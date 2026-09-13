@@ -438,12 +438,16 @@ export type Task = {
     phone: string;
     title: string;
     state: 'OPEN' | 'COMPLETED';
-    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI' | 'STAFF_MESSAGE_FOLLOW_UP' | 'VOICEMAIL_RECOVERY' | 'MISSED_CALL_RECOVERY';
+    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI' | 'STAFF_MESSAGE_FOLLOW_UP' | 'APPOINTMENT_REVIEW' | 'INBOUND_MESSAGE_REVIEW' | 'VOICEMAIL_RECOVERY' | 'MISSED_CALL_RECOVERY';
     recoveryOutcome?: 'VOICEMAIL' | 'MISSED_CALL';
     urgency: StaffTaskUrgency;
     category?: StaffTaskCategory;
     callerName?: string;
     sourceCallId?: string;
+    /**
+     * Latest incoming text preview for the workspace list.
+     */
+    preview?: string;
     sourceMessage?: string;
     messageId?: string;
     messageThreadId?: string;
@@ -482,6 +486,8 @@ export type TaskPage = {
 export type TaskFolderCounts = {
     tasks: number;
     missedCalls: number;
+    texts?: number;
+    callRecovery?: number;
     categories: TaskCategoryCounts;
 };
 
@@ -1126,6 +1132,7 @@ export type OperatorAiInteractionAnalytics = {
 
 export type TaskQueryRequest = {
     responsibility?: 'mine' | 'all';
+    kind?: 'texts' | 'calls';
     category?: StaffTaskCategory;
     knowledgeFlagged?: boolean;
     grouped?: boolean;
@@ -1302,7 +1309,7 @@ export type ConversationTimelineItem = {
     taskActivityDetails?: {
         [key: string]: unknown;
     };
-    taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'CATEGORY_CHANGED' | 'KNOWLEDGE_FEEDBACK_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
+    taskActivity?: 'TASK_CREATED' | 'SOURCE_UPDATED' | 'TITLE_CHANGED' | 'CATEGORY_CHANGED' | 'KNOWLEDGE_FEEDBACK_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_OUTBOUND_CALL' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
     message?: Message;
     task?: Task;
     call?: CallHistoryItem;

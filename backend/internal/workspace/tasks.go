@@ -32,6 +32,7 @@ func (m *Module) QueryTasks(
 	}
 	if m.database == nil || m.access == nil || command.PracticeID == "" ||
 		len(command.Search) > 500 ||
+		(command.Kind != "" && command.Kind != "texts" && command.Kind != "calls") ||
 		(command.Responsibility != "" && command.Responsibility != "mine" && command.Responsibility != "all") ||
 		(command.State != work.TaskOpen && command.State != work.TaskCompleted) ||
 		(command.Folder != "" &&
@@ -55,6 +56,7 @@ func (m *Module) QueryTasks(
 		command.Ordering,
 		command.State,
 		command.Folder,
+		command.Kind,
 	)
 	if err != nil {
 		return work.TaskPage{}, ErrInvalidInput
@@ -84,7 +86,7 @@ func (m *Module) QueryTasks(
 		limit+1,
 		command.Identity.Subject,
 		command.Folder,
-		command.Responsibility, strings.ToLower(command.Identity.Email), command.KnowledgeFlagged, command.Category,
+		command.Responsibility, strings.ToLower(command.Identity.Email), command.KnowledgeFlagged, command.Category, command.Kind,
 	)
 	if err != nil {
 		return work.TaskPage{}, fmt.Errorf("query Tasks: %w", err)
@@ -121,6 +123,7 @@ func (m *Module) QueryTasks(
 			items[len(items)-1],
 			command.Ordering,
 			command.Folder,
+			command.Kind,
 		)
 		if err != nil {
 			return work.TaskPage{}, err
@@ -189,6 +192,11 @@ const taskColumns = `
 		task.caller_name,
 		task.source_call_id,
 		task.source_message,
+        COALESCE(CASE WHEN task.origin='INBOUND_MESSAGE_REVIEW' THEN (
+          SELECT COALESCE(NULLIF(message.body,''),'Attachment') FROM messaging_messages message
+          WHERE message.thread_id=task.message_thread_id AND message.direction='INBOUND'
+          ORDER BY message.created_at DESC,message.id DESC LIMIT 1
+        ) END,''),
 		task.source_message_id::text,
 		task.message_thread_id::text,
 		task.recovery_outcome,
@@ -250,6 +258,7 @@ const taskQueryFilter = `
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter + `
  AND ($15::text = '' OR task.category=$15)
+ AND ($16::text = '' OR ($16='texts' AND task.origin='INBOUND_MESSAGE_REVIEW') OR ($16='calls' AND task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')))
 		AND (
 			$3 = ''
 				OR strpos(lower(task.title), lower($3)) > 0
@@ -285,7 +294,7 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool
  SELECT task.* FROM work_tasks task
  JOIN access_locations location ON location.practice_id=task.practice_id AND location.id=task.location_id` + taskQueryFilter + ` AND task.state='OPEN'
  ), ranked AS (
- SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category,(origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')) ORDER BY ` + order + `) AS member_rank FROM matching
+ SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category,origin ORDER BY ` + order + `) AS member_rank FROM matching
  ), group_candidates AS (SELECT * FROM ranked WHERE member_rank=1) ` + taskQueryColumns + " FROM group_candidates task" + taskProjectionJoins + " WHERE true"
 	}
 	switch {
@@ -331,13 +340,6 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool
 			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
 		ORDER BY task.updated_at DESC, task.id DESC
 		LIMIT $9`
-	case ordering == work.TaskOrderingRecent:
-		return query + `
-			AND task.state = 'COMPLETED'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
-		ORDER BY task.updated_at DESC, task.id DESC
-		LIMIT $9`
 	default:
 		return query + `
 			AND task.state = 'COMPLETED'
@@ -378,7 +380,8 @@ const conversationTaskQuery = `
 	LEFT JOIN work_task_acknowledgements acknowledgement
 		ON acknowledgement.task_id = task.id
 		AND acknowledgement.purpose = 'CALLER_TASK_RECEIVED'
-	WHERE task.practice_id = $1
+	WHERE task.origin <> 'INBOUND_MESSAGE_REVIEW'
+		AND task.practice_id = $1
 		AND task.location_id = $2
 		AND (
 			task.message_thread_id = $3::uuid
@@ -445,6 +448,7 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 		&callerName,
 		&sourceCall,
 		&sourceMessage,
+		&task.Preview,
 		&messageID,
 		&messageThreadID,
 		&recoveryOutcome,
@@ -586,7 +590,7 @@ func queryTaskFolderCounts(
 			SELECT
 				category,
 				CASE
-					WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AND NOT $8
+					WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AND NOT $8 AND $9::text <> ''
 						THEN 'missed_calls'
 					ELSE 'tasks'
 				END AS folder
@@ -611,9 +615,11 @@ func queryTaskFolderCounts(
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'other'),
  count(*) FILTER (WHERE folder='tasks' AND category='insurance'),
  count(*) FILTER (WHERE folder='tasks' AND category='pre_op'),
- count(*) FILTER (WHERE folder='tasks' AND category='post_op')
+ count(*) FILTER (WHERE folder='tasks' AND category='post_op'),
+ (SELECT count(*) FROM scoped WHERE origin='INBOUND_MESSAGE_REVIEW'),
+ (SELECT count(*) FROM scoped WHERE origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))
 		FROM foldered
-	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.KnowledgeFlagged).Scan(
+	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.KnowledgeFlagged, command.Folder).Scan(
 		&counts.Tasks,
 		&counts.MissedCalls,
 		&counts.Categories.Billing,
@@ -624,6 +630,7 @@ func queryTaskFolderCounts(
 		&counts.Categories.Referrals,
 		&counts.Categories.Other,
 		&counts.Categories.Insurance, &counts.Categories.PreOp, &counts.Categories.PostOp,
+		&counts.Texts, &counts.CallRecovery,
 	)
 	if err != nil {
 		return work.TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)
@@ -632,6 +639,7 @@ func queryTaskFolderCounts(
 }
 
 type taskCursor struct {
+	Kind      string            `json:"kind,omitempty"`
 	Present   bool              `json:"-"`
 	Ordering  work.TaskOrdering `json:"ordering"`
 	State     work.TaskState    `json:"state"`
@@ -645,20 +653,22 @@ func encodeTaskCursor(
 	task work.Task,
 	ordering work.TaskOrdering,
 	folder work.TaskFolder,
+	kind string,
 ) (string, error) {
 	orderedAt := task.CreatedAt
-	if ordering == work.TaskOrderingRecent {
-		orderedAt = task.UpdatedAt
-	} else if task.State == work.TaskCompleted {
+	if task.State == work.TaskCompleted {
 		if task.CompletedAt == nil {
 			return "", fmt.Errorf("encode Task cursor: completed Task has no completion time")
 		}
 		orderedAt = *task.CompletedAt
+	} else if ordering == work.TaskOrderingRecent {
+		orderedAt = task.UpdatedAt
 	}
 	encoded, err := json.Marshal(taskCursor{
 		Ordering:  ordering,
 		State:     task.State,
 		Folder:    folder,
+		Kind:      kind,
 		Urgency:   task.Urgency,
 		OrderedAt: orderedAt,
 		ID:        task.ID,
@@ -674,6 +684,7 @@ func decodeTaskCursor(
 	ordering work.TaskOrdering,
 	state work.TaskState,
 	folder work.TaskFolder,
+	kind string,
 ) (taskCursor, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -688,7 +699,7 @@ func decodeTaskCursor(
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cursor); err != nil || cursor.OrderedAt.IsZero() ||
 		uuid.Validate(cursor.ID) != nil || cursor.Ordering != ordering ||
-		cursor.State != state || cursor.Folder != folder ||
+		cursor.State != state || cursor.Folder != folder || cursor.Kind != kind ||
 		(cursor.Urgency != work.TaskUrgencyHighPriority &&
 			cursor.Urgency != work.TaskUrgencyNormal &&
 			cursor.Urgency != work.TaskUrgencyNonUrgent) {
@@ -734,5 +745,5 @@ const taskResponsibilityFilter = `
 // count disappear. In the knowledge view, flagged recovery is included in Tasks.
 func taskCountFilter() string {
 	filter := strings.NewReplacer("$12", "$6", "$13", "$7", "$14", "$8").Replace(taskResponsibilityFilter)
-	return " AND ((task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY') AND NOT $8) OR (" + strings.TrimPrefix(strings.TrimSpace(filter), "AND ") + "))"
+	return " AND ((task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY') AND NOT $8 AND $9::text <> '') OR (" + strings.TrimPrefix(strings.TrimSpace(filter), "AND ") + "))"
 }

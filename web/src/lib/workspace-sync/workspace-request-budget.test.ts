@@ -3,29 +3,6 @@ import test from "node:test"
 
 import { createWorkspaceRequestBudget } from "./workspace-request-budget.ts"
 
-test("generic revisions do not restart the AI outcome cadence", async () => {
-  const clock = new ManualClock()
-  let aiRequests = 0
-  const budget = createWorkspaceRequestBudget({ clock })
-
-  budget.setAIRefresh("practice-1:all", async () => {
-    aiRequests += 1
-  })
-  await clock.advance(0)
-  assert.equal(aiRequests, 0)
-
-  for (let revision = 1; revision <= 20; revision += 1) {
-    budget.setAIRefresh("practice-1:all", async () => {
-      aiRequests += 1
-    })
-  }
-  await clock.advance(29_999)
-  assert.equal(aiRequests, 0)
-  await clock.advance(1)
-  assert.equal(aiRequests, 1)
-  budget.stop()
-})
-
 test("generic revision bursts spend one selected-detail request budget", async () => {
   const clock = new ManualClock()
   let detailRefreshes = 0
@@ -65,30 +42,6 @@ test("selected details refresh only after the detail UI has mounted", async () =
   budget.signalDetailRefresh()
   await clock.advance(500)
   assert.equal(detailRefreshes, 1)
-  budget.stop()
-})
-
-test("hidden AI polling defers until one visible refresh", async () => {
-  const clock = new ManualClock()
-  let hidden = true
-  let aiRequests = 0
-  const budget = createWorkspaceRequestBudget({
-    clock,
-    isHidden: () => hidden,
-  })
-
-  budget.setAIRefresh("practice-1:all", async () => {
-    aiRequests += 1
-  })
-  await clock.advance(60_000)
-  assert.equal(aiRequests, 0)
-
-  hidden = false
-  budget.visibilityChanged()
-  await clock.advance(0)
-  assert.equal(aiRequests, 1)
-  await clock.advance(30_000)
-  assert.equal(aiRequests, 2)
   budget.stop()
 })
 

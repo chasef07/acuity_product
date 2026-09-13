@@ -68,7 +68,20 @@ createServer(async (request, response) => {
       response.writeHead(400).end()
       return
     }
-    const audio = Buffer.from("synthetic-mp3-audio")
+    // A short, playable silent WAV lets browser tests reach the real ended event.
+    const audio = Buffer.alloc(44 + 8000)
+    audio.write("RIFF", 0)
+    audio.writeUInt32LE(audio.length - 8, 4)
+    audio.write("WAVEfmt ", 8)
+    audio.writeUInt32LE(16, 16)
+    audio.writeUInt16LE(1, 20)
+    audio.writeUInt16LE(1, 22)
+    audio.writeUInt32LE(8000, 24)
+    audio.writeUInt32LE(16000, 28)
+    audio.writeUInt16LE(2, 32)
+    audio.writeUInt16LE(16, 34)
+    audio.write("data", 36)
+    audio.writeUInt32LE(audio.length - 44, 40)
     const range = request.headers.range?.match(/^bytes=(\d+)-(\d*)$/)
     if (range) {
       const start = Number(range[1])
@@ -83,14 +96,14 @@ createServer(async (request, response) => {
         "accept-ranges": "bytes",
         "content-length": String(partial.length),
         "content-range": `bytes ${start}-${end}/${audio.length}`,
-        "content-type": "audio/mpeg",
+        "content-type": "audio/wav",
       }).end(partial)
       return
     }
     response.writeHead(200, {
       "accept-ranges": "bytes",
       "content-length": String(audio.length),
-      "content-type": "audio/mpeg",
+      "content-type": "audio/wav",
     }).end(audio)
     return
   }

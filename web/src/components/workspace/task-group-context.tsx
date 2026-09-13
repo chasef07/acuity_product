@@ -17,7 +17,7 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
   taskRows: Task[]
   canMutate: boolean
   onSelect: (task: Task) => void
-  onUpdated: (task: Task) => void
+  onUpdated: (task: Task, advance?: boolean) => void
 }) {
   // Keep the requests actually shown to staff separate from refreshed membership.
   const [reviewed, setReviewed] = useState(group.groupMembers ?? [group])
@@ -34,7 +34,7 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
   function updated(member: Task) {
     setReviewed((items) => items.flatMap((item) => item.id !== member.id ? [item]
       : member.state === "OPEN" && member.category === group.category ? [member] : []))
-    onUpdated(member)
+    onUpdated(member, member.state === "COMPLETED")
   }
 
   async function resolve(member?: Task) {
@@ -54,7 +54,7 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
       if (!member || reviewed.length === 1) {
         setResolved(true)
         setReviewed([])
-        onUpdated(result.data)
+        onUpdated(result.data, true)
       } else {
         updated(result.data)
       }
@@ -93,14 +93,14 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
               <p className="whitespace-pre-wrap break-words text-sm leading-5 text-muted-foreground">{member.sourceMessage}</p>
               <div className="flex items-center justify-between gap-2">
                 <Button size="sm" variant="ghost" className="-ml-2 text-xs" onClick={() => onSelect(member)}>Open Task & call <ArrowUpRightIcon className="size-3.5" /></Button>
-                {canMutate && <Button size="sm" variant="outline" disabled={pending || stale} onClick={() => void resolve(member)}><CheckCircle2Icon /> Resolve</Button>}
+                {canMutate && <Button size="sm" variant="outline" disabled={pending || stale} onClick={() => void resolve(member)}><CheckCircle2Icon /> {member.origin === "APPOINTMENT_REVIEW" ? "Complete verification" : "Complete"}</Button>}
               </div>
               {canMutate && <fieldset disabled={pending || stale} className="min-w-0"><TaskMetadata compact task={member} onUpdated={updated} /></fieldset>}
             </article>)}
           </div>
           {canMutate && reviewed.length > 1 && <footer className="shrink-0 border-t bg-background pt-3 pb-1">
-            <Button className="w-full" disabled={pending || stale} onClick={() => void resolve()}><CheckCircle2Icon /> Resolve group</Button>
-            <p className="mt-2 text-center text-[11px] leading-4 text-muted-foreground">Resolves all {reviewed.length} requests shown. Each keeps its history.</p>
+            <Button className="w-full" disabled={pending || stale} onClick={() => void resolve()}><CheckCircle2Icon /> Complete all {reviewed.length} requests</Button>
+            <p className="mt-2 text-center text-[11px] leading-4 text-muted-foreground">Completes all {reviewed.length} requests shown. Each keeps its history.</p>
           </footer>}
         </>
       )}

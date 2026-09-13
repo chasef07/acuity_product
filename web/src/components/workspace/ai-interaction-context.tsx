@@ -1,9 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import type {
   AiAppointmentFacts,
@@ -16,56 +14,14 @@ import {
 import { formatUSPhone } from "@/lib/phone"
 
 export function AIInteractionContext({
-  interactionID,
   detail,
   loading,
   error,
-  onReview,
 }: {
-  interactionID: string
   detail?: AiInteractionDetail
   loading: boolean
   error: string
-  onReview?: (interactionID: string) => Promise<boolean>
 }) {
-  const [reviewRequest, setReviewRequest] = useState<{
-    interactionID: string
-    state: "saving" | "saved" | "failed"
-  }>({ interactionID: "", state: "saved" })
-  const appointmentOutcome = detail?.appointmentOutcome
-  useEffect(() => {
-    if (
-      !interactionID ||
-      !appointmentOutcome ||
-      !onReview ||
-      appointmentOutcome === "INDETERMINATE"
-    ) return
-    let cancelled = false
-    void Promise.resolve().then(async () => {
-      if (cancelled) return
-      setReviewRequest({ interactionID, state: "saving" })
-      const reviewed = await onReview(interactionID).catch(() => false)
-      if (cancelled) return
-      setReviewRequest({
-        interactionID,
-        state: reviewed ? "saved" : "failed",
-      })
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [appointmentOutcome, interactionID, onReview])
-
-  async function retryReview() {
-    if (!onReview) return
-    setReviewRequest({ interactionID, state: "saving" })
-    const reviewed = await onReview(interactionID).catch(() => false)
-    setReviewRequest({
-      interactionID,
-      state: reviewed ? "saved" : "failed",
-    })
-  }
-
   if (loading) {
     return (
       <div className="flex min-h-48 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -85,32 +41,8 @@ export function AIInteractionContext({
     )
   }
   if (!detail) return null
-  const reviewFailed =
-    reviewRequest.interactionID === interactionID &&
-    reviewRequest.state === "failed"
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      {reviewFailed && (
-        <div className="px-4 pt-4">
-          <Alert variant="destructive">
-            <AlertTitle>Review status not saved</AlertTitle>
-            <AlertDescription className="flex flex-wrap items-center gap-3">
-              <span>
-                This appointment will remain in the sidebar until its review
-                status is saved.
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => void retryReview()}
-              >
-                Try again
-              </Button>
-            </AlertDescription>
-          </Alert>
-        </div>
-      )}
       <AIInteractionDetailView detail={detail} />
     </div>
   )

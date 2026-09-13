@@ -820,6 +820,9 @@ func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) err
 			return err
 		}
 	}
+	if err := m.resolveOutboundRecovery(ctx, tx, state.CallID); err != nil {
+		return err
+	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
@@ -903,6 +906,9 @@ func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_calls SET version = version + 1, updated_at = $2 WHERE id = $1
 	`, state.CallID, m.now()); err != nil {
+		return err
+	}
+	if err := m.resolveOutboundRecovery(ctx, tx, state.CallID); err != nil {
 		return err
 	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
@@ -1014,4 +1020,24 @@ func outboundFingerprint(command StartOutboundCallCommand) ([32]byte, error) {
 		return [32]byte{}, fmt.Errorf("encode outbound fingerprint: %w", err)
 	}
 	return sha256.Sum256(encoded), nil
+}
+
+// Both media legs must be connected; dialing or an unanswered attempt is not restored contact.
+func (m *Module) resolveOutboundRecovery(ctx context.Context, tx pgx.Tx, callID string) error {
+	var command work.ResolveRecoveryTasksCommand
+	err := tx.QueryRow(ctx, `SELECT call.practice_id::text,call.destination_phone,GREATEST(staff.bridged_at,destination.bridged_at)
+ FROM human_calling_calls call
+ JOIN human_calling_call_legs staff ON staff.call_id=call.id AND staff.role='STAFF'
+ JOIN human_calling_call_legs destination ON destination.call_id=call.id AND destination.role='DESTINATION'
+ WHERE call.id=$1 AND call.direction='OUTBOUND' AND staff.bridged_at IS NOT NULL AND destination.bridged_at IS NOT NULL`, callID).Scan(&command.PracticeID, &command.Phone, &command.OccurredAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	command.Kind = work.RecoveryResolutionOutboundCall
+	command.SourceID = callID
+	_, err = m.work.ResolveRecoveryTasks(ctx, tx, command)
+	return err
 }

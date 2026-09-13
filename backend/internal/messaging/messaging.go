@@ -655,6 +655,12 @@ func (m *Module) Send(
 	if err != nil {
 		return Message{}, "", fmt.Errorf("commit outbound Message: %w", err)
 	}
+	if m.work == nil {
+		return Message{}, "", errors.New("work module is required for staff text replies")
+	}
+	if err := m.work.CaptureTextReply(ctx, tx, thread.ID, messageID, authorization.Actor); err != nil {
+		return Message{}, "", err
+	}
 	if attachment != nil {
 		if _, err := tx.Exec(ctx, `
 			UPDATE messaging_attachments
@@ -1448,6 +1454,11 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	`, command.MessageID, deliveryState, providerMessageID, errorCode, finishedAt); err != nil {
 		return true, fmt.Errorf("project Message provider result: %w", err)
 	}
+	if m.work != nil {
+		if err := m.work.ApplyTextReply(ctx, finishTx, command.MessageID); err != nil {
+			return true, err
+		}
+	}
 	if _, err := m.access.RecordWorkspaceChange(
 		ctx,
 		finishTx,
@@ -1680,6 +1691,11 @@ func (m *Module) ReconcileNextCommand(ctx context.Context) (bool, error) {
 		WHERE id = $1 AND state = 'RECONCILING'
 	`, commandID, commandState, m.now()); err != nil {
 		return true, fmt.Errorf("finish Message reconciliation: %w", err)
+	}
+	if m.work != nil {
+		if err := m.work.ApplyTextReply(ctx, finishTx, messageID); err != nil {
+			return true, err
+		}
 	}
 	if err := finishTx.Commit(ctx); err != nil {
 		return true, fmt.Errorf("commit Message reconciliation result: %w", err)
@@ -2647,6 +2663,11 @@ func (m *Module) projectOutboundReceipt(
 	`, eventID, m.now()); err != nil {
 		return fmt.Errorf("mark delivery receipt applied: %w", err)
 	}
+	if m.work != nil {
+		if err := m.work.ApplyTextReply(ctx, tx, messageID); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delivery projection: %w", err)
 	}
@@ -2658,6 +2679,9 @@ func (m *Module) projectInboundReceipt(
 	eventID string,
 	envelope normalizedWebhookEvent,
 ) error {
+	if m.work == nil {
+		return fmt.Errorf("project inbound Message: Work module is not configured")
+	}
 	payload := envelope.Data.Payload
 	providerMessageID := strings.TrimSpace(payload.ID)
 	body := strings.TrimSpace(payload.Text)
@@ -2841,6 +2865,11 @@ func (m *Module) projectInboundReceipt(
 	}
 	blocked := isStop(body)
 	started := isStart(body)
+	if inserted && !blocked && !started {
+		if err := m.work.EnsureInboundMessageReview(ctx, tx, practiceID, locationID, from, threadID, messageID, occurredAt); err != nil {
+			return fmt.Errorf("project inbound Message review: %w", err)
+		}
+	}
 	isNewerOptOutEvidence := priorOptOutAt == nil ||
 		occurredAt.After(*priorOptOutAt) ||
 		(occurredAt.Equal(*priorOptOutAt) &&

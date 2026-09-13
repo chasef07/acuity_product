@@ -17,12 +17,6 @@ type CompleteTaskGroupCommand struct {
 	Members  []ReviewedTask
 }
 
-// IsRecoveryOrigin distinguishes the separate missed-call recovery surface from
-// ordinary follow-up work, even when both have the same Contact Context.
-func IsRecoveryOrigin(origin TaskOrigin) bool {
-	return origin == TaskOriginMissedCall || origin == TaskOriginVoicemail
-}
-
 func (m *Module) CompleteTaskGroup(ctx context.Context, command CompleteTaskGroupCommand) (Task, error) {
 	if len(command.Members) == 0 || command.TaskID == "" {
 		return Task{}, ErrInvalidInput
@@ -66,13 +60,13 @@ func (m *Module) CompleteTaskGroup(ctx context.Context, command CompleteTaskGrou
 		if task.PracticeID != anchor.PracticeID || task.LocationID != anchor.LocationID {
 			return Task{}, ErrDenied
 		}
-		if task.State != TaskOpen || task.Version != expected[id] || task.Phone != anchor.Phone || task.Category != anchor.Category || IsRecoveryOrigin(task.Origin) != IsRecoveryOrigin(anchor.Origin) {
+		if task.State != TaskOpen || task.Version != expected[id] || task.Phone != anchor.Phone || task.Category != anchor.Category || task.Origin != anchor.Origin {
 			return Task{}, ErrConflict
 		}
 		tasks = append(tasks, task)
 	}
 	var currentIDs []string
-	err = tx.QueryRow(ctx, `SELECT array_agg(id::text ORDER BY id::text) FROM work_tasks WHERE practice_id=$1 AND location_id=$2 AND phone=$3 AND category IS NOT DISTINCT FROM $4::text AND state='OPEN' AND (origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))=$5`, anchor.PracticeID, anchor.LocationID, anchor.Phone, nullIfEmpty(string(anchor.Category)), IsRecoveryOrigin(anchor.Origin)).Scan(&currentIDs)
+	err = tx.QueryRow(ctx, `SELECT array_agg(id::text ORDER BY id::text) FROM work_tasks WHERE practice_id=$1 AND location_id=$2 AND phone=$3 AND category IS NOT DISTINCT FROM $4::text AND state='OPEN' AND origin=$5`, anchor.PracticeID, anchor.LocationID, anchor.Phone, nullIfEmpty(string(anchor.Category)), anchor.Origin).Scan(&currentIDs)
 	if err != nil {
 		return Task{}, err
 	}

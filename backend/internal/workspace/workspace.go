@@ -91,6 +91,7 @@ type TimelinePage struct {
 }
 
 type QueryTasksCommand struct {
+	Kind             string
 	Responsibility   string
 	Category         work.TaskCategory
 	KnowledgeFlagged bool

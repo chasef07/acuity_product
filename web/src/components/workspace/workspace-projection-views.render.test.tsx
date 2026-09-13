@@ -92,52 +92,14 @@ test("Task rail and canvas render one supplied projection and the rail emits sel
   dom.window.close()
 })
 
-test("failed AI outcome review exposes a retry that can recover", async () => {
+test("opening AI appointment evidence never clears shared work", async () => {
   const dom = installDOM()
   const host = document.createElement("div")
   document.body.append(host)
   const root = createRoot(host)
-  let resolveFirstReview!: (reviewed: boolean) => void
-  const firstReview = new Promise<boolean>((resolve) => {
-    resolveFirstReview = resolve
-  })
-  let attempts = 0
-  const onReview = () => {
-    attempts += 1
-    return attempts === 1 ? firstReview : Promise.resolve(true)
-  }
-
-  await act(async () => {
-    root.render(
-      <AIInteractionContext
-        interactionID="interaction-1"
-        detail={projectedAIInteraction()}
-        loading={false}
-        error=""
-        onReview={onReview}
-      />,
-    )
-  })
-  assert.equal(attempts, 1)
-
-  await act(async () => {
-    resolveFirstReview(false)
-    await firstReview
-  })
-  const failure = host.querySelector<HTMLElement>("[role='alert']")
-  assert.match(failure?.textContent ?? "", /Review status not saved/)
-  const retry = Array.from(failure?.querySelectorAll("button") ?? []).find(
-    (button) => button.textContent === "Try again",
-  )
-  assert.ok(retry)
-
-  await act(async () => {
-    retry.click()
-    await Promise.resolve()
-  })
-  assert.equal(attempts, 2)
-  assert.equal(host.querySelector("[role='alert']"), null)
-
+  await act(async () => root.render(<AIInteractionContext detail={projectedAIInteraction()} loading={false} error="" />))
+  assert.match(host.textContent ?? "", /Appointment booked/)
+  assert.doesNotMatch(host.textContent ?? "", /Review status|Mark.*reviewed/)
   await act(async () => root.unmount())
   dom.window.close()
 })
@@ -438,16 +400,7 @@ function projectedWorkspace(task: Task): WorkspaceProjectionState {
         },
       },
     },
-    recoveryTasks: { items: [], nextCursor: "", loading: false, error: "" },
-    messages: { items: [], nextCursor: "", loading: false, error: "" },
-    aiOutcomes: {
-      items: [],
-      nextCursor: "",
-      loading: false,
-      error: "",
-      counts: { tasks: 0, bookings: 0, cancellations: 0, reschedules: 0 },
-      nextCursors: { bookings: "", cancellations: "", reschedules: "" },
-    },
+    completedTasks: { items: [], nextCursor: "", loading: false, error: "" },
     selection: {
       task,
       taskError: "",
@@ -469,7 +422,6 @@ function projectedWorkspace(task: Task): WorkspaceProjectionState {
     completion: { pendingTaskID: "", errorTaskID: "", error: "" },
     rail: {
       expanded: ["tasks"],
-      expandedAppointments: [],
       taskCategory: "all",
       scrollTop: 0,
     },

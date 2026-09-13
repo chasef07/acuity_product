@@ -16,6 +16,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type TaskState string
@@ -45,8 +46,9 @@ const (
 type RecoveryResolutionKind string
 
 const (
-	RecoveryResolutionInboundCall RecoveryResolutionKind = "INBOUND_CALL"
-	RecoveryResolutionBooking     RecoveryResolutionKind = "BOOKING"
+	RecoveryResolutionInboundCall  RecoveryResolutionKind = "INBOUND_CALL"
+	RecoveryResolutionOutboundCall RecoveryResolutionKind = "OUTBOUND_CALL"
+	RecoveryResolutionBooking      RecoveryResolutionKind = "BOOKING"
 )
 
 type TaskUrgency string
@@ -132,6 +134,7 @@ type Task struct {
 	CallerName               string
 	SourceCallID             string
 	SourceMessage            string
+	Preview                  string
 	MessageID                string
 	MessageThreadID          string
 	ConversationThreadID     string
@@ -255,9 +258,11 @@ type TaskPage struct {
 }
 
 type TaskFolderCounts struct {
-	Tasks       int
-	MissedCalls int
-	Categories  TaskCategoryCounts
+	Texts        int
+	CallRecovery int
+	Tasks        int
+	MissedCalls  int
+	Categories   TaskCategoryCounts
 }
 
 type TaskCategoryCounts struct {
@@ -408,7 +413,7 @@ func (m *Module) EnsureMessageFollowUp(
 		if err := tx.QueryRow(ctx, `
 			SELECT id::text
 			FROM work_tasks
-			WHERE source_message_id = $1
+			WHERE (source_message_id = $1 AND origin = 'STAFF_MESSAGE_FOLLOW_UP')
 				OR (
 					practice_id = $2
 					AND location_id = $3
@@ -708,6 +713,7 @@ func (m *Module) ResolveRecoveryTasks(
 		!canonicalPhone.MatchString(command.Phone) ||
 		command.OccurredAt.IsZero() ||
 		(command.Kind != RecoveryResolutionInboundCall &&
+			command.Kind != RecoveryResolutionOutboundCall &&
 			command.Kind != RecoveryResolutionBooking) ||
 		!textLengthBetween(command.SourceID, 1, 255) {
 		return 0, ErrInvalidInput
@@ -834,6 +840,7 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 				updated.version,
 				CASE updated.kind
 					WHEN 'BOOKING' THEN 'TASK_AUTO_COMPLETED_BOOKING'
+                    WHEN 'OUTBOUND_CALL' THEN 'TASK_AUTO_COMPLETED_OUTBOUND_CALL'
 					ELSE 'TASK_AUTO_COMPLETED_INBOUND_CALL'
 				END,
 				'SERVICE',
@@ -1571,6 +1578,10 @@ func (m *Module) ReopenTask(
 		WHERE id = $1
 		RETURNING version
 	`, task.ID, reopenedAt).Scan(&task.Version); err != nil {
+		var constraint *pgconn.PgError
+		if errors.As(err, &constraint) && constraint.Code == "23505" && constraint.ConstraintName == "work_tasks_open_message_review_idx" {
+			return Task{}, ErrConflict
+		}
 		return Task{}, fmt.Errorf("reopen Task: %w", err)
 	}
 	task.State = TaskOpen

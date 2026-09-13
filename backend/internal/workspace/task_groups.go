@@ -25,7 +25,7 @@ func loadGroupMembers(ctx context.Context, tx pgx.Tx, subject string, groups []w
  JOIN work_tasks anchor ON anchor.practice_id=task.practice_id
  AND anchor.location_id=task.location_id AND anchor.phone=task.phone
  AND anchor.category IS NOT DISTINCT FROM task.category
- AND (anchor.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))=(task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))
+ AND anchor.origin=task.origin
  WHERE anchor.id=ANY($1::uuid[]) AND task.state='OPEN'
  ORDER BY task.created_at,task.id`, ids, subject)
 	if err != nil {

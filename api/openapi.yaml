@@ -3231,6 +3231,8 @@ components:
             - HUMAN_CALL_FOLLOW_UP
             - ABITA_AI
             - STAFF_MESSAGE_FOLLOW_UP
+            - APPOINTMENT_REVIEW
+            - INBOUND_MESSAGE_REVIEW
             - VOICEMAIL_RECOVERY
             - MISSED_CALL_RECOVERY
         recoveryOutcome:
@@ -3243,6 +3245,9 @@ components:
         callerName:
           type: string
         sourceCallId:
+          type: string
+        preview:
+          description: Latest incoming text preview for the workspace list.
           type: string
         sourceMessage:
           type: string
@@ -3337,6 +3342,12 @@ components:
           type: integer
           minimum: 0
         missedCalls:
+          type: integer
+          minimum: 0
+        texts:
+          type: integer
+          minimum: 0
+        callRecovery:
           type: integer
           minimum: 0
         categories:
@@ -4518,6 +4529,9 @@ components:
         responsibility:
           type: string
           enum: [mine, all]
+        kind:
+          type: string
+          enum: [texts, calls]
         category:
           $ref: "#/components/schemas/StaffTaskCategory"
         knowledgeFlagged:
@@ -4963,6 +4977,7 @@ components:
           type: string
           enum:
             - TASK_CREATED
+            - SOURCE_UPDATED
             - TITLE_CHANGED
             - CATEGORY_CHANGED
             - KNOWLEDGE_FEEDBACK_CHANGED
@@ -4970,6 +4985,7 @@ components:
             - TASK_REOPENED
             - INTERACTION_ATTACHED
             - TASK_AUTO_COMPLETED_INBOUND_CALL
+            - TASK_AUTO_COMPLETED_OUTBOUND_CALL
             - TASK_AUTO_COMPLETED_BOOKING
             - TASK_AUTO_COMPLETED_DUPLICATE
         message:

@@ -1303,6 +1303,13 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil || !processed {
 		t.Fatalf("process inbound Message = %t, %v", processed, err)
 	}
+	if _, err := module.ReceiveWebhook(context.Background(), "", rawInbound, timestamp, signature); err != nil {
+		t.Fatalf("replay inbound Message: %v", err)
+	}
+	var reviewVersion int64
+	if err := pool.QueryRow(context.Background(), `SELECT version FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW'`).Scan(&reviewVersion); err != nil || reviewVersion != 1 {
+		t.Fatalf("duplicate inbound changed review version: %d %v", reviewVersion, err)
+	}
 	firstThreads, err := module.QueryThreads(
 		context.Background(),
 		messaging.QueryThreadsCommand{
@@ -1422,8 +1429,8 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	).Scan(&taskCount); err != nil {
 		t.Fatalf("count Tasks after inbound Message: %v", err)
 	}
-	if taskCount != 0 {
-		t.Fatalf("inbound Message created %d automatic Tasks", taskCount)
+	if taskCount != 1 {
+		t.Fatalf("inbound Message review Task count = %d, want 1", taskCount)
 	}
 
 	now = now.Add(time.Minute)
@@ -1631,6 +1638,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		)
 	}
 
+	if err := pool.QueryRow(context.Background(), `SELECT version FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW'`).Scan(&reviewVersion); err != nil || reviewVersion != 1 {
+		t.Fatalf("STOP/START changed review work: %d %v", reviewVersion, err)
+	}
 	followUp, status, err := module.CreateFollowUpTask(
 		context.Background(),
 		messaging.CreateFollowUpTaskCommand{

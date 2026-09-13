@@ -1632,6 +1632,7 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	page, err := server.workspace.QueryTasks(ctx, workspace.QueryTasksCommand{
+		Kind:             stringValue((*string)(body.Kind)),
 		IncludeCounts:    body.IncludeCounts,
 		Responsibility:   stringValue((*string)(body.Responsibility)),
 		Category:         work.TaskCategory(stringValue((*string)(body.Category))),
@@ -3314,6 +3315,9 @@ func taskResponse(task work.Task) (api.Task, error) {
 	if task.SourceCallID != "" {
 		response.SourceCallId = &task.SourceCallID
 	}
+	if task.Preview != "" {
+		response.Preview = &task.Preview
+	}
 	if task.SourceMessage != "" {
 		response.SourceMessage = &task.SourceMessage
 	}
@@ -3663,8 +3667,10 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 	}
 	if page.Counts != nil {
 		response.Counts = &api.TaskFolderCounts{
-			Tasks:       page.Counts.Tasks,
-			MissedCalls: page.Counts.MissedCalls,
+			Tasks:        page.Counts.Tasks,
+			MissedCalls:  page.Counts.MissedCalls,
+			Texts:        &page.Counts.Texts,
+			CallRecovery: &page.Counts.CallRecovery,
 			Categories: api.TaskCategoryCounts{
 				Billing:       page.Counts.Categories.Billing,
 				Appointments:  page.Counts.Categories.Appointments,

@@ -44,7 +44,11 @@ import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-
 import type {
   AccessDiscovery,
   CallingCall,
+  Task,
 } from "@/lib/api/generated/types.gen"
+import { completeTask, reopenTask } from "@/lib/api/generated/sdk.gen"
+import { portalClient } from "@/lib/api/client"
+import { getAccessToken } from "@/lib/auth-client"
 import { authClient } from "@/lib/auth-client"
 import { workspaceScopeForCall } from "@/lib/calling/workspace-scope"
 import { cn } from "@/lib/utils"
@@ -106,7 +110,6 @@ export function PortalWorkspace() {
         },
       },
       environment: {
-        isHidden: () => document.hidden,
         clock: {
           setTimeout: (callback, milliseconds) =>
             window.setTimeout(callback, milliseconds),
@@ -279,7 +282,8 @@ export function PortalWorkspace() {
   const selectedAIInteractionID = state.selection.aiInteractionID
   const historicalCall = state.selection.historicalCall
   const contextView = state.selection.contextView
-  const contextPanelOpen = state.selection.contextPanelOpen
+  const textTask = contextView === "task" && selectedTask?.origin === "INBOUND_MESSAGE_REVIEW" ? selectedTask : undefined
+  const contextPanelOpen = state.selection.contextPanelOpen && !textTask
   const view = state.selection.view
 
   return callingShell((activeCall, callingOccupied) => {
@@ -361,6 +365,9 @@ export function PortalWorkspace() {
                       : undefined
                   }
                   headerLeading={<SidebarTrigger collapsedOnly />}
+                  headerTrailing={textTask && <TextConversationAction key={textTask.id} task={textTask}
+                    onNext={!activeCall && state.tasks.items.some((task) => task.id !== textTask.id) ? () => { const next = state.tasks.items.find((task) => task.id !== textTask.id); if (next) sendIntent({ type: "select-task", task: next }) } : undefined}
+                    onUpdated={(task) => sendIntent({ type: "task-committed", task, advance: !activeCall })} />}
                   onTaskCreated={(task) =>
                     void projection.dispatch({ type: "task-created", task })
                   }
@@ -410,11 +417,9 @@ export function PortalWorkspace() {
                 <div className="flex min-h-0 flex-1">
                   {contextView === "ai-call" ? (
                     <AIInteractionContext
-                      interactionID={selectedAIInteractionID}
                       detail={state.selection.aiInteraction}
                       loading={state.selection.aiInteractionLoading}
                       error={state.selection.aiInteractionError}
-                      onReview={projection.reviewAIOutcome}
                     />
                   ) : contextView === "task" && state.selection.taskError ? (
                     <div className="flex-1 p-4">
@@ -438,8 +443,8 @@ export function PortalWorkspace() {
                       historyHint={state.detailRevision}
                       taskCallPending={Boolean(taskCallRequest)}
                       taskCallError={taskCallError}
-                      onTaskUpdated={(task) =>
-                        void projection.dispatch({ type: "task-committed", task })
+                      onTaskUpdated={(task, advance) =>
+                        void projection.dispatch({ type: "task-committed", task, advance: advance && !activeCall })
                       }
                       onStartTaskCall={(task) => {
                         setTaskCallError("")
@@ -626,4 +631,30 @@ function WorkspaceFailure({
       </Alert>
     </main>
   )
+}
+
+function TextConversationAction({ task, onUpdated, onNext }: { task: Task; onUpdated: (task: Task) => void; onNext?: () => void }) {
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+  async function transition() {
+    setPending(true)
+    setError("")
+    try {
+      const token = await getAccessToken()
+      if (!token) throw new Error("Sign in again to update this conversation.")
+      const result = await (task.state === "OPEN" ? completeTask : reopenTask)({
+        client: portalClient(token), path: { taskId: task.id }, body: { expectedVersion: task.version },
+      })
+      if (!result.data) throw new Error("Could not update this conversation. Review the latest messages and try again.")
+      onUpdated(result.data)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not update this conversation.")
+    } finally { setPending(false) }
+  }
+  return <div className="flex items-center gap-2">
+    {error && <span role="alert" className="max-w-52 text-xs text-destructive">{error}</span>}
+    {task.state === "COMPLETED" && <span className="text-xs text-muted-foreground">Completed</span>}
+    {task.state === "COMPLETED" && onNext && <Button size="sm" onClick={onNext}>Next task</Button>}
+    <Button size="sm" variant="ghost" disabled={pending} onClick={() => void transition()}>{pending ? "Saving…" : task.state === "OPEN" ? "Mark done" : "Reopen"}</Button>
+  </div>
 }

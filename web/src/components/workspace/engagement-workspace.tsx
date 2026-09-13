@@ -772,6 +772,7 @@ function TimelineEntry({
   }
   if (item.type === "TASK" && item.task) {
     const task = item.task
+    if (task.origin === "INBOUND_MESSAGE_REVIEW") return null
     return (
       <ActivityItem
         selected={task.id === selectedTaskID}
@@ -1582,6 +1583,8 @@ function taskActivityDetail(
   switch (activity) {
     case "TASK_CREATED":
       return task.origin === "ABITA_AI" ? "Task created by AI" : "Task created"
+    case "SOURCE_UPDATED":
+      return "New message needs review"
     case "CATEGORY_CHANGED":
       return "Task group changed"
     case "KNOWLEDGE_FEEDBACK_CHANGED":
@@ -1594,6 +1597,8 @@ function taskActivityDetail(
       return "Task reopened"
     case "INTERACTION_ATTACHED":
       return "New activity added"
+    case "TASK_AUTO_COMPLETED_OUTBOUND_CALL":
+      return "Completed after callback connected"
     case "TASK_AUTO_COMPLETED_INBOUND_CALL":
       return "Task completed after connected call"
     case "TASK_AUTO_COMPLETED_BOOKING":
