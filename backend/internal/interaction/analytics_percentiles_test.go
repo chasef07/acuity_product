@@ -1,11 +1,9 @@
 package interaction
 
 import (
-	"math"
 	"math/rand/v2"
 	"reflect"
 	"slices"
-	"sort"
 	"testing"
 )
 
@@ -42,30 +40,14 @@ func TestLatencyPercentilesPreserveExactStatistics(t *testing.T) {
 	}
 }
 
-// Keep the previous algorithm here to quantify the savings against identical
-// exact statistics, without adding a second production implementation.
 func BenchmarkLatencyPercentiles(b *testing.B) {
 	random := rand.New(rand.NewPCG(1, 2))
 	values := make([]float64, 100000)
 	for i := range values {
 		values[i] = random.Float64() * 10000
 	}
-	b.Run("three-sorts", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			_ = medianMilliseconds(values)
-			for _, percentile := range []float64{90, 99} {
-				ordered := slices.Clone(values)
-				sort.Float64s(ordered)
-				index := int(math.Ceil(percentile/100*float64(len(ordered)))) - 1
-				_ = int(math.Round(ordered[index]))
-			}
-		}
-	})
-	b.Run("one-sort", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			latencyPercentiles(slices.Clone(values))
-		}
-	})
+	b.ReportAllocs()
+	for b.Loop() {
+		latencyPercentiles(slices.Clone(values))
+	}
 }

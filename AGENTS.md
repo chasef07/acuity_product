@@ -14,10 +14,6 @@ Then read only the context the task needs:
 - `CONTEXT.md` defines the product's canonical vocabulary. Use those terms in
   code, tests, issues, and user-facing copy.
 - `README.md` owns the current architecture.
-- `docs/acuity-portal-product-technical-spec.md` owns detailed product behavior
-  and the production release bar.
-- `docs/architecture/overview.md` owns module boundaries, dependency direction,
-  state lifecycles, and architectural invariants.
 - GitHub Issues own committed product work. Read the issue and all comments
   before implementing it.
 
@@ -69,14 +65,12 @@ why and describe the remaining risk.
 
 ### Issue tracker
 
-Issues and PRDs are tracked in GitHub Issues. See
-`docs/agents/issue-tracker.md`.
+Issues and PRDs are tracked in GitHub Issues.
 
 ### Triage labels
 
-This repo uses the five default triage labels. See
-`docs/agents/triage-labels.md`.
+This repo uses the five default triage labels.
 
 ### Domain docs
 
-This is a single-context repo. See `docs/agents/domain.md`.
+This is a single-context repo.
