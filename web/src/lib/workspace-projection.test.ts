@@ -412,7 +412,7 @@ test("rail preferences restore through the projection and corrupted values fail 
 
   await projection.start()
   assert.deepEqual(projection.getSnapshot().rail, {
-    expanded: [],
+    expanded: ["tasks"],
     taskCategory: "all",
     scrollTop: 0,
   })
@@ -425,7 +425,7 @@ test("rail preferences restore through the projection and corrupted values fail 
     JSON.parse(values.get("acuity.attentionRail.user-1.practice-1") ?? ""),
     {
       version: 1,
-      expanded: ["completed"],
+      expanded: ["tasks", "completed"],
       taskCategory: "billing",
       scrollTop: 42,
     },
@@ -1099,7 +1099,7 @@ for (const legacyFilters of [false, true]) {
   })
 }
 
-test("one active query includes every origin and completed history loads ten shared rows without polling", async () => {
+test("My Tasks queries follow-up while completed history includes every origin", async () => {
   const realtime = deterministicRealtime()
   const clock = new ManualClock()
   const requests: Parameters<WorkspaceAuthorityAdapter["tasks"]>[1][] = []
@@ -1119,13 +1119,13 @@ test("one active query includes every origin and completed history loads ten sha
   })
   await projection.start()
   await realtime.reconcile(0)
-  assert.deepEqual(projection.getSnapshot().rail.expanded, [])
+  assert.deepEqual(projection.getSnapshot().rail.expanded, ["tasks"])
   assert.deepEqual(projection.getSnapshot().tasks.items, active)
   assert.deepEqual(projection.getSnapshot().completedTasks.items, [done])
   assert.equal(requests.length, 2)
-  assert.deepEqual(requests.map(({ state, folder, responsibility, grouped, limit, includeCounts }) => ({ state, folder, responsibility, grouped, limit, includeCounts })), [
-    { state: "OPEN", folder: undefined, responsibility: "mine", grouped: true, limit: 50, includeCounts: true },
-    { state: "COMPLETED", folder: undefined, responsibility: "mine", grouped: false, limit: 10, includeCounts: false },
+  assert.deepEqual(requests.map(({ state, folder, kind, responsibility, grouped, limit, includeCounts }) => ({ state, folder, kind, responsibility, grouped, limit, includeCounts })), [
+    { state: "OPEN", folder: undefined, kind: "follow_up", responsibility: "mine", grouped: true, limit: 50, includeCounts: true },
+    { state: "COMPLETED", folder: undefined, kind: undefined, responsibility: "mine", grouped: false, limit: 10, includeCounts: false },
   ])
   await clock.advance(90_000)
   await projection.dispatch({ type: "visibility-changed" })
@@ -1239,4 +1239,20 @@ test("text attention expiry refreshes without replacing the selected workspace w
   assert.equal(projection.getSnapshot().loadState, "ready")
   assert.equal(projection.getSnapshot().selection.task?.id, selected)
   projection.stop()
+})
+
+test("a former Texts selection becomes a persistent independent folder", async () => {
+  const values = new Map([["acuity.attentionRail.user-1.practice-1", JSON.stringify({ version: 1, expanded: [], taskCategory: "texts", scrollTop: 0 })]])
+  const preferences = { read: (key: string) => values.get(key) ?? null, write: (key: string, value: string) => values.set(key, value) }
+  const options = { authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(4), tasks: taskPage([]) }), realtime: deterministicRealtime().adapter, preferences }
+  const projection = createWorkspaceProjection(options)
+  await projection.start()
+  assert.deepEqual(projection.getSnapshot().rail.expanded, ["texts"])
+  assert.equal(projection.getSnapshot().rail.taskCategory, "all")
+  await projection.dispatch({ type: "toggle-rail-section", section: "texts" })
+  projection.stop()
+  const restored = createWorkspaceProjection({ ...options, realtime: deterministicRealtime().adapter })
+  await restored.start()
+  assert.deepEqual(restored.getSnapshot().rail.expanded, [])
+  restored.stop()
 })

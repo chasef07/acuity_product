@@ -132,6 +132,22 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 			}
 		})
 	}
+	// Navigation separates durable follow-up from channel reviews.
+	followUp, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, Responsibility: "all", Kind: "follow_up"})
+	if err != nil || len(followUp.Items) != 2 || followUp.Counts.Tasks != 2 || followUp.Counts.Categories.Appointments != 0 {
+		t.Fatalf("follow-up folder includes communication reviews: %#v, %v", followUp, err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO access_abita_office_locations(practice_id,office_key,location_id) VALUES($1,'spring-hill',$2)`, auth.Practice.ID, locations["allowed"]); err != nil {
+		t.Fatal(err)
+	}
+	springHill, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, Kind: "appointments"})
+	if err != nil || len(springHill.Items) != 1 || springHill.Items[0].LocationID != locations["allowed"] {
+		t.Fatalf("appointment folder must contain only Spring Hill reviews: %#v, %v", springHill, err)
+	}
+	otherOffice, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, LocationID: locations["denied"], Kind: "appointments"})
+	if err != nil || len(otherOffice.Items) != 0 {
+		t.Fatalf("appointment reviews leaked into another office: %#v, %v", otherOffice, err)
+	}
 	// One staff member checking an appointment clears that shared review for all.
 	checkingStaff := access.Identity{Subject: "call-center", Email: "call-center@shared-review.test", EmailVerified: true}
 	appointments, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: checkingStaff, PracticeID: auth.Practice.ID, Responsibility: "mine", Category: work.TaskCategoryAppointments})

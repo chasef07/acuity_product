@@ -98,7 +98,10 @@ Activity without an outcome is not success.
 
 - Work that requires staff action remains durable across My Tasks, Missed Calls
   & Voicemails, Texts, and the Spring Hill Appointments folder. These folders
-  are views of shared Tasks, not separate workflow states. My Tasks follows
+  are independently collapsible views of shared Tasks, not separate workflow states.
+  My Tasks and All Tasks contain follow-up work; communication reviews appear only in their
+  corresponding folders. Appointment reviews are shown only for the Spring Hill
+  office route. Scheduling follow-up Tasks remain available at every office. My Tasks follows
   personal responsibility, with an All Tasks option within authorized Locations. Opening or
   reading evidence never completes work. A confirmed staff text reply completes
   its conversation review; failed delivery restores pending review. A completed

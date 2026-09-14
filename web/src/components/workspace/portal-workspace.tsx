@@ -81,7 +81,7 @@ const OperatorAnalytics = dynamic(
   },
 )
 
-export function PortalWorkspace() {
+export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarOpen?: boolean } = {}) {
   const router = useRouter()
   const session = authClient.useSession()
   const sessionID = session.data?.session.id
@@ -227,7 +227,7 @@ export function PortalWorkspace() {
       callingOccupied: boolean,
     ) => ReactNode,
   ) => (
-    <SidebarProvider>
+    <SidebarProvider defaultOpen={defaultSidebarOpen}>
       <CallingDock
         key={discovery.actor.subject}
         actorSubject={discovery.actor.subject}

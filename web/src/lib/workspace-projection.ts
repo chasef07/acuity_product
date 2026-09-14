@@ -33,7 +33,7 @@ export type WorkspaceConnectionState =
 
 export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics"
 export type WorkspaceContextView = "task" | "call" | "ai-call"
-export type WorkspaceRailSection = "completed"
+export type WorkspaceRailSection = "tasks" | "calls" | "appointments" | "texts" | "completed"
 
 export type WorkspaceRailState = {
   expanded: WorkspaceRailSection[]
@@ -1383,10 +1383,9 @@ export function createWorkspaceProjection({
   }
 }
 
-const railSections: WorkspaceRailSection[] = ["completed"]
+const railSections: WorkspaceRailSection[] = ["tasks", "calls", "appointments", "texts", "completed"]
 
 const taskCategories: TaskCategoryFilter[] = [
-  "texts", "calls",
   "all",
   "insurance", "pre_op", "post_op",
   "appointments",
@@ -1399,7 +1398,7 @@ const taskCategories: TaskCategoryFilter[] = [
 
 function emptyRailState(): WorkspaceRailState {
   return {
-    expanded: [],
+    expanded: ["tasks"],
     taskCategory: "all",
     scrollTop: 0,
   }
@@ -1424,12 +1423,16 @@ function restoreRailPreferences(
     ) {
       return emptyRailState()
     }
+    const expanded = Array.isArray(value.expanded)
+      ? value.expanded.filter((section): section is WorkspaceRailSection => railSections.includes(section))
+      : []
+    // Preserve the open channel when upgrading the former single-view sidebar.
+    const formerCategory = String(value.taskCategory)
+    if ((formerCategory === "texts" || formerCategory === "calls") && !expanded.includes(formerCategory)) {
+      expanded.push(formerCategory)
+    }
     return {
-      expanded: Array.isArray(value.expanded)
-        ? value.expanded.filter((section): section is WorkspaceRailSection =>
-            railSections.includes(section as WorkspaceRailSection),
-          )
-        : [],
+      expanded,
       ...(value.taskResponsibility === "mine" || value.taskResponsibility === "all" ? {taskResponsibility:value.taskResponsibility} : {}),
       taskCategory: taskCategories.includes(
         value.taskCategory as TaskCategoryFilter,
@@ -1486,9 +1489,8 @@ function taskQueryRequest(
     ordering: "recent",
     responsibility: rail?.taskResponsibility ?? "mine",
     grouped: true,
-    ...(rail?.taskCategory === "texts" || rail?.taskCategory === "calls"
-      ? { kind: rail.taskCategory }
-      : rail?.taskCategory && rail.taskCategory !== "all" ? { category: rail.taskCategory } : {}),
+    kind: "follow_up",
+    ...(rail?.taskCategory && rail.taskCategory !== "all" ? { category: rail.taskCategory } : {}),
     includeCounts: true,
     ...(search ? { search } : {}),
     limit: 50,
@@ -1503,6 +1505,7 @@ function completedTaskQueryRequest(
   return {
     ...taskQueryRequest(scope, search, rail),
     state: "COMPLETED",
+    kind: undefined,
     ordering: "recent",
     grouped: false,
     includeCounts: false,

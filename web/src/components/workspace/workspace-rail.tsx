@@ -60,6 +60,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { ReviewFolder } from "./review-folder"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { Task, TaskFolderCounts } from "@/lib/api/generated/types.gen"
 import { authClient } from "@/lib/auth-client"
@@ -81,8 +82,7 @@ import {
 export type ConnectionState = WorkspaceConnectionState
 
 const taskFilterLabels: Partial<Record<TaskCategoryFilter, string>> = {
-  texts: "Texts",
-  calls: "Missed calls & voicemails",
+  appointments: "Scheduling follow-up",
   documentation: "Medical records",
   medication: "Clinical & pharmacy",
   insurance: "Insurance",
@@ -145,27 +145,36 @@ export function WorkspaceRail({
       (projection.scope.locationScopeID === location.id ||
         practice.locations.length === 1),
   )
-  const folders: Array<{ value: TaskCategoryFilter; label: string }> = [
+  const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
+  const folders: Array<{
+    section: Exclude<WorkspaceRailSection, "completed">
+    title: string
+    count: number
+  }> = [
     {
-      value: "all",
-      label:
+      section: "tasks",
+      title:
         (projection.rail.taskResponsibility ?? "mine") === "mine"
           ? "My Tasks"
           : "All Tasks",
+      count: selectedTaskCount,
     },
-    { value: "calls", label: "Missed Calls & Voicemails" },
-    ...(appointmentLocation
-      ? [{ value: "appointments" as const, label: "Appointments" }]
+    {
+      section: "calls",
+      title: "Missed Calls & Voicemails",
+      count: taskCounts.callRecovery ?? 0,
+    },
+    ...(appointmentLocation || (taskCounts.appointmentReviews ?? 0) > 0
+      ? [
+          {
+            section: "appointments" as const,
+            title: "Appointments",
+            count: taskCounts.appointmentReviews ?? 0,
+          },
+        ]
       : []),
-    { value: "texts", label: "Texts" },
+    { section: "texts", title: "Texts", count: taskCounts.texts ?? 0 },
   ]
-  const activeFolder =
-    taskCategory === "calls" || taskCategory === "texts"
-      ? taskCategory
-      : taskCategory === "appointments" && appointmentLocation
-        ? "appointments"
-        : "all"
-  const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
   const completed = projection.completedTasks
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
@@ -202,6 +211,28 @@ export function WorkspaceRail({
 
   function selectTaskCategory(value: TaskCategoryFilter) {
     onIntent({ type: "set-task-category", category: value })
+  }
+
+  function renderTask(task: Task) {
+    return (
+      <TaskRow
+        key={task.id}
+        task={task}
+        active={
+          task.id === selectedTaskID ||
+          Boolean(
+            task.groupMembers?.some((member) => member.id === selectedTaskID),
+          )
+        }
+        onSelect={() => onIntent({ type: "select-task", task })}
+        completionDisabled={Boolean(pendingTaskID)}
+        completionPending={pendingTaskID === task.id}
+        completionError={
+          completionError?.taskID === task.id ? completionError.message : ""
+        }
+        onComplete={() => onIntent({ type: "complete-task", task })}
+      />
+    )
   }
 
   return (
@@ -258,122 +289,68 @@ export function WorkspaceRail({
           className="gap-2 overflow-y-auto px-2 py-2"
           onScroll={rememberScroll}
         >
-          <SidebarMenu className="gap-1" aria-label="Workspace folders">
-            {folders.map((folder) => {
-              const active = activeFolder === folder.value
-              const Icon = active ? FolderOpenIcon : FolderIcon
-              return (
-                <SidebarMenuItem key={folder.value}>
-                  <div className="flex items-center gap-1">
-                    <SidebarMenuButton
-                      title={
-                        folder.value === "texts"
-                          ? "Incoming texts from the past five days"
-                          : undefined
+          <div aria-label="Workspace folders" className="space-y-2">
+            {folders.map((folder) => (
+              <AttentionGroup
+                key={folder.section}
+                title={folder.title}
+                count={folder.count}
+                expanded={expanded.includes(folder.section)}
+                onToggle={() => toggle(folder.section)}
+                action={
+                  folder.section === "tasks" ? (
+                    <TaskViewMenu
+                      category={taskCategory}
+                      responsibility={
+                        projection.rail.taskResponsibility ?? "mine"
                       }
-                      aria-expanded={active}
-                      isActive={active}
-                      onClick={() => selectTaskCategory(folder.value)}
-                      className="h-8 min-w-0 rounded-md text-sm font-medium"
-                    >
-                      <Icon className="text-muted-foreground" />
-                      <span className="flex-1 truncate">
-                        {folder.label}
-                        {folder.value === "all" &&
-                          active &&
-                          taskCategory !== "all" && (
-                            <span className="font-normal text-muted-foreground">
-                              {" "}
-                              ·{" "}
-                              {
-                                taskCategoryOptions.find(
-                                  (option) => option.value === taskCategory,
-                                )?.label
-                              }
-                            </span>
-                          )}
-                      </span>
-                      <span className="text-xs font-normal tabular-nums text-muted-foreground">
-                        {active
-                          ? selectedTaskCount
-                          : taskCountForCategory(taskCounts, folder.value)}
-                      </span>
-                    </SidebarMenuButton>
-                    {folder.value === "all" && (
-                      <TaskViewMenu
-                        category={taskCategory}
-                        responsibility={
-                          projection.rail.taskResponsibility ?? "mine"
-                        }
-                        counts={taskCounts}
-                        onCategoryChange={selectTaskCategory}
-                        onResponsibilityChange={(responsibility) =>
-                          onIntent({ type: "set-task-filters", responsibility })
-                        }
+                      counts={taskCounts}
+                      onCategoryChange={selectTaskCategory}
+                      onResponsibilityChange={(responsibility) =>
+                        onIntent({ type: "set-task-filters", responsibility })
+                      }
+                    />
+                  ) : undefined
+                }
+              >
+                {folder.section === "tasks" ? (
+                  <>
+                    {tasks.map(renderTask)}
+                    {loading && tasks.length === 0 && (
+                      <RailLoading label="Loading tasks" />
+                    )}
+                    {!loading && selectedTaskCount === 0 && (
+                      <RailEmpty>No open Tasks in this view.</RailEmpty>
+                    )}
+                    {taskError && (
+                      <WorkspaceWindowFailure
+                        message={taskError}
+                        onRetry={() => onIntent({ type: "retry" })}
                       />
                     )}
-                  </div>
-                  {active && (
-                    <SidebarMenu className="mt-1 ml-3 w-auto gap-0.5 border-l border-sidebar-border pl-2">
-                      {tasks.map((task) => (
-                        <TaskRow
-                          key={task.id}
-                          task={task}
-                          active={
-                            task.id === selectedTaskID ||
-                            Boolean(
-                              task.groupMembers?.some(
-                                (member) => member.id === selectedTaskID,
-                              ),
-                            )
-                          }
-                          onSelect={() =>
-                            onIntent({ type: "select-task", task })
-                          }
-                          completionDisabled={Boolean(pendingTaskID)}
-                          completionPending={pendingTaskID === task.id}
-                          completionError={
-                            completionError?.taskID === task.id
-                              ? completionError.message
-                              : ""
-                          }
-                          onComplete={() =>
-                            onIntent({ type: "complete-task", task })
-                          }
-                        />
-                      ))}
-                      {loading && tasks.length === 0 && (
-                        <RailLoading label="Loading tasks" />
-                      )}
-                      {!loading && selectedTaskCount === 0 && (
-                        <RailEmpty>
-                          {taskCategory === "texts"
-                            ? "No texts needing review in the past five days."
-                            : (projection.rail.taskResponsibility ?? "mine") ===
-                                "mine"
-                              ? "No open Tasks in this view."
-                              : "No Tasks match these filters"}
-                        </RailEmpty>
-                      )}
-                      {taskError && (
-                        <WorkspaceWindowFailure
-                          message={taskError}
-                          onRetry={() => onIntent({ type: "retry" })}
-                        />
-                      )}
-                      <RailShowMore
-                        cursor={nextCursor}
-                        loading={loading}
-                        onLoadMore={() =>
-                          onIntent({ type: "load-more", window: "tasks" })
-                        }
-                      />
-                    </SidebarMenu>
-                  )}
-                </SidebarMenuItem>
-              )
-            })}
-          </SidebarMenu>
+                    <RailShowMore
+                      cursor={nextCursor}
+                      loading={loading}
+                      onLoadMore={() =>
+                        onIntent({ type: "load-more", window: "tasks" })
+                      }
+                    />
+                  </>
+                ) : (
+                  <ReviewFolder
+                    key={`${railStateKey}:${projection.scope.locationScopeID}:${projection.search.applied}:${folder.section}`}
+                    practiceID={practice.id}
+                    locationID={projection.scope.locationScopeID}
+                    search={projection.search.applied}
+                    kind={folder.section}
+                    revision={projection.workspace?.version ?? 0}
+                    count={folder.count}
+                    renderTask={renderTask}
+                  />
+                )}
+              </AttentionGroup>
+            ))}
+          </div>
 
           <div className="mt-3">
             <CompletedGroup
@@ -503,6 +480,64 @@ export function WorkspaceRail({
   )
 }
 
+function AttentionGroup({
+  title,
+  count,
+  expanded,
+  onToggle,
+  action,
+  children,
+}: {
+  title: string
+  count?: number
+  expanded: boolean
+  onToggle: () => void
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
+  const FolderStateIcon = expanded ? FolderOpenIcon : FolderIcon
+
+  return (
+    <Collapsible
+      open={expanded}
+      onOpenChange={(open) => {
+        if (open !== expanded) onToggle()
+      }}
+      render={<SidebarGroup className="p-0" role="group" aria-label={title} />}
+    >
+      <div className="flex min-w-0 items-center gap-0.5">
+        <CollapsibleTrigger
+          render={
+            <button
+              type="button"
+              className="group/disclosure flex h-8 min-w-0 flex-1 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm/5 font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            />
+          }
+        >
+          <FolderStateIcon
+            aria-hidden="true"
+            className="size-4 shrink-0 text-[var(--sidebar-icon-color)] group-hover/disclosure:text-sidebar-foreground"
+          />
+          <span className="truncate">{title}</span>
+          {count !== undefined && (
+            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+              {count}
+            </span>
+          )}
+        </CollapsibleTrigger>
+        {action}
+      </div>
+      <CollapsibleContent>
+        <SidebarGroupContent>
+          <SidebarMenu className="mx-1 w-auto gap-0.5 px-1.5 py-0">
+            {children}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
 function CompletedGroup({
   title,
   expanded,
@@ -570,6 +605,13 @@ function TaskViewMenu({
     taskFilterLabels[category] ??
     taskCategoryOptions.find((option) => option.value === category)?.label ??
     "All types"
+  const visibleCategories = taskCategoryOptions.filter(
+    (option) =>
+      responsibility === "all" ||
+      option.value === "all" ||
+      option.value === category ||
+      taskCountForCategory(counts, option.value) > 0,
+  )
   const viewLabel = responsibility === "mine" ? "My Tasks" : "All Tasks"
   return (
     <DropdownMenu>
@@ -610,7 +652,7 @@ function TaskViewMenu({
           }
         >
           <DropdownMenuLabel>{viewLabel} by type</DropdownMenuLabel>
-          {taskCategoryOptions.map((option) => (
+          {visibleCategories.map((option) => (
             <DropdownMenuRadioItem
               key={option.value}
               value={option.value}
@@ -660,7 +702,7 @@ function TaskRow({
     >
       <RailHoverDetails
         eyebrow={grouped ? `${groupCount} related Tasks` : "Task"}
-        title={task.title}
+        title={textReview && task.preview ? task.preview : task.title}
         phone={task.phone}
         office={task.locationName}
         meta={`${taskUrgencyLabel(task.urgency)} · Updated ${relativeTime(taskRelativeAt(task))}`}
@@ -670,7 +712,7 @@ function TaskRow({
             grouped ? `${rowTitle}, ${groupCount} requests` : rowTitle
           }
           isActive={active}
-          className="h-auto min-h-9 items-center rounded-md py-1.5 pr-10 pl-2 text-sidebar-foreground/90"
+          className="h-7 rounded-lg px-2 pr-9 text-sidebar-foreground/80"
           onClick={onSelect}
         >
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -691,15 +733,10 @@ function TaskRow({
                 </span>
               )}
             </span>
-            {textReview && task.state === "OPEN" && task.preview && (
-              <span className="truncate text-xs font-normal text-muted-foreground">
-                {task.preview}
-              </span>
-            )}
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>
-      <span className="pointer-events-none absolute top-1 right-1 h-7 w-7 [@media(pointer:coarse)]:h-11">
+      <span className="pointer-events-none absolute top-0 right-1 h-7 w-7 [@media(pointer:coarse)]:h-11">
         <time
           className={`absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
           dateTime={taskRelativeAt(task)}

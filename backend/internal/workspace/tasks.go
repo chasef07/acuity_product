@@ -32,7 +32,7 @@ func (m *Module) QueryTasks(
 	}
 	if m.database == nil || m.access == nil || command.PracticeID == "" ||
 		len(command.Search) > 500 ||
-		(command.Kind != "" && command.Kind != "texts" && command.Kind != "calls") ||
+		(command.Kind != "" && command.Kind != "texts" && command.Kind != "calls" && command.Kind != "appointments" && command.Kind != "follow_up") ||
 		(command.Responsibility != "" && command.Responsibility != "mine" && command.Responsibility != "all") ||
 		(command.State != work.TaskOpen && command.State != work.TaskCompleted) ||
 		(command.Folder != "" &&
@@ -264,12 +264,22 @@ const taskHasRecentTextAttention = `(task.origin <> 'INBOUND_MESSAGE_REVIEW'
      AND recent_message.created_at >= CURRENT_TIMESTAMP - INTERVAL '120 hours'
  ))`
 
+const taskIsSpringHillReview = `(task.origin='APPOINTMENT_REVIEW' AND EXISTS (
+ SELECT 1 FROM access_abita_office_locations route
+ WHERE route.practice_id=task.practice_id AND route.location_id=task.location_id
+ AND route.office_key='spring-hill'
+))`
+
+const taskIsFollowUp = `task.origin NOT IN ('APPOINTMENT_REVIEW','INBOUND_MESSAGE_REVIEW','MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')`
+
 const taskQueryFilter = `
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter + `
  AND ($14::text = '' OR task.category=$14)
  AND ($15::text <> 'texts' OR ` + taskHasRecentTextAttention + `)
- AND ($15::text = '' OR ($15='texts' AND task.origin='INBOUND_MESSAGE_REVIEW') OR ($15='calls' AND task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')))
+ AND ($15::text = '' OR ($15='texts' AND task.origin='INBOUND_MESSAGE_REVIEW') OR ($15='calls' AND task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))
+ OR ($15='appointments' AND ` + taskIsSpringHillReview + `)
+ OR ($15='follow_up' AND ` + taskIsFollowUp + `))
 		AND (
 			$3 = ''
 				OR strpos(lower(task.title), lower($3)) > 0
@@ -581,7 +591,9 @@ func queryTaskFolderCounts(
 			SELECT
 				task.origin,
 				task.category,
-                `+taskHasRecentTextAttention+` AS recent_text_attention
+                `+taskHasRecentTextAttention+` AS recent_text_attention,
+                `+taskIsSpringHillReview+` AS spring_hill_review,
+                `+taskIsFollowUp+` AS follow_up
 			FROM work_tasks task
 			JOIN access_locations location
 				ON location.practice_id = task.practice_id
@@ -601,7 +613,8 @@ func queryTaskFolderCounts(
 			SELECT
 				category,
 				CASE
-					WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AND $8::text <> ''
+					WHEN $9::text='follow_up' AND NOT follow_up THEN 'review'
+                    WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AND $8::text <> ''
 						THEN 'missed_calls'
 					ELSE 'tasks'
 				END AS folder
@@ -628,9 +641,10 @@ func queryTaskFolderCounts(
  count(*) FILTER (WHERE folder='tasks' AND category='pre_op'),
  count(*) FILTER (WHERE folder='tasks' AND category='post_op'),
  (SELECT count(*) FROM scoped WHERE origin='INBOUND_MESSAGE_REVIEW' AND recent_text_attention),
- (SELECT count(*) FROM scoped WHERE origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))
+ (SELECT count(*) FROM scoped WHERE origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')),
+ (SELECT count(*) FROM scoped WHERE spring_hill_review)
 		FROM foldered
-	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.Folder).Scan(
+	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.Folder, command.Kind).Scan(
 		&counts.Tasks,
 		&counts.MissedCalls,
 		&counts.Categories.Billing,
@@ -641,7 +655,7 @@ func queryTaskFolderCounts(
 		&counts.Categories.Referrals,
 		&counts.Categories.Other,
 		&counts.Categories.Insurance, &counts.Categories.PreOp, &counts.Categories.PostOp,
-		&counts.Texts, &counts.CallRecovery,
+		&counts.Texts, &counts.CallRecovery, &counts.AppointmentReviews,
 	)
 	if err != nil {
 		return work.TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)

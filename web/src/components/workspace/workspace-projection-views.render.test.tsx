@@ -465,7 +465,7 @@ function projectedWorkspace(task: Task): WorkspaceProjectionState {
     detailRevision: 0,
     completion: { pendingTaskID: "", errorTaskID: "", error: "" },
     rail: {
-      expanded: [],
+      expanded: ["tasks"],
       taskCategory: "all",
       scrollTop: 0,
     },
