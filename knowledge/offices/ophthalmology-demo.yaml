@@ -1,102 +1,50 @@
 practiceId: "6b8e7d2c-1d5b-48d5-bc01-983c92a85495"
 officeKey: "ophthalmology-demo"
 entries:
-  - id: "after-hours"
-    title: "After Hours"
-    text: |-
-      The fictional after-hours line is (813) 555-0199.
-  - id: "appointment-expectations"
-    title: "Appointment Expectations"
-    text: |-
-      New-patient visits may take 1 to 2 hours. Eye dilation may occur and can cause temporary blurry vision and light sensitivity. Provider, location, visit length, and dilation remain subject to the booked appointment and clinical needs.
-  - id: "billing"
-    title: "Billing"
-    text: |-
-      The fictional billing department number is (813) 555-0182. Billing-related questions can be handled there or through a staff request when available. A balance, claim, refund, or payment issue remains unconfirmed until supported by system or staff evidence.
-  - id: "contact-lenses"
-    title: "Contact Lenses"
-    text: |-
-      Clearbrook offers contact-lens prescriptions and fittings through the routine-vision scheduling lane when the caller is using accepted vision coverage or self-pay.
-  - id: "hours"
-    title: "Hours"
-    text: |-
-      Monday through Friday, 8:30 AM to 4:30 PM Eastern Time. Closed Saturday and Sunday. Provider and optical schedules may differ.
-  - id: "insurance-and-referrals"
-    title: "Insurance and Referrals"
-    text: |-
-      The demo insurance files intentionally mirror the established ophthalmology coverage lists for demonstration. A successful participation match does not guarantee active eligibility, benefits, copays, deductibles, referral requirements, authorization, service coverage, provider network, or payment.
-      
-      For routine-vision patients, some plans do not cover retinal photography and the fictional demo charge is $39.
-      
-      Referral requirements are not supplied.
   - id: "location-and-contact"
-    title: "Location and Contact"
+    title: "Frantz EyeCare locations and contact"
     text: |-
-      Clearbrook Eye Center is a fictional ophthalmology practice created for product demonstrations.
-      
-      Harbor Point Center: 1840 Harbor Point Drive, Suite 220, Tampa, Florida 33607. This is the primary demo location for comprehensive ophthalmology, retina, uveitis, glaucoma, pediatric ophthalmology, strabismus, oculoplastics, routine vision, and optical services.
-      
-      Cypress Commons Center: 620 Cypress Commons Way, Suite 140, Tampa, Florida 33612. This demo location represents comprehensive ophthalmology, cataract evaluation, glaucoma care, routine vision, and optical services.
-      
-      Main demo phone: (802) 787-8312.
-      Administrative email for new-patient paperwork or requested documents: newpatients@clearbrookeye.example.
-      Demo fax: (813) 555-0194.
-      
-      Use the administrative email only for new-patient paperwork or requested documents.
-  - id: "optical-and-glasses"
-    title: "Optical and Glasses"
+      Frantz EyeCare serves Southwest Florida. Website: https://www.bettervision.net. Published main phone: (239) 418-0999. Callers on this route have already reached the front desk; help them on this call.
+      Fort Myers: 9617 Gulf Research Lane, Fort Myers, FL 33912.
+      Cape Coral: 2301 Del Prado Blvd S #630, Cape Coral, FL 33990.
+      North Naples: 1201 Piper Blvd. #22, Naples, FL 34110.
+      Naples: 2500 Goodlette-Frank Rd, Naples, FL 34103.
+      Lehigh Acres: 3020 Lee Blvd., Unit 12, Lehigh Acres, FL 33971.
+      Punta Gorda: 109 Taylor Street, Punta Gorda, FL 33950.
+      South Naples: 7075 Radio Rd, Naples, FL 34104.
+      Ask which location the caller means before giving an address. A listed office does not establish appointment availability there.
+      Source: https://www.bettervision.net/locations/ (checked September 14, 2026).
+  - id: "hours"
+    title: "Office hours"
     text: |-
-      Clearbrook's fictional optical department represents frames from YSL, Ferragamo, Gucci, Ray-Ban, Nike, Bebe, Anne Klein, Vivid, Lacoste, and Puma. Lens upgrades are available. Glasses usually take about 10 business days to arrive.
-      
-      Eyeglass prescriptions are valid for 2 years, while a yearly eye exam is recommended. Patients may bring an outside prescription to shop for glasses. A routine eye examination is available for patients without a valid prescription.
-      
-      Non-prescription sunglasses are represented in the demo and may be made with prescription lenses. Vision insurance generally does not cover non-prescription sunglasses.
-      
-      Morgan Lee is the fictional licensed optician and is represented at Harbor Point Tuesday through Friday, 9:30 AM to 4:30 PM. No appointment is needed to browse frames, request adjustments, or ask about minor repairs.
-      
-      Glasses pickup policy: a readiness text confirms glasses are ready for pickup; patients wait for that text before coming in. This policy does not establish an individual order's readiness.
-  - id: "payments"
-    title: "Payments"
-    text: |-
-      Payment handling is owned by the billing department.
+      The website lists all seven offices as open Monday through Friday, 8 AM to 5 PM Eastern Time. Holiday, weekend, and individual provider schedules are not confirmed here.
+      Source: https://www.bettervision.net/locations/ (checked September 14, 2026).
   - id: "providers"
-    title: "Providers"
+    title: "Cataract specialists and other ophthalmologists"
     text: |-
-      All providers below are fictional demo providers:
-      
-      - Doctor Elena Marlowe: comprehensive ophthalmology, cataract evaluation, and glaucoma care at Harbor Point and Cypress Commons.
-      - Doctor Julian Reyes: retina and uveitis care at Harbor Point.
-      - Doctor Camille Hart: pediatric ophthalmology, adult strabismus, and double-vision evaluation at Harbor Point on a limited rotating schedule.
-      - Doctor Jonah Ellis: comprehensive ophthalmology, glaucoma care, and oculoplastic or eyelid evaluation at Harbor Point.
-      - Doctor Nina Patel: routine vision, glasses prescriptions, and contact-lens fittings at both locations for eligible ages.
-      - Doctor Marcus Wynn: routine vision and medical optometry at Cypress Commons.
-      
-      Provider availability, location, age eligibility, and clinical fit must come from current scheduling results or staff confirmation.
-  - id: "repairs-and-warranty"
-    title: "Repairs and Warranty"
+      Cataract specialists: Jonathan M. Frantz, MD, FACS (cataract and refractive); Maxwell A. Burch, MD (cataract, cornea, refractive); Manik Goel, MD (glaucoma and cataract); Boyd Vaziri, MD (refractive cornea and cataract).
+      Other specialists: Yamini Attiku, MD (medical retina and uveitis); Nisha Warrier, MD, MPH (vitreoretinal); Chau M. Pham, MD, FACS (oculoplastic surgery).
+      Cataract inquiries use medical scheduling for an evaluation. A website listing does not establish a bookable provider, location, or time. Confirm the named provider only from scheduling results or staff; do not substitute a website name for a different returned provider.
+      Source: https://www.bettervision.net/eye-doctor-fort-myers/ (checked September 14, 2026).
+  - id: "optometrists"
+    title: "Routine eye care and optometrists"
     text: |-
-      Patients should bring glasses to Harbor Point or Cypress Commons. Staff reviews the item and determines repair or warranty options in person. A specific repair, replacement, cost, or warranty outcome remains unconfirmed until staff inspects the glasses.
+      Frantz EyeCare has several optometrists for routine eye care. Say: "We have several great optometrists. Do you have a preferred location or doctor?" Give individual names when requested rather than reading the entire directory.
+      The directory lists Clare Meyers, Sandler L. Burkley, Brittany P. Coyle, Veronique Edward, Stephen J. Haidet, Jamie N. Hogan, Tammy Johnson, Joseph Legiec, Thy A. Nguyen, Roger Paez, Mark P. Strosser, and Nicole M. Yontz, all ODs.
+      Routine eye exams, glasses, and contacts without an active eye problem use routine_vision. Age restrictions and provider-location assignments require scheduling or staff confirmation.
+      Source: https://www.bettervision.net/eye-doctor-fort-myers/ (checked September 14, 2026).
   - id: "scope-of-services"
-    title: "Scope of Services"
+    title: "Basic services"
     text: |-
-      Clearbrook provides medical and surgical eye evaluations for cataracts, glaucoma, retina conditions, uveitis, pediatric ophthalmology, adult strabismus, double vision, and oculoplastic or eyelid concerns. Retina evaluations are available, while retina surgery is performed at an affiliated surgical facility rather than in the office.
-      
-      Clearbrook also provides routine eye examinations, glasses prescriptions, contact-lens prescriptions and fittings, and optical services. Routine optometry is represented for patients age 7 and older. Children under 7 needing routine vision care use the medical scheduling lane for pediatric ophthalmology.
-  - id: "self-pay-pricing"
-    title: "Self-Pay Pricing"
+      Frantz EyeCare offers cataract care, laser vision correction, retina, glaucoma, cornea, dry-eye care, eyelid/cosmetic services, and optical services including eyewear and contact lenses. Explain scheduling options without diagnosing or recommending treatment. Do not assume every service is offered at every location.
+      Source: https://www.bettervision.net/ (checked September 14, 2026).
+  - id: "urgent-and-earlier-appointments"
+    title: "Eye emergencies and requests to be squeezed in"
     text: |-
-      New-patient medical visit with an optometrist: $150. Established-patient medical visit with an optometrist: $75. New-patient medical visit with an ophthalmologist: $250. Established-patient medical visit with an ophthalmologist: $125. Routine vision examination with an optometrist: $100. Routine vision with contact-lens fitting: $150.
-      
-      These are fictional demo prices.
-  - id: "social-follow-up"
-    title: "Social Follow-Up"
+      Immediately transfer eye emergencies to staff, including sudden vision loss, new flashes or floaters, a curtain or shadow in vision, eye trauma, chemical exposure, or severe eye pain with sudden visual symptoms. Do not delay for routine scheduling or patient registration.
+      Also transfer requests to be squeezed in or seen sooner because the schedule is booked out, including "I was told you are booked for five months." Preserve the reason and requested timing for staff. Do not promise an earlier appointment or treat a callback request as a completed transfer. Follow the transfer tool result if staff cannot be reached.
+      Routing policy for this phone route, supplied by the practice setup; not a website statement.
+  - id: "insurance-and-referrals"
+    title: "Insurance, pricing, and office policies"
     text: |-
-      No social-media accounts or public review links are supplied for this fictional demo.
-  - id: "source-and-demo-limitations"
-    title: "Source and Demo Limitations"
-    text: |-
-      Clearbrook Eye Center, its locations, providers, contact details, and prices are fictional and created only for product demonstrations.
-  - id: "what-to-bring"
-    title: "What to Bring"
-    text: |-
-      Bring photo identification, an insurance card when using insurance, a list of current medications, and previous eye records when available. Bring current glasses or contact-lens information when relevant.
+      Insurance participation answers require a successful check_insurance result; participation does not guarantee eligibility, benefits, authorization, or payment. Prices, referral requirements, pediatric age limits, dedicated billing and after-hours numbers, fax, document-delivery email, glasses readiness, and repair policies are not verified in this source. Use staff help for these details rather than inventing an answer.

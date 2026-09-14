@@ -1,0 +1,56 @@
+[
+  {
+    "id": "locations",
+    "query": "What is the address of the Naples office?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "location-and-contact"
+    ],
+    "maxResponseCharacters": 3500
+  },
+  {
+    "id": "hours",
+    "query": "What time does the Fort Myers office close?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "hours"
+    ],
+    "maxResponseCharacters": 3500
+  },
+  {
+    "id": "cataracts",
+    "query": "Which doctors specialize in cataracts?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "providers"
+    ],
+    "maxResponseCharacters": 3500
+  },
+  {
+    "id": "routine-vision",
+    "query": "Which optometrists can I see for a routine eye exam?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "optometrists"
+    ],
+    "maxResponseCharacters": 3500
+  },
+  {
+    "id": "emergency",
+    "query": "How should an eye emergency with sudden vision loss be routed?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "urgent-and-earlier-appointments"
+    ],
+    "maxResponseCharacters": 3500
+  },
+  {
+    "id": "squeeze-in",
+    "query": "I was told the schedule is booked for five months; can you squeeze me in?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "urgent-and-earlier-appointments"
+    ],
+    "maxResponseCharacters": 3500
+  }
+]
