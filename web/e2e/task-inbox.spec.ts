@@ -73,8 +73,13 @@ test("Texts ages out after five days without completing work and new inbound res
   await expect(page.getByTestId("task-row")).toHaveCount(0)
   const { token } = await (await page.request.get("/api/auth/token")).json()
   const discovery = await (await page.request.get(`${portalURL}/v1/access`, { headers: { authorization: `Bearer ${token}` } })).json()
-  const history = await page.request.post(`${portalURL}/v1/tasks/query`, { headers: { authorization: `Bearer ${token}` }, data: { practiceId: discovery.practices[0].id, search: "5550209", state: "OPEN" } })
-  expect((await history.json()).items).toHaveLength(1)
+  // Webhook acceptance precedes worker projection; an empty Texts folder alone
+  // does not prove that the aged review has been created and preserved.
+  await expect.poll(async () => {
+    const history = await page.request.post(`${portalURL}/v1/tasks/query`, { headers: { authorization: `Bearer ${token}` }, data: { practiceId: discovery.practices[0].id, search: "5550209", state: "OPEN" } })
+    expect(history.ok()).toBeTruthy()
+    return (await history.json()).items.length
+  }).toBe(1)
 
   const expiresAt = Date.now() + 15_000
   await inbound("near-boundary", new Date(expiresAt - 120 * 60 * 60 * 1000).toISOString())
