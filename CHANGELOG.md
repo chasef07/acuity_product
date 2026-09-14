@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/chasef07/acuity_product/compare/v1.13.0...v1.14.0) (2026-09-14)
+
+
+### Features
+
+* **marketing:** refresh partnerships and add Stedi eligibility page ([#326](https://github.com/chasef07/acuity_product/issues/326)) ([98e296c](https://github.com/chasef07/acuity_product/commit/98e296cd6c788cd7c54868f81b896b8e44de1db9))
+
 ## [1.13.0](https://github.com/chasef07/acuity_product/compare/v1.12.1...v1.13.0) (2026-09-13)
 
 
