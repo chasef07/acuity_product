@@ -13,6 +13,8 @@ import {
   ChartNoAxesCombinedIcon,
   CheckIcon,
   ChevronDownIcon,
+  FolderIcon,
+  FolderOpenIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
@@ -84,7 +86,7 @@ import {
 
 export type ConnectionState = WorkspaceConnectionState
 
-import { taskGroups, taskGroupLabel } from "@/lib/task-groups"
+import { taskGroups } from "@/lib/task-groups"
 
 
 const taskFilterLabels: Partial<Record<TaskCategoryFilter, string>> = {
@@ -142,6 +144,19 @@ export function WorkspaceRail({
   const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
   const { setTheme, theme } = useTheme()
+  const appointmentLocation = practice.locations.find((location) =>
+    location.name.trim().toLowerCase() === "spring hill" &&
+    (projection.scope.locationScopeID === location.id || practice.locations.length === 1),
+  )
+  const folders: Array<{ value: TaskCategoryFilter; label: string }> = [
+    { value: "all", label: (projection.rail.taskResponsibility ?? "mine") === "mine" ? "My Tasks" : "All Tasks" },
+    { value: "calls", label: "Missed Calls & Voicemails" },
+    ...(appointmentLocation ? [{ value: "appointments" as const, label: "Appointments" }] : []),
+    { value: "texts", label: "Texts" },
+  ]
+  const activeFolder = taskCategory === "calls" || taskCategory === "texts"
+    ? taskCategory
+    : taskCategory === "appointments" && appointmentLocation ? "appointments" : "all"
   const filteredTasks = tasks
   const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
   const completed = projection.completedTasks
@@ -227,34 +242,39 @@ export function WorkspaceRail({
               </p>
             )}
           </form>
-            <div className="-mx-1 pb-1">
-            <TaskViewMenu
-              category={taskCategory}
-              responsibility={projection.rail.taskResponsibility ?? "mine"}
-              counts={taskCounts}
-              onCategoryChange={selectTaskCategory}
-              onResponsibilityChange={(responsibility) => onIntent({ type: "set-task-filters", responsibility, category: "all" })}
-            />
-            <div aria-label="Open workload" className="mb-2 grid grid-cols-2 gap-1 px-1.5">
-              {taskCategoryOptions.filter((option) => ["all", "texts", "calls", "appointments", taskCategory].includes(option.value) || taskCountForCategory(taskCounts, option.value) > 0).map((option) => (
-                <button key={option.value} type="button" aria-pressed={taskCategory === option.value}
-                  onClick={() => selectTaskCategory(option.value)}
-                  className={cn("flex min-h-8 items-center justify-between gap-2 rounded-md px-2 text-left text-xs transition-colors focus-visible:outline-2 focus-visible:outline-sidebar-ring", taskCategory === option.value ? "bg-sidebar-accent font-medium text-sidebar-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground")}>
-                  <span className="truncate">{option.value === "all" ? "All work" : option.value === "calls" ? "Calls & voicemail" : option.label}</span>
-                  <span className="tabular-nums">{taskCountForCategory(taskCounts, option.value)}</span>
-                </button>
-              ))}
-            </div>
-            </div>
         </SidebarHeader>
         <SidebarContent
           ref={scrollContainer}
           className="gap-2 overflow-y-auto px-2 py-2"
           onScroll={rememberScroll}
         >
-          <SidebarGroup className="p-0">
-            <SidebarGroupContent>
-              <SidebarMenu className="mx-1 w-auto gap-0.5 px-1.5 py-0">
+          <SidebarMenu className="gap-1" aria-label="Workspace folders">
+            {folders.map((folder) => {
+              const active = activeFolder === folder.value
+              const Icon = active ? FolderOpenIcon : FolderIcon
+              return (
+                <SidebarMenuItem key={folder.value}>
+                  <div className="flex items-center gap-1">
+                    <SidebarMenuButton
+                      title={folder.value === "texts" ? "Incoming texts from the past five days" : undefined}
+                      aria-expanded={active}
+                      isActive={active}
+                      onClick={() => selectTaskCategory(folder.value)}
+                      className="h-8 min-w-0 rounded-md text-sm font-medium"
+                    >
+                      <Icon className="text-muted-foreground" />
+                      <span className="flex-1 truncate">{folder.label}{folder.value === "all" && active && taskCategory !== "all" && <span className="font-normal text-muted-foreground"> · {taskCategoryOptions.find((option) => option.value === taskCategory)?.label}</span>}</span>
+                      <span className="text-xs font-normal tabular-nums text-muted-foreground">{active ? selectedTaskCount : taskCountForCategory(taskCounts, folder.value)}</span>
+                    </SidebarMenuButton>
+                    {folder.value === "all" && <TaskViewMenu
+                      category={taskCategory}
+                      responsibility={projection.rail.taskResponsibility ?? "mine"}
+                      counts={taskCounts}
+                      onCategoryChange={selectTaskCategory}
+                      onResponsibilityChange={(responsibility) => onIntent({ type: "set-task-filters", responsibility })}
+                    />}
+                  </div>
+                  {active && <SidebarMenu className="mt-1 ml-3 w-auto gap-0.5 border-l border-sidebar-border pl-2">
             {filteredTasks.map((task) => (
               <TaskRow key={task.id} task={task} active={task.id === selectedTaskID || Boolean(task.groupMembers?.some((member) => member.id === selectedTaskID))} onSelect={() => onIntent({ type: "select-task", task })} completionDisabled={Boolean(pendingTaskID)} completionPending={pendingTaskID === task.id} completionError={completionError?.taskID === task.id ? completionError.message : ""} onComplete={() => onIntent({ type: "complete-task", task })} />
             ))}
@@ -263,9 +283,11 @@ export function WorkspaceRail({
             )}
             {!loading && selectedTaskCount === 0 && (
               <RailEmpty>
-                {(projection.rail.taskResponsibility ?? "mine") === "mine"
-                  ? "No Tasks match your responsibilities and filters. Use All tasks to help another group."
-                  : "No Tasks match these filters"}
+                {taskCategory === "texts"
+                  ? "No texts needing review in the past five days."
+                  : (projection.rail.taskResponsibility ?? "mine") === "mine"
+                    ? "No open Tasks in this view."
+                    : "No Tasks match these filters"}
               </RailEmpty>
             )}
             {taskError && (
@@ -281,9 +303,11 @@ export function WorkspaceRail({
                 onIntent({ type: "load-more", window: "tasks" })
               }
             />
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+                  </SidebarMenu>}
+                </SidebarMenuItem>
+              )
+            })}
+          </SidebarMenu>
 
           <div className="mt-3">
             <CompletedGroup title="Recently completed" expanded={expanded.includes("completed")} onToggle={() => toggle("completed")}>
@@ -445,7 +469,7 @@ function TaskViewMenu({
   const activeLabel =
     taskCategoryOptions.find((option) => option.value === category)?.label ??
     "All types"
-  const viewLabel = responsibility === "mine" ? "My Tasks" : "All tasks"
+  const viewLabel = responsibility === "mine" ? "My Tasks" : "All Tasks"
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -453,15 +477,12 @@ function TaskViewMenu({
           <Button
             variant="ghost"
             size="sm"
-            aria-label={`${viewLabel}${category === "all" ? "" : ` · ${activeLabel}`}`}
+            aria-label={`Filter ${viewLabel}${category === "all" ? "" : ` · ${activeLabel}`}`}
             title={`${viewLabel} · ${activeLabel}`}
-            className="h-9 w-full justify-start gap-2 px-2.5 text-sm font-medium text-sidebar-foreground"
+            className="size-7 shrink-0 p-0 text-muted-foreground"
           />
         }
       >
-        <span className="truncate">{viewLabel}{category !== "all" && <span className="font-normal text-muted-foreground"> · {activeLabel}</span>}</span>
-        <span className="ml-auto text-xs font-normal tabular-nums text-muted-foreground">{taskCountForCategory(counts, category)}</span>
-
         <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
@@ -470,7 +491,7 @@ function TaskViewMenu({
         }}>
           <DropdownMenuLabel>View</DropdownMenuLabel>
           <DropdownMenuRadioItem value="mine" closeOnClick>My Tasks</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="all" closeOnClick>All tasks</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="all" closeOnClick>All Tasks</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup
@@ -478,7 +499,7 @@ function TaskViewMenu({
           onValueChange={(value) => onCategoryChange(value as TaskCategoryFilter)}
         >
           <DropdownMenuLabel>{viewLabel} by type</DropdownMenuLabel>
-          {taskCategoryOptions.map((option) => (
+          {taskCategoryOptions.filter((option) => option.value !== "calls" && option.value !== "texts").map((option) => (
             <DropdownMenuRadioItem key={option.value} value={option.value} closeOnClick className="min-h-7 py-1">
               <span className="flex-1 whitespace-nowrap">{option.value === "all" ? "All categories" : option.label}</span>
               <span className="mr-5 tabular-nums text-muted-foreground">
@@ -529,22 +550,20 @@ function TaskRow({
         <SidebarMenuButton
           aria-label={grouped ? `${rowTitle}, ${groupCount} requests` : rowTitle}
           isActive={active}
-          className={cn(
-            "h-auto items-start rounded-lg py-2 pr-10 pl-2 text-sidebar-foreground/90",
-            task.state === "OPEN" ? "min-h-16" : "min-h-0",
-          )}
+          className="h-auto min-h-9 items-center rounded-md py-1.5 pr-10 pl-2 text-sidebar-foreground/90"
           onClick={onSelect}
         >
-          <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
-            <span className="line-clamp-2 text-sm leading-5 font-medium">{task.urgency === "high_priority" && <span className="mr-1.5 text-xs text-destructive">Urgent</span>}{rowTitle}</span>
-            {textReview && task.state === "OPEN" && task.preview && <span className="line-clamp-2 text-xs font-normal leading-4 text-muted-foreground">{task.preview}</span>}
-            <span className="w-full truncate text-[11px] font-normal text-muted-foreground">{task.state === "COMPLETED" ? `Completed by ${task.completedBy?.email ?? "the team"}` : (task.callerName ?? formatUSPhone(task.phone))} · {task.locationName}</span>
-            {task.state === "OPEN" && <span className="w-full truncate text-[11px] font-normal text-muted-foreground">{task.origin === "APPOINTMENT_REVIEW" ? "Appointment verification" : task.origin === "INBOUND_MESSAGE_REVIEW" ? "Text review" : task.origin === "MISSED_CALL_RECOVERY" || task.origin === "VOICEMAIL_RECOVERY" ? "Return call" : taskGroupLabel(task.category)}</span>}
-            {grouped && <span aria-label={`${groupCount} Tasks`} className="shrink-0 rounded bg-sidebar-accent px-1.5 text-[10px] font-medium tabular-nums leading-4">{groupCount} requests</span>}
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex min-w-0 items-center gap-1.5 text-sm leading-5">
+              {task.urgency === "high_priority" && <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-label="Urgent" />}
+              <span className="truncate">{rowTitle}</span>
+              {grouped && <span aria-label={`${groupCount} Tasks`} className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{groupCount}</span>}
+            </span>
+            {textReview && task.state === "OPEN" && task.preview && <span className="truncate text-xs font-normal text-muted-foreground">{task.preview}</span>}
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>
-      <span className="pointer-events-none absolute top-2 right-1 h-7 w-7 [@media(pointer:coarse)]:h-11">
+      <span className="pointer-events-none absolute top-1 right-1 h-7 w-7 [@media(pointer:coarse)]:h-11">
         <time
           className={`absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
           dateTime={taskRelativeAt(task)}

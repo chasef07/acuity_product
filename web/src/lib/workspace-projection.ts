@@ -221,6 +221,7 @@ export type WorkspaceProjectionIntent =
   | { type: "task-created"; task: Task }
   | { type: "visibility-changed" }
   | { type: "retry" }
+  | { type: "refresh-text-attention" }
   | { type: "call-connected"; call: CallingCall }
   | { type: "remember-return-task"; taskID: string }
   | { type: "return-to-call" }
@@ -735,6 +736,10 @@ export function createWorkspaceProjection({
     }
     if (intent.type === "visibility-changed") {
       realtimeController.visibilityChanged()
+      return
+    }
+    if (intent.type === "refresh-text-attention") {
+      if (state.loadState === "ready") realtimeController.refresh()
       return
     }
     if (intent.type === "retry") {

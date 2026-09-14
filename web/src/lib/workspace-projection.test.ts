@@ -1218,3 +1218,25 @@ test("Complete and next uses refreshed recent order without moving on remote com
   assert.ok(requests.filter((request) => request.state === "OPEN").every((request) => request.ordering === "recent"))
   projection.stop()
 })
+
+test("text attention expiry refreshes without replacing the selected workspace with loading", async () => {
+  const realtime = deterministicRealtime()
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({
+      discovery: accessDiscovery(), snapshot: workspaceSnapshot(4), tasks: taskPage([task("task-1")]),
+    }),
+    realtime: realtime.adapter,
+    preferences: { read: () => null, write: () => {} },
+  })
+  await projection.dispatch({ type: "refresh-text-attention" })
+  assert.equal(realtime.refreshes, 0)
+  await projection.start()
+  await realtime.reconcile(0)
+  const selected = projection.getSnapshot().selection.task?.id
+  const before = realtime.refreshes
+  await projection.dispatch({ type: "refresh-text-attention" })
+  assert.equal(realtime.refreshes, before + 1)
+  assert.equal(projection.getSnapshot().loadState, "ready")
+  assert.equal(projection.getSnapshot().selection.task?.id, selected)
+  projection.stop()
+})

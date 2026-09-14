@@ -201,7 +201,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
   await test.step("provisioned Admin receives an authenticated session", async () => {
     await signInAs(page, "admin@abita.test", "Fixture Admin")
     const tasksSection = page.getByRole("button", { name: /^My Tasks/ })
-    await expect(tasksSection).toHaveAttribute("aria-expanded", "false")
+    await expect(tasksSection).toHaveAttribute("aria-expanded", "true")
     await expectNoOpenTasks(page)
     const workspaceSelector = page.getByRole("button", {
       name: "Workspace selector",
@@ -714,8 +714,8 @@ async function accessToken(page: Page): Promise<string> {
 
 async function expectNoOpenTasks(page: Page) {
   const tasksSection = page.getByRole("button", { name: /^My Tasks/ })
-  await expect(tasksSection).toHaveAttribute("aria-expanded", "false")
-  await expect(page.getByText("No Tasks match your responsibilities and filters. Use All tasks to help another group.")).toBeVisible()
+  await expect(tasksSection).toHaveAttribute("aria-expanded", "true")
+  await expect(page.getByText("No open Tasks in this view.")).toBeVisible()
 }
 
 async function abortFirstRealtimeRequest(page: Page) {

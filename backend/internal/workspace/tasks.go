@@ -253,10 +253,22 @@ const taskProjectionJoins = `
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin
 
+// Text attention expires from the latest inbound message, not Task updates or
+// outbound activity. The Task and its history remain available in other views.
+const taskHasRecentTextAttention = `(task.origin <> 'INBOUND_MESSAGE_REVIEW'
+ OR task.state <> 'OPEN'
+ OR EXISTS (
+   SELECT 1 FROM messaging_messages recent_message
+   WHERE recent_message.thread_id=task.message_thread_id
+     AND recent_message.direction='INBOUND'
+     AND recent_message.created_at >= CURRENT_TIMESTAMP - INTERVAL '120 hours'
+ ))`
+
 const taskQueryFilter = `
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter + `
  AND ($14::text = '' OR task.category=$14)
+ AND ($15::text <> 'texts' OR ` + taskHasRecentTextAttention + `)
  AND ($15::text = '' OR ($15='texts' AND task.origin='INBOUND_MESSAGE_REVIEW') OR ($15='calls' AND task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')))
 		AND (
 			$3 = ''
@@ -568,7 +580,8 @@ func queryTaskFolderCounts(
 		WITH scoped AS (
 			SELECT
 				task.origin,
-				task.category
+				task.category,
+                `+taskHasRecentTextAttention+` AS recent_text_attention
 			FROM work_tasks task
 			JOIN access_locations location
 				ON location.practice_id = task.practice_id
@@ -614,7 +627,7 @@ func queryTaskFolderCounts(
  count(*) FILTER (WHERE folder='tasks' AND category='insurance'),
  count(*) FILTER (WHERE folder='tasks' AND category='pre_op'),
  count(*) FILTER (WHERE folder='tasks' AND category='post_op'),
- (SELECT count(*) FROM scoped WHERE origin='INBOUND_MESSAGE_REVIEW'),
+ (SELECT count(*) FROM scoped WHERE origin='INBOUND_MESSAGE_REVIEW' AND recent_text_attention),
  (SELECT count(*) FROM scoped WHERE origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))
 		FROM foldered
 	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.Folder).Scan(
