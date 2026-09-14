@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.1](https://github.com/chasef07/acuity_product/compare/v1.15.0...v1.15.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **workspace:** restore sidebar folders and separate review queues ([#330](https://github.com/chasef07/acuity_product/issues/330)) ([34b66ad](https://github.com/chasef07/acuity_product/commit/34b66ad097e6e4e68e70aaef711f5f58107aeb75))
+
 ## [1.15.0](https://github.com/chasef07/acuity_product/compare/v1.14.0...v1.15.0) (2026-09-14)
 
 
