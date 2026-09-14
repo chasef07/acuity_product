@@ -484,6 +484,7 @@ export type TaskFolderCounts = {
     missedCalls: number;
     texts?: number;
     callRecovery?: number;
+    appointmentReviews?: number;
     categories: TaskCategoryCounts;
 };
 
@@ -1131,7 +1132,7 @@ export type TaskQueryRequest = {
      * Mine filters categorized follow-up by primary and backup responsibility. Appointment, text, missed-call, and voicemail reviews remain shared within authorized Locations, regardless of category. All removes only responsibility filtering.
      */
     responsibility?: 'mine' | 'all';
-    kind?: 'texts' | 'calls';
+    kind?: 'texts' | 'calls' | 'appointments' | 'follow_up';
     category?: StaffTaskCategory;
     grouped?: boolean;
     practiceId: string;

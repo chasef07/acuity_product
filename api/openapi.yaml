@@ -3307,6 +3307,9 @@ components:
         callRecovery:
           type: integer
           minimum: 0
+        appointmentReviews:
+          type: integer
+          minimum: 0
         categories:
           $ref: "#/components/schemas/TaskCategoryCounts"
     TaskCategoryCounts:
@@ -4492,7 +4495,7 @@ components:
             Locations, regardless of category. All removes only responsibility filtering.
         kind:
           type: string
-          enum: [texts, calls]
+          enum: [texts, calls, appointments, follow_up]
         category:
           $ref: "#/components/schemas/StaffTaskCategory"
         grouped:

@@ -1391,7 +1391,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		projected.Origin != api.ABITAAI ||
 		projected.Urgency != api.Normal ||
 		projected.Category == nil ||
-		*projected.Category != api.Documentation ||
+		*projected.Category != api.StaffTaskCategoryDocumentation ||
 		projected.CallerName == nil ||
 		*projected.CallerName != "Jane Doe" ||
 		projected.SourceCallId == nil ||

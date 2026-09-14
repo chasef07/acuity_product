@@ -254,11 +254,12 @@ type TaskPage struct {
 }
 
 type TaskFolderCounts struct {
-	Texts        int
-	CallRecovery int
-	Tasks        int
-	MissedCalls  int
-	Categories   TaskCategoryCounts
+	AppointmentReviews int
+	Texts              int
+	CallRecovery       int
+	Tasks              int
+	MissedCalls        int
+	Categories         TaskCategoryCounts
 }
 
 type TaskCategoryCounts struct {

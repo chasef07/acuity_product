@@ -65,6 +65,7 @@ test("appointment verification stays open until shared completion and can be reo
     return Boolean(task)
   }).toBe(true)
   await page.reload()
+  await page.getByRole("button", { name: /^Appointments/ }).click()
   const row = page.locator(`[data-task-id="${task.id}"]`)
   await expect(row).toBeVisible()
   await row.getByRole("button").first().click()
@@ -73,6 +74,7 @@ test("appointment verification stays open until shared completion and can be reo
   try {
     const second = await secondContext.newPage()
     await signInAs(second, "selected@abita.test", "Second Synthetic Staff")
+    await second.getByRole("button", { name: /^Appointments/ }).click()
     const secondRow = second.locator(`[data-task-id="${task.id}"]`)
     await expect(secondRow).toBeVisible()
     await secondRow.getByRole("button").first().click()
@@ -512,6 +514,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
       .getByText("Sent", { exact: true }),
   ).toBeVisible()
 
+  await page.getByRole("button", { name: /^Texts/ }).click()
   const inboundText = "Please call me about the pickup time."
   await sendInbound(page, "messaging-inbound", inboundText)
   const firstThread = page.getByTestId("task-row").filter({ hasText: "(727) 555-0199" }).getByRole("button").first()
@@ -812,16 +815,16 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await taskFilter.click()
   for (const [label, count] of [
     ["All categories", counts.tasks],
-        ["Appointments", counts.categories.appointments],
+        ["Scheduling follow-up", counts.categories.appointments],
     ["Medical records", counts.categories.documentation],
     ["Optical", counts.categories.optical],
     ["Clinical & pharmacy", counts.categories.medication],
     ["Referrals", counts.categories.referrals],
     ["Other", counts.categories.other],
   ] as const) {
-    await expect(
-      page.getByRole("menuitemradio", { name: `${label} ${count}` }),
-    ).toBeVisible()
+    const option = page.getByRole("menuitemradio", { name: `${label} ${count}` })
+    if (label === "All categories" || count > 0) await expect(option).toBeVisible()
+    else await expect(option).toHaveCount(0)
   }
   await page.getByRole("menuitemradio", { name: /^Other / }).click()
   await expect(
@@ -1131,7 +1134,7 @@ async function createAINoAppointmentCall(page: Page) {
 }
 
 
-test("shared task counts include old work and unloaded pages", async ({ page }) => {
+test("Text folder counts include old work and unloaded pages", async ({ page }) => {
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   for (let index = 0; index < 64; index += 1) {
@@ -1139,17 +1142,18 @@ test("shared task counts include old work and unloaded pages", async ({ page }) 
   }
   await page.getByLabel("Search tasks, names, or phone").fill("555040")
   await page.getByLabel("Search tasks, names, or phone").press("Enter")
-  await expect(page.getByRole("button", { name: /^My Tasks/ })).toContainText("64", { timeout: 30_000 })
+  await page.getByRole("button", { name: /^Texts/ }).click()
+  await expect(page.getByRole("button", { name: /^Texts/ })).toContainText("64", { timeout: 30_000 })
   await expect(page.getByTestId("task-row")).toHaveCount(50)
   await page.getByRole("button", { name: "Show more", exact: true }).click()
   await expect(page.getByTestId("task-row")).toHaveCount(64)
   // Opening a conversation is not completion, even after a refresh.
   await page.getByTestId("task-row").first().getByRole("button").first().click()
-  await expect(page.getByRole("button", { name: /^My Tasks/ })).toContainText("64")
+  await expect(page.getByRole("button", { name: /^Texts/ })).toContainText("64")
   await page.reload()
   await page.getByLabel("Search tasks, names, or phone").fill("555040")
   await page.getByLabel("Search tasks, names, or phone").press("Enter")
-  await expect(page.getByRole("button", { name: /^My Tasks/ })).toContainText("64")
+  await expect(page.getByRole("button", { name: /^Texts/ })).toContainText("64")
 })
 
 test("staff replies complete text conversations and new texts return to the inbox", async ({ page }) => {
@@ -1157,6 +1161,7 @@ test("staff replies complete text conversations and new texts return to the inbo
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   const phone = "+15550509999"
   await sendInbound(page, "review-version-first", "Initial synthetic question", phone)
+  await page.getByRole("button", { name: /^Texts/ }).click()
   const row = page.getByTestId("task-row").filter({ hasText: "(555) 050-9999" })
   await expect(row).toBeVisible({ timeout: 30_000 })
   await row.getByRole("button").first().click()
