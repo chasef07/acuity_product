@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/chasef07/acuity_product/compare/v1.14.0...v1.15.0) (2026-09-14)
+
+
+### Features
+
+* **workspace:** restore compact folders and expire text attention ([#328](https://github.com/chasef07/acuity_product/issues/328)) ([52dc5c7](https://github.com/chasef07/acuity_product/commit/52dc5c7de25aaf4bf75c9a3eb8cba6235b5be999))
+
 ## [1.14.0](https://github.com/chasef07/acuity_product/compare/v1.13.0...v1.14.0) (2026-09-14)
 
 
