@@ -210,6 +210,8 @@ test("new public pages and navigation remain usable on mobile", async ({ page })
 
   for (const route of [
     "/",
+    "/integrations",
+    "/integrations/stedi",
     "/security",
     "/privacy-policy",
     "/terms-of-service",
@@ -267,9 +269,15 @@ test("public pages expose canonical metadata and browser identity assets", async
     {
       route: "/integrations",
       canonical: "https://acuityhealth.io/integrations",
-      title: "EHR & PMS Integrations | Acuity Health",
+      title: "EHR, PMS & Insurance Eligibility Integrations | Acuity Health",
       description:
-        "Explore Acuity Health’s AdvancedMD partnership and medical AI integrations with Nextech, Athenahealth, ModMed, Compulink, and custom EHR & PMS platforms.",
+        "Connect patient access with your EHR, PMS, and insurance eligibility workflows through Acuity Health’s AdvancedMD and Stedi partnerships.",
+    },
+    {
+      route: "/integrations/stedi",
+      canonical: "https://acuityhealth.io/integrations/stedi",
+      title: "Medical, Vision & Medicare Eligibility Checks | Stedi Partner | Acuity Health",
+      description: "Acuity Health partners with Stedi for quick, efficient medical, vision, and Medicare insurance eligibility checks within your patient-access workflow.",
     },
     {
       route: "/integrations/advancedmd",
@@ -498,4 +506,19 @@ test("working-session form submits to Formspree and confirms in place", async ({
     expect(submittedPayload).toContain(value)
   }
   expect(submittedPayload).toContain('name="emrPmSystem"')
+})
+
+
+test("integrations lead to Stedi eligibility details and the header contact link", async ({ page }) => {
+  await page.goto("/integrations")
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Built around the systems your practice already uses.")
+  await expect(page.getByRole("link", { name: "View Acuity on Stedi" })).toHaveAttribute("href", "https://www.stedi.com/platform-partners#acuity-health")
+  await page.getByRole("link", { name: "Explore insurance eligibility" }).click()
+  await expect(page).toHaveURL(/\/integrations\/stedi$/)
+  for (const name of ["Medical eligibility", "Vision eligibility", "Medicare eligibility"]) {
+    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible()
+  }
+  await expect(page.getByText("No. An eligibility response", { exact: false })).toBeVisible()
+  await page.getByRole("banner").getByRole("link", { name: "Build with us", exact: true }).click()
+  await expect(page).toHaveURL(/\/work-with-us$/)
 })

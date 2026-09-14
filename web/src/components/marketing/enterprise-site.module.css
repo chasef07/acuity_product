@@ -229,8 +229,7 @@
   gap: 22px;
 }
 
-.darkButton,
-.lightButton {
+.darkButton {
   min-height: 46px;
   padding: 0 18px;
   display: inline-flex;
@@ -402,7 +401,6 @@
 .sectionHeader h1,
 .sectionHeader h2,
 .storyPreview h2,
-.partnershipCta h2,
 .commitmentSection h2,
 .foundersSection h2,
 .inquirySection h1 {
@@ -431,14 +429,6 @@
 .integrationsSection {
   padding: clamp(64px, 8vw, 112px) max(6vw, calc((100vw - 1320px) / 2));
   scroll-margin-top: 140px;
-}
-
-.integrationsGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  margin-top: clamp(32px, 5vw, 64px);
-  gap: clamp(32px, 6vw, 80px);
-  align-items: start;
 }
 
 .platformActions {
@@ -480,25 +470,6 @@
   line-height: 1.7;
 }
 
-.integrationPartner {
-  padding: clamp(28px, 3vw, 44px);
-  background: #eeeeeb;
-  border-left: 3px solid var(--marketing-surface-deep);
-}
-
-.integrationPartner h2 {
-  margin: 0;
-  font-size: clamp(2.2rem, 3.5vw, 3.2rem);
-  font-weight: 550;
-  letter-spacing: -0.055em;
-  line-height: 1.1;
-}
-
-.additionalIntegrations {
-  padding-top: clamp(28px, 3vw, 44px);
-}
-
-.additionalIntegrations h2,
 .customIntegration h2 {
   margin: 0;
   font-size: 1.25rem;
@@ -553,23 +524,9 @@
   flex-shrink: 0;
 }
 
-.integrationsGrid .inlineArrowLink {
-  align-items: center;
-  line-height: 1.5;
-}
-
-.integrationsGrid .inlineArrowLink svg {
-  flex-shrink: 0;
-}
-
 @media (max-width: 860px) {
-  .integrationsGrid,
   .platformDetails {
     grid-template-columns: 1fr;
-  }
-
-  .additionalIntegrations {
-    padding-top: 0;
   }
 
   .customIntegration {
@@ -645,43 +602,6 @@
   color: var(--marketing-ink-soft);
   font-size: 1.05rem;
   line-height: 1.75;
-}
-
-.partnershipCta {
-  padding: clamp(80px, 9vw, 128px) max(5vw, calc((100vw - 1320px) / 2));
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 70px;
-  background: var(--marketing-accent);
-  color: white;
-}
-
-.partnershipCta .eyebrow {
-  color: var(--marketing-paper);
-}
-
-.partnershipCta h2 {
-  max-width: 1050px;
-}
-
-.partnershipCta p:not(.eyebrow) {
-  max-width: 680px;
-  margin: 24px 0 0;
-  color: rgb(255 255 255 / 0.9);
-  font-size: 1.04rem;
-}
-
-.lightButton {
-  background: var(--marketing-paper);
-  color: var(--marketing-ink);
-  white-space: nowrap;
-}
-
-.lightButton:hover,
-.lightButton:focus-visible {
-  background: white;
-  transform: translateY(-1px);
 }
 
 .siteFooter {
@@ -1514,7 +1434,6 @@
 
   .sectionHeader,
   .storyPreview,
-  .partnershipCta,
   .commitmentSection,
   .foundingStory,
   .principlesSection,
@@ -1524,14 +1443,6 @@
 
   .storyArtifact {
     min-height: 390px;
-  }
-
-  .partnershipCta {
-    align-items: start;
-  }
-
-  .lightButton {
-    width: fit-content;
   }
 
   .footerPrimary {
@@ -1635,7 +1546,6 @@
 
   .methodSection,
   .storyPreview,
-  .partnershipCta,
   .commitmentSection,
   .foundingStory,
   .foundersSection,
@@ -1738,10 +1648,63 @@
   }
 
   .darkButton,
-  .lightButton,
   .navLink,
   .portalLink,
   .workLink {
     transition: none;
+  }
+}
+
+.integrationEditorial {
+  padding: clamp(64px, 7vw, 100px) max(5vw, calc((100vw - 1200px) / 2));
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+  gap: clamp(40px, 8vw, 120px);
+  border-bottom: 1px solid var(--marketing-line);
+}
+
+.integrationEditorial h2 {
+  margin: 0;
+  max-width: 440px;
+  font-family: var(--font-acuity-display), ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(2.25rem, 3.3vw, 3rem);
+  font-weight: 300;
+  letter-spacing: -0.04em;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+
+.eligibilityAnswers {
+  display: grid;
+  gap: 32px;
+}
+
+.eligibilityAnswers h3 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+  font-weight: 550;
+}
+
+.eligibilityAnswers p {
+  margin: 0;
+  color: var(--marketing-ink-soft);
+  line-height: 1.65;
+}
+
+.eligibilityAnswers p a {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+@media (max-width: 860px) {
+  .integrationEditorial {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .integrationEditorial {
+    padding-right: 24px;
+    padding-left: 24px;
   }
 }

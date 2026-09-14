@@ -3,9 +3,9 @@ import { createPublicPageMetadata } from "@/lib/site"
 
 export const metadata = createPublicPageMetadata({
   path: "/integrations",
-  title: "EHR & PMS Integrations",
+  title: "EHR, PMS & Insurance Eligibility Integrations",
   description:
-    "Explore Acuity Health’s AdvancedMD partnership and medical AI integrations with Nextech, Athenahealth, ModMed, Compulink, and custom EHR & PMS platforms.",
+    "Connect patient access with your EHR, PMS, and insurance eligibility workflows through Acuity Health’s AdvancedMD and Stedi partnerships.",
 })
 
 export default function IntegrationsPage() {
