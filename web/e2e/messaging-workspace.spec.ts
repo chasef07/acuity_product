@@ -342,12 +342,12 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^My Tasks/ })).toHaveAttribute(
     "aria-expanded",
-    "false",
+    "true",
   )
   await expect(
     page.getByRole("button", { name: /^My Tasks/ }),
   ).toBeVisible()
-  await expect(page.getByLabel("Open workload").getByRole("button", { name: /^Texts/ })).toBeVisible()
+  await expect(page.getByLabel("Workspace folders").getByRole("button", { name: /^Texts/ })).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
   await openNumberInbox(page, "7275550199")
   await expect(page.getByRole("button", { name: "Call", exact: true })).toBeVisible()
@@ -807,7 +807,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(medicationTaskButton).toBeVisible()
 
   const taskFilter = page.getByRole("button", {
-    name: "My Tasks",
+    name: "Filter My Tasks",
   })
   await taskFilter.click()
   for (const [label, count] of [
@@ -825,7 +825,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   }
   await page.getByRole("menuitemradio", { name: /^Other / }).click()
   await expect(
-    page.getByRole("button", { name: "My Tasks · Other" }),
+    page.getByRole("button", { name: "Filter My Tasks · Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
@@ -835,7 +835,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
 
   await page.reload()
   await expect(
-    page.getByRole("button", { name: "My Tasks · Other" }),
+    page.getByRole("button", { name: "Filter My Tasks · Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
@@ -971,7 +971,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(taskItem).toHaveCount(0)
   await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
 
-  await page.getByRole("button", { name: "My Tasks · Other" }).click()
+  await page.getByRole("button", { name: "Filter My Tasks · Other" }).click()
   await page.getByRole("menuitemradio", { name: /^Clinical & pharmacy / }).click()
   await page.keyboard.press("Escape")
   const medicationItem = page

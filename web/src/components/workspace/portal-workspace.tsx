@@ -137,6 +137,16 @@ export function PortalWorkspace() {
   useEffect(() => () => projection.stop(), [projection])
 
   useEffect(() => {
+    // Aging has no provider event to trigger an SSE refresh.
+    const timer = window.setInterval(() => {
+      if (!document.hidden && (projection.getSnapshot().tasks.counts.texts ?? 0) > 0) {
+        void projection.dispatch({ type: "refresh-text-attention" })
+      }
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [projection])
+
+  useEffect(() => {
     const visibilityChanged = () => {
       void projection.dispatch({ type: "visibility-changed" })
     }

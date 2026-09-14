@@ -17,7 +17,7 @@ import (
 func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.Open(t)
-	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	a := access.New(pool, func() time.Time { return now })
 	staff := []struct {
 		key      string

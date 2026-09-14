@@ -96,8 +96,10 @@ Activity without an outcome is not success.
 
 ## Non-Negotiables
 
-- Work that requires staff action belongs in one shared My Tasks inbox, including
-  appointment verification, incoming text review, and call follow-up. Opening or
+- Work that requires staff action remains durable across My Tasks, Missed Calls
+  & Voicemails, Texts, and the Spring Hill Appointments folder. These folders
+  are views of shared Tasks, not separate workflow states. My Tasks follows
+  personal responsibility, with an All Tasks option within authorized Locations. Opening or
   reading evidence never completes work. A confirmed staff text reply completes
   its conversation review; failed delivery restores pending review. A completed
   callback attempt clears older missed-call and voicemail reviews, including when
@@ -105,8 +107,11 @@ Activity without an outcome is not success.
   contact. Finishing voicemail playback completes its
   current review. Explicit completion clears other Tasks for
   everyone with access and preserves actor, time, and Activity in Recently completed.
-- Open work does not expire or disappear with age. New source evidence requiring
-  attention must remain visible and cannot be cleared by a stale completion.
+- Open Tasks do not expire or complete with age. The Texts folder and its badge
+  show only open reviews with an incoming text in the past five days (120 hours).
+  Aging out preserves the Task, history, and completion state in other views;
+  a new incoming text restores visibility. Outbound activity does not extend this
+  window. New source evidence cannot be cleared by a stale completion.
 - Appointment, text, missed-call, and voicemail reviews are shared by all staff with access to
   their Location, regardless of category responsibility. Categorizing a review
   does not hide it from those staff.
