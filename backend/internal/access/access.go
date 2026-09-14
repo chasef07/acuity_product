@@ -52,6 +52,7 @@ const (
 type ServiceCapability string
 
 const (
+	ServiceCapabilityReadKnowledge       ServiceCapability = "READ_KNOWLEDGE"
 	ServiceCapabilityHumanHandoff        ServiceCapability = "HUMAN_HANDOFF"
 	ServiceCapabilityCreateTask          ServiceCapability = "CREATE_TASK"
 	ServiceCapabilityIngestAIInteraction ServiceCapability = "INGEST_AI_INTERACTION"
@@ -102,6 +103,7 @@ type LocationProvision struct {
 	VoiceNumber        string
 	VoiceEnabled       *bool
 	VoicemailGreeting  string
+	InboundRingEmails  []string
 }
 
 type AccessGrantProvision struct {
@@ -799,11 +801,13 @@ func (m *Module) LockOperationalActor(
 		return nil, err
 	}
 	if isOperator {
+		// Protect Practice identity without blocking workspace-version updates
+		// from call processing that already holds a Call or softphone lease.
 		rows, err := tx.Query(ctx, `
 			SELECT id::text
 			FROM access_practices
 			ORDER BY id
-			FOR SHARE
+			FOR KEY SHARE
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("lock operator Practices: %w", err)

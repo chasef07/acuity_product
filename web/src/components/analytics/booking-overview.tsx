@@ -44,13 +44,12 @@ const chartConfig = {
   },
   new: { label: "New patients", color: "var(--booking-new)" },
   existing: { label: "Existing patients", color: "var(--booking-existing)" },
-  calls: { label: "Call volume", color: "var(--chart-3)" },
   unknown: { label: "Unclassified", color: "var(--muted-foreground)" },
 } satisfies ChartConfig
 const visibleGroups = ["new", "existing"] as const
 const count = (value: number) => value.toLocaleString("en-US")
 
-type Series = Exclude<keyof typeof chartConfig, "calls">
+type Series = keyof typeof chartConfig
 
 // Only the plotted value uses zero; report metrics retain their missing state.
 function chartValue(summary: BookingSummary, metric: Metric) {
@@ -61,8 +60,8 @@ function GroupLabel({ group }: { group: keyof typeof chartConfig }) {
   return (
     <span className={styles.groupLabel}>
       <span
-        className={group === "calls" ? styles.callVolumeSwatch : styles.dot}
-        style={group === "calls" ? undefined : { background: chartConfig[group].color }}
+        className={styles.dot}
+        style={{ background: chartConfig[group].color }}
       />
       {chartConfig[group].label}
     </span>
@@ -85,14 +84,6 @@ function DayTooltip({
   return (
     <div className={styles.tooltip}>
       <p className={styles.tooltipDate}>{formatDay(day.day)}</p>
-      {metric === "bookings" && (
-        <div className={styles.tooltipGroup}>
-          <div className={styles.tooltipRow}>
-            <GroupLabel group="calls" />
-            <strong>{count(day.total.calls)}</strong>
-          </div>
-        </div>
-      )}
       {series.map((cohort) => {
         const summary = day[cohort]
         return (
@@ -107,7 +98,7 @@ function DayTooltip({
                       ? "No activity"
                       : formatPercent(summary.conversion)
                     : summary.p50 === null
-                      ? summary.bookings === 0
+                      ? summary.bookings === 0 && summary.searched === 0
                         ? "No activity"
                         : "Duration unavailable"
                       : formatDuration(summary.p50)}
@@ -123,8 +114,8 @@ function DayTooltip({
             {metric === "duration" && (
               <span className={styles.tooltipSub}>
                 {summary.durationSamples === 0
-                  ? summary.bookings === 0
-                    ? "No booked calls"
+                  ? summary.bookings === 0 && summary.searched === 0
+                    ? "No booking attempts"
                     : "No recorded call durations"
                   : `p50 · ${count(summary.durationSamples)} calls`}
               </span>
@@ -160,7 +151,7 @@ function BookingTrend({
       className="h-[300px] w-full aspect-auto"
       aria-label={
         metric === "bookings"
-          ? "Daily confirmed bookings and call volume"
+          ? "Daily confirmed bookings"
           : metric === "conversion"
             ? "Daily booking conversion by patient status"
             : "Daily p50 duration by patient status"
@@ -230,19 +221,6 @@ function BookingTrend({
             isAnimationActive={!reducedMotion}
           />
         ))}
-        {metric === "bookings" && (
-          <Line
-            name="Call volume"
-            type="monotone"
-            dataKey="total.calls"
-            stroke="var(--color-calls)"
-            strokeWidth={2}
-            strokeDasharray="2 4"
-            dot={false}
-            activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--background)" }}
-            isAnimationActive={!reducedMotion}
-          />
-        )}
       </ComposedChart>
     </ChartContainer>
   )
@@ -288,7 +266,7 @@ function ConversionSummary({
         })}
       </div>
       <p className={styles.summaryNote}>
-        Repeated completed searches count once. Searches with no openings remain
+        Repeated completed searches count once per call. Searches with no openings remain
         included. Failed searches, reschedules, and cancellations are excluded.
       </p>
       {missingHistory > 0 && (
@@ -315,7 +293,7 @@ function Summary({
   if (metric === "conversion")
     return <ConversionSummary total={total} groups={groups} />
   const label =
-    metric === "bookings" ? "Confirmed bookings" : "Median booked-call duration"
+    metric === "bookings" ? "Confirmed bookings" : "Median call duration"
   return (
     <div className={styles.summary}>
       <div>
@@ -327,7 +305,7 @@ function Summary({
         </output>
         {metric === "duration" && (
           <p className={styles.summaryCaption}>
-            p50 · {count(total.durationSamples)} booked calls
+            p50 · {count(total.durationSamples)} calls
           </p>
         )}
       </div>
@@ -355,7 +333,7 @@ function Summary({
       </div>
       {metric === "duration" && (
         <p className={styles.summaryNote}>
-          From call start to hang-up, for calls that booked.
+          From call start to hang-up, for booking attempts.
         </p>
       )}
     </div>
@@ -442,13 +420,12 @@ export function BookingOverview({
                 ? "Bookings"
                 : metric === "conversion"
                   ? "Daily booking conversion"
-                  : "Median booked-call duration"}
+                  : "Median call duration"}
             </h2>
             <div className={styles.chartLegend}>
               {(metric === "conversion" || partialBreakdown) && (
                 <GroupLabel group="total" />
               )}
-              {metric === "bookings" && <GroupLabel group="calls" />}
             </div>
           </div>
           {metric === "conversion" && (
@@ -488,7 +465,6 @@ export function BookingOverview({
                 <TableHead className="text-right">Bookings</TableHead>
                 <TableHead className="text-right">Conversion</TableHead>
                 <TableHead className="text-right">p50 duration</TableHead>
-                <TableHead className="text-right">p90 duration</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -506,9 +482,6 @@ export function BookingOverview({
                   <TableCell className="text-right tabular-nums">
                     {formatDuration(report.groups[group].p50)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatDuration(report.groups[group].p90)}
-                  </TableCell>
                 </TableRow>
               ))}
               <TableRow>
@@ -523,9 +496,6 @@ export function BookingOverview({
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatDuration(report.total.p50)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatDuration(report.total.p90)}
                 </TableCell>
               </TableRow>
             </TableBody>

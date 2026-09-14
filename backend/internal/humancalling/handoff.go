@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -154,7 +155,14 @@ func (m *Module) resolveHandoffForRefer(
 	tx pgx.Tx,
 	fact ProviderFact,
 ) (string, string, string, error) {
-	if !canonicalE164.MatchString(fact.From) || !canonicalE164.MatchString(fact.To) {
+	// REFER webhooks can retain the configured SIP destination, with or
+	// without its scheme, instead of normalizing it to a phone number.
+	sipDestination := m.sipDestination()
+	validDestination := canonicalE164.MatchString(fact.To) ||
+		(m.config.HandoffSIPDomain != "" &&
+			(fact.To == sipDestination || fact.To == strings.TrimPrefix(sipDestination, "sip:")))
+	if !canonicalE164.MatchString(fact.From) || !validDestination {
+		observability.Record(m.observer, observability.HandoffRejected("address"))
 		return "", "", "", ErrInvalidHandoff
 	}
 	rows, err := tx.Query(ctx, `
@@ -183,6 +191,11 @@ func (m *Module) resolveHandoffForRefer(
 		return "", "", "", fmt.Errorf("read handoff admission: %w", err)
 	}
 	if candidateCount != 1 {
+		reason := "missing_handoff"
+		if candidateCount > 1 {
+			reason = "ambiguous_handoff"
+		}
+		observability.Record(m.observer, observability.HandoffRejected(reason))
 		return "", "", "", ErrInvalidHandoff
 	}
 	return handoffID, practiceID, locationID, nil

@@ -4,6 +4,19 @@ export type ClientOptions = {
     baseUrl: 'https://api.acuity.example' | (string & {});
 };
 
+export type KnowledgeSearchResult = {
+    outcome: 'found' | 'no_relevant_information' | 'temporary_failure';
+    revisionId?: string;
+    passages: Array<KnowledgePassage>;
+};
+
+export type KnowledgePassage = {
+    sectionId: string;
+    title: string;
+    text: string;
+    revisionId: string;
+};
+
 export type Health = {
     status: 'ok';
     role: 'portal-api' | 'provider-ingress' | 'realtime';
@@ -371,7 +384,7 @@ export type CallingDispositionResult = {
     taskId?: string;
 };
 
-export type StaffTaskCategory = 'billing' | 'appointments' | 'documentation' | 'optical' | 'medication' | 'referrals' | 'other';
+export type StaffTaskCategory = 'insurance' | 'pre_op' | 'post_op' | 'billing' | 'appointments' | 'documentation' | 'optical' | 'medication' | 'referrals' | 'other';
 
 export type StaffTaskUrgency = 'high_priority' | 'normal' | 'non_urgent';
 
@@ -387,6 +400,9 @@ export type StaffTaskPatientCompatibility = {
 
 export type CreateStaffTaskRequest = {
     callId: string;
+    /**
+     * Caller number normalized to E.164; common phone formatting is accepted.
+     */
     callerPhone: string;
     category: StaffTaskCategory;
     idempotencyKey: string;
@@ -414,6 +430,10 @@ export type TaskActor = {
 };
 
 export type Task = {
+    /**
+     * Complete open membership for this bucket, normalized number, and Location, including members outside a text filter. This is a display projection, never a merged Task.
+     */
+    groupMembers?: Array<Task>;
     id: string;
     practiceId: string;
     locationId: string;
@@ -422,12 +442,16 @@ export type Task = {
     phone: string;
     title: string;
     state: 'OPEN' | 'COMPLETED';
-    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI' | 'STAFF_MESSAGE_FOLLOW_UP' | 'VOICEMAIL_RECOVERY' | 'MISSED_CALL_RECOVERY';
+    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI' | 'STAFF_MESSAGE_FOLLOW_UP' | 'APPOINTMENT_REVIEW' | 'INBOUND_MESSAGE_REVIEW' | 'VOICEMAIL_RECOVERY' | 'MISSED_CALL_RECOVERY';
     recoveryOutcome?: 'VOICEMAIL' | 'MISSED_CALL';
     urgency: StaffTaskUrgency;
     category?: StaffTaskCategory;
     callerName?: string;
     sourceCallId?: string;
+    /**
+     * Latest incoming text preview for the workspace list.
+     */
+    preview?: string;
     sourceMessage?: string;
     messageId?: string;
     messageThreadId?: string;
@@ -466,10 +490,15 @@ export type TaskPage = {
 export type TaskFolderCounts = {
     tasks: number;
     missedCalls: number;
+    texts?: number;
+    callRecovery?: number;
     categories: TaskCategoryCounts;
 };
 
 export type TaskCategoryCounts = {
+    insurance?: number;
+    pre_op?: number;
+    post_op?: number;
     billing: number;
     appointments: number;
     documentation: number;
@@ -651,6 +680,10 @@ export type StaffPhoneMetrics = {
     missingInboundDurationCalls: number;
     missingOutboundDurationCalls: number;
     tasksCompleted: number;
+    /**
+     * Staff-authored outbound message records created in the reporting period with current SENT or DELIVERED state. Excludes automated messages and unconfirmed or failed attempts; counts messages, not billing segments.
+     */
+    textsSent: number;
     inboundSeconds: number;
     outboundSeconds: number;
 };
@@ -665,6 +698,10 @@ export type StaffAccountAnalytics = {
     missingInboundDurationCalls: number;
     missingOutboundDurationCalls: number;
     tasksCompleted: number;
+    /**
+     * Staff-authored outbound message records created in the reporting period with current SENT or DELIVERED state. Excludes automated messages and unconfirmed or failed attempts; counts messages, not billing segments.
+     */
+    textsSent: number;
     inboundSeconds: number;
     outboundSeconds: number;
 };
@@ -722,7 +759,7 @@ export type BookingMetrics = {
      */
     conversion: number | null;
     /**
-     * Median call-start-to-hang-up duration in seconds across booked calls with valid timing evidence.
+     * Median call-start-to-hang-up duration in seconds across calls with a completed booking search or confirmed booking and valid timing evidence. Includes non-converting attempts.
      */
     p50: number | null;
     /**
@@ -853,7 +890,27 @@ export type OperatorAiAnalyticsQueryRequest = {
     limit?: number;
 };
 
+export type OperatorAiAnalyticsDay = {
+    /**
+     * UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
+     */
+    date: string;
+    totalCalls: number;
+    /**
+     * Calls with persisted ESCALATED status, matching the summary transfer count.
+     */
+    transferCount: number;
+    /**
+     * Transferred calls divided by all AI calls on this date. Absent when there are no calls.
+     */
+    transferRate?: number;
+};
+
 export type OperatorAiAnalyticsSummary = {
+    /**
+     * All UTC dates in the full selected range, including dates without calls; independent of call pagination.
+     */
+    daily: Array<OperatorAiAnalyticsDay>;
     diagnostics?: OperatorAiAnalyticsDiagnostics;
     totalCalls: number;
     bookingCount: number;
@@ -1010,6 +1067,36 @@ export type OperatorAiToolExecution = {
      * Durable Product Task proving Staff Task follow-up.
      */
     taskId?: string;
+    /**
+     * Sanitized middleware attempts correlated to this tool call, including recovered failures.
+     */
+    middlewareRequests?: Array<MiddlewareRequestDiagnostic>;
+};
+
+export type MiddlewareRequestDiagnostic = {
+    requestId: string;
+    operation: string;
+    attempt: number;
+    durationMs: number;
+    result: string;
+    httpStatus?: number;
+    responseStatus?: string;
+    appointmentsStatus?: 'found' | 'none' | 'error';
+    outcome?: string;
+    category?: string;
+    failureReason?: string;
+    failureDetail?: 'missing_appointment_id';
+    retryable?: boolean;
+    providerErrorCount?: number;
+    providerErrors?: Array<ProviderErrorDiagnostic>;
+};
+
+export type ProviderErrorDiagnostic = {
+    operation: string;
+    category: string;
+    durationMs: number;
+    httpStatus?: number;
+    code?: string;
 };
 
 export type OperatorAiInteractionAnalytics = {
@@ -1048,6 +1135,13 @@ export type OperatorAiInteractionAnalytics = {
 };
 
 export type TaskQueryRequest = {
+    /**
+     * Mine filters categorized follow-up by primary and backup responsibility. Appointment, text, missed-call, and voicemail reviews remain shared within authorized Locations, regardless of category. All removes only responsibility filtering.
+     */
+    responsibility?: 'mine' | 'all';
+    kind?: 'texts' | 'calls';
+    category?: StaffTaskCategory;
+    grouped?: boolean;
     practiceId: string;
     locationId?: string;
     search?: string;
@@ -1060,6 +1154,18 @@ export type TaskQueryRequest = {
     includeCounts?: boolean;
     cursor?: string;
     limit?: number;
+};
+
+export type ChangeTaskCategoryRequest = {
+    expectedVersion: number;
+    category: StaffTaskCategory;
+};
+
+export type CompleteTaskGroupRequest = {
+    members: Array<{
+        id: string;
+        expectedVersion: number;
+    }>;
 };
 
 export type RenameTaskRequest = {
@@ -1098,14 +1204,27 @@ export type MessageThreadSummary = MessageThread & {
     unread: boolean;
 };
 
+export type RecentAttentionScope = {
+    practiceId: string;
+    locationId?: string;
+};
+
 export type MessageThreadPage = {
     items: Array<MessageThreadSummary>;
+    /**
+     * Full eligible phone-number count before pagination, supplied for recentAttention queries.
+     */
+    total?: number;
     nextCursor: string;
 };
 
 export type MessageThreadQueryRequest = {
     practiceId: string;
     locationId?: string;
+    /**
+     * Return only unread conversations with an inbound message in the past seven days and no linked open Task. Paginate phone-number groups and return their full total.
+     */
+    recentAttention?: boolean;
     search?: string;
     cursor?: string;
     limit?: number;
@@ -1187,7 +1306,10 @@ export type ConversationTimelineItem = {
     type: 'MESSAGE' | 'CALL' | 'AI_INTERACTION' | 'TASK' | 'CALL_HISTORY';
     id: string;
     occurredAt: string;
-    taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
+    taskActivityDetails?: {
+        [key: string]: unknown;
+    };
+    taskActivity?: 'TASK_CREATED' | 'SOURCE_UPDATED' | 'TITLE_CHANGED' | 'CATEGORY_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
     message?: Message;
     task?: Task;
     call?: CallHistoryItem;
@@ -3070,6 +3192,92 @@ export type CompleteTaskResponses = {
 
 export type CompleteTaskResponse = CompleteTaskResponses[keyof CompleteTaskResponses];
 
+export type ChangeTaskCategoryData = {
+    body: ChangeTaskCategoryRequest;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/tasks/{taskId}/category';
+};
+
+export type ChangeTaskCategoryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ChangeTaskCategoryError = ChangeTaskCategoryErrors[keyof ChangeTaskCategoryErrors];
+
+export type ChangeTaskCategoryResponses = {
+    /**
+     * Completed or idempotently current Task.
+     */
+    200: Task;
+};
+
+export type ChangeTaskCategoryResponse = ChangeTaskCategoryResponses[keyof ChangeTaskCategoryResponses];
+
+export type CompleteTaskGroupData = {
+    body: CompleteTaskGroupRequest;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/tasks/{taskId}/complete-group';
+};
+
+export type CompleteTaskGroupErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CompleteTaskGroupError = CompleteTaskGroupErrors[keyof CompleteTaskGroupErrors];
+
+export type CompleteTaskGroupResponses = {
+    /**
+     * Completed or idempotently current Task.
+     */
+    200: Task;
+};
+
+export type CompleteTaskGroupResponse = CompleteTaskGroupResponses[keyof CompleteTaskGroupResponses];
+
 export type ReopenTaskData = {
     body: TaskTransitionRequest;
     path: {
@@ -3236,6 +3444,80 @@ export type QueryMessageThreadsResponses = {
 };
 
 export type QueryMessageThreadsResponse = QueryMessageThreadsResponses[keyof QueryMessageThreadsResponses];
+
+export type MarkRecentMessageThreadsReadData = {
+    body: RecentAttentionScope;
+    path?: never;
+    query?: never;
+    url: '/v1/message-threads/read';
+};
+
+export type MarkRecentMessageThreadsReadErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type MarkRecentMessageThreadsReadError = MarkRecentMessageThreadsReadErrors[keyof MarkRecentMessageThreadsReadErrors];
+
+export type MarkRecentMessageThreadsReadResponses = {
+    /**
+     * Current User attention cleared within the authorized scope, including unloaded pages.
+     */
+    204: void;
+};
+
+export type MarkRecentMessageThreadsReadResponse = MarkRecentMessageThreadsReadResponses[keyof MarkRecentMessageThreadsReadResponses];
+
+export type ReviewRecentAiInteractionOutcomesData = {
+    body: RecentAttentionScope;
+    path?: never;
+    query?: never;
+    url: '/v1/ai/interactions/outcomes/review';
+};
+
+export type ReviewRecentAiInteractionOutcomesErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReviewRecentAiInteractionOutcomesError = ReviewRecentAiInteractionOutcomesErrors[keyof ReviewRecentAiInteractionOutcomesErrors];
+
+export type ReviewRecentAiInteractionOutcomesResponses = {
+    /**
+     * Current User attention cleared within the authorized scope, including unloaded pages.
+     */
+    204: void;
+};
+
+export type ReviewRecentAiInteractionOutcomesResponse = ReviewRecentAiInteractionOutcomesResponses[keyof ReviewRecentAiInteractionOutcomesResponses];
 
 export type GetMessageThreadTimelineData = {
     body?: never;
@@ -3744,3 +4026,45 @@ export type RequeueOperatorProviderReceiptResponses = {
 };
 
 export type RequeueOperatorProviderReceiptResponse = RequeueOperatorProviderReceiptResponses[keyof RequeueOperatorProviderReceiptResponses];
+
+export type SearchOfficeKnowledgeData = {
+    body: {
+        query: string;
+    };
+    headers: {
+        'X-Office-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/agent/knowledge/search';
+};
+
+export type SearchOfficeKnowledgeErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * Corpus, database, or embedding provider is temporarily unavailable. Never fall back to a stale source.
+     */
+    503: KnowledgeSearchResult;
+};
+
+export type SearchOfficeKnowledgeError = SearchOfficeKnowledgeErrors[keyof SearchOfficeKnowledgeErrors];
+
+export type SearchOfficeKnowledgeResponses = {
+    /**
+     * A scoped current-revision search completed; passages may not answer every part of the question.
+     */
+    200: KnowledgeSearchResult;
+};
+
+export type SearchOfficeKnowledgeResponse = SearchOfficeKnowledgeResponses[keyof SearchOfficeKnowledgeResponses];

@@ -1377,6 +1377,74 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/category:
+    post:
+      operationId: changeTaskCategory
+      summary: Move one open Task to a responsibility group.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeTaskCategoryRequest"
+      responses:
+        "200":
+          description: Completed or idempotently current Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/complete-group:
+    post:
+      operationId: completeTaskGroup
+      summary: Resolve exactly the reviewed open group membership.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteTaskGroupRequest"
+      responses:
+        "200":
+          description: Completed or idempotently current Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks/{taskId}/reopen:
     post:
       operationId: reopenTask
@@ -1500,6 +1568,48 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MessageThreadPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/message-threads/read:
+    post:
+      operationId: markRecentMessageThreadsRead
+      summary: Mark all eligible Texts from the past seven days read for the current User.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecentAttentionScope"
+      responses:
+        "204":
+          description: Current User attention cleared within the authorized scope, including unloaded pages.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/ai/interactions/outcomes/review:
+    post:
+      operationId: reviewRecentAIInteractionOutcomes
+      summary: Review all eligible appointment outcomes from the past seven days for the current User.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecentAttentionScope"
+      responses:
+        "204":
+          description: Current User attention cleared within the authorized scope, including unloaded pages.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1911,6 +2021,53 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/agent/knowledge/search:
+    post:
+      operationId: searchOfficeKnowledge
+      summary: Search the current imported corpus for the authenticated agent office route.
+      description: The model supplies only a short non-patient query. The trusted agent runtime supplies the office header; Practice comes from its service credential. Returned passages are untrusted data, and similarity is not proof of answerability.
+      security:
+        - serviceBearer: []
+      parameters:
+        - name: X-Office-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+      responses:
+        "200":
+          description: A scoped current-revision search completed; passages may not answer every part of the question.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeSearchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          description: Corpus, database, or embedding provider is temporarily unavailable. Never fall back to a stale source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeSearchResult"
 components:
   securitySchemes:
     bearerAuth:
@@ -1963,6 +2120,34 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    KnowledgeSearchResult:
+      type: object
+      required: [outcome, passages]
+      properties:
+        outcome:
+          type: string
+          enum: [found, no_relevant_information, temporary_failure]
+        revisionId:
+          type: string
+          format: uuid
+        passages:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/KnowledgePassage"
+    KnowledgePassage:
+      type: object
+      required: [sectionId, title, text, revisionId]
+      properties:
+        sectionId:
+          type: string
+        title:
+          type: string
+        text:
+          type: string
+        revisionId:
+          type: string
+          format: uuid
     Health:
       type: object
       additionalProperties: false
@@ -2846,6 +3031,9 @@ components:
     StaffTaskCategory:
       type: string
       enum:
+        - insurance
+        - pre_op
+        - post_op
         - billing
         - appointments
         - documentation
@@ -2893,7 +3081,8 @@ components:
           maxLength: 255
         callerPhone:
           type: string
-          pattern: '^\+[1-9][0-9]{7,14}$'
+          maxLength: 64
+          description: Caller number normalized to E.164; common phone formatting is accepted.
         category:
           $ref: "#/components/schemas/StaffTaskCategory"
         idempotencyKey:
@@ -2975,6 +3164,11 @@ components:
         - relatedInteractionCount
         - interactions
       properties:
+        groupMembers:
+          description: Complete open membership for this bucket, normalized number, and Location, including members outside a text filter. This is a display projection, never a merged Task.
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
         id:
           type: string
           format: uuid
@@ -3002,6 +3196,8 @@ components:
             - HUMAN_CALL_FOLLOW_UP
             - ABITA_AI
             - STAFF_MESSAGE_FOLLOW_UP
+            - APPOINTMENT_REVIEW
+            - INBOUND_MESSAGE_REVIEW
             - VOICEMAIL_RECOVERY
             - MISSED_CALL_RECOVERY
         recoveryOutcome:
@@ -3014,6 +3210,9 @@ components:
         callerName:
           type: string
         sourceCallId:
+          type: string
+        preview:
+          description: Latest incoming text preview for the workspace list.
           type: string
         sourceMessage:
           type: string
@@ -3110,6 +3309,12 @@ components:
         missedCalls:
           type: integer
           minimum: 0
+        texts:
+          type: integer
+          minimum: 0
+        callRecovery:
+          type: integer
+          minimum: 0
         categories:
           $ref: "#/components/schemas/TaskCategoryCounts"
     TaskCategoryCounts:
@@ -3117,6 +3322,12 @@ components:
       additionalProperties: false
       required: [billing, appointments, documentation, optical, medication, referrals, other]
       properties:
+        insurance:
+          type: integer
+        pre_op:
+          type: integer
+        post_op:
+          type: integer
         billing:
           type: integer
           minimum: 0
@@ -3522,19 +3733,23 @@ components:
     StaffPhoneMetrics:
       type: object
       additionalProperties: false
-      required: ["inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "inboundSeconds", "outboundSeconds"]
+      required: ["inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "textsSent", "inboundSeconds", "outboundSeconds"]
       properties:
         inboundCalls: {"type": "integer", "minimum": 0}
         outboundCalls: {"type": "integer", "minimum": 0}
         missingInboundDurationCalls: {"type": "integer", "minimum": 0}
         missingOutboundDurationCalls: {"type": "integer", "minimum": 0}
         tasksCompleted: {"type": "integer", "minimum": 0}
+        textsSent:
+          type: integer
+          minimum: 0
+          description: Staff-authored outbound message records created in the reporting period with current SENT or DELIVERED state. Excludes automated messages and unconfirmed or failed attempts; counts messages, not billing segments.
         inboundSeconds: {"type": "number", "minimum": 0}
         outboundSeconds: {"type": "number", "minimum": 0}
     StaffAccountAnalytics:
       type: object
       additionalProperties: false
-      required: ["id", "email", "role", "status", "inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "inboundSeconds", "outboundSeconds"]
+      required: ["id", "email", "role", "status", "inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "textsSent", "inboundSeconds", "outboundSeconds"]
       properties:
         id: {"type": "string"}
         email: {"type": "string"}
@@ -3545,6 +3760,10 @@ components:
         missingInboundDurationCalls: {"type": "integer", "minimum": 0}
         missingOutboundDurationCalls: {"type": "integer", "minimum": 0}
         tasksCompleted: {"type": "integer", "minimum": 0}
+        textsSent:
+          type: integer
+          minimum: 0
+          description: Staff-authored outbound message records created in the reporting period with current SENT or DELIVERED state. Excludes automated messages and unconfirmed or failed attempts; counts messages, not billing segments.
         inboundSeconds: {"type": "number", "minimum": 0}
         outboundSeconds: {"type": "number", "minimum": 0}
     StaffTaskMetrics:
@@ -3619,7 +3838,7 @@ components:
         p50:
           type: number
           nullable: true
-          description: Median call-start-to-hang-up duration in seconds across booked calls with valid timing evidence.
+          description: Median call-start-to-hang-up duration in seconds across calls with a completed booking search or confirmed booking and valid timing evidence. Includes non-converting attempts.
         p90:
           type: number
           nullable: true
@@ -3792,10 +4011,32 @@ components:
           minimum: 1
           maximum: 100
           default: 50
+    OperatorAIAnalyticsDay:
+      type: object
+      additionalProperties: false
+      required: [date, totalCalls, transferCount]
+      properties:
+        date:
+          type: string
+          description: UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
+        totalCalls:
+          type: integer
+          minimum: 0
+        transferCount:
+          type: integer
+          minimum: 0
+          description: Calls with persisted ESCALATED status, matching the summary transfer count.
+        transferRate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Transferred calls divided by all AI calls on this date. Absent when there are no calls.
     OperatorAIAnalyticsSummary:
       type: object
       additionalProperties: false
       required:
+        - daily
         - totalCalls
         - bookingCount
         - cancellationCount
@@ -3806,6 +4047,10 @@ components:
         - toolErrorCount
         - toolFailureRate
       properties:
+        daily:
+          type: array
+          description: All UTC dates in the full selected range, including dates without calls; independent of call pagination.
+          items: {$ref: "#/components/schemas/OperatorAIAnalyticsDay"}
         diagnostics: {$ref: "#/components/schemas/OperatorAIAnalyticsDiagnostics"}
         totalCalls:
           type: integer
@@ -4105,6 +4350,46 @@ components:
         taskId:
           type: string
           description: Durable Product Task proving Staff Task follow-up.
+        middlewareRequests:
+          type: array
+          maxItems: 32
+          description: Sanitized middleware attempts correlated to this tool call, including recovered failures.
+          items:
+            $ref: "#/components/schemas/MiddlewareRequestDiagnostic"
+    MiddlewareRequestDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [requestId, operation, attempt, durationMs, result]
+      properties:
+        requestId: {type: string, format: uuid}
+        operation: {type: string}
+        attempt: {type: integer, minimum: 1}
+        durationMs: {type: integer, minimum: 0}
+        result: {type: string}
+        httpStatus: {type: integer, minimum: 100, maximum: 599}
+        responseStatus: {type: string}
+        appointmentsStatus: {type: string, enum: [found, none, error]}
+        outcome: {type: string}
+        category: {type: string}
+        failureReason: {type: string}
+        failureDetail: {type: string, enum: [missing_appointment_id]}
+        retryable: {type: boolean}
+        providerErrorCount: {type: integer, minimum: 0}
+        providerErrors:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/ProviderErrorDiagnostic"
+    ProviderErrorDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [operation, category, durationMs]
+      properties:
+        operation: {type: string}
+        category: {type: string}
+        durationMs: {type: integer, minimum: 0}
+        httpStatus: {type: integer, minimum: 100, maximum: 599}
+        code: {type: string, pattern: '^-?[0-9]{1,6}$'}
     OperatorAIInteractionAnalytics:
       type: object
       additionalProperties: false
@@ -4206,6 +4491,20 @@ components:
       additionalProperties: false
       required: [practiceId]
       properties:
+        responsibility:
+          type: string
+          enum: [mine, all]
+          description: >-
+            Mine filters categorized follow-up by primary and backup responsibility.
+            Appointment, text, missed-call, and voicemail reviews remain shared within authorized
+            Locations, regardless of category. All removes only responsibility filtering.
+        kind:
+          type: string
+          enum: [texts, calls]
+        category:
+          $ref: "#/components/schemas/StaffTaskCategory"
+        grouped:
+          type: boolean
         practiceId:
           type: string
           format: uuid
@@ -4234,6 +4533,37 @@ components:
           type: integer
           minimum: 1
           maximum: 50
+    ChangeTaskCategoryRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, category]
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        category:
+          $ref: "#/components/schemas/StaffTaskCategory"
+    CompleteTaskGroupRequest:
+      type: object
+      additionalProperties: false
+      required: [members]
+      properties:
+        members:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, expectedVersion]
+            properties:
+              id:
+                type: string
+                format: uuid
+              expectedVersion:
+                type: integer
+                format: int64
+                minimum: 1
     RenameTaskRequest:
       type: object
       additionalProperties: false
@@ -4332,6 +4662,17 @@ components:
               minimum: 0
             unread:
               type: boolean
+    RecentAttentionScope:
+      type: object
+      additionalProperties: false
+      required: [practiceId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
     MessageThreadPage:
       type: object
       additionalProperties: false
@@ -4341,6 +4682,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MessageThreadSummary"
+        total:
+          type: integer
+          minimum: 0
+          description: Full eligible phone-number count before pagination, supplied for recentAttention queries.
         nextCursor:
           type: string
     MessageThreadQueryRequest:
@@ -4354,6 +4699,10 @@ components:
         locationId:
           type: string
           format: uuid
+        recentAttention:
+          type: boolean
+          default: false
+          description: Return only unread conversations with an inbound message in the past seven days and no linked open Task. Paginate phone-number groups and return their full total.
         search:
           type: string
           maxLength: 40
@@ -4574,15 +4923,21 @@ components:
         occurredAt:
           type: string
           format: date-time
+        taskActivityDetails:
+          type: object
+          additionalProperties: true
         taskActivity:
           type: string
           enum:
             - TASK_CREATED
+            - SOURCE_UPDATED
             - TITLE_CHANGED
+            - CATEGORY_CHANGED
             - TASK_COMPLETED
             - TASK_REOPENED
             - INTERACTION_ATTACHED
             - TASK_AUTO_COMPLETED_INBOUND_CALL
+            - TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT
             - TASK_AUTO_COMPLETED_BOOKING
             - TASK_AUTO_COMPLETED_DUPLICATE
         message:

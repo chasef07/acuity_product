@@ -106,7 +106,6 @@ export function PortalWorkspace() {
         },
       },
       environment: {
-        isHidden: () => document.hidden,
         clock: {
           setTimeout: (callback, milliseconds) =>
             window.setTimeout(callback, milliseconds),
@@ -279,7 +278,8 @@ export function PortalWorkspace() {
   const selectedAIInteractionID = state.selection.aiInteractionID
   const historicalCall = state.selection.historicalCall
   const contextView = state.selection.contextView
-  const contextPanelOpen = state.selection.contextPanelOpen
+  const textTask = contextView === "task" && selectedTask?.origin === "INBOUND_MESSAGE_REVIEW" ? selectedTask : undefined
+  const contextPanelOpen = state.selection.contextPanelOpen && !textTask
   const view = state.selection.view
 
   return callingShell((activeCall, callingOccupied) => {
@@ -361,6 +361,9 @@ export function PortalWorkspace() {
                       : undefined
                   }
                   headerLeading={<SidebarTrigger collapsedOnly />}
+                  textTask={textTask}
+                  onNextTask={!activeCall && textTask && state.tasks.items.some((task) => task.id !== textTask.id) ? () => { const next = state.tasks.items.find((task) => task.id !== textTask.id); if (next) sendIntent({ type: "select-task", task: next }) } : undefined}
+                  onTextTaskUpdated={(task) => sendIntent({ type: "task-committed", task, advance: !activeCall })}
                   onTaskCreated={(task) =>
                     void projection.dispatch({ type: "task-created", task })
                   }
@@ -386,6 +389,7 @@ export function PortalWorkspace() {
                 inert={!contextPanelOpen}
                 className={cn(
                   "absolute top-3 right-3 flex h-fit max-h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:my-3 lg:max-w-none lg:shrink-0",
+                  contextView === "task" && state.selection.taskGroup && "h-[calc(100%-1.5rem)]",
                   contextPanelOpen
                     ? "translate-x-0 opacity-100 lg:mr-3 lg:w-72"
                     : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:mr-0 lg:w-0",
@@ -409,11 +413,9 @@ export function PortalWorkspace() {
                 <div className="flex min-h-0 flex-1">
                   {contextView === "ai-call" ? (
                     <AIInteractionContext
-                      interactionID={selectedAIInteractionID}
                       detail={state.selection.aiInteraction}
                       loading={state.selection.aiInteractionLoading}
                       error={state.selection.aiInteractionError}
-                      onReview={projection.reviewAIOutcome}
                     />
                   ) : contextView === "task" && state.selection.taskError ? (
                     <div className="flex-1 p-4">
@@ -427,6 +429,9 @@ export function PortalWorkspace() {
                   ) : (
                     <TaskCallContext
                       task={selectedTask}
+                      group={state.selection.taskGroup}
+                      taskRows={state.tasks.items}
+                      onSelectTask={(task) => sendIntent({ type: "select-task", task })}
                       activeCall={historicalCall ?? activeCall}
                       view={contextView}
                       canMutate
@@ -434,8 +439,8 @@ export function PortalWorkspace() {
                       historyHint={state.detailRevision}
                       taskCallPending={Boolean(taskCallRequest)}
                       taskCallError={taskCallError}
-                      onTaskUpdated={(task) =>
-                        void projection.dispatch({ type: "task-committed", task })
+                      onTaskUpdated={(task, advance) =>
+                        void projection.dispatch({ type: "task-committed", task, advance: advance && !activeCall })
                       }
                       onStartTaskCall={(task) => {
                         setTaskCallError("")

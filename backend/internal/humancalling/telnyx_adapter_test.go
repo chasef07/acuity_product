@@ -1144,6 +1144,7 @@ func TestTelnyxAdapterClassifiesCallControlFailures(t *testing.T) {
 		definitive   bool
 		targetAbsent bool
 	}{
+		{name: "destination country restriction", status: 403, code: "10010", safeCode: "TELNYX_DESTINATION_COUNTRY_REJECTED", definitive: true},
 		{name: "ended Call", status: 422, code: "90018", safeCode: "TELNYX_CALL_ENDED", definitive: true, targetAbsent: true},
 		{name: "Call not answered", status: 422, code: "90034", safeCode: "TELNYX_CALL_NOT_ANSWERED"},
 		{name: "user channel limit", status: 422, code: "90041", safeCode: "TELNYX_USER_CHANNEL_LIMIT", definitive: true},

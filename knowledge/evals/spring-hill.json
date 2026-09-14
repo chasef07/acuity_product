@@ -1,0 +1,281 @@
+[
+  {
+    "id": "medical-drive-closed",
+    "query": "Is the Medical Drive office open?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "medical-drive-closure"
+    ],
+    "excludedSectionIds": [
+      "billing",
+      "dr-bach"
+    ],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "medical-drive-closure"
+    ]
+  },
+  {
+    "id": "medical-drive-move",
+    "query": "Can I move my appointment to Medical Dr?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "medical-drive-closure"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "medical-drive-closure"
+    ]
+  },
+  {
+    "id": "medical-drive-directions",
+    "query": "I was given the old Abita Eye address on Medical Drive. Should I go there?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "medical-drive-closure"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "medical-drive-closure",
+      "current-address"
+    ]
+  },
+  {
+    "id": "current-address",
+    "query": "What is the current Spring Hill office address?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "current-address"
+    ],
+    "excludedSectionIds": [
+      "billing",
+      "dr-bach",
+      "frame-brands"
+    ],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "current-address"
+    ]
+  },
+  {
+    "id": "closure-and-current-address",
+    "query": "Is Medical Drive closed, and where is the current Spring Hill office?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "medical-drive-closure",
+      "current-address"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 1400,
+    "allowedSectionIds": [
+      "medical-drive-closure",
+      "current-address"
+    ]
+  },
+  {
+    "id": "office-hours",
+    "query": "What are your regular opening hours?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "hours"
+    ],
+    "excludedSectionIds": [
+      "billing",
+      "frame-brands"
+    ],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "hours"
+    ]
+  },
+  {
+    "id": "cataract-provider",
+    "query": "Can Dr. Bach see cataract patients?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "cataract-provider"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "cataract-provider"
+    ]
+  },
+  {
+    "id": "routine-child-age",
+    "query": "Can a child under seven have a routine vision exam?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "routine-vision-and-children"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "routine-vision-and-children"
+    ]
+  },
+  {
+    "id": "routine-medical-word",
+    "query": "Do you provide medical eye care?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "medical-services"
+    ],
+    "excludedSectionIds": [
+      "medical-drive-closure"
+    ],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "medical-services"
+    ]
+  },
+  {
+    "id": "retina-surgery",
+    "query": "Do you perform retina surgery at the office?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "retina-care"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "retina-care"
+    ]
+  },
+  {
+    "id": "paperwork-email",
+    "query": "What email should I use for new-patient paperwork?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "paperwork-email"
+    ],
+    "excludedSectionIds": [
+      "billing"
+    ],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "paperwork-email"
+    ]
+  },
+  {
+    "id": "optical-hours-and-walkins",
+    "query": "When is Sherry the optician available, and do I need an appointment for adjustments?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "optician-hours",
+      "optical-walk-ins"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 1400,
+    "allowedSectionIds": [
+      "optician-hours",
+      "optical-walk-ins"
+    ]
+  },
+  {
+    "id": "unknown",
+    "query": "Can I park a spaceship on the moon?",
+    "expectedOutcome": "no_relevant_information",
+    "expectedSectionIds": [],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 300,
+    "allowedSectionIds": []
+  },
+  {
+    "id": "generic-address",
+    "query": "What is your current address?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "current-address"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "current-address"
+    ]
+  },
+  {
+    "id": "generic-hours",
+    "query": "What are your hours?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "hours"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "hours"
+    ]
+  },
+  {
+    "id": "closure-and-address-generic",
+    "query": "Is Medical Drive closed, and where is your current office?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "medical-drive-closure",
+      "current-address"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 1400,
+    "allowedSectionIds": [
+      "medical-drive-closure",
+      "current-address"
+    ]
+  },
+  {
+    "id": "cataract-generic",
+    "query": "Who sees cataract patients?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "cataract-provider"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": [
+      "cataract-provider"
+    ]
+  },
+  {
+    "id": "unknown-baseline",
+    "query": "Can I park my spaceship on the moon?",
+    "expectedOutcome": "no_relevant_information",
+    "expectedSectionIds": [],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 800,
+    "allowedSectionIds": []
+  },
+  {
+    "id": "spanish-closure-address",
+    "query": "¿Está cerrada la oficina de Medical Drive y cuál es la dirección actual?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "medical-drive-closure",
+      "current-address"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 3000
+  },
+  {
+    "id": "spanish-address-hours",
+    "query": "¿Cuál es la dirección y el horario de la oficina?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "current-address",
+      "hours"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 3000
+  },
+  {
+    "id": "six-year-old-exam",
+    "query": "Can my six-year-old get an eye exam?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "routine-vision-and-children"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 3000
+  }
+]

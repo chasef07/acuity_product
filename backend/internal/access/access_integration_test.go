@@ -1047,6 +1047,26 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 	if len(practiceIDs) != 2 {
 		t.Fatalf("operational Practices = %#v, want both Practices", practiceIDs)
 	}
+	// The operational lock protects Practice identity while concurrent call
+	// processing remains able to publish a workspace-version change.
+	changeContext, cancelChange := context.WithTimeout(context.Background(), time.Second)
+	defer cancelChange()
+	changeTx, err := pool.Begin(changeContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = changeTx.Rollback(context.Background()) }()
+	if _, err := module.RecordWorkspaceChange(changeContext, changeTx, demo.ID); err != nil {
+		t.Fatalf("operator lock blocked workspace change: %v", err)
+	}
+	if err := changeTx.Commit(changeContext); err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(context.Background(), `SELECT id FROM access_practices WHERE id = $1 FOR UPDATE NOWAIT`, demo.ID)
+	var lockError *pgconn.PgError
+	if !errors.As(err, &lockError) || lockError.Code != "55P03" {
+		t.Fatalf("operator lock did not protect Practice identity: %v", err)
+	}
 	if _, err := module.LockMembershipAuthorization(
 		context.Background(), tx, operator, demo.ID, demo.Locations[0].ID,
 	); err != nil {

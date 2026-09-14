@@ -54,7 +54,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		LocationScope: access.LocationScopeAll,
 		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
 	}
-	create := func(key, title string, urgency work.TaskUrgency) work.Task {
+	create := func(key, title string, urgency work.TaskUrgency, category work.TaskCategory) work.Task {
 		t.Helper()
 		task, status, err := workModule.CreateAITask(
 			context.Background(),
@@ -67,7 +67,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 				Phone:          "+17275550199",
 				Summary:        title,
 				Message:        "Queue ordering fixture",
-				Category:       work.TaskCategoryDocumentation,
+				Category:       category,
 				Urgency:        urgency,
 			},
 		)
@@ -77,10 +77,10 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		now = now.Add(time.Minute)
 		return task
 	}
-	high := create("high", "Urgent referral", work.TaskUrgencyHighPriority)
-	normalOld := create("normal-old", "Routine records", work.TaskUrgencyNormal)
-	normalNew := create("normal-new", "Routine surgery records", work.TaskUrgencyNormal)
-	nonUrgent := create("non-urgent", "Optional follow-up", work.TaskUrgencyNonUrgent)
+	high := create("high", "Urgent referral", work.TaskUrgencyHighPriority, work.TaskCategoryDocumentation)
+	normalOld := create("normal-old", "Routine records", work.TaskUrgencyNormal, work.TaskCategoryDocumentation)
+	normalNew := create("normal-new", "Routine surgery records", work.TaskUrgencyNormal, work.TaskCategoryDocumentation)
+	nonUrgent := create("non-urgent", "Optional follow-up", work.TaskUrgencyNonUrgent, work.TaskCategoryDocumentation)
 
 	reads := workspace.New(pool, accessModule)
 	first, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
@@ -126,6 +126,70 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 	}); !errors.Is(err, workspace.ErrInvalidInput) {
 		t.Fatalf("cross-order cursor error = %v, want invalid input", err)
 	}
+
+	create("optical", "Optical request", work.TaskUrgencyNormal, work.TaskCategoryOptical)
+	create("other", "Other request", work.TaskUrgencyNormal, work.TaskCategoryOther)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO work_responsibility_locations (practice_id, location_id) VALUES ($1, $2)`, authorization.Practice.ID, authorization.Locations[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO work_responsibilities (practice_id, location_id, account_email, category, role)
+		VALUES ($1,$2,$3,'documentation','primary'), ($1,$2,$3,'optical','backup')`, authorization.Practice.ID, authorization.Locations[0].ID, identity.Email); err != nil {
+		t.Fatal(err)
+	}
+	for _, responsibility := range []string{"all", "mine"} {
+		t.Run(responsibility+" category menu counts", func(t *testing.T) {
+			command := workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, Responsibility: responsibility, Folder: work.TaskFolderWork, Grouped: true}
+			baseline, err := reads.QueryTasks(ctx, command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTotal, wantOther := 6, 1
+			if responsibility == "mine" {
+				wantTotal, wantOther = 5, 0
+			}
+			if baseline.Counts == nil || baseline.Counts.Tasks != wantTotal || baseline.Counts.Categories.Other != wantOther {
+				t.Fatalf("responsibility-scoped counts = %+v", baseline.Counts)
+			}
+			for _, category := range []work.TaskCategory{work.TaskCategoryDocumentation, work.TaskCategoryOptical, work.TaskCategoryOther} {
+				command.Category = category
+				filtered, err := reads.QueryTasks(ctx, command)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, item := range filtered.Items {
+					if item.Category != category {
+						t.Fatalf("category %s returned %s", category, item.Category)
+					}
+				}
+				if filtered.Counts == nil || *filtered.Counts != *baseline.Counts {
+					t.Errorf("category %s changed menu totals: got %+v, want %+v", category, filtered.Counts, baseline.Counts)
+				}
+			}
+		})
+	}
+
+	_, err = workModule.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: high.ID, ExpectedVersion: high.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := workModule.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: normalOld.ID, ExpectedVersion: normalOld.Version}); err != nil {
+		t.Fatal(err)
+	}
+	completedCommand := workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, State: work.TaskCompleted, Ordering: work.TaskOrderingRecent, Limit: 1}
+	completed, err := reads.QueryTasks(ctx, completedCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWorkspaceTaskIDs(t, completed.Items, normalOld.ID)
+	completedCommand.Cursor = completed.NextCursor
+	completed, err = reads.QueryTasks(ctx, completedCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWorkspaceTaskIDs(t, completed.Items, high.ID)
+
 }
 
 func TestQueryTasksMissedCallsFolderStartsWithNewestRecoveryTask(t *testing.T) {
@@ -205,6 +269,15 @@ func TestQueryTasksMissedCallsFolderStartsWithNewestRecoveryTask(t *testing.T) {
 	}
 
 	reads := workspace.New(pool, accessModule)
+
+	callsPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, Kind: "calls"})
+	if err != nil || len(callsPage.Items) != 2 || callsPage.Counts == nil || callsPage.Counts.CallRecovery != 2 || callsPage.Counts.Texts != 0 {
+		t.Fatalf("calls filter/counts = %#v, %v", callsPage, err)
+	}
+	textsPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, Kind: "texts"})
+	if err != nil || len(textsPage.Items) != 0 {
+		t.Fatalf("texts leaked non-text work = %#v, %v", textsPage, err)
+	}
 	workPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity: identity, PracticeID: authorization.Practice.ID,
 		Folder: work.TaskFolderWork, Ordering: work.TaskOrderingRecent, Limit: 50,
@@ -234,6 +307,27 @@ func TestQueryTasksMissedCallsFolderStartsWithNewestRecoveryTask(t *testing.T) {
 	assertWorkspaceTaskIDs(t, second.Items, older.ID)
 	if second.NextCursor != "" {
 		t.Fatalf("second Missed Calls cursor = %q, want empty", second.NextCursor)
+	}
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO work_responsibility_locations VALUES ($1,$2)`, authorization.Practice.ID, locationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE work_tasks SET category='optical' WHERE id=ANY($1::uuid[])`, []string{older.ID, newest.ID}); err != nil {
+		t.Fatal(err)
+	}
+	// Recovery reviews stay shared after classification, with matching counts.
+	for _, responsibility := range []string{"mine", "all"} {
+		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, Responsibility: responsibility, Grouped: false})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.Counts.Tasks != len(page.Items) {
+			t.Fatalf("%s counted hidden Tasks: count=%d rows=%d", responsibility, page.Counts.Tasks, len(page.Items))
+		}
+		if page.Counts.Categories.Optical != 2 || page.Counts.CallRecovery != 2 {
+			t.Fatalf("%s hid shared recovery reviews: %+v", responsibility, page.Counts)
+		}
 	}
 }
 

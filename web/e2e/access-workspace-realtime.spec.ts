@@ -48,6 +48,7 @@ const operatorAnalyticsFixture = {
         errors: [],
       }],
     },
+    daily: [{ date: "2026-08-10", totalCalls: 42, transferCount: 5, transferRate: 5 / 42 }],
     totalCalls: 42,
     bookingCount: 8,
     cancellationCount: 3,
@@ -199,7 +200,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
   await abortFirstRealtimeRequest(page)
   await test.step("provisioned Admin receives an authenticated session", async () => {
     await signInAs(page, "admin@abita.test", "Fixture Admin")
-    const tasksSection = page.getByRole("button", { name: /^Tasks/ })
+    const tasksSection = page.getByRole("button", { name: /^My Tasks/ })
     await expect(tasksSection).toHaveAttribute("aria-expanded", "false")
     await expectNoOpenTasks(page)
     const workspaceSelector = page.getByRole("button", {
@@ -443,7 +444,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       name: "AI call analytics",
     })
     await expect(analyticsRegion.getByText("Total calls")).toBeVisible()
-    await expect(analyticsRegion.getByText("42", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByRole("region", { name: "Call volume over time", exact: true }).getByRole("strong")).toHaveText("42")
     await expect(analyticsRegion.getByText("Booked", { exact: true })).toBeVisible()
     await expect(analyticsRegion.getByText("8", { exact: true })).toBeVisible()
     await expect(analyticsRegion.getByText("Cancelled", { exact: true })).toBeVisible()
@@ -712,12 +713,9 @@ async function accessToken(page: Page): Promise<string> {
 }
 
 async function expectNoOpenTasks(page: Page) {
-  const tasksSection = page.getByRole("button", { name: /^Tasks/ })
-  if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
-    await tasksSection.click()
-  }
-  await expect(tasksSection).toHaveAttribute("aria-expanded", "true")
-  await expect(page.getByText("No open Tasks")).toBeVisible()
+  const tasksSection = page.getByRole("button", { name: /^My Tasks/ })
+  await expect(tasksSection).toHaveAttribute("aria-expanded", "false")
+  await expect(page.getByText("No Tasks match your responsibilities and filters. Use All tasks to help another group.")).toBeVisible()
 }
 
 async function abortFirstRealtimeRequest(page: Page) {

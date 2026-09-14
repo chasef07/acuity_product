@@ -5,7 +5,7 @@ export const metadata = createPublicPageMetadata({
   path: "/who-we-are",
   title: "Patient Access AI Company & Founders",
   description:
-    "Acuity Health is a founder-deployed medical voice company built from the consulting relationship required to transform patient access.",
+    "Meet Acuity Health’s founders and Chief Medical Officer Michael Venincasa, MD, bringing operational and clinical expertise to medical AI.",
 })
 
 export default function WhoWeArePage() {

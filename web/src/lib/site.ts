@@ -5,9 +5,16 @@ export const siteConfig = {
   shortName: "Acuity Health",
   legalName: "Data Buddies Solutions LLC",
   url: "https://acuityhealth.io",
-  title: "AI Agents for Patient Access | Acuity Health",
+  title: "Voice AI Agents for Patient Access | Acuity Health",
   description:
-    "Acuity Health deploys medical AI agents that answer calls, complete patient-access workflows, and bring staff in when judgment or ownership is required.",
+    "Acuity Health helps medical enterprises onboard voice AI agents to answer calls, check insurance eligibility, book appointments, and support staff.",
+} as const
+
+export const siteSocialImage = {
+  url: "/opengraph-image",
+  width: 1200,
+  height: 630,
+  alt: "Acuity Health: Voice AI agents for patient access",
 } as const
 
 export const siteStructuredData = {
@@ -78,20 +85,13 @@ export function createPublicPageMetadata({
       siteName: siteConfig.name,
       locale: "en_US",
       type: "website",
-      images: [
-        {
-          url: "/opengraph-image",
-          width: 1200,
-          height: 630,
-          alt: "Acuity Health: AI agents for patient access",
-        },
-      ],
+      images: [siteSocialImage],
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
-      images: ["/opengraph-image"],
+      images: [siteSocialImage],
     },
   }
 }

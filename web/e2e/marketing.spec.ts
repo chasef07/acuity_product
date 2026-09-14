@@ -1,22 +1,9 @@
 import { expect, test, type Page } from "@playwright/test"
 
-async function expectPinnedGlassNavigation(page: Page, expectedTop: number) {
-  const navigation = page.getByRole("banner")
-  const glass = await navigation.evaluate((element) => {
-    const styles = getComputedStyle(element)
-    return {
-      backdropFilter: styles.backdropFilter,
-      position: styles.position,
-      top: styles.top,
-    }
-  })
-
-  expect(glass.position).toBe("sticky")
-  expect(glass.top).toBe(`${expectedTop}px`)
-  expect(glass.backdropFilter).toContain("blur(24px)")
-
+async function expectPinnedNavigation(page: Page) {
   await page.evaluate(() => window.scrollTo(0, 700))
-  expect((await navigation.boundingBox())?.y).toBe(expectedTop)
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
+  await expect.poll(async () => (await page.getByRole("banner").boundingBox())?.y).toBe(0)
 }
 
 test("enterprise story leads from medical voice to the Acuity Health Method", async ({ page }) => {
@@ -24,41 +11,24 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
 
   await expect(
     page.getByRole("heading", {
-      name: "Redesign patient access with medical AI agents.",
+      name: "Voice AI agents for patient access.",
     }),
   ).toBeVisible()
   await expect(page.getByText("AI agents", { exact: true })).toBeVisible()
   await expect(page.getByText("for medical enterprises", { exact: true })).toBeVisible()
-  await expect(page.locator("canvas")).toHaveCSS("cursor", "auto")
   await expect(
     page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
   ).toBeVisible()
-  const methodVenn = page.getByTestId("method-venn")
-  await expect(methodVenn).toContainText("Agentic")
-  await expect(methodVenn).toContainText("system design")
-  await expect(methodVenn).toContainText("Workflow")
-  await expect(methodVenn).toContainText("transformation")
-  await expect(page.getByText("Built for enterprise")).toHaveCount(0)
-  await expect(
-    page.getByRole("link", { name: "Work with us" }).first().locator("svg"),
-  ).toHaveCount(0)
-  await expect(
-    page.getByRole("link", { name: "See the Acuity Health Method" }),
-  ).toHaveCSS("border-bottom-width", "0px")
+  const methodCapabilities = page.getByTestId("method-capabilities")
+  await expect(methodCapabilities).toContainText("Agentic")
+  await expect(methodCapabilities).toContainText("system design")
+  await expect(methodCapabilities).toContainText("Workflow")
+  await expect(methodCapabilities).toContainText("transformation")
   await expect(
     page.getByText(
-      "Acuity answers calls, completes approved work in the systems your team already uses, and brings staff in when judgment or ownership is required. Then we stay until the new operating model works.",
+      "Acuity Health helps medical enterprises onboard voice AI agents that answer calls, check insurance eligibility, and book appointments.",
     ),
   ).toBeVisible()
-
-  await expect(
-    page.getByRole("heading", { name: "Find where patient demand stops moving." }),
-  ).toHaveCount(0)
-  await expect(
-    page.getByRole("heading", {
-      name: "A deployed operation created measurable capacity.",
-    }),
-  ).toHaveCount(0)
 })
 
 test("marketing navigation exposes the enterprise pages", async ({ page }) => {
@@ -67,25 +37,20 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   const primaryNavigation = page
     .getByRole("banner")
     .getByRole("navigation", { name: "Main navigation" })
-  await expect(
-    primaryNavigation.getByRole("link", { name: "Ophthalmology" }),
-  ).toHaveCount(0)
+  await expect(primaryNavigation).toHaveCount(1)
 
   await page.getByRole("banner").getByRole("link", { name: "Our Method" }).click()
   await expect(page).toHaveURL(/\/method$/)
   await expect(
     page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
   ).toBeVisible()
-  await expect(page.getByText("Medical AI agents")).toBeVisible()
-  await expect(
-    page.getByRole("heading", { name: "A deployed operation created measurable capacity." }),
-  ).toHaveCount(0)
+  await expect(page.getByText("Data security + HIPAA safeguards")).toBeVisible()
 
   await page.getByRole("link", { name: "Who We Are" }).first().click()
   await expect(page).toHaveURL(/\/who-we-are$/)
   await expect(
     page.getByRole("heading", {
-      name: "Acuity Health began close to the patient-access work.",
+      name: "From consulting to Acuity.",
     }),
   ).toBeVisible()
   await expect(page.getByRole("heading", { name: "Kyle Shechtman" })).toBeVisible()
@@ -110,67 +75,18 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
     page.getByRole("heading", { name: "Continuous improvement" }),
   ).toBeVisible()
   await expect(page.getByText("KAIZEN · 改善")).toBeVisible()
-})
-
-test("marketing shell uses one navigation surface and an organized footer", async ({
-  page,
-}) => {
-  await page.goto("/")
-
-  const banner = page.getByRole("banner")
-  const navigation = banner.getByRole("navigation", { name: "Main navigation" })
-  const shell = await banner.evaluate((element) => {
-    const styles = getComputedStyle(element)
-    return {
-      borderRadius: styles.borderRadius,
-      top: styles.top,
-      width: element.getBoundingClientRect().width,
-    }
-  })
-  const navigationSurface = await navigation.evaluate((element) => {
-    const styles = getComputedStyle(element)
-    return {
-      backgroundColor: styles.backgroundColor,
-      borderTopWidth: styles.borderTopWidth,
-      boxShadow: styles.boxShadow,
-    }
-  })
-
-  expect(shell.borderRadius).toBe("0px")
-  expect(shell.top).toBe("0px")
-  expect(shell.width).toBe(await page.evaluate(() => document.documentElement.clientWidth))
-  expect(navigationSurface.backgroundColor).toBe("rgba(0, 0, 0, 0)")
-  expect(navigationSurface.borderTopWidth).toBe("0px")
-  expect(navigationSurface.boxShadow).toBe("none")
-  await expect(navigation.getByRole("link", { name: "Home" })).toHaveCSS(
-    "box-shadow",
-    "none",
-  )
 
   const footer = page.getByRole("contentinfo")
-  const footerNavigation = footer.getByRole("navigation", { name: "Footer navigation" })
-  await expect(footerNavigation).toBeVisible()
-  for (const group of ["Product", "Company", "Resources"]) {
+  await expect(footer.getByRole("navigation", { name: "Footer navigation" })).toBeVisible()
+  for (const group of ["Product", "Company", "Social", "Legal"]) {
     await expect(footer.getByRole("heading", { name: group })).toBeVisible()
   }
-  for (const label of [
-    "AdvancedMD integration",
-    "Ophthalmology patient access",
-    "Compare operating models",
-    "Case study",
-    "FAQ",
-  ]) {
-    await expect(footerNavigation.getByRole("link", { name: label })).toHaveCount(0)
-  }
-  await expect(footer.getByRole("separator")).toHaveCount(0)
-  await expect(footer.getByText("Acuity Health", { exact: true }).last()).toBeVisible()
 })
 
 test("retired commercial routes and their legacy aliases return 404", async ({
   request,
 }) => {
   for (const route of [
-    "/advancedmd-ai-receptionist",
     "/ai-receptionist-for-ophthalmology",
     "/ai-receptionist-vs-medical-answering-service",
     "/case-studies/ophthalmology-patient-access",
@@ -180,20 +96,19 @@ test("retired commercial routes and their legacy aliases return 404", async ({
     "/after-hours-answering-service-ophthalmology",
     "/insights/best-ai-answering-service-ophthalmology",
     "/insights/ai-receptionist-vs-traditional-answering-service",
-    "/partners/advancedmd",
   ]) {
     expect((await request.get(route, { maxRedirects: 0 })).status()).toBe(404)
   }
 })
 
-test("work with us links land at the top with the pinned glass navigation visible", async ({
+test("work with us links land at the top with navigation pinned while scrolling", async ({
   page,
 }) => {
   await page.goto("/")
 
   await page
     .getByRole("banner")
-    .getByRole("link", { name: "Work with us" })
+    .getByRole("link", { name: "Build with us", exact: true })
     .click()
   await expect(page).toHaveURL(/\/work-with-us$/)
   await expect(
@@ -205,30 +120,8 @@ test("work with us links land at the top with the pinned glass navigation visibl
   expect(await page.evaluate(() => window.scrollY)).toBe(0)
   const navigation = await page.getByRole("banner").boundingBox()
   expect(navigation?.y).toBe(0)
-  expect(navigation?.height).toBe(76)
 
-  await expect(page.getByRole("banner")).toHaveCSS("border-radius", "0px")
-  await expectPinnedGlassNavigation(page, 0)
-})
-
-test("mobile homepage does not overflow horizontally", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto("/")
-
-  const dimensions = await page.evaluate(() => {
-    return {
-      viewport: document.documentElement.clientWidth,
-      content: document.documentElement.scrollWidth,
-    }
-  })
-
-  expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport)
-  await expectPinnedGlassNavigation(page, 0)
-  await expect(
-    page.getByRole("heading", {
-      name: "Redesign patient access with medical AI agents.",
-    }),
-  ).toBeVisible()
+  await expectPinnedNavigation(page)
 })
 
 test("trust and legal pages publish bounded evidence", async ({ page }) => {
@@ -264,17 +157,30 @@ test("trust and legal pages publish bounded evidence", async ({ page }) => {
   await expect(page.getByText("A public overview, not a compliance badge.")).toBeVisible()
   await expect(page.getByText(/not a third-party certification/)).toBeVisible()
   await expect(page.getByText(/Data Buddies Solutions LLC d\/b\/a Acuity Health/)).toBeVisible()
-
 })
 
 test("legacy SEO routes redirect only to equivalent current pages", async ({ request }) => {
-  const redirects = [["/about", "/who-we-are"]] as const
+  const redirects = [
+    ["/about", "/who-we-are"],
+    ["/advancedmd-ai-receptionist", "/integrations/advancedmd"],
+    ["/partners/advancedmd", "/integrations/advancedmd"],
+  ] as const
 
   for (const [source, destination] of redirects) {
     const response = await request.get(source, { maxRedirects: 0 })
     expect(response.status()).toBe(308)
     expect(response.headers().location).toBe(destination)
+    expect((await request.get(destination)).status()).toBe(200)
   }
+
+  const campaignRedirect = await request.get(
+    "/advancedmd-ai-receptionist?utm_source=marketplace",
+    { maxRedirects: 0 },
+  )
+  expect(campaignRedirect.status()).toBe(308)
+  expect(campaignRedirect.headers().location).toBe(
+    "/integrations/advancedmd?utm_source=marketplace",
+  )
 
   for (const route of [
     "/insights",
@@ -303,6 +209,9 @@ test("new public pages and navigation remain usable on mobile", async ({ page })
   await page.setViewportSize({ width: 390, height: 844 })
 
   for (const route of [
+    "/",
+    "/integrations",
+    "/integrations/stedi",
     "/security",
     "/privacy-policy",
     "/terms-of-service",
@@ -353,9 +262,29 @@ test("public pages expose canonical metadata and browser identity assets", async
     {
       route: "/",
       canonical: "https://acuityhealth.io",
-      title: "AI Agents for Patient Access | Acuity Health",
+      title: "Voice AI Agents for Patient Access | Acuity Health",
       description:
-        "Acuity Health deploys medical AI agents that answer calls, complete patient-access workflows, and bring staff in when judgment or ownership is required.",
+        "Acuity Health helps medical enterprises onboard voice AI agents to answer calls, check insurance eligibility, book appointments, and support staff.",
+    },
+    {
+      route: "/integrations",
+      canonical: "https://acuityhealth.io/integrations",
+      title: "EHR, PMS & Insurance Eligibility Integrations | Acuity Health",
+      description:
+        "Connect patient access with your EHR, PMS, and insurance eligibility workflows through Acuity Health’s AdvancedMD and Stedi partnerships.",
+    },
+    {
+      route: "/integrations/stedi",
+      canonical: "https://acuityhealth.io/integrations/stedi",
+      title: "Medical, Vision & Medicare Eligibility Checks | Stedi Partner | Acuity Health",
+      description: "Acuity Health partners with Stedi for quick, efficient medical, vision, and Medicare insurance eligibility checks within your patient-access workflow.",
+    },
+    {
+      route: "/integrations/advancedmd",
+      canonical: "https://acuityhealth.io/integrations/advancedmd",
+      title: "AI Agents for AdvancedMD | Acuity Health",
+      description:
+        "Acuity Health is an AdvancedMD marketplace partner. Answer calls 24/7, schedule directly in AdvancedMD, and hand unresolved requests to staff with context.",
     },
     {
       route: "/method",
@@ -369,7 +298,7 @@ test("public pages expose canonical metadata and browser identity assets", async
       canonical: "https://acuityhealth.io/who-we-are",
       title: "Patient Access AI Company & Founders | Acuity Health",
       description:
-        "Acuity Health is a founder-deployed medical voice company built from the consulting relationship required to transform patient access.",
+        "Meet Acuity Health’s founders and Chief Medical Officer Michael Venincasa, MD, bringing operational and clinical expertise to medical AI.",
     },
     {
       route: "/work-with-us",
@@ -423,6 +352,14 @@ test("public pages expose canonical metadata and browser identity assets", async
       "content",
       "summary_large_image",
     )
+    await expect(page.locator('meta[name="twitter:image"]')).toHaveAttribute(
+      "content",
+      /\/opengraph-image/,
+    )
+    await expect(page.locator('meta[name="twitter:image:alt"]')).toHaveAttribute(
+      "content",
+      "Acuity Health: Voice AI agents for patient access",
+    )
     await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
       "href",
       "/manifest.webmanifest",
@@ -457,7 +394,7 @@ test("public pages expose canonical metadata and browser identity assets", async
   expect(sitemap.ok()).toBe(true)
   expect(sitemap.headers()["content-type"]).toContain("application/xml")
   const sitemapXml = await sitemap.text()
-  expect(sitemapXml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
+  expect(sitemapXml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"')
   for (const { route, canonical } of publicPages) {
     const sitemapUrl = route === "/" ? `${canonical}/` : canonical
     expect(sitemapXml).toContain(`<loc>${sitemapUrl}</loc>`)
@@ -543,6 +480,7 @@ test("working-session form submits to Formspree and confirms in place", async ({
   await page.getByLabel("Role").fill("Practice administrator")
   await page.getByLabel("Number of locations").fill("4")
   await page.getByLabel("Practice").fill("Example Medical Group")
+  await page.getByLabel("EMR / PM system").fill("AdvancedMD")
   await page
     .getByLabel("Which patient-access workflow should we focus on?")
     .fill("New-patient scheduling")
@@ -561,9 +499,26 @@ test("working-session form submits to Formspree and confirms in place", async ({
     "Practice administrator",
     "4",
     "Example Medical Group",
+    "AdvancedMD",
     "New-patient scheduling",
     "Time to appointment and call abandonment",
   ]) {
     expect(submittedPayload).toContain(value)
   }
+  expect(submittedPayload).toContain('name="emrPmSystem"')
+})
+
+
+test("integrations lead to Stedi eligibility details and the header contact link", async ({ page }) => {
+  await page.goto("/integrations")
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Built around the systems your practice already uses.")
+  await expect(page.getByRole("link", { name: "View Acuity on Stedi" })).toHaveAttribute("href", "https://www.stedi.com/platform-partners#acuity-health")
+  await page.getByRole("link", { name: "Explore insurance eligibility" }).click()
+  await expect(page).toHaveURL(/\/integrations\/stedi$/)
+  for (const name of ["Medical eligibility", "Vision eligibility", "Medicare eligibility"]) {
+    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible()
+  }
+  await expect(page.getByText("No. An eligibility response", { exact: false })).toBeVisible()
+  await page.getByRole("banner").getByRole("link", { name: "Build with us", exact: true }).click()
+  await expect(page).toHaveURL(/\/work-with-us$/)
 })

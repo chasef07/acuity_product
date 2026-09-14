@@ -15,7 +15,13 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AnalyticsFrame } from "@/components/analytics/analytics-layout"
-import { DiagnosticsPerformance, DiagnosticsTools, type DiagnosticFocus, type SelectDiagnostic } from "@/components/analytics/ai-diagnostics"
+import {
+  DiagnosticsCallTrends,
+  DiagnosticsPerformance,
+  DiagnosticsTools,
+  type DiagnosticFocus,
+  type SelectDiagnostic,
+} from "@/components/analytics/ai-diagnostics"
 import { CostOverview } from "@/components/analytics/cost-overview"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -464,6 +470,8 @@ function AnalyticsOverview({ summary }: { summary: OperatorAiAnalyticsSummary })
           </Card>
         ))}
       </div>
+
+      <DiagnosticsCallTrends summary={summary} />
 
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <OperationalHealth summary={summary} />

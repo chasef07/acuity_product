@@ -8,6 +8,19 @@ test("homepage opens a Google-only sign-in dialog", async ({
   await page.goto("/")
 
   await expect(page.getByTestId("sign-in-dialog")).toBeHidden()
+  await page.evaluate(() => {
+    const loadingFrames: boolean[] = []
+    Object.assign(window, { signInLoadingFrames: loadingFrames })
+    const observer = new MutationObserver(() => {
+      const card = document.querySelector('[data-testid="sign-in-card"]')
+      if (!card) return
+      loadingFrames.push(Boolean(card.querySelector('[data-slot="skeleton"]')))
+      if (card.textContent?.includes("Continue with Google")) {
+        observer.disconnect()
+      }
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+  })
   await page.getByRole("button", { name: "Sign in" }).click()
   await expect(page).toHaveURL("/")
 
@@ -19,6 +32,11 @@ test("homepage opens a Google-only sign-in dialog", async ({
     card.getByRole("button", { name: "Continue with Google" }),
   ).toBeVisible()
   await expect(card.getByText("Secure Google sign-in")).toBeVisible()
+  const loadingFrames = await page.evaluate(
+    () => (window as typeof window & { signInLoadingFrames: boolean[] }).signInLoadingFrames,
+  )
+  expect(loadingFrames.length).toBeGreaterThan(0)
+  expect(loadingFrames).not.toContain(true)
   await expect(card.getByLabel("Email")).toBeHidden()
   await expect(card.getByLabel("Password")).toBeHidden()
 })

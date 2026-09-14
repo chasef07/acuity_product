@@ -613,6 +613,11 @@ func expectedTablePrivileges() map[string]bool {
 		}
 	}
 
+	grant("acuity_portal", "SELECT", "work_text_replies")
+	grant("acuity_portal", "INSERT", "work_text_replies")
+	grant("acuity_worker", "SELECT", "work_text_replies")
+	grant("acuity_worker", "UPDATE", "work_text_replies")
+
 	portalReads := []string{
 		"access_abita_office_locations",
 		"access_calling_scopes",
@@ -640,6 +645,9 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_staff_transfers",
 		"human_calling_timeline",
 		"human_calling_voicemails",
+		"knowledge_corpora",
+		"knowledge_revisions",
+		"knowledge_passages",
 		"messaging_attachments",
 		"messaging_location_configurations",
 		"messaging_messages",
@@ -651,7 +659,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	}
-	grant("acuity_portal", "SELECT", portalReads...)
+	grant("acuity_portal", "SELECT", append(portalReads, "work_responsibilities", "work_responsibility_locations")...)
 	grant("acuity_portal", "INSERT",
 		"access_audit_events",
 		"access_locations",
@@ -668,6 +676,7 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_softphone_leases",
 		"human_calling_staff_transfers",
 		"human_calling_timeline",
+		"knowledge_retrieval_observations",
 		"messaging_attachments",
 		"messaging_messages",
 		"messaging_provider_commands",
@@ -721,6 +730,7 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_credentials",
 		"human_calling_handoffs",
 		"human_calling_location_voice_numbers",
+		"human_calling_location_ring_groups",
 		"human_calling_provider_commands",
 		"human_calling_provider_receipts",
 		"human_calling_softphone_leases",

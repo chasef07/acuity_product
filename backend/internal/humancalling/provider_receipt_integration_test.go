@@ -536,7 +536,7 @@ func TestChildReceiptWakesWhenParentAttachesRelatedCall(t *testing.T) {
 	raw := func(eventID, eventType string) []byte {
 		t.Helper()
 		return []byte(fmt.Sprintf(
-			`{"data":{"record_type":"event","event_type":"%s","id":"%s","occurred_at":"%s","payload":{"connection_id":"expected-connection","call_control_id":"%s-control","call_leg_id":"%s-leg","call_session_id":"%s-session","from":"%s","to":"+14843989071"}}}`,
+			`{"data":{"record_type":"event","event_type":"%s","id":"%s","occurred_at":"%s","payload":{"connection_id":"expected-connection","call_control_id":"%s-control","call_leg_id":"%s-leg","call_session_id":"%s-session","from":"%s","to":"acuity-handoff@synthetic.sip.telnyx.com"}}}`,
 			eventType, eventID, now.Format(time.RFC3339Nano), prefix, prefix, prefix,
 			callerPhone,
 		))

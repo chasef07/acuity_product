@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
@@ -122,15 +123,17 @@ type ActorSnapshot struct {
 }
 
 type QueryThreadsCommand struct {
-	Identity   access.Identity
-	PracticeID string
-	LocationID string
-	Search     string
-	Cursor     string
-	Limit      int
+	RecentAttention bool
+	Identity        access.Identity
+	PracticeID      string
+	LocationID      string
+	Search          string
+	Cursor          string
+	Limit           int
 }
 
 type ThreadPage struct {
+	Total      *int
 	Items      []ThreadSummary
 	NextCursor string
 }
@@ -651,6 +654,12 @@ func (m *Module) Send(
 	})
 	if err != nil {
 		return Message{}, "", fmt.Errorf("commit outbound Message: %w", err)
+	}
+	if m.work == nil {
+		return Message{}, "", errors.New("work module is required for staff text replies")
+	}
+	if err := m.work.CaptureTextReply(ctx, tx, thread.ID, messageID, authorization.Actor); err != nil {
+		return Message{}, "", err
 	}
 	if attachment != nil {
 		if _, err := tx.Exec(ctx, `
@@ -1445,6 +1454,11 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	`, command.MessageID, deliveryState, providerMessageID, errorCode, finishedAt); err != nil {
 		return true, fmt.Errorf("project Message provider result: %w", err)
 	}
+	if m.work != nil {
+		if err := m.work.ApplyTextReply(ctx, finishTx, command.MessageID); err != nil {
+			return true, err
+		}
+	}
 	if _, err := m.access.RecordWorkspaceChange(
 		ctx,
 		finishTx,
@@ -1677,6 +1691,11 @@ func (m *Module) ReconcileNextCommand(ctx context.Context) (bool, error) {
 		WHERE id = $1 AND state = 'RECONCILING'
 	`, commandID, commandState, m.now()); err != nil {
 		return true, fmt.Errorf("finish Message reconciliation: %w", err)
+	}
+	if m.work != nil {
+		if err := m.work.ApplyTextReply(ctx, finishTx, messageID); err != nil {
+			return true, err
+		}
 	}
 	if err := finishTx.Commit(ctx); err != nil {
 		return true, fmt.Errorf("commit Message reconciliation result: %w", err)
@@ -1963,6 +1982,9 @@ func (m *Module) QueryThreads(
 	ctx context.Context,
 	command QueryThreadsCommand,
 ) (ThreadPage, error) {
+	if command.RecentAttention {
+		return m.queryRecentThreads(ctx, command)
+	}
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	command.Search = strings.TrimSpace(command.Search)
@@ -2641,6 +2663,11 @@ func (m *Module) projectOutboundReceipt(
 	`, eventID, m.now()); err != nil {
 		return fmt.Errorf("mark delivery receipt applied: %w", err)
 	}
+	if m.work != nil {
+		if err := m.work.ApplyTextReply(ctx, tx, messageID); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delivery projection: %w", err)
 	}
@@ -2652,6 +2679,9 @@ func (m *Module) projectInboundReceipt(
 	eventID string,
 	envelope normalizedWebhookEvent,
 ) error {
+	if m.work == nil {
+		return fmt.Errorf("project inbound Message: Work module is not configured")
+	}
 	payload := envelope.Data.Payload
 	providerMessageID := strings.TrimSpace(payload.ID)
 	body := strings.TrimSpace(payload.Text)
@@ -2835,6 +2865,11 @@ func (m *Module) projectInboundReceipt(
 	}
 	blocked := isStop(body)
 	started := isStart(body)
+	if inserted && !blocked && !started {
+		if err := m.work.EnsureInboundMessageReview(ctx, tx, practiceID, locationID, from, threadID, messageID, occurredAt); err != nil {
+			return fmt.Errorf("project inbound Message review: %w", err)
+		}
+	}
 	isNewerOptOutEvidence := priorOptOutAt == nil ||
 		occurredAt.After(*priorOptOutAt) ||
 		(occurredAt.Equal(*priorOptOutAt) &&
@@ -3292,45 +3327,13 @@ func normalizeSendCommand(command *SendCommand) {
 }
 
 func normalizePhone(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if canonicalPhone.MatchString(value) {
-		return value, nil
-	}
-	var digits strings.Builder
-	openParenthesis := -1
-	closeParenthesis := -1
-	for index, character := range value {
-		switch {
-		case character >= '0' && character <= '9':
-			digits.WriteRune(character)
-		case character == '+' && index == 0:
-		case character == ' ' || character == '-' || character == '.':
-		case character == '(' && openParenthesis == -1:
-			openParenthesis = index
-		case character == ')' && closeParenthesis == -1:
-			closeParenthesis = index
-		default:
-			return "", ErrInvalidInput
-		}
-	}
-	if (openParenthesis == -1) != (closeParenthesis == -1) ||
-		(openParenthesis >= 0 && closeParenthesis <= openParenthesis) {
+	phone, err := contactcontext.NormalizePhone(value)
+	if err != nil {
 		return "", ErrInvalidInput
 	}
-	normalized := digits.String()
-	if len(normalized) == 10 {
-		normalized = "1" + normalized
-	}
-	normalized = "+" + normalized
-	if !canonicalPhone.MatchString(normalized) {
-		return "", ErrInvalidInput
-	}
-	return normalized, nil
+	return phone, nil
 }
-
-func NormalizePhone(value string) (string, error) {
-	return normalizePhone(value)
-}
+func NormalizePhone(value string) (string, error) { return normalizePhone(value) }
 
 func sendFingerprint(command SendCommand) ([32]byte, error) {
 	encoded, err := json.Marshal(struct {

@@ -3,7 +3,7 @@ import type { StaticImageData } from "next/image"
 import Image from "next/image"
 import Link from "next/link"
 import { ArrowRight, Check } from "lucide-react"
-import { Geist, JetBrains_Mono, Newsreader } from "next/font/google"
+import { Geist, Inter } from "next/font/google"
 
 import { AcuityMark } from "@/components/acuity-mark"
 import {
@@ -18,25 +18,26 @@ import styles from "./enterprise-site.module.css"
 
 import chasePortrait from "../../../public/marketing/chase-fagen-v2.png"
 import kylePortrait from "../../../public/marketing/kyle-shechtman-2026.png"
+import venincasaPortrait from "../../../public/marketing/michael-venincasa-md.jpg"
 
-const sans = Geist({
+const sans = Inter({
   subsets: ["latin"],
   variable: "--font-acuity-sans",
 })
 
-const display = Newsreader({
+// ABC Favorit Light is the reference display face. Keep Geist until the
+// licensed webfont is available; Inter matches the reference body and navigation.
+const display = Geist({
   subsets: ["latin"],
   variable: "--font-acuity-display",
-})
-
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-jetbrains-mono",
 })
 
 export type MarketingRoute =
   | "/"
   | "/method"
+  | "/integrations"
+  | "/integrations/advancedmd"
+  | "/integrations/stedi"
   | "/who-we-are"
   | "/work-with-us"
   | "/privacy-policy"
@@ -54,6 +55,7 @@ const footerNavigation = [
     label: "Product",
     links: [
       { href: "/method", label: "The Acuity Health Method" },
+      { href: "/integrations", label: "Partnerships & Integrations" },
     ],
   },
   {
@@ -61,6 +63,12 @@ const footerNavigation = [
     links: [
       { href: "/who-we-are", label: "Who We Are" },
       { href: "/work-with-us", label: "Work With Us" },
+      { href: "/sign-in", label: "Sign in" },
+    ],
+  },
+  {
+    label: "Social",
+    links: [
       {
         href: "https://www.linkedin.com/company/acuityhealth/",
         label: "LinkedIn",
@@ -69,9 +77,8 @@ const footerNavigation = [
     ],
   },
   {
-    label: "Resources",
+    label: "Legal",
     links: [
-      { href: "/sign-in", label: "Sign in" },
       { href: "/security", label: "Security, Privacy & HIPAA" },
       { href: "/privacy-policy", label: "Privacy Policy" },
       { href: "/terms-of-service", label: "Terms of Service" },
@@ -103,7 +110,7 @@ function SiteHeader({ current }: { current: MarketingRoute }) {
       <div className={styles.headerActions}>
         <PortalSignInTrigger className={styles.portalLink} />
         <Link className={styles.workLink} href="/work-with-us">
-          Work With Us
+          Build with us
         </Link>
       </div>
     </header>
@@ -114,6 +121,17 @@ function SiteFooter() {
   return (
     <footer className={styles.siteFooter}>
       <div className={styles.footerPrimary}>
+        <div className={styles.footerIdentity}>
+          <Link className={styles.footerBrand} href="/" aria-label="Acuity Health home">
+            <AcuityMark className={styles.footerBrandMark} />
+            <span>Acuity Health</span>
+          </Link>
+          <p className={styles.footerDescription}>Voice AI agents for patient access.</p>
+          <Link className={styles.footerContact} href="/work-with-us">
+            Work with us
+          </Link>
+          <p className={styles.footerCopyright}>© {new Date().getFullYear()} Acuity Health.</p>
+        </div>
         <nav className={styles.footerNavigation} aria-label="Footer navigation">
           {footerNavigation.map((section) => (
             <section className={styles.footerGroup} key={section.label}>
@@ -136,12 +154,6 @@ function SiteFooter() {
         </nav>
       </div>
 
-      <div className={styles.footerClose}>
-        <Link className={styles.footerWordmark} href="/" aria-label="Acuity Health home">
-          <AcuityMark className={styles.footerWordmarkMark} />
-          <span>Acuity Health</span>
-        </Link>
-      </div>
     </footer>
   )
 }
@@ -160,7 +172,7 @@ export function MarketingFrame({
       key={initiallyOpen ? "sign-in-open" : "sign-in-closed"}
       initiallyOpen={initiallyOpen}
     >
-      <div className={cn(styles.site, sans.variable, display.variable, mono.variable)}>
+      <div className={cn(styles.site, sans.variable, display.variable)}>
         <a className={styles.skipLink} href="#main-content">
           Skip to main content
         </a>
@@ -185,50 +197,42 @@ function Waveform({ compact = false }: { compact?: boolean }) {
   )
 }
 
-export function MethodVenn() {
+function MethodCapabilities({ headingLevel = 3 }: { headingLevel?: 2 | 3 }) {
+  const Heading = headingLevel === 2 ? "h2" : "h3"
+
   return (
-    <div className={styles.venn} data-testid="method-venn">
-      <div className={cn(styles.vennCircle, styles.vennSystem)}>
-        <div className={styles.vennCopy}>
-          <p>Agentic<br /><span>system design</span></p>
+    <div className={styles.methodCapabilities} data-testid="method-capabilities">
+      <div className={styles.methodColumns}>
+        <article className={styles.methodSystem}>
+          <p className={styles.methodLabel}>The technology</p>
+          <Heading>Agentic<br />system design</Heading>
+          <p className={styles.methodDescription}>
+            Voice AI agents built around medical workflows, privacy, and control.
+          </p>
           <ul>
-            <li>Medical AI agents</li>
-            <li>Evals + safeguards</li>
-            <li>Enterprise integrations</li>
+            <li>Data security + HIPAA safeguards</li>
+            <li>Analytics + guardrails</li>
+            <li>EMR integrations</li>
           </ul>
-        </div>
-      </div>
-      <div className={cn(styles.vennCircle, styles.vennTransformation)}>
-        <div className={styles.vennCopy}>
-          <p>Workflow<br />transformation</p>
+        </article>
+        <article className={styles.methodWorkflow}>
+          <p className={styles.methodLabel}>The operation</p>
+          <Heading>Workflow<br />transformation</Heading>
+          <p className={styles.methodDescription}>
+            Workflows shaped with the people who run them, from rollout onward.
+          </p>
           <ul>
             <li>Change management</li>
             <li>Workflow redesign</li>
             <li>Frontline training</li>
           </ul>
-        </div>
+        </article>
       </div>
-      <div className={styles.vennCenter}>
-        <strong>The Acuity Health Method</strong>
+      <div className={styles.methodConnection}>
+        <p>Built together.<br />Improved in the operation.</p>
+        <span>One team, from system design to the way work gets done.</span>
       </div>
     </div>
-  )
-}
-
-function PartnershipCta() {
-  return (
-    <section className={styles.partnershipCta}>
-      <div>
-        <p className={styles.eyebrow}>Work with us</p>
-        <h2>Bring us the operation that needs to change.</h2>
-        <p>
-          We’ll work beside your team from the first diagnostic through rollout.
-        </p>
-      </div>
-      <Link className={styles.lightButton} href="/work-with-us">
-        Start the conversation <ArrowRight size={17} aria-hidden="true" />
-      </Link>
-    </section>
   )
 }
 
@@ -241,25 +245,24 @@ export function EnterpriseHome({
     <MarketingFrame current="/" initiallyOpen={initiallyOpen}>
       <section className={styles.hero}>
         <div className={styles.heroCopy}>
-          <h1>Redesign patient access with medical AI agents.</h1>
+          <h1>Voice AI agents<br />for patient access.</h1>
           <p className={styles.heroBody}>
-            Acuity answers calls, completes approved work in the systems your
-            team already uses, and brings staff in when judgment or ownership is
-            required. Then we stay until the new operating model works.
+            Acuity Health helps medical enterprises onboard voice AI agents that
+            answer calls, check insurance eligibility, and book appointments.
           </p>
           <div className={styles.heroActions}>
             <Link className={styles.darkButton} href="/work-with-us">
-              Work with us
+              Build with us
             </Link>
             <Link className={styles.textLink} href="/method">
-              See the Acuity Health Method
+              Explore our method
             </Link>
           </div>
         </div>
         <PixelWaveField />
       </section>
 
-      <section className={styles.methodPageVenn}>
+      <section className={styles.methodSection}>
         <header className={styles.sectionHeader}>
           <div>
             <p className={styles.eyebrow}>The Acuity Health Method</p>
@@ -270,7 +273,7 @@ export function EnterpriseHome({
             needed to deploy it across the enterprise.
           </p>
         </header>
-        <MethodVenn />
+        <MethodCapabilities />
       </section>
 
       <section className={styles.storyPreview}>
@@ -282,17 +285,236 @@ export function EnterpriseHome({
           <p className={styles.eyebrow}>The founding story</p>
           <h2>We started close to the work.</h2>
           <p>
-            Consulting taught us the hard part was not answering the phone. It
-            was understanding the workflow and staying long enough to redesign
-            it with the people who run it.
+            Acuity grew out of our consulting work with medical practices. We build
+            voice AI agents around real workflows and support teams through rollout.
           </p>
           <Link className={styles.inlineArrowLink} href="/who-we-are">
             Read our story <ArrowRight size={16} aria-hidden="true" />
           </Link>
         </div>
       </section>
+    </MarketingFrame>
+  )
+}
 
-      <PartnershipCta />
+const stediPartnerUrl = "https://www.stedi.com/platform-partners#acuity-health"
+
+export function IntegrationsPageContent() {
+  return (
+    <MarketingFrame current="/integrations">
+      <section className={styles.missionVision} aria-labelledby="integrations-title" id="integrations">
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Partnerships & integrations</p>
+          <h1 id="integrations-title">Built around the systems your practice already uses.</h1>
+        </div>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>From the call to the next step</p>
+          <p>Connect patient conversations to scheduling and insurance eligibility, shaped around the way your team works.</p>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="advancedmd-partner">
+        <header>
+          <p className={styles.eyebrow}>EHR & PMS · Marketplace partner</p>
+          <h2 id="advancedmd-partner">AdvancedMD</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Patient calls become appointments in AdvancedMD. Our AI receptionist works with your practice’s providers, locations, appointment types, and scheduling rules.</p>
+          <div className={styles.platformActions}>
+            <Link className={styles.inlineArrowLink} href="/integrations/advancedmd">
+              Explore the AdvancedMD integration <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+            <a className={styles.inlineArrowLink} href="https://www.advancedmd.com/integrations/marketplace/acuity-health/" target="_blank" rel="noreferrer">
+              View our AdvancedMD marketplace listing <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="stedi-partner">
+        <header>
+          <p className={styles.eyebrow}>Healthcare clearinghouse · Platform partner</p>
+          <h2 id="stedi-partner">Stedi</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Bring insurance eligibility into the patient-access workflow. We partner with Stedi, a healthcare clearinghouse, to support quick, efficient medical, vision, and Medicare eligibility checks for supported payers.</p>
+          <div className={styles.platformActions}>
+            <Link className={styles.inlineArrowLink} href="/integrations/stedi">
+              Explore insurance eligibility <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+            <a className={styles.inlineArrowLink} href={stediPartnerUrl} target="_blank" rel="noreferrer">
+              View Acuity on Stedi <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="whitecotton-partner">
+        <header>
+          <p className={styles.eyebrow}>Eye care · Sales & implementation partner</p>
+          <h2 id="whitecotton-partner">Whitecotton Vision</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Whitecotton Vision brings Acuity Health to ophthalmology and optometry practices alongside its ophthalmic equipment and practice technology. Their team helps practices assess fit and supports implementation.</p>
+          <div className={styles.platformActions}>
+            <a className={styles.inlineArrowLink} href="https://whitecottonvision.com/acuity-health" target="_blank" rel="noreferrer">
+              Explore Acuity with Whitecotton Vision <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="other-systems">
+        <header>
+          <p className={styles.eyebrow}>More EHR & PMS integrations</p>
+          <h2 id="other-systems">Your systems.<br />Your workflow.</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>We also connect with these platforms. We scope the supported workflows and access requirements with your team before rollout.</p>
+          <ul className={styles.integrationNames}>
+            <li>Nextech</li><li>Athenahealth</li><li>ModMed</li><li>Compulink</li>
+          </ul>
+          <p>Use another system? We can assess a custom connection around the work your practice needs.</p>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="integration-setup">
+        <header>
+          <p className={styles.eyebrow}>How we build</p>
+          <h2 id="integration-setup">The connection starts with your workflow.</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>We map the work with your team: scheduling rules, insurance requirements, and the moments that need staff attention.</p>
+          <p>Then we confirm system access and payer enrollment, configure the workflow, and verify the connection before rollout. Your team stays involved as we refine the operation together.</p>
+        </div>
+      </section>
+    </MarketingFrame>
+  )
+}
+
+export function StediPageContent() {
+  return (
+    <MarketingFrame current="/integrations/stedi">
+      <section className={styles.missionVision} aria-labelledby="stedi-title">
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Stedi · Healthcare clearinghouse partner</p>
+          <h1 id="stedi-title">Medical, vision, and Medicare eligibility checks.</h1>
+        </div>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>Insurance eligibility, connected</p>
+          <p>We partner with Stedi to bring quick, efficient eligibility checks into your patient-access workflow.</p>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="stedi-connection">
+        <header>
+          <p className={styles.eyebrow}>Our partnership</p>
+          <h2 id="stedi-connection">A clearinghouse connection. A clearer next step.</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Stedi connects eligibility requests to insurance payers. Acuity brings that connection into the work of answering patient calls and preparing the next step with your practice.</p>
+          <p>Real-time checks help reduce manual verification. Available benefits and response times depend on the payer, the patient information provided, and your practice’s enrollment.</p>
+          <div className={styles.platformActions}>
+            <a className={styles.inlineArrowLink} href={stediPartnerUrl} target="_blank" rel="noreferrer">
+              View Acuity on Stedi <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.integrationsSection} aria-labelledby="eligibility-types">
+        <header className={styles.sectionHeader}>
+          <div><p className={styles.eyebrow}>Coverage checks</p><h2 id="eligibility-types">The right check for the visit.</h2></div>
+          <p>We confirm payer support and the information your team needs before configuring your eligibility workflow.</p>
+        </header>
+        <div className={styles.platformDetails}>
+          <article>
+            <h2>Medical eligibility</h2>
+            <p>Check active medical coverage and the benefits returned by supported payers, including copays and deductibles when available.</p>
+          </article>
+          <article>
+            <h2>Vision eligibility</h2>
+            <p>Check vision benefits where the payer supports them. We scope routine vision and medical eye-care workflows separately so the check fits the visit.</p>
+          </article>
+          <article>
+            <h2>Medicare eligibility</h2>
+            <p>Support Medicare eligibility checks with the required provider enrollment. Medicare Advantage checks depend on the patient’s plan and the payer connection.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="eligibility-questions">
+        <header>
+          <p className={styles.eyebrow}>Before rollout</p>
+          <h2 id="eligibility-questions">Know what the check can tell you.</h2>
+        </header>
+        <div className={styles.eligibilityAnswers}>
+          <div><h3>Does this support every payer?</h3><p>Support varies by payer and coverage type. We review your payer mix and any enrollment requirements with your team. You can also explore <a href="https://www.stedi.com/healthcare/network" target="_blank" rel="noreferrer">Stedi’s payer network</a>.</p></div>
+          <div><h3>Does eligibility guarantee payment?</h3><p>No. An eligibility response is not a guarantee of payment, prior authorization, or confirmation that a particular procedure is covered. Your practice’s acceptance rules and any remaining verification still apply.</p></div>
+          <div><h3>What if a check cannot be completed?</h3><p>We define the staff handoff during setup, including when patient information needs correction or a payer cannot return a usable result.</p></div>
+          <Link className={styles.inlineArrowLink} href="/integrations">All partnerships & integrations <ArrowRight size={16} aria-hidden="true" /></Link>
+        </div>
+      </section>
+    </MarketingFrame>
+  )
+}
+
+export function AdvancedMDPageContent() {
+  return (
+    <MarketingFrame current="/integrations/advancedmd">
+      <section className={styles.integrationsSection}>
+        <header className={styles.sectionHeader}>
+          <div>
+            <p className={styles.eyebrow}>AdvancedMD marketplace partner</p>
+            <h1>AI Agents for AdvancedMD.</h1>
+          </div>
+          <p>
+            Acuity Health answers patient calls and schedules directly in
+            AdvancedMD, with medical AI built around your practice’s rules.
+          </p>
+        </header>
+        <div className={styles.platformActions}>
+          <Link className={styles.darkButton} href="/work-with-us">
+            Discuss AdvancedMD <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+          <a
+            className={styles.inlineArrowLink}
+            href="https://www.advancedmd.com/integrations/marketplace/acuity-health/"
+            rel="noreferrer"
+            target="_blank"
+          >
+            View our AdvancedMD marketplace listing
+            <ArrowRight size={16} aria-hidden="true" />
+          </a>
+        </div>
+        <div className={styles.platformDetails}>
+          <article>
+            <h2>Calls answered, 24/7</h2>
+            <p>Handle common questions, scheduling requests, and after-hours calls.</p>
+          </article>
+          <article>
+            <h2>Scheduling that follows your rules</h2>
+            <p>Book in AdvancedMD using your providers, locations, appointment types, and insurance requirements.</p>
+          </article>
+          <article>
+            <h2>Clear staff handoffs</h2>
+            <p>Turn unresolved requests into staff work with the context, ownership, and next action to follow through.</p>
+          </article>
+        </div>
+        <div className={styles.customIntegration}>
+          <div>
+            <h2>What does setup involve?</h2>
+            <p className={styles.integrationDescription}>
+              We review your AdvancedMD setup and scheduling workflows with your
+              team, then confirm the integration requirements and work your AI
+              should handle before rollout.
+            </p>
+          </div>
+          <Link className={styles.inlineArrowLink} href="/integrations">
+            All EHR & PMS integrations <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+        </div>
+      </section>
     </MarketingFrame>
   )
 }
@@ -300,7 +522,7 @@ export function EnterpriseHome({
 export function MethodPageContent() {
   return (
     <MarketingFrame current="/method">
-      <section className={styles.methodPageVenn}>
+      <section className={styles.methodSection}>
         <header className={styles.sectionHeader}>
           <div>
             <p className={styles.eyebrow}>The Acuity Health Method</p>
@@ -311,7 +533,7 @@ export function MethodPageContent() {
             expertise needed to deploy it across the enterprise.
           </p>
         </header>
-        <MethodVenn />
+        <MethodCapabilities headingLevel={2} />
       </section>
 
       <section className={styles.commitmentSection}>
@@ -326,8 +548,6 @@ export function MethodPageContent() {
           <li><Check size={17} aria-hidden="true" /> The customer gains capability at every stage.</li>
         </ul>
       </section>
-
-      <PartnershipCta />
     </MarketingFrame>
   )
 }
@@ -401,8 +621,22 @@ export function WhoWeArePageContent() {
                 "@type": "Person",
                 "@id": "https://acuityhealth.io/who-we-are#chase-fagen",
                 name: "Chase Fagen",
-                jobTitle: "Co-founder",
+                jobTitle: "Co-founder and Head of AI Engineering",
                 sameAs: ["https://www.linkedin.com/in/chase-fagen-198947180"],
+                worksFor: { "@id": "https://acuityhealth.io/#organization" },
+              },
+              {
+                "@type": "Person",
+                "@id": "https://acuityhealth.io/who-we-are#dr-venincasa",
+                name: "Michael Venincasa, MD",
+                jobTitle: "Chief Medical Officer",
+                image: {
+                  "@type": "ImageObject",
+                  url: "https://acuityhealth.io/marketing/michael-venincasa-md.jpg",
+                  width: venincasaPortrait.width,
+                  height: venincasaPortrait.height,
+                  caption: "Michael Venincasa, MD, Acuity Health Chief Medical Officer",
+                },
                 worksFor: { "@id": "https://acuityhealth.io/#organization" },
               },
             ],
@@ -410,28 +644,45 @@ export function WhoWeArePageContent() {
         }}
         type="application/ld+json"
       />
-      <section className={styles.foundingStory}>
-        <p className={styles.eyebrow}>The founding story</p>
-        <div>
-          <h1>Acuity Health began close to the patient-access work.</h1>
-          <div className={styles.storyColumns}>
-            <p>
-              Working closely with medical practices taught us that the hard part
-              was never simply teaching a model to answer the phone. It was
-              understanding how the practice actually worked: how scheduling rules
-              changed by location, where handoffs failed, which exceptions required
-              judgment, and what staff and patients needed to trust the system.
-              Making the technology useful required workflow redesign, frontline
-              change management, and a new operating model that people could
-              actually adopt.
-            </p>
-            <p>
-              That understanding cannot be handed from a sales team to an
-              implementation queue. So we built Acuity Health the same way we learned to
-              solve the problem: founder-deployed, inside the operation, with the
-              relationship treated as part of the product.
-            </p>
-          </div>
+      <section
+        aria-labelledby="company-mission"
+        className={styles.missionVision}
+      >
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Our mission</p>
+          <h1 id="company-mission">
+            Free medical practices from administrative overload so every patient
+            can be treated like a VIP.
+          </h1>
+        </div>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>Our vision</p>
+          <p>
+            A future where AI runs the administration, humans elevate the care,
+            and no patient falls through the cracks.
+          </p>
+        </div>
+      </section>
+
+      <section className={styles.foundingStory} aria-labelledby="founding-story">
+        <header>
+          <p className={styles.eyebrow}>The founding story</p>
+          <h2 id="founding-story">From consulting<br />to Acuity.</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>
+            Acuity grew out of consulting work with medical practices. We learned
+            how scheduling rules, insurance requirements, and handoffs shape the
+            work of staff and the experience of patients.
+          </p>
+          <p>
+            We built our voice AI agents around those realities, connecting them
+            to existing systems and giving staff clear roles in the workflow.
+          </p>
+          <p>
+            Today, our founders stay involved from workflow design through rollout.
+            We build alongside your team and keep improving the operation together.
+          </p>
         </div>
       </section>
 
@@ -458,7 +709,7 @@ export function WhoWeArePageContent() {
             linkedinHref="https://www.linkedin.com/in/chase-fagen-198947180"
             location="August 2026"
             portraitClassName={styles.founderPortraitChase}
-            role="Co-founder"
+            role="Co-founder & Head of AI Engineering"
           >
             <p>
               When intelligence has negligible marginal cost and is abundant,
@@ -467,30 +718,44 @@ export function WhoWeArePageContent() {
             </p>
           </FounderPanel>
         </div>
-      </section>
-
-      <section
-        aria-labelledby="company-mission"
-        className={styles.missionVision}
-      >
-        <div className={styles.missionStatement}>
-          <p className={styles.eyebrow}>Our mission</p>
-          <h2 id="company-mission">
-            Free medical practices from administrative overload so every patient
-            can be treated like a VIP.
-          </h2>
-        </div>
-        <div className={styles.visionStatement}>
-          <p className={styles.eyebrow}>Our vision</p>
-          <p>
-            A future where AI runs the administration, humans elevate the care,
-            and no patient falls through the cracks.
-          </p>
-        </div>
+        <article
+          aria-labelledby="dr-venincasa"
+          className={styles.clinicalLeadership}
+        >
+          <Image
+            alt="Michael Venincasa, MD, Acuity Health Chief Medical Officer"
+            className={styles.clinicalPortrait}
+            placeholder="blur"
+            loading="lazy"
+            sizes="(max-width: 427px) calc(100vw - 48px), (max-width: 640px) 380px, (max-width: 860px) 300px, 380px"
+            src={venincasaPortrait}
+          />
+          <div className={styles.clinicalProfile}>
+            <p className={styles.eyebrow}>Clinical leadership</p>
+            <h2 id="dr-venincasa">Michael Venincasa<span>, MD</span></h2>
+            <p className={styles.clinicalRole}>Chief Medical Officer</p>
+            <div className={styles.clinicalBio}>
+              <p>
+                Dr. Venincasa is a comprehensive ophthalmologist with a special
+                interest in cataract surgery and advanced lens replacement.
+              </p>
+              <p>
+                He earned his medical degree at the University of Miami Miller
+                School of Medicine and completed his residency at Bascom Palmer
+                Eye Institute. His commitment to improving patients’ vision and
+                lives guides his work at Acuity Health, where he helps shape AI
+                that gives medical teams more time to focus on care.
+              </p>
+            </div>
+          </div>
+        </article>
       </section>
 
       <section className={styles.principlesSection}>
-        <p className={styles.eyebrow}>How we build</p>
+        <header>
+          <p className={styles.eyebrow}>Our principles</p>
+          <h2>How we build</h2>
+        </header>
         <div>
           <article>
             <div>
@@ -520,8 +785,6 @@ export function WhoWeArePageContent() {
           </article>
         </div>
       </section>
-
-      <PartnershipCta />
     </MarketingFrame>
   )
 }
@@ -544,22 +807,22 @@ export function WorkWithUsPageContent() {
         <div className={styles.collaborationSteps}>
           <article>
             <span>01</span>
-            <h3>Baseline</h3>
+            <h2>Baseline</h2>
             <p>Agree on volumes, failure modes, handoffs, and the KPIs that matter.</p>
           </article>
           <article>
             <span>02</span>
-            <h3>Redesign</h3>
+            <h2>Redesign</h2>
             <p>Map the rules, exceptions, ownership, and new workflow with the people who run it.</p>
           </article>
           <article>
             <span>03</span>
-            <h3>Test</h3>
+            <h2>Test</h2>
             <p>Launch a bounded pilot that tests the highest-risk assumptions in real operations.</p>
           </article>
           <article>
             <span>04</span>
-            <h3>Prove</h3>
+            <h2>Prove</h2>
             <p>Compare results with the agreed KPIs, strengthen weak points, and expand when the evidence holds.</p>
           </article>
         </div>

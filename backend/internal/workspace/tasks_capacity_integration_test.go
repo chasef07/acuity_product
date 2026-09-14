@@ -40,8 +40,8 @@ func TestTaskLocationFilterUsesScopedIndex(t *testing.T) {
 	if _, err := pool.Exec(ctx, `ANALYZE work_tasks; ANALYZE access_locations`); err != nil {
 		t.Fatal(err)
 	}
-	query := taskQuerySQL(work.TaskOpen, work.TaskOrderingRecent)
-	args := []any{practiceID, []string{locationID}, "", "", false, time.Now(), "", 1, 51, "synthetic-staff", "work"}
+	query := taskQuerySQL(work.TaskOpen, work.TaskOrderingRecent, false)
+	args := []any{practiceID, []string{locationID}, "", "", false, time.Now(), "", 1, 51, "synthetic-staff", "work", "all", "synthetic@staff.test", "", ""}
 	explain := func(sql string) (float64, map[string]any) {
 		t.Helper()
 		var raw []byte

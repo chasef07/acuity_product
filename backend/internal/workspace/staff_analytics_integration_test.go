@@ -64,6 +64,36 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 	insertCall(locA, "OUTBOUND", []int{600}, true)
 	insertCall(locA, "INBOUND", []int{50}, false)
 	insertCall(locB, "INBOUND", []int{999}, true)
+	insertText := func(practiceID, location, direction, kind, subject, state string, created time.Time) {
+		t.Helper()
+		var threadID string
+		if err := pool.QueryRow(ctx, `
+  INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone)
+  VALUES($1,$2,'+15555550198','+15555550199')
+  ON CONFLICT(practice_id,location_id,office_phone,external_phone)
+  DO UPDATE SET updated_at=messaging_threads.updated_at RETURNING id::text`, practiceID, location).Scan(&threadID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `
+  INSERT INTO messaging_messages(thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,created_by_kind,created_by_subject,created_at)
+  VALUES($1,$2,$3,$4,'Synthetic text','+15555550198','+15555550199',$5,NULLIF($6,''),NULLIF($7,''),$8)`, threadID, practiceID, location, direction, state, kind, subject, created); err != nil {
+			t.Fatal(err)
+		}
+	}
+	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	from := to.AddDate(0, 0, -7)
+	insertText(practice, locA, "OUTBOUND", "HUMAN", staff.Subject, "SENT", from)
+	insertText(practice, locA, "OUTBOUND", "HUMAN", staff.Subject, "DELIVERED", day)
+	insertText(practice, locA, "OUTBOUND", "HUMAN", "former-staff", "DELIVERED", day)
+	insertText(practice, locB, "OUTBOUND", "HUMAN", staff.Subject, "DELIVERED", day)
+	insertText(otherPractice, otherLocation, "OUTBOUND", "HUMAN", staff.Subject, "DELIVERED", day)
+	for _, state := range []string{"FAILED", "SENDING", "UNKNOWN"} {
+		insertText(practice, locA, "OUTBOUND", "HUMAN", staff.Subject, state, day)
+	}
+	insertText(practice, locA, "OUTBOUND", "SERVICE", staff.Subject, "DELIVERED", day)
+	insertText(practice, locA, "INBOUND", "", "", "DELIVERED", day)
+	insertText(practice, locA, "OUTBOUND", "HUMAN", staff.Subject, "DELIVERED", from.Add(-time.Microsecond))
+	insertText(practice, locA, "OUTBOUND", "HUMAN", staff.Subject, "DELIVERED", to)
 	for i, kind := range []string{"HUMAN", "SERVICE", ""} {
 		id := uuid.NewString()
 		state := "OPEN"
@@ -89,16 +119,31 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Accounts) != 3 || report.Total.InboundCalls != 1 || report.Total.OutboundCalls != 1 || report.Total.InboundSeconds != 300 || report.Total.OutboundSeconds != 600 || report.Total.TasksCompleted != 1 {
+	if len(report.Accounts) != 4 || report.Total.InboundCalls != 1 || report.Total.OutboundCalls != 1 || report.Total.InboundSeconds != 300 || report.Total.OutboundSeconds != 600 || report.Total.TasksCompleted != 1 || report.Total.TextsSent != 3 {
 		t.Fatalf("staff aggregates: %+v", report)
 	}
 	if report.Tasks.Completed != 2 || report.Tasks.Eligible != 3 || report.Tasks.Within48Hours != 2 {
 		t.Fatalf("task KPI: %+v", report.Tasks)
 	}
 	for _, account := range report.Accounts {
-		if account.Email == "pending@staff.test" && (account.Status != "PENDING" || account.InboundCalls != 0) {
+		if account.Email == "pending@staff.test" && (account.Status != "PENDING" || account.InboundCalls != 0 || account.TextsSent != 0) {
 			t.Fatalf("pending account lost: %+v", account)
 		}
+		wantTexts := 0
+		if account.Email == staff.Email {
+			wantTexts = 2
+		} else if account.ID == "other-accounts" {
+			wantTexts = 1
+		}
+		if account.TextsSent != wantTexts {
+			t.Fatalf("incorrect staff text attribution: %+v", account)
+		}
+	}
+	allLocations := command
+	allLocations.LocationID = ""
+	allReport, err := module.QueryStaffAnalytics(ctx, allLocations)
+	if err != nil || allReport.Total.TextsSent != 4 {
+		t.Fatalf("all-Location texts: %+v, %v", allReport.Total, err)
 	}
 	// A completed Call can still be waiting for its staff leg's terminal receipt.
 	// Missing inbound timing must not make complete outbound timing unavailable.

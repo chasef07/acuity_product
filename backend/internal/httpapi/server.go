@@ -22,6 +22,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
+	"github.com/chasef07/acuity_product/backend/internal/knowledge"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/work"
@@ -58,6 +59,7 @@ type Config struct {
 }
 
 type PortalDependencies struct {
+	Knowledge            *knowledge.Module
 	Access               *access.Module
 	Authenticator        IdentityAuthenticator
 	Calling              *humancalling.Module
@@ -75,6 +77,7 @@ type RealtimeDependencies struct {
 }
 
 type Server struct {
+	knowledge       *knowledge.Module
 	role            string
 	config          Config
 	pool            *pgxpool.Pool
@@ -92,6 +95,7 @@ type Server struct {
 }
 
 type serverDependencies struct {
+	knowledge     *knowledge.Module
 	access        *access.Module
 	authenticator IdentityAuthenticator
 	events        EventStreamer
@@ -119,6 +123,7 @@ func NewPortal(
 		return nil, fmt.Errorf("portal dependencies are required")
 	}
 	return newServer("portal-api", config, pool, serverDependencies{
+		knowledge:     dependencies.Knowledge,
 		access:        dependencies.Access,
 		authenticator: dependencies.Authenticator,
 		calling:       dependencies.Calling,
@@ -179,6 +184,7 @@ func newServer(
 	}
 
 	server := &Server{
+		knowledge:     dependencies.knowledge,
 		role:          role,
 		config:        config,
 		pool:          pool,
@@ -1632,16 +1638,20 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	page, err := server.workspace.QueryTasks(ctx, workspace.QueryTasksCommand{
-		IncludeCounts: body.IncludeCounts,
-		Identity:      identity,
-		PracticeID:    body.PracticeId.String(),
-		LocationID:    uuidString(body.LocationId),
-		Search:        stringValue(body.Search),
-		State:         state,
-		Ordering:      ordering,
-		Folder:        folder,
-		Cursor:        stringValue(body.Cursor),
-		Limit:         intValue(body.Limit),
+		Kind:           stringValue((*string)(body.Kind)),
+		IncludeCounts:  body.IncludeCounts,
+		Responsibility: stringValue((*string)(body.Responsibility)),
+		Category:       work.TaskCategory(stringValue((*string)(body.Category))),
+		Grouped:        body.Grouped != nil && *body.Grouped,
+		Identity:       identity,
+		PracticeID:     body.PracticeId.String(),
+		LocationID:     uuidString(body.LocationId),
+		Search:         stringValue(body.Search),
+		State:          state,
+		Ordering:       ordering,
+		Folder:         folder,
+		Cursor:         stringValue(body.Cursor),
+		Limit:          intValue(body.Limit),
 	})
 	if err != nil {
 		server.writeWorkspaceError(w, r, err)
@@ -1731,6 +1741,75 @@ func (server *Server) CompleteTask(
 		Identity:        identity,
 		TaskID:          taskID.String(),
 		ExpectedVersion: body.ExpectedVersion,
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := taskResponse(task)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) ChangeTaskCategory(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.ChangeTaskCategoryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	task, err := server.work.ChangeTaskCategory(ctx, work.ChangeTaskCategoryCommand{
+		Identity:        identity,
+		TaskID:          taskID.String(),
+		ExpectedVersion: body.ExpectedVersion,
+		Category:        work.TaskCategory(body.Category),
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := taskResponse(task)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) CompleteTaskGroup(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.CompleteTaskGroupRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	members := make([]work.ReviewedTask, 0, len(body.Members))
+	for _, member := range body.Members {
+		members = append(members, work.ReviewedTask{ID: member.Id.String(), ExpectedVersion: member.ExpectedVersion})
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	task, err := server.work.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
+		Identity: identity,
+		TaskID:   taskID.String(),
+		Members:  members,
 	})
 	if err != nil {
 		server.writeWorkError(w, r, err)
@@ -1869,12 +1948,13 @@ func (server *Server) QueryMessageThreads(w http.ResponseWriter, r *http.Request
 	page, err := server.messaging.QueryThreads(
 		ctx,
 		messaging.QueryThreadsCommand{
-			Identity:   identity,
-			PracticeID: body.PracticeId.String(),
-			LocationID: uuidString(body.LocationId),
-			Search:     stringValue(body.Search),
-			Cursor:     stringValue(body.Cursor),
-			Limit:      intValue(body.Limit),
+			Identity:        identity,
+			RecentAttention: body.RecentAttention != nil && *body.RecentAttention,
+			PracticeID:      body.PracticeId.String(),
+			LocationID:      uuidString(body.LocationId),
+			Search:          stringValue(body.Search),
+			Cursor:          stringValue(body.Cursor),
+			Limit:           intValue(body.Limit),
 		},
 	)
 	if err != nil {
@@ -2639,6 +2719,10 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 		if server.role == "portal-api" {
 			route = availabilityRoute(r.Method, r.URL.Path)
 		}
+		if diagnostic := diagnosticRoute(server.role, r.Method, r.URL.Path); diagnostic != "" {
+			server.serveDiagnosticRoute(next, w, r.WithContext(ctx), diagnostic)
+			return
+		}
 		if route == "" {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -3178,6 +3262,17 @@ func taskResponse(task work.Task) (api.Task, error) {
 		}
 		response.CallId = &callID
 	}
+	if len(task.GroupMembers) > 0 {
+		members := make([]api.Task, 0, len(task.GroupMembers))
+		for _, member := range task.GroupMembers {
+			converted, err := taskResponse(member)
+			if err != nil {
+				return api.Task{}, err
+			}
+			members = append(members, converted)
+		}
+		response.GroupMembers = &members
+	}
 	if task.Category != "" {
 		category := api.StaffTaskCategory(task.Category)
 		response.Category = &category
@@ -3187,6 +3282,9 @@ func taskResponse(task work.Task) (api.Task, error) {
 	}
 	if task.SourceCallID != "" {
 		response.SourceCallId = &task.SourceCallID
+	}
+	if task.Preview != "" {
+		response.Preview = &task.Preview
 	}
 	if task.SourceMessage != "" {
 		response.SourceMessage = &task.SourceMessage
@@ -3292,6 +3390,7 @@ func messageThreadPageResponse(
 	response := api.MessageThreadPage{
 		Items:      make([]api.MessageThreadSummary, 0, len(page.Items)),
 		NextCursor: page.NextCursor,
+		Total:      page.Total,
 	}
 	for _, item := range page.Items {
 		thread, err := messageThreadResponse(item.Thread)
@@ -3473,6 +3572,9 @@ func conversationTimelineResponse(
 		if item.TaskActivity != "" {
 			activity := api.ConversationTimelineItemTaskActivity(item.TaskActivity)
 			converted.TaskActivity = &activity
+			if item.TaskActivityDetails != nil {
+				converted.TaskActivityDetails = &item.TaskActivityDetails
+			}
 		}
 		switch item.Type {
 		case "CALL_HISTORY":
@@ -3533,8 +3635,10 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 	}
 	if page.Counts != nil {
 		response.Counts = &api.TaskFolderCounts{
-			Tasks:       page.Counts.Tasks,
-			MissedCalls: page.Counts.MissedCalls,
+			Tasks:        page.Counts.Tasks,
+			MissedCalls:  page.Counts.MissedCalls,
+			Texts:        &page.Counts.Texts,
+			CallRecovery: &page.Counts.CallRecovery,
 			Categories: api.TaskCategoryCounts{
 				Billing:       page.Counts.Categories.Billing,
 				Appointments:  page.Counts.Categories.Appointments,
@@ -3543,6 +3647,7 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 				Medication:    page.Counts.Categories.Medication,
 				Referrals:     page.Counts.Categories.Referrals,
 				Other:         page.Counts.Categories.Other,
+				Insurance:     &page.Counts.Categories.Insurance, PreOp: &page.Counts.Categories.PreOp, PostOp: &page.Counts.Categories.PostOp,
 			},
 		}
 	}
@@ -3818,6 +3923,7 @@ func operatorAIAnalyticsPageResponse(
 	}
 	if page.Summary != nil {
 		response.Summary = &api.OperatorAIAnalyticsSummary{
+			Daily:             make([]api.OperatorAIAnalyticsDay, 0, len(page.Summary.Daily)),
 			Diagnostics:       analyticsDiagnosticsResponse(page.Summary.Diagnostics),
 			TotalCalls:        page.Summary.TotalCalls,
 			BookingCount:      page.Summary.BookingCount,
@@ -3840,6 +3946,9 @@ func operatorAIAnalyticsPageResponse(
 			ToolCallCount:     page.Summary.ToolCallCount,
 			ToolErrorCount:    page.Summary.ToolErrorCount,
 			ToolFailureRate:   page.Summary.ToolFailureRate,
+		}
+		for _, day := range page.Summary.Daily {
+			response.Summary.Daily = append(response.Summary.Daily, api.OperatorAIAnalyticsDay{Date: day.Date, TotalCalls: day.TotalCalls, TransferCount: day.TransferCount, TransferRate: day.TransferRate})
 		}
 	}
 	for _, call := range page.Calls {
@@ -3932,15 +4041,16 @@ func operatorAIInteractionAnalyticsResponse(
 	}
 	for _, execution := range detail.ToolExecutions {
 		response.ToolExecutions = append(response.ToolExecutions, api.OperatorAIToolExecution{
-			DurationMs:    execution.DurationMs,
-			CallId:        execution.CallID,
-			Name:          execution.Name,
-			OccurredAt:    execution.OccurredAt,
-			Status:        api.OperatorAIToolExecutionStatus(execution.Status),
-			OutputClass:   stringPointer(execution.OutputClass),
-			DomainOutcome: stringPointer(execution.DomainOutcome),
-			DomainStatus:  optionalOperatorAIToolDomainStatus(execution.DomainStatus),
-			TaskId:        stringPointer(execution.TaskID),
+			MiddlewareRequests: operatorMiddlewareRequests(execution.MiddlewareRequests),
+			DurationMs:         execution.DurationMs,
+			CallId:             execution.CallID,
+			Name:               execution.Name,
+			OccurredAt:         execution.OccurredAt,
+			Status:             api.OperatorAIToolExecutionStatus(execution.Status),
+			OutputClass:        stringPointer(execution.OutputClass),
+			DomainOutcome:      stringPointer(execution.DomainOutcome),
+			DomainStatus:       optionalOperatorAIToolDomainStatus(execution.DomainStatus),
+			TaskId:             stringPointer(execution.TaskID),
 		})
 	}
 	return response, nil
@@ -3990,3 +4100,44 @@ func intValue(value *int) int {
 }
 
 var _ IdentityAuthenticator = (*authn.JWKSAuthenticator)(nil)
+
+// Bulk attention commands use domain-owned mutations and the current User's
+// authorized Location scope, never IDs supplied from a loaded browser page.
+func (server *Server) MarkRecentMessageThreadsRead(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.RecentAttentionScope
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	if err := server.messaging.MarkRecentRead(ctx, identity, body.PracticeId.String(), uuidString(body.LocationId)); err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) ReviewRecentAIInteractionOutcomes(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.RecentAttentionScope
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	if err := server.interactions.ReviewRecentOutcomes(ctx, identity, body.PracticeId.String(), uuidString(body.LocationId)); err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

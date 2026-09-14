@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
+	"github.com/google/uuid"
 )
 
 func TestRecoveryReusesExplicitAITask(t *testing.T) {
@@ -157,6 +158,41 @@ func TestRecoveryKeepsSeparateNeedsAndConcurrentReplays(t *testing.T) {
 	if tasks != 2 || attachments != 1 || activities != 1 {
 		t.Fatalf("Tasks=%d attachments=%d activities=%d", tasks, attachments, activities)
 	}
+	// Existing grouped review keeps both requests, with the Call attached only to its explicit owner.
+	page, err := workspace.New(pool, accessModule).QueryTasks(ctx, workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: first.PracticeID, Responsibility: "all", Grouped: true,
+	})
+	if err != nil || len(page.Items) != 1 || len(page.Items[0].GroupMembers) != 2 {
+		t.Fatalf("linked request lost grouped review: %#v %v", page, err)
+	}
+	_, err = module.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
+		Identity: identity, TaskID: first.ID,
+		Members: []work.ReviewedTask{{ID: first.ID, ExpectedVersion: first.Version}, {ID: second.ID, ExpectedVersion: second.Version}},
+	})
+	if !errors.Is(err, work.ErrConflict) {
+		t.Fatalf("group completed without reviewing attached Call: %v", err)
+	}
+	// A callback clears ordinary recovery reviews, never the original AI obligation.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	_, err = module.ResolveRecoveryTasks(ctx, tx, work.ResolveRecoveryTasksCommand{
+		PracticeID: first.PracticeID, Phone: first.Phone, Kind: work.RecoveryResolutionCallbackAttempt,
+		SourceID: uuid.NewString(), OccurredAt: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	linked, err := module.ReadTask(ctx, identity, first.ID)
+	if err != nil || linked.State != work.TaskOpen {
+		t.Fatalf("callback completed AI obligation: %#v %v", linked, err)
+	}
+
 	// Completion before the first recovery fact preserves completion and attaches evidence once.
 	completed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: second.ID, ExpectedVersion: second.Version})
 	if err != nil {

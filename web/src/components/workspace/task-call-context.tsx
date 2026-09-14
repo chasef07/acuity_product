@@ -36,8 +36,14 @@ import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 
+import { TaskGroupContext } from "./task-group-context"
+import { TaskMetadata } from "./task-metadata"
+
 type TaskCallContextProps = {
   task: Task | undefined
+  group?: Task
+  taskRows?: Task[]
+  onSelectTask?: (task: Task) => void
   activeCall: CallingCall | undefined
   view: "none" | "task" | "call"
   canMutate: boolean
@@ -45,13 +51,16 @@ type TaskCallContextProps = {
   historyHint: number
   taskCallPending: boolean
   taskCallError: string
-  onTaskUpdated: (task: Task) => void
+  onTaskUpdated: (task: Task, advance?: boolean) => void
   onStartTaskCall: (task: Task) => void
   onReturnToCall: () => void
 }
 
 export function TaskCallContext({
   task,
+  group,
+  taskRows,
+  onSelectTask,
   activeCall,
   view,
   canMutate,
@@ -85,11 +94,16 @@ export function TaskCallContext({
       />
     )
   }
+  if (view === "task" && task && group && onSelectTask) {
+    return <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} canMutate={canMutate} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
+  }
   if (view === "task" && task) {
     return (
       <TaskWorkspace
         key={task.id}
         task={task}
+        onNextTask={onSelectTask && taskRows?.some((row) => row.id !== task.id)
+          ? () => onSelectTask(taskRows.find((row) => row.id !== task.id)!) : undefined}
         activeCall={activeCall}
         canMutate={canMutate}
         canCall={canCall}
@@ -107,6 +121,7 @@ export function TaskCallContext({
 
 function TaskWorkspace({
   task,
+  onNextTask,
   activeCall,
   canMutate,
   canCall,
@@ -118,13 +133,14 @@ function TaskWorkspace({
   onReturnToCall,
 }: {
   task: Task
+  onNextTask?: () => void
   activeCall: CallingCall | undefined
   canMutate: boolean
   canCall: boolean
   historyHint: number
   taskCallPending: boolean
   taskCallError: string
-  onTaskUpdated: (task: Task) => void
+  onTaskUpdated: (task: Task, advance?: boolean) => void
   onStartTaskCall: (task: Task) => void
   onReturnToCall: () => void
 }) {
@@ -134,6 +150,14 @@ function TaskWorkspace({
   const [error, setError] = useState("")
   const [callEligible, setCallEligible] = useState(false)
   const [callReason, setCallReason] = useState("Checking Call route…")
+
+  const [reviewedVersion, setReviewedVersion] = useState(task.version)
+  const reviewRequired = task.origin === "APPOINTMENT_REVIEW" || task.origin === "INBOUND_MESSAGE_REVIEW"
+  const needsReview = reviewRequired && task.state === "OPEN" && reviewedVersion !== task.version
+  function acceptUpdate(updated: Task, advance = false) {
+    setReviewedVersion(updated.version)
+    onTaskUpdated(updated, advance)
+  }
 
   useEffect(() => {
     if (!canCall) return
@@ -200,7 +224,7 @@ function TaskWorkspace({
     }).catch(() => undefined)
     setPending(false)
     if (result?.data) {
-      onTaskUpdated(result.data)
+      acceptUpdate(result.data)
       setEditing(false)
       return
     }
@@ -217,6 +241,7 @@ function TaskWorkspace({
   }
 
   async function transition(action: "complete" | "reopen") {
+    if (pending || (action === "complete" && needsReview)) return
     setPending(true)
     setError("")
     const token = await getAccessToken()
@@ -234,7 +259,7 @@ function TaskWorkspace({
     }).catch(() => undefined)
     setPending(false)
     if (result?.data) {
-      onTaskUpdated(result.data)
+      acceptUpdate(result.data, action === "complete")
       return
     }
     if (result?.response?.status === 409) {
@@ -312,20 +337,28 @@ function TaskWorkspace({
           {!canMutate && <Badge variant="outline">Read only</Badge>}
         </div>
       )}
+      {canMutate && <TaskMetadata task={task} onUpdated={acceptUpdate} />}
       {task.sourceMessage && (
         <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
           {task.sourceMessage}
         </p>
       )}
+      {task.state === "COMPLETED" && <p role="status" className="mt-3 text-sm text-muted-foreground">Completed by {task.completedBy?.email ?? "the team"}{task.completedAt ? ` · ${formatDateTime(task.completedAt)}` : ""}. <span className="block mt-1 text-xs">Completed for everyone with access.</span></p>}
+      {needsReview && <div role="status" className="mt-3 rounded-md border p-3 text-sm">
+        This Task changed. Review the latest activity before completing it.
+        <Button size="sm" variant="outline" className="mt-2" onClick={() => setReviewedVersion(task.version)}>Review latest</Button>
+      </div>}
       {canMutate && (
         <div className="mt-4 flex flex-col gap-2">
           {task.state === "OPEN" ? (
             <>
               <Button
+                variant={recovery ? "ghost" : "default"}
+                className={recovery ? "order-2" : undefined}
                 onClick={() => void transition("complete")}
-                disabled={pending}
+                disabled={pending || needsReview}
               >
-                {pending ? <Spinner /> : <CheckCircle2Icon />} {recovery ? "Resolve" : "Complete"}
+                {pending ? <Spinner /> : <CheckCircle2Icon />} {task.origin === "APPOINTMENT_REVIEW" ? "Verify & next" : recovery ? "Mark done" : "Complete & next"}
               </Button>
               {activeCall ? (
                 <Button variant="outline" onClick={onReturnToCall}>
@@ -333,7 +366,7 @@ function TaskWorkspace({
                 </Button>
               ) : canCall ? (
                 <Button
-                  variant="outline"
+                  variant={recovery ? "default" : "outline"}
                   disabled={!taskCallingEligible || taskCallPending}
                   title={taskCallingEligible ? "Call this Task" : taskCallingReason}
                   onClick={() => onStartTaskCall(task)}
@@ -343,6 +376,8 @@ function TaskWorkspace({
               ) : null}
             </>
           ) : (
+            <>
+            {onNextTask && <Button onClick={onNextTask}>Next task</Button>}
             <Button
               variant="outline"
               onClick={() => void transition("reopen")}
@@ -350,6 +385,7 @@ function TaskWorkspace({
             >
               {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
             </Button>
+            </>
           )}
         </div>
       )}
@@ -362,8 +398,8 @@ function TaskWorkspace({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      {recovery && (
-        <RecoveryTaskSource task={task} revision={historyHint} />
+      {(recovery || (task.origin === "ABITA_AI" && task.interactions.length > 0)) && (
+        <RecoveryTaskSource task={task} revision={historyHint} onUpdated={onTaskUpdated} />
       )}
       <details className="group mt-4 border-t pt-4">
         <summary className="cursor-pointer text-sm font-medium">
@@ -417,9 +453,11 @@ function TaskSourceDetails({ task }: { task: Task }) {
 function RecoveryTaskSource({
   task,
   revision,
+  onUpdated,
 }: {
   task: Task
   revision: number
+  onUpdated: (task: Task, advance?: boolean) => void
 }) {
   const [call, setCall] = useState<CallingCall>()
   const [interactions, setInteractions] = useState<Task["interactions"]>([])
@@ -476,7 +514,7 @@ function RecoveryTaskSource({
   return (
     <section aria-label="Call recovery source" className="mt-4">
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
-      {call?.voicemail && <VoicemailSource call={call} compact />}
+      {call?.voicemail && <VoicemailSource call={call} compact onUpdated={onUpdated} taskID={task.id} />}
       {otherInteractions.length > 0 && (
         <details className="mt-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer">
@@ -508,25 +546,43 @@ function newestRecoveryInteraction(interactions: Task["interactions"]) {
   )
 }
 
-function VoicemailSource({
-  call,
-  compact = false,
-}: {
+function VoicemailSource({ call, compact = false, taskID, onUpdated }: {
   call: CallingCall
   compact?: boolean
+  taskID?: string
+  onUpdated?: (task: Task, advance?: boolean) => void
 }) {
+  const reviewedTask = useRef<Task | undefined>(undefined)
+  const [completionError, setCompletionError] = useState("")
   const voicemail = call.voicemail
   if (!voicemail) return null
-  return (
-    <RecordingSource
-      call={call}
-      audioState={voicemail.audioState}
-      durationSeconds={voicemail.durationSeconds}
-      kind="voicemail"
-      compact={compact}
-      unavailable={voicemail.outcome === "MISSED_CALL"}
-    />
-  )
+  async function captureReview() {
+    reviewedTask.current = undefined
+    setCompletionError("")
+    const id = taskID ?? call.recoveryTask?.id
+    if (!id) return
+    const token = await getAccessToken()
+    const result = token ? await readTask({ client: portalClient(token), path: { taskId: id } }).catch(() => undefined) : undefined
+    if (result?.data?.origin === "VOICEMAIL_RECOVERY" && result.data.state === "OPEN") {
+      const latestCallID = newestRecoveryInteraction(result.data.interactions)?.callId ?? result.data.callId
+      if (latestCallID === call.id) reviewedTask.current = result.data
+      else setCompletionError("A newer call needs review. This playback will keep that work open.")
+    }
+    else if (!result?.data) setCompletionError("Could not load voicemail work. Use Mark done after listening.")
+  }
+  async function finishReview() {
+    const task = reviewedTask.current
+    if (!task) return
+    reviewedTask.current = undefined
+    const token = await getAccessToken()
+    const result = token ? await completeTask({ client: portalClient(token), path: { taskId: task.id }, body: { expectedVersion: task.version } }).catch(() => undefined) : undefined
+    if (result?.data) onUpdated?.(result.data)
+    else setCompletionError("Could not mark voicemail done. Review any new activity and use Mark done.")
+  }
+  return <>
+    <RecordingSource call={call} audioState={voicemail.audioState} durationSeconds={voicemail.durationSeconds} kind="voicemail" compact={compact} unavailable={voicemail.outcome === "MISSED_CALL"} onBeforePlay={captureReview} onEnded={() => void finishReview()} />
+    {completionError && <p role="alert" className="px-5 py-2 text-xs text-destructive">{completionError}</p>}
+  </>
 }
 
 function CallRecordingSource({ call }: { call: CallingCall }) {
@@ -567,6 +623,8 @@ function RecordingSource({
   kind,
   compact = false,
   unavailable = false,
+  onBeforePlay,
+  onEnded,
 }: {
   call: CallingCall
   audioState: "PROCESSING" | "READY" | "UNAVAILABLE" | "EXPIRED" | "DELETED" | undefined
@@ -574,6 +632,8 @@ function RecordingSource({
   kind: RecordingKind
   compact?: boolean
   unavailable?: boolean
+  onBeforePlay?: () => Promise<void>
+  onEnded?: () => void
 }) {
   const [audioURL, setAudioURL] = useState("")
   const [loading, setLoading] = useState(false)
@@ -601,6 +661,7 @@ function RecordingSource({
     if (!token) return
     setLoading(true)
     setError("")
+    await onBeforePlay?.()
     const issued = await presentation.issuePlayback({
       client: portalClient(token),
       path: { callId: call.id },
@@ -649,6 +710,7 @@ function RecordingSource({
           controlsList="nodownload"
           preload="metadata"
           src={audioURL}
+          onEnded={onEnded}
           onError={() => setError(`The ${presentation.label} could not be opened.`)}
           className="mt-3 h-9 max-w-full"
         />
@@ -682,6 +744,10 @@ function taskSourceLabel(task: Task) {
   switch (task.origin) {
     case "ABITA_AI":
       return "Created by AI"
+    case "APPOINTMENT_REVIEW":
+      return "Appointment verification"
+    case "INBOUND_MESSAGE_REVIEW":
+      return "Incoming text"
     case "STAFF_MESSAGE_FOLLOW_UP":
       return "Message follow-up"
     case "VOICEMAIL_RECOVERY":

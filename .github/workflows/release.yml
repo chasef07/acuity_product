@@ -85,3 +85,12 @@ jobs:
             --config=cloudbuild.release.yaml \
             --substitutions="_IMAGE_TAG=${RELEASE_SHA},_CALLLEG_SCHEMA_CUTOVER_COMPLETE=${CALLLEG_SCHEMA_CUTOVER_COMPLETE},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS}" \
             .
+
+  knowledge:
+    needs: [release-please, deploy]
+    uses: ./.github/workflows/knowledge.yml
+    permissions:
+      contents: write
+      id-token: write
+    with:
+      release_sha: ${{ needs.release-please.outputs.release_sha }}

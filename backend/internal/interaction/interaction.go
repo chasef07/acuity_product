@@ -288,6 +288,8 @@ func (m *Module) QueryOutcomes(
 	if len(locationIDs) == 0 {
 		return OutcomePage{}, ErrDenied
 	}
+	now := m.now()
+	cutoff := now.Add(-7 * 24 * time.Hour)
 	page := OutcomePage{Items: []OutcomeItem{}}
 	if !command.SkipCounts {
 		counts := OutcomeCounts{}
@@ -304,6 +306,8 @@ func (m *Module) QueryOutcomes(
 			WHERE candidate.interaction_id = interaction.id
 				AND candidate.user_subject = $3
 				AND candidate.reviewed_at IS NULL
+				AND candidate.outcome_occurred_at >= $4
+				AND candidate.outcome_occurred_at <= $5
 			ORDER BY candidate.outcome_occurred_at DESC
 			LIMIT 1
 		) attention ON true
@@ -325,7 +329,7 @@ func (m *Module) QueryOutcomes(
 				OR interaction.status IN ('FAILED', 'ESCALATED')
 				OR interaction.appointment_outcome = 'PARTIAL'
 			)
-		`, command.PracticeID, locationIDs, command.Identity.Subject).Scan(
+		`, command.PracticeID, locationIDs, command.Identity.Subject, cutoff, now).Scan(
 			&counts.Tasks,
 			&counts.Bookings,
 			&counts.Cancellations,
@@ -360,6 +364,8 @@ func (m *Module) QueryOutcomes(
 			WHERE candidate.interaction_id = interaction.id
 				AND candidate.user_subject = $3
 				AND candidate.reviewed_at IS NULL
+				AND candidate.outcome_occurred_at >= $9
+				AND candidate.outcome_occurred_at <= $10
 			ORDER BY candidate.outcome_occurred_at DESC
 			LIMIT 1
 		) attention ON true
@@ -394,7 +400,7 @@ func (m *Module) QueryOutcomes(
 		LIMIT $8
 	`, command.PracticeID, locationIDs, command.Identity.Subject,
 		command.AppointmentAction, cursor.Present, nullableOutcomeCursorTime(cursor),
-		nullableOutcomeCursorID(cursor), limit+1)
+		nullableOutcomeCursorID(cursor), limit+1, cutoff, now)
 	if err != nil {
 		return OutcomePage{}, fmt.Errorf("query AI outcome attention: %w", err)
 	}

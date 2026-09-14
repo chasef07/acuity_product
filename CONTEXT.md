@@ -87,3 +87,15 @@ _Avoid_: Audit event
 A query over Tasks, never a call-routing object or second source of workflow
 state.
 _Avoid_: Inbox state
+
+**Responsibility group**:
+A Task category and its provisioned primary/backup staff responsibilities at a
+Location. My Tasks intersects those responsibilities with existing access;
+All tasks removes only the responsibility filter. Responsibilities never grant
+Location access or assign a Task to a person.
+
+**Related Task group**:
+An authorized display of open Tasks with the same Practice, normalized phone,
+Location, category, and origin. Every Task and its source remain separate. A shared
+number is not verified patient identity. Resolve group acts only on explicitly
+reviewed current member IDs and versions.

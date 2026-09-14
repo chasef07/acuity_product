@@ -32,6 +32,8 @@ func (m *Module) QueryTasks(
 	}
 	if m.database == nil || m.access == nil || command.PracticeID == "" ||
 		len(command.Search) > 500 ||
+		(command.Kind != "" && command.Kind != "texts" && command.Kind != "calls") ||
+		(command.Responsibility != "" && command.Responsibility != "mine" && command.Responsibility != "all") ||
 		(command.State != work.TaskOpen && command.State != work.TaskCompleted) ||
 		(command.Folder != "" &&
 			command.Folder != work.TaskFolderWork &&
@@ -54,12 +56,13 @@ func (m *Module) QueryTasks(
 		command.Ordering,
 		command.State,
 		command.Folder,
+		command.Kind,
 	)
 	if err != nil {
 		return work.TaskPage{}, ErrInvalidInput
 	}
 
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return work.TaskPage{}, fmt.Errorf("begin Task query: %w", err)
 	}
@@ -71,7 +74,7 @@ func (m *Module) QueryTasks(
 		return work.TaskPage{}, err
 	}
 
-	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering),
+	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering, command.Grouped),
 		command.PracticeID,
 		locationIDs,
 		command.Search,
@@ -83,6 +86,7 @@ func (m *Module) QueryTasks(
 		limit+1,
 		command.Identity.Subject,
 		command.Folder,
+		command.Responsibility, strings.ToLower(command.Identity.Email), command.Category, command.Kind,
 	)
 	if err != nil {
 		return work.TaskPage{}, fmt.Errorf("query Tasks: %w", err)
@@ -105,7 +109,7 @@ func (m *Module) QueryTasks(
 	if command.IncludeCounts == nil || *command.IncludeCounts {
 		value, err := queryTaskFolderCounts(
 			ctx, tx, command.PracticeID, locationIDs,
-			command.Search, normalizedDigits(command.Search), command.State,
+			command.Search, normalizedDigits(command.Search), command.State, command,
 		)
 		if err != nil {
 			return work.TaskPage{}, err
@@ -119,11 +123,18 @@ func (m *Module) QueryTasks(
 			items[len(items)-1],
 			command.Ordering,
 			command.Folder,
+			command.Kind,
 		)
 		if err != nil {
 			return work.TaskPage{}, err
 		}
 	}
+	if command.Grouped && command.State == work.TaskOpen {
+		if err := loadGroupMembers(ctx, tx, command.Identity.Subject, items); err != nil {
+			return work.TaskPage{}, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return work.TaskPage{}, fmt.Errorf("commit Task query: %w", err)
 	}
@@ -181,6 +192,11 @@ const taskColumns = `
 		task.caller_name,
 		task.source_call_id,
 		task.source_message,
+        COALESCE(CASE WHEN task.origin='INBOUND_MESSAGE_REVIEW' THEN (
+          SELECT COALESCE(NULLIF(message.body,''),'Attachment') FROM messaging_messages message
+          WHERE message.thread_id=task.message_thread_id AND message.direction='INBOUND'
+          ORDER BY message.created_at DESC,message.id DESC LIMIT 1
+        ) END,''),
 		task.source_message_id::text,
 		task.message_thread_id::text,
 		task.recovery_outcome,
@@ -217,7 +233,7 @@ const taskConversationJoin = `
 		LIMIT 1
 	) conversation ON true`
 
-const taskQuerySelect = `
+const taskQueryColumns = `
 	SELECT` + taskColumns + `,
 		COALESCE(conversation.id::text, ''),
 		task.state = 'OPEN' AND EXISTS (
@@ -230,13 +246,18 @@ const taskQuerySelect = `
 			SELECT count(*)
 			FROM work_task_interactions interaction
 			WHERE interaction.task_id = task.id
-		)
-	FROM work_tasks task
+		)`
+
+const taskProjectionJoins = `
 	JOIN access_locations location
 		ON location.practice_id = task.practice_id
-		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin + `
+		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin
+
+const taskQueryFilter = `
 	WHERE task.practice_id = $1
-		AND task.location_id = ANY($2::uuid[])
+		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter + `
+ AND ($14::text = '' OR task.category=$14)
+ AND ($15::text = '' OR ($15='texts' AND task.origin='INBOUND_MESSAGE_REVIEW') OR ($15='calls' AND task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')))
 		AND (
 			$3 = ''
 				OR strpos(lower(task.title), lower($3)) > 0
@@ -257,10 +278,27 @@ const taskQuerySelect = `
 			))
 		)`
 
-func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering) string {
+func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool) string {
+	query := taskQueryColumns + " FROM work_tasks task" + taskProjectionJoins + taskQueryFilter
+	if grouped && state == work.TaskOpen {
+		order := "created_at,id"
+		if ordering == work.TaskOrderingRecent {
+			order = "updated_at DESC,id DESC"
+		} else if ordering == work.TaskOrderingPriority {
+			order = "CASE urgency WHEN 'high_priority' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,created_at,id"
+		}
+		// Filter before choosing a representative; load complete membership separately
+		// in this snapshot so a search never hides a group resolution target.
+		query = `WITH matching AS (
+ SELECT task.* FROM work_tasks task
+ JOIN access_locations location ON location.practice_id=task.practice_id AND location.id=task.location_id` + taskQueryFilter + ` AND task.state='OPEN'
+ ), ranked AS (
+ SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category,origin ORDER BY ` + order + `) AS member_rank FROM matching
+ ), group_candidates AS (SELECT * FROM ranked WHERE member_rank=1) ` + taskQueryColumns + " FROM group_candidates task" + taskProjectionJoins + " WHERE true"
+	}
 	switch {
 	case state == work.TaskOpen && ordering == work.TaskOrderingPriority:
-		return taskQuerySelect + `
+		return query + `
 			AND task.state = 'OPEN'
 			AND (
 				NOT $5
@@ -288,28 +326,21 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering) string {
 			task.id
 		LIMIT $9`
 	case state == work.TaskOpen && ordering == work.TaskOrderingTime:
-		return taskQuerySelect + `
+		return query + `
 			AND task.state = 'OPEN'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.created_at, task.id::text) > ($6, $7))
 		ORDER BY task.created_at, task.id
 		LIMIT $9`
 	case state == work.TaskOpen:
-		return taskQuerySelect + `
+		return query + `
 			AND task.state = 'OPEN'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
 		ORDER BY task.updated_at DESC, task.id DESC
 		LIMIT $9`
-	case ordering == work.TaskOrderingRecent:
-		return taskQuerySelect + `
-			AND task.state = 'COMPLETED'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
-		ORDER BY task.updated_at DESC, task.id DESC
-		LIMIT $9`
 	default:
-		return taskQuerySelect + `
+		return query + `
 			AND task.state = 'COMPLETED'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.completed_at, task.id::text) < ($6, $7))
@@ -318,8 +349,7 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering) string {
 	}
 }
 
-const taskReadQuery = `
-	SELECT` + taskColumns + `,
+const taskReadColumns = taskColumns + `,
 		COALESCE(conversation.id::text, ''),
 		task.state = 'OPEN' AND EXISTS (
 			SELECT 1
@@ -327,11 +357,9 @@ const taskReadQuery = `
 			WHERE unread.thread_id = conversation.id
 				AND unread.user_subject = $2
 		),
-		0
-	FROM work_tasks task
-	JOIN access_locations location
-		ON location.practice_id = task.practice_id
-		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin + `
+		(SELECT count(*) FROM work_task_interactions interaction WHERE interaction.task_id=task.id)`
+
+const taskReadQuery = `SELECT` + taskReadColumns + ` FROM work_tasks task` + taskProjectionJoins + `
 	WHERE task.id = $1`
 
 const conversationTaskQuery = `
@@ -351,7 +379,8 @@ const conversationTaskQuery = `
 	LEFT JOIN work_task_acknowledgements acknowledgement
 		ON acknowledgement.task_id = task.id
 		AND acknowledgement.purpose = 'CALLER_TASK_RECEIVED'
-	WHERE task.practice_id = $1
+	WHERE task.origin <> 'INBOUND_MESSAGE_REVIEW'
+		AND task.practice_id = $1
 		AND task.location_id = $2
 		AND (
 			task.message_thread_id = $3::uuid
@@ -369,7 +398,7 @@ const phoneTaskActivityQuery = `
 	SELECT
 		activity.id::text,
 		activity.kind,
-		activity.occurred_at,` + taskColumns + `,
+		activity.occurred_at, activity.details,` + taskColumns + `,
 		COALESCE(task.message_thread_id::text, ''),
 		false,
 		0
@@ -418,6 +447,7 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 		&callerName,
 		&sourceCall,
 		&sourceMessage,
+		&task.Preview,
 		&messageID,
 		&messageThreadID,
 		&recoveryOutcome,
@@ -531,6 +561,7 @@ func queryTaskFolderCounts(
 	search string,
 	phoneDigits string,
 	state work.TaskState,
+	command QueryTasksCommand,
 ) (work.TaskFolderCounts, error) {
 	var counts work.TaskFolderCounts
 	err := tx.QueryRow(ctx, `
@@ -552,12 +583,12 @@ func queryTaskFolderCounts(
 						OR strpos(lower(COALESCE(task.category, '')), lower($3)) > 0
 						OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
 				)
-				AND task.state = $5
+				AND task.state = $5`+taskCountFilter()+`
 		), foldered AS (
 			SELECT
 				category,
 				CASE
-					WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY')
+					WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AND $8::text <> ''
 						THEN 'missed_calls'
 					ELSE 'tasks'
 				END AS folder
@@ -565,16 +596,28 @@ func queryTaskFolderCounts(
 		)
 		SELECT
 			count(*) FILTER (WHERE folder = 'tasks'),
-			count(*) FILTER (WHERE folder = 'missed_calls'),
+			(SELECT count(*) FROM work_tasks recovery JOIN access_locations recovery_location ON recovery_location.id=recovery.location_id
+ WHERE recovery.practice_id=$1 AND recovery.location_id=ANY($2::uuid[]) AND recovery.state='OPEN'
+ AND recovery.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')
+ AND ($3='' OR strpos(lower(recovery.title),lower($3))>0
+ OR strpos(lower(COALESCE(recovery.caller_name,'')),lower($3))>0
+ OR strpos(lower(recovery_location.name),lower($3))>0
+ OR strpos(lower(COALESCE(recovery.category,'')),lower($3))>0
+ OR ($4<>'' AND recovery.phone_digits LIKE '%'||$4||'%'))),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'billing'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'appointments'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'documentation'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'optical'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'medication'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'referrals'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'other')
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'other'),
+ count(*) FILTER (WHERE folder='tasks' AND category='insurance'),
+ count(*) FILTER (WHERE folder='tasks' AND category='pre_op'),
+ count(*) FILTER (WHERE folder='tasks' AND category='post_op'),
+ (SELECT count(*) FROM scoped WHERE origin='INBOUND_MESSAGE_REVIEW'),
+ (SELECT count(*) FROM scoped WHERE origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))
 		FROM foldered
-	`, practiceID, locationIDs, search, phoneDigits, state).Scan(
+	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.Folder).Scan(
 		&counts.Tasks,
 		&counts.MissedCalls,
 		&counts.Categories.Billing,
@@ -584,6 +627,8 @@ func queryTaskFolderCounts(
 		&counts.Categories.Medication,
 		&counts.Categories.Referrals,
 		&counts.Categories.Other,
+		&counts.Categories.Insurance, &counts.Categories.PreOp, &counts.Categories.PostOp,
+		&counts.Texts, &counts.CallRecovery,
 	)
 	if err != nil {
 		return work.TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)
@@ -592,6 +637,7 @@ func queryTaskFolderCounts(
 }
 
 type taskCursor struct {
+	Kind      string            `json:"kind,omitempty"`
 	Present   bool              `json:"-"`
 	Ordering  work.TaskOrdering `json:"ordering"`
 	State     work.TaskState    `json:"state"`
@@ -605,20 +651,22 @@ func encodeTaskCursor(
 	task work.Task,
 	ordering work.TaskOrdering,
 	folder work.TaskFolder,
+	kind string,
 ) (string, error) {
 	orderedAt := task.CreatedAt
-	if ordering == work.TaskOrderingRecent {
-		orderedAt = task.UpdatedAt
-	} else if task.State == work.TaskCompleted {
+	if task.State == work.TaskCompleted {
 		if task.CompletedAt == nil {
 			return "", fmt.Errorf("encode Task cursor: completed Task has no completion time")
 		}
 		orderedAt = *task.CompletedAt
+	} else if ordering == work.TaskOrderingRecent {
+		orderedAt = task.UpdatedAt
 	}
 	encoded, err := json.Marshal(taskCursor{
 		Ordering:  ordering,
 		State:     task.State,
 		Folder:    folder,
+		Kind:      kind,
 		Urgency:   task.Urgency,
 		OrderedAt: orderedAt,
 		ID:        task.ID,
@@ -634,6 +682,7 @@ func decodeTaskCursor(
 	ordering work.TaskOrdering,
 	state work.TaskState,
 	folder work.TaskFolder,
+	kind string,
 ) (taskCursor, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -648,7 +697,7 @@ func decodeTaskCursor(
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cursor); err != nil || cursor.OrderedAt.IsZero() ||
 		uuid.Validate(cursor.ID) != nil || cursor.Ordering != ordering ||
-		cursor.State != state || cursor.Folder != folder ||
+		cursor.State != state || cursor.Folder != folder || cursor.Kind != kind ||
 		(cursor.Urgency != work.TaskUrgencyHighPriority &&
 			cursor.Urgency != work.TaskUrgencyNormal &&
 			cursor.Urgency != work.TaskUrgencyNonUrgent) {
@@ -677,4 +726,20 @@ func normalizedDigits(value string) string {
 		}
 	}
 	return digits.String()
+}
+
+// Responsibilities narrow categorized follow-up within an authorized scope.
+// Communication reviews remain shared even after staff categorize them.
+const taskResponsibilityFilter = `
+ AND ($12::text <> 'mine' OR task.category IS NULL
+ OR task.origin IN ('APPOINTMENT_REVIEW','INBOUND_MESSAGE_REVIEW','MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')
+ OR NOT EXISTS (SELECT 1 FROM work_responsibility_locations configured WHERE configured.practice_id=task.practice_id AND configured.location_id=task.location_id)
+ OR EXISTS (SELECT 1 FROM work_responsibilities responsibility
+ WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
+ AND responsibility.category=task.category AND responsibility.account_email=$13))`
+
+// Category menu totals span all categories in the responsibility-scoped query.
+// Only the row query applies the selected category.
+func taskCountFilter() string {
+	return strings.NewReplacer("$12", "$6", "$13", "$7").Replace(taskResponsibilityFilter)
 }

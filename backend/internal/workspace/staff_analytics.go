@@ -27,6 +27,7 @@ type StaffPhoneMetrics struct {
 	MissingInboundDurationCalls  int     `json:"missingInboundDurationCalls"`
 	MissingOutboundDurationCalls int     `json:"missingOutboundDurationCalls"`
 	TasksCompleted               int     `json:"tasksCompleted"`
+	TextsSent                    int     `json:"textsSent"`
 }
 
 type StaffAccountAnalytics struct {
@@ -222,6 +223,41 @@ func (m *Module) QueryStaffAnalytics(ctx context.Context, command QueryStaffAnal
 	}
 	if callRows > 50000 {
 		return StaffAnalytics{}, fmt.Errorf("staff analytics exceeds call limit")
+	}
+
+	// Count staff-authored messages with send evidence, excluding automated
+	// acknowledgements and unconfirmed or failed attempts. Use the same scope
+	// and reporting-day boundaries as calls and Tasks.
+	rows, err = tx.Query(ctx, `
+  SELECT created_by_subject, count(*)
+  FROM messaging_messages
+  WHERE practice_id=$1::uuid AND location_id=ANY($2::uuid[])
+   AND direction='OUTBOUND' AND created_by_kind='HUMAN'
+   AND delivery_state IN ('SENT', 'DELIVERED')
+   AND created_at >= $3 AND created_at < $4
+  GROUP BY created_by_subject
+  LIMIT 5001`, command.PracticeID, locations, from, to)
+	if err != nil {
+		return StaffAnalytics{}, fmt.Errorf("staff text activity: %w", err)
+	}
+	messageSenders := 0
+	for rows.Next() {
+		var subject string
+		var count int
+		if err := rows.Scan(&subject, &count); err != nil {
+			rows.Close()
+			return StaffAnalytics{}, err
+		}
+		messageSenders++
+		accountFor(subject).TextsSent += count
+		report.Total.TextsSent += count
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return StaffAnalytics{}, err
+	}
+	if messageSenders > 5000 {
+		return StaffAnalytics{}, fmt.Errorf("staff analytics exceeds message sender limit")
 	}
 
 	// The creation clock never resets on viewing, assignment, or reopening.

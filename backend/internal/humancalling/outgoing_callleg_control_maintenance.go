@@ -443,8 +443,16 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 	if connectionID == "" && commandAction == CommandTransferStaff {
 		connectionID = m.config.CallControlID
 	}
+	// Keep part of the existing worker budget for the fenced result write.
+	// A provider read timeout must not consume the only chance to save backoff.
+	observationContext := ctx
+	if deadline, ok := ctx.Deadline(); ok {
+		var cancel context.CancelFunc
+		observationContext, cancel = context.WithDeadline(ctx, deadline.Add(-time.Second))
+		defer cancel()
+	}
 	observation, err := provider.ObserveCall(
-		ctx,
+		observationContext,
 		connectionID,
 		controlID,
 		providerLegID,

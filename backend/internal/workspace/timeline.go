@@ -542,16 +542,17 @@ func queryPhoneTaskActivities(
 	items := make([]TimelineItem, 0, limit+1)
 	for rows.Next() {
 		var activityID, kind string
+		var details map[string]any
 		var occurredAt time.Time
 		task, err := scanTaskProjection(
-			rows, &activityID, &kind, &occurredAt,
+			rows, &activityID, &kind, &occurredAt, &details,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan phone Task Activity: %w", err)
 		}
 		items = append(items, TimelineItem{
 			Type: "TASK", ID: activityID, OccurredAt: occurredAt,
-			TaskActivity: kind, Task: task,
+			TaskActivity: kind, Task: task, TaskActivityDetails: details,
 		})
 	}
 	if err := rows.Err(); err != nil {

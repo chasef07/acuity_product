@@ -19,6 +19,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
+	"github.com/chasef07/acuity_product/backend/internal/knowledge"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
@@ -263,6 +264,7 @@ func runAuthorizedHTTP(
 						access.ServiceCapabilityCreateTask,
 						access.ServiceCapabilityHumanHandoff,
 						access.ServiceCapabilityIngestAIInteraction,
+						access.ServiceCapabilityReadKnowledge,
 					},
 				},
 			},
@@ -276,12 +278,24 @@ func runAuthorizedHTTP(
 						access.ServiceCapabilityCreateTask,
 						access.ServiceCapabilityHumanHandoff,
 						access.ServiceCapabilityIngestAIInteraction,
+						access.ServiceCapabilityReadKnowledge,
 					},
 				},
 			},
 		)
 		if err != nil {
 			return err
+		}
+		var knowledgeModule *knowledge.Module
+		if config.KnowledgeGoogleProject != "" {
+			provider, providerErr := knowledge.NewGoogleEmbedder(ctx, config.KnowledgeGoogleProject, config.KnowledgeGoogleLocation, nil)
+			if providerErr != nil {
+				return providerErr
+			}
+			knowledgeModule, err = knowledge.New(database, accessModule, provider, knowledge.Config{ProviderTimeout: 3 * time.Second})
+			if err != nil {
+				return err
+			}
 		}
 		handler, err = httpapi.NewPortal(httpapi.Config{
 			AllowedOrigins: config.BrowserOrigins,
@@ -296,6 +310,7 @@ func runAuthorizedHTTP(
 			Messaging:            messages,
 			Work:                 workModule,
 			Workspace:            workspace.New(database, accessModule),
+			Knowledge:            knowledgeModule,
 			ServiceAuthenticator: serviceAuth,
 		})
 		if err != nil {
@@ -506,6 +521,7 @@ func runMigrate(
 		}
 	}
 	voiceLocations := make([]humancalling.LocationVoiceProvision, 0)
+	ringGroups := make([]humancalling.LocationRingGroupProvision, 0)
 	voiceFallbacks := make([]humancalling.OutboundVoiceFallbackProvision, 0, len(input.Practices))
 	for _, practice := range input.Practices {
 		voiceFallbacks = append(voiceFallbacks, humancalling.OutboundVoiceFallbackProvision{
@@ -513,6 +529,12 @@ func runMigrate(
 			LocationKey: practice.OutboundVoiceFallbackLocationKey,
 		})
 		for _, location := range practice.Locations {
+			if location.InboundRingEmails != nil {
+				ringGroups = append(ringGroups, humancalling.LocationRingGroupProvision{
+					PracticeKey: practice.Key, LocationKey: location.Key,
+					MemberEmails: location.InboundRingEmails,
+				})
+			}
 			if location.VoiceNumber == "" {
 				if location.VoicemailGreeting != "" {
 					return fmt.Errorf(
@@ -552,6 +574,9 @@ func runMigrate(
 		return err
 	}
 	callingModule := humancalling.New(pool, nil, nil, humancalling.Config{}, nil)
+	if err := callingModule.ProvisionLocationRingGroupsInTx(ctx, tx, ringGroups, input.RequestedBy); err != nil {
+		return err
+	}
 	if err := callingModule.ProvisionLocationVoicesInTx(ctx, tx, voiceLocations); err != nil {
 		return err
 	}

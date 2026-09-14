@@ -48,67 +48,47 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   await expect(page.locator('button[aria-label="Search"]')).toBeHidden()
 })
 
-test("appointment reviews are nested and leave the queue when opened", async ({
-  page,
-}, testInfo) => {
+test("appointment verification stays open until shared completion and can be reopened", async ({ page, browser }) => {
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
-  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
-  await createAIAppointmentReview(page)
+  const sourceCallId = "shared-appointment-verification"
+  await createAIAppointmentReview(page, sourceCallId, new Date(Date.now() - 8 * 24 * 60 * 60 * 1000))
+  const { token } = await (await page.request.get("/api/auth/token")).json()
+  let task!: { id: string; title: string }
+  await expect.poll(async () => {
+    const response = await page.request.post(`${portalURL}/v1/tasks/query`, {
+      headers: { authorization: `Bearer ${token}` },
+      data: { practiceId: (await (await page.request.get(`${portalURL}/v1/access`, { headers: { authorization: `Bearer ${token}` } })).json()).practices[0].id, state: "OPEN", responsibility: "all", limit: 50 },
+    })
+    const data = await response.json()
+    task = data.items?.find((item: { sourceCallId?: string }) => item.sourceCallId === sourceCallId)
+    return Boolean(task)
+  }).toBe(true)
   await page.reload()
-  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
-
-  const appointmentsSection = page.getByRole("button", {
-    name: /^Appointments/,
-  })
-  await expect(appointmentsSection).toHaveAttribute("aria-expanded", "false")
-  await expect(page.getByRole("button", { name: /^Bookings/ })).toHaveCount(0)
-  await expect(page.getByRole("button", { name: /^Cancellations/ })).toHaveCount(0)
-  await expect(page.getByRole("button", { name: /^Reschedules/ })).toHaveCount(0)
-
-  await appointmentsSection.click()
-  const tasksSection = page.getByRole("button", { name: /^Tasks/ })
-  await tasksSection.click()
-  await expect(appointmentsSection).toHaveAttribute("aria-expanded", "true")
-  await expect(tasksSection).toHaveAttribute("aria-expanded", "true")
-  const bookingsSection = page.getByRole("button", { name: /^Bookings/ })
-  const cancellationsSection = page.getByRole("button", {
-    name: /^Cancellations/,
-  })
-  await expect(bookingsSection).toHaveAttribute("aria-expanded", "false")
-  await expect(cancellationsSection).toHaveAttribute("aria-expanded", "false")
-  await expect(page.getByRole("button", { name: /^Reschedules/ })).toHaveAttribute(
-    "aria-expanded",
-    "false",
-  )
-  await bookingsSection.click()
-  await expect(bookingsSection).toHaveAttribute("aria-expanded", "true")
-  await cancellationsSection.click()
-  await expect(bookingsSection).toHaveAttribute("aria-expanded", "true")
-  await expect(cancellationsSection).toHaveAttribute("aria-expanded", "true")
-
-  await expect(appointmentsSection).toContainText("1")
-  const bookingReview = page.getByRole("button", {
-    name: /\(727\) 555-0188/,
-  })
-  await expect(bookingReview).toBeVisible()
-  await bookingReview.click()
-  const appointmentContext = page.getByRole("complementary", {
-    name: "AI call context",
-  })
-  await expect(
-    appointmentContext.getByRole("heading", { name: "Appointment booked" }),
-  ).toBeVisible()
-  await expect(appointmentContext.getByText("Call completed")).toHaveCount(0)
-  await expect(appointmentContext.getByText("Booking", { exact: true })).toHaveCount(0)
-  await expect(appointmentContext.getByText("Details", { exact: true })).toBeVisible()
-  await expect(appointmentContext.getByText("Evidence", { exact: true })).toBeVisible()
-  await page.screenshot({
-    path: testInfo.outputPath("ai-call-appointment-context.png"),
-    fullPage: true,
-  })
-  await expect(bookingReview).toHaveCount(0)
-  await expect(appointmentsSection).toContainText("0")
+  const row = page.locator(`[data-task-id="${task.id}"]`)
+  await expect(row).toBeVisible()
+  await row.getByRole("button").first().click()
+  await expect(row).toBeVisible()
+  const secondContext = await browser.newContext()
+  try {
+    const second = await secondContext.newPage()
+    await signInAs(second, "selected@abita.test", "Second Synthetic Staff")
+    const secondRow = second.locator(`[data-task-id="${task.id}"]`)
+    await expect(secondRow).toBeVisible()
+    await secondRow.getByRole("button").first().click()
+    await page.getByRole("button", { name: "Verify & next", exact: true }).click()
+    await expect(row).toHaveCount(0)
+    await expect(secondRow).toHaveCount(0)
+    await expect(second.getByText("Completed for everyone with access.")).toBeVisible()
+    await page.getByRole("button", { name: "Recently completed", exact: true }).click()
+    await expect(row).toBeVisible()
+    await row.getByRole("button").first().click()
+    await page.getByRole("button", { name: "Reopen", exact: true }).click()
+    await expect(secondRow).toBeVisible()
+    await expect(page.getByRole("button", { name: /^Appointments 7d|^Texts 7d|^Mark all/ })).toHaveCount(0)
+  } finally {
+    await secondContext.close()
+  }
 })
 
 test("an AI call without appointment actions stays call-first", async ({
@@ -203,7 +183,7 @@ test("an AI call without appointment actions stays call-first", async ({
 
   await page.getByRole("button", { name: "View task: Confirm office paperwork" }).click()
   const taskContext = page.getByRole("complementary", { name: "Task context" })
-  await taskContext.getByRole("button", { name: "Complete", exact: true }).click()
+  await taskContext.getByRole("button", { name: "Complete & next", exact: true }).click()
   await expect(callRow).toContainText("Confirm office paperwork — Completed")
   await expect(page.getByText(/Task completed ·/)).toBeVisible()
 })
@@ -237,10 +217,6 @@ test("rail hover details and the message composer preserve compact context", asy
     "hover-details",
   )
   await page.reload()
-  const tasksSection = page.getByRole("button", { name: /^Tasks/ })
-  if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
-    await tasksSection.click()
-  }
   const taskRow = page.getByRole("button", {
     name: /^Review billing balance/,
   })
@@ -364,16 +340,15 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     page.getByRole("button", { name: "Workspace selector" }),
   ).toContainText("Fixture Location 1")
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
-  await expect(page.getByRole("button", { name: /^Tasks/ })).toHaveAttribute(
+  await expect(page.getByRole("button", { name: /^My Tasks/ })).toHaveAttribute(
     "aria-expanded",
     "false",
   )
   await expect(
-    page.getByRole("button", { name: /^Missed Calls \d+$/ }),
+    page.getByRole("button", { name: /^My Tasks/ }),
   ).toBeVisible()
-  await expect(page.getByRole("button", { name: /^Texts/ })).toBeVisible()
+  await expect(page.getByLabel("Open workload").getByRole("button", { name: /^Texts/ })).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
-  await expect(page.getByRole("button", { name: "Call", exact: true })).toHaveCount(0)
   await openNumberInbox(page, "7275550199")
   await expect(page.getByRole("button", { name: "Call", exact: true })).toBeVisible()
   await context.grantPermissions(["clipboard-read", "clipboard-write"])
@@ -539,13 +514,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
 
   const inboundText = "Please call me about the pickup time."
   await sendInbound(page, "messaging-inbound", inboundText)
-  const textsSection = page.getByRole("button", { name: /^Texts/ })
-  if ((await textsSection.getAttribute("aria-expanded")) === "false") {
-    await textsSection.click()
-  }
-  const firstThread = page
-    .getByRole("button", { name: /\(727\) 555-0199/ })
-    .first()
+  const firstThread = page.getByTestId("task-row").filter({ hasText: "(727) 555-0199" }).getByRole("button").first()
   await expect(page.getByText("Correspondence ledger", { exact: true })).toHaveCount(0)
   await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
   await firstThread.click()
@@ -696,10 +665,6 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     "closed",
   )
 
-  const tasksSection = page.getByRole("button", { name: /^Tasks/ })
-  if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
-    await tasksSection.click()
-  }
   const sidebarTask = page.getByRole("button", {
     name: "Follow up on text",
     exact: true,
@@ -740,7 +705,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toBeVisible()
 
   await sidebarTaskContext
-    .getByRole("button", { name: "Complete", exact: true })
+    .getByRole("button", { name: "Complete & next", exact: true })
     .click()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
@@ -771,7 +736,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toBeEnabled()
   await completedTaskContext.getByRole("button", { name: "Reopen" }).click()
   await expect(
-    completedTaskContext.getByRole("button", { name: "Complete" }),
+    completedTaskContext.getByRole("button", { name: "Complete & next" }),
   ).toBeVisible()
   await expect(
     page
@@ -806,9 +771,6 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     page.getByText("Outbound messaging is blocked after STOP"),
   ).not.toBeVisible()
 
-  if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
-    await tasksSection.click()
-  }
   await createAIStaffTask(page, "billing", "Review billing balance")
   const billingTaskButton = page.getByRole("button", {
     name: "Review billing balance",
@@ -845,16 +807,15 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(medicationTaskButton).toBeVisible()
 
   const taskFilter = page.getByRole("button", {
-    name: "Filter Tasks: All types",
+    name: "My Tasks",
   })
   await taskFilter.click()
   for (const [label, count] of [
-    ["All types", counts.tasks],
-    ["Billing", counts.categories.billing],
-    ["Appointments", counts.categories.appointments],
-    ["Documentation", counts.categories.documentation],
+    ["All categories", counts.tasks],
+        ["Appointments", counts.categories.appointments],
+    ["Medical records", counts.categories.documentation],
     ["Optical", counts.categories.optical],
-    ["Medication", counts.categories.medication],
+    ["Clinical & pharmacy", counts.categories.medication],
     ["Referrals", counts.categories.referrals],
     ["Other", counts.categories.other],
   ] as const) {
@@ -862,23 +823,19 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
       page.getByRole("menuitemradio", { name: `${label} ${count}` }),
     ).toBeVisible()
   }
-  await page.getByRole("menuitemradio", { name: /^Billing / }).click()
+  await page.getByRole("menuitemradio", { name: /^Other / }).click()
   await expect(
-    page.getByRole("button", { name: "Filter Tasks: Billing" }),
+    page.getByRole("button", { name: "My Tasks · Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
   await expect(
-    page.getByRole("button", { name: /^Missed Calls \d+$/ }),
+    page.getByRole("button", { name: /^My Tasks/ }),
   ).toBeVisible()
 
   await page.reload()
-  const restoredTasksSection = page.getByRole("button", { name: /^Tasks/ })
-  if ((await restoredTasksSection.getAttribute("aria-expanded")) === "false") {
-    await restoredTasksSection.click()
-  }
   await expect(
-    page.getByRole("button", { name: "Filter Tasks: Billing" }),
+    page.getByRole("button", { name: "My Tasks · Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
@@ -913,11 +870,8 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(completeTask).toHaveCSS("transition-duration", "0s")
   await expect(relativeTime).toHaveCSS("transition-duration", "0s")
 
-  await page.evaluate(() => {
-    const channel = new BroadcastChannel("acuity-auth-token")
-    channel.postMessage("clear-access-token")
-    channel.close()
-  })
+  // Install the outage before invalidating the token: background refreshes can
+  // otherwise refill the cache between invalidation and route registration.
   await page.route("**/api/auth/token", (route) =>
     route.fulfill({
       status: 503,
@@ -925,6 +879,16 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
       body: JSON.stringify({ error: "temporarily unavailable" }),
     }),
   )
+  await page.evaluate(async () => {
+    const sender = new BroadcastChannel("acuity-auth-token")
+    const observer = new BroadcastChannel("acuity-auth-token")
+    await new Promise<void>((resolve) => {
+      observer.onmessage = () => resolve()
+      sender.postMessage("clear-access-token")
+    })
+    sender.close()
+    observer.close()
+  })
   await completeTask.click()
   await expect(
     taskItem
@@ -1007,8 +971,8 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(taskItem).toHaveCount(0)
   await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
 
-  await page.getByRole("button", { name: "Filter Tasks: Billing" }).click()
-  await page.getByRole("menuitemradio", { name: /^Medication / }).click()
+  await page.getByRole("button", { name: "My Tasks · Other" }).click()
+  await page.getByRole("menuitemradio", { name: /^Clinical & pharmacy / }).click()
   await page.keyboard.press("Escape")
   const medicationItem = page
     .getByTestId("task-row")
@@ -1116,22 +1080,21 @@ async function createAIStaffTask(
   expect([200, 201]).toContain(response.status())
 }
 
-async function createAIAppointmentReview(page: Page) {
-  const occurredAt = new Date()
+async function createAIAppointmentReview(page: Page, sourceCallId = "messaging-booking-review", occurredAt = new Date()) {
   const startedAt = new Date(occurredAt.getTime() - 60_000)
   const response = await page.request.post(`${portalURL}/v1/ai/interactions`, {
     headers: { authorization: "Bearer synthetic-production-token" },
     data: {
       kind: "CLOSEOUT",
       officeKey: "spring-hill",
-      sourceCallId: "messaging-booking-review",
+      sourceCallId,
       callerPhone: "+17275550188",
       officePhone: "+17275550101",
       startedAt: startedAt.toISOString(),
       endedAt: occurredAt.toISOString(),
       status: "COMPLETED",
       summary: "Caller booked an appointment.",
-      closeoutPayload: { callId: "messaging-booking-review" },
+      closeoutPayload: { callId: sourceCallId },
       appointmentOutcome: {
         action: "BOOKED",
         occurredAt: occurredAt.toISOString(),
@@ -1166,3 +1129,54 @@ async function createAINoAppointmentCall(page: Page) {
   })
   expect([200, 201]).toContain(response.status())
 }
+
+
+test("shared task counts include old work and unloaded pages", async ({ page }) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+  for (let index = 0; index < 64; index += 1) {
+    await sendInbound(page, `shared-inbox-${index}`, "Synthetic inbox question", `+1555040${String(index).padStart(4, "0")}`)
+  }
+  await page.getByLabel("Search tasks, names, or phone").fill("555040")
+  await page.getByLabel("Search tasks, names, or phone").press("Enter")
+  await expect(page.getByRole("button", { name: /^My Tasks/ })).toContainText("64", { timeout: 30_000 })
+  await expect(page.getByTestId("task-row")).toHaveCount(50)
+  await page.getByRole("button", { name: "Show more", exact: true }).click()
+  await expect(page.getByTestId("task-row")).toHaveCount(64)
+  // Opening a conversation is not completion, even after a refresh.
+  await page.getByTestId("task-row").first().getByRole("button").first().click()
+  await expect(page.getByRole("button", { name: /^My Tasks/ })).toContainText("64")
+  await page.reload()
+  await page.getByLabel("Search tasks, names, or phone").fill("555040")
+  await page.getByLabel("Search tasks, names, or phone").press("Enter")
+  await expect(page.getByRole("button", { name: /^My Tasks/ })).toContainText("64")
+})
+
+test("staff replies complete text conversations and new texts return to the inbox", async ({ page }) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+  const phone = "+15550509999"
+  await sendInbound(page, "review-version-first", "Initial synthetic question", phone)
+  const row = page.getByTestId("task-row").filter({ hasText: "(555) 050-9999" })
+  await expect(row).toBeVisible({ timeout: 30_000 })
+  await row.getByRole("button").first().click()
+  await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "closed")
+  await expect(page.getByRole("button", { name: "Mark done", exact: true })).toBeVisible()
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Here is the answer to your synthetic question.")
+  await page.getByRole("button", { name: "Send message", exact: true }).click()
+  await expect(page.getByRole("article").filter({ hasText: "Here is the answer to your synthetic question." }).getByText("Sent", { exact: true })).toBeVisible()
+  await expect(row).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Reopen", exact: true })).toBeVisible()
+  await sendInbound(page, "review-version-second", "Another synthetic question", phone)
+  await expect(row).toBeVisible()
+  await row.getByRole("button").first().click()
+  const reviewID = await row.getAttribute("data-task-id")
+  await page.getByRole("button", { name: "Mark done", exact: true }).click()
+  await expect(row).toHaveCount(0)
+  // Manual completion advances; reopen the completed review from its history.
+  await page.getByRole("button", { name: "Recently completed", exact: true }).click()
+  const completedReview = page.locator(`[data-task-id="${reviewID}"]`)
+  await completedReview.getByRole("button").first().click()
+  await page.getByRole("button", { name: "Reopen", exact: true }).click()
+  await expect(completedReview).toBeVisible()
+})

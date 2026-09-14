@@ -12,6 +12,16 @@ const nextConfig: NextConfig = {
         destination: "/who-we-are",
         permanent: true,
       },
+      {
+        source: "/advancedmd-ai-receptionist",
+        destination: "/integrations/advancedmd",
+        permanent: true,
+      },
+      {
+        source: "/partners/advancedmd",
+        destination: "/integrations/advancedmd",
+        permanent: true,
+      },
     ]
   },
   async headers() {

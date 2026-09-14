@@ -1,32 +1,15 @@
 import type {
   AccessDiscovery,
-  AiOutcomeCounts,
   AiInteractionDetail,
-  AiOutcomeItem,
-  AiOutcomePage,
-  AiOutcomeQueryRequest,
   CallingCall,
   CallingDispositionResult,
   EngagementSummary,
-  MessageThreadPage,
-  MessageThreadQueryRequest,
-  MessageThreadSummary,
   Task,
   TaskFolderCounts,
   TaskPage,
   TaskQueryRequest,
   WorkspaceSnapshot,
 } from "./api/generated/types.gen.ts"
-import {
-  applyOutcomePages,
-  appointmentActionForFolder,
-  categorizeAIOutcomes,
-  appointmentOutcomeFolderKeys,
-  type AppointmentOutcomeCursors,
-  type AppointmentOutcomeFolder,
-  decrementOutcomeCount,
-  emptyAppointmentOutcomeCursors,
-} from "./ai-outcome-attention.ts"
 import { appendUniqueByID } from "./workspace-ordering.ts"
 import { canViewPracticeAnalytics } from "./booking-analytics.ts"
 import { resolveWorkspaceSearch } from "./workspace-search.ts"
@@ -50,15 +33,11 @@ export type WorkspaceConnectionState =
 
 export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics"
 export type WorkspaceContextView = "task" | "call" | "ai-call"
-export type WorkspaceRailSection =
-  | "tasks"
-  | "calls"
-  | "appointments"
-  | "texts"
+export type WorkspaceRailSection = "completed"
 
 export type WorkspaceRailState = {
   expanded: WorkspaceRailSection[]
-  expandedAppointments: AppointmentOutcomeFolder[]
+  taskResponsibility?: "mine" | "all"
   taskCategory: TaskCategoryFilter
   scrollTop: number
 }
@@ -88,14 +67,10 @@ export type WorkspaceProjectionState = {
     error: string
   }
   tasks: WorkspaceQueryWindow<Task> & { counts: TaskFolderCounts }
-  recoveryTasks: WorkspaceQueryWindow<Task>
-  messages: WorkspaceQueryWindow<MessageThreadSummary>
-  aiOutcomes: WorkspaceQueryWindow<AiOutcomeItem> & {
-    counts: AiOutcomeCounts
-    nextCursors: AppointmentOutcomeCursors
-  }
+  completedTasks: WorkspaceQueryWindow<Task>
   selection: {
     task?: Task
+    taskGroup?: Task
     taskError: string
     engagement?: EngagementSummary
     aiInteractionID: string
@@ -148,16 +123,6 @@ export type WorkspaceAuthorityAdapter = {
     request: TaskQueryRequest,
     signal: AbortSignal,
   ) => Promise<WorkspaceAuthorityResult<TaskPage>>
-  messageThreads: (
-    token: string,
-    request: MessageThreadQueryRequest,
-    signal: AbortSignal,
-  ) => Promise<WorkspaceAuthorityResult<MessageThreadPage>>
-  aiOutcomes: (
-    token: string,
-    request: AiOutcomeQueryRequest,
-    signal: AbortSignal,
-  ) => Promise<WorkspaceAuthorityResult<AiOutcomePage>>
   aiInteraction: (
     token: string,
     interactionID: string,
@@ -178,16 +143,6 @@ export type WorkspaceAuthorityAdapter = {
     task: Pick<Task, "id" | "version">,
     signal: AbortSignal,
   ) => Promise<WorkspaceAuthorityResult<Task>>
-  reviewAIOutcome: (
-    token: string,
-    interactionID: string,
-    signal: AbortSignal,
-  ) => Promise<WorkspaceAuthorityResult<unknown>>
-  markMessageThreadRead: (
-    token: string,
-    threadID: string,
-    signal: AbortSignal,
-  ) => Promise<WorkspaceAuthorityResult<unknown>>
 }
 
 type Reconciliation = {
@@ -226,7 +181,6 @@ export type WorkspacePreferences = {
 }
 
 export type WorkspaceProjectionEnvironment = {
-  isHidden: () => boolean
   clock: {
     setTimeout: (callback: () => void, milliseconds: number) => number
     clearTimeout: (id: number) => void
@@ -238,7 +192,6 @@ export type WorkspaceProjection = {
   subscribe: (listener: () => void) => () => void
   start: () => Promise<void>
   dispatch: (intent: WorkspaceProjectionIntent) => Promise<void>
-  reviewAIOutcome: (interactionID: string) => Promise<boolean>
   stop: () => void
 }
 
@@ -250,18 +203,13 @@ export type WorkspaceProjectionIntent =
     }
   | {
       type: "load-more"
-      window: "tasks" | "recoveryTasks" | "messages"
-    }
-  | {
-      type: "load-more-outcomes"
-      folder: AppointmentOutcomeFolder
+      window: "tasks" | "completedTasks"
     }
   | { type: "set-search"; value: string }
   | { type: "submit-search" }
   | { type: "complete-task"; task: Task }
   | { type: "select-engagement"; engagement: EngagementSummary }
   | { type: "select-task"; task: Task; rememberForCall?: boolean }
-  | { type: "select-ai-interaction"; interaction: AiOutcomeItem }
   | { type: "select-analytics" }
   | { type: "select-operator-analytics" }
   | { type: "open-ai-context"; interactionID: string }
@@ -269,7 +217,7 @@ export type WorkspaceProjectionIntent =
   | { type: "open-call-context"; callID: string }
   | { type: "close-context" }
   | { type: "context-transition-ended" }
-  | { type: "task-committed"; task: Task }
+  | { type: "task-committed"; task: Task; advance?: boolean }
   | { type: "task-created"; task: Task }
   | { type: "visibility-changed" }
   | { type: "retry" }
@@ -278,11 +226,8 @@ export type WorkspaceProjectionIntent =
   | { type: "return-to-call" }
   | { type: "call-disposition"; result: CallingDispositionResult }
   | { type: "toggle-rail-section"; section: WorkspaceRailSection }
-  | {
-      type: "toggle-appointment-section"
-      section: AppointmentOutcomeFolder
-    }
   | { type: "set-task-category"; category: TaskCategoryFilter }
+  | { type: "set-task-filters"; responsibility?: "mine" | "all"; category?: TaskCategoryFilter }
   | { type: "remember-rail-scroll"; scrollTop: number }
 
 const practiceStorageKey = "acuity.selectedPractice"
@@ -319,7 +264,6 @@ export function createWorkspaceProjection({
   const requestBudget: WorkspaceRequestBudget | undefined = environment
     ? createWorkspaceRequestBudget({
         clock: environment.clock,
-        isHidden: environment.isHidden,
         refreshDetails: () =>
           patch((current) => ({
             ...current,
@@ -330,11 +274,8 @@ export function createWorkspaceProjection({
   const queryGenerations = {
     tasks: 0,
     taskCounts: 0,
-    recoveryTasks: 0,
-    messages: 0,
-    aiOutcomes: 0,
+    completedTasks: 0,
   }
-  let aiRefreshController: AbortController | undefined
   let accessController: AbortController | undefined
   const listeners = new Set<() => void>()
 
@@ -344,12 +285,6 @@ export function createWorkspaceProjection({
     requestBudget?.setDetailRefreshMounted(
       next.selection.view === "engagement" &&
         Boolean(next.selection.engagement),
-    )
-    requestBudget?.setAIRefresh(
-      next.loadState === "ready" && next.scope.practiceID
-        ? `${next.scope.practiceID}:${next.scope.locationScopeID}`
-        : "",
-      refreshAIOutcomes,
     )
     for (const listener of listeners) listener()
   }
@@ -418,68 +353,38 @@ export function createWorkspaceProjection({
     signal,
     minimumVersion,
   }: Parameters<WorkspaceRealtimeCallbacks["reconcile"]>[0]) {
-    aiRefreshController?.abort()
-    const resumeAIRefresh = requestBudget?.pauseAIRefresh()
     const generation = scopeGeneration
     const countGeneration = ++queryGenerations.taskCounts
     const taskGeneration = ++queryGenerations.tasks
-    const recoveryGeneration = ++queryGenerations.recoveryTasks
-    const messageGeneration = ++queryGenerations.messages
-    const outcomeGeneration = ++queryGenerations.aiOutcomes
+    const completedGeneration = ++queryGenerations.completedTasks
     const current = state
-    const taskRequest = taskQueryRequest(current.scope, current.search.applied)
-    const recoveryRequest = recoveryTaskQueryRequest(
-      current.scope,
-      current.search.applied,
-    )
-    const messageRequest = messageQueryRequest(current.scope)
+    const taskRequest = taskQueryRequest(current.scope, current.search.applied, current.rail)
     const selectedTaskID = current.selection.task?.id
     const selectedAIInteractionID = current.selection.aiInteractionID
     const [
       snapshotResult,
       taskPageResult,
-      recoveryResult,
-      messageResult,
-      outcomeResult,
+      completedResult,
       selectedTaskResult,
       selectedAIResult,
     ] =
       await Promise.all([
         authority.workspace(token, scope, signal),
         loadTaskWindow(token, taskRequest, current.tasks.items.length, signal),
-        loadTaskWindow(
-          token,
-          recoveryRequest,
-          current.recoveryTasks.items.length,
-          signal,
-        ),
-        loadMessageWindow(
-          token,
-          messageRequest,
-          current.messages.items.length,
-          signal,
-        ),
-        loadOutcomeWindows(
-          token,
-          current.aiOutcomes,
-          current.scope,
-          signal,
-        ),
+        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), current.completedTasks.items.length, signal),
         selectedTaskID
           ? authority.task(token, selectedTaskID, signal)
           : Promise.resolve(undefined),
         selectedAIInteractionID
           ? authority.aiInteraction(token, selectedAIInteractionID, signal)
           : Promise.resolve(undefined),
-      ]).finally(() => resumeAIRefresh?.())
+      ])
 
     const taskResult = requireTaskCounts(taskPageResult)
     const authorityResults = [
       snapshotResult,
       taskResult,
-      recoveryResult,
-      messageResult,
-      outcomeResult,
+      completedResult,
       selectedTaskResult,
       selectedAIResult,
     ]
@@ -518,39 +423,16 @@ export function createWorkspaceProjection({
         patch((currentState) => {
           const taskWindowCurrent =
             taskGeneration === queryGenerations.tasks
-          const recoveryWindowCurrent =
-            recoveryGeneration === queryGenerations.recoveryTasks
-          const messageWindowCurrent =
-            messageGeneration === queryGenerations.messages
-          const outcomeWindowCurrent =
-            outcomeGeneration === queryGenerations.aiOutcomes
+          const completedWindowCurrent = completedGeneration === queryGenerations.completedTasks
           const refreshedSelected =
             taskWindowCurrent && selectedTaskResult?.kind === "success"
               ? selectedTaskResult.data
               : undefined
-          const tasks =
-            taskWindowCurrent && taskResult.kind === "success"
-              ? taskResult.data.items
-              : currentState.tasks.items
-          const recoveryTasks =
-            recoveryWindowCurrent && recoveryResult.kind === "success"
-              ? recoveryResult.data.items
-              : currentState.recoveryTasks.items
-          const selectedIsRecovery = refreshedSelected
-            ? isRecoveryTask(refreshedSelected)
-            : false
-          const tasksWithSelection =
-            refreshedSelected?.state === "OPEN" && !selectedIsRecovery
-            ? tasks.map((task) =>
-                task.id === refreshedSelected.id ? refreshedSelected : task,
-              )
-            : tasks
-          const recoveryTasksWithSelection =
-            refreshedSelected?.state === "OPEN" && selectedIsRecovery
-              ? recoveryTasks.map((task) =>
-                  task.id === refreshedSelected.id ? refreshedSelected : task,
-                )
-              : recoveryTasks
+          const tasks = taskWindowCurrent && taskResult.kind === "success"
+            ? taskResult.data.items.map((task) =>
+                refreshedSelected?.state === "OPEN" && task.id === refreshedSelected.id && !task.groupMembers
+                  ? refreshedSelected : task)
+            : currentState.tasks.items
           const selectionStillMatches = taskWindowCurrent &&
             Boolean(selectedTaskID) &&
             currentState.selection.task?.id === selectedTaskID
@@ -562,6 +444,7 @@ export function createWorkspaceProjection({
             selection = {
               ...selection,
               task: undefined,
+              taskGroup: undefined,
               taskError: "",
               contextPanelOpen:
                 selection.contextView === "task"
@@ -573,6 +456,7 @@ export function createWorkspaceProjection({
               selection = {
                 ...selection,
                 task: refreshedSelected,
+                taskGroup: refreshedSelected.state === "COMPLETED" ? undefined : selection.taskGroup,
                 taskError: "",
                 engagement: taskEngagement(refreshedSelected),
               }
@@ -585,12 +469,13 @@ export function createWorkspaceProjection({
           } else if (taskWindowCurrent &&
             !currentState.selection.task &&
             currentState.selection.view === "none" &&
-            tasksWithSelection[0]
+            tasks[0]
           ) {
-            const firstTask = tasksWithSelection[0]
+            const firstTask = tasks[0]
             selection = {
               ...selection,
               task: firstTask,
+              taskGroup: firstTask.groupMembers && firstTask.groupMembers.length > 1 ? firstTask : undefined,
               taskError: "",
               engagement: taskEngagement(firstTask),
               view: "engagement",
@@ -634,7 +519,7 @@ export function createWorkspaceProjection({
           if (taskWindowCurrent) {
             taskWindow = taskResult.kind === "success"
               ? {
-                  items: tasksWithSelection,
+                  items: tasks,
                   nextCursor: taskResult.data.nextCursor,
                   counts: currentState.tasks.counts,
                   loading: false,
@@ -654,52 +539,11 @@ export function createWorkspaceProjection({
             loadState: "ready",
             workspace: snapshot,
             tasks: taskWindow,
-            recoveryTasks:
-              recoveryWindowCurrent && recoveryResult.kind === "success"
-              ? {
-                  items: recoveryTasksWithSelection,
-                  nextCursor: recoveryResult.data.nextCursor,
-                  loading: false,
-                  error: "",
-                }
-              : recoveryWindowCurrent
-                ? {
-                  ...currentState.recoveryTasks,
-                  loading: false,
-                  error: recoveryWindowError,
-                  }
-                : currentState.recoveryTasks,
-            messages: messageWindowCurrent && messageResult.kind === "success"
-              ? {
-                  items: messageResult.data.items,
-                  nextCursor: messageResult.data.nextCursor,
-                  loading: false,
-                  error: "",
-                }
-              : messageWindowCurrent
-                ? {
-                  ...currentState.messages,
-                  loading: false,
-                  error: messageWindowError,
-                  }
-                : currentState.messages,
-            aiOutcomes:
-              outcomeWindowCurrent && outcomeResult.kind === "success"
-              ? {
-                  items: outcomeResult.data.items,
-                  nextCursor: "",
-                  nextCursors: outcomeResult.data.nextCursors,
-                  counts: outcomeResult.data.counts,
-                  loading: false,
-                  error: "",
-                }
-              : outcomeWindowCurrent
-                ? {
-                  ...currentState.aiOutcomes,
-                  loading: false,
-                  error: outcomeWindowError,
-                  }
-                : currentState.aiOutcomes,
+            completedTasks: completedWindowCurrent
+              ? completedResult.kind === "success"
+                ? { items: completedResult.data.items, nextCursor: completedResult.data.nextCursor, loading: false, error: "" }
+                : { ...currentState.completedTasks, loading: false, error: completedWindowError }
+              : currentState.completedTasks,
             selection,
           }
         })
@@ -787,10 +631,6 @@ export function createWorkspaceProjection({
       await loadMore(intent.window)
       return
     }
-    if (intent.type === "load-more-outcomes") {
-      await loadMoreOutcomes(intent.folder)
-      return
-    }
     if (intent.type === "set-search") {
       patch((current) => ({
         ...current,
@@ -808,35 +648,11 @@ export function createWorkspaceProjection({
     }
     if (intent.type === "select-engagement") {
       selectEngagement(intent.engagement)
-      await markEngagementRead(intent.engagement.phone)
       return
     }
     if (intent.type === "select-task") {
       if (intent.rememberForCall) returnTaskID = intent.task.id
       selectEngagement(taskEngagement(intent.task), intent.task)
-      await markEngagementRead(intent.task.phone)
-      return
-    }
-    if (intent.type === "select-ai-interaction") {
-      const interaction = intent.interaction
-      const engagement = aiOutcomeEngagement(interaction)
-      selectEngagement(engagement)
-      patch((current) => ({
-        ...current,
-        selection: {
-          ...current.selection,
-          aiInteractionID: interaction.id,
-          aiInteraction: undefined,
-          aiInteractionLoading: true,
-          aiInteractionError: "",
-          contextView: "ai-call",
-          contextPanelOpen: true,
-        },
-      }))
-      await Promise.all([
-        markEngagementRead(interaction.phone),
-        loadAIInteractionDetail(interaction.id),
-      ])
       return
     }
     if (intent.type === "select-analytics" || intent.type === "select-operator-analytics") {
@@ -897,20 +713,28 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "task-committed") {
+      const selectedID = state.selection.task?.id
+      const generation = scopeGeneration
+      const ownsSelection = selectedID === intent.task.id || state.selection.taskGroup?.groupMembers?.some((member) => member.id === intent.task.id)
       queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
+      await refreshTaskWindows(state.search.applied)
+      if (intent.advance && intent.task.state === "COMPLETED" && ownsSelection && generation === scopeGeneration && state.selection.task?.id === selectedID && !state.tasks.error) {
+        const next = state.tasks.items.find((task) => task.id !== intent.task.id)
+        if (next) selectEngagement(taskEngagement(next), next)
+      }
       realtimeController.refresh()
       return
     }
     if (intent.type === "task-created") {
       queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
+      await refreshTaskWindows(state.search.applied)
       realtimeController.refresh()
       return
     }
     if (intent.type === "visibility-changed") {
       realtimeController.visibilityChanged()
-      requestBudget?.visibilityChanged()
       return
     }
     if (intent.type === "retry") {
@@ -954,21 +778,19 @@ export function createWorkspaceProjection({
       }))
       return
     }
-    if (intent.type === "toggle-appointment-section") {
-      updateRail((rail) => ({
-        ...rail,
-        expandedAppointments: rail.expandedAppointments.includes(
-          intent.section,
-        )
-          ? rail.expandedAppointments.filter(
-              (section) => section !== intent.section,
-            )
-          : [...rail.expandedAppointments, intent.section],
-      }))
-      return
-    }
     if (intent.type === "set-task-category") {
       updateRail((rail) => ({ ...rail, taskCategory: intent.category }))
+      await refreshTaskWindows(state.search.applied, true)
+      selectFirstVisibleTask()
+      return
+    }
+    if (intent.type === "set-task-filters") {
+      updateRail((rail) => ({ ...rail,
+        taskResponsibility: intent.responsibility ?? rail.taskResponsibility ?? "mine",
+        taskCategory: intent.category ?? rail.taskCategory,
+      }))
+      await refreshTaskWindows(state.search.applied, true)
+      selectFirstVisibleTask()
       return
     }
     if (intent.type === "remember-rail-scroll") {
@@ -1085,45 +907,13 @@ export function createWorkspaceProjection({
       ...current,
       [window]: { ...current[window], loading: true, error: "" },
     }))
-    if (window === "messages") {
-      const result = await authenticatedRequest((token, signal) =>
-        authority.messageThreads(
-          token,
-          {
-            ...messageQueryRequest(state.scope),
-            cursor: currentWindow.nextCursor,
-          },
-          signal,
-        ),
-      )
-      if (
-        generation !== scopeGeneration ||
-        queryGeneration !== queryGenerations.messages ||
-        stopped
-      ) return
-      if (failIfAccessLost(result)) return
-      if (result.kind !== "success") {
-        setWindowFailure(window)
-        return
-      }
-      patch((current) => ({
-        ...current,
-        messages: {
-          items: appendUniqueByID(current.messages.items, result.data.items),
-          nextCursor: result.data.nextCursor,
-          loading: false,
-          error: "",
-        },
-      }))
-      return
-    }
     const result = await authenticatedRequest((token, signal) =>
       authority.tasks(
         token,
         {
           ...(window === "tasks"
-            ? taskQueryRequest(state.scope, state.search.applied)
-            : recoveryTaskQueryRequest(state.scope, state.search.applied)),
+            ? taskQueryRequest(state.scope, state.search.applied, state.rail)
+            : completedTaskQueryRequest(state.scope, state.search.applied, state.rail)),
           cursor: currentWindow.nextCursor,
           includeCounts: false,
         },
@@ -1155,122 +945,11 @@ export function createWorkspaceProjection({
     }
     patch((current) => ({
       ...current,
-      recoveryTasks: {
-        items: appendUniqueByID(current.recoveryTasks.items, result.data.items),
+      completedTasks: {
+        items: appendUniqueByID(current.completedTasks.items, result.data.items),
         nextCursor: result.data.nextCursor,
         loading: false,
         error: "",
-      },
-    }))
-  }
-
-  async function loadMoreOutcomes(folder: AppointmentOutcomeFolder) {
-    if (state.loadState !== "ready" || state.aiOutcomes.loading) return
-    const cursor = state.aiOutcomes.nextCursors[folder]
-    if (!cursor) return
-    const generation = scopeGeneration
-    const queryGeneration = ++queryGenerations.aiOutcomes
-    patch((current) => ({
-      ...current,
-      aiOutcomes: { ...current.aiOutcomes, loading: true, error: "" },
-    }))
-    const result = await authenticatedRequest((token, signal) =>
-      authority.aiOutcomes(
-        token,
-        {
-          practiceId: state.scope.practiceID,
-          ...(state.scope.locationScopeID
-            ? { locationId: state.scope.locationScopeID }
-            : {}),
-          appointmentAction: appointmentActionForFolder(folder),
-          includeCounts: false,
-          cursor,
-          limit: 10,
-        },
-        signal,
-      ),
-    )
-    if (
-      generation !== scopeGeneration ||
-      queryGeneration !== queryGenerations.aiOutcomes ||
-      stopped
-    ) return
-    if (failIfAccessLost(result)) return
-    if (result.kind !== "success") {
-      setOutcomeFailure()
-      return
-    }
-    patch((current) => {
-      const applied = applyOutcomePages(
-        current.aiOutcomes.items,
-        [
-          {
-            folder,
-            items: result.data.items,
-            nextCursor: result.data.nextCursor,
-          },
-        ],
-        true,
-      )
-      return {
-        ...current,
-        aiOutcomes: {
-          ...current.aiOutcomes,
-          items: applied.items,
-          nextCursors: {
-            ...current.aiOutcomes.nextCursors,
-            ...applied.nextCursors,
-          },
-          loading: false,
-          error: "",
-        },
-      }
-    })
-  }
-
-  async function refreshAIOutcomes() {
-    if (state.loadState !== "ready") return
-    const controller = new AbortController()
-    aiRefreshController = controller
-    const generation = scopeGeneration
-    const queryGeneration = ++queryGenerations.aiOutcomes
-    const current = state.aiOutcomes
-    const scope = state.scope
-    const result = await authenticatedRequest((token, signal) =>
-      loadOutcomeWindows(token, current, scope, signal),
-      controller.signal,
-    )
-    if (
-      generation !== scopeGeneration ||
-      queryGeneration !== queryGenerations.aiOutcomes ||
-      controller.signal.aborted ||
-      stopped
-    ) return
-    if (failIfAccessLost(result)) return
-    if (result.kind !== "success") {
-      setOutcomeFailure()
-      return
-    }
-    patch((currentState) => ({
-      ...currentState,
-      aiOutcomes: {
-        items: result.data.items,
-        nextCursor: "",
-        nextCursors: result.data.nextCursors,
-        counts: result.data.counts,
-        loading: false,
-        error: "",
-      },
-    }))
-  }
-
-  function setOutcomeFailure() {
-    patch((current) => ({
-      ...current,
-      aiOutcomes: {
-        ...current.aiOutcomes,
-        loading: false,
-        error: outcomeWindowError,
       },
     }))
   }
@@ -1289,6 +968,7 @@ export function createWorkspaceProjection({
         selection: {
           ...current.selection,
           task: undefined,
+          taskGroup: undefined,
           taskError: "",
           aiInteractionID: "",
           aiInteraction: undefined,
@@ -1304,14 +984,14 @@ export function createWorkspaceProjection({
           contextPanelOpen: false,
         },
       }))
-      await refreshTaskWindows("")
+      await refreshTaskWindows("", true)
       return
     }
     patch((current) => ({
       ...current,
       search: { ...current.search, applied: resolved.value, error: "" },
     }))
-    await refreshTaskWindows(resolved.value)
+    await refreshTaskWindows(resolved.value, true)
   }
 
   async function completeTaskIntent(task: Task) {
@@ -1338,53 +1018,27 @@ export function createWorkspaceProjection({
       return
     }
     queryGenerations.taskCounts += 1
-    const committed = result.data
-    const recovery = isRecoveryTask(committed)
-    patch((current) => {
-      const selected = current.selection.task?.id === committed.id
-      return {
-        ...current,
-        tasks: {
-          ...current.tasks,
-          items: recovery
-            ? current.tasks.items
-            : projectCommittedTask(current.tasks.items, committed),
-          counts: decrementTaskCounts(current.tasks.counts, committed),
-        },
-        recoveryTasks: recovery
-          ? {
-              ...current.recoveryTasks,
-              items: projectCommittedTask(
-                current.recoveryTasks.items,
-                committed,
-              ),
-            }
-          : current.recoveryTasks,
-        selection: selected
-          ? {
-              ...current.selection,
-              task: undefined,
-              taskError: "",
-              engagement: current.selection.engagement
-                ? {
-                    ...current.selection.engagement,
-                    openTaskCount: Math.max(
-                      0,
-                      current.selection.engagement.openTaskCount - 1,
-                    ),
-                  }
-                : undefined,
-              contextPanelOpen:
-                current.selection.contextView === "task"
-                  ? false
-                  : current.selection.contextPanelOpen,
-            }
-          : current.selection,
-        detailRevision: current.detailRevision + 1,
-        completion: { pendingTaskID: "", errorTaskID: "", error: "" },
-      }
-    })
+    projectTaskIntent(result.data, false)
+    patch((current) => ({
+      ...current,
+      detailRevision: current.detailRevision + 1,
+    }))
+    await refreshTaskWindows(state.search.applied)
+    if (generation !== scopeGeneration || stopped || state.loadState !== "ready") return
+    patch((current) => ({
+      ...current,
+      completion: { pendingTaskID: "", errorTaskID: "", error: "" },
+    }))
     realtimeController.refresh()
+  }
+
+  function selectFirstVisibleTask() {
+    if (state.loadState !== "ready" || state.tasks.error || state.selection.contextView === "call") return
+    const selectedID = state.selection.task?.id
+    if (state.tasks.items.some((task) => task.id === selectedID || task.groupMembers?.some((member) => member.id === selectedID))) return
+    const first = state.tasks.items[0]
+    if (first) selectEngagement(taskEngagement(first), first)
+    else patch((current) => ({ ...current, selection: { ...current.selection, task: undefined, taskGroup: undefined, contextPanelOpen: false } }))
   }
 
   function selectEngagement(engagement: EngagementSummary, task?: Task) {
@@ -1393,6 +1047,7 @@ export function createWorkspaceProjection({
       selection: {
         ...current.selection,
         task,
+        taskGroup: task?.groupMembers && task.groupMembers.length > 1 ? task : undefined,
         taskError: "",
         engagement,
         aiInteractionID: "",
@@ -1407,98 +1062,22 @@ export function createWorkspaceProjection({
     }))
   }
 
-  async function markEngagementRead(phone: string) {
-    const unreadThreadIDs = state.messages.items
-      .filter((thread) => thread.externalPhone === phone && thread.unread)
-      .map((thread) => thread.id)
-    if (unreadThreadIDs.length === 0) return
-    const generation = scopeGeneration
-    const result = await authenticatedRequest(async (token, signal) => {
-      const results = await Promise.all(
-        unreadThreadIDs.map((threadID) =>
-          authority.markMessageThreadRead(token, threadID, signal),
-        ),
-      )
-      const accessLoss = results.find(
-        (item) =>
-          item.kind === "unauthenticated" || item.kind === "unauthorized",
-      )
-      if (accessLoss) return accessLoss
-      return {
-        kind: "success" as const,
-        data: unreadThreadIDs.filter(
-          (_threadID, index) => results[index]?.kind === "success",
-        ),
-      }
-    })
-    if (generation !== scopeGeneration || stopped) return
-    if (failIfAccessLost(result) || result.kind !== "success") return
-    const readThreadIDs = new Set(result.data)
-    if (readThreadIDs.size === 0) return
-    patch((current) => ({
-      ...current,
-      messages: {
-        ...current.messages,
-        items: current.messages.items.map((thread) =>
-          readThreadIDs.has(thread.id) ? { ...thread, unread: false } : thread,
-        ),
-      },
-      tasks: {
-        ...current.tasks,
-        items: current.tasks.items.map((task) =>
-          (task.conversationThreadId &&
-            readThreadIDs.has(task.conversationThreadId)) ||
-          (task.messageThreadId && readThreadIDs.has(task.messageThreadId))
-            ? { ...task, unread: false }
-            : task,
-        ),
-      },
-      selection:
-        current.selection.engagement?.phone === phone
-          ? {
-              ...current.selection,
-              engagement: { ...current.selection.engagement, unread: false },
-              task: current.selection.task
-                ? { ...current.selection.task, unread: false }
-                : undefined,
-            }
-          : current.selection,
-    }))
-  }
-
   function projectTaskIntent(task: Task, select: boolean) {
     detailGeneration += 1
-    const recovery = isRecoveryTask(task)
     patch((current) => {
-      const window = recovery ? current.recoveryTasks : current.tasks
-      const existed = window.items.some((item) => item.id === task.id)
       const selected = current.selection.task?.id === task.id
-      const counts = adjustTaskCountsForProjection(
-        current.tasks.counts,
-        task,
-        existed,
-      )
+      // Detail commands do not prove membership in the active filtered query.
       return {
         ...current,
         search: select ? { ...current.search, input: "" } : current.search,
-        tasks: recovery
-          ? { ...current.tasks, counts }
-          : {
-              ...current.tasks,
-              items: projectCommittedTask(current.tasks.items, task),
-              counts,
-            },
-        recoveryTasks: recovery
-          ? {
-              ...current.recoveryTasks,
-              items: projectCommittedTask(current.recoveryTasks.items, task),
-            }
-          : current.recoveryTasks,
         selection:
           select || selected
             ? {
                 ...current.selection,
                 task,
+                taskGroup: select
+                  ? (task.groupMembers && task.groupMembers.length > 1 ? task : undefined)
+                  : task.state === "COMPLETED" ? undefined : current.selection.taskGroup,
                 taskError: "",
                 engagement: taskEngagement(task),
                 aiInteractionID: "",
@@ -1593,37 +1172,6 @@ export function createWorkspaceProjection({
     }))
   }
 
-  async function reviewAIOutcome(interactionID: string) {
-    const generation = scopeGeneration
-    const result = await authenticatedRequest((token, signal) =>
-      authority.reviewAIOutcome(token, interactionID, signal),
-    )
-    if (generation !== scopeGeneration || stopped) return false
-    if (failIfAccessLost(result)) return false
-    if (result.kind !== "success") return false
-    patch((current) => {
-      const reviewed = current.aiOutcomes.items.find(
-        (outcome) => outcome.id === interactionID,
-      )
-      return {
-        ...current,
-        aiOutcomes: {
-          ...current.aiOutcomes,
-          items: current.aiOutcomes.items.filter(
-            (outcome) => outcome.id !== interactionID,
-          ),
-          counts: reviewed
-            ? decrementOutcomeCount(
-                current.aiOutcomes.counts,
-                reviewed.appointmentAction,
-              )
-            : current.aiOutcomes.counts,
-        },
-      }
-    })
-    return true
-  }
-
   function handleCallConnected(call: CallingCall) {
     if (call.id === focusedCallID) return
     detailGeneration += 1
@@ -1664,10 +1212,10 @@ export function createWorkspaceProjection({
         return
       }
     }
-    const previous = [...state.tasks.items, ...state.recoveryTasks.items].find(
+    const previous = [...state.tasks.items, ...state.completedTasks.items].find(
       (task) => task.id === returnTaskID,
     )
-    const nextTask = previous ?? state.tasks.items[0] ?? state.recoveryTasks.items[0]
+    const nextTask = previous ?? state.tasks.items[0]
     if (nextTask) {
       selectEngagement(taskEngagement(nextTask), nextTask)
       return
@@ -1685,50 +1233,46 @@ export function createWorkspaceProjection({
     }))
   }
 
-  async function refreshTaskWindows(search: string) {
+  async function refreshTaskWindows(search: string, reset = false) {
     if (state.loadState !== "ready") return
     const generation = scopeGeneration
     const countGeneration = ++queryGenerations.taskCounts
     const taskGeneration = ++queryGenerations.tasks
-    const recoveryGeneration = ++queryGenerations.recoveryTasks
+    const completedGeneration = ++queryGenerations.completedTasks
     const scope = state.scope
+    const rail = state.rail
+    const taskDepth = reset ? 0 : state.tasks.items.length
+    const completedDepth = reset ? 0 : state.completedTasks.items.length
     patch((current) => ({
       ...current,
       tasks: {
         ...current.tasks,
-        items: [],
-        nextCursor: "",
-        counts: emptyTaskFolderCounts(),
+        ...(reset ? { items: [], nextCursor: "", counts: emptyTaskFolderCounts() } : {}),
         loading: true,
         error: "",
       },
-      recoveryTasks: {
-        ...current.recoveryTasks,
-        items: [],
-        nextCursor: "",
+      completedTasks: {
+        ...current.completedTasks,
+        ...(reset ? { items: [], nextCursor: "" } : {}),
         loading: true,
         error: "",
       },
     }))
     const result = await authenticatedRequest(async (token, signal) => {
-      const [tasks, recoveryTasks] = await Promise.all([
-        authority.tasks(token, taskQueryRequest(scope, search), signal),
-        authority.tasks(
-          token,
-          recoveryTaskQueryRequest(scope, search),
-          signal,
-        ),
+      const [tasks, completedTasks] = await Promise.all([
+        loadTaskWindow(token, taskQueryRequest(scope, search, rail), taskDepth, signal),
+        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail), completedDepth, signal),
       ])
       if (
         tasks.kind === "unauthenticated" || tasks.kind === "unauthorized"
       ) return tasks
       if (
-        recoveryTasks.kind === "unauthenticated" ||
-        recoveryTasks.kind === "unauthorized"
-      ) return recoveryTasks
+        completedTasks.kind === "unauthenticated" ||
+        completedTasks.kind === "unauthorized"
+      ) return completedTasks
       return {
         kind: "success" as const,
-        data: { tasks, recoveryTasks },
+        data: { tasks, completedTasks },
       }
     })
     if (generation !== scopeGeneration || stopped) return
@@ -1736,8 +1280,8 @@ export function createWorkspaceProjection({
     const tasks = requireTaskCounts(result.kind === "success"
       ? result.data.tasks
       : ({ kind: "unavailable" } as const))
-    const recoveryTasks = result.kind === "success"
-      ? result.data.recoveryTasks
+    const completedTasks = result.kind === "success"
+      ? result.data.completedTasks
       : ({ kind: "unavailable" } as const)
     patch((current) => ({
       ...current,
@@ -1755,20 +1299,20 @@ export function createWorkspaceProjection({
                 error: "",
               }
             : { ...current.tasks, loading: false, error: taskWindowError },
-      recoveryTasks:
-        recoveryGeneration !== queryGenerations.recoveryTasks
-          ? current.recoveryTasks
-          : recoveryTasks.kind === "success"
+      completedTasks:
+        completedGeneration !== queryGenerations.completedTasks
+          ? current.completedTasks
+          : completedTasks.kind === "success"
             ? {
-                items: recoveryTasks.data.items,
-                nextCursor: recoveryTasks.data.nextCursor,
+                items: completedTasks.data.items,
+                nextCursor: completedTasks.data.nextCursor,
                 loading: false,
                 error: "",
               }
             : {
-                ...current.recoveryTasks,
+                ...current.completedTasks,
                 loading: false,
-                error: recoveryWindowError,
+                error: completedWindowError,
               },
     }))
   }
@@ -1776,20 +1320,13 @@ export function createWorkspaceProjection({
   function obsoleteAllQueries() {
     queryGenerations.tasks += 1
     queryGenerations.taskCounts += 1
-    queryGenerations.recoveryTasks += 1
-    queryGenerations.messages += 1
-    queryGenerations.aiOutcomes += 1
+    queryGenerations.completedTasks += 1
   }
 
   function setWindowFailure(
-    window: "tasks" | "recoveryTasks" | "messages",
+    window: "tasks" | "completedTasks",
   ) {
-    const error =
-      window === "tasks"
-        ? taskWindowError
-        : window === "recoveryTasks"
-          ? recoveryWindowError
-          : messageWindowError
+    const error = window === "tasks" ? taskWindowError : completedWindowError
     patch((current) => ({
       ...current,
       [window]: { ...current[window], loading: false, error },
@@ -1820,124 +1357,9 @@ export function createWorkspaceProjection({
     return { kind: "success", data: { items, nextCursor: cursor, counts } }
   }
 
-  async function loadMessageWindow(
-    token: string,
-    request: MessageThreadQueryRequest,
-    loadedCount: number,
-    signal: AbortSignal,
-  ): Promise<WorkspaceAuthorityResult<MessageThreadPage>> {
-    const target = refreshLoadedWindowTarget(loadedCount)
-    const items: MessageThreadSummary[] = []
-    let cursor = ""
-    do {
-      const result = await authority.messageThreads(
-        token,
-        { ...request, ...(cursor ? { cursor } : {}) },
-        signal,
-      )
-      if (result.kind !== "success") return result
-      items.push(...appendUniqueByID(items, result.data.items).slice(items.length))
-      cursor = result.data.nextCursor
-    } while (cursor && items.length < target)
-    return { kind: "success", data: { items, nextCursor: cursor } }
-  }
-
-  async function loadOutcomeWindows(
-    token: string,
-    current: WorkspaceProjectionState["aiOutcomes"],
-    scope: WorkspaceScope,
-    signal: AbortSignal,
-  ): Promise<
-    WorkspaceAuthorityResult<{
-      items: AiOutcomeItem[]
-      nextCursors: AppointmentOutcomeCursors
-      counts: AiOutcomeCounts
-    }>
-  > {
-    const categorized = categorizeAIOutcomes(current.items)
-    const pages = await Promise.all(
-      appointmentOutcomeFolderKeys.map((folder, index) =>
-        loadOutcomeWindow(
-          token,
-          folder,
-          categorized[folder].length,
-          index === 0,
-          scope,
-          signal,
-        ),
-      ),
-    )
-    const dataPages: Array<{
-      folder: AppointmentOutcomeFolder
-      items: AiOutcomeItem[]
-      nextCursor: string
-      counts?: AiOutcomeCounts
-    }> = []
-    for (const page of pages) {
-      if (page.result.kind !== "success") return page.result
-      dataPages.push({ folder: page.folder, ...page.result.data })
-    }
-    const counts = dataPages[0]?.counts ?? current.counts
-    return {
-      kind: "success",
-      data: {
-        items: dataPages.flatMap((page) => page.items),
-        nextCursors: Object.fromEntries(
-          dataPages.map((page) => [page.folder, page.nextCursor]),
-        ) as AppointmentOutcomeCursors,
-        counts,
-      },
-    }
-  }
-
-  async function loadOutcomeWindow(
-    token: string,
-    folder: AppointmentOutcomeFolder,
-    loadedCount: number,
-    includeCounts: boolean,
-    scope: WorkspaceScope,
-    signal: AbortSignal,
-  ) {
-    const target = refreshLoadedWindowTarget(loadedCount)
-    const items: AiOutcomeItem[] = []
-    let cursor = ""
-    let counts: AiOutcomeCounts | undefined
-    do {
-      const result = await authority.aiOutcomes(
-        token,
-        {
-          practiceId: scope.practiceID,
-          ...(scope.locationScopeID
-            ? { locationId: scope.locationScopeID }
-            : {}),
-          appointmentAction: appointmentActionForFolder(folder),
-          includeCounts: includeCounts && !cursor,
-          ...(cursor ? { cursor } : {}),
-          limit: Math.min(50, Math.max(10, target - items.length)),
-        },
-        signal,
-      )
-      if (result.kind !== "success") return { folder, result }
-      if (includeCounts && !cursor && !result.data.counts) {
-        return { folder, result: { kind: "unavailable" as const } }
-      }
-      counts ??= result.data.counts
-      items.push(...appendUniqueByID(items, result.data.items).slice(items.length))
-      cursor = result.data.nextCursor
-    } while (cursor && items.length < target)
-    return {
-      folder,
-      result: {
-        kind: "success" as const,
-        data: { items, nextCursor: cursor, counts },
-      },
-    }
-  }
-
   function stop() {
     stopped = true
     accessController?.abort()
-    aiRefreshController?.abort()
     accessController = undefined
     realtimeController.stop()
     requestBudget?.stop()
@@ -1952,21 +1374,16 @@ export function createWorkspaceProjection({
     },
     start,
     dispatch,
-    reviewAIOutcome,
     stop,
   }
 }
 
-const railSections: WorkspaceRailSection[] = [
-  "tasks",
-  "calls",
-  "appointments",
-  "texts",
-]
+const railSections: WorkspaceRailSection[] = ["completed"]
 
 const taskCategories: TaskCategoryFilter[] = [
+  "texts", "calls",
   "all",
-  "billing",
+  "insurance", "pre_op", "post_op",
   "appointments",
   "documentation",
   "optical",
@@ -1978,7 +1395,6 @@ const taskCategories: TaskCategoryFilter[] = [
 function emptyRailState(): WorkspaceRailState {
   return {
     expanded: [],
-    expandedAppointments: [],
     taskCategory: "all",
     scrollTop: 0,
   }
@@ -2009,14 +1425,7 @@ function restoreRailPreferences(
             railSections.includes(section as WorkspaceRailSection),
           )
         : [],
-      expandedAppointments: Array.isArray(value.expandedAppointments)
-        ? value.expandedAppointments.filter(
-            (section): section is AppointmentOutcomeFolder =>
-              appointmentOutcomeFolderKeys.includes(
-                section as AppointmentOutcomeFolder,
-              ),
-          )
-        : [],
+      ...(value.taskResponsibility === "mine" || value.taskResponsibility === "all" ? {taskResponsibility:value.taskResponsibility} : {}),
       taskCategory: taskCategories.includes(
         value.taskCategory as TaskCategoryFilter,
       )
@@ -2063,35 +1472,36 @@ function restoreAuthorizedScope(
 function taskQueryRequest(
   scope: WorkspaceScope,
   search: string,
+  rail?: WorkspaceRailState,
 ): TaskQueryRequest {
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
     state: "OPEN",
     ordering: "recent",
-    folder: "work",
+    responsibility: rail?.taskResponsibility ?? "mine",
+    grouped: true,
+    ...(rail?.taskCategory === "texts" || rail?.taskCategory === "calls"
+      ? { kind: rail.taskCategory }
+      : rail?.taskCategory && rail.taskCategory !== "all" ? { category: rail.taskCategory } : {}),
     includeCounts: true,
     ...(search ? { search } : {}),
     limit: 50,
   }
 }
 
-function recoveryTaskQueryRequest(
+function completedTaskQueryRequest(
   scope: WorkspaceScope,
   search: string,
+  rail: WorkspaceRailState,
 ): TaskQueryRequest {
   return {
-    ...taskQueryRequest(scope, search),
-    folder: "missed_calls",
+    ...taskQueryRequest(scope, search, rail),
+    state: "COMPLETED",
+    ordering: "recent",
+    grouped: false,
     includeCounts: false,
-  }
-}
-
-function messageQueryRequest(scope: WorkspaceScope): MessageThreadQueryRequest {
-  return {
-    practiceId: scope.practiceID,
-    ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
-    limit: 50,
+    limit: 10,
   }
 }
 
@@ -2103,76 +1513,6 @@ function taskEngagement(task: Task): EngagementSummary {
     latestActivity: task.updatedAt,
     openTaskCount: task.state === "OPEN" ? 1 : 0,
     unread: task.unread,
-  }
-}
-
-function aiOutcomeEngagement(interaction: AiOutcomeItem): EngagementSummary {
-  return {
-    phone: interaction.phone,
-    locations: [
-      { id: interaction.locationId, name: interaction.locationName },
-    ],
-    latestActivity:
-      interaction.appointmentOccurredAt ??
-      interaction.endedAt ??
-      interaction.startedAt,
-    openTaskCount: 0,
-    unread: false,
-  }
-}
-
-function isRecoveryTask(task: Task) {
-  return (
-    task.origin === "MISSED_CALL_RECOVERY" ||
-    task.origin === "VOICEMAIL_RECOVERY"
-  )
-}
-
-function projectCommittedTask(tasks: Task[], committed: Task) {
-  if (committed.state !== "OPEN") {
-    return tasks.filter((task) => task.id !== committed.id)
-  }
-  return tasks.some((task) => task.id === committed.id)
-    ? tasks.map((task) => (task.id === committed.id ? committed : task))
-    : [committed, ...tasks]
-}
-
-function decrementTaskCounts(counts: TaskFolderCounts, committed: Task) {
-  if (committed.state === "OPEN") return counts
-  if (isRecoveryTask(committed)) {
-    return { ...counts, missedCalls: Math.max(0, counts.missedCalls - 1) }
-  }
-  const category = committed.category ?? "other"
-  return {
-    ...counts,
-    tasks: Math.max(0, counts.tasks - 1),
-    categories: {
-      ...counts.categories,
-      [category]: Math.max(0, counts.categories[category] - 1),
-    },
-  }
-}
-
-function adjustTaskCountsForProjection(
-  counts: TaskFolderCounts,
-  task: Task,
-  existed: boolean,
-) {
-  if (task.state === "COMPLETED") {
-    return existed ? decrementTaskCounts(counts, task) : counts
-  }
-  if (existed) return counts
-  if (isRecoveryTask(task)) {
-    return { ...counts, missedCalls: counts.missedCalls + 1 }
-  }
-  const category = task.category ?? "other"
-  return {
-    ...counts,
-    tasks: counts.tasks + 1,
-    categories: {
-      ...counts.categories,
-      [category]: counts.categories[category] + 1,
-    },
   }
 }
 
@@ -2216,16 +1556,7 @@ function initialState(): WorkspaceProjectionState {
       loading: false,
       error: "",
     },
-    recoveryTasks: { items: [], nextCursor: "", loading: false, error: "" },
-    messages: { items: [], nextCursor: "", loading: false, error: "" },
-    aiOutcomes: {
-      items: [],
-      nextCursor: "",
-      nextCursors: emptyAppointmentOutcomeCursors(),
-      counts: emptyAIOutcomeCounts(),
-      loading: false,
-      error: "",
-    },
+    completedTasks: { items: [], nextCursor: "", loading: false, error: "" },
     selection: {
       taskError: "",
       aiInteractionID: "",
@@ -2257,19 +1588,13 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
   }
 }
 
-function emptyAIOutcomeCounts(): AiOutcomeCounts {
-  return { tasks: 0, bookings: 0, cancellations: 0, reschedules: 0 }
-}
-
 function refreshLoadedWindowTarget(loadedCount: number) {
   return Math.max(1, loadedCount)
 }
 
 const taskWindowError = "Tasks are temporarily unavailable."
 const selectedTaskDetailError = "Task details are temporarily unavailable."
-const recoveryWindowError = "Missed Calls are temporarily unavailable."
-const messageWindowError = "Texts are temporarily unavailable."
-const outcomeWindowError = "AI appointment updates are unavailable."
+const completedWindowError = "Recently completed Tasks are temporarily unavailable."
 const aiInteractionDetailError = "This AI call could not be loaded."
 
 function requireTaskCounts(

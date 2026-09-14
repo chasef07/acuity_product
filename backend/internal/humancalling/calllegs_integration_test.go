@@ -646,7 +646,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		CallLegID:     "caller-provider-leg",
 		CallSessionID: "caller-session",
 		From:          "+15555550100",
-		To:            "+14843989071",
+		To:            handoff.SIPDestination,
 	}
 	wrongConnection := caller
 	wrongConnection.EventID = "caller-initiated-wrong-connection"
@@ -655,6 +655,22 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		context.Background(), wrongConnection,
 	); !errors.Is(err, humancalling.ErrInvalidHandoff) {
 		t.Fatalf("wrong-connection REFER error = %v", err)
+	}
+	for index, destination := range []string{
+		"sip:acuity-handoff@unrelated.sip.telnyx.com",
+		"acuity-handoff@unrelated.sip.telnyx.com",
+		"sip:other-user@synthetic.sip.telnyx.com",
+		"other-user@synthetic.sip.telnyx.com",
+		" " + handoff.SIPDestination,
+		handoff.SIPDestination + ";transport=tcp",
+		"",
+	} {
+		invalid := caller
+		invalid.EventID = fmt.Sprintf("caller-invalid-destination-%d", index)
+		invalid.To = destination
+		if err := calling.ApplyProviderFact(context.Background(), invalid); !errors.Is(err, humancalling.ErrInvalidHandoff) {
+			t.Fatalf("unexpected admission for destination %q: %v", destination, err)
+		}
 	}
 	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("admit REFER caller: %v", err)
@@ -4602,11 +4618,13 @@ func TestOutboundCallUsesPracticeVoiceFallbackForLocationWithoutNumber(t *testin
 		}}); err != nil {
 		t.Fatalf("provision Sweetwater caller ID: %v", err)
 	}
-	if err := calling.ProvisionOutboundVoiceFallbacks(context.Background(),
-		[]humancalling.OutboundVoiceFallbackProvision{{
-			PracticeKey: "outbound-fallback-practice",
-			LocationKey: "sweetwater",
-		}}); err != nil {
+	if err := pgx.BeginFunc(context.Background(), pool, func(tx pgx.Tx) error {
+		return calling.ProvisionOutboundVoiceFallbacksInTx(context.Background(), tx,
+			[]humancalling.OutboundVoiceFallbackProvision{{
+				PracticeKey: "outbound-fallback-practice",
+				LocationKey: "sweetwater",
+			}})
+	}); err != nil {
 		t.Fatalf("provision Sweetwater outbound fallback: %v", err)
 	}
 

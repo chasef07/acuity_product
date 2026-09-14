@@ -96,8 +96,20 @@ Activity without an outcome is not success.
 
 ## Non-Negotiables
 
-- No unresolved patient need disappears inside a transcript, voicemail,
-  notification, channel inbox, or individual memory.
+- Work that requires staff action belongs in one shared My Tasks inbox, including
+  appointment verification, incoming text review, and call follow-up. Opening or
+  reading evidence never completes work. A confirmed staff text reply completes
+  its conversation review; failed delivery restores pending review. A completed
+  callback attempt clears older missed-call and voicemail reviews, including when
+  the patient does not answer. History records the attempt without claiming patient
+  contact. Finishing voicemail playback completes its
+  current review. Explicit completion clears other Tasks for
+  everyone with access and preserves actor, time, and Activity in Recently completed.
+- Open work does not expire or disappear with age. New source evidence requiring
+  attention must remain visible and cannot be cleared by a stale completion.
+- Appointment, text, missed-call, and voicemail reviews are shared by all staff with access to
+  their Location, regardless of category responsibility. Categorizing a review
+  does not hide it from those staff.
 - No Task becomes invisible because it is assigned, deprioritized, or
   completed.
 - No call, message, automated action, or completion is represented as
@@ -114,6 +126,4 @@ the shared staff workspace, accountable work, human communication, and evidence
 across AI and human Interactions.
 
 `README.md` owns the current architecture.
-`docs/acuity-portal-product-technical-spec.md` owns detailed product behavior
-and the release bar. `CONTEXT.md` owns domain vocabulary. GitHub Issues own
-committed product work.
+`CONTEXT.md` owns domain vocabulary. GitHub Issues own committed product work.

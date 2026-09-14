@@ -2,16 +2,6 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function MessageGroup({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="message-group"
-      className={cn("flex min-w-0 flex-col gap-1.5", className)}
-      {...props}
-    />
-  )
-}
-
 function Message({
   className,
   align = "start",
@@ -23,19 +13,6 @@ function Message({
       data-align={align}
       className={cn(
         "group/message relative flex w-full min-w-0 gap-1.5 text-xs/relaxed data-[align=end]:flex-row-reverse",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-function MessageAvatar({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="message-avatar"
-      className={cn(
-        "flex w-fit min-w-8 shrink-0 items-center justify-center self-end overflow-hidden rounded-full bg-muted group-has-data-[slot=message-footer]/message:-translate-y-8",
         className
       )}
       {...props}
@@ -82,11 +59,4 @@ function MessageFooter({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-export {
-  MessageGroup,
-  Message,
-  MessageAvatar,
-  MessageContent,
-  MessageFooter,
-  MessageHeader,
-}
+export { Message, MessageContent, MessageFooter, MessageHeader }

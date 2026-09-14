@@ -5,12 +5,8 @@ import {
   getAiInteraction,
   getCallingCall,
   getWorkspace,
-  markMessageThreadRead,
-  queryAiInteractionOutcomes,
-  queryMessageThreads,
   queryTasks,
   readTask,
-  reviewAiInteractionOutcome,
 } from "./api/generated/sdk.gen"
 import { getAccessTokenResult } from "./auth-client"
 import {
@@ -54,22 +50,6 @@ export function createWorkspaceAuthorityAdapter(): WorkspaceAuthorityAdapter {
       }).catch(() => undefined)
       return authorityResult(result)
     },
-    async messageThreads(token, request, signal) {
-      const result = await queryMessageThreads({
-        client: portalClient(token),
-        body: request,
-        signal,
-      }).catch(() => undefined)
-      return authorityResult(result)
-    },
-    async aiOutcomes(token, request, signal) {
-      const result = await queryAiInteractionOutcomes({
-        client: portalClient(token),
-        body: request,
-        signal,
-      }).catch(() => undefined)
-      return authorityResult(result)
-    },
     async aiInteraction(token, interactionID, signal) {
       const result = await getAiInteraction({
         client: portalClient(token),
@@ -102,23 +82,6 @@ export function createWorkspaceAuthorityAdapter(): WorkspaceAuthorityAdapter {
         signal,
       }).catch(() => undefined)
       return authorityResult(result)
-    },
-    async reviewAIOutcome(token, interactionID, signal) {
-      const result = await reviewAiInteractionOutcome({
-        client: portalClient(token),
-        path: { interactionId: interactionID },
-        signal,
-      }).catch(() => undefined)
-      return emptyAuthorityResult(result)
-    },
-    async markMessageThreadRead(token, threadID, signal) {
-      const result = await markMessageThreadRead({
-        client: portalClient(token),
-        path: { threadId: threadID },
-        body: {},
-        signal,
-      }).catch(() => undefined)
-      return emptyAuthorityResult(result)
     },
   }
 }
@@ -166,13 +129,6 @@ function authorityResult<T>(
   if (result?.data !== undefined) {
     return { kind: "success", data: result.data }
   }
-  return authorityFailure(result?.response?.status)
-}
-
-function emptyAuthorityResult(
-  result: { response?: Response } | undefined,
-): WorkspaceAuthorityResult<unknown> {
-  if (result?.response?.ok) return { kind: "success", data: {} }
   return authorityFailure(result?.response?.status)
 }
 

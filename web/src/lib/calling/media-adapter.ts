@@ -1,4 +1,5 @@
 import type { ITelnyxError, ITelnyxErrorEvent } from "@telnyx/webrtc"
+import { createKeypadFeedback } from "./keypad-feedback.ts"
 
 export type MediaState =
   | "registering"
@@ -229,6 +230,7 @@ function matchesMediaSession(
 }
 
 class TelnyxMediaAdapter implements CallingMediaAdapter {
+  private readonly keypadFeedback = createKeypadFeedback()
   private client?: SDKClient
   private activeSession?: MediaSession
   private output?: HTMLMediaElement
@@ -291,6 +293,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       this.client === client && signal?.aborted !== true
     client.on("telnyx.socket.close", () => {
       if (!connectionCurrent()) return
+      this.keypadFeedback.stop()
       const session = this.activeSession
       if (session) {
         session.attachmentCurrent = false
@@ -327,6 +330,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       if (!connectionCurrent()) return
       const event = value as ITelnyxErrorEvent
       if (event.recoverable === true || event.error.fatal === false) return
+      this.keypadFeedback.stop()
       const session = this.activeSession
       if (session) {
         session.attachmentCurrent = false
@@ -347,6 +351,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         this.terminalCalls.add(call)
         const session = this.activeSession
         if (session?.call === call) {
+          this.keypadFeedback.stop()
           this.activeSession = undefined
           const output = this.output
           if (
@@ -385,6 +390,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         recovery: call.state !== "ringing",
         answer: async () => {
           if (this.terminalCalls.has(call)) return "ended"
+          this.keypadFeedback.stop()
           const current = this.activeSession
           const recoversActiveLeg = matchesMediaSession(
             current,
@@ -452,6 +458,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         sendDTMF: (digit) => {
           const current = this.activeSession
           if (
+            !connectionCurrent() ||
             !/^[0-9A-D*#]$/.test(digit) ||
             call.state !== "active" ||
             !current?.attachmentCurrent ||
@@ -460,6 +467,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
             return false
           }
           call.dtmf(digit)
+          void this.keypadFeedback.play(digit, output)
           return true
         },
       })
@@ -480,6 +488,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
   }
 
   async disconnect(signal?: AbortSignal) {
+    this.keypadFeedback.stop()
     const client = this.client
     this.client = undefined
     this.tokenRefresh = undefined

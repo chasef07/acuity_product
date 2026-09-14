@@ -13,8 +13,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type TaskState string
@@ -44,8 +46,9 @@ const (
 type RecoveryResolutionKind string
 
 const (
-	RecoveryResolutionInboundCall RecoveryResolutionKind = "INBOUND_CALL"
-	RecoveryResolutionBooking     RecoveryResolutionKind = "BOOKING"
+	RecoveryResolutionInboundCall     RecoveryResolutionKind = "INBOUND_CALL"
+	RecoveryResolutionBooking         RecoveryResolutionKind = "BOOKING"
+	RecoveryResolutionCallbackAttempt RecoveryResolutionKind = "CALLBACK_ATTEMPT"
 )
 
 type TaskUrgency string
@@ -66,6 +69,9 @@ const (
 	TaskCategoryMedication    TaskCategory = "medication"
 	TaskCategoryReferrals     TaskCategory = "referrals"
 	TaskCategoryOther         TaskCategory = "other"
+	TaskCategoryInsurance     TaskCategory = "insurance"
+	TaskCategoryPreOp         TaskCategory = "pre_op"
+	TaskCategoryPostOp        TaskCategory = "post_op"
 )
 
 type TaskCreateStatus string
@@ -109,6 +115,7 @@ type ActorSnapshot struct {
 }
 
 type Task struct {
+	GroupMembers             []Task
 	ID                       string
 	PracticeID               string
 	LocationID               string
@@ -123,6 +130,7 @@ type Task struct {
 	CallerName               string
 	SourceCallID             string
 	SourceMessage            string
+	Preview                  string
 	MessageID                string
 	MessageThreadID          string
 	ConversationThreadID     string
@@ -203,14 +211,17 @@ type EnsureMessageFollowUpCommand struct {
 }
 
 type EnsureRecoveryTaskCommand struct {
-	TaskID     string
-	CallID     string
-	PracticeID string
-	LocationID string
-	Phone      string
-	CallerName string
-	Outcome    RecoveryOutcome
-	OccurredAt time.Time
+	// HumanCalling sets this only for newly accepted recording evidence, after
+	// deduplicating provider facts and an already-ready voicemail.
+	NewVoicemail bool
+	TaskID       string
+	CallID       string
+	PracticeID   string
+	LocationID   string
+	Phone        string
+	CallerName   string
+	Outcome      RecoveryOutcome
+	OccurredAt   time.Time
 }
 
 type ResolveRecoveryTasksCommand struct {
@@ -247,12 +258,17 @@ type TaskPage struct {
 }
 
 type TaskFolderCounts struct {
-	Tasks       int
-	MissedCalls int
-	Categories  TaskCategoryCounts
+	Texts        int
+	CallRecovery int
+	Tasks        int
+	MissedCalls  int
+	Categories   TaskCategoryCounts
 }
 
 type TaskCategoryCounts struct {
+	Insurance     int
+	PreOp         int
+	PostOp        int
 	Billing       int
 	Appointments  int
 	Documentation int
@@ -397,7 +413,7 @@ func (m *Module) EnsureMessageFollowUp(
 		if err := tx.QueryRow(ctx, `
 			SELECT id::text
 			FROM work_tasks
-			WHERE source_message_id = $1
+			WHERE (source_message_id = $1 AND origin = 'STAFF_MESSAGE_FOLLOW_UP')
 				OR (
 					practice_id = $2
 					AND location_id = $3
@@ -645,13 +661,14 @@ func (m *Module) EnsureRecoveryTask(
 				AND (state = 'OPEN' OR $3)
 				AND (
 					$3
+					OR $5
 					OR ($2 AND (
 						title IS DISTINCT FROM 'Review voicemail'
 						OR origin IS DISTINCT FROM 'VOICEMAIL_RECOVERY'
 						OR recovery_outcome IS DISTINCT FROM 'VOICEMAIL'
 					))
 				)
-		`, taskID, upgradeToVoicemail, interactionInserted, command.OccurredAt)
+		`, taskID, upgradeToVoicemail, interactionInserted, command.OccurredAt, command.NewVoicemail)
 		if err != nil {
 			return Task{}, fmt.Errorf("advance recovery Task: %w", err)
 		}
@@ -721,6 +738,7 @@ func (m *Module) ResolveRecoveryTasks(
 		!canonicalPhone.MatchString(command.Phone) ||
 		command.OccurredAt.IsZero() ||
 		(command.Kind != RecoveryResolutionInboundCall &&
+			command.Kind != RecoveryResolutionCallbackAttempt &&
 			command.Kind != RecoveryResolutionBooking) ||
 		!textLengthBetween(command.SourceID, 1, 255) {
 		return 0, ErrInvalidInput
@@ -790,11 +808,12 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 	var completed int64
 	if err := tx.QueryRow(ctx, `
 		WITH checkpoint AS (
-			SELECT resolved_at, kind
+			SELECT resolved_at, kind,
+				CASE WHEN kind = 'CALLBACK_ATTEMPT' THEN updated_at ELSE resolved_at END AS completed_at
 			FROM work_recovery_resolution_checkpoints
 			WHERE practice_id = $1 AND phone = $2
 		), eligible AS (
-			SELECT task.id, checkpoint.resolved_at, checkpoint.kind
+			SELECT task.id, checkpoint.completed_at, checkpoint.kind
 			FROM work_tasks task
 			CROSS JOIN checkpoint
 			WHERE task.practice_id = $1
@@ -826,9 +845,9 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 				completed_by_kind = 'SERVICE',
 				completed_by_subject = 'work-recovery-resolution',
 				completed_by_email = NULL,
-				completed_at = eligible.resolved_at,
+				completed_at = eligible.completed_at,
 				version = task.version + 1,
-				updated_at = GREATEST(task.updated_at, eligible.resolved_at)
+				updated_at = GREATEST(task.updated_at, eligible.completed_at)
 			FROM eligible
 			WHERE task.id = eligible.id
 			RETURNING task.id, task.version, task.completed_at, eligible.kind
@@ -847,6 +866,7 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 				updated.version,
 				CASE updated.kind
 					WHEN 'BOOKING' THEN 'TASK_AUTO_COMPLETED_BOOKING'
+					WHEN 'CALLBACK_ATTEMPT' THEN 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'
 					ELSE 'TASK_AUTO_COMPLETED_INBOUND_CALL'
 				END,
 				'SERVICE',
@@ -1346,7 +1366,7 @@ func (m *Module) CreateAITask(
 					AND origin = 'ABITA_AI'
 					AND title = $4
 					AND urgency = $5
-					AND category = $6
+					AND source_category = $6
 					AND COALESCE(caller_name, '') = $7
 					AND source_call_id = $8
 					AND source_message = $9
@@ -1512,7 +1532,6 @@ func (m *Module) CompleteTask(
 	if err != nil {
 		return Task{}, err
 	}
-	actor := authorization.Actor
 	task, err = lockTask(ctx, tx, command.TaskID)
 	if err != nil {
 		return Task{}, err
@@ -1523,48 +1542,8 @@ func (m *Module) CompleteTask(
 	if task.Version != command.ExpectedVersion {
 		return task, ErrConflict
 	}
-	completedAt := m.now()
-	if err := tx.QueryRow(ctx, `
-		UPDATE work_tasks
-		SET
-			state = 'COMPLETED',
-			completed_by_kind = 'HUMAN',
-			completed_by_subject = $2,
-			completed_by_email = $3,
-			completed_at = $4,
-			version = version + 1,
-			updated_at = $4
-		WHERE id = $1
-		RETURNING version
-	`, task.ID, actor.Subject, actor.Email, completedAt).Scan(&task.Version); err != nil {
-		return Task{}, fmt.Errorf("complete Task: %w", err)
-	}
-	task.State = TaskCompleted
-	completionActor := humanActorSnapshot(actor)
-	task.CompletedBy = &completionActor
-	task.CompletedAt = &completedAt
-	task.UpdatedAt = completedAt
-	if err := appendActivity(
-		ctx,
-		tx,
-		task,
-		"TASK_COMPLETED",
-		humanActorSnapshot(actor),
-		completedAt,
-	); err != nil {
-		return Task{}, err
-	}
-	if err := m.auditOperatorMutation(
-		ctx,
-		tx,
-		authorization,
-		task,
-		"task.completed",
-		completedAt,
-	); err != nil {
-		return Task{}, err
-	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+	task, err = m.completeLockedTask(ctx, tx, authorization, task)
+	if err != nil {
 		return Task{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1625,6 +1604,10 @@ func (m *Module) ReopenTask(
 		WHERE id = $1
 		RETURNING version
 	`, task.ID, reopenedAt).Scan(&task.Version); err != nil {
+		var constraint *pgconn.PgError
+		if errors.As(err, &constraint) && constraint.Code == "23505" && constraint.ConstraintName == "work_tasks_open_message_review_idx" {
+			return Task{}, ErrConflict
+		}
 		return Task{}, fmt.Errorf("reopen Task: %w", err)
 	}
 	task.State = TaskOpen
@@ -1877,7 +1860,7 @@ func insertTask(
 						AND existing.title = $5
 						AND existing.origin = 'HUMAN_CALL_FOLLOW_UP'
 						AND existing.urgency = 'normal'
-						AND existing.category IS NULL
+						AND existing.source_category IS NULL
 						AND existing.caller_name IS NULL
 						AND existing.source_call_id IS NULL
 						AND existing.source_message IS NULL
@@ -1984,7 +1967,7 @@ func loadTask(
 			ON location.practice_id = task.practice_id
 			AND location.id = task.location_id
 		WHERE task.id = $1
-	`, taskID), false)
+	`, taskID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
@@ -2036,7 +2019,7 @@ func lockTask(
 			AND location.id = task.location_id
 		WHERE task.id = $1
 		FOR UPDATE OF task
-	`, taskID), false)
+	`, taskID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
@@ -2081,7 +2064,7 @@ type taskScanner interface {
 	Scan(...any) error
 }
 
-func scanTask(scanner taskScanner, includeRelatedInteractionCount bool) (Task, error) {
+func scanTask(scanner taskScanner) (Task, error) {
 	var task Task
 	var callID, category, callerName, sourceCall, sourceMessage *string
 	var messageID, messageThreadID, recoveryOutcome *string
@@ -2113,9 +2096,6 @@ func scanTask(scanner taskScanner, includeRelatedInteractionCount bool) (Task, e
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
-	}
-	if includeRelatedInteractionCount {
-		destinations = append(destinations, &task.RelatedInteractionCount)
 	}
 	if err := scanner.Scan(destinations...); err != nil {
 		return Task{}, err
@@ -2205,6 +2185,9 @@ func humanActorSnapshot(actor access.Actor) ActorSnapshot {
 }
 
 func normalizeAITaskCommand(command *CreateAITaskCommand) {
+	if phone, err := contactcontext.NormalizePhone(command.Phone); err == nil {
+		command.Phone = phone
+	}
 	command.Service.Subject = strings.TrimSpace(command.Service.Subject)
 	command.Service.PracticeID = strings.TrimSpace(command.Service.PracticeID)
 	command.OfficeKey = strings.TrimSpace(command.OfficeKey)
@@ -2249,7 +2232,7 @@ func validTaskCategory(category TaskCategory) bool {
 		TaskCategoryOptical,
 		TaskCategoryMedication,
 		TaskCategoryReferrals,
-		TaskCategoryOther:
+		TaskCategoryOther, TaskCategoryInsurance, TaskCategoryPreOp, TaskCategoryPostOp:
 		return true
 	default:
 		return false
@@ -2313,4 +2296,53 @@ func nullIfEmpty(value string) any {
 		return nil
 	}
 	return value
+}
+
+func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorization access.Authorization, task Task) (Task, error) {
+	actor := authorization.Actor
+	completedAt := m.now()
+	if err := tx.QueryRow(ctx, `
+		UPDATE work_tasks
+		SET
+			state = 'COMPLETED',
+			completed_by_kind = 'HUMAN',
+			completed_by_subject = $2,
+			completed_by_email = $3,
+			completed_at = $4,
+			version = version + 1,
+			updated_at = $4
+		WHERE id = $1
+		RETURNING version
+	`, task.ID, actor.Subject, actor.Email, completedAt).Scan(&task.Version); err != nil {
+		return Task{}, fmt.Errorf("complete Task: %w", err)
+	}
+	task.State = TaskCompleted
+	completionActor := humanActorSnapshot(actor)
+	task.CompletedBy = &completionActor
+	task.CompletedAt = &completedAt
+	task.UpdatedAt = completedAt
+	if err := appendActivity(
+		ctx,
+		tx,
+		task,
+		"TASK_COMPLETED",
+		humanActorSnapshot(actor),
+		completedAt,
+	); err != nil {
+		return Task{}, err
+	}
+	if err := m.auditOperatorMutation(
+		ctx,
+		tx,
+		authorization,
+		task,
+		"task.completed",
+		completedAt,
+	); err != nil {
+		return Task{}, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+		return Task{}, err
+	}
+	return task, nil
 }

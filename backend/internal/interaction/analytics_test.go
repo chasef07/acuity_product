@@ -314,3 +314,46 @@ func TestSummarizeAnalyticsProjectionIncludesOutcomesAndPipelineLatency(t *testi
 		t.Fatalf("analytics pipeline latency = %#v", summary)
 	}
 }
+
+func TestAnalyticsDailyTrendsUseUTCAndKeepEmptyDates(t *testing.T) {
+	from := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	through := from.Add(72 * time.Hour)
+	summary := AnalyticsSummary{Daily: analyticsDays(from, through)}
+	for _, fixture := range []struct {
+		at     string
+		status CallStatus
+	}{
+		{"2026-09-01T13:00:00Z", CallEscalated},
+		{"2026-09-01T14:00:00Z", CallCompleted},
+		{"2026-09-02T23:30:00-07:00", CallEscalated},
+	} {
+		started, err := time.Parse(time.RFC3339, fixture.at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projection := analyticsProjection{call: AnalyticsCall{StartedAt: started, Status: fixture.status}}
+		projectAnalyticsEvidence(&projection)
+		summarizeAnalyticsProjection(&summary, projection)
+	}
+	finalizeAnalyticsSummary(&summary)
+	if len(summary.Daily) != 4 {
+		t.Fatalf("daily buckets = %#v", summary.Daily)
+	}
+	expectedCalls := []int{2, 0, 1, 0}
+	expectedTransfers := []int{1, 0, 1, 0}
+	for i, day := range summary.Daily {
+		if day.Date != from.AddDate(0, 0, i).Format(time.DateOnly) || day.TotalCalls != expectedCalls[i] || day.TransferCount != expectedTransfers[i] {
+			t.Fatalf("day %d = %#v", i, day)
+		}
+		if day.TotalCalls == 0 {
+			if day.TransferRate != nil {
+				t.Fatalf("empty day has a rate: %#v", day)
+			}
+		} else if day.TransferRate == nil || *day.TransferRate != float64(day.TransferCount)/float64(day.TotalCalls) {
+			t.Fatalf("daily rate = %#v", day)
+		}
+	}
+	if summary.TransferRate != 2.0/3.0 {
+		t.Fatalf("range rate must be call-weighted: %v", summary.TransferRate)
+	}
+}

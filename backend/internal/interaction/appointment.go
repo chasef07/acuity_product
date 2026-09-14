@@ -188,3 +188,22 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+// The Task keeps the facts staff were asked to verify even when later outcomes
+// update the Interaction projection. The receipt retains complete source evidence.
+func appointmentReviewMessage(value Interaction) string {
+	instruction := "Verify insurance and provider for this appointment."
+	if value.AppointmentOutcome == OutcomePartial {
+		instruction = "Review the unfinished appointment change and complete the remaining follow-up. Check which booking or cancellation actions succeeded before making further changes."
+	} else if value.AppointmentAction == AppointmentCancelled {
+		instruction = "Confirm the cancellation is reflected in the appointment system."
+	}
+	facts := ProjectAppointmentDetails(value).Appointment
+	lines := []string{instruction}
+	for _, field := range [][2]string{{"Patient", facts.PatientName}, {"Date", facts.AppointmentDate}, {"Time", facts.AppointmentTime}, {"Start", facts.StartDatetime}, {"Provider", facts.ProviderName}, {"Location", facts.LocationName}, {"Type", facts.AppointmentTypeName}, {"Appointment ID", facts.AppointmentID}} {
+		if field[1] != "" {
+			lines = append(lines, field[0]+": "+field[1])
+		}
+	}
+	return strings.Join(lines, "\n")
+}

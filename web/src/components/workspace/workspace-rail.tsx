@@ -3,7 +3,6 @@
 import {
   type ReactNode,
   useEffect,
-  useMemo,
   useRef,
 } from "react"
 import { useTheme } from "next-themes"
@@ -13,10 +12,7 @@ import {
   Building2Icon,
   ChartNoAxesCombinedIcon,
   CheckIcon,
-  CheckCircle2Icon,
-  FolderClosedIcon,
-  FolderOpenIcon,
-  ListFilterIcon,
+  ChevronDownIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
@@ -26,6 +22,7 @@ import {
   SunIcon,
 } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
 import { AcuityMark } from "@/components/acuity-mark"
 import {
   Collapsible,
@@ -39,6 +36,7 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import {
   InputGroup,
@@ -66,28 +64,13 @@ import {
 } from "@/components/ui/tooltip"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type {
-  AiOutcomeItem,
-  EngagementSummary,
-  MessageThreadSummary,
   Task,
   TaskFolderCounts,
 } from "@/lib/api/generated/types.gen"
-import {
-  aiCallCompletionLabel,
-  appointmentOutcomeTitle,
-} from "@/lib/ai-interactions"
-import {
-  appointmentOutcomeFolderKeys,
-  appointmentOutcomeFolders,
-  categorizeAIOutcomes,
-  type AppointmentOutcomeFolder,
-} from "@/lib/ai-outcome-attention"
 import { authClient } from "@/lib/auth-client"
 import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
-import { newestFirst } from "@/lib/workspace-ordering"
-import { resolveWorkspaceSearch } from "@/lib/workspace-search"
 import type {
   WorkspaceConnectionState,
   WorkspaceProjectionIntent,
@@ -95,30 +78,26 @@ import type {
   WorkspaceRailSection,
 } from "@/lib/workspace-projection"
 import {
-  filterTasksByCategory,
-  filterTaskQueue,
-  sortRecoveryQueue,
   taskCountForCategory,
-  taskFolderCursor,
   type TaskCategoryFilter,
 } from "@/lib/workspace-triage"
 
 export type ConnectionState = WorkspaceConnectionState
 
-type AppointmentSection = AppointmentOutcomeFolder
+import { taskGroups, taskGroupLabel } from "@/lib/task-groups"
 
-const taskCategoryOptions: Array<{
-  value: TaskCategoryFilter
-  label: string
-}> = [
-  { value: "all", label: "All types" },
-  { value: "billing", label: "Billing" },
-  { value: "appointments", label: "Appointments" },
-  { value: "documentation", label: "Documentation" },
-  { value: "optical", label: "Optical" },
-  { value: "medication", label: "Medication" },
-  { value: "referrals", label: "Referrals" },
-  { value: "other", label: "Other" },
+
+const taskFilterLabels: Partial<Record<TaskCategoryFilter, string>> = {
+  documentation: "Medical records",
+  medication: "Clinical & pharmacy",
+  insurance: "Insurance",
+  optical: "Optical",
+}
+const taskCategoryOptions: Array<{ value: TaskCategoryFilter; label: string }> = [
+  { value: "all", label: "All categories" },
+  { value: "texts", label: "Texts" },
+  { value: "calls", label: "Missed calls & voicemails" },
+  ...taskGroups.map((group) => ({ ...group, label: taskFilterLabels[group.value] ?? group.label })),
 ]
 
 type WorkspaceRailProps = {
@@ -140,33 +119,17 @@ export function WorkspaceRail({
       (item) => item.id === projection.scope.practiceID,
     ) ?? discovery.practices[0]!
   const tasks = projection.tasks.items
-  const recoveryTasks = projection.recoveryTasks.items
   const taskCounts = projection.tasks.counts
-  const aiOutcomes = projection.aiOutcomes.items
-  const outcomeCounts = projection.aiOutcomes.counts
-  const messages = projection.messages.items
   const selectedTaskID = projection.selection.task?.id ?? ""
-  const selectedAIInteractionID = projection.selection.aiInteractionID
-  const selectedPhone = projection.selection.engagement?.phone ?? ""
   const search = projection.search.input
   const engagementError = projection.search.error
   const loading = projection.tasks.loading
   const taskError = projection.tasks.error
-  const recoveryLoading = projection.recoveryTasks.loading
-  const recoveryError = projection.recoveryTasks.error
-  const outcomesLoading = projection.aiOutcomes.loading
-  const outcomesError = projection.aiOutcomes.error
-  const outcomeNextCursors = projection.aiOutcomes.nextCursors
-  const messageLoading = projection.messages.loading
-  const messageError = projection.messages.error
   const nextCursor = projection.tasks.nextCursor
-  const recoveryNextCursor = projection.recoveryTasks.nextCursor
-  const messageNextCursor = projection.messages.nextCursor
   const connection = projection.connection
   const analyticsActive = projection.selection.view === "analytics"
   const railStateKey = `${discovery.actor.subject}:${practice.id}`
   const expanded = projection.rail.expanded
-  const expandedAppointment = projection.rail.expandedAppointments
   const taskCategory = projection.rail.taskCategory
   const pendingTaskID = projection.completion.pendingTaskID
   const completionError = projection.completion.error
@@ -179,38 +142,9 @@ export function WorkspaceRail({
   const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
   const { setTheme, theme } = useTheme()
-  const taskRows = useMemo(
-    () => newestFirst(filterTaskQueue(tasks), taskRelativeAt),
-    [tasks],
-  )
-  const filteredTasks = useMemo(
-    () =>
-      filterTasksByCategory(taskRows, taskCategory),
-    [taskRows, taskCategory],
-  )
+  const filteredTasks = tasks
   const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
-  const categorizedAIOutcomes = useMemo(
-    () =>
-      categorizeAIOutcomes(
-        newestFirst(aiOutcomes, aiOutcomeOccurredAt),
-      ),
-    [aiOutcomes],
-  )
-  const appointmentFolders = appointmentOutcomeFolderKeys.map((key) => ({
-    key,
-    title: appointmentOutcomeFolders[key].title,
-    outcomes: categorizedAIOutcomes[key],
-    count: outcomeCounts[key],
-  }))
-  const appointmentCount = appointmentFolders.reduce(
-    (total, folder) => total + folder.count,
-    0,
-  )
-  const recoveryRows = useMemo(
-    () => aggregateRecovery(recoveryTasks),
-    [recoveryTasks],
-  )
-  const textRows = useMemo(() => aggregateTexts(messages), [messages])
+  const completed = projection.completedTasks
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") {
@@ -232,10 +166,6 @@ export function WorkspaceRail({
 
   function toggle(section: WorkspaceRailSection) {
     onIntent({ type: "toggle-rail-section", section })
-  }
-
-  function toggleAppointment(section: AppointmentSection) {
-    onIntent({ type: "toggle-appointment-section", section })
   }
 
   function rememberScroll() {
@@ -262,12 +192,6 @@ export function WorkspaceRail({
           <form
             onSubmit={(event) => {
               event.preventDefault()
-              if (
-                resolveWorkspaceSearch(search).kind === "tasks" &&
-                !expanded.includes("tasks")
-              ) {
-                onIntent({ type: "toggle-rail-section", section: "tasks" })
-              }
               onIntent({ type: "submit-search" })
             }}
           >
@@ -303,49 +227,45 @@ export function WorkspaceRail({
               </p>
             )}
           </form>
+            <div className="-mx-1 pb-1">
+            <TaskViewMenu
+              category={taskCategory}
+              responsibility={projection.rail.taskResponsibility ?? "mine"}
+              counts={taskCounts}
+              onCategoryChange={selectTaskCategory}
+              onResponsibilityChange={(responsibility) => onIntent({ type: "set-task-filters", responsibility, category: "all" })}
+            />
+            <div aria-label="Open workload" className="mb-2 grid grid-cols-2 gap-1 px-1.5">
+              {taskCategoryOptions.filter((option) => ["all", "texts", "calls", "appointments", taskCategory].includes(option.value) || taskCountForCategory(taskCounts, option.value) > 0).map((option) => (
+                <button key={option.value} type="button" aria-pressed={taskCategory === option.value}
+                  onClick={() => selectTaskCategory(option.value)}
+                  className={cn("flex min-h-8 items-center justify-between gap-2 rounded-md px-2 text-left text-xs transition-colors focus-visible:outline-2 focus-visible:outline-sidebar-ring", taskCategory === option.value ? "bg-sidebar-accent font-medium text-sidebar-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground")}>
+                  <span className="truncate">{option.value === "all" ? "All work" : option.value === "calls" ? "Calls & voicemail" : option.label}</span>
+                  <span className="tabular-nums">{taskCountForCategory(taskCounts, option.value)}</span>
+                </button>
+              ))}
+            </div>
+            </div>
         </SidebarHeader>
         <SidebarContent
           ref={scrollContainer}
           className="gap-2 overflow-y-auto px-2 py-2"
           onScroll={rememberScroll}
         >
-          <AttentionGroup
-            title="Tasks"
-            count={selectedTaskCount}
-            expanded={expanded.includes("tasks")}
-            onToggle={() => toggle("tasks")}
-            action={
-              <TaskCategoryMenu
-                value={taskCategory}
-                counts={taskCounts}
-                onChange={selectTaskCategory}
-              />
-            }
-          >
+          <SidebarGroup className="p-0">
+            <SidebarGroupContent>
+              <SidebarMenu className="mx-1 w-auto gap-0.5 px-1.5 py-0">
             {filteredTasks.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                active={task.id === selectedTaskID}
-                onSelect={() => onIntent({ type: "select-task", task })}
-                completionDisabled={Boolean(pendingTaskID)}
-                completionPending={pendingTaskID === task.id}
-                completionError={
-                  completionError?.taskID === task.id
-                    ? completionError.message
-                    : ""
-                }
-                onComplete={() => onIntent({ type: "complete-task", task })}
-              />
+              <TaskRow key={task.id} task={task} active={task.id === selectedTaskID || Boolean(task.groupMembers?.some((member) => member.id === selectedTaskID))} onSelect={() => onIntent({ type: "select-task", task })} completionDisabled={Boolean(pendingTaskID)} completionPending={pendingTaskID === task.id} completionError={completionError?.taskID === task.id ? completionError.message : ""} onComplete={() => onIntent({ type: "complete-task", task })} />
             ))}
             {loading && filteredTasks.length === 0 && (
-              <RailLoading inMenu label="Loading tasks" />
+              <RailLoading label="Loading tasks" />
             )}
             {!loading && selectedTaskCount === 0 && (
-              <RailEmpty inMenu>
-                {taskCategory === "all"
-                  ? "No open Tasks"
-                  : "No Tasks of this type"}
+              <RailEmpty>
+                {(projection.rail.taskResponsibility ?? "mine") === "mine"
+                  ? "No Tasks match your responsibilities and filters. Use All tasks to help another group."
+                  : "No Tasks match these filters"}
               </RailEmpty>
             )}
             {taskError && (
@@ -355,114 +275,27 @@ export function WorkspaceRail({
               />
             )}
             <RailShowMore
-              cursor={taskFolderCursor(
-                nextCursor,
-                filteredTasks.length,
-                selectedTaskCount,
-              )}
+              cursor={nextCursor}
               loading={loading}
               onLoadMore={() =>
                 onIntent({ type: "load-more", window: "tasks" })
               }
             />
-          </AttentionGroup>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
 
-          <RecoveryGroup
-            title="Missed Calls"
-            empty="No missed calls"
-            rows={recoveryRows}
-            count={taskCounts.missedCalls}
-            expanded={expanded.includes("calls")}
-            selectedTaskID={selectedTaskID}
-            onToggle={() => toggle("calls")}
-            onSelect={(task) => onIntent({ type: "select-task", task })}
-            cursor={recoveryNextCursor}
-            loading={recoveryLoading}
-            onLoadMore={() =>
-              onIntent({ type: "load-more", window: "recoveryTasks" })
-            }
-          />
-          {recoveryError && (
-            <WorkspaceWindowFailure
-              message={recoveryError}
-              onRetry={() => onIntent({ type: "retry" })}
-            />
-          )}
-          {outcomesError && (
-            <WorkspaceWindowFailure
-              message={outcomesError}
-              onRetry={() => onIntent({ type: "retry" })}
-            />
-          )}
-          <AttentionGroup
-            title="Appointments"
-            count={appointmentCount}
-            expanded={expanded.includes("appointments")}
-            onToggle={() => toggle("appointments")}
-          >
-            {appointmentFolders.map((folder) => (
-              <AppointmentFolder
-                key={folder.key}
-                title={folder.title}
-                outcomes={folder.outcomes}
-                count={folder.count}
-                expanded={expandedAppointment.includes(folder.key)}
-                selectedAIInteractionID={selectedAIInteractionID}
-                loading={outcomesLoading}
-                cursor={taskFolderCursor(
-                  outcomeNextCursors[folder.key],
-                  folder.outcomes.length,
-                  folder.count,
-                )}
-                onToggle={() => toggleAppointment(folder.key)}
-                onAIInteractionSelect={(interaction) =>
-                  onIntent({ type: "select-ai-interaction", interaction })
-                }
-                onLoadMore={() =>
-                  onIntent({ type: "load-more-outcomes", folder: folder.key })
-                }
-              />
-            ))}
-          </AttentionGroup>
-          <AttentionGroup
-            title="Texts"
-            count={textRows.length}
-            expanded={expanded.includes("texts")}
-            onToggle={() => toggle("texts")}
-          >
-            {textRows.map((row) => (
-              <TextRow
-                key={row.engagement.phone}
-                row={row}
-                active={row.engagement.phone === selectedPhone}
-                onSelect={() =>
-                  onIntent({
-                    type: "select-engagement",
-                    engagement: row.engagement,
-                  })
-                }
-              />
-            ))}
-            {messageLoading && textRows.length === 0 && (
-              <RailLoading inMenu label="Loading Texts" />
-            )}
-            {!messageLoading && textRows.length === 0 && (
-              <RailEmpty inMenu>No unread Texts</RailEmpty>
-            )}
-            {messageError && (
-              <WorkspaceWindowFailure
-                message={messageError}
-                onRetry={() => onIntent({ type: "retry" })}
-              />
-            )}
-            <RailShowMore
-              cursor={messageNextCursor}
-              loading={messageLoading}
-              onLoadMore={() =>
-                onIntent({ type: "load-more", window: "messages" })
-              }
-            />
-          </AttentionGroup>
+          <div className="mt-3">
+            <CompletedGroup title="Recently completed" expanded={expanded.includes("completed")} onToggle={() => toggle("completed")}>
+              {completed.items.map((task) => (
+                <TaskRow key={task.id} task={task} active={task.id === selectedTaskID} onSelect={() => onIntent({ type: "select-task", task })} completionDisabled completionPending={false} completionError="" onComplete={() => {}} />
+              ))}
+              {completed.loading && completed.items.length === 0 && <RailLoading label="Loading completed Tasks" />}
+              {!completed.loading && completed.items.length === 0 && <RailEmpty>No completed Tasks match these filters.</RailEmpty>}
+              {completed.error && <WorkspaceWindowFailure message={completed.error} onRetry={() => onIntent({ type: "retry" })} />}
+              <RailShowMore cursor={completed.nextCursor} loading={completed.loading} onLoadMore={() => onIntent({ type: "load-more", window: "completedTasks" })} />
+            </CompletedGroup>
+          </div>
         </SidebarContent>
         <SidebarFooter className="p-2">
           {availabilityControl && (
@@ -551,22 +384,17 @@ export function WorkspaceRail({
   )
 }
 
-function AttentionGroup({
+function CompletedGroup({
   title,
-  count,
   expanded,
   onToggle,
-  action,
   children,
 }: {
   title: string
-  count?: number
   expanded: boolean
   onToggle: () => void
-  action?: React.ReactNode
   children: React.ReactNode
 }) {
-  const FolderStateIcon = expanded ? FolderOpenIcon : FolderClosedIcon
 
   return (
     <Collapsible
@@ -579,24 +407,16 @@ function AttentionGroup({
       <div className="flex min-w-0 items-center gap-0.5">
         <CollapsibleTrigger
           render={
-            <button
-              type="button"
-              className="group/disclosure flex h-8 min-w-0 flex-1 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm/5 font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            <Button
+              variant="ghost"
+              className="group/disclosure flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
             />
           }
         >
-          <FolderStateIcon
-            aria-hidden="true"
-            className="size-4 shrink-0 text-[var(--sidebar-icon-color)] group-hover/disclosure:text-sidebar-foreground"
-          />
           <span className="truncate">{title}</span>
-          {count !== undefined && (
-            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-              {count}
-            </span>
-          )}
+            <span aria-hidden="true" className="h-px flex-1 bg-sidebar-border" />
+            <ChevronDownIcon aria-hidden="true" className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")} />
         </CollapsibleTrigger>
-        {action}
       </div>
       <CollapsibleContent>
         <SidebarGroupContent>
@@ -609,43 +429,58 @@ function AttentionGroup({
   )
 }
 
-function TaskCategoryMenu({
-  value,
+function TaskViewMenu({
+  category,
+  responsibility,
   counts,
-  onChange,
+  onCategoryChange,
+  onResponsibilityChange,
 }: {
-  value: TaskCategoryFilter
+  category: TaskCategoryFilter
+  responsibility: "mine" | "all"
   counts: TaskFolderCounts
-  onChange: (value: TaskCategoryFilter) => void
+  onCategoryChange: (value: TaskCategoryFilter) => void
+  onResponsibilityChange: (value: "mine" | "all") => void
 }) {
   const activeLabel =
-    taskCategoryOptions.find((option) => option.value === value)?.label ??
+    taskCategoryOptions.find((option) => option.value === category)?.label ??
     "All types"
+  const viewLabel = responsibility === "mine" ? "My Tasks" : "All tasks"
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <button
-            type="button"
-            aria-label={`Filter Tasks: ${activeLabel}`}
-            className="flex h-8 max-w-24 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-foreground"
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`${viewLabel}${category === "all" ? "" : ` · ${activeLabel}`}`}
+            title={`${viewLabel} · ${activeLabel}`}
+            className="h-9 w-full justify-start gap-2 px-2.5 text-sm font-medium text-sidebar-foreground"
           />
         }
       >
-        <ListFilterIcon aria-hidden="true" className="size-3.5 shrink-0" />
-        <span className="truncate">{activeLabel}</span>
+        <span className="truncate">{viewLabel}{category !== "all" && <span className="font-normal text-muted-foreground"> · {activeLabel}</span>}</span>
+        <span className="ml-auto text-xs font-normal tabular-nums text-muted-foreground">{taskCountForCategory(counts, category)}</span>
+
+        <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuRadioGroup value={responsibility} onValueChange={(value) => {
+          if (value === "mine" || value === "all") onResponsibilityChange(value)
+        }}>
+          <DropdownMenuLabel>View</DropdownMenuLabel>
+          <DropdownMenuRadioItem value="mine" closeOnClick>My Tasks</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="all" closeOnClick>All tasks</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
         <DropdownMenuRadioGroup
-          value={value}
-          onValueChange={(nextValue) =>
-            onChange(nextValue as TaskCategoryFilter)
-          }
+          value={category}
+          onValueChange={(value) => onCategoryChange(value as TaskCategoryFilter)}
         >
-          <DropdownMenuLabel>Task type</DropdownMenuLabel>
+          <DropdownMenuLabel>{viewLabel} by type</DropdownMenuLabel>
           {taskCategoryOptions.map((option) => (
-            <DropdownMenuRadioItem key={option.value} value={option.value}>
-              <span className="flex-1">{option.label}</span>
+            <DropdownMenuRadioItem key={option.value} value={option.value} closeOnClick className="min-h-7 py-1">
+              <span className="flex-1 whitespace-nowrap">{option.value === "all" ? "All categories" : option.label}</span>
               <span className="mr-5 tabular-nums text-muted-foreground">
                 {taskCountForCategory(counts, option.value)}
               </span>
@@ -654,175 +489,6 @@ function TaskCategoryMenu({
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-}
-
-function AppointmentFolder({
-  title,
-  outcomes,
-  count,
-  expanded,
-  selectedAIInteractionID,
-  loading,
-  cursor,
-  onToggle,
-  onAIInteractionSelect,
-  onLoadMore,
-}: {
-  title: string
-  outcomes: AiOutcomeItem[]
-  count: number
-  expanded: boolean
-  selectedAIInteractionID: string
-  loading: boolean
-  cursor: string
-  onToggle: () => void
-  onAIInteractionSelect: (interaction: AiOutcomeItem) => void
-  onLoadMore: () => void
-}) {
-  const FolderStateIcon = expanded ? FolderOpenIcon : FolderClosedIcon
-
-  return (
-    <Collapsible
-      open={expanded}
-      onOpenChange={(open) => {
-        if (open !== expanded) onToggle()
-      }}
-      render={<SidebarMenuItem />}
-    >
-      <CollapsibleTrigger
-        render={
-          <button
-            type="button"
-            className="group/disclosure flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-          />
-        }
-      >
-        <FolderStateIcon
-          aria-hidden="true"
-          className="size-4 shrink-0 text-[var(--sidebar-icon-color)] group-hover/disclosure:text-sidebar-foreground"
-        />
-        <span className="truncate">{title}</span>
-        <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-          {count}
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <SidebarMenu className="ml-2 w-auto gap-0.5 pl-1.5 py-0">
-          {outcomes.map((interaction) => (
-            <AIOutcomeRow
-              key={interaction.id}
-              interaction={interaction}
-              active={interaction.id === selectedAIInteractionID}
-              onSelect={() => onAIInteractionSelect(interaction)}
-            />
-          ))}
-          {loading && outcomes.length === 0 && (
-            <RailLoading inMenu label={`Loading ${title.toLowerCase()}`} />
-          )}
-          {!loading && count === 0 && (
-            <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
-          )}
-          <RailShowMore
-            cursor={cursor}
-            loading={loading}
-            onLoadMore={onLoadMore}
-          />
-        </SidebarMenu>
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-function AIOutcomeRow({
-  interaction,
-  active,
-  onSelect,
-}: {
-  interaction: AiOutcomeItem
-  active: boolean
-  onSelect: () => void
-}) {
-  const occurredAt = aiOutcomeOccurredAt(interaction)
-  return (
-    <SidebarMenuItem>
-      <RailHoverDetails
-        eyebrow="Appointment"
-        title={appointmentOutcomeTitle(interaction.appointmentOutcome)}
-        phone={interaction.phone}
-        office={interaction.locationName}
-        meta={`${aiCallCompletionLabel(interaction.status)} · ${relativeTime(occurredAt)}`}
-      >
-        <SidebarMenuButton
-          isActive={active}
-          className="h-7 rounded-lg px-2 text-sidebar-foreground/80"
-          onClick={onSelect}
-        >
-          <span className="min-w-0 flex-1 truncate text-sm tabular-nums">
-            {formatUSPhone(interaction.phone)}
-          </span>
-          <time
-            className="ml-2 shrink-0 text-[10px] font-normal tabular-nums text-muted-foreground"
-            dateTime={occurredAt}
-          >
-            {relativeTime(occurredAt)}
-          </time>
-        </SidebarMenuButton>
-      </RailHoverDetails>
-    </SidebarMenuItem>
-  )
-}
-
-function RecoveryGroup({
-  title,
-  empty,
-  rows,
-  count,
-  expanded,
-  selectedTaskID,
-  onToggle,
-  onSelect,
-  cursor,
-  loading,
-  onLoadMore,
-}: {
-  title: string
-  empty: string
-  rows: RecoveryRowValue[]
-  count: number
-  expanded: boolean
-  selectedTaskID: string
-  onToggle: () => void
-  onSelect: (task: Task) => void
-  cursor: string
-  loading: boolean
-  onLoadMore: () => void
-}) {
-  return (
-    <AttentionGroup
-      title={title}
-      count={count}
-      expanded={expanded}
-      onToggle={onToggle}
-    >
-      {rows.map((row) => (
-        <RecoveryRow
-          key={row.task.id}
-          row={row}
-          active={row.task.id === selectedTaskID}
-          onSelect={() => onSelect(row.task)}
-        />
-      ))}
-      {loading && rows.length === 0 && (
-        <RailLoading inMenu label="Loading missed calls" />
-      )}
-      {!loading && count === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
-      <RailShowMore
-        cursor={taskFolderCursor(cursor, rows.length, count)}
-        loading={loading}
-        onLoadMore={onLoadMore}
-      />
-    </AttentionGroup>
   )
 }
 
@@ -843,45 +509,49 @@ function TaskRow({
   completionError: string
   onComplete: () => void
 }) {
+  const textReview = task.origin === "INBOUND_MESSAGE_REVIEW"
+  const rowTitle = textReview ? (task.callerName ?? formatUSPhone(task.phone)) : task.title
+  const groupCount = task.groupMembers?.length ?? 0
+  const grouped = groupCount > 1
   return (
     <SidebarMenuItem
-      data-testid="task-row"
+      data-testid={grouped ? "task-group-row" : "task-row"}
+      data-task-id={task.id}
       className="group/task relative"
     >
       <RailHoverDetails
-        eyebrow="Task"
+        eyebrow={grouped ? `${groupCount} related Tasks` : "Task"}
         title={task.title}
         phone={task.phone}
         office={task.locationName}
         meta={`${taskUrgencyLabel(task.urgency)} · Updated ${relativeTime(taskRelativeAt(task))}`}
       >
         <SidebarMenuButton
+          aria-label={grouped ? `${rowTitle}, ${groupCount} requests` : rowTitle}
           isActive={active}
           className={cn(
-            "h-7 rounded-lg py-0 pr-10 pl-2 text-sidebar-foreground/80",
-            task.unread && task.state === "OPEN" && "font-medium text-sidebar-foreground",
+            "h-auto items-start rounded-lg py-2 pr-10 pl-2 text-sidebar-foreground/90",
+            task.state === "OPEN" ? "min-h-16" : "min-h-0",
           )}
           onClick={onSelect}
         >
-          <span className="flex min-w-0 flex-1 items-center gap-2">
-            {task.unread && task.state === "OPEN" && (
-              <span className="sr-only">Unread conversation: </span>
-            )}
-            {task.state === "COMPLETED" && (
-              <CheckCircle2Icon className="size-4 shrink-0 stroke-[1.75] text-success" />
-            )}
-            <span className="truncate text-sm">{task.title}</span>
+          <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
+            <span className="line-clamp-2 text-sm leading-5 font-medium">{task.urgency === "high_priority" && <span className="mr-1.5 text-xs text-destructive">Urgent</span>}{rowTitle}</span>
+            {textReview && task.state === "OPEN" && task.preview && <span className="line-clamp-2 text-xs font-normal leading-4 text-muted-foreground">{task.preview}</span>}
+            <span className="w-full truncate text-[11px] font-normal text-muted-foreground">{task.state === "COMPLETED" ? `Completed by ${task.completedBy?.email ?? "the team"}` : (task.callerName ?? formatUSPhone(task.phone))} · {task.locationName}</span>
+            {task.state === "OPEN" && <span className="w-full truncate text-[11px] font-normal text-muted-foreground">{task.origin === "APPOINTMENT_REVIEW" ? "Appointment verification" : task.origin === "INBOUND_MESSAGE_REVIEW" ? "Text review" : task.origin === "MISSED_CALL_RECOVERY" || task.origin === "VOICEMAIL_RECOVERY" ? "Return call" : taskGroupLabel(task.category)}</span>}
+            {grouped && <span aria-label={`${groupCount} Tasks`} className="shrink-0 rounded bg-sidebar-accent px-1.5 text-[10px] font-medium tabular-nums leading-4">{groupCount} requests</span>}
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>
-      <span className="pointer-events-none absolute top-0 right-1 h-7 w-7 [@media(pointer:coarse)]:h-11">
+      <span className="pointer-events-none absolute top-2 right-1 h-7 w-7 [@media(pointer:coarse)]:h-11">
         <time
-          className="absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 group-hover/task:opacity-0 group-focus-within/task:opacity-0 motion-reduce:duration-0 motion-reduce:transition-none"
+          className={`absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
           dateTime={taskRelativeAt(task)}
         >
           {relativeTime(taskRelativeAt(task))}
         </time>
-        {task.state === "OPEN" && (
+        {task.state === "OPEN" && task.origin !== "APPOINTMENT_REVIEW" && task.origin !== "INBOUND_MESSAGE_REVIEW" && !grouped && (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -916,110 +586,6 @@ function TaskRow({
           {completionError}
         </p>
       )}
-    </SidebarMenuItem>
-  )
-}
-
-type RecoveryRowValue = {
-  phone: string
-  locationID: string
-  locationName: string
-  task: Task
-  voicemailCount: number
-  missedCount: number
-  latestAt: string
-}
-
-function RecoveryRow({
-  row,
-  active,
-  onSelect,
-}: {
-  row: RecoveryRowValue
-  active: boolean
-  onSelect: () => void
-}) {
-  const kind = row.voicemailCount > 0 ? "Voicemail" : "Missed call"
-  const count = row.voicemailCount || row.missedCount
-  return (
-    <SidebarMenuItem>
-      <RailHoverDetails
-        eyebrow="Call recovery"
-        title={kind}
-        phone={row.phone}
-        office={row.locationName}
-        meta={`${count} ${kind.toLowerCase()}${count === 1 ? "" : "s"} · ${relativeTime(row.latestAt)}`}
-      >
-        <SidebarMenuButton
-          isActive={active}
-          className="h-7 rounded-lg px-2 text-sidebar-foreground/80"
-          onClick={onSelect}
-        >
-          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-            <span className="shrink-0 text-sm tabular-nums">
-              {formatUSPhone(row.phone)}
-            </span>
-            <span className="truncate text-xs text-muted-foreground">
-              {kind}
-            </span>
-          </span>
-          <time
-            className="ml-2 shrink-0 text-[10px] font-normal tabular-nums text-muted-foreground"
-            dateTime={row.latestAt}
-          >
-            {relativeTime(row.latestAt)}
-          </time>
-        </SidebarMenuButton>
-      </RailHoverDetails>
-    </SidebarMenuItem>
-  )
-}
-
-type TextAttentionRow = {
-  engagement: EngagementSummary
-  previewThread: MessageThreadSummary
-}
-
-function TextRow({
-  row,
-  active,
-  onSelect,
-}: {
-  row: TextAttentionRow
-  active: boolean
-  onSelect: () => void
-}) {
-  return (
-    <SidebarMenuItem>
-      <RailHoverDetails
-        eyebrow="Unread text"
-        title={row.engagement.displayName || row.previewThread.preview || "Attachment"}
-        phone={row.engagement.phone}
-        office={row.engagement.locations.map((location) => location.name).join(", ")}
-        meta={`Received ${relativeTime(row.engagement.latestActivity)}`}
-      >
-        <SidebarMenuButton
-          isActive={active}
-          data-testid="text-attention-row"
-          className="h-7 rounded-lg px-2 font-medium text-sidebar-foreground"
-          onClick={onSelect}
-        >
-          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-            <span className="shrink-0 text-sm tabular-nums">
-              {formatUSPhone(row.engagement.phone)}
-            </span>
-            <span className="truncate text-xs text-muted-foreground">
-              {row.previewThread.preview || "Attachment"}
-            </span>
-          </span>
-          <time
-            className="ml-2 shrink-0 text-[10px] font-normal tabular-nums text-muted-foreground"
-            dateTime={row.engagement.latestActivity}
-          >
-            {relativeTime(row.engagement.latestActivity)}
-          </time>
-        </SidebarMenuButton>
-      </RailHoverDetails>
     </SidebarMenuItem>
   )
 }
@@ -1106,73 +672,17 @@ function HoverDetail({
   )
 }
 
-function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
-  return sortRecoveryQueue(
-    tasks.filter(
-      (task) =>
-        task.origin === "MISSED_CALL_RECOVERY" ||
-        task.origin === "VOICEMAIL_RECOVERY",
-    ),
-  ).map((task) => {
-    const related = Math.max(1, task.relatedInteractionCount)
-    return {
-      phone: task.phone,
-      locationID: task.locationId,
-      locationName: task.locationName,
-      task,
-      voicemailCount: task.origin === "VOICEMAIL_RECOVERY" ? related : 0,
-      missedCount: task.origin === "MISSED_CALL_RECOVERY" ? related : 0,
-      latestAt: task.updatedAt,
-    }
-  })
-}
-
-function aggregateTexts(messages: MessageThreadSummary[]): TextAttentionRow[] {
-  const byPhone = new Map<string, MessageThreadSummary[]>()
-  for (const thread of messages) {
-    if (!thread.unread || thread.openTaskCount > 0) continue
-    byPhone.set(thread.externalPhone, [...(byPhone.get(thread.externalPhone) ?? []), thread])
-  }
-  return newestFirst(
-    [...byPhone.entries()].map(([phone, threads]) => {
-      const newest = newestFirst(threads, (thread) => thread.latestActivity)[0]!
-      return {
-        previewThread: newest,
-        engagement: {
-          phone,
-          ...(newest.displayName ? { displayName: newest.displayName } : {}),
-          locations: [
-            ...new Map(threads.map((thread) => [thread.locationId, { id: thread.locationId, name: thread.locationName }])).values(),
-          ],
-          latestActivity: newest.latestActivity,
-          openTaskCount: 0,
-          unread: true,
-        },
-      }
-    }),
-    (row) => row.engagement.latestActivity,
+function RailLoading({ label }: { label: string }) {
+  return (
+    <SidebarMenuItem className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+      <Spinner />
+      {label}
+    </SidebarMenuItem>
   )
 }
 
-function RailLoading({ label, inMenu = false }: { label: string; inMenu?: boolean }) {
-  const className = "flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground"
-  if (inMenu) {
-    return (
-      <SidebarMenuItem className={className}>
-        <Spinner />
-        {label}
-      </SidebarMenuItem>
-    )
-  }
-  return <div className={className}><Spinner />{label}</div>
-}
-
-function RailEmpty({ children, inMenu = false }: { children: string; inMenu?: boolean }) {
-  const className = "px-3 py-2 text-xs text-muted-foreground"
-  if (inMenu) {
-    return <SidebarMenuItem className={className}>{children}</SidebarMenuItem>
-  }
-  return <p className={className}>{children}</p>
+function RailEmpty({ children }: { children: string }) {
+  return <SidebarMenuItem className="px-3 py-2 text-xs text-muted-foreground">{children}</SidebarMenuItem>
 }
 
 function RailShowMore({
@@ -1241,13 +751,5 @@ function taskUrgencyLabel(urgency: Task["urgency"]) {
 }
 
 function taskRelativeAt(task: Task) {
-  return task.state === "OPEN" ? task.updatedAt : (task.completedAt ?? task.updatedAt)
-}
-
-function aiOutcomeOccurredAt(interaction: AiOutcomeItem) {
-  return (
-    interaction.appointmentOccurredAt ??
-    interaction.endedAt ??
-    interaction.startedAt
-  )
+  return task.state === "OPEN" ? task.createdAt : (task.completedAt ?? task.updatedAt)
 }

@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"testing"
 	"time"
 
@@ -50,6 +53,15 @@ func TestExecutorClassifiesOnlySupportedPostgresCauses(t *testing.T) {
 		{name: "serialization", err: &pgconn.PgError{Code: "40001"}, want: CauseSerialization},
 		{name: "deadlock", err: &pgconn.PgError{Code: "40P01"}, want: CauseDeadlock},
 		{name: "lock timeout", err: &pgconn.PgError{Code: "55P03"}, want: CauseLockTimeout},
+		{name: "closed connection", err: fmt.Errorf("query: %w", pgconn.ErrConnClosed), want: CauseConnection},
+		{name: "socket EOF", err: fmt.Errorf("read: %w", io.EOF), want: CauseConnection},
+		{name: "truncated socket read", err: io.ErrUnexpectedEOF, want: CauseConnection},
+		{name: "network error", err: &net.OpError{Op: "read", Net: "tcp", Err: errors.New("synthetic transport loss")}, want: CauseConnection},
+		{name: "administrator shutdown", err: &pgconn.PgError{Code: "57P01"}, want: CauseConnection},
+		{name: "crash shutdown", err: &pgconn.PgError{Code: "57P02"}, want: CauseConnection},
+		{name: "unavailable database", err: &pgconn.PgError{Code: "57P03"}, want: CauseConnection},
+		{name: "timed out transport", err: &net.OpError{Op: "read", Net: "tcp", Err: context.DeadlineExceeded}, want: CauseOperationTimeout},
+		{name: "canceled transport", err: &net.OpError{Op: "read", Net: "tcp", Err: context.Canceled}, want: CauseCanceled},
 		{name: "unknown", err: errors.New("patient@example.test"), want: CauseOther},
 	}
 	for _, test := range tests {
@@ -304,4 +316,47 @@ func (rows *deadlineRows) Next() bool {
 	<-rows.ctx.Done()
 	rows.err = rows.ctx.Err()
 	return false
+}
+
+func TestExecutorDistinguishesParentAndAcquireDeadlines(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		parentTimeout  time.Duration
+		acquireTimeout time.Duration
+		want           Cause
+		parentCause    error
+	}{
+		{"expired parent", -time.Second, time.Second, Cause("operation_timeout"), nil},
+		{"parent expires while acquiring", 10 * time.Millisecond, time.Second, Cause("operation_timeout"), nil},
+		{"acquisition budget expires", time.Second, 10 * time.Millisecond, CauseAcquireTimeout, nil},
+		{"custom expired parent", -time.Second, time.Second, CauseOperationTimeout, errors.New("synthetic worker deadline")},
+		{"custom parent expires while acquiring", 10 * time.Millisecond, time.Second, CauseOperationTimeout, errors.New("synthetic worker deadline")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			executor, err := newExecutor(deadlineAcquirer{}, ExecutorConfig{
+				AcquireTimeout: test.acquireTimeout, OperationTimeout: time.Second, StatementTimeout: time.Second,
+			}, observability.NewLogger(observability.RuntimeWorker, "worker-test", slog.New(slog.NewJSONHandler(&output, nil))))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeoutCause(context.Background(), test.parentTimeout, test.parentCause)
+			defer cancel()
+			_, err = executor.Exec(ctx, "synthetic observation schedule")
+			if CauseOf(err) != test.want || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("cause = %q, want %q; err = %v", CauseOf(err), test.want, err)
+			}
+			entries := decodeLogEntries(t, output.Bytes())
+			if entries[0]["cause"] != string(test.want) {
+				t.Fatalf("metric = %#v", entries[0])
+			}
+		})
+	}
+}
+
+type deadlineAcquirer struct{}
+
+func (deadlineAcquirer) Acquire(ctx context.Context) (acquiredConnection, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }

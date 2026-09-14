@@ -25,8 +25,13 @@ that connects them.
   appointment outcomes without treating an automated claim as proof of success.
 
 A resolved Interaction should not create unnecessary work. An unresolved need
-should remain visible until it reaches an accountable outcome. Inbound messages
-are communication evidence; they do not automatically become Tasks.
+should remain visible until it reaches an accountable outcome. Incoming texts
+create shared review Tasks, except opt-out/control messages. Appointment, text,
+missed-call, and voicemail reviews appear for everyone with access to their
+Location, independent of category responsibility. Checking an appointment clears
+its review for everyone. A completed callback attempt clears older call recovery
+reviews even if the patient does not answer; history records the attempt without
+claiming patient contact. Any remaining patient obligation needs separate follow-up.
 
 A **Practice** is the customer tenant and security boundary; a **Location** is
 an office within it. Google sign-in establishes human identity, and the backend
@@ -51,6 +56,7 @@ flowchart LR
     Backend["Go backend<br/>isolated runtime roles"]
     DB[("PostgreSQL")]
     Telnyx["Telnyx<br/>voice and messaging"]
+    Vertex["Google Vertex AI<br/>knowledge embeddings"]
     Abita["Abita AI agent"]
 
     Browser -->|"pages and sign-in"| Web
@@ -61,7 +67,8 @@ flowchart LR
     Browser <-->|"WebRTC calling"| Telnyx
     Telnyx -->|"signed webhooks"| Backend
     Backend -->|"provider commands"| Telnyx
-    Abita -->|"authenticated Tasks and AI Interactions"| Backend
+    Backend -->|"embedding requests"| Vertex
+    Abita -->|"authenticated Tasks, AI Interactions, and knowledge queries"| Backend
 ```
 
 ### One backend, five runtime roles
@@ -94,10 +101,19 @@ Business rules live in their owning module under `backend/internal/`.
 | HumanCalling | [`humancalling/`](backend/internal/humancalling) | Calls, CallLegs, softphone readiness, transfers, voicemail, and recordings |
 | Messaging | [`messaging/`](backend/internal/messaging) | Conversations, send intent, delivery evidence, and attachments |
 | AIInteraction | [`interaction/`](backend/internal/interaction) | AI call lifecycle, transcripts, appointment evidence, and analytics |
+| Knowledge | [`knowledge/`](backend/internal/knowledge) | Office corpus revisions, controlled imports, and semantic passage search |
 
 The [`workspace/`](backend/internal/workspace) query layer combines authorized
 cross-domain views; it does not own domain writes. HTTP, authentication,
 provider, storage, and worker adapters connect to the owning modules.
+
+Knowledge uses Access for Practice and office authorization, a Google Vertex AI
+adapter for embeddings, and PostgreSQL/pgvector for passages and immutable revisions.
+Embedding requests run outside database transactions; the Agent has read-only access.
+Reviewed office facts live in [`knowledge/offices/`](knowledge/offices/). The
+[Knowledge workflow](knowledge/README.md) validates edits and publishes complete
+office revisions from Git. Search combines semantic and text matching, preserving
+complete facts and restrictions while limiting the evidence returned to the Agent.
 
 The browser/backend contract is [`api/openapi.yaml`](api/openapi.yaml).
 Go bindings and the TypeScript client are generated from it, not edited by hand.
@@ -116,9 +132,6 @@ Go bindings and the TypeScript client are generated from it, not edited by hand.
    product state. The browser refetches authorized views; calling also reconciles
    through polling. Neither browser intent nor a successful provider request
    proves that a call connected or a message was delivered.
-
-Detailed boundaries, lifecycles, and invariants live in the
-[architecture guide](docs/architecture/overview.md).
 
 ## Local development
 
@@ -218,8 +231,9 @@ go test -p 1 ./backend/... ./deploy -count=1
 
 Keep database-backed packages serial: they share and reset schemas. Without
 `TEST_DATABASE_URL`, integration tests may skip; a green exit is not proof that
-database behavior passed. Pull-request CI shards packages across isolated
-databases; main and release verification run the full serial suite.
+database behavior passed. CI shards the complete package set across isolated
+databases for pull requests, main, and exact-release verification. Packages
+within each shard remain serial, and every shard must pass.
 
 ### Frontend
 
@@ -270,8 +284,8 @@ settings into this README:
   connection budgets, and database recovery settings.
 - [Observability](deploy/observability/README.md): checked metrics, alerts, SLOs,
   and deployment instructions.
-- [Provider-receipt recovery](docs/runbooks/provider-receipt-recovery.md):
-  guarded inspection and recovery. **Do not bulk replay receipts.**
+
+**Do not bulk replay provider receipts.**
 
 This README describes the implementation and checked deployment contracts, not
 current production health. Local tests, CI, deployed application behavior,
@@ -289,13 +303,11 @@ web/                 Next.js app, Better Auth, generated client, and browser tes
 config/              Reviewed development and production provisioning inputs
 scripts/             Test harnesses and schema verification
 deploy/              Runtime contracts, release automation, and operational controls
-docs/                Product specification, architecture, runbooks, and research
 .github/             CI, release workflows, and pull request template
 ```
 
-Before changing behavior, read [VISION.md](VISION.md), the relevant
-[product specification](docs/acuity-portal-product-technical-spec.md), and the
-issue with all its comments. [GitHub Issues](docs/agents/issue-tracker.md) own
-committed product work. Follow [AGENTS.md](AGENTS.md), plus
+Before changing behavior, read [VISION.md](VISION.md) and the relevant
+issue with all its comments. GitHub Issues own committed product work.
+Follow [AGENTS.md](AGENTS.md), plus
 [web/AGENTS.md](web/AGENTS.md) for frontend changes. Use synthetic, PHI-free data
 in tests and evidence, and state what remains unverified when handing off work.

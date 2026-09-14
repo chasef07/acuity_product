@@ -195,7 +195,11 @@ func (hub *Hub) Stream(
 		closeReason = observability.SSEWriteFailed
 		return nil
 	}
-	flusher.Flush()
+	if err := http.NewResponseController(w).Flush(); err != nil {
+		closeReason = observability.SSEWriteFailed
+		return nil
+	}
+	observability.StreamReady(r.Context())
 
 	heartbeat := time.NewTicker(hub.config.HeartbeatInterval)
 	defer heartbeat.Stop()

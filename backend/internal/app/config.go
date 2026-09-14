@@ -21,24 +21,26 @@ const (
 )
 
 type Config struct {
-	Role                   Role
-	DatabaseURL            string
-	PoolMax                int32
-	AcquireTimeout         time.Duration
-	OperationTimeout       time.Duration
-	StatementTimeout       time.Duration
-	HTTPPort               int
-	BrowserOrigins         []string
-	JWKSURL                string
-	AuthIssuer             string
-	APIAudience            string
-	ProvisioningInput      string
-	ProvisioningOutput     string
-	LocationVoiceProvision LocationVoiceProvisionConfig
-	Realtime               RealtimeConfig
-	Service                ServiceConfig
-	HumanCalling           HumanCallingConfig
-	Messaging              MessagingConfig
+	Role                    Role
+	DatabaseURL             string
+	PoolMax                 int32
+	AcquireTimeout          time.Duration
+	OperationTimeout        time.Duration
+	StatementTimeout        time.Duration
+	HTTPPort                int
+	BrowserOrigins          []string
+	JWKSURL                 string
+	AuthIssuer              string
+	APIAudience             string
+	ProvisioningInput       string
+	ProvisioningOutput      string
+	LocationVoiceProvision  LocationVoiceProvisionConfig
+	Realtime                RealtimeConfig
+	Service                 ServiceConfig
+	HumanCalling            HumanCallingConfig
+	Messaging               MessagingConfig
+	KnowledgeGoogleProject  string
+	KnowledgeGoogleLocation string
 }
 
 type LocationVoiceProvisionConfig struct {
@@ -136,14 +138,19 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("DATABASE_STATEMENT_TIMEOUT_MS must not exceed DATABASE_OPERATION_TIMEOUT_MS")
 	}
 	config := Config{
-		Role:               role,
-		DatabaseURL:        databaseURL,
-		PoolMax:            int32(poolMax),
-		AcquireTimeout:     time.Duration(acquireMilliseconds) * time.Millisecond,
-		OperationTimeout:   time.Duration(operationMilliseconds) * time.Millisecond,
-		StatementTimeout:   time.Duration(statementMilliseconds) * time.Millisecond,
-		ProvisioningInput:  strings.TrimSpace(getenv("PROVISIONING_INPUT")),
-		ProvisioningOutput: strings.TrimSpace(getenv("PROVISIONING_OUTPUT")),
+		Role:                    role,
+		DatabaseURL:             databaseURL,
+		PoolMax:                 int32(poolMax),
+		AcquireTimeout:          time.Duration(acquireMilliseconds) * time.Millisecond,
+		OperationTimeout:        time.Duration(operationMilliseconds) * time.Millisecond,
+		StatementTimeout:        time.Duration(statementMilliseconds) * time.Millisecond,
+		ProvisioningInput:       strings.TrimSpace(getenv("PROVISIONING_INPUT")),
+		ProvisioningOutput:      strings.TrimSpace(getenv("PROVISIONING_OUTPUT")),
+		KnowledgeGoogleProject:  strings.TrimSpace(getenv("KNOWLEDGE_GOOGLE_PROJECT")),
+		KnowledgeGoogleLocation: strings.TrimSpace(getenv("KNOWLEDGE_GOOGLE_LOCATION")),
+	}
+	if config.KnowledgeGoogleLocation == "" {
+		config.KnowledgeGoogleLocation = "us-east1"
 	}
 
 	if role == RolePortalAPI || role == RoleProviderIngress || role == RoleRealtime {

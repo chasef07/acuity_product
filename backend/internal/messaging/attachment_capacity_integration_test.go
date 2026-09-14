@@ -16,6 +16,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -66,7 +67,7 @@ func attachmentCapacityFixture(t *testing.T) (automaticAcknowledgementTestFixtur
 	s := &delayedAttachmentStore{MemoryAttachmentStore: messaging.NewMemoryAttachmentStore(), entered: make(chan string, 1), release: make(chan struct{})}
 	t.Cleanup(s.unblock)
 	a := access.New(pool, func() time.Time { return *f.clock })
-	m := messaging.New(pool, a, nil, f.provider, messaging.Config{AttachmentStore: s}, func() time.Time { return *f.clock })
+	m := messaging.New(pool, a, work.New(pool, a, func() time.Time { return *f.clock }), f.provider, messaging.Config{AttachmentStore: s}, func() time.Time { return *f.clock })
 	input := messaging.UploadAttachmentCommand{Identity: f.identity, PracticeID: f.practiceID, LocationID: f.locationID, FileName: "synthetic.pdf", DeclaredType: "application/pdf", Content: append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("synthetic"), 16)...)}
 	return f, pool, m, s, input
 }
@@ -201,7 +202,8 @@ func TestInboundAttachmentCannotFinalizeAfterCleanupBegins(t *testing.T) {
 		_, _ = w.Write(input.Content)
 	}))
 	defer media.Close()
-	m := messaging.New(pool, access.New(pool, func() time.Time { return *f.clock }), nil, f.provider, messaging.Config{AttachmentStore: s, HTTPClient: media.Client(), WebhookPublicKeys: [][]byte{f.privateKey.Public().(ed25519.PublicKey)}}, func() time.Time { return *f.clock })
+	a := access.New(pool, func() time.Time { return *f.clock })
+	m := messaging.New(pool, a, work.New(pool, a, func() time.Time { return *f.clock }), f.provider, messaging.Config{AttachmentStore: s, HTTPClient: media.Client(), WebhookPublicKeys: [][]byte{f.privateKey.Public().(ed25519.PublicKey)}}, func() time.Time { return *f.clock })
 	raw := []byte(fmt.Sprintf(`{"data":{"record_type":"event","event_type":"message.received","id":"capacity-inbound-event","occurred_at":"%s","payload":{"id":"capacity-inbound-message","from":{"phone_number":"+15555550199"},"to":[{"phone_number":"+17275550100"}],"text":"Synthetic document.","media":[{"url":%q,"content_type":"application/pdf"}]}}}`, f.now.Format(time.RFC3339), media.URL))
 	timestamp := fmt.Sprint(time.Now().Unix())
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(f.privateKey, append([]byte(timestamp+"|"), raw...)))

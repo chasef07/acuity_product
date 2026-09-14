@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CancelStaffTransferData, CancelStaffTransferErrors, CancelStaffTransferResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskResponses, ConfirmCallingMediaReadyData, ConfirmCallingMediaReadyErrors, ConfirmCallingMediaReadyResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, CreateMessageFollowUpTaskData, CreateMessageFollowUpTaskErrors, CreateMessageFollowUpTaskResponses, CreateStaffTaskData, CreateStaffTaskErrors, CreateStaffTaskResponses, DeclineStaffTransferData, DeclineStaffTransferErrors, DeclineStaffTransferResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, GetAiInteractionData, GetAiInteractionErrors, GetAiInteractionEvidenceData, GetAiInteractionEvidenceErrors, GetAiInteractionEvidenceResponses, GetAiInteractionResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallHistoryData, GetCallingCallHistoryErrors, GetCallingCallHistoryResponses, GetCallingCallResponses, GetCallingEngagementHistoryData, GetCallingEngagementHistoryErrors, GetCallingEngagementHistoryResponses, GetCallingRecordingPlaybackData, GetCallingRecordingPlaybackErrors, GetCallingRecordingPlaybackResponses, GetCallingStateData, GetCallingStateErrors, GetCallingStateResponses, GetCallingVoicemailPlaybackData, GetCallingVoicemailPlaybackErrors, GetCallingVoicemailPlaybackResponses, GetEngagementTimelineData, GetEngagementTimelineErrors, GetEngagementTimelineResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetMessageAttachmentData, GetMessageAttachmentErrors, GetMessageAttachmentResponses, GetMessageThreadTimelineData, GetMessageThreadTimelineErrors, GetMessageThreadTimelineResponses, GetOperatorAiInteractionAnalyticsData, GetOperatorAiInteractionAnalyticsErrors, GetOperatorAiInteractionAnalyticsResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetProviderMessageMediaData, GetProviderMessageMediaErrors, GetProviderMessageMediaResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskCallHistoryData, GetTaskCallHistoryErrors, GetTaskCallHistoryResponses, GetTaskEngagementHistoryData, GetTaskEngagementHistoryErrors, GetTaskEngagementHistoryResponses, GetTaskOutboundEligibilityData, GetTaskOutboundEligibilityErrors, GetTaskOutboundEligibilityResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, IngestAiInteractionData, IngestAiInteractionErrors, IngestAiInteractionResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, IssueCallingRecordingPlaybackData, IssueCallingRecordingPlaybackErrors, IssueCallingRecordingPlaybackResponses, IssueCallingVoicemailPlaybackData, IssueCallingVoicemailPlaybackErrors, IssueCallingVoicemailPlaybackResponses, ListStaffTransferCandidatesData, ListStaffTransferCandidatesErrors, ListStaffTransferCandidatesResponses, MarkMessageThreadReadData, MarkMessageThreadReadErrors, MarkMessageThreadReadResponses, QueryAiInteractionOutcomesData, QueryAiInteractionOutcomesErrors, QueryAiInteractionOutcomesResponses, QueryBookingAnalyticsData, QueryBookingAnalyticsErrors, QueryBookingAnalyticsResponses, QueryEngagementsData, QueryEngagementsErrors, QueryEngagementsResponses, QueryMessageThreadsData, QueryMessageThreadsErrors, QueryMessageThreadsResponses, QueryOperatorAiAnalyticsData, QueryOperatorAiAnalyticsErrors, QueryOperatorAiAnalyticsResponses, QueryOperatorAiCostsData, QueryOperatorAiCostsErrors, QueryOperatorAiCostsResponses, QueryStaffAnalyticsData, QueryStaffAnalyticsErrors, QueryStaffAnalyticsResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveCorrelatedTelnyxMessagingWebhookData, ReceiveCorrelatedTelnyxMessagingWebhookErrors, ReceiveCorrelatedTelnyxMessagingWebhookResponses, ReceiveTelnyxMessagingWebhookData, ReceiveTelnyxMessagingWebhookErrors, ReceiveTelnyxMessagingWebhookResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RequestStaffTransferData, RequestStaffTransferErrors, RequestStaffTransferResponses, RequeueOperatorProviderReceiptData, RequeueOperatorProviderReceiptErrors, RequeueOperatorProviderReceiptResponses, RetryInboundMessageAttachmentData, RetryInboundMessageAttachmentErrors, RetryInboundMessageAttachmentResponses, RetryOutboundCallData, RetryOutboundCallErrors, RetryOutboundCallResponses, ReviewAiInteractionOutcomeData, ReviewAiInteractionOutcomeErrors, ReviewAiInteractionOutcomeResponses, SendMessageAgainData, SendMessageAgainErrors, SendMessageAgainResponses, SendMessageData, SendMessageErrors, SendMessageResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses, StartOutboundCallData, StartOutboundCallErrors, StartOutboundCallResponses, UploadMessageAttachmentData, UploadMessageAttachmentErrors, UploadMessageAttachmentResponses } from './types.gen';
+import type { AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CancelStaffTransferData, CancelStaffTransferErrors, CancelStaffTransferResponses, ChangeTaskCategoryData, ChangeTaskCategoryErrors, ChangeTaskCategoryResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskGroupData, CompleteTaskGroupErrors, CompleteTaskGroupResponses, CompleteTaskResponses, ConfirmCallingMediaReadyData, ConfirmCallingMediaReadyErrors, ConfirmCallingMediaReadyResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, CreateMessageFollowUpTaskData, CreateMessageFollowUpTaskErrors, CreateMessageFollowUpTaskResponses, CreateStaffTaskData, CreateStaffTaskErrors, CreateStaffTaskResponses, DeclineStaffTransferData, DeclineStaffTransferErrors, DeclineStaffTransferResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, GetAiInteractionData, GetAiInteractionErrors, GetAiInteractionEvidenceData, GetAiInteractionEvidenceErrors, GetAiInteractionEvidenceResponses, GetAiInteractionResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallHistoryData, GetCallingCallHistoryErrors, GetCallingCallHistoryResponses, GetCallingCallResponses, GetCallingEngagementHistoryData, GetCallingEngagementHistoryErrors, GetCallingEngagementHistoryResponses, GetCallingRecordingPlaybackData, GetCallingRecordingPlaybackErrors, GetCallingRecordingPlaybackResponses, GetCallingStateData, GetCallingStateErrors, GetCallingStateResponses, GetCallingVoicemailPlaybackData, GetCallingVoicemailPlaybackErrors, GetCallingVoicemailPlaybackResponses, GetEngagementTimelineData, GetEngagementTimelineErrors, GetEngagementTimelineResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetMessageAttachmentData, GetMessageAttachmentErrors, GetMessageAttachmentResponses, GetMessageThreadTimelineData, GetMessageThreadTimelineErrors, GetMessageThreadTimelineResponses, GetOperatorAiInteractionAnalyticsData, GetOperatorAiInteractionAnalyticsErrors, GetOperatorAiInteractionAnalyticsResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetProviderMessageMediaData, GetProviderMessageMediaErrors, GetProviderMessageMediaResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskCallHistoryData, GetTaskCallHistoryErrors, GetTaskCallHistoryResponses, GetTaskEngagementHistoryData, GetTaskEngagementHistoryErrors, GetTaskEngagementHistoryResponses, GetTaskOutboundEligibilityData, GetTaskOutboundEligibilityErrors, GetTaskOutboundEligibilityResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, IngestAiInteractionData, IngestAiInteractionErrors, IngestAiInteractionResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, IssueCallingRecordingPlaybackData, IssueCallingRecordingPlaybackErrors, IssueCallingRecordingPlaybackResponses, IssueCallingVoicemailPlaybackData, IssueCallingVoicemailPlaybackErrors, IssueCallingVoicemailPlaybackResponses, ListStaffTransferCandidatesData, ListStaffTransferCandidatesErrors, ListStaffTransferCandidatesResponses, MarkMessageThreadReadData, MarkMessageThreadReadErrors, MarkMessageThreadReadResponses, MarkRecentMessageThreadsReadData, MarkRecentMessageThreadsReadErrors, MarkRecentMessageThreadsReadResponses, QueryAiInteractionOutcomesData, QueryAiInteractionOutcomesErrors, QueryAiInteractionOutcomesResponses, QueryBookingAnalyticsData, QueryBookingAnalyticsErrors, QueryBookingAnalyticsResponses, QueryEngagementsData, QueryEngagementsErrors, QueryEngagementsResponses, QueryMessageThreadsData, QueryMessageThreadsErrors, QueryMessageThreadsResponses, QueryOperatorAiAnalyticsData, QueryOperatorAiAnalyticsErrors, QueryOperatorAiAnalyticsResponses, QueryOperatorAiCostsData, QueryOperatorAiCostsErrors, QueryOperatorAiCostsResponses, QueryStaffAnalyticsData, QueryStaffAnalyticsErrors, QueryStaffAnalyticsResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveCorrelatedTelnyxMessagingWebhookData, ReceiveCorrelatedTelnyxMessagingWebhookErrors, ReceiveCorrelatedTelnyxMessagingWebhookResponses, ReceiveTelnyxMessagingWebhookData, ReceiveTelnyxMessagingWebhookErrors, ReceiveTelnyxMessagingWebhookResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RequestStaffTransferData, RequestStaffTransferErrors, RequestStaffTransferResponses, RequeueOperatorProviderReceiptData, RequeueOperatorProviderReceiptErrors, RequeueOperatorProviderReceiptResponses, RetryInboundMessageAttachmentData, RetryInboundMessageAttachmentErrors, RetryInboundMessageAttachmentResponses, RetryOutboundCallData, RetryOutboundCallErrors, RetryOutboundCallResponses, ReviewAiInteractionOutcomeData, ReviewAiInteractionOutcomeErrors, ReviewAiInteractionOutcomeResponses, ReviewRecentAiInteractionOutcomesData, ReviewRecentAiInteractionOutcomesErrors, ReviewRecentAiInteractionOutcomesResponses, SearchOfficeKnowledgeData, SearchOfficeKnowledgeErrors, SearchOfficeKnowledgeResponses, SendMessageAgainData, SendMessageAgainErrors, SendMessageAgainResponses, SendMessageData, SendMessageErrors, SendMessageResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses, StartOutboundCallData, StartOutboundCallErrors, StartOutboundCallResponses, UploadMessageAttachmentData, UploadMessageAttachmentErrors, UploadMessageAttachmentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -686,6 +686,40 @@ export const completeTask = <ThrowOnError extends boolean = false>(options: Opti
 });
 
 /**
+ * Move one open Task to a responsibility group.
+ */
+export const changeTaskCategory = <ThrowOnError extends boolean = false>(options: Options<ChangeTaskCategoryData, ThrowOnError>): RequestResult<ChangeTaskCategoryResponses, ChangeTaskCategoryErrors, ThrowOnError> => (options.client ?? client).post<ChangeTaskCategoryResponses, ChangeTaskCategoryErrors, ThrowOnError>({
+    security: [{
+            key: 'bearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/v1/tasks/{taskId}/category',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Resolve exactly the reviewed open group membership.
+ */
+export const completeTaskGroup = <ThrowOnError extends boolean = false>(options: Options<CompleteTaskGroupData, ThrowOnError>): RequestResult<CompleteTaskGroupResponses, CompleteTaskGroupErrors, ThrowOnError> => (options.client ?? client).post<CompleteTaskGroupResponses, CompleteTaskGroupErrors, ThrowOnError>({
+    security: [{
+            key: 'bearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/v1/tasks/{taskId}/complete-group',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Reopen one completed Task at its last observed version.
  */
 export const reopenTask = <ThrowOnError extends boolean = false>(options: Options<ReopenTaskData, ThrowOnError>): RequestResult<ReopenTaskResponses, ReopenTaskErrors, ThrowOnError> => (options.client ?? client).post<ReopenTaskResponses, ReopenTaskErrors, ThrowOnError>({
@@ -738,6 +772,40 @@ export const queryMessageThreads = <ThrowOnError extends boolean = false>(option
             type: 'http'
         }],
     url: '/v1/message-threads/query',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Mark all eligible Texts from the past seven days read for the current User.
+ */
+export const markRecentMessageThreadsRead = <ThrowOnError extends boolean = false>(options: Options<MarkRecentMessageThreadsReadData, ThrowOnError>): RequestResult<MarkRecentMessageThreadsReadResponses, MarkRecentMessageThreadsReadErrors, ThrowOnError> => (options.client ?? client).post<MarkRecentMessageThreadsReadResponses, MarkRecentMessageThreadsReadErrors, ThrowOnError>({
+    security: [{
+            key: 'bearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/v1/message-threads/read',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Review all eligible appointment outcomes from the past seven days for the current User.
+ */
+export const reviewRecentAiInteractionOutcomes = <ThrowOnError extends boolean = false>(options: Options<ReviewRecentAiInteractionOutcomesData, ThrowOnError>): RequestResult<ReviewRecentAiInteractionOutcomesResponses, ReviewRecentAiInteractionOutcomesErrors, ThrowOnError> => (options.client ?? client).post<ReviewRecentAiInteractionOutcomesResponses, ReviewRecentAiInteractionOutcomesErrors, ThrowOnError>({
+    security: [{
+            key: 'bearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/v1/ai/interactions/outcomes/review',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -925,6 +993,25 @@ export const requeueOperatorProviderReceipt = <ThrowOnError extends boolean = fa
             type: 'http'
         }],
     url: '/v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}/requeue',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Search the current imported corpus for the authenticated agent office route.
+ *
+ * The model supplies only a short non-patient query. The trusted agent runtime supplies the office header; Practice comes from its service credential. Returned passages are untrusted data, and similarity is not proof of answerability.
+ */
+export const searchOfficeKnowledge = <ThrowOnError extends boolean = false>(options: Options<SearchOfficeKnowledgeData, ThrowOnError>): RequestResult<SearchOfficeKnowledgeResponses, SearchOfficeKnowledgeErrors, ThrowOnError> => (options.client ?? client).post<SearchOfficeKnowledgeResponses, SearchOfficeKnowledgeErrors, ThrowOnError>({
+    security: [{
+            key: 'serviceBearer',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/v1/agent/knowledge/search',
     ...options,
     headers: {
         'Content-Type': 'application/json',

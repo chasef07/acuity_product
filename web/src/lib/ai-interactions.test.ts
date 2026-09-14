@@ -4,17 +4,8 @@ import test from "node:test"
 import {
   aiCallCompletionLabel,
   aiCallTimelinePresentation,
-  appointmentOutcomeLabel,
   appointmentOutcomeTitle,
 } from "./ai-interactions.ts"
-
-test("keeps ambiguous outcomes distinguishable without implying staff work", () => {
-  assert.equal(appointmentOutcomeLabel("PARTIAL"), "Partially completed")
-  assert.equal(
-    appointmentOutcomeLabel("INDETERMINATE"),
-    "No appointment actions",
-  )
-})
 
 test("labels AI completion separately from staff transfer", () => {
   assert.equal(aiCallCompletionLabel("COMPLETED"), "Call completed")

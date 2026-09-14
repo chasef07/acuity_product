@@ -1,5 +1,153 @@
 # Changelog
 
+## [1.14.0](https://github.com/chasef07/acuity_product/compare/v1.13.0...v1.14.0) (2026-09-14)
+
+
+### Features
+
+* **marketing:** refresh partnerships and add Stedi eligibility page ([#326](https://github.com/chasef07/acuity_product/issues/326)) ([98e296c](https://github.com/chasef07/acuity_product/commit/98e296cd6c788cd7c54868f81b896b8e44de1db9))
+
+## [1.13.0](https://github.com/chasef07/acuity_product/compare/v1.12.1...v1.13.0) (2026-09-13)
+
+
+### Features
+
+* **workspace:** unify shared staff inbox and completion ([#317](https://github.com/chasef07/acuity_product/issues/317)) ([a40e033](https://github.com/chasef07/acuity_product/commit/a40e033abc58b4384f2ad53a443bc938f8ad154d))
+
+
+### Bug Fixes
+
+* add South Florida records intake and billing knowledge ([#324](https://github.com/chasef07/acuity_product/issues/324)) ([f384832](https://github.com/chasef07/acuity_product/commit/f384832d81cefb91fc07356c1d555b23a961ef9d))
+
+## [1.12.1](https://github.com/chasef07/acuity_product/compare/v1.12.0...v1.12.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* **knowledge:** allow unrelated merges during publication ([#322](https://github.com/chasef07/acuity_product/issues/322)) ([2d43e8d](https://github.com/chasef07/acuity_product/commit/2d43e8d0cbebb84ce5a7b26dc9a1247652a58dd6))
+
+## [1.12.0](https://github.com/chasef07/acuity_product/compare/v1.11.0...v1.12.0) (2026-09-13)
+
+
+### Features
+
+* **knowledge:** record verified publications as GitHub releases ([#319](https://github.com/chasef07/acuity_product/issues/319)) ([7cb8d5a](https://github.com/chasef07/acuity_product/commit/7cb8d5af7966c8ad736d283aea890887111f5aac))
+
+## [1.11.0](https://github.com/chasef07/acuity_product/compare/v1.10.0...v1.11.0) (2026-09-13)
+
+
+### Features
+
+* automatically publish changed office knowledge ([#315](https://github.com/chasef07/acuity_product/issues/315)) ([77bb2e1](https://github.com/chasef07/acuity_product/commit/77bb2e16f23f450ea8892aae98ddbc329f439e39))
+
+
+### Bug Fixes
+
+* **knowledge:** publish after deployment and stabilize release checks ([#316](https://github.com/chasef07/acuity_product/issues/316)) ([0c69ec9](https://github.com/chasef07/acuity_product/commit/0c69ec9f7a0a4fcfb645886b806b918a3ca0eabc))
+
+## [1.10.0](https://github.com/chasef07/acuity_product/compare/v1.9.0...v1.10.0) (2026-09-11)
+
+
+### Features
+
+* **knowledge:** version office facts and fix analytics chart clipping ([#313](https://github.com/chasef07/acuity_product/issues/313)) ([b0206ba](https://github.com/chasef07/acuity_product/commit/b0206ba9b46426a5a5bdf0c5641eb48ff8869c69))
+
+## [1.9.0](https://github.com/chasef07/acuity_product/compare/v1.8.0...v1.9.0) (2026-09-10)
+
+
+### Features
+
+* **knowledge:** add scoped vector search for all office corpora ([#311](https://github.com/chasef07/acuity_product/issues/311)) ([7ec9313](https://github.com/chasef07/acuity_product/commit/7ec9313fe35fbd2a1ed5a67bcc921546092d7709))
+
+## [1.8.0](https://github.com/chasef07/acuity_product/compare/v1.7.0...v1.8.0) (2026-09-09)
+
+
+### Features
+
+* **workspace:** add seven-day sidebar attention and bulk clearing ([#306](https://github.com/chasef07/acuity_product/issues/306)) ([a23bb08](https://github.com/chasef07/acuity_product/commit/a23bb08b2f3a9667e6b402a1606e74b33ac622c3))
+
+
+### Bug Fixes
+
+* **analytics:** surface correlated middleware tool diagnostics ([#308](https://github.com/chasef07/acuity_product/issues/308)) ([c2c2f27](https://github.com/chasef07/acuity_product/commit/c2c2f27ac52b059a84a9feddb0cc4baa29dbf4c3))
+* **auth:** remove loading flash when opening sign-in dialog ([#307](https://github.com/chasef07/acuity_product/issues/307)) ([b03ae16](https://github.com/chasef07/acuity_product/commit/b03ae162147bd3effa5f046140613591445eda15))
+
+## [1.7.0](https://github.com/chasef07/acuity_product/compare/v1.6.2...v1.7.0) (2026-09-09)
+
+
+### Features
+
+* **analytics:** add staff text counts and average call time ([#300](https://github.com/chasef07/acuity_product/issues/300)) ([d34114f](https://github.com/chasef07/acuity_product/commit/d34114ffef50a3035473dd09d410e9527b3b971a))
+
+
+### Bug Fixes
+
+* **calling:** prevent operator readiness workspace deadlocks ([#305](https://github.com/chasef07/acuity_product/issues/305)) ([4a9485a](https://github.com/chasef07/acuity_product/commit/4a9485a271094f5f0e7597154d1c98ea82959f6c))
+
+
+### Performance Improvements
+
+* **ci:** streamline verification and isolate build caches ([#303](https://github.com/chasef07/acuity_product/issues/303)) ([acdd464](https://github.com/chasef07/acuity_product/commit/acdd46491f51447dd870bfa7f29940b7108697be))
+
+## [1.6.2](https://github.com/chasef07/acuity_product/compare/v1.6.1...v1.6.2) (2026-09-09)
+
+
+### Bug Fixes
+
+* **ci:** unblock Chromium setup from stale Chrome package indexes ([#301](https://github.com/chasef07/acuity_product/issues/301)) ([140c4f9](https://github.com/chasef07/acuity_product/commit/140c4f9b7fa259b424b968a21d1c266b97f06e7f))
+
+## [1.6.1](https://github.com/chasef07/acuity_product/compare/v1.6.0...v1.6.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **calling:** play quiet keypad feedback through call output ([#299](https://github.com/chasef07/acuity_product/issues/299)) ([f06c7cc](https://github.com/chasef07/acuity_product/commit/f06c7cc438a4c3eed0b3e11d93290ec067120f8f))
+* repair calling failures and remove unused vulnerable dependency ([#295](https://github.com/chasef07/acuity_product/issues/295)) ([87a2930](https://github.com/chasef07/acuity_product/commit/87a293058f72228268cc459293db0db01101a409))
+
+## [1.6.0](https://github.com/chasef07/acuity_product/compare/v1.5.1...v1.6.0) (2026-09-08)
+
+
+### Features
+
+* **marketing:** refresh website design and brand assets ([#294](https://github.com/chasef07/acuity_product/issues/294)) ([896229d](https://github.com/chasef07/acuity_product/commit/896229dcf75ec3fac3e18d284ccb098a318debbd))
+
+
+### Bug Fixes
+
+* **analytics:** preserve historical patient classification ([#291](https://github.com/chasef07/acuity_product/issues/291)) ([5dfeb1f](https://github.com/chasef07/acuity_product/commit/5dfeb1fe257e18bceddec9602a7cc53811a2cca8))
+* **backend:** repair provider reconciliation and reliability monitoring ([#292](https://github.com/chasef07/acuity_product/issues/292)) ([b6436e2](https://github.com/chasef07/acuity_product/commit/b6436e27d8d4210f3303fc880072c143f0ce3153))
+
+## [1.5.1](https://github.com/chasef07/acuity_product/compare/v1.5.0...v1.5.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **analytics:** classify patient outcomes and remove P90 ([43d6a25](https://github.com/chasef07/acuity_product/commit/43d6a251cd3d32a362649b3b3c44dbe4055b791e))
+
+## [1.5.0](https://github.com/chasef07/acuity_product/compare/v1.4.0...v1.5.0) (2026-09-07)
+
+
+### Features
+
+* **analytics:** add AI call trends and refine call diagnostics ([#288](https://github.com/chasef07/acuity_product/issues/288)) ([3fdfe22](https://github.com/chasef07/acuity_product/commit/3fdfe22292a368f3fe5bf667d9c0911df5fcba52))
+
+
+### Bug Fixes
+
+* **demo:** migrate New Tampa office identity in place ([#286](https://github.com/chasef07/acuity_product/issues/286)) ([2cc3800](https://github.com/chasef07/acuity_product/commit/2cc38005fdf274396793d2c37d6ea204d74b2e18))
+
+## [1.4.0](https://github.com/chasef07/acuity_product/compare/v1.3.0...v1.4.0) (2026-09-06)
+
+
+### Features
+
+* **marketing:** add clinical leadership and integration pages ([#284](https://github.com/chasef07/acuity_product/issues/284)) ([c598e75](https://github.com/chasef07/acuity_product/commit/c598e7571e06b7af204eed5fba05703d61da2f4a))
+
+
+### Bug Fixes
+
+* **calling:** restrict NMB inbound ring group to its optical account ([#276](https://github.com/chasef07/acuity_product/issues/276)) ([c52f3e0](https://github.com/chasef07/acuity_product/commit/c52f3e001da51befa19f96fc576d7b5d56b92e25))
+
 ## [1.3.0](https://github.com/chasef07/acuity_product/compare/v1.2.4...v1.3.0) (2026-09-06)
 
 

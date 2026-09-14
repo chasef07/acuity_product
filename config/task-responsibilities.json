@@ -1,0 +1,600 @@
+{
+  "PracticeKey": "abita-eye-group",
+  "Locations": [
+    {
+      "LocationKey": "hollywood",
+      "Members": [
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "abita.insurance@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "gustavo@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "doralreception@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "maria.g@abitaeye.com",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
+          "Email": "jianna@abitaeye.com",
+          "Category": "medication",
+          "Role": "primary"
+        },
+        {
+          "Email": "aileen@abitaeye.com",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "drbach@abitaeye.com",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "aileen@abitaeye.com",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "madelyn@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "denise@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "sashao@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "optical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "ari@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "mobileoptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "justin@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "sweetwateroptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "abel@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "frontdesk@abitaeye.com",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloffice@abitaeye.com",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloffice@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "abita.insurance@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "gustavo@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "doralreception@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "scheduler@abitaeye.com",
+          "Category": "insurance",
+          "Role": "primary"
+        },
+        {
+          "Email": "hollywoodreception@abitaeye.com",
+          "Category": "insurance",
+          "Role": "primary"
+        }
+      ]
+    },
+    {
+      "LocationKey": "sweetwater",
+      "Members": [
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "abita.insurance@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "gustavo@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "doralreception@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "maria.g@abitaeye.com",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
+          "Email": "jianna@abitaeye.com",
+          "Category": "medication",
+          "Role": "primary"
+        },
+        {
+          "Email": "aileen@abitaeye.com",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "drbach@abitaeye.com",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "aileen@abitaeye.com",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "madelyn@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "denise@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "sashao@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "optical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "ari@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "mobileoptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "justin@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "sweetwateroptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "abel@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "frontdesk@abitaeye.com",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloffice@abitaeye.com",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloffice@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "abita.insurance@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "gustavo@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "doralreception@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "eligibility@abitaeye.com",
+          "Category": "insurance",
+          "Role": "primary"
+        },
+        {
+          "Email": "hollywoodreception@abitaeye.com",
+          "Category": "insurance",
+          "Role": "primary"
+        }
+      ]
+    },
+    {
+      "LocationKey": "sweetwater-optical",
+      "Members": [
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "abita.insurance@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "gustavo@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "doralreception@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "maria.g@abitaeye.com",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
+          "Email": "jianna@abitaeye.com",
+          "Category": "medication",
+          "Role": "primary"
+        },
+        {
+          "Email": "aileen@abitaeye.com",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "drbach@abitaeye.com",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "aileen@abitaeye.com",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "madelyn@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "denise@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "sashao@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "optical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "ari@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "mobileoptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "justin@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "sweetwateroptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "abel@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "frontdesk@abitaeye.com",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloffice@abitaeye.com",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloffice@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "abita.insurance@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "gustavo@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "doralreception@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "eligibility@abitaeye.com",
+          "Category": "insurance",
+          "Role": "primary"
+        },
+        {
+          "Email": "hollywoodreception@abitaeye.com",
+          "Category": "insurance",
+          "Role": "primary"
+        }
+      ]
+    },
+    {
+      "LocationKey": "north-miami-beach-optical",
+      "Members": [
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "abita.insurance@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "gustavo@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "doralreception@abitaeye.com",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "maria.g@abitaeye.com",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
+          "Email": "jianna@abitaeye.com",
+          "Category": "medication",
+          "Role": "primary"
+        },
+        {
+          "Email": "aileen@abitaeye.com",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "drbach@abitaeye.com",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "aileen@abitaeye.com",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "madelyn@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "denise@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "sashao@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "optical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "ari@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "mobileoptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "justin@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "sweetwateroptical@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "abel@abitaeye.com",
+          "Category": "optical",
+          "Role": "primary"
+        },
+        {
+          "Email": "frontdesk@abitaeye.com",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloffice@abitaeye.com",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "doraloffice@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "everth@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "abita.insurance@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "gustavo@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "doralreception@abitaeye.com",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "brightvumiami@gmail.com",
+          "Category": "insurance",
+          "Role": "primary"
+        }
+      ]
+    }
+  ]
+}

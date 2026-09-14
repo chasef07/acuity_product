@@ -84,7 +84,7 @@ export function PixelWaveField() {
       const rows = Math.max(38, Math.min(56, Math.round(height / 13)))
 
       context.clearRect(0, 0, width, height)
-      context.fillStyle = "#25334a"
+      context.fillStyle = "#343a35"
 
       for (let column = 0; column < columns; column += 1) {
         const u = column / (columns - 1)

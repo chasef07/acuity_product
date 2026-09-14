@@ -171,8 +171,12 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 		return ErrHandoffAdmissionClosed
 	}
 	if fact.CallControlID == "" || fact.CallLegID == "" ||
-		fact.CallSessionID == "" || fact.ConnectionID == "" ||
-		fact.ConnectionID != m.config.CallControlID {
+		fact.CallSessionID == "" || fact.ConnectionID == "" {
+		observability.Record(m.observer, observability.HandoffRejected("provider_identity"))
+		return ErrInvalidHandoff
+	}
+	if fact.ConnectionID != m.config.CallControlID {
+		observability.Record(m.observer, observability.HandoffRejected("connection"))
 		return ErrInvalidHandoff
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -379,7 +383,14 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 			ON lease.user_subject = calling_scope.user_subject
 		JOIN human_calling_credentials credential
 			ON credential.user_subject = calling_scope.user_subject
+		LEFT JOIN human_calling_location_ring_groups ring_group
+			ON ring_group.practice_id = calling_scope.practice_id AND ring_group.location_id = $2
 		WHERE calling_scope.practice_id = $1
+			AND (ring_group.location_id IS NULL OR EXISTS (
+				SELECT 1 FROM access_memberships member
+				WHERE member.id = calling_scope.membership_id
+					AND member.email = ANY(ring_group.member_emails)
+			))
 			AND (
 				calling_scope.location_scope = 'ALL'
 				OR EXISTS (

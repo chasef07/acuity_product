@@ -504,7 +504,8 @@ func (m *Module) ensureRecoveryOutcome(
 		workOutcome = work.RecoveryOutcomeVoicemail
 	}
 	task, err := m.work.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
-		TaskID: taskID, CallID: callID, PracticeID: practiceID, LocationID: locationID,
+		NewVoicemail: outcome == RecoveryVoicemail,
+		TaskID:       taskID, CallID: callID, PracticeID: practiceID, LocationID: locationID,
 		Phone: phone, CallerName: callerName, Outcome: workOutcome,
 		OccurredAt: fact.OccurredAt,
 	})
