@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/chasef07/acuity_product/compare/v1.15.1...v1.16.0) (2026-09-14)
+
+
+### Features
+
+* **knowledge:** customize ophthalmology demo for Frantz EyeCare ([#333](https://github.com/chasef07/acuity_product/issues/333)) ([58eb446](https://github.com/chasef07/acuity_product/commit/58eb446aa08596a82b7b8ee43e6432996aab7aa6))
+
 ## [1.15.1](https://github.com/chasef07/acuity_product/compare/v1.15.0...v1.15.1) (2026-09-14)
 
 
