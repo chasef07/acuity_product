@@ -137,6 +137,10 @@ export type CreateHandoffRequest = {
      * Preferred Abita Office Route identity.
      */
     officeKey: string;
+    /**
+     * Existing AI Task for the same request being transferred. Must belong to this service, source call, Practice, Location, and phone. Omit for a separate request.
+     */
+    taskId?: string;
     sourceCallId: string;
     idempotencyKey: string;
     contact: ContactContextInput;
@@ -146,6 +150,10 @@ export type CreateHandoffRequest = {
      * Migration-only compatibility input.
      */
     locationId: string;
+    /**
+     * Existing AI Task for the same request being transferred. Must belong to this service, source call, Practice, Location, and phone. Omit for a separate request.
+     */
+    taskId?: string;
     sourceCallId: string;
     idempotencyKey: string;
     contact: ContactContextInput;

@@ -396,6 +396,7 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 		OfficeKey:      input.officeKey,
 		LocationID:     input.locationID,
 		SourceCallID:   input.sourceCallID,
+		TaskID:         input.taskID,
 		IdempotencyKey: input.idempotencyKey,
 		Contact: humancalling.ContactContext{
 			Phone:          input.contact.Phone,
@@ -429,6 +430,7 @@ type createHandoffRequest struct {
 	officeKey      string
 	practiceID     openapi_types.UUID
 	sourceCallID   string
+	taskID         string
 }
 
 func normalizeCreateHandoffRequest(body api.CreateHandoffRequest) (createHandoffRequest, bool) {
@@ -443,6 +445,7 @@ func normalizeCreateHandoffRequest(body api.CreateHandoffRequest) (createHandoff
 		OfficeKey      *string                 `json:"officeKey"`
 		PracticeID     openapi_types.UUID      `json:"practiceId"`
 		SourceCallID   string                  `json:"sourceCallId"`
+		TaskID         *openapi_types.UUID     `json:"taskId"`
 	}
 	if err := json.Unmarshal(encoded, &input); err != nil ||
 		(input.LocationID == nil) == (input.OfficeKey == nil) {
@@ -453,6 +456,9 @@ func normalizeCreateHandoffRequest(body api.CreateHandoffRequest) (createHandoff
 		idempotencyKey: input.IdempotencyKey,
 		practiceID:     input.PracticeID,
 		sourceCallID:   input.SourceCallID,
+	}
+	if input.TaskID != nil {
+		result.taskID = input.TaskID.String()
 	}
 	if input.OfficeKey != nil {
 		result.officeKey = *input.OfficeKey

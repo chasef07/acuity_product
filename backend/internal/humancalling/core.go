@@ -176,6 +176,7 @@ type ContactContext struct {
 }
 
 type CreateHandoffCommand struct {
+	TaskID         string
 	Service        ServiceIdentity
 	OfficeKey      string
 	LocationID     string

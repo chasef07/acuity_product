@@ -398,7 +398,7 @@ function TaskWorkspace({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      {recovery && (
+      {(recovery || (task.origin === "ABITA_AI" && task.interactions.length > 0)) && (
         <RecoveryTaskSource task={task} revision={historyHint} onUpdated={onTaskUpdated} />
       )}
       <details className="group mt-4 border-t pt-4">
