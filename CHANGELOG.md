@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.1](https://github.com/chasef07/acuity_product/compare/v1.16.0...v1.16.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **knowledge:** focus retrieval and fix automatic publication ([#335](https://github.com/chasef07/acuity_product/issues/335)) ([427aa8e](https://github.com/chasef07/acuity_product/commit/427aa8e6da540167695a3bf0fe8768a9ec185375))
+
 ## [1.16.0](https://github.com/chasef07/acuity_product/compare/v1.15.1...v1.16.0) (2026-09-14)
 
 
