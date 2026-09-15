@@ -97,3 +97,14 @@ func TestRelevanceSelectionCoversMultipartWithoutFiller(t *testing.T) {
 		t.Fatalf("semantic-only query must preserve bounded evidence until relevance is calibrated: %+v", got)
 	}
 }
+
+func TestRelevanceSelectionPrefersTopicsToIncidentalMentions(t *testing.T) {
+	got := relevantPassages([]searchCandidate{
+		{Passage: Passage{SectionID: "records-policy"}, queryCoverage: 1, lexical: .8, matchedTerms: []string{"address", "fax"}},
+		{Passage: Passage{SectionID: "address"}, queryCoverage: 1, lexical: .4, matchedTerms: []string{"address"}, titleTerms: []string{"address"}},
+		{Passage: Passage{SectionID: "fax"}, queryCoverage: 1, lexical: .3, matchedTerms: []string{"fax"}, titleTerms: []string{"fax"}},
+	})
+	if len(got) != 2 || got[0].SectionID != "address" || got[1].SectionID != "fax" {
+		t.Fatalf("address and fax must not be replaced by a records policy mentioning both: %+v", got)
+	}
+}

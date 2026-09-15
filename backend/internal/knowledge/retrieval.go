@@ -66,6 +66,7 @@ type searchCandidate struct {
 // Select enough evidence to cover the query's distinctive terms. Corpus-common
 // vocabulary cannot keep adding unrelated office entries. Stemming is performed
 // by PostgreSQL, and all candidates still satisfy the retrieval relevance gate.
+// Body-only matches cannot replace facts whose topics are explicitly titled.
 // Normalized lexical score breaks equal-coverage ties, followed by hybrid rank.
 // Unfamiliar vocabulary and semantic-only paraphrases preserve bounded candidates:
 // English lexical coverage cannot establish sufficiency for those queries.
@@ -77,6 +78,12 @@ func relevantPassages(candidates []searchCandidate) []Passage {
 		}
 		return selected
 	}
+	titled := map[string]bool{}
+	for _, candidate := range candidates {
+		for _, term := range candidate.titleTerms {
+			titled[term] = true
+		}
+	}
 	covered := map[string]bool{}
 	used := make([]bool, len(candidates))
 	for {
@@ -85,10 +92,13 @@ func relevantPassages(candidates []searchCandidate) []Passage {
 			if used[i] {
 				continue
 			}
-			added := 0
+			added, untitled := 0, 0
 			for _, term := range c.matchedTerms {
 				if !covered[term] {
 					added++
+					if !titled[term] {
+						untitled++
+					}
 				}
 			}
 			titleAdded := 0
@@ -97,7 +107,7 @@ func relevantPassages(candidates []searchCandidate) []Passage {
 					titleAdded++
 				}
 			}
-			if added < 2 && titleAdded == 0 {
+			if titleAdded == 0 && (added < 2 || untitled == 0) {
 				continue
 			}
 			if added > gain || (added == gain && best >= 0 && c.lexical > candidates[best].lexical) {

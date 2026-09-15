@@ -80,6 +80,9 @@ def main():
             if args.revision and (result.get('revisionId') != args.revision or
                                   any(p.get('revisionId') != args.revision for p in passages)):
                 errors.append('unexpected active revision')
+        except urllib.error.HTTPError as exc:
+            errors.append('request failed: HTTP ' + str(exc.code))
+            ids, characters = set(), 0
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as exc:
             errors.append('request failed: ' + type(exc).__name__)
             ids, characters = set(), 0

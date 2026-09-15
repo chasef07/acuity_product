@@ -26,9 +26,10 @@ class PublishTest(unittest.TestCase):
                         KNOWLEDGE_SQL_INSTANCE='synthetic-instance',
                         KNOWLEDGE_DATABASE_SECRET='synthetic-database',
                         KNOWLEDGE_OPERATOR_EMAIL='operator@example.com',
+                        KNOWLEDGE_SERVICE_TOKEN_SECRETS=json.dumps({'practice-a': 'token-a', 'practice-b': 'token-b'}),
                         KNOWLEDGE_OUTPUT_DIRECTORY=str(self.root / 'receipts'),
                         GITHUB_STEP_SUMMARY=str(self.root / 'summary'))
-        for key in ('KNOWLEDGE_OFFICE', 'KNOWLEDGE_COMMIT', 'FAIL_VALIDATE', 'FAIL_APPLY', 'UNCHANGED', 'FAIL_EVAL'):
+        for key in ('KNOWLEDGE_OFFICE', 'KNOWLEDGE_COMMIT', 'FAIL_VALIDATE', 'FAIL_APPLY', 'UNCHANGED', 'FAIL_EVAL', 'FAIL_SECRET'):
             self.env.pop(key, None)
         self.executable('cli', '''import json,os,sys
 from pathlib import Path
@@ -36,14 +37,15 @@ args=sys.argv[1:]; office=Path(args[args.index('--source')+1]).stem
 phase='apply' if '--apply' in args else 'validate'
 with open(os.environ['EVENTS'],'a') as f: f.write(f'{phase}:{office}\\n')
 if os.environ.get('FAIL_'+phase.upper())==office: sys.exit(7)
-print(json.dumps({'unchanged':os.environ.get('UNCHANGED')==office,'revision':{'id':'synthetic-'+office}}))
+print(json.dumps({'unchanged':os.environ.get('UNCHANGED')==office,'revision':{'id':'synthetic-'+office},'practiceId':'practice-b' if office=='beta' else 'practice-a'}))
 ''')
         self.executable('go', '''import os,shutil,sys
 shutil.copy(os.path.join(os.path.dirname(sys.argv[0]),'cli'),sys.argv[sys.argv.index('-o')+1])
 ''')
-        self.executable('gcloud', '''import os
+        self.executable('gcloud', '''import os,sys
 with open(os.environ['EVENTS'],'a') as f: f.write('secret\\n')
-print('synthetic-value')
+if os.environ.get('FAIL_SECRET')==sys.argv[-1]: sys.exit(7)
+print('synthetic-'+sys.argv[-1])
 ''')
         self.executable('cloud-sql-proxy', 'import time\ntime.sleep(120)\n')
         # Only stub the publisher's inline socket-readiness check. Run JSON
@@ -77,6 +79,43 @@ os.execv({sys.executable!r},[{sys.executable!r}]+sys.argv[1:])
                                 env=dict(self.env, **env), capture_output=True, text=True, timeout=15)
         events = self.log.read_text().splitlines() if self.log.exists() else []
         return result, events
+
+    def tenant_evaluations(self):
+        (self.root / 'knowledge/evals').mkdir()
+        for office in ('alpha', 'beta'):
+            (self.root / f'knowledge/evals/{office}.json').write_text('[]')
+        (self.root / 'scripts/knowledge-evaluate.py').write_text("""import os,sys
+if '--validate-only' in sys.argv: sys.exit(0)
+office=sys.argv[sys.argv.index('--office')+1]
+expected='synthetic-token-b' if office=='beta' else 'synthetic-token-a'
+with open(os.environ['EVENTS'],'a') as f: f.write('eval:'+office+'\\n')
+sys.exit(0 if os.environ.get('KNOWLEDGE_SERVICE_TOKEN')==expected else 9)
+""")
+        self.commit()
+
+    def test_each_practice_uses_its_own_verification_token(self):
+        self.tenant_evaluations()
+        result, events = self.run_publish(KNOWLEDGE_API_URL='https://synthetic.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('eval:alpha', events)
+        self.assertIn('eval:beta', events)
+        self.assertNotIn('synthetic-token-a', result.stdout + result.stderr)
+        self.assertNotIn('synthetic-token-b', result.stdout + result.stderr)
+
+    def test_unavailable_practice_token_prevents_every_write(self):
+        self.tenant_evaluations()
+        result, events = self.run_publish(KNOWLEDGE_API_URL='https://synthetic.invalid',
+                                         FAIL_SECRET='token-b')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(x.startswith('apply:') for x in events))
+
+    def test_missing_practice_token_mapping_prevents_every_write(self):
+        self.tenant_evaluations()
+        result, events = self.run_publish(KNOWLEDGE_API_URL='https://synthetic.invalid',
+                                         KNOWLEDGE_SERVICE_TOKEN_SECRETS=json.dumps({'practice-a':'token-a'}))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(x.startswith('apply:') for x in events))
+        self.assertIn('practice-b', result.stderr)
 
     def test_default_all_validates_before_writes_and_receipts(self):
         result, events = self.run_publish(UNCHANGED='beta')
@@ -131,7 +170,7 @@ sys.exit(0 if phase=='eval-validate' else 9)
 ''')
         self.commit()
         result, events = self.run_publish(KNOWLEDGE_API_URL='https://synthetic.invalid',
-                                          KNOWLEDGE_SERVICE_TOKEN_SECRET='synthetic-token')
+                                          KNOWLEDGE_SERVICE_TOKEN_SECRETS=json.dumps({'practice-a':'token-a'}))
         self.assertNotEqual(result.returncode, 0)
         self.assertLess(events.index('eval-validate'), events.index('apply:alpha'))
         self.assertIn('apply:gamma', events)

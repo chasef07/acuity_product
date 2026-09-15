@@ -2,7 +2,7 @@ practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 officeKey: "crystal-river"
 entries:
   - id: "after-hours"
-    title: "After Hours"
+    title: "After-hours doctor contact"
     text: |-
       After-hours doctor: 727-379-4923.
   - id: "appointment-expectations"
@@ -20,28 +20,34 @@ entries:
     text: |-
       Crystal River does not schedule contact lens prescriptions or fittings.
   - id: "hours"
-    title: "Hours"
+    title: "Office opening hours and closing times"
     text: |-
       Tuesday–Thursday 12:00 PM–5:00 PM. Closed Monday, Friday, Saturday, and Sunday.
       
       Holiday closure: Closed on Labor Day, Monday, September 7, 2026.
-      
-      The Spring Hill office is open Monday–Friday, 8:30 AM–4:30 PM.
   - id: "insurance-and-referrals"
     title: "Insurance and Referrals"
     text: |-
       Plan acceptance is separate from coverage for a specific visit or procedure.
       
       Referral and authorization requirements depend on the patient's insurance policy. Insurance verification may be required before appointment confirmation.
-  - id: "location-and-contact"
-    title: "Location and Contact"
+  - id: "current-address"
+    title: "Office location address"
     text: |-
       Practice Name: Eye Radiance
       Address: 1100 N Lyle Avenue Crystal River, FL 34429
+  - id: "paperwork-email"
+    title: "Email for new-patient paperwork and requested documents"
+    text: |-
       Administrative email for new-patient paperwork or requested documents: newpatient@abitaeye.com
       Use this address only for new-patient paperwork or requested documents.
+  - id: "fax"
+    title: "Office fax"
+    text: |-
       Fax: (352)-228-4315
-      
+  - id: "spring-hill-location"
+    title: "Spring Hill office address and providers"
+    text: |-
       **Other Location:** We also have an office in Spring Hill — Abita Eye Group, 10495 SpringHill Drive, Springhill, FL 34608. That location also sees Dr. Bach, Dr. Noel, and Dr. Licht. Dr. Licht practices at both locations.
   - id: "optical-and-glasses"
     title: "Optical and Glasses"
@@ -89,3 +95,7 @@ entries:
     title: "What to Bring"
     text: |-
       Photo ID, insurance card, list of current medications, previous eye records (if available).
+  - id: "spring-hill-hours"
+    title: "Spring Hill opening schedule"
+    text: |-
+      The Spring Hill office is open Monday–Friday, 8:30 AM–4:30 PM.

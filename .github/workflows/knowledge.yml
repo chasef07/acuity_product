@@ -101,7 +101,7 @@ jobs:
           KNOWLEDGE_DATABASE_SECRET: ${{ vars.KNOWLEDGE_DATABASE_SECRET }}
           KNOWLEDGE_OPERATOR_EMAIL: ${{ vars.KNOWLEDGE_OPERATOR_EMAIL }}
           KNOWLEDGE_API_URL: ${{ vars.KNOWLEDGE_API_URL }}
-          KNOWLEDGE_SERVICE_TOKEN_SECRET: ${{ vars.KNOWLEDGE_SERVICE_TOKEN_SECRET }}
+          KNOWLEDGE_SERVICE_TOKEN_SECRETS: ${{ vars.KNOWLEDGE_SERVICE_TOKEN_SECRETS }}
         run: bash scripts/knowledge-publish.sh
       - name: Record verified knowledge release
         env:

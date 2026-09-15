@@ -117,10 +117,13 @@ Federation variables: `GCP_WORKLOAD_IDENTITY_PROVIDER`,
 - `KNOWLEDGE_OPERATOR_EMAIL`: existing bound Platform Operator attribution.
 - `KNOWLEDGE_API_URL`: deployed agent API base URL, required when the office has
   a retrieval evaluation fixture.
-- `KNOWLEDGE_SERVICE_TOKEN_SECRET`: Secret Manager name containing the authorized
-  agent service token for retrieval evaluation.
+- `KNOWLEDGE_SERVICE_TOKEN_SECRETS`: JSON object mapping each Practice ID to
+  its authorized agent service-token secret name, for example
+  `{"practice-a":"practice-a-token","practice-b":"practice-b-token"}`.
+  These are Secret Manager names, not token values. Every Practice with retrieval
+  fixtures needs a mapping; credentials are checked before any office is written.
 
-The publishing service account needs access to both configured secrets, Cloud SQL connection
+The publishing service account needs access to the database and configured service-token secrets, Cloud SQL connection
 permission, and Vertex AI embedding permission. It uses short-lived Google
 credentials; database credentials stay in process memory and are never committed
 or printed. The instance must be reachable by Cloud SQL Auth Proxy from the

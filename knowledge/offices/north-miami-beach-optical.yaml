@@ -2,7 +2,7 @@ practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 officeKey: "north-miami-beach-optical"
 entries:
   - id: "after-hours"
-    title: "After Hours"
+    title: "After-hours doctor contact"
     text: |-
       No after-hours contact information is supplied for this office.
   - id: "appointment-expectations"
@@ -22,7 +22,7 @@ entries:
       
       If the patient's contact lens prescription is on file, the office can take a contact lens order over the phone with payment.
   - id: "hours"
-    title: "Hours"
+    title: "Office opening hours and closing times"
     text: |-
       Sunday–Thursday 9:00 AM–5:00 PM.
       
@@ -33,15 +33,31 @@ entries:
       For routine-vision patients, some insurances do not cover retinal photos and there is a $39 charge.
       
       Medical insurance checks are not supported for this office. Referral information is not supplied.
-  - id: "location-and-contact"
-    title: "Location and Contact"
+  - id: "current-address"
+    title: "Office location address"
     text: |-
       Practice Name: North Miami Beach Optical
-      North Miami Beach Optical is also known as “BrightView Optical,” “Brightview,” or “Bright View”; ownership recently transferred.
       Address: 633 NE 167th Street, North Miami Beach, FL 33162
+  - id: "practice-name"
+    title: "BrightView Optical practice name and ownership"
+    text: |-
+      North Miami Beach Optical is also known as “BrightView Optical,” “Brightview,” or “Bright View”; ownership recently transferred.
+  - id: "phone"
+    title: "Office phone number"
+    text: |-
       Phone: (305) 509-5333
-      
-      Fax number, email, and directions are not supplied.
+  - id: "fax"
+    title: "Office fax"
+    text: |-
+      Fax number is not supplied.
+  - id: "email"
+    title: "Office email"
+    text: |-
+      Email is not supplied.
+  - id: "directions"
+    title: "Office directions"
+    text: |-
+      Directions are not supplied.
   - id: "medical-records-requests"
     title: "Medical records requests and patient email limits"
     text: |-
