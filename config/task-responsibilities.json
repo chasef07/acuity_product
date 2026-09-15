@@ -30,12 +30,22 @@
           "Role": "primary"
         },
         {
+          "Email": "christina@abitaeye.com",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
           "Email": "jianna@abitaeye.com",
           "Category": "medication",
           "Role": "primary"
         },
         {
           "Email": "aileen@abitaeye.com",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "v.vicuna@abitaeye.com",
           "Category": "pre_op",
           "Role": "primary"
         },
@@ -180,12 +190,22 @@
           "Role": "primary"
         },
         {
+          "Email": "christina@abitaeye.com",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
           "Email": "jianna@abitaeye.com",
           "Category": "medication",
           "Role": "primary"
         },
         {
           "Email": "aileen@abitaeye.com",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "v.vicuna@abitaeye.com",
           "Category": "pre_op",
           "Role": "primary"
         },
@@ -330,12 +350,22 @@
           "Role": "primary"
         },
         {
+          "Email": "christina@abitaeye.com",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
           "Email": "jianna@abitaeye.com",
           "Category": "medication",
           "Role": "primary"
         },
         {
           "Email": "aileen@abitaeye.com",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "v.vicuna@abitaeye.com",
           "Category": "pre_op",
           "Role": "primary"
         },
@@ -480,12 +510,22 @@
           "Role": "primary"
         },
         {
+          "Email": "christina@abitaeye.com",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
           "Email": "jianna@abitaeye.com",
           "Category": "medication",
           "Role": "primary"
         },
         {
           "Email": "aileen@abitaeye.com",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "v.vicuna@abitaeye.com",
           "Category": "pre_op",
           "Role": "primary"
         },

@@ -361,11 +361,23 @@ func TestResponsibilityRosterPreservesElevenOpticalOwnersAndPendingAccounts(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Unmatched) != 8 {
+	if len(report.Unmatched) != 12 {
 		t.Fatalf("unmatched configured accounts: %#v", report)
 	}
+	for _, location := range roster.Locations {
+		found := false
+		for _, unmatched := range report.Unmatched {
+			if unmatched == location.LocationKey+":christina@abitaeye.com" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: Christina must remain pending until existing office access is available", location.LocationKey)
+		}
+	}
 	cases := map[string][]string{
-		"madelyn@abitaeye.com": {"optical"}, "everth@abitaeye.com": {"appointments", "optical", "other"}, "denise@abitaeye.com": {"optical"}, "sashao@abitaeye.com": {"optical"}, "optical@abitaeye.com": {"optical"}, "doraloptical@abitaeye.com": {"optical"}, "ari@abitaeye.com": {"optical"}, "mobileoptical@abitaeye.com": {"optical"}, "justin@abitaeye.com": {"optical"}, "sweetwateroptical@abitaeye.com": {"optical"}, "abel@abitaeye.com": {"optical"}, "gustavo@abitaeye.com": {"appointments", "other"}, "abita.insurance@abitaeye.com": {"appointments", "other"}, "doralreception@abitaeye.com": {"appointments", "other"}, "aileen@abitaeye.com": {"pre_op", "post_op"}, "jianna@abitaeye.com": {"medication"},
+		"v.vicuna@abitaeye.com": {"pre_op"},
+		"madelyn@abitaeye.com":  {"optical"}, "everth@abitaeye.com": {"appointments", "optical", "other"}, "denise@abitaeye.com": {"optical"}, "sashao@abitaeye.com": {"optical"}, "optical@abitaeye.com": {"optical"}, "doraloptical@abitaeye.com": {"optical"}, "ari@abitaeye.com": {"optical"}, "mobileoptical@abitaeye.com": {"optical"}, "justin@abitaeye.com": {"optical"}, "sweetwateroptical@abitaeye.com": {"optical"}, "abel@abitaeye.com": {"optical"}, "gustavo@abitaeye.com": {"appointments", "other"}, "abita.insurance@abitaeye.com": {"appointments", "other"}, "doralreception@abitaeye.com": {"appointments", "other"}, "aileen@abitaeye.com": {"pre_op", "post_op"}, "jianna@abitaeye.com": {"medication"},
 	}
 	for email, want := range cases {
 		identity := access.Identity{Subject: "roster-" + email, Email: email, EmailVerified: true}
