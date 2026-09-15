@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.2](https://github.com/chasef07/acuity_product/compare/v1.16.1...v1.16.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* align South Florida task responsibilities and routing ([#337](https://github.com/chasef07/acuity_product/issues/337)) ([06abfd8](https://github.com/chasef07/acuity_product/commit/06abfd8ca9aab91f876905b1829351e6e8de060c))
+
 ## [1.16.1](https://github.com/chasef07/acuity_product/compare/v1.16.0...v1.16.1) (2026-09-15)
 
 
