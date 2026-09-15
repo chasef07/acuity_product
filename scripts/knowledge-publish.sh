@@ -29,27 +29,48 @@ cleanup() {
 trap cleanup EXIT
 binary="$runtime/knowledge-import"
 go build -o "$binary" ./backend/cmd/knowledge-import
-needs_api=false
+token_secrets=()
+service_tokens=()
 # Validate every selected source before the first database write.
-for source in "${sources[@]}"; do
+for index in "${!sources[@]}"; do
+  source=${sources[$index]}
   git ls-files --error-unmatch "$source" >/dev/null
   git diff --exit-code HEAD -- "$source" >/dev/null
-  "$binary" --source "$source" --commit "$commit"
+  validation=$("$binary" --source "$source" --commit "$commit")
+  printf '%s\n' "$validation"
+  token_secrets[$index]=''
   office=$(basename "$source" .yaml)
   cases="knowledge/evals/${office}.json"
   if [[ -f "$cases" ]]; then
     : "${KNOWLEDGE_API_URL:?required for retrieval verification}"
-    : "${KNOWLEDGE_SERVICE_TOKEN_SECRET:?required for retrieval verification}"
+    token_secrets[$index]=$(python3 -c '
+import json,os,re,sys
+practice=json.loads(sys.argv[1])["practiceId"]
+try:
+    secret=json.loads(os.environ.get("KNOWLEDGE_SERVICE_TOKEN_SECRETS", "{}"))[practice]
+except (ValueError, KeyError, TypeError):
+    raise SystemExit("Missing retrieval token secret mapping for practice " + practice)
+if not isinstance(secret,str) or not re.fullmatch(r"[A-Za-z0-9_-]+",secret):
+    raise SystemExit("Invalid retrieval token secret name for practice " + practice)
+print(secret)
+' "$validation")
     python3 scripts/knowledge-evaluate.py --cases "$cases" --validate-only
-    needs_api=true
   fi
 done
 output=${KNOWLEDGE_OUTPUT_DIRECTORY:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/knowledge-publication-${GITHUB_RUN_ID:-$$}}
 mkdir -p "$output"
-if [[ "$needs_api" == true ]]; then
-  KNOWLEDGE_SERVICE_TOKEN=$(gcloud secrets versions access latest --project "$KNOWLEDGE_GOOGLE_PROJECT" --secret "$KNOWLEDGE_SERVICE_TOKEN_SECRET")
-  export KNOWLEDGE_SERVICE_TOKEN
-fi
+# Resolve all verification credentials before the first write. Keep token values
+# in process memory; each evaluator receives only its own practice's token.
+for index in "${!sources[@]}"; do
+  service_tokens[$index]=''
+  if [[ -n "${token_secrets[$index]}" ]]; then
+    service_tokens[$index]=$(gcloud secrets versions access latest --project "$KNOWLEDGE_GOOGLE_PROJECT" --secret "${token_secrets[$index]}")
+    if [[ -z "${service_tokens[$index]}" ]]; then
+      echo 'Retrieval service token is empty.' >&2
+      exit 1
+    fi
+  fi
+done
 cloud-sql-proxy --address 127.0.0.1 --port 5432 "$KNOWLEDGE_SQL_INSTANCE" &
 proxy_pid=$!
 python3 - <<'PY'
@@ -70,7 +91,8 @@ status=0
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   printf '### Knowledge publication\n\nCommit: `%s`\n\n| Office | Result |\n| --- | --- |\n' "$commit" >> "$GITHUB_STEP_SUMMARY"
 fi
-for source in "${sources[@]}"; do
+for index in "${!sources[@]}"; do
+  source=${sources[$index]}
   office=$(basename "$source" .yaml)
   echo "Publishing $office"
   result='failed'
@@ -79,7 +101,7 @@ for source in "${sources[@]}"; do
     cases="knowledge/evals/${office}.json"
     if metadata=$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(("unchanged" if r.get("unchanged") else "published")+"\t"+r["revision"]["id"])' "$output/$office.json"); then
       IFS=$'\t' read -r result revision <<< "$metadata"
-      if [[ -f "$cases" ]] && ! python3 scripts/knowledge-evaluate.py --cases "$cases" --office "$office" \
+      if [[ -f "$cases" ]] && ! KNOWLEDGE_SERVICE_TOKEN="${service_tokens[$index]}" python3 scripts/knowledge-evaluate.py --cases "$cases" --office "$office" \
         --url "$KNOWLEDGE_API_URL" --revision "$revision" | tee "$output/$office-evaluation.json"; then
         result="$result; retrieval verification failed"
         status=1
@@ -95,5 +117,5 @@ for source in "${sources[@]}"; do
     printf '| %s | %s |\n' "$office" "$result" >> "$GITHUB_STEP_SUMMARY"
   fi
 done
-unset KNOWLEDGE_SERVICE_TOKEN
+unset service_tokens
 exit "$status"

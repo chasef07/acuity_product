@@ -53,6 +53,17 @@ func TestKnowledgePublicationWaitsForDeployedRelease(t *testing.T) {
 	if checkout["with"].(map[string]any)["ref"] != "${{ inputs.release_sha || github.sha }}" {
 		t.Fatal("publisher must check out the deployed commit")
 	}
+	foundCredentials := false
+	for _, value := range steps {
+		step := value.(map[string]any)
+		if step["name"] == "Publish and verify office knowledge" {
+			env := step["env"].(map[string]any)
+			foundCredentials = env["KNOWLEDGE_SERVICE_TOKEN_SECRETS"] == "${{ vars.KNOWLEDGE_SERVICE_TOKEN_SECRETS }}"
+		}
+	}
+	if !foundCredentials {
+		t.Fatal("publisher must receive practice-scoped verification secret mappings")
+	}
 }
 
 func TestKnowledgePublicationFreshness(t *testing.T) {
