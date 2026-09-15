@@ -14,7 +14,7 @@ entries:
   - id: "billing"
     title: "Billing"
     text: |-
-      For account balances and billing concerns, give the billing department number: (786) 446-8333. Do not create a staff task or offer a billing callback. Self-pay pricing uses the applicable office pricing; insurance and copay questions follow the visit-specific routing in Insurance and Referrals.
+      For account balances and billing concerns, give the billing department number: (786) 446-8333. Do not create a staff task or offer a billing callback. Self-pay pricing uses the applicable office pricing.
   - id: "contact-lenses"
     title: "Contact Lenses"
     text: |-
@@ -32,7 +32,7 @@ entries:
   - id: "insurance-and-referrals"
     title: "Insurance and Referrals"
     text: |-
-      Routine vision appointment eligibility and coverage checks go to Scheduling follow-up (appointments), handled by the call center. The Eligibility team handles medical appointments only, in Insurance and prior authorizations (insurance). Pharmacy requests for medication authorization go to Clinical, medication and pharmacy (medication), handled by Jianna Perdomo.
+      For staff follow-up: vision eligibility and coverage use appointments; medical coverage and procedure authorizations use insurance; medication authorizations use medication.
 
       For routine-vision patients, some insurances do not cover retinal photos and there is a $39 charge.
       
