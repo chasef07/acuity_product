@@ -2,7 +2,7 @@ practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 officeKey: "hollywood"
 entries:
   - id: "after-hours"
-    title: "After Hours"
+    title: "After-hours doctor contact"
     text: |-
       No after-hours contact information is supplied for this office.
   - id: "appointment-expectations"
@@ -22,7 +22,7 @@ entries:
       
       If this is the patient's first set of contact lenses, the exam and insertion training take longer than a standard visit. First-time contact lens appointments must be scheduled before 3:00 PM Monday–Thursday and before 1:00 PM on Friday.
   - id: "hours"
-    title: "Hours"
+    title: "Office opening hours and closing times"
     text: |-
       Monday–Thursday 8:30 AM–4:30 PM. Closed for lunch 12:30 PM–1:30 PM. Friday 8:30 AM–2:30 PM.
       
@@ -35,17 +35,29 @@ entries:
       For routine-vision patients, some insurances do not cover retinal photos and there is a $39 charge.
       
       Retina surgical care needs referral to a retina surgeon. A primary care provider or insurance company can provide an appropriate referral when the patient does not have a retina surgeon.
-  - id: "location-and-contact"
-    title: "Location and Contact"
+  - id: "current-address"
+    title: "Office location address"
     text: |-
       Practice Name: Abita Eye Group Hollywood
       Address: 4330 Sheridan St, Suite 102B, Hollywood, FL 33021
-      Other scheduling office: Abita Eye Group Sweetwater
-      Other scheduling office address: 12750 NW 17th St, #201, Miami, FL 33182
+  - id: "paperwork-email"
+    title: "Email for new-patient paperwork and requested documents"
+    text: |-
       Administrative email for new-patient paperwork or requested documents: newpatient@abitaeye.com
       Use this address only for new-patient paperwork or requested documents.
-      Phone: (954) 287-2010
+  - id: "fax"
+    title: "Office fax"
+    text: |-
       Fax: (305) 723-1910
+  - id: "phone"
+    title: "Office phone number"
+    text: |-
+      Phone: (954) 287-2010
+  - id: "sweetwater-location"
+    title: "Other scheduling office: Sweetwater address"
+    text: |-
+      Other scheduling office: Abita Eye Group Sweetwater
+      Other scheduling office address: 12750 NW 17th St, #201, Miami, FL 33182
   - id: "medical-records-requests"
     title: "Medical records requests and patient email limits"
     text: |-

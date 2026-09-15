@@ -1,0 +1,88 @@
+[
+  {
+    "id": "address",
+    "query": "office location address",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "current-address"
+    ],
+    "allowedSectionIds": [
+      "current-address"
+    ],
+    "maxResponseCharacters": 220
+  },
+  {
+    "id": "hours",
+    "query": "office hours",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "hours"
+    ],
+    "allowedSectionIds": [
+      "hours"
+    ],
+    "maxResponseCharacters": 300
+  },
+  {
+    "id": "closing-time",
+    "query": "closing time today",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "hours"
+    ],
+    "allowedSectionIds": [
+      "hours"
+    ],
+    "maxResponseCharacters": 300
+  },
+  {
+    "id": "fax",
+    "query": "office fax",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "fax"
+    ],
+    "allowedSectionIds": [
+      "fax"
+    ],
+    "maxResponseCharacters": 100
+  },
+  {
+    "id": "address-and-fax",
+    "query": "office address and fax",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "current-address",
+      "fax"
+    ],
+    "allowedSectionIds": [
+      "current-address",
+      "fax"
+    ],
+    "maxResponseCharacters": 300
+  },
+  {
+    "id": "after-hours",
+    "query": "after-hours doctor contact",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "after-hours"
+    ],
+    "allowedSectionIds": [
+      "after-hours"
+    ],
+    "maxResponseCharacters": 160
+  },
+  {
+    "id": "paperwork-email",
+    "query": "email for new patient paperwork",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "email"
+    ],
+    "allowedSectionIds": [
+      "email"
+    ],
+    "maxResponseCharacters": 400
+  }
+]
