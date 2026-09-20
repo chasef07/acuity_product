@@ -32,7 +32,14 @@ func (tiedEmbeddings) Embed(_ context.Context, texts []string, _ knowledge.TaskT
 // and retrieval SQL. Tied vectors isolate source granularity and lexical ranking;
 // this does not claim to validate the embedding provider's semantic relevance.
 func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
-	for _, office := range []string{"north-miami-beach-optical", "sweetwater", "hollywood", "crystal-river"} {
+	for _, fixture := range []struct{ office, caseID string }{
+		{office: "north-miami-beach-optical"},
+		{office: "sweetwater"},
+		{office: "hollywood"},
+		{office: "crystal-river"},
+		{office: "ophthalmology-demo", caseID: "hours"},
+	} {
+		office := fixture.office
 		t.Run(office, func(t *testing.T) {
 			pool := testdb.Open(t)
 			ctx := context.Background()
@@ -68,18 +75,24 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 			}
 			identity := access.ServiceIdentity{Subject: "agent", PracticeID: practice, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityReadKnowledge}}
 			var cases []struct {
+				ID                    string   `json:"id"`
 				Query                 string   `json:"query"`
 				ExpectedSectionIDs    []string `json:"expectedSectionIds"`
 				MaxResponseCharacters int      `json:"maxResponseCharacters"`
 			}
-			fixture, err := os.ReadFile(filepath.Join("../../..", "knowledge/evals", office+".json"))
+			caseFile, err := os.ReadFile(filepath.Join("../../..", "knowledge/evals", office+".json"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := json.Unmarshal(fixture, &cases); err != nil {
+			if err := json.Unmarshal(caseFile, &cases); err != nil {
 				t.Fatal(err)
 			}
+			matched := 0
 			for _, tc := range cases {
+				if fixture.caseID != "" && fixture.caseID != tc.ID {
+					continue
+				}
+				matched++
 				t.Run(tc.Query, func(t *testing.T) {
 					got, err := module.Search(ctx, identity, office, tc.Query)
 					if err != nil {
@@ -100,6 +113,9 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 						t.Fatalf("query %q must return only %v within %d characters; got %+v (%d characters)", tc.Query, tc.ExpectedSectionIDs, tc.MaxResponseCharacters, got, characters)
 					}
 				})
+			}
+			if matched == 0 {
+				t.Fatalf("no retrieval cases matched %q", fixture.caseID)
 			}
 
 		})

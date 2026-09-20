@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test"
+import type { TaskPage } from "../src/lib/api/generated/types.gen"
 
 import { signInAs } from "./support"
 
@@ -781,28 +782,23 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   })
   await expect(billingTaskButton).toBeVisible()
   const taskCountsResponse = page.waitForResponse(
-    (response) =>
-      response.url() === `${portalURL}/v1/tasks/query` &&
-      response.request().method() === "POST" &&
-      response.request().postDataJSON()?.includeCounts !== false &&
-      response.ok(),
+    async (response) => {
+      if (
+        response.url() !== `${portalURL}/v1/tasks/query` ||
+        response.request().method() !== "POST" ||
+        !response.ok()
+      ) return false
+      const query = response.request().postDataJSON()
+      if (query.state !== "OPEN" || query.includeCounts === false) return false
+      const result = (await response.json()) as TaskPage
+      // A refresh for the billing write may finish before medication is created.
+      return Boolean(result.counts) && result.items.some(
+        (task) => task.sourceCallId === "messaging-medication",
+      )
+    },
   )
   await createAIStaffTask(page, "medication", "Review medication refill")
-  const counts = ((await (await taskCountsResponse).json()) as {
-    counts: {
-      tasks: number
-      categories: Record<
-        | "billing"
-        | "appointments"
-        | "documentation"
-        | "optical"
-        | "medication"
-        | "referrals"
-        | "other",
-        number
-      >
-    }
-  }).counts
+  const counts = ((await (await taskCountsResponse).json()) as TaskPage).counts!
   const medicationTaskButton = page.getByRole("button", {
     name: "Review medication refill",
     exact: true,
@@ -815,7 +811,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await taskFilter.click()
   for (const [label, count] of [
     ["All categories", counts.tasks],
-        ["Scheduling follow-up", counts.categories.appointments],
+    ["Scheduling follow-up", counts.categories.appointments],
     ["Medical records", counts.categories.documentation],
     ["Optical", counts.categories.optical],
     ["Clinical & pharmacy", counts.categories.medication],
