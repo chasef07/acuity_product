@@ -1,0 +1,56 @@
+[
+  {
+    "id": "services",
+    "query": "Do you see children?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "scope-of-services"
+    ],
+    "maxResponseCharacters": 4500
+  },
+  {
+    "id": "uninsured",
+    "query": "I do not have insurance. Can I get help with costs?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "self-pay-pricing"
+    ],
+    "maxResponseCharacters": 4500
+  },
+  {
+    "id": "appointment",
+    "query": "How do I request a new appointment at Southern?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "appointment-expectations"
+    ],
+    "maxResponseCharacters": 4500
+  },
+  {
+    "id": "location",
+    "query": "Where is the Southern clinic and what is its phone number?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "location-and-contact"
+    ],
+    "maxResponseCharacters": 4500
+  },
+  {
+    "id": "telemedicine",
+    "query": "Can I change my appointment to telemedicine?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "telemedicine"
+    ],
+    "maxResponseCharacters": 4500
+  },
+  {
+    "id": "insurance",
+    "query": "Do you accept Aetna insurance?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "insurance-and-referrals"
+    ],
+    "maxResponseCharacters": 4500
+  }
+]
