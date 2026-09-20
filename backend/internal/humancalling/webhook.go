@@ -25,6 +25,7 @@ const (
 	ReceiptPending     ReceiptState = "PENDING"
 	ReceiptProcessing  ReceiptState = "PROCESSING"
 	ReceiptApplied     ReceiptState = "APPLIED"
+	ReceiptIgnored     ReceiptState = "IGNORED"
 	ReceiptUnknown     ReceiptState = "UNKNOWN"
 	ReceiptFailed      ReceiptState = "FAILED"
 	ReceiptQuarantined ReceiptState = "QUARANTINED"
@@ -457,7 +458,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 			processing_started_at = NULL,
 			next_attempt_at = $4,
 			projected_at = CASE
-				WHEN $2 IN ('APPLIED', 'UNKNOWN', 'FAILED', 'QUARANTINED') THEN $5
+				WHEN $2 IN ('APPLIED', 'IGNORED', 'UNKNOWN', 'FAILED', 'QUARANTINED') THEN $5
 				ELSE projected_at
 			END,
 			quarantined_at = CASE
@@ -488,6 +489,25 @@ func (m *Module) replayProviderReceipt(
 	}
 	if !known {
 		return ReceiptUnknown, ""
+	}
+	// WebRTC emits a second leg for the Staff session. It is evidence, not
+	// another handoff or authority to update the Call Control leg.
+	if m.config.CredentialConnectionID != "" && m.config.CallControlID != "" &&
+		m.config.CredentialConnectionID != m.config.CallControlID &&
+		fact.ConnectionID == m.config.CredentialConnectionID &&
+		fact.ClientState == "" && fact.CallControlID != "" &&
+		fact.CallLegID != "" && fact.CallSessionID != "" &&
+		(fact.Type == FactCallInitiated || rejectedHandoffLifecycle(fact.Type)) {
+		attached, err := m.attachCredentialReceiptCall(ctx, eventID, fact)
+		if err != nil {
+			return ReceiptPending, projectionAttachCallRetry
+		}
+		if !attached {
+			// The credential webhook can precede persistence of the Staff leg.
+			// Unmatched or ambiguous sessions remain visible through bounded retry.
+			return ReceiptPending, "WAITING_FOR_RELATED_FACT"
+		}
+		return ReceiptIgnored, ""
 	}
 	retryCode := projectionAttachCallRetry
 	err = m.attachReceiptCall(ctx, eventID, fact)
@@ -531,6 +551,30 @@ func (m *Module) replayProviderReceipt(
 	default:
 		return ReceiptPending, retryCode
 	}
+}
+
+func (m *Module) attachCredentialReceiptCall(ctx context.Context, eventID string, fact ProviderFact) (bool, error) {
+	tag, err := m.database.Exec(ctx, `
+		WITH matched AS (
+			SELECT min(call_id::text)::uuid AS call_id
+			FROM human_calling_call_legs
+			WHERE role = 'STAFF'
+				AND provider_call_session_id = $2
+				AND provider_connection_id = $3
+				AND provider_call_control_id <> $4
+				AND provider_call_leg_id <> $5
+			HAVING count(DISTINCT call_id) = 1
+		)
+		UPDATE human_calling_provider_receipts receipt
+		SET call_id = matched.call_id
+		FROM matched
+		WHERE receipt.event_id = $1
+			AND (receipt.call_id IS NULL OR receipt.call_id = matched.call_id)
+	`, eventID, fact.CallSessionID, m.config.CallControlID, fact.CallControlID, fact.CallLegID)
+	if err != nil {
+		return false, fmt.Errorf("attach credential-side receipt Call: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // wakeRelatedReceipts brings only exact Call or provider-leg matches forward;

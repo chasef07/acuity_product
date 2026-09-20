@@ -33,6 +33,7 @@ type ReceiptOutcome string
 
 const (
 	ReceiptApplied     ReceiptOutcome = "applied"
+	ReceiptIgnored     ReceiptOutcome = "ignored"
 	ReceiptUnknown     ReceiptOutcome = "unknown"
 	ReceiptFailed      ReceiptOutcome = "failed"
 	ReceiptRetry       ReceiptOutcome = "retry"
@@ -264,7 +265,7 @@ func TerminalCleanup(
 
 func ReceiptProcessed(outcome ReceiptOutcome, queueAge, duration time.Duration) Event {
 	return event("acuity_call_center_receipt_processing",
-		"outcome", bounded(string(outcome), "applied", "unknown", "failed", "retry",
+		"outcome", bounded(string(outcome), "applied", "ignored", "unknown", "failed", "retry",
 			"related_fact", "obsolete", "quarantined"),
 		"queue_seconds", positive(queueAge).Seconds(),
 		"processing_seconds", positive(duration).Seconds())

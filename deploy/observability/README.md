@@ -14,6 +14,16 @@ the fixed `route`, `failure_stage`, `outcome`, `action`, `stage`, `cause`, and `
 where relevant. SSE state is selected by fixed filters instead of becoming
 another label.
 
+Credential-side WebRTC lifecycle receipts are recorded as `IGNORED` with an
+`ignored` processing outcome only when their provider session belongs to exactly
+one tracked Staff Call on the configured Call Control connection. They retain
+their receipt-to-Call link without changing Call state or counting as failed
+handoff admissions. This is not evidence that a Staff member answered. Events
+that arrive before the matching Staff leg use bounded related-fact retries;
+unmatched or ambiguous sessions still reach quarantine. Unknown connections
+retain the existing rejection behavior. Historical failure records are not
+rewritten by this classification change.
+
 ## Backend availability SLI and SLO
 
 The customer-journey SLI counts only two authenticated, read-only portal route
