@@ -253,6 +253,8 @@ func (m *Module) recordReceiptProcessed(
 	switch state {
 	case ReceiptApplied:
 		outcome = observability.ReceiptApplied
+	case ReceiptIgnored:
+		outcome = observability.ReceiptIgnored
 	case ReceiptUnknown:
 		outcome = observability.ReceiptUnknown
 	case ReceiptFailed:
