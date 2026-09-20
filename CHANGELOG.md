@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.3](https://github.com/chasef07/acuity_product/compare/v1.16.2...v1.16.3) (2026-09-20)
+
+
+### Bug Fixes
+
+* **calling:** classify tracked WebRTC receipts as ignored ([#340](https://github.com/chasef07/acuity_product/issues/340)) ([a701814](https://github.com/chasef07/acuity_product/commit/a7018147541791eaa0e9747601e6a8153bfb3be6))
+* **knowledge:** replace rheumatology demo corpus with Isla ([#339](https://github.com/chasef07/acuity_product/issues/339)) ([ec579a4](https://github.com/chasef07/acuity_product/commit/ec579a41f6f98e5e22a16effd346770c3d54847c))
+
 ## [1.16.2](https://github.com/chasef07/acuity_product/compare/v1.16.1...v1.16.2) (2026-09-15)
 
 
