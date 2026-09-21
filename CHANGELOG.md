@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.4](https://github.com/chasef07/acuity_product/compare/v1.16.3...v1.16.4) (2026-09-21)
+
+
+### Bug Fixes
+
+* **auth:** reuse portal sessions and streamline Google sign-in ([#343](https://github.com/chasef07/acuity_product/issues/343)) ([9280a9c](https://github.com/chasef07/acuity_product/commit/9280a9c82fa65798c4ecf8a8f221d2eaad3095f9))
+* stabilize release verification and office hours retrieval ([#342](https://github.com/chasef07/acuity_product/issues/342)) ([7484927](https://github.com/chasef07/acuity_product/commit/7484927c6123d52c057666431210ab438a060c4c))
+
 ## [1.16.3](https://github.com/chasef07/acuity_product/compare/v1.16.2...v1.16.3) (2026-09-20)
 
 
