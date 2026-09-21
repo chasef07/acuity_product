@@ -139,7 +139,9 @@ function SiteFooter() {
               <ul>
                 {section.links.map((link) => (
                   <li key={link.href}>
-                    {"external" in link ? (
+                    {link.href === "/sign-in" ? (
+                      <PortalSignInTrigger />
+                    ) : "external" in link ? (
                       <a href={link.href} rel="noreferrer" target="_blank">
                         {link.label}
                       </a>

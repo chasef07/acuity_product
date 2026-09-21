@@ -2,84 +2,67 @@ import { expect, test } from "@playwright/test"
 
 import { signInAs } from "./support"
 
-test("homepage opens a Google-only sign-in dialog", async ({
-  page,
-}) => {
-  await page.goto("/")
-
-  await expect(page.getByTestId("sign-in-dialog")).toBeHidden()
-  await page.evaluate(() => {
-    const loadingFrames: boolean[] = []
-    Object.assign(window, { signInLoadingFrames: loadingFrames })
-    const observer = new MutationObserver(() => {
-      const card = document.querySelector('[data-testid="sign-in-card"]')
-      if (!card) return
-      loadingFrames.push(Boolean(card.querySelector('[data-slot="skeleton"]')))
-      if (card.textContent?.includes("Continue with Google")) {
-        observer.disconnect()
-      }
-    })
-    observer.observe(document.body, { childList: true, subtree: true })
+for (const path of ["/", "/method"]) {
+  test(`${path} starts Google sign-in with one click`, async ({ page }) => {
+    await page.context().route("**/api/auth/oauth-popup/start**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Google sign-in</title>" }),
+    )
+    await page.goto(path)
+    const popupPromise = page.waitForEvent("popup")
+    await page.locator("header").getByRole("button", { name: "Sign in" }).click()
+    const popup = await popupPromise
+    const popupURL = new URL(popup.url())
+    expect(popupURL.pathname).toBe("/api/auth/oauth-popup/start")
+    expect(popupURL.searchParams.get("provider")).toBe("google")
+    expect(popupURL.searchParams.get("callbackURL")).toBe("/workspace")
+    await expect(page).toHaveURL(path)
+    await popup.close()
+    await expect(page.getByText("Google sign-in was closed. Try again.")).toBeVisible()
+    await expect(page.getByRole("button", { name: "Continue with Google" })).toBeEnabled()
   })
-  await page.getByRole("button", { name: "Sign in" }).click()
-  await expect(page).toHaveURL("/")
+}
 
-  const card = page.getByTestId("sign-in-card")
-  await expect(
-    card.getByRole("heading", { name: "Sign in to Acuity Health" }),
-  ).toBeVisible()
-  await expect(
-    card.getByRole("button", { name: "Continue with Google" }),
-  ).toBeVisible()
-  await expect(card.getByText("Secure Google sign-in")).toBeVisible()
-  const loadingFrames = await page.evaluate(
-    () => (window as typeof window & { signInLoadingFrames: boolean[] }).signInLoadingFrames,
+test("footer sign-in also starts Google with one click", async ({ page }) => {
+  await page.context().route("**/api/auth/oauth-popup/start**", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Google sign-in</title>" }),
   )
-  expect(loadingFrames.length).toBeGreaterThan(0)
-  expect(loadingFrames).not.toContain(true)
-  await expect(card.getByLabel("Email")).toBeHidden()
-  await expect(card.getByLabel("Password")).toBeHidden()
-})
-
-test("interior marketing pages open the same sign-in dialog in place", async ({
-  page,
-}) => {
-  await page.goto("/method")
-
-  await page.getByRole("button", { name: "Sign in" }).click()
-
-  await expect(page).toHaveURL(/\/method$/)
-  await expect(
-    page.getByRole("dialog", { name: "Sign in to Acuity Health" }),
-  ).toBeVisible()
-})
-
-test("Google sign-in opens in a popup and leaves the portal in place", async ({
-  page,
-}) => {
-  await page
-    .context()
-    .route("**/api/auth/oauth-popup/start**", async (route) => {
-      await route.fulfill({
-        contentType: "text/html",
-        body: "<!doctype html><title>Google sign-in</title>",
-      })
-    })
   await page.goto("/")
-  await page.getByRole("button", { name: "Sign in" }).click()
+  const popupPromise = page.waitForEvent("popup")
+  await page.locator("footer").getByRole("button", { name: "Sign in" }).click()
+  await (await popupPromise).close()
+})
 
+test("existing session opens the workspace without contacting Google", async ({ page }) => {
+  await signInAs(page, "admin@abita.test", "Fixture Admin")
+  await expect(page.getByRole("button", { name: "admin@abita.test" })).toBeVisible()
+  let popupStarts = 0
+  page.on("popup", () => { popupStarts += 1 })
+  await page.goto("/")
+  await page.locator("header").getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/workspace$/)
+  await expect(page.getByRole("button", { name: "admin@abita.test" })).toBeVisible()
+  await page.goto("/sign-in?next=%2Fworkspace")
+  await expect(page).toHaveURL(/\/workspace$/)
+  expect(popupStarts).toBe(0)
+})
+
+test("blocked popup stays recoverable", async ({ page }) => {
+  await page.goto("/")
+  await page.evaluate(() => { window.open = () => null })
+  await page.locator("header").getByRole("button", { name: "Sign in" }).click()
+  await expect(page.getByText("Allow pop-ups for Acuity Health, then try again.")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Continue with Google" })).toBeEnabled()
+})
+
+test("sign-in does not pass an external return destination to Google", async ({ page }) => {
+  await page.context().route("**/api/auth/oauth-popup/start**", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Google sign-in</title>" }),
+  )
+  await page.goto("/sign-in?next=%2F%2Fexample.com")
   const popupPromise = page.waitForEvent("popup")
   await page.getByRole("button", { name: "Continue with Google" }).click()
   const popup = await popupPromise
-  const popupURL = new URL(popup.url())
-
-  expect(popupURL.pathname).toBe("/api/auth/oauth-popup/start")
-  expect(popupURL.searchParams.get("provider")).toBe("google")
-  expect(popupURL.searchParams.get("callbackURL")).toBe("/workspace")
-  await expect(page).toHaveURL("/")
-  await expect(
-    page.getByRole("dialog", { name: "Sign in to Acuity Health" }),
-  ).toBeVisible()
+  expect(new URL(popup.url()).searchParams.get("callbackURL")).toBe("/workspace")
   await popup.close()
 })
 

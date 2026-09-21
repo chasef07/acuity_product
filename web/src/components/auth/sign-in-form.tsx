@@ -1,66 +1,20 @@
 "use client"
 
-import { useRouter, useSearchParams } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
 import { FieldError, FieldGroup } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
-import { authClient, clearAccessToken } from "@/lib/auth-client"
 
-export function SignInForm() {
-  const router = useRouter()
+export function SignInForm({ pending, error, onSignIn }: {
+  pending: boolean
+  error: string | null
+  onSignIn: () => void
+}) {
   const searchParams = useSearchParams()
-  const session = authClient.useSession()
-  const [pending, setPending] = useState(false)
-  const [signedInDestination, setSignedInDestination] = useState<string | null>(
-    null,
-  )
-  const [error, setError] = useState<string | null>(
-    searchParams.get("error") === "google"
-      ? "Google sign-in didn’t finish. Try again."
-      : null,
-  )
-
-  function nextDestination() {
-    const requested = searchParams.get("next")
-    return requested?.startsWith("/") ? requested : "/workspace"
-  }
-
-  useEffect(() => {
-    if (!signedInDestination) return
-    if (session.data) {
-      router.replace(signedInDestination)
-      return
-    }
-
-    const timeout = window.setTimeout(() => {
-      setSignedInDestination(null)
-      setPending(false)
-      setError(
-        "Google sign-in finished, but the session was not ready. Try again.",
-      )
-    }, 5_000)
-    return () => window.clearTimeout(timeout)
-  }, [router, session.data, signedInDestination])
-
-  async function signInWithGoogle() {
-    const destination = nextDestination()
-    setPending(true)
-    setError(null)
-    clearAccessToken()
-    const result = await authClient.signIn.popup({
-      provider: "google",
-      callbackURL: destination,
-      errorCallbackURL: `/sign-in?error=google&next=${encodeURIComponent(destination)}`,
-    })
-    if (result?.error) {
-      setPending(false)
-      setError(googleErrorMessage(result.error.code))
-      return
-    }
-    setSignedInDestination(destination)
-  }
+  const message = error ?? (searchParams.has("error") && !pending
+    ? "Google sign-in didn’t finish. Try again."
+    : null)
 
   return (
     <FieldGroup>
@@ -69,7 +23,7 @@ export function SignInForm() {
         size="lg"
         className="w-full rounded-full"
         disabled={pending}
-        onClick={signInWithGoogle}
+        onClick={onSignIn}
       >
         {pending ? (
           <Spinner data-icon="inline-start" />
@@ -78,19 +32,9 @@ export function SignInForm() {
         )}
         Continue with Google
       </Button>
-      {error && <FieldError>{error}</FieldError>}
+      {message && <FieldError>{message}</FieldError>}
     </FieldGroup>
   )
-}
-
-function googleErrorMessage(code: string): string {
-  if (code === "POPUP_BLOCKED") {
-    return "Allow pop-ups for Acuity Health, then try again."
-  }
-  if (code === "POPUP_CLOSED") {
-    return "Google sign-in was closed. Try again."
-  }
-  return "Google sign-in didn’t finish. Try again."
 }
 
 function GoogleMark(props: React.ComponentProps<"svg">) {
