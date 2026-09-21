@@ -21,7 +21,6 @@ export function googleProviderConfiguration(
     google: {
       clientId,
       clientSecret,
-      prompt: "select_account" as const,
     },
   }
 }

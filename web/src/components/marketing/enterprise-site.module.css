@@ -692,7 +692,8 @@
   list-style: none;
 }
 
-.footerGroup a {
+.footerGroup a,
+.footerGroup button {
   color: #c7c7c3;
   font-size: 14px;
   letter-spacing: -0.02em;
@@ -701,7 +702,9 @@
 }
 
 .footerGroup a:hover,
-.footerGroup a:focus-visible {
+.footerGroup a:focus-visible,
+.footerGroup button:hover,
+.footerGroup button:focus-visible {
   color: white;
 }
 
@@ -1378,7 +1381,8 @@
   .navLink,
   .portalLink,
   .workLink,
-  .footerGroup a {
+  .footerGroup a,
+  .footerGroup button {
     min-width: 44px;
     min-height: 44px;
     display: inline-flex;
