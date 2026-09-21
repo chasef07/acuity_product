@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.16.5](https://github.com/chasef07/acuity_product/compare/v1.16.4...v1.16.5) (2026-09-21)
+
+
+### Bug Fixes
+
+* **knowledge:** close Hollywood, Sweetwater, and NMB on September 21 ([8baa005](https://github.com/chasef07/acuity_product/commit/8baa005faf42ff1bfd3d59b83f8b9f28cdeedf1c))
+* **knowledge:** name Yom Kippur in office closure notices ([01a3d01](https://github.com/chasef07/acuity_product/commit/01a3d014a462595d85819843a5b24a4362e41221))
+* **knowledge:** update three office closures to September 21 ([5aea0a5](https://github.com/chasef07/acuity_product/commit/5aea0a5c550a8eaceef647c1d585d4fc6e35d149))
+
 ## [1.16.4](https://github.com/chasef07/acuity_product/compare/v1.16.3...v1.16.4) (2026-09-21)
 
 
