@@ -21,6 +21,10 @@ that connects them.
   recording playback beside the work.
 - **Messaging:** send and receive Location-scoped SMS/MMS, track delivery and
   attachments, and create follow-up Tasks when staff identifies work to do.
+- **Manage my agent:** staff can search recent calls, read conversation transcripts,
+  and flag a call with a durable note. Acuity Platform Operators review these in
+  Manage my agent using the Flagged calls filter within the selected Practice.
+  Flags preserve the original report; they do not create patient Tasks or send notifications.
 - **AI evidence:** preserve AI Interactions, transcripts, and receipt-backed
   appointment outcomes without treating an automated claim as proof of success.
 

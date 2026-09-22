@@ -585,6 +585,53 @@ export type AiAppointmentFacts = {
     startDatetime?: string;
 };
 
+export type AgentCallsQuery = {
+    practiceId: string;
+    locationId?: string;
+    range: OperatorAiAnalyticsRange;
+    phone?: string;
+    flaggedOnly?: boolean;
+    cursor?: string;
+    limit?: number;
+};
+
+export type AgentCall = {
+    id: string;
+    phone: string;
+    startedAt: string;
+    durationSeconds?: number;
+    appointmentActions: Array<AiAppointmentAction>;
+    transferred: boolean;
+    issueFlagged: boolean;
+};
+
+export type AgentCallsPage = {
+    calls: Array<AgentCall>;
+    nextCursor: string;
+};
+
+export type AgentCallIssueInput = {
+    note: string;
+};
+
+export type AgentCallIssue = {
+    note: string;
+    createdAt: string;
+};
+
+export type AgentCallMessage = {
+    speaker: 'Caller' | 'Agent';
+    text: string;
+    occurredAt: string;
+};
+
+export type AgentCallDetail = {
+    call: AgentCall;
+    locationName: string;
+    messages: Array<AgentCallMessage>;
+    issue?: AgentCallIssue;
+};
+
 export type AiInteractionDetail = {
     id: string;
     practiceId: string;
@@ -2864,6 +2911,121 @@ export type QueryStaffAnalyticsResponses = {
 };
 
 export type QueryStaffAnalyticsResponse = QueryStaffAnalyticsResponses[keyof QueryStaffAnalyticsResponses];
+
+export type QueryAgentCallsData = {
+    body: AgentCallsQuery;
+    path?: never;
+    query?: never;
+    url: '/v1/agent-calls/query';
+};
+
+export type QueryAgentCallsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryAgentCallsError = QueryAgentCallsErrors[keyof QueryAgentCallsErrors];
+
+export type QueryAgentCallsResponses = {
+    /**
+     * Authorized call data.
+     */
+    200: AgentCallsPage;
+};
+
+export type QueryAgentCallsResponse = QueryAgentCallsResponses[keyof QueryAgentCallsResponses];
+
+export type GetAgentCallData = {
+    body?: never;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/agent-calls/{interactionId}';
+};
+
+export type GetAgentCallErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetAgentCallError = GetAgentCallErrors[keyof GetAgentCallErrors];
+
+export type GetAgentCallResponses = {
+    /**
+     * Authorized call data.
+     */
+    200: AgentCallDetail;
+};
+
+export type GetAgentCallResponse = GetAgentCallResponses[keyof GetAgentCallResponses];
+
+export type FlagAgentCallIssueData = {
+    body: AgentCallIssueInput;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/agent-calls/{interactionId}/issue';
+};
+
+export type FlagAgentCallIssueErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type FlagAgentCallIssueError = FlagAgentCallIssueErrors[keyof FlagAgentCallIssueErrors];
+
+export type FlagAgentCallIssueResponses = {
+    /**
+     * Authorized call data.
+     */
+    200: AgentCallIssue;
+};
+
+export type FlagAgentCallIssueResponse = FlagAgentCallIssueResponses[keyof FlagAgentCallIssueResponses];
 
 export type QueryOperatorAiCostsData = {
     body: OperatorAiCostQueryRequest;

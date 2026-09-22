@@ -836,6 +836,10 @@ test("booking analytics is Admin-only and operator diagnostics remain separate",
       await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
       assert.equal(projection.getSnapshot().selection.view, "analytics")
     }
+    await projection.dispatch({ type: "select-manage-agent" })
+    assert.equal(projection.getSnapshot().selection.view, "manage-agent")
+    await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
+    assert.equal(projection.getSnapshot().selection.view, "manage-agent")
     projection.stop()
   }
 })

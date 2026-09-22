@@ -31,7 +31,7 @@ export type WorkspaceConnectionState =
   | "connected"
   | "degraded"
 
-export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics"
+export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics" | "manage-agent"
 export type WorkspaceContextView = "task" | "call" | "ai-call"
 export type WorkspaceRailSection = "tasks" | "calls" | "appointments" | "texts" | "completed"
 
@@ -212,6 +212,7 @@ export type WorkspaceProjectionIntent =
   | { type: "select-task"; task: Task; rememberForCall?: boolean }
   | { type: "select-analytics" }
   | { type: "select-operator-analytics" }
+  | { type: "select-manage-agent" }
   | { type: "open-ai-context"; interactionID: string }
   | { type: "open-task-context"; task: Task }
   | { type: "open-call-context"; callID: string }
@@ -656,6 +657,11 @@ export function createWorkspaceProjection({
       selectEngagement(taskEngagement(intent.task), intent.task)
       return
     }
+    if (intent.type === "select-manage-agent") {
+      if (!state.discovery?.practices.some(practice => practice.id === state.scope.practiceID)) return
+      patch(current => ({ ...current, selection: { ...current.selection, view: "manage-agent", contextPanelOpen: false } }))
+      return
+    }
     if (intent.type === "select-analytics" || intent.type === "select-operator-analytics") {
       const operator = state.discovery?.platformOperator
       if (intent.type === "select-operator-analytics" ? !operator : !canViewPracticeAnalytics(state.discovery, state.scope.practiceID)) return
@@ -877,7 +883,8 @@ export function createWorkspaceProjection({
     const empty = initialState()
     const analyticsView = current.selection.view === "analytics" && canViewPracticeAnalytics(discovery, nextScope.practiceID)
       ? "analytics"
-      : current.selection.view === "operator-analytics" && discovery.platformOperator ? "operator-analytics" : "none"
+      : current.selection.view === "operator-analytics" && discovery.platformOperator ? "operator-analytics"
+      : current.selection.view === "manage-agent" ? "manage-agent" : "none"
     publish({
       ...empty,
       selection: { ...empty.selection, view: analyticsView },

@@ -638,3 +638,6 @@ GRANT INSERT ON TABLE public.knowledge_retrieval_observations TO acuity_portal;
 -- Human reply snapshots and provider-confirmed shared completion.
 GRANT SELECT, INSERT ON work_text_replies TO acuity_portal;
 GRANT SELECT, UPDATE ON work_text_replies TO acuity_worker;
+
+-- Staff reports remain attached to their authorized AI Interaction.
+GRANT SELECT, INSERT ON public.ai_interaction_issues TO acuity_portal;

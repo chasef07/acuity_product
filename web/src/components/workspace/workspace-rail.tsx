@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import {
   ArrowRightIcon,
   Building2Icon,
+  BotIcon,
   ChartNoAxesCombinedIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -399,6 +400,16 @@ export function WorkspaceRail({
             </div>
           )}
           <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={projection.selection.view === "manage-agent"}
+                tooltip="Manage my agent"
+                onClick={() => onIntent({ type: "select-manage-agent" })}
+              >
+                <BotIcon />
+                <span>Manage my agent</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             {canViewPracticeAnalytics(discovery, practice.id) && (
               <SidebarMenuItem>
                 <SidebarMenuButton

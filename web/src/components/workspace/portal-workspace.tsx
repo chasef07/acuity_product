@@ -63,6 +63,8 @@ const PracticeAnalytics = dynamic(
   { loading: () => <Skeleton aria-label="Loading booking analytics" className="m-6 h-72" /> },
 )
 
+const ManageAgent = dynamic(() => import("@/components/workspace/manage-agent").then(module => module.ManageAgent))
+
 const OperatorAnalytics = dynamic(
   () =>
     import("@/components/workspace/operator-analytics").then(
@@ -327,7 +329,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           data-workspace-version={workspace.version}
           className="h-svh min-h-0 min-w-0 overflow-hidden"
         >
-          {view !== "engagement" && view !== "analytics" && view !== "operator-analytics" && (
+          {view !== "engagement" && view !== "analytics" && view !== "operator-analytics" && view !== "manage-agent" && (
             <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
               <SidebarTrigger collapsedOnly />
               <div className="flex-1" />
@@ -335,6 +337,13 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           )}
           {view === "analytics" && canViewPracticeAnalytics(discovery, state.scope.practiceID) ? (
             <PracticeAnalytics
+              key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
+              practiceID={state.scope.practiceID}
+              locationScopeID={state.scope.locationScopeID}
+              locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
+            />
+          ) : view === "manage-agent" ? (
+            <ManageAgent
               key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
               practiceID={state.scope.practiceID}
               locationScopeID={state.scope.locationScopeID}
