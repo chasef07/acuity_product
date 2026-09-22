@@ -255,7 +255,7 @@ export function WorkspaceRail({
                 onIntent({ type: "submit-search" })
               }}
             >
-              <InputGroup className="h-9 rounded-md border-sidebar-border bg-sidebar-control shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-background hover:shadow-sm focus-within:border-sidebar-ring focus-within:bg-background focus-within:ring-2 focus-within:ring-sidebar-ring/30">
+              <InputGroup className="h-9 rounded-md border-transparent bg-transparent! shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-sidebar-border hover:bg-background! focus-within:border-sidebar-ring focus-within:bg-background! focus-within:ring-2 focus-within:ring-sidebar-ring/30">
                 <InputGroupAddon>
                   <SearchIcon />
                 </InputGroupAddon>
