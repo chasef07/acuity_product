@@ -47,12 +47,9 @@ type TaskCallContextProps = {
   activeCall: CallingCall | undefined
   view: "none" | "task" | "call"
   canMutate: boolean
-  canCall: boolean
   historyHint: number
-  taskCallPending: boolean
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
-  onStartTaskCall: (task: Task) => void
   onReturnToCall: () => void
 }
 
@@ -64,12 +61,9 @@ export function TaskCallContext({
   activeCall,
   view,
   canMutate,
-  canCall,
   historyHint,
-  taskCallPending,
   taskCallError,
   onTaskUpdated,
-  onStartTaskCall,
   onReturnToCall,
 }: TaskCallContextProps) {
   const openRecoveryTask = useCallback(
@@ -106,12 +100,9 @@ export function TaskCallContext({
           ? () => onSelectTask(taskRows.find((row) => row.id !== task.id)!) : undefined}
         activeCall={activeCall}
         canMutate={canMutate}
-        canCall={canCall}
         historyHint={historyHint}
-        taskCallPending={taskCallPending}
         taskCallError={taskCallError}
         onTaskUpdated={onTaskUpdated}
-        onStartTaskCall={onStartTaskCall}
         onReturnToCall={onReturnToCall}
       />
     )
@@ -124,32 +115,24 @@ function TaskWorkspace({
   onNextTask,
   activeCall,
   canMutate,
-  canCall,
   historyHint,
-  taskCallPending,
   taskCallError,
   onTaskUpdated,
-  onStartTaskCall,
   onReturnToCall,
 }: {
   task: Task
   onNextTask?: () => void
   activeCall: CallingCall | undefined
   canMutate: boolean
-  canCall: boolean
   historyHint: number
-  taskCallPending: boolean
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
-  onStartTaskCall: (task: Task) => void
   onReturnToCall: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(task.title)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
-  const [callEligible, setCallEligible] = useState(false)
-  const [callReason, setCallReason] = useState("Checking Call route…")
 
   const [reviewedVersion, setReviewedVersion] = useState(task.version)
   const reviewRequired = task.origin === "APPOINTMENT_REVIEW" || task.origin === "INBOUND_MESSAGE_REVIEW"
@@ -158,36 +141,6 @@ function TaskWorkspace({
     setReviewedVersion(updated.version)
     onTaskUpdated(updated, advance)
   }
-
-  useEffect(() => {
-    if (!canCall) return
-    let current = true
-    const timeout = window.setTimeout(async () => {
-      const token = await getAccessToken()
-      if (!token || !current) return
-      const result = await getTaskOutboundEligibility({
-        client: portalClient(token),
-        path: { taskId: task.id },
-      }).catch(() => undefined)
-      if (!current) return
-      if (!result?.data) {
-        setCallEligible(false)
-        setCallReason("Call eligibility is temporarily unavailable.")
-        return
-      }
-      setCallEligible(result.data.eligible)
-      setCallReason(result.data.reason)
-    }, 0)
-    return () => {
-      current = false
-      window.clearTimeout(timeout)
-    }
-  }, [canCall, historyHint, task.id, task.state, task.version])
-
-  const taskCallingEligible = canCall && callEligible
-  const taskCallingReason = canCall
-    ? callReason
-    : "Calling is not enabled for this account."
 
   async function refreshTask() {
     const token = await getAccessToken()
@@ -276,8 +229,9 @@ function TaskWorkspace({
   return (
     <section
       aria-label="Focused Task"
-      className="h-full min-h-0 flex-1 overflow-y-auto bg-transparent px-5 py-5"
+      className="flex h-full min-h-0 flex-1 flex-col bg-transparent"
     >
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
       {editing && task.state === "OPEN" ? (
         <div className="flex items-center gap-1">
           <Input
@@ -348,56 +302,6 @@ function TaskWorkspace({
         This Task changed. Review the latest activity before completing it.
         <Button size="sm" variant="outline" className="mt-2" onClick={() => setReviewedVersion(task.version)}>Review latest</Button>
       </div>}
-      {canMutate && (
-        <div className="mt-4 flex flex-col gap-2">
-          {task.state === "OPEN" ? (
-            <>
-              <Button
-                variant={recovery ? "ghost" : "default"}
-                className={recovery ? "order-2" : undefined}
-                onClick={() => void transition("complete")}
-                disabled={pending || needsReview}
-              >
-                {pending ? <Spinner /> : <CheckCircle2Icon />} {task.origin === "APPOINTMENT_REVIEW" ? "Verify & next" : recovery ? "Mark done" : "Complete & next"}
-              </Button>
-              {activeCall ? (
-                <Button variant="outline" onClick={onReturnToCall}>
-                  <PhoneCallIcon /> Return to active call
-                </Button>
-              ) : canCall ? (
-                <Button
-                  variant={recovery ? "default" : "outline"}
-                  disabled={!taskCallingEligible || taskCallPending}
-                  title={taskCallingEligible ? "Call this Task" : taskCallingReason}
-                  onClick={() => onStartTaskCall(task)}
-                >
-                  <PhoneCallIcon /> {taskCallPending ? "Preparing…" : recovery ? "Call back" : "Call"}
-                </Button>
-              ) : null}
-            </>
-          ) : (
-            <>
-            {onNextTask && <Button onClick={onNextTask}>Next task</Button>}
-            <Button
-              variant="outline"
-              onClick={() => void transition("reopen")}
-              disabled={pending}
-            >
-              {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
-            </Button>
-            </>
-          )}
-        </div>
-      )}
-      {taskCallError && (
-        <p className="mt-3 text-xs text-destructive">{taskCallError}</p>
-      )}
-      {error && (
-        <Alert variant="destructive" className="mt-3">
-          <AlertTitle>Task changed</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
       {recovery && (
         <RecoveryTaskSource task={task} revision={historyHint} onUpdated={onTaskUpdated} />
       )}
@@ -431,6 +335,50 @@ function TaskWorkspace({
           />
         </div>
       </details>
+      </div>
+      <footer className="shrink-0 border-t bg-background p-5">
+      {canMutate && (
+        <div className="flex flex-col gap-2">
+          {task.state === "OPEN" ? (
+            <>
+              <Button
+                variant={recovery ? "ghost" : "default"}
+                className={recovery ? "order-2" : undefined}
+                onClick={() => void transition("complete")}
+                disabled={pending || needsReview}
+              >
+                {pending ? <Spinner /> : <CheckCircle2Icon />} {task.origin === "APPOINTMENT_REVIEW" ? "Verify & next" : recovery ? "Mark done" : "Complete & next"}
+              </Button>
+              {activeCall ? (
+                <Button variant="outline" onClick={onReturnToCall}>
+                  <PhoneCallIcon /> Return to active call
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <>
+            {onNextTask && <Button onClick={onNextTask}>Next task</Button>}
+            <Button
+              variant="outline"
+              onClick={() => void transition("reopen")}
+              disabled={pending}
+            >
+              {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
+            </Button>
+            </>
+          )}
+        </div>
+      )}
+      {taskCallError && (
+        <p className="mt-3 text-xs text-destructive">{taskCallError}</p>
+      )}
+      {error && (
+        <Alert variant="destructive" className="mt-3">
+          <AlertTitle>Task changed</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      </footer>
     </section>
   )
 }
@@ -893,4 +841,48 @@ function formatEntryPoint(entryPoint: CallingCall["entryPoint"]) {
     default:
       return "Phone number"
   }
+}
+
+export function TaskCallAction({ task, canCall, historyHint, pending, onCall }: {
+  task: Task
+  canCall: boolean
+  historyHint: number
+  pending: boolean
+  onCall: (task: Task) => void
+}) {
+  const [callEligible, setCallEligible] = useState(false)
+  const [callReason, setCallReason] = useState("Checking Call route…")
+  useEffect(() => {
+    if (!canCall) return
+    let current = true
+    const timeout = window.setTimeout(async () => {
+      const token = await getAccessToken()
+      if (!token || !current) return
+      const result = await getTaskOutboundEligibility({
+        client: portalClient(token),
+        path: { taskId: task.id },
+      }).catch(() => undefined)
+      if (!current) return
+      if (!result?.data) {
+        setCallEligible(false)
+        setCallReason("Call eligibility is temporarily unavailable.")
+        return
+      }
+      setCallEligible(result.data.eligible)
+      setCallReason(result.data.reason)
+    }, 0)
+    return () => {
+      current = false
+      window.clearTimeout(timeout)
+    }
+  }, [canCall, historyHint, task.id, task.state, task.version])
+
+  const taskCallingEligible = canCall && callEligible
+  const taskCallingReason = canCall
+    ? callReason
+    : "Calling is not enabled for this account."
+
+  return <Button variant="outline" className="shadow-sm" disabled={!taskCallingEligible || pending} title={taskCallingEligible ? "Call this Task" : taskCallingReason} onClick={() => onCall(task)}>
+    {pending ? <Spinner /> : <PhoneCallIcon />} {pending ? "Preparing…" : "Call"}
+  </Button>
 }

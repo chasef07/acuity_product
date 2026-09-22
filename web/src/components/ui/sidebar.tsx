@@ -135,7 +135,7 @@ function SidebarProvider({
           } as React.CSSProperties
         }
         className={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
+          "group/sidebar-wrapper flex min-h-svh w-full bg-canvas has-data-[variant=inset]:bg-sidebar",
           className
         )}
         {...props}
@@ -389,8 +389,8 @@ const sidebarMenuButtonVariants = cva(
           "bg-background shadow-[0_0_0_1px_var(--sidebar-border)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_var(--sidebar-accent)]",
       },
       size: {
-        default: "h-8 text-sm/5",
-        sm: "h-7 text-sm/5",
+        default: "h-9 text-sm/5",
+        sm: "h-8 text-sm/5",
         lg: "h-12 text-sm/5 group-data-[collapsible=icon]:p-0!",
       },
     },
@@ -456,6 +456,7 @@ function SidebarMenuButton({
 }
 
 export {
+  useSidebar,
   Sidebar,
   SidebarContent,
   SidebarFooter,

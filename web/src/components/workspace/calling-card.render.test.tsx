@@ -306,3 +306,11 @@ function lease() {
 function matches(value: string, pattern: string) {
   return value.split(pattern).length - 1
 }
+
+test("compact workspace calling status keeps recovery actions visible", () => {
+  for (const [kind, label] of [["ownership", "Use this browser"], ["media", "Refresh page"]] as const) {
+    const html = renderToStaticMarkup(<CallingFailureNotice compact failure={{ kind, recoverable: true, message: "private runtime detail" }} onRecover={() => undefined} />)
+    assert.match(html, new RegExp(`>${label}</`))
+    assert.doesNotMatch(html, /private runtime detail/)
+  }
+})

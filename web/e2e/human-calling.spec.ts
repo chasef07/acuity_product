@@ -580,14 +580,17 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     const viewport = selectedPage.viewportSize()
     expect(contextPanelBox).not.toBeNull()
     expect(viewport).not.toBeNull()
-    expect(contextPanelBox!.height).toBeLessThan(viewport!.height * 0.75)
+    expect(contextPanelBox!.y).toBeCloseTo(0, 0)
+    expect(contextPanelBox!.y + contextPanelBox!.height).toBeCloseTo(viewport!.height, 0)
     await selectedPage.setViewportSize({ width: 800, height: 1200 })
     await expect
       .poll(async () => {
         const compactPanelBox = await contextPanel.boundingBox()
-        return compactPanelBox?.height ?? 1200
+        if (!compactPanelBox) return false
+        return Math.abs(compactPanelBox.y + compactPanelBox.height - 1200) < 1 &&
+          Math.abs(compactPanelBox.y) < 1
       })
-      .toBeLessThan(900)
+      .toBe(true)
     await expect(callCenter(secondaryPage)).toHaveCount(0)
     await expect(
       secondaryPage.getByRole("button", { name: "End call", exact: true }),
@@ -1112,7 +1115,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     await expect(
       missedCallContext.getByRole("heading", { name: "Missed call" }),
     ).toBeVisible()
-    await expect(missedCallContext).toHaveCSS("width", "288px")
+    await expect(missedCallContext).toHaveCSS("width", "384px")
     await expect(missedCallContext.getByText("Live call")).toHaveCount(0)
     await expect(missedCallContext.getByText("Contact Context")).toHaveCount(0)
     await page.screenshot({

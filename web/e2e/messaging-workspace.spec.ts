@@ -198,19 +198,20 @@ test("rail hover details and the message composer preserve compact context", asy
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
 
-  const appearanceButton = page.getByRole("button", { name: "Appearance" })
-  await expect(appearanceButton).toHaveCSS("height", "32px")
-  await expect(appearanceButton.locator("svg")).toHaveCSS("width", "16px")
+  const appearanceButton = page.getByRole("button", { name: "Account menu" })
+  await expect(appearanceButton).toBeVisible()
+  await expect(appearanceButton.locator('[data-slot="avatar"]')).toBeVisible()
   await appearanceButton.click()
-  await expect(page.getByRole("menuitemradio", { name: "System" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "System", exact: true })).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath("appearance-menu.png"),
     fullPage: true,
   })
-  await page.getByRole("menuitemradio", { name: "Light" }).click()
+  await page.getByRole("button", { name: "Light", exact: true }).click()
+  await page.keyboard.press("Escape")
   await expect(page.locator('[data-slot="sidebar-inner"]')).toHaveCSS(
     "background-color",
-    "lab(98.26 0 0)",
+    "rgb(243, 243, 243)",
   )
 
   await createAIStaffTask(
@@ -338,10 +339,10 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
 
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
-  ).toContainText("Abita Eye Group")
+  ).toHaveAttribute("title", /Abita Eye Group/)
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
-  ).toContainText("Fixture Location 1")
+  ).toHaveAttribute("title", /Fixture Location 1/)
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^My Tasks/ })).toHaveAttribute(
     "aria-expanded",
@@ -650,7 +651,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     contextPanel.getByRole("heading", { name: "Follow up on text" }),
   ).toBeVisible()
-  await expect(contextPanel).toHaveCSS("width", "288px")
+  await expect(contextPanel).toHaveCSS("width", "384px")
   await expect(contextPanel.getByText("Task context", { exact: true })).toHaveCount(0)
   await expect(contextPanel.getByText("Normal", { exact: true })).toBeHidden()
   await page.screenshot({

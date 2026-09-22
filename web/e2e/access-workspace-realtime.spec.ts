@@ -206,9 +206,9 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     const workspaceSelector = page.getByRole("button", {
       name: "Workspace selector",
     })
-    await expect(workspaceSelector).toContainText("Abita Eye Group")
-    await expect(workspaceSelector).toContainText("All offices")
-    await expect(page.getByLabel("Live updates connected")).toBeVisible()
+    await expect(workspaceSelector).toHaveAttribute("title", /Abita Eye Group/)
+    await expect(workspaceSelector).toHaveAttribute("title", /All offices/)
+    await expect(page.locator('[data-testid="mounted-workspace"][data-connection="connected"]')).toBeVisible()
     await expect(page.getByRole("button", { name: "Analytics", exact: true })).toBeVisible()
     await expect(page.getByRole("button", { name: "AI diagnostics", exact: true })).toHaveCount(0)
   })
@@ -245,7 +245,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
   await secondCustomerPage.goto("/workspace")
   await expectNoOpenTasks(secondCustomerPage)
   await expect(
-    secondCustomerPage.getByLabel("Live updates connected"),
+    secondCustomerPage.locator('[data-testid="mounted-workspace"][data-connection="connected"]'),
   ).toBeVisible()
   await test.step("both established browsers recover from realtime instance death", async () => {
     const realtimePID = Number(process.env.E2E_REALTIME_PID)
@@ -270,9 +270,9 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     )
 
     process.kill(realtimePID, "SIGKILL")
-    await expect(page.getByLabel("Live updates delayed")).toBeVisible()
+    await expect(page.getByText("Live updates delayed. Reconnecting…", { exact: true })).toBeVisible()
     await expect(
-      secondCustomerPage.getByLabel("Live updates delayed"),
+      secondCustomerPage.getByText("Live updates delayed. Reconnecting…", { exact: true }),
     ).toBeVisible()
 
     const realtimeEndpoint = new URL(realtimeURL)
@@ -339,11 +339,11 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       .toBe("ready")
 
     await Promise.all([
-      expect(page.getByLabel("Live updates connected")).toBeVisible({
+      expect(page.locator('[data-testid="mounted-workspace"][data-connection="connected"]')).toBeVisible({
         timeout: browserReconnectAssertionMilliseconds,
       }),
       expect(
-        secondCustomerPage.getByLabel("Live updates connected"),
+        secondCustomerPage.locator('[data-testid="mounted-workspace"][data-connection="connected"]'),
       ).toBeVisible({ timeout: browserReconnectAssertionMilliseconds }),
     ])
     expect(firstBrowserRefetches).toBeGreaterThan(0)
@@ -582,13 +582,15 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
   await test.step("persisted theme and explicit browser states", async () => {
     await page.goto("/workspace")
     await expectNoOpenTasks(page)
-    const appearanceButton = page.getByRole("button", { name: "Appearance" })
-    const systemThemeOption = page.getByRole("menuitemradio", {
+    const appearanceButton = page.getByRole("button", { name: "Account menu" })
+    const systemThemeOption = page.getByRole("button", {
       name: "System",
+      exact: true,
     })
     await appearanceButton.click()
     await expect(systemThemeOption).toBeVisible()
-    await page.getByRole("menuitemradio", { name: "Light" }).click()
+    await page.getByRole("button", { name: "Light", exact: true }).click()
+    await page.keyboard.press("Escape")
     await expect(systemThemeOption).toBeHidden()
     await expect(page.locator("html")).not.toHaveClass(/dark/)
     await expect
@@ -605,18 +607,19 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       )
       .toEqual({
         background: "#fff",
-        foreground: "#0d0d0d",
+        foreground: "#242424",
         primary: "#0d0d0d",
-        sidebar: "lab(98.26% 0 0)",
+        sidebar: "#f3f3f3",
       })
     await page.screenshot({
       path: testInfo.outputPath("workspace-light.png"),
       fullPage: true,
     })
     await appearanceButton.click()
-    const darkThemeOption = page.getByRole("menuitemradio", { name: "Dark" })
+    const darkThemeOption = page.getByRole("button", { name: "Dark", exact: true })
     await expect(darkThemeOption).toBeVisible()
     await darkThemeOption.click()
+    await page.keyboard.press("Escape")
     await expect(darkThemeOption).toBeHidden()
     await expect(page.locator("html")).toHaveClass(/dark/)
     await expect
@@ -633,9 +636,9 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       )
       .toEqual({
         background: "#0f0f0f",
-        foreground: "#f5f5f3",
-        primary: "#f5f5f3",
-        sidebar: "#000",
+        foreground: "#f5f5f5",
+        primary: "#f5f5f5",
+        sidebar: "#171717",
       })
     await page.screenshot({
       path: testInfo.outputPath("workspace-dark.png"),
@@ -655,7 +658,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     await expectNoOpenTasks(coarsePage)
     await expect(
       coarsePage.getByRole("button", { name: "Workspace selector" }),
-    ).toContainText("Abita Eye Group")
+    ).toHaveAttribute("title", /Abita Eye Group/)
     await coarsePage.screenshot({
       path: testInfo.outputPath("workspace-coarse-pointer.png"),
       fullPage: true,

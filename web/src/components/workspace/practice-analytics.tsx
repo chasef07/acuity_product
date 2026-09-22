@@ -9,7 +9,6 @@ import { BookingOverview } from "@/components/analytics/booking-overview"
 import { StaffOverview } from "@/components/analytics/staff-overview"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { SidebarTrigger } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { portalClient } from "@/lib/api/client"
 import {
@@ -125,7 +124,6 @@ export function PracticeAnalytics({
       ]}
       from={current.state === "ready" ? current.report.from : undefined}
       through={current.state === "ready" ? current.report.through : undefined}
-      headerLeading={<SidebarTrigger collapsedOnly />}
     >
       {current.state === "loading" ? (
         <div

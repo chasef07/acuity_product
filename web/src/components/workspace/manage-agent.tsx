@@ -13,7 +13,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
-import { SidebarTrigger } from "@/components/ui/sidebar"
 import {
   Select,
   SelectContent,
@@ -185,13 +184,12 @@ export function ManageAgent({
 
   return (
     <section
-      aria-label="Manage my agent"
-      className="flex min-h-0 flex-1 flex-col"
+      aria-label="Manage agent"
+      className="flex min-h-0 flex-1 flex-col bg-canvas"
     >
-      <header className="flex shrink-0 items-center gap-3 border-b px-4 py-4 sm:px-6">
-        <SidebarTrigger collapsedOnly />
-        <h1 className="flex-1 text-lg font-semibold tracking-tight">
-          Manage my agent
+      <header className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-6 sm:px-6">
+        <h1 className="flex-1 text-2xl font-semibold tracking-tight">
+          Manage agent
         </h1>
         <Button
           variant="ghost"
@@ -202,7 +200,7 @@ export function ManageAgent({
           <RefreshCwIcon />
         </Button>
       </header>
-      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3 sm:px-6">
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-5 pt-2 sm:px-6">
         <Input
           aria-label="Search phone number"
           placeholder="Search phone number"
@@ -258,7 +256,7 @@ export function ManageAgent({
           Flagged calls
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto px-4 sm:px-6">
+      <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 sm:px-6">
         {!current && (
           <div
             role="status"
@@ -290,11 +288,11 @@ export function ManageAgent({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Date / time</TableHead>
-                    <TableHead>Phone number</TableHead>
+                    <TableHead className="w-40">Date / time</TableHead>
+                    <TableHead className="w-56">Phone number</TableHead>
                     <TableHead>Appointment action</TableHead>
-                    <TableHead className="text-right">Duration</TableHead>
-                    <TableHead className="text-right">Transferred</TableHead>
+                    <TableHead className="w-24 text-right">Duration</TableHead>
+                    <TableHead className="w-28 text-right">Transferred</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -304,7 +302,7 @@ export function ManageAgent({
                       className="cursor-pointer"
                       onClick={() => setSelectedID(call.id)}
                     >
-                      <TableCell className="py-4">
+                      <TableCell className="py-2">
                         <Button
                           variant="ghost"
                           className="h-auto flex-col items-start gap-0 px-2 py-1 -ml-2 tabular-nums"

@@ -1,12 +1,12 @@
 "use client"
 
-import { type ReactNode, useEffect, useRef } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
   ArrowRightIcon,
   Building2Icon,
-  BotIcon,
+  SparklesIcon,
   ChartNoAxesCombinedIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -17,10 +17,11 @@ import {
   MoonIcon,
   PhoneIcon,
   SearchIcon,
-  SunMoonIcon,
   SunIcon,
 } from "lucide-react"
 
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { AcuityMark } from "@/components/acuity-mark"
 import {
@@ -31,6 +32,8 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -100,14 +103,14 @@ const taskCategoryOptions: Array<{ value: TaskCategoryFilter; label: string }> =
 
 type WorkspaceRailProps = {
   projection: WorkspaceProjectionState
-  workspaceControl: ReactNode
-  availabilityControl: ReactNode
+  availabilityControl?: ReactNode
+  locationControl?: ReactNode
   onIntent: (intent: WorkspaceProjectionIntent) => void
 }
 
 export function WorkspaceRail({
   projection,
-  workspaceControl,
+  locationControl,
   availabilityControl,
   onIntent,
 }: WorkspaceRailProps) {
@@ -220,9 +223,9 @@ export function WorkspaceRail({
         key={task.id}
         task={task}
         active={
-          task.id === selectedTaskID ||
-          Boolean(
-            task.groupMembers?.some((member) => member.id === selectedTaskID),
+          projection.selection.view === "engagement" && (
+            task.id === selectedTaskID ||
+            Boolean(task.groupMembers?.some((member) => member.id === selectedTaskID))
           )
         }
         onSelect={() => onIntent({ type: "select-task", task })}
@@ -238,52 +241,93 @@ export function WorkspaceRail({
 
   return (
     <>
-      <Sidebar collapsible="offcanvas">
+      <Sidebar collapsible="offcanvas" className="group/rail">
         <SidebarHeader className="gap-3 p-3 pb-2">
           <div className="flex items-center gap-2 px-1">
-            <SidebarTrigger className="-ml-1 size-7 shrink-0 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground" />
             <AcuityMark className="size-7 shrink-0" />
-            <div className="min-w-0 flex-1">{workspaceControl}</div>
-            <ConnectionMark state={connection} />
+            <span className="flex-1 text-base font-semibold tracking-tight">Acuity Health</span>
+            <SidebarTrigger className="size-7 shrink-0 text-muted-foreground [@media(hover:hover)]:opacity-0 group-hover/rail:opacity-100 group-focus-within/rail:opacity-100 focus-visible:opacity-100" />
           </div>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              onIntent({ type: "submit-search" })
-            }}
-          >
-            <InputGroup className="h-8 rounded-md border-sidebar-border bg-sidebar-control shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-background hover:shadow-sm focus-within:border-sidebar-ring focus-within:bg-background focus-within:ring-2 focus-within:ring-sidebar-ring/30">
-              <InputGroupAddon>
-                <SearchIcon />
-              </InputGroupAddon>
-              <InputGroupInput
-                ref={searchInput}
-                aria-label="Search tasks, names, or phone"
-                aria-invalid={Boolean(engagementError)}
-                autoComplete="off"
-                enterKeyHint="go"
-                placeholder="Search"
-                value={search}
-                onChange={(event) =>
-                  onIntent({ type: "set-search", value: event.target.value })
-                }
-              />
-              <InputGroupAddon align="inline-end" className="md:hidden">
-                <InputGroupButton
-                  type="submit"
-                  size="icon-xs"
-                  aria-label="Search"
+          <div className="flex items-start gap-2">
+            <form className="min-w-0 flex-1"
+              onSubmit={(event) => {
+                event.preventDefault()
+                onIntent({ type: "submit-search" })
+              }}
+            >
+              <InputGroup className="h-9 rounded-md border-sidebar-border bg-sidebar-control shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-background hover:shadow-sm focus-within:border-sidebar-ring focus-within:bg-background focus-within:ring-2 focus-within:ring-sidebar-ring/30">
+                <InputGroupAddon>
+                  <SearchIcon />
+                </InputGroupAddon>
+                <InputGroupInput
+                  ref={searchInput}
+                  aria-label="Search tasks, names, or phone"
+                  aria-invalid={Boolean(engagementError)}
+                  autoComplete="off"
+                  enterKeyHint="go"
+                  placeholder="Search"
+                  value={search}
+                  onChange={(event) =>
+                    onIntent({ type: "set-search", value: event.target.value })
+                  }
+                />
+                <InputGroupAddon align="inline-end" className="md:hidden">
+                  <InputGroupButton
+                    type="submit"
+                    size="icon-xs"
+                    aria-label="Search"
+                  >
+                    <ArrowRightIcon />
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
+              {engagementError && (
+                <p role="alert" className="px-2 pt-1 text-xs text-destructive">
+                  {engagementError}
+                </p>
+              )}
+            </form>
+            {locationControl}
+          </div>
+          {connection === "degraded" && <p role="status" className="px-1 text-xs text-destructive">Live updates delayed. Reconnecting…</p>}
+          <SidebarMenu className="pt-1">
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={projection.selection.view === "manage-agent"}
+                tooltip="Manage agent"
+                onClick={() => onIntent({ type: "select-manage-agent" })}
+              >
+                <SparklesIcon />
+                <span>Manage agent</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            {canViewPracticeAnalytics(discovery, practice.id) && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={analyticsActive}
+                  tooltip="Analytics"
+                  onClick={() => onIntent({ type: "select-analytics" })}
                 >
-                  <ArrowRightIcon />
-                </InputGroupButton>
-              </InputGroupAddon>
-            </InputGroup>
-            {engagementError && (
-              <p role="alert" className="px-2 pt-1 text-xs text-destructive">
-                {engagementError}
-              </p>
+                  <ChartNoAxesCombinedIcon />
+                  <span>Analytics</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             )}
-          </form>
+            {discovery.platformOperator && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={projection.selection.view === "operator-analytics"}
+                  tooltip="AI diagnostics"
+                  onClick={() =>
+                    onIntent({ type: "select-operator-analytics" })
+                  }
+                >
+                  <ChartNoAxesCombinedIcon />
+                  <span>AI diagnostics</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
+          </SidebarMenu>
         </SidebarHeader>
         <SidebarContent
           ref={scrollContainer}
@@ -393,98 +437,43 @@ export function WorkspaceRail({
             </CompletedGroup>
           </div>
         </SidebarContent>
-        <SidebarFooter className="p-2">
-          {availabilityControl && (
-            <div className="mb-1 border-b border-sidebar-border px-2 py-2">
-              {availabilityControl}
-            </div>
-          )}
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={projection.selection.view === "manage-agent"}
-                tooltip="Manage my agent"
-                onClick={() => onIntent({ type: "select-manage-agent" })}
-              >
-                <BotIcon />
-                <span>Manage my agent</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            {canViewPracticeAnalytics(discovery, practice.id) && (
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={analyticsActive}
-                  tooltip="Analytics"
-                  onClick={() => onIntent({ type: "select-analytics" })}
-                >
-                  <ChartNoAxesCombinedIcon />
-                  <span>Analytics</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-            {discovery.platformOperator && (
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={projection.selection.view === "operator-analytics"}
-                  tooltip="AI diagnostics"
-                  onClick={() =>
-                    onIntent({ type: "select-operator-analytics" })
-                  }
-                >
-                  <ChartNoAxesCombinedIcon />
-                  <span>AI diagnostics</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-            <SidebarMenuItem>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <SidebarMenuButton
-                      aria-label="Appearance"
-                      className="data-popup-open:bg-sidebar-accent"
-                    />
-                  }
-                >
-                  <SunMoonIcon />
-                  <span>Appearance</span>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="right" align="end" className="w-40">
-                  <DropdownMenuRadioGroup
-                    value={theme ?? "system"}
-                    onValueChange={setTheme}
-                  >
-                    <DropdownMenuLabel>Theme</DropdownMenuLabel>
-                    <DropdownMenuRadioItem value="system" closeOnClick>
-                      <MonitorIcon />
-                      System
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="light" closeOnClick>
-                      <SunIcon />
-                      Light
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="dark" closeOnClick>
-                      <MoonIcon />
-                      Dark
-                    </DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="Sign out"
-                onClick={() =>
-                  void authClient.signOut().then((result) => {
-                    if (!result.error) router.push("/sign-in")
-                  })
-                }
-              >
-                <LogOutIcon />
-                <span className="truncate">{discovery.actor.email}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
+        <SidebarFooter className="border-t border-sidebar-border p-2">
+          {availabilityControl}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="ghost" className="h-auto w-full min-w-0 justify-start gap-2 px-2 py-2" aria-label="Account menu" />}
+            >
+              <Avatar>
+                <AvatarFallback>{discovery.actor.email.charAt(0).toUpperCase()}</AvatarFallback>
+              </Avatar>
+              <span className="truncate text-xs">{discovery.actor.email}</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-64">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Signed in as</DropdownMenuLabel>
+                <p className="truncate px-2 pb-2 text-sm" title={discovery.actor.email}>{discovery.actor.email}</p>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <div className="flex items-center justify-between gap-4 px-2 py-2">
+                <span className="text-xs text-muted-foreground">Theme</span>
+                <ToggleGroup aria-label="Theme" variant="outline" size="sm" spacing={0}
+                  value={[theme ?? "system"]}
+                  onValueChange={(values) => { if (values[0]) setTheme(values[0]) }}>
+                  <ToggleGroupItem value="light" aria-label="Light" title="Light"><SunIcon /></ToggleGroupItem>
+                  <ToggleGroupItem value="dark" aria-label="Dark" title="Dark"><MoonIcon /></ToggleGroupItem>
+                  <ToggleGroupItem value="system" aria-label="System" title="System"><MonitorIcon /></ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={() => void authClient.signOut().then((result) => {
+                  if (!result.error) router.push("/sign-in")
+                })}>
+                  <span>Sign out</span><LogOutIcon className="ml-auto" />
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </SidebarFooter>
       </Sidebar>
     </>
@@ -723,7 +712,7 @@ function TaskRow({
             grouped ? `${rowTitle}, ${groupCount} requests` : rowTitle
           }
           isActive={active}
-          className="h-7 rounded-lg px-2 pr-9 text-sidebar-foreground/80"
+          className="h-8 rounded-md px-2 pr-9 text-sidebar-foreground"
           onClick={onSelect}
         >
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -738,7 +727,7 @@ function TaskRow({
               {grouped && (
                 <span
                   aria-label={`${groupCount} Tasks`}
-                  className="shrink-0 text-[10px] tabular-nums text-muted-foreground"
+                  className="shrink-0 text-xs tabular-nums text-muted-foreground"
                 >
                   {groupCount}
                 </span>
@@ -916,26 +905,6 @@ function RailShowMore({
         {loading ? <Spinner /> : "Show more"}
       </button>
     </SidebarMenuItem>
-  )
-}
-
-function ConnectionMark({ state }: { state: ConnectionState }) {
-  return (
-    <span
-      aria-label={
-        state === "connected"
-          ? "Live updates connected"
-          : state === "connecting"
-            ? "Connecting live updates"
-            : "Live updates delayed"
-      }
-      className={cn(
-        "size-2 shrink-0 rounded-full",
-        state === "connected" && "bg-success",
-        state === "connecting" && "bg-warning",
-        state === "degraded" && "bg-destructive",
-      )}
-    />
   )
 }
 

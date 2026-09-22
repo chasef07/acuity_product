@@ -27,8 +27,8 @@ test("Task rail and canvas render one supplied projection and the rail emits sel
     <SidebarProvider>
       <WorkspaceRail
         projection={projection}
-        workspaceControl={<span>Workspace control</span>}
-        availabilityControl={<span>Available</span>}
+
+
         onIntent={() => {}}
       />
     </SidebarProvider>,
@@ -69,8 +69,8 @@ test("Task rail and canvas render one supplied projection and the rail emits sel
         <SidebarProvider>
           <WorkspaceRail
             projection={projection}
-            workspaceControl={<span>Workspace control</span>}
-            availabilityControl={<span>Available</span>}
+
+
             onIntent={(intent) => intents.push(intent)}
           />
         </SidebarProvider>,

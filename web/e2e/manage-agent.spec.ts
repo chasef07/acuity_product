@@ -57,7 +57,7 @@ test("staff review calls and persist an issue for Acuity", async ({
     )
     await signInAs(page, "selected@abita.test", "Synthetic Staff")
     await page
-      .getByRole("button", { name: "Manage my agent", exact: true })
+      .getByRole("button", { name: "Manage agent", exact: true })
       .click()
     await expect(page.getByRole("columnheader")).toHaveText([
       "Date / time",
@@ -139,7 +139,7 @@ test("staff review calls and persist an issue for Acuity", async ({
     })
     await page.reload()
     await page
-      .getByRole("button", { name: "Manage my agent", exact: true })
+      .getByRole("button", { name: "Manage agent", exact: true })
       .click()
     await page
       .getByRole("textbox", { name: "Search phone number" })
@@ -177,7 +177,7 @@ test("staff review calls and persist an issue for Acuity", async ({
     await page.setViewportSize({ width: 1280, height: 720 })
     await signInAs(page, "founder@acuity.test", "Synthetic Acuity Operator")
     await page
-      .getByRole("button", { name: "Manage my agent", exact: true })
+      .getByRole("button", { name: "Manage agent", exact: true })
       .click()
     await page
       .getByRole("textbox", { name: "Search phone number" })
@@ -253,7 +253,7 @@ test("call navigation preserves drafts and crosses page boundaries with retry", 
   }
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
   await page
-    .getByRole("button", { name: "Manage my agent", exact: true })
+    .getByRole("button", { name: "Manage agent", exact: true })
     .click()
   await page
     .getByRole("textbox", { name: "Search phone number" })
