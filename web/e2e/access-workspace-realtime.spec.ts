@@ -443,6 +443,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     const analyticsRegion = operatorPage.getByRole("region", {
       name: "AI call analytics",
     })
+    await analyticsRegion.getByRole("button", { name: "Overview", exact: true }).click()
     await expect(analyticsRegion.getByText("Total calls")).toBeVisible()
     await expect(analyticsRegion.getByRole("region", { name: "Call volume over time", exact: true }).getByRole("strong")).toHaveText("42")
     await expect(analyticsRegion.getByText("Booked", { exact: true })).toBeVisible()

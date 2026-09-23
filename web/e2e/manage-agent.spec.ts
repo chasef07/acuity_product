@@ -52,7 +52,13 @@ test("staff review calls and persist an issue for Acuity", async ({
             },
           ],
         },
-        { domainOutcomes: [{ outcome: "rescheduled", status: "success" }] },
+        {
+          domainOutcomes: [{
+            outcome: "rescheduled",
+            status: "success",
+            evidence: { appointmentId: "synthetic-new", cancelledAppointmentId: "synthetic-old" },
+          }],
+        },
       ],
     )
     await signInAs(page, "selected@abita.test", "Synthetic Staff")

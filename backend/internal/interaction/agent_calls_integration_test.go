@@ -51,6 +51,9 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != first || page.NextCursor == "" {
 		t.Fatalf("first page: %+v %v", page, err)
 	}
+	if len(page.Calls[0].AppointmentActions) != 0 {
+		t.Fatal("list must not present a bare agent claim as appointment success")
+	}
 	command.Cursor = page.NextCursor
 	page, err = module.QueryAgentCalls(ctx, command)
 	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != second || page.NextCursor != "" {
@@ -80,6 +83,9 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	detail, err := module.ReadAgentCall(ctx, staff, first)
 	if err != nil || len(detail.Messages) != 2 {
 		t.Fatalf("detail: %+v %v", detail, err)
+	}
+	if len(detail.Call.AppointmentActions) != 0 {
+		t.Fatal("detail must not present a bare agent claim as appointment success")
 	}
 	raw, _ := json.Marshal(detail)
 	if strings.Contains(string(raw), "private") {

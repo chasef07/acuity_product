@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.17.1](https://github.com/chasef07/acuity_product/compare/v1.17.0...v1.17.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **ci:** separate knowledge publication from application releases ([#351](https://github.com/chasef07/acuity_product/issues/351)) ([2355525](https://github.com/chasef07/acuity_product/commit/2355525f126e4e092806f281516874c0e5e7b0a9))
+
+## [1.17.0](https://github.com/chasef07/acuity_product/compare/v1.16.5...v1.17.0) (2026-09-23)
+
+
+### Features
+
+* **analytics:** add Jev call review and reusable manual tags ([#347](https://github.com/chasef07/acuity_product/issues/347)) ([b46e645](https://github.com/chasef07/acuity_product/commit/b46e6453fad921e99095d6d747ed6187ba9f8ce4))
+
 ## [1.16.5](https://github.com/chasef07/acuity_product/compare/v1.16.4...v1.16.5) (2026-09-21)
 
 

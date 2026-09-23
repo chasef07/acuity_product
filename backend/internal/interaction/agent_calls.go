@@ -151,7 +151,8 @@ func agentCall(stored Interaction, receipts json.RawMessage, flagged bool) Agent
 	var outcomes []map[string]any
 	_ = json.Unmarshal(receipts, &outcomes)
 	for _, outcome := range outcomes {
-		if stringValue(outcome["status"]) != "success" || boolValue(recordValue(outcome["evidence"])["replayed"]) {
+		evidence := recordValue(outcome["evidence"])
+		if stringValue(outcome["status"]) != "success" || len(evidence) == 0 || boolValue(evidence["replayed"]) {
 			continue
 		}
 		switch stringValue(outcome["outcome"]) {

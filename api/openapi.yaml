@@ -1308,6 +1308,57 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/operator/ai-interactions/{interactionId}/manual-tags:
+    parameters:
+      - name: interactionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getOperatorAICallTags
+      summary: Read or update manual call tags as a Platform Operator.
+      responses:
+        "200":
+          description: Available practice tags and tags applied to this call.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OperatorAICallTags"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      operationId: setOperatorAICallTag
+      summary: Read or update manual call tags as a Platform Operator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, applied]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 60}
+                applied: {type: boolean}
+      responses:
+        "200":
+          description: Available practice tags and tags applied to this call.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OperatorAICallTags"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks:
     post:
       operationId: createStaffTask
@@ -4173,6 +4224,12 @@ components:
         cacheSavingsUsd: {type: number, minimum: 0}
         items: {type: array, items: {$ref: "#/components/schemas/OperatorAICostItem"}}
         daily: {type: array, items: {$ref: "#/components/schemas/OperatorAICostDay"}}
+    OperatorAICallTags:
+      type: object
+      required: [available, selected]
+      properties:
+        available: {type: array, items: {type: string}}
+        selected: {type: array, items: {type: string}}
     OperatorAIAnalyticsRange:
       type: string
       enum: [24h, 7d, 30d]
@@ -4181,6 +4238,7 @@ components:
       additionalProperties: false
       required: [practiceId, range]
       properties:
+        manualTag: {type: string, maxLength: 60}
         practiceId:
           type: string
           format: uuid
@@ -4403,6 +4461,8 @@ components:
         - transferred
         - transcriptAvailable
       properties:
+        reviewReasons: {type: array, items: {type: string}}
+        manualTags: {type: array, items: {type: string}}
         id:
           type: string
           format: uuid
@@ -4459,6 +4519,7 @@ components:
       additionalProperties: false
       required: [calls, nextCursor]
       properties:
+        availableTags: {type: array, items: {type: string}}
         summary:
           $ref: "#/components/schemas/OperatorAIAnalyticsSummary"
         calls:
@@ -4595,6 +4656,10 @@ components:
         - timeline
         - toolExecutions
       properties:
+        evaluation:
+          type: object
+          additionalProperties: true
+          description: Complete stored evaluator result, including version, status, answers and usage.
         id:
           type: string
           format: uuid

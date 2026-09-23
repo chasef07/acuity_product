@@ -641,3 +641,6 @@ GRANT SELECT, UPDATE ON work_text_replies TO acuity_worker;
 
 -- Staff reports remain attached to their authorized AI Interaction.
 GRANT SELECT, INSERT ON public.ai_interaction_issues TO acuity_portal;
+-- Manual call review labels are owned by the operator-facing portal.
+GRANT SELECT, INSERT ON ai_manual_tags TO acuity_portal;
+GRANT SELECT, INSERT, DELETE ON ai_interaction_manual_tags TO acuity_portal;

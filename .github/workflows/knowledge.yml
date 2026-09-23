@@ -1,12 +1,6 @@
 name: Knowledge
 
 on:
-  workflow_call:
-    inputs:
-      release_sha:
-        description: Exact commit successfully deployed by Release
-        required: true
-        type: string
   pull_request:
     paths:
       - 'knowledge/**'
@@ -43,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.release_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -53,7 +47,7 @@ jobs:
       - run: bash scripts/knowledge-validate.sh
 
   publish:
-    if: github.ref == 'refs/heads/main' && (inputs.release_sha != '' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -67,19 +61,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.release_sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Require current knowledge contents
         env:
-          KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
+          KNOWLEDGE_COMMIT: ${{ github.sha }}
         run: |
-          # A merge during deployment only supersedes publication if it changes
-          # knowledge. Keep the checkout pinned to the verified release.
+          # A concurrent merge supersedes publication only if knowledge changes.
+          # Keep the checkout pinned to the manually selected commit.
           git fetch --no-tags --depth=1 origin refs/heads/main
           if ! git diff --quiet "$KNOWLEDGE_COMMIT" FETCH_HEAD -- knowledge/; then
-            echo 'Knowledge differs from current main. Publish the newer knowledge after its release is deployed.' >&2
+            echo 'Knowledge differs from current main. Dispatch again from current main after confirming backend compatibility.' >&2
             exit 1
           fi
       - name: Authenticate to Google Cloud
@@ -92,7 +86,7 @@ jobs:
         run: go install github.com/GoogleCloudPlatform/cloud-sql-proxy/v2@v2.25.4
       - name: Publish and verify office knowledge
         env:
-          KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
+          KNOWLEDGE_COMMIT: ${{ github.sha }}
           KNOWLEDGE_OFFICE: ${{ inputs.office || 'all' }}
           KNOWLEDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/knowledge-publication
           KNOWLEDGE_GOOGLE_PROJECT: ${{ vars.GCP_PROJECT_ID }}
@@ -106,7 +100,7 @@ jobs:
       - name: Record verified knowledge release
         env:
           GH_TOKEN: ${{ github.token }}
-          KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
+          KNOWLEDGE_COMMIT: ${{ github.sha }}
           KNOWLEDGE_OFFICE: ${{ inputs.office || 'all' }}
           KNOWLEDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/knowledge-publication
         run: python3 scripts/knowledge-release.py
