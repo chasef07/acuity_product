@@ -3252,6 +3252,9 @@ components:
           $ref: "#/components/schemas/StaffTaskCategory"
         callerName:
           type: string
+        sourceReviewKey:
+          description: Immutable source appointment outcome key.
+          type: string
         sourceInteractionId:
           description: Exact source AI interaction for this appointment review.
           type: string
@@ -3590,6 +3593,18 @@ components:
       additionalProperties: false
       required: [status, patientName, submittedName, plan, memberIdLast4, checkedAt, reason, benefits]
       properties:
+        providerCheck:
+          type: boolean
+        providerProfileId:
+          type: string
+        providerName:
+          type: string
+        providerNpi:
+          type: string
+        appointmentReviewKeys:
+          type: array
+          items:
+            type: string
         status:
           type: string
           enum: [active, inactive, review, unknown, unavailable, pending]

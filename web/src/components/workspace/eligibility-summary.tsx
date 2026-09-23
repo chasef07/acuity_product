@@ -7,6 +7,13 @@ const strings = (value: unknown): string[] =>
     ? value.filter((v): v is string => typeof v === "string")
     : []
 const codes = (row: Benefit) => strings(row.serviceTypeCodes)
+// Ordering is only a reading aid; it does not establish the applicable copay.
+const mentionsSpecialistCopay = (row: Benefit) => row.code === "B" && (
+  Array.isArray(row.additionalInformation) && row.additionalInformation.some((item) =>
+    item && typeof item === "object" && "description" in item &&
+    /\bspecialist\b/i.test(text(item.description)) && !/\b(?:non[ -]?|not a )specialist\b/i.test(text(item.description)),
+  )
+)
 const labels: Record<AiEligibilityCheck["status"], string> = {
   active: "Active coverage",
   inactive: "Inactive coverage reported",
@@ -42,15 +49,42 @@ function checkedAt(value: string) {
 
 export function EligibilitySummary({
   checks,
+  appointmentReviewKey,
 }: {
   checks?: AiEligibilityCheck[]
+  appointmentReviewKey?: string
 }) {
-  if (!checks?.length) return null
+  if (!checks?.length && !appointmentReviewKey) return null
+  const selected = (check: AiEligibilityCheck) => !appointmentReviewKey || check.appointmentReviewKeys?.includes(appointmentReviewKey)
+  const primary = (checks ?? []).filter(selected).toReversed()
+  const other = (checks ?? []).filter((check) => !selected(check)).toReversed()
   return (
     <section aria-label="Insurance eligibility" className="border-t px-5 py-4">
       <h3 className="mb-3 text-sm font-semibold">Insurance</h3>
-      {checks.toReversed().map((check, index) => (
-        <div key={index} className={index ? "mt-5 border-t pt-4" : ""}>
+      {appointmentReviewKey && primary.length === 0 && (
+        <p className="text-sm">Booked provider eligibility needs verification. No check is linked to this appointment’s provider.</p>
+      )}
+      {primary.map((check, index) => <CheckDetails key={index} check={check} />)}
+      {other.length > 0 && (
+        <details className="mt-4 border-t pt-3">
+          <summary className="cursor-pointer text-xs font-medium">Other provider and intake checks</summary>
+          <p className="mt-2 text-xs text-muted-foreground">These checks do not establish benefits for this appointment’s provider.</p>
+          {other.map((check, index) => <CheckDetails key={index} check={check} />)}
+        </details>
+      )}
+    </section>
+  )
+}
+
+function CheckDetails({ check }: { check: AiEligibilityCheck }) {
+  return (
+    <div className="mt-4 border-t pt-4 first:mt-0 first:border-0 first:pt-0">
+      {check.providerCheck && (
+        <div className="mb-3">
+          <p className="text-sm font-medium">{check.providerName || "Provider not identified"}</p>
+          {check.providerNpi && <p className="text-xs text-muted-foreground">NPI {check.providerNpi}</p>}
+        </div>
+      )}
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-medium break-words">
@@ -91,9 +125,12 @@ export function EligibilitySummary({
               status.
             </p>
           )}
+          {check.providerCheck && check.benefits.some((row) => codes(row).includes("98")) && (
+            <p className="mt-3 text-xs text-muted-foreground">Specialist copay needs verification. Review the listed service, network, and provider tier; active coverage alone does not establish the applicable amount.</p>
+          )}
           <BenefitGroup
             title="Physician office-visit benefits"
-            rows={check.benefits.filter((row) => codes(row).includes("98"))}
+            rows={check.benefits.filter((row) => codes(row).includes("98")).toSorted((a, b) => Number(mentionsSpecialistCopay(b)) - Number(mentionsSpecialistCopay(a)))}
             empty="Office-visit benefits not returned."
             open
           />
@@ -154,9 +191,7 @@ export function EligibilitySummary({
             Coverage is as of the check date. Benefits depend on the listed
             service, network, and plan conditions.
           </p>
-        </div>
-      ))}
-    </section>
+    </div>
   )
 }
 

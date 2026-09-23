@@ -3280,6 +3280,7 @@ func taskResponse(task work.Task) (api.Task, error) {
 	}
 	if task.SourceInteractionID != "" {
 		response.SourceInteractionId = &task.SourceInteractionID
+		response.SourceReviewKey = stringPointer(task.SourceReviewKey)
 	}
 	if task.SourceCallID != "" {
 		response.SourceCallId = &task.SourceCallID
@@ -3818,6 +3819,7 @@ func aiInteractionDetailResponse(
 		projected := make([]api.AIEligibilityCheck, 0, len(checks))
 		for _, check := range checks {
 			projected = append(projected, api.AIEligibilityCheck{
+				ProviderCheck: &check.ProviderCheck, ProviderProfileId: stringPointer(check.ProviderProfileID), ProviderName: stringPointer(check.ProviderName), ProviderNpi: stringPointer(check.ProviderNPI), AppointmentReviewKeys: &check.AppointmentReviewKeys,
 				Status: api.AIEligibilityCheckStatus(check.Status), PatientName: check.PatientName, SubmittedName: check.SubmittedName,
 				Plan: check.Plan, PlanName: stringPointer(check.PlanName), MemberIdLast4: check.MemberIDLast4,
 				CheckedAt: check.CheckedAt, Reason: check.Reason, Benefits: check.Benefits,

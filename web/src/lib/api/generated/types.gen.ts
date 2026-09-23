@@ -440,6 +440,10 @@ export type Task = {
     category?: StaffTaskCategory;
     callerName?: string;
     /**
+     * Immutable source appointment outcome key.
+     */
+    sourceReviewKey?: string;
+    /**
      * Exact source AI interaction for this appointment review.
      */
     sourceInteractionId?: string;
@@ -590,6 +594,11 @@ export type AiAppointmentFacts = {
 };
 
 export type AiEligibilityCheck = {
+    providerCheck?: boolean;
+    providerProfileId?: string;
+    providerName?: string;
+    providerNpi?: string;
+    appointmentReviewKeys?: Array<string>;
     status: 'active' | 'inactive' | 'review' | 'unknown' | 'unavailable' | 'pending';
     patientName: string;
     submittedName: string;

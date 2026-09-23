@@ -32,3 +32,42 @@ func TestEligibilityProjectionDoesNotInferCoverageFromPayerRows(t *testing.T) {
 		t.Fatal("unmatched patient shown active")
 	}
 }
+
+func TestProviderEligibilityUsesExactBatchProviderAndAppointmentEvent(t *testing.T) {
+	response := func(profile, status string) map[string]any {
+		return map[string]any{"provider": map[string]any{"profileId": profile, "firstName": "Synthetic", "lastName": profile, "npi": "synthetic-npi"}, "status": status, "identity": map[string]any{"status": "exact_name_dob", "reviewRequired": false}, "providerResponse": map[string]any{"benefitsInformation": []any{map[string]any{"code": "B", "serviceTypeCodes": []string{"98"}, "benefitAmount": "80"}}}}
+	}
+	batch := func(id string) map[string]any {
+		return map[string]any{"id": id, "externalPatientId": "synthetic-patient", "status": "complete", "result": map[string]any{"providerResults": []any{response("doctor-a", "active"), response("doctor-b", "unknown"), response("doctor-c", "active")}}}
+	}
+	outcome := func(batchID, profile, occurredAt, status string) map[string]any {
+		return map[string]any{"status": "success", "evidence": map[string]any{"newAppointmentId": "synthetic-appointment", "externalPatientId": "synthetic-patient", "occurredAt": occurredAt, "bookingResult": map[string]any{"status": status, "eligibilityCheckId": batchID, "providerProfileId": profile}}}
+	}
+	raw, err := json.Marshal(map[string]any{"eligibilityChecks": []any{batch("intake-a"), batch("intake-b")}, "domainOutcomes": []any{outcome("intake-a", "doctor-b", "2026-09-23T12:00:00.123456+00:00", "booked"), outcome("intake-b", "doctor-c", "2026-09-23T12:05:00Z", "booked"), outcome("intake-a", "doctor-a", "2026-09-23T12:10:00Z", "failed"), outcome("intake-a", "doctor-a", "bad-date", "booked")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := ProjectEligibilityChecks(Interaction{ID: "interaction-1", CloseoutPayload: raw})
+	if len(checks) != 6 {
+		t.Fatalf("lost batch/provider evidence: %d", len(checks))
+	}
+	for i, check := range checks {
+		if !check.ProviderCheck || check.ProviderNPI != "synthetic-npi" || len(check.Benefits) != 1 {
+			t.Fatalf("lost doctor evidence: %#v", check)
+		}
+		switch i {
+		case 1:
+			if check.Status != "unknown" || len(check.AppointmentReviewKeys) != 1 || check.AppointmentReviewKeys[0] != "interaction-1:2026-09-23T12:00:00.123456Z" {
+				t.Fatalf("booked doctor's failure substituted: %#v", check)
+			}
+		case 5:
+			if len(check.AppointmentReviewKeys) != 1 || check.AppointmentReviewKeys[0] != "interaction-1:2026-09-23T12:05:00Z" {
+				t.Fatalf("wrong later event: %#v", check)
+			}
+		default:
+			if len(check.AppointmentReviewKeys) != 0 {
+				t.Fatalf("unrelated check promoted: %#v", check)
+			}
+		}
+	}
+}

@@ -452,7 +452,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                                     Retry insurance eligibility
                                   </Button>
                                 </div>
-                              : <EligibilitySummary checks={state.selection.aiInteraction?.eligibilityChecks} />
+                              : <EligibilitySummary checks={state.selection.aiInteraction?.eligibilityChecks} appointmentReviewKey={selectedTask.sourceReviewKey} />
                           : undefined
                       }
                       group={state.selection.taskGroup}

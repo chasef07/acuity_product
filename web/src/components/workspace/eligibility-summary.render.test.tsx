@@ -118,3 +118,43 @@ test("applicability and identity review evidence stay visible with the benefit",
   }
   for (const value of ["date of birth conflict", "synthetic-check-1", "synthetic-search-1", "retained"]) assert.ok(html.includes(value), value)
 })
+
+
+test("only the exact booked doctor and intake are prominent, including a failed check", () => {
+  const provider = (name: string, key: string, status: AiEligibilityCheck["status"] = "active"): AiEligibilityCheck => ({ ...check, providerCheck: true, providerName: name, providerNpi: "synthetic-npi", status, appointmentReviewKeys: key ? [key] : [] })
+  const checks = [provider("Doctor A", ""), provider("Doctor B", "event-a", "unknown"), provider("Doctor C", "event-b")]
+  const document = new JSDOM(renderToStaticMarkup(<EligibilitySummary checks={checks} appointmentReviewKey="event-a" />)).window.document
+  for (const name of ["Doctor A", "Doctor C"]) {
+    const node = [...document.querySelectorAll("p")].find((node) => node.textContent === name)!
+    assert.ok(node.closest("details:not([open])"), name)
+  }
+  const booked = [...document.querySelectorAll("p")].find((node) => node.textContent === "Doctor B")!
+  assert.equal(booked.closest("details"), null)
+  assert.ok(booked.parentElement?.parentElement?.textContent?.includes("Unable to confirm coverage"))
+  assert.ok(document.body.textContent?.includes("provider tier"))
+  const missing = renderToStaticMarkup(<EligibilitySummary checks={checks} appointmentReviewKey="event-missing" />)
+  assert.ok(missing.includes("Booked provider eligibility needs verification"))
+})
+
+test("appointment never substitutes legacy evidence or silently hides absent linked checks", () => {
+  for (const checks of [undefined, [], [check]]) {
+    const document = new JSDOM(renderToStaticMarkup(<EligibilitySummary checks={checks} appointmentReviewKey="event-a" />)).window.document
+    assert.ok(document.body.textContent?.includes("Booked provider eligibility needs verification"))
+    const active = [...document.querySelectorAll("span")].find((node) => node.textContent?.includes("Active coverage"))
+    if (active) assert.ok(active.closest("details:not([open])"))
+  }
+})
+
+test("explicit specialist copay rows precede PCP without becoming an unqualified price", () => {
+  const document = new JSDOM(renderToStaticMarkup(<EligibilitySummary checks={[{
+    ...check, providerCheck: true,
+    benefits: [
+      { code: "B", name: "Co-payment", serviceTypeCodes: ["98"], benefitAmount: "40", additionalInformation: [{ description: "Primary care visit" }] },
+      { code: "B", name: "Co-payment", serviceTypeCodes: ["98"], benefitAmount: "80", additionalInformation: [{ description: "Specialist visit · designated tier" }] },
+    ],
+  }]} />)).window.document
+  const first = document.querySelector("tbody tr")!
+  assert.ok(first.textContent?.includes("$80.00"))
+  assert.ok(first.textContent?.includes("designated tier"))
+  assert.ok(document.body.textContent?.includes("Specialist copay needs verification"))
+})
