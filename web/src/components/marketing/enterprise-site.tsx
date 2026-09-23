@@ -417,6 +417,9 @@ export function StediPageContent() {
           <p>Stedi connects eligibility requests to insurance payers. Acuity brings that connection into the work of answering patient calls and preparing the next step with your practice.</p>
           <p>Real-time checks help reduce manual verification. Available benefits and response times depend on the payer, the patient information provided, and your practice’s enrollment.</p>
           <div className={styles.platformActions}>
+            <a className={styles.inlineArrowLink} href="https://www.stedi.com/blog/spotlight-chase-fagen-acuity-health" target="_blank" rel="noreferrer">
+              Read our CTO’s thoughts on Stedi <ArrowRight size={16} aria-hidden="true" />
+            </a>
             <a className={styles.inlineArrowLink} href={stediPartnerUrl} target="_blank" rel="noreferrer">
               View Acuity on Stedi <ArrowRight size={16} aria-hidden="true" />
             </a>
