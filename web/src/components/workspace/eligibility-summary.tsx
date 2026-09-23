@@ -257,9 +257,10 @@ function BenefitTable({ title, rows, empty }: {
 }
 
 function benefitValue(row: Benefit): string {
-  const amount = text(row.benefitAmount),
-    percent = text(row.benefitPercent)
+  const amount = text(row.benefitAmount).trim(),
+    percent = text(row.benefitPercent).trim()
   const values: string[] = []
+  if (row.code === "B" && !amount && !percent) values.push("Amount not returned")
   if (amount)
     values.push(
       Number.isFinite(Number(amount))

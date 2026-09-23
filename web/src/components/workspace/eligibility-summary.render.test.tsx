@@ -174,3 +174,28 @@ test("physician copayment and qualifiers stay outside collapsed details without 
   assert.ok(other.textContent?.includes("20%"))
   assert.ok(!other.textContent?.includes("$0.00"))
 })
+
+
+test("blank copayment amounts remain missing while genuine zero remains visible", () => {
+  for (const value of [undefined, null, "", "   ", "\t\n"]) {
+    const html = renderToStaticMarkup(<EligibilitySummary checks={[{
+      ...check,
+      benefits: [{ code: "B", name: "Co-payment", serviceTypeCodes: ["98"], benefitAmount: value, benefitPercent: value, timeQualifier: "Visit", futureField: "preserved" }],
+    }]} />)
+    const document = new JSDOM(html).window.document
+    const amount = [...document.querySelectorAll("p")].find((node) => node.textContent?.includes("Amount not returned"))
+    assert.ok(amount, String(value))
+    assert.equal(amount.closest("details"), null)
+    assert.ok(!html.includes("$0.00"))
+    assert.ok(!html.includes("0%"))
+    assert.ok(html.includes("Visit"))
+    assert.ok(html.includes("preserved"))
+  }
+  const zero = renderToStaticMarkup(<EligibilitySummary checks={[{
+    ...check,
+    benefits: [{ code: "B", name: "Co-payment", serviceTypeCodes: ["98"], benefitAmount: " 0 ", benefitPercent: "0" }],
+  }]} />)
+  assert.ok(zero.includes("$0.00"))
+  assert.ok(zero.includes("0%"))
+  assert.ok(!zero.includes("Amount not returned"))
+})
