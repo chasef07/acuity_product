@@ -77,6 +77,15 @@ export function EligibilitySummary({
 }
 
 function CheckDetails({ check }: { check: AiEligibilityCheck }) {
+  const officeBenefits = check.benefits.filter((row) => codes(row).includes("98"))
+  const copayments = officeBenefits.filter((row) => row.code === "B").toSorted(
+    (a, b) => Number(mentionsSpecialistCopay(b)) - Number(mentionsSpecialistCopay(a)),
+  )
+  const statusColor = check.status === "active"
+    ? "text-emerald-700 dark:text-emerald-400"
+    : check.status === "review" || check.status === "inactive"
+      ? "text-amber-700 dark:text-amber-400"
+      : "text-muted-foreground"
   return (
     <div className="mt-4 border-t pt-4 first:mt-0 first:border-0 first:pt-0">
       {check.providerCheck && (
@@ -97,7 +106,7 @@ function CheckDetails({ check }: { check: AiEligibilityCheck }) {
               )}
             </div>
             <span
-              className={`max-w-[48%] shrink-0 text-right text-xs font-medium ${check.status === "active" ? "text-emerald-700 dark:text-emerald-400" : check.status === "review" || check.status === "inactive" ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}
+              className={`max-w-[48%] shrink-0 text-right text-xs font-medium ${statusColor}`}
             >
               {check.status === "active" && <span aria-hidden="true">✓ </span>}
               {labels[check.status]}
@@ -125,14 +134,24 @@ function CheckDetails({ check }: { check: AiEligibilityCheck }) {
               status.
             </p>
           )}
-          {check.providerCheck && check.benefits.some((row) => codes(row).includes("98")) && (
-            <p className="mt-3 text-xs text-muted-foreground">Specialist copay needs verification. Review the listed service, network, and provider tier; active coverage alone does not establish the applicable amount.</p>
+          {check.providerCheck && officeBenefits.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Specialist copay needs verification. Review the listed service,
+              network, and provider tier; active coverage alone does not establish
+              the applicable amount.
+            </p>
           )}
+          <section aria-label="Physician visit copayment" className="mt-4 border-t pt-3">
+            <h4 className="text-xs font-medium">Physician visit copayment</h4>
+            <BenefitTable
+              title="Physician visit copayment"
+              rows={copayments}
+              empty="Physician visit copayment not returned."
+            />
+          </section>
           <BenefitGroup
-            title="Physician office-visit benefits"
-            rows={check.benefits.filter((row) => codes(row).includes("98")).toSorted((a, b) => Number(mentionsSpecialistCopay(b)) - Number(mentionsSpecialistCopay(a)))}
-            empty="Office-visit benefits not returned."
-            open
+            title="Other physician office-visit benefits"
+            rows={officeBenefits.filter((row) => row.code !== "B")}
           />
           <BenefitGroup
             title="General plan benefits"
@@ -199,38 +218,41 @@ function BenefitGroup({
   title,
   rows,
   empty,
-  open = false,
 }: {
   title: string
   rows: Benefit[]
   empty?: string
-  open?: boolean
 }) {
   if (!rows.length && !empty) return null
   return (
-    <details open={open} className="mt-4 border-t pt-3">
+    <details className="mt-4 border-t pt-3">
       <summary className="cursor-pointer text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-4">
         {title}
       </summary>
-      {!rows.length ? (
-        <p className="mt-3 text-xs text-muted-foreground">{empty}</p>
-      ) : (
-        <table className="mt-3 w-full table-fixed text-left text-xs">
-          <caption className="sr-only">{title}</caption>
-          <thead>
-            <tr className="text-muted-foreground">
-              <th className="w-[34%] pb-2 pr-3 font-normal">Benefit</th>
-              <th className="pb-2 font-normal">Returned details</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <BenefitRow key={index} row={row} />
-            ))}
-          </tbody>
-        </table>
-      )}
+      <BenefitTable title={title} rows={rows} empty={empty} />
     </details>
+  )
+}
+
+function BenefitTable({ title, rows, empty }: {
+  title: string
+  rows: Benefit[]
+  empty?: string
+}) {
+  if (!rows.length) return <p className="mt-3 text-xs text-muted-foreground">{empty}</p>
+  return (
+    <table className="mt-3 w-full table-fixed text-left text-xs">
+      <caption className="sr-only">{title}</caption>
+      <thead>
+        <tr className="text-muted-foreground">
+          <th className="w-[34%] pb-2 pr-3 font-normal">Benefit</th>
+          <th className="pb-2 font-normal">Returned details</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, index) => <BenefitRow key={index} row={row} />)}
+      </tbody>
+    </table>
   )
 }
 
@@ -305,7 +327,9 @@ function BenefitRow({ row }: { row: Benefit }) {
       </th>
       <td className="py-3 break-words">
         {benefitValue(row) && (
-          <p className="font-medium tabular-nums">{benefitValue(row)}</p>
+          <p className={row.code === "B" ? "text-base font-semibold tabular-nums" : "font-medium tabular-nums"}>
+            {benefitValue(row)}
+          </p>
         )}
         {qualifiers.length > 0 && (
           <p className="mt-1 text-muted-foreground">{qualifiers.join(" · ")}</p>

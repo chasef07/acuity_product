@@ -47,10 +47,10 @@ test("office visits lead general benefits and retain amounts, qualifiers, and co
   const html = renderToStaticMarkup(<EligibilitySummary checks={[check]} />)
   const document = new JSDOM(html).window.document
   assert.ok(
-    html.indexOf("Physician office-visit benefits") <
+    html.indexOf("Physician visit copayment") <
       html.indexOf("General plan benefits"),
   )
-  assert.equal(document.querySelector("details")?.open, true)
+  assert.equal(document.querySelector("table")?.closest("details"), null)
   for (const value of [
     "Active coverage",
     "$0.00",
@@ -72,7 +72,7 @@ test("missing office benefits remain explicit, never inferred from active plan s
       checks={[{ ...check, benefits: [check.benefits[0]] }]}
     />,
   )
-  assert.ok(html.includes("Office-visit benefits not returned."))
+  assert.ok(html.includes("Physician visit copayment not returned."))
   assert.ok(!html.includes("Co-payment"))
 })
 
@@ -108,7 +108,7 @@ test("applicability and identity review evidence stay visible with the benefit",
   const html = renderToStaticMarkup(<EligibilitySummary checks={[{
     ...check, status: "review", reason: "identity_uncertain",
     identityReasons: ["date_of_birth_conflict"], checkId: "synthetic-check-1", eligibilitySearchId: "synthetic-search-1",
-    benefits: [{ name: "Co-payment", serviceTypeCodes: ["98"], benefitAmount: "25", procedureId: "synthetic-procedure", healthCareServiceDelivery: [{ placeOfService: "Office" }], benefitDateInformation: { benefitBegin: "20260101" }, authorizationOrCertificationIndicator: "Yes", additionalInformation: [{ description: "Specific visit", futureQualifier: "retained" }] }],
+    benefits: [{ code: "B", name: "Co-payment", serviceTypeCodes: ["98"], benefitAmount: "25", procedureId: "synthetic-procedure", healthCareServiceDelivery: [{ placeOfService: "Office" }], benefitDateInformation: { benefitBegin: "20260101" }, authorizationOrCertificationIndicator: "Yes", additionalInformation: [{ description: "Specific visit", futureQualifier: "retained" }] }],
   }]} />)
   const document = new JSDOM(html).window.document
   const row = document.querySelector("tbody tr")!
@@ -157,4 +157,20 @@ test("explicit specialist copay rows precede PCP without becoming an unqualified
   assert.ok(first.textContent?.includes("$80.00"))
   assert.ok(first.textContent?.includes("designated tier"))
   assert.ok(document.body.textContent?.includes("Specialist copay needs verification"))
+})
+
+
+test("physician copayment and qualifiers stay outside collapsed details without duplicate rows", () => {
+  const document = new JSDOM(renderToStaticMarkup(<EligibilitySummary checks={[check]} />)).window.document
+  const copayment = document.querySelector('section[aria-label="Physician visit copayment"]')!
+  assert.equal(copayment.closest("details"), null)
+  assert.ok(copayment.textContent?.includes("$0.00"))
+  for (const value of ["$0.00", "specific provider tier"]) {
+    const matching = [...copayment.querySelectorAll("p, li")].filter((node) => node.textContent?.includes(value))
+    assert.ok(matching.some((node) => node.closest("details") === null), value)
+  }
+  const other = [...document.querySelectorAll("details")].find((node) => node.querySelector("summary")?.textContent === "Other physician office-visit benefits")!
+  assert.equal(other.open, false)
+  assert.ok(other.textContent?.includes("20%"))
+  assert.ok(!other.textContent?.includes("$0.00"))
 })
