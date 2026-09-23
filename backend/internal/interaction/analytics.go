@@ -80,6 +80,7 @@ type AnalyticsSummary struct {
 }
 
 type AnalyticsCall struct {
+	ReviewReasons       []string
 	ManualTags          []string
 	ID                  string
 	LocationID          string
@@ -418,6 +419,7 @@ func queryAnalyticsCalls(
 			interaction.analytics_evidence -> 'transcript',
 			interaction.analytics_evidence -> 'closeout',
 			interaction.transcript IS NOT NULL,
+ interaction.closeout_payload -> 'evaluation',
  ARRAY(SELECT tag.name FROM ai_manual_tags tag JOIN ai_interaction_manual_tags applied ON applied.practice_id=tag.practice_id AND applied.tag_key=tag.key WHERE applied.interaction_id=interaction.id ORDER BY tag.key)
 		FROM ai_interactions interaction
 		JOIN access_locations location
@@ -442,6 +444,7 @@ func queryAnalyticsCalls(
 	projections := make([]analyticsProjection, 0, command.Limit+1)
 	for rows.Next() {
 		var projection analyticsProjection
+		var evaluation json.RawMessage
 		if err := rows.Scan(
 			&projection.call.ID,
 			&projection.call.LocationID,
@@ -454,10 +457,12 @@ func queryAnalyticsCalls(
 			&projection.transcript,
 			&projection.closeoutPayload,
 			&projection.call.TranscriptAvailable,
+			&evaluation,
 			&projection.call.ManualTags,
 		); err != nil {
 			return nil, false, fmt.Errorf("scan operator AI analytics page: %w", err)
 		}
+		projection.call.ReviewReasons = EvaluationReviewReasons(evaluation)
 		projectAnalyticsCall(&projection, to)
 		projections = append(projections, projection)
 	}

@@ -612,7 +612,7 @@ function CallLedger({
               {calls.map((call) => (
                 <TableRow
                   key={call.id}
-                  className="group cursor-pointer hover:bg-muted"
+                  className={call.reviewReasons?.length ? "group cursor-pointer bg-destructive/5 hover:bg-destructive/10" : "group cursor-pointer hover:bg-muted"}
                   onClick={() => onSelect(call.id)}
                 >
                   <TableCell className="px-3 py-3">
@@ -628,7 +628,10 @@ function CallLedger({
                       {formatDateTime(call.startedAt)}
                     </button>
                   </TableCell>
-                  <TableCell className="tabular-nums">{formatPhone(call.phone)}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {formatPhone(call.phone)}
+                    <ReviewReasons reasons={call.reviewReasons} />
+                  </TableCell>
                   <TableCell>{call.locationName}</TableCell>
                   <TableCell className="tabular-nums">
                     {formatDuration(call.durationSeconds)}
@@ -661,7 +664,7 @@ function CallLedger({
             key={call.id}
             type="button"
             aria-label={`Open analytics for call from ${formatDateTime(call.startedAt)}`}
-            className="rounded-xl border bg-card p-4 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40"
+            className={`rounded-xl border p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/40 ${call.reviewReasons?.length ? "border-destructive/25 bg-destructive/5 hover:bg-destructive/10" : "bg-card hover:bg-muted"}`}
             onClick={() => onSelect(call.id)}
           >
             <div className="flex items-start justify-between gap-3">
@@ -676,6 +679,7 @@ function CallLedger({
                 aria-hidden="true"
               />
             </div>
+            <ReviewReasons reasons={call.reviewReasons} />
             <dl className="mt-4 grid grid-cols-2 gap-3 border-y py-3">
               <CompactValue label="Duration" value={formatDuration(call.durationSeconds)} />
               <CompactValue
@@ -720,6 +724,13 @@ function CallLedger({
       )}
     </section>
   )
+}
+
+function ReviewReasons({ reasons }: { reasons?: string[] }) {
+  if (!reasons?.length) return null
+  return <span className="mt-1 flex flex-col gap-0.5 text-xs text-destructive">
+    {reasons.map((reason) => <span key={reason}>{reason}</span>)}
+  </span>
 }
 
 function AnalyticsLoading() {

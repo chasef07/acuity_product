@@ -107,6 +107,25 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
           { items },
           call % 2 === 0 ? "ESCALATED" : "COMPLETED",
           {
+            ...(call === 0 ? { evaluation: {
+              evaluator: "jev", evaluatorVersion: "typesafe-trace-v4", model: "typesafe-ai/jev",
+              status: "complete", evaluatedAt: start.toISOString(),
+              results: {
+                outcome: { answers: {
+                  request_fulfilled: { type: "boolean", probability: 0.4 },
+                  handoff_required: { type: "boolean", probability: 0.9 },
+                  claims_supported: { type: "boolean", probability: 0.15 },
+                }, usage: { total_tokens: 123 } },
+                clarity: { answers: {
+                  request_specificity: { type: "score", score: 2.7, probabilities: { "2": 0.3, "3": 0.7 } },
+                  in_scope: { type: "boolean", probability: 0.95 },
+                } },
+                reaction: { answers: {
+                  expressed_sentiment: { type: "score", score: 1, probabilities: { "1": 1 } },
+                  reports_unresolved: { type: "boolean", probability: 0.85 },
+                } },
+              },
+            } } : {}),
             domainOutcomes: [
               {
                 callId: "tool-0",
@@ -154,6 +173,10 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await page
       .getByRole("option", { name: "Fixture Location 6", exact: true })
       .click()
+    const flaggedCall = diagnostics.getByRole("row").filter({ hasText: "Possible unsupported claim" })
+    await expect(flaggedCall).toHaveCount(1)
+    await expect(flaggedCall).toContainText("Caller reports unresolved issue")
+    await expect(flaggedCall).toHaveClass(/bg-destructive/)
     await expect(diagnostics.getByRole("button", { name: "Calls", exact: true })).toHaveAttribute("aria-pressed", "true")
     await expect(diagnostics.getByRole("columnheader", { name: /P50/ })).toHaveCount(0)
     await diagnostics.getByRole("button", { name: "Overview", exact: true }).click()
@@ -213,6 +236,13 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await expect(callSheet.getByRole("button", { name: "Previous call", exact: true })).toBeEnabled()
     await callSheet.getByRole("button", { name: "Previous call", exact: true }).click()
     await expect(callSheet.getByRole("button", { name: "Previous call", exact: true })).toBeDisabled()
+    const evaluation = callSheet.getByRole("region", { name: "AI evaluation", exact: true })
+    await expect(evaluation.getByText("Factual claims supported", { exact: true })).toBeVisible()
+    await expect(evaluation.getByText("15.0% likely true", { exact: true })).toBeVisible()
+    await expect(evaluation.getByText("85.0% likely true", { exact: true })).toBeVisible()
+    await evaluation.getByText("Full evaluation data, including usage", { exact: true }).click()
+    await expect(evaluation.locator("pre")).toContainText('"total_tokens": 123')
+    await evaluation.getByText("Full evaluation data, including usage", { exact: true }).click()
     const manualTags = callSheet.getByRole("region", { name: "Manual tags", exact: true })
     await manualTags.getByRole("textbox", { name: "New tag", exact: true }).fill("Good recovery")
     await manualTags.getByRole("button", { name: "Add tag", exact: true }).click()

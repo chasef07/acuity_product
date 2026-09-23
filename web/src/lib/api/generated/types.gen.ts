@@ -992,6 +992,7 @@ export type OperatorAiAnalyticsDiagnostics = {
 };
 
 export type OperatorAiCallAnalytics = {
+    reviewReasons?: Array<string>;
     manualTags?: Array<string>;
     id: string;
     locationId: string;
@@ -1101,6 +1102,12 @@ export type ProviderErrorDiagnostic = {
 };
 
 export type OperatorAiInteractionAnalytics = {
+    /**
+     * Complete stored evaluator result, including version, status, answers and usage.
+     */
+    evaluation?: {
+        [key: string]: unknown;
+    };
     id: string;
     practiceId: string;
     locationId: string;

@@ -4271,6 +4271,7 @@ components:
         - transferred
         - transcriptAvailable
       properties:
+        reviewReasons: {type: array, items: {type: string}}
         manualTags: {type: array, items: {type: string}}
         id:
           type: string
@@ -4465,6 +4466,10 @@ components:
         - timeline
         - toolExecutions
       properties:
+        evaluation:
+          type: object
+          additionalProperties: true
+          description: Complete stored evaluator result, including version, status, answers and usage.
         id:
           type: string
           format: uuid

@@ -3960,6 +3960,7 @@ func operatorAIAnalyticsPageResponse(
 		response.Calls = append(response.Calls, api.OperatorAICallAnalytics{
 			Id:                  id,
 			ManualTags:          &call.ManualTags,
+			ReviewReasons:       &call.ReviewReasons,
 			LocationId:          locationID,
 			LocationName:        call.LocationName,
 			SourceCallId:        call.SourceCallID,
@@ -3989,7 +3990,10 @@ func operatorAIInteractionAnalyticsResponse(
 	if err != nil {
 		return api.OperatorAIInteractionAnalytics{}, err
 	}
+	var closeout map[string]json.RawMessage
+	_ = json.Unmarshal(detail.Interaction.CloseoutPayload, &closeout)
 	response := api.OperatorAIInteractionAnalytics{
+		Evaluation:            jsonMap(closeout["evaluation"]),
 		Id:                    base.Id,
 		PracticeId:            base.PracticeId,
 		LocationId:            base.LocationId,

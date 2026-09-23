@@ -1,5 +1,6 @@
 "use client"
 
+import { CallEvaluation } from "./call-evaluation"
 import { CallManualTags } from "./call-manual-tags"
 import type { OperatorAiCallTags } from "@/lib/api/generated/types.gen"
 
@@ -248,6 +249,7 @@ function OperatorAnalyticsDetailView({
                 messageId="conversation"
                 className="[content-visibility:visible]"
               >
+                <CallEvaluation evaluation={detail.evaluation} />
                 <CallManualTags key={detail.id} interactionID={detail.id} onChange={onTagsChange} />
                 <section
                   aria-label="Call conversation"
