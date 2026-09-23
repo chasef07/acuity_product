@@ -129,7 +129,6 @@ type Task struct {
 	Category                 TaskCategory
 	CallerName               string
 	SourceCallID             string
-	SourceInteractionID      string
 	SourceReviewKey          string
 	SourceMessage            string
 	Preview                  string
@@ -1804,7 +1803,6 @@ func insertTask(
 			task.category,
 			task.caller_name,
 			task.source_call_id,
-			CASE WHEN task.origin = 'APPOINTMENT_REVIEW' THEN split_part(COALESCE(task.source_review_key, ''), ':', 1) ELSE '' END,
 		COALESCE(task.source_review_key, ''),
 			task.source_message,
 			task.source_message_id::text,
@@ -1869,7 +1867,6 @@ func insertTask(
 		&category,
 		&callerName,
 		&sourceCall,
-		&task.SourceInteractionID,
 		&task.SourceReviewKey,
 		&sourceMessage,
 		&messageID,
@@ -1927,7 +1924,6 @@ func loadTask(
 			task.category,
 			task.caller_name,
 			task.source_call_id,
-			CASE WHEN task.origin = 'APPOINTMENT_REVIEW' THEN split_part(COALESCE(task.source_review_key, ''), ':', 1) ELSE '' END,
 		COALESCE(task.source_review_key, ''),
 			task.source_message,
 			task.source_message_id::text,
@@ -1980,7 +1976,6 @@ func lockTask(
 			task.category,
 			task.caller_name,
 			task.source_call_id,
-			CASE WHEN task.origin = 'APPOINTMENT_REVIEW' THEN split_part(COALESCE(task.source_review_key, ''), ':', 1) ELSE '' END,
 		COALESCE(task.source_review_key, ''),
 			task.source_message,
 			task.source_message_id::text,
@@ -2065,7 +2060,6 @@ func scanTask(scanner taskScanner) (Task, error) {
 		&category,
 		&callerName,
 		&sourceCall,
-		&task.SourceInteractionID,
 		&task.SourceReviewKey,
 		&sourceMessage,
 		&messageID,

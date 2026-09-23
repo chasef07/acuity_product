@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
 // EligibilityCheck is a staff-facing projection of saved intake evidence. It
@@ -103,7 +105,7 @@ func ProjectEligibilityChecks(stored Interaction) []EligibilityCheck {
 					continue
 				}
 				if c.ID != "" && c.ExternalPatientID != "" && c.ExternalPatientID == evidence.ExternalPatientID && booking.EligibilityCheckID == c.ID && out.ProviderProfileID != "" && booking.ProviderProfileID == out.ProviderProfileID {
-					out.AppointmentReviewKeys = append(out.AppointmentReviewKeys, stored.ID+":"+occurredAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano))
+					out.AppointmentReviewKeys = append(out.AppointmentReviewKeys, work.AppointmentReviewKey(stored.ID, occurredAt))
 				}
 			}
 			checks = append(checks, out)

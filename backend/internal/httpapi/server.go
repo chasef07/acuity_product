@@ -3278,8 +3278,8 @@ func taskResponse(task work.Task) (api.Task, error) {
 	if task.CallerName != "" {
 		response.CallerName = &task.CallerName
 	}
-	if task.SourceInteractionID != "" {
-		response.SourceInteractionId = &task.SourceInteractionID
+	if interactionID := task.SourceInteractionID(); interactionID != "" {
+		response.SourceInteractionId = &interactionID
 		response.SourceReviewKey = stringPointer(task.SourceReviewKey)
 	}
 	if task.SourceCallID != "" {
