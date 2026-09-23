@@ -130,7 +130,15 @@ test("appointment review folder is Spring Hill only and does not inflate My Task
       headers: { authorization: "Bearer synthetic-production-token" },
       data: { kind: "CLOSEOUT", officeKey, officePhone, sourceCallId, callerPhone: "+12025550280",
         startedAt: new Date(now.getTime() - 60_000).toISOString(), endedAt: now.toISOString(), status: "COMPLETED",
-        summary: "Synthetic appointment booked", closeoutPayload: { callId: sourceCallId },
+        summary: "Synthetic appointment booked", closeoutPayload: { callId: sourceCallId, eligibilityChecks: [{
+          status: "complete", request: { firstName: "Jane", lastName: "Example", plan: "Example Health", memberId: "synthetic-4821" },
+          result: { status: "active", checkedAt: now.toISOString(), identity: { status: "exact_name_dob", reviewRequired: false }, providerResponse: {
+            benefitsInformation: [
+              { code: "B", name: "Co-payment", serviceTypeCodes: ["98"], serviceTypes: ["Professional (Physician) Visit - Office"], benefitAmount: "35", coverageLevel: "Individual", inPlanNetworkIndicator: "Yes", additionalInformation: [{ description: "Specialist visit · specific provider tier" }] },
+              { code: "C", name: "Deductible", serviceTypeCodes: ["30"], benefitAmount: "1500", coverageLevel: "Individual", timeQualifier: "Remaining", inPlanNetworkIndicator: "Yes" },
+            ],
+          } },
+        }] },
         appointmentOutcome: { action: "BOOKED", occurredAt: now.toISOString(), newAppointmentId: sourceCallId, bookingResult: { status: "booked", appointmentId: sourceCallId } },
       },
     })
@@ -156,6 +164,17 @@ test("appointment review folder is Spring Hill only and does not inflate My Task
   await expect(page.getByRole("heading", { name: "(202) 555-0280", exact: true })).toBeVisible()
   await page.mouse.move(700, 50)
   await expect(page.getByTestId("rail-hover-details")).toBeHidden()
+  const insurance = page.getByRole("region", { name: "Insurance eligibility" })
+  await expect(page.getByRole("button", { name: "Verify & next" })).toBeVisible()
+  await expect(insurance).toContainText("Active coverage")
+  await expect(insurance).toContainText("Jane Example")
+  await expect(insurance.getByRole("table", { name: "Physician office-visit benefits" })).toBeVisible()
+  await expect(insurance).toContainText("$35.00")
+  await expect(insurance).toContainText("specific provider tier")
+  await insurance.locator("summary").filter({ hasText: /^General plan benefits$/ }).click()
+  await expect(insurance.getByRole("table", { name: "General plan benefits" })).toBeVisible()
+  await expect(insurance).toContainText("$1,500.00")
+  await insurance.screenshot({ path: testInfo.outputPath("eligibility-sidebar.png") })
   await page.screenshot({ path: testInfo.outputPath("spring-hill-folder.png"), fullPage: true })
   await page.getByRole("button", { name: "Workspace selector" }).click()
   await page.getByRole("button", { name: "Fixture Location 3", exact: true }).click()

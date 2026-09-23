@@ -3252,6 +3252,9 @@ components:
           $ref: "#/components/schemas/StaffTaskCategory"
         callerName:
           type: string
+        sourceInteractionId:
+          description: Exact source AI interaction for this appointment review.
+          type: string
         sourceCallId:
           type: string
         preview:
@@ -3497,7 +3500,9 @@ components:
         One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence;
         OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses
         a terminal status with endedAt, optional transcript and appointmentOutcome,
-        and required closeoutPayload. The service validates these kind-specific
+        and required closeoutPayload. The authenticated envelope is limited to 32 MiB,
+        including all eligibility responses and transcript. Oversized envelopes are
+        rejected without truncating evidence. The service validates these kind-specific
         requirements.
       additionalProperties: false
       required:
@@ -3580,6 +3585,42 @@ components:
           type: string
         startDatetime:
           type: string
+    AIEligibilityCheck:
+      type: object
+      additionalProperties: false
+      required: [status, patientName, submittedName, plan, memberIdLast4, checkedAt, reason, benefits]
+      properties:
+        status:
+          type: string
+          enum: [active, inactive, review, unknown, unavailable, pending]
+          x-enum-varnames: [EligibilityActive, EligibilityInactive, EligibilityReview, EligibilityUnknown, EligibilityUnavailable, EligibilityPending]
+        patientName:
+          type: string
+        submittedName:
+          type: string
+        plan:
+          type: string
+        planName:
+          type: string
+        memberIdLast4:
+          type: string
+        checkedAt:
+          type: string
+        reason:
+          type: string
+        identityReasons:
+          type: array
+          items:
+            type: string
+        checkId:
+          type: string
+        eligibilitySearchId:
+          type: string
+        benefits:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
     AIInteractionDetail:
       type: object
       additionalProperties: false
@@ -3598,6 +3639,10 @@ components:
         - createdAt
         - updatedAt
       properties:
+        eligibilityChecks:
+          type: array
+          items:
+            $ref: "#/components/schemas/AIEligibilityCheck"
         id:
           type: string
           format: uuid

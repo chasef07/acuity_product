@@ -120,6 +120,9 @@ func TestAppointmentReviewIdentitySurvivesCompletionAndNewOutcome(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	if original.SourceInteractionID != sourceID {
+		t.Fatalf("lost exact source interaction: %q", original.SourceInteractionID)
+	}
 	if !original.CreatedAt.Equal(at) {
 		t.Fatal("review reset source age")
 	}

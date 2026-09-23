@@ -191,6 +191,7 @@ const taskColumns = `
 		task.category,
 		task.caller_name,
 		task.source_call_id,
+		CASE WHEN task.origin = 'APPOINTMENT_REVIEW' THEN split_part(COALESCE(task.source_review_key, ''), ':', 1) ELSE '' END,
 		task.source_message,
         COALESCE(CASE WHEN task.origin='INBOUND_MESSAGE_REVIEW' THEN (
           SELECT COALESCE(NULLIF(message.body,''),'Attachment') FROM messaging_messages message
@@ -468,6 +469,7 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 		&category,
 		&callerName,
 		&sourceCall,
+		&task.SourceInteractionID,
 		&sourceMessage,
 		&task.Preview,
 		&messageID,

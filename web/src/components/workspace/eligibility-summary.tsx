@@ -1,0 +1,354 @@
+import type { AiEligibilityCheck } from "@/lib/api/generated/types.gen"
+
+type Benefit = Record<string, unknown>
+const text = (value: unknown) => (typeof value === "string" ? value : "")
+const strings = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
+    : []
+const codes = (row: Benefit) => strings(row.serviceTypeCodes)
+const labels: Record<AiEligibilityCheck["status"], string> = {
+  active: "Active coverage",
+  inactive: "Inactive coverage reported",
+  review: "Needs review",
+  unknown: "Unable to confirm coverage",
+  unavailable: "Check unavailable",
+  pending: "Check pending",
+}
+const reasons: Record<string, string> = {
+  identity_uncertain: "Patient details need review.",
+  subscriber_details_required: "Subscriber details are needed.",
+  payer_rejected: "The payer could not validate the submitted details.",
+  payer_eligibility_not_supported:
+    "Eligibility checks are not supported for this plan.",
+  provider_not_configured: "Eligibility is not configured for this Location.",
+  general_coverage_unknown: "The payer did not confirm general plan coverage.",
+  request_failed: "The eligibility request failed.",
+  unverified_response: "No verified eligibility response was received.",
+}
+
+function checkedAt(value: string) {
+  const date = new Date(value)
+  return value && Number.isFinite(date.getTime())
+    ? date.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "Time not recorded"
+}
+
+export function EligibilitySummary({
+  checks,
+}: {
+  checks?: AiEligibilityCheck[]
+}) {
+  if (!checks?.length) return null
+  return (
+    <section aria-label="Insurance eligibility" className="border-t px-5 py-4">
+      <h3 className="mb-3 text-sm font-semibold">Insurance</h3>
+      {checks.toReversed().map((check, index) => (
+        <div key={index} className={index ? "mt-5 border-t pt-4" : ""}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium break-words">
+                {check.plan || "Insurance plan"}
+              </p>
+              {check.planName && (
+                <p className="mt-1 text-xs text-muted-foreground break-words">
+                  {check.planName}
+                </p>
+              )}
+            </div>
+            <span
+              className={`max-w-[48%] shrink-0 text-right text-xs font-medium ${check.status === "active" ? "text-emerald-700 dark:text-emerald-400" : check.status === "review" || check.status === "inactive" ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}
+            >
+              {check.status === "active" && <span aria-hidden="true">✓ </span>}
+              {labels[check.status]}
+            </span>
+          </div>
+          <p className="mt-2 text-xs break-words">
+            {check.patientName || "Patient name not recorded"}
+            {check.memberIdLast4 &&
+              ` · Member ID ending ${check.memberIdLast4}`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {check.checkedAt
+              ? `Checked ${checkedAt(check.checkedAt)}`
+              : "Check time not recorded"}
+          </p>
+          {check.reason && (
+            <p className="mt-2 text-xs leading-5">
+              {reasons[check.reason] ||
+                "Review the check details; coverage could not be fully verified."}
+            </p>
+          )}
+          {check.status !== "active" && check.benefits.length > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Returned benefits are evidence; they do not resolve this check’s
+              status.
+            </p>
+          )}
+          <BenefitGroup
+            title="Physician office-visit benefits"
+            rows={check.benefits.filter((row) => codes(row).includes("98"))}
+            empty="Office-visit benefits not returned."
+            open
+          />
+          <BenefitGroup
+            title="General plan benefits"
+            rows={check.benefits.filter((row) => codes(row).includes("30"))}
+            empty="General plan benefits not returned."
+          />
+          <BenefitGroup
+            title="Other returned benefits"
+            rows={check.benefits.filter(
+              (row) => !codes(row).includes("98") && !codes(row).includes("30"),
+            )}
+          />
+          <details className="mt-3 text-xs">
+            <summary className="cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-offset-4">
+              Check details
+            </summary>
+            <dl className="mt-2 space-y-2 text-muted-foreground">
+              <div>
+                <dt>Submitted name</dt>
+                <dd className="text-foreground">
+                  {check.submittedName || "Not recorded"}
+                </dd>
+              </div>
+              {check.patientName !== check.submittedName && (
+                <div>
+                  <dt>Payer-returned name</dt>
+                  <dd className="text-foreground">{check.patientName}</dd>
+                </div>
+              )}
+              {check.identityReasons?.length ? <div>
+                <dt>Patient matching</dt>
+                <dd className="text-foreground">
+                  {check.identityReasons.map((reason) => reason.replaceAll("_", " ")).join(" · ")}
+                </dd>
+              </div> : null}
+              {check.checkId && <div><dt>Check ID</dt><dd className="break-all">{check.checkId}</dd></div>}
+              {check.eligibilitySearchId && <div><dt>Eligibility reference</dt><dd className="break-all">{check.eligibilitySearchId}</dd></div>}
+              <div>
+                <dt>Source</dt>
+                <dd>
+                  Eligibility checked during this call. Each check retains its
+                  own submitted patient details.
+                </dd>
+              </div>
+              {check.reason && (
+                <div>
+                  <dt>Result reason</dt>
+                  <dd className="break-words">
+                    {check.reason.replaceAll("_", " ")}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </details>
+          <p className="mt-3 text-[11px] leading-4 text-muted-foreground">
+            Coverage is as of the check date. Benefits depend on the listed
+            service, network, and plan conditions.
+          </p>
+        </div>
+      ))}
+    </section>
+  )
+}
+
+function BenefitGroup({
+  title,
+  rows,
+  empty,
+  open = false,
+}: {
+  title: string
+  rows: Benefit[]
+  empty?: string
+  open?: boolean
+}) {
+  if (!rows.length && !empty) return null
+  return (
+    <details open={open} className="mt-4 border-t pt-3">
+      <summary className="cursor-pointer text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-4">
+        {title}
+      </summary>
+      {!rows.length ? (
+        <p className="mt-3 text-xs text-muted-foreground">{empty}</p>
+      ) : (
+        <table className="mt-3 w-full table-fixed text-left text-xs">
+          <caption className="sr-only">{title}</caption>
+          <thead>
+            <tr className="text-muted-foreground">
+              <th className="w-[34%] pb-2 pr-3 font-normal">Benefit</th>
+              <th className="pb-2 font-normal">Returned details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <BenefitRow key={index} row={row} />
+            ))}
+          </tbody>
+        </table>
+      )}
+    </details>
+  )
+}
+
+function benefitValue(row: Benefit): string {
+  const amount = text(row.benefitAmount),
+    percent = text(row.benefitPercent)
+  const values: string[] = []
+  if (amount)
+    values.push(
+      Number.isFinite(Number(amount))
+        ? new Intl.NumberFormat("en-US", {
+            style: "currency",
+            currency: "USD",
+          }).format(Number(amount))
+        : amount,
+    )
+  if (percent)
+    values.push(
+      Number.isFinite(Number(percent))
+        ? `${Number((Number(percent) * 100).toFixed(4))}%`
+        : percent,
+    )
+  const period = text(row.timeQualifier)
+  return [...values, period].filter(Boolean).join(" · ")
+}
+
+const applicability = new Set([
+  "procedureId", "procedureIdentifier", "procedureCode", "procedureModifier", "procedureModifiers",
+  "benefitDateInformation", "eligibilityAdditionalInformation",
+  "authorizationOrCertificationIndicator", "healthCareServiceDelivery", "quantity", "quantityQualifier",
+])
+
+const displayed = new Set([
+  "name",
+  "code",
+  "benefitAmount",
+  "benefitPercent",
+  "timeQualifier",
+  "coverageLevel",
+  "inPlanNetworkIndicator",
+  "serviceTypes",
+])
+function BenefitRow({ row }: { row: Benefit }) {
+  const messages = Array.isArray(row.additionalInformation)
+    ? row.additionalInformation.flatMap((item) =>
+        item &&
+        typeof item === "object" &&
+        "description" in item &&
+        typeof item.description === "string"
+          ? [item.description]
+          : [],
+      )
+    : []
+  const qualifiers = [
+    text(row.coverageLevel),
+    text(row.inPlanNetworkIndicator) === "Yes"
+      ? "In network"
+      : text(row.inPlanNetworkIndicator) === "No"
+        ? "Out of network"
+        : text(row.inPlanNetworkIndicator),
+  ].filter(Boolean)
+  const remaining = Object.entries(row).filter(
+    ([key, value]) =>
+      !displayed.has(key) && value !== null && value !== undefined,
+  )
+  const visibleDetails = remaining.filter(([key]) => applicability.has(key))
+  const extraDetails = remaining.filter(([key]) => !applicability.has(key))
+  return (
+    <tr className="border-t align-top">
+      <th scope="row" className="py-3 pr-3 font-medium break-words">
+        {text(row.name) || `Benefit ${text(row.code) || "detail"}`}
+      </th>
+      <td className="py-3 break-words">
+        {benefitValue(row) && (
+          <p className="font-medium tabular-nums">{benefitValue(row)}</p>
+        )}
+        {qualifiers.length > 0 && (
+          <p className="mt-1 text-muted-foreground">{qualifiers.join(" · ")}</p>
+        )}
+        {strings(row.serviceTypes).length > 0 && (
+          <p className="mt-1 text-muted-foreground">
+            {strings(row.serviceTypes).join(" · ")}
+          </p>
+        )}
+        {messages.length > 0 && (
+          <ul className="mt-2 space-y-1 leading-5">
+            {messages.map((message, index) => (
+              <li key={index}>{message}</li>
+            ))}
+          </ul>
+        )}
+        {visibleDetails.length > 0 && (
+          <dl className="mt-2 space-y-2">
+            {visibleDetails.map(([key, value]) => (
+              <div key={key}>
+                <dt className="text-muted-foreground">{fieldLabel(key)}</dt>
+                <dd><ReturnedDetail value={value} /></dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {extraDetails.length > 0 && (
+          <details className="mt-2">
+            <summary className="cursor-pointer text-muted-foreground">
+              Additional details
+            </summary>
+            <dl className="mt-2 space-y-2">
+              {extraDetails.map(([key, value]) => (
+                <div key={key}>
+                  <dt className="text-muted-foreground">{fieldLabel(key)}</dt>
+                  <dd className="whitespace-pre-wrap break-words">
+                    {<ReturnedDetail value={value} />}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </details>
+        )}
+      </td>
+    </tr>
+  )
+}
+
+function fieldLabel(key: string) {
+  return key
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/^./, (letter) => letter.toUpperCase())
+}
+
+function ReturnedDetail({ value }: { value: unknown }) {
+  if (value === null || value === undefined) return <span>Not returned</span>
+  if (Array.isArray(value))
+    return (
+      <ul className="space-y-1">
+        {value.map((item, index) => (
+          <li key={index}>
+            <ReturnedDetail value={item} />
+          </li>
+        ))}
+      </ul>
+    )
+  if (typeof value === "object")
+    return (
+      <dl className="space-y-1">
+        {Object.entries(value).map(([key, item]) => (
+          <div key={key}>
+            <dt className="text-muted-foreground">{fieldLabel(key)}</dt>
+            <dd>
+              <ReturnedDetail value={item} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+    )
+  return <span>{String(value)}</span>
+}

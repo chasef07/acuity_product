@@ -36,6 +36,7 @@ import {
   CallingAvailabilityControl,
   CallingDock,
 } from "@/components/workspace/calling-dock"
+import { EligibilitySummary } from "@/components/workspace/eligibility-summary"
 import { AIInteractionContext } from "@/components/workspace/ai-interaction-context"
 import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
 import { TaskCallContext } from "@/components/workspace/task-call-context"
@@ -439,6 +440,21 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   ) : (
                     <TaskCallContext
                       task={selectedTask}
+                      eligibility={
+                        selectedTask?.origin === "APPOINTMENT_REVIEW" &&
+                        selectedTask.sourceInteractionId === state.selection.aiInteractionID
+                          ? state.selection.aiInteractionLoading
+                            ? <p role="status" className="px-5 py-4 text-sm">Loading insurance eligibility…</p>
+                            : state.selection.aiInteractionError
+                              ? <div role="alert" className="px-5 py-4 text-sm">
+                                  Insurance eligibility could not be loaded.
+                                  <Button variant="outline" size="sm" onClick={() => void projection.dispatch({ type: "open-task-context", task: selectedTask })}>
+                                    Retry insurance eligibility
+                                  </Button>
+                                </div>
+                              : <EligibilitySummary checks={state.selection.aiInteraction?.eligibilityChecks} />
+                          : undefined
+                      }
                       group={state.selection.taskGroup}
                       taskRows={state.tasks.items}
                       onSelectTask={(task) => sendIntent({ type: "select-task", task })}
