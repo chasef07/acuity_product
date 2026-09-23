@@ -467,6 +467,17 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			},
 		}},
 	}
+	jevEvaluation := map[string]any{
+		"evaluator": "jev", "evaluatorVersion": "typesafe-trace-v1",
+		"model": "typesafe-ai/jev", "status": "complete",
+		"evaluatedAt": endedAt.Format(time.RFC3339),
+		"results": map[string]any{
+			"outcome": map[string]any{"answers": map[string]any{
+				"claims_supported": map[string]any{"type": "boolean", "probability": 0.37},
+			}},
+			"reaction": map[string]any{"status": "unavailable", "reason": "No post-call feedback supplied."},
+		},
+	}
 	closeoutBody, _ := json.Marshal(map[string]any{
 		"kind":         "CLOSEOUT",
 		"officeKey":    "spring-hill",
@@ -493,6 +504,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		},
 		"closeoutPayload": map[string]any{
 			"callId":      "abita-call-63",
+			"evaluation":  jevEvaluation,
 			"callerPhone": "+17275550199",
 			"officeKey":   "spring-hill",
 			"officePhone": "+17275919997",
@@ -672,6 +684,25 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	chatItems, _ := chatHistory["items"].([]any)
 	if len(chatItems) != 4 || storedEvidence.CloseoutPayload["domainOutcomes"] == nil {
 		t.Fatalf("admin AI Interaction evidence = %#v", storedEvidence)
+	}
+	wantEvaluation, _ := json.Marshal(jevEvaluation)
+	gotEvaluation, _ := json.Marshal(storedEvidence.CloseoutPayload["evaluation"])
+	if !bytes.Equal(gotEvaluation, wantEvaluation) {
+		t.Fatalf("Jev evaluation did not survive ingestion and evidence retrieval: %s", gotEvaluation)
+	}
+	var storedEvaluation json.RawMessage
+	if err := pool.QueryRow(context.Background(),
+		`SELECT closeout_payload->'evaluation' FROM ai_interactions WHERE id=$1`,
+		first.InteractionID).Scan(&storedEvaluation); err != nil {
+		t.Fatalf("read persisted Jev evaluation: %v", err)
+	}
+	var evaluationValue any
+	if err := json.Unmarshal(storedEvaluation, &evaluationValue); err != nil {
+		t.Fatalf("decode persisted Jev evaluation: %v", err)
+	}
+	storedEvaluation, _ = json.Marshal(evaluationValue)
+	if !bytes.Equal(storedEvaluation, wantEvaluation) {
+		t.Fatalf("Jev evaluation not persisted on call record: %s", storedEvaluation)
 	}
 	var interactionCount, transcriptEvidenceCount int
 	if err := pool.QueryRow(context.Background(), `

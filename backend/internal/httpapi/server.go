@@ -731,6 +731,7 @@ func (server *Server) QueryOperatorAIAnalytics(
 		ctx,
 		interaction.QueryAnalyticsCommand{
 			Identity:   identity,
+			ManualTag:  stringValue(body.ManualTag),
 			PracticeID: body.PracticeId.String(),
 			LocationID: uuidString(body.LocationId),
 			Range:      interaction.AnalyticsRange(body.Range),
@@ -3913,8 +3914,9 @@ func operatorAIAnalyticsPageResponse(
 	page interaction.AnalyticsPage,
 ) (api.OperatorAIAnalyticsPage, error) {
 	response := api.OperatorAIAnalyticsPage{
-		Calls:      make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
-		NextCursor: page.NextCursor,
+		AvailableTags: &page.AvailableTags,
+		Calls:         make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
+		NextCursor:    page.NextCursor,
 	}
 	if page.Summary != nil {
 		response.Summary = &api.OperatorAIAnalyticsSummary{
@@ -3957,6 +3959,8 @@ func operatorAIAnalyticsPageResponse(
 		}
 		response.Calls = append(response.Calls, api.OperatorAICallAnalytics{
 			Id:                  id,
+			ManualTags:          &call.ManualTags,
+			ReviewReasons:       &call.ReviewReasons,
 			LocationId:          locationID,
 			LocationName:        call.LocationName,
 			SourceCallId:        call.SourceCallID,
@@ -3986,7 +3990,10 @@ func operatorAIInteractionAnalyticsResponse(
 	if err != nil {
 		return api.OperatorAIInteractionAnalytics{}, err
 	}
+	var closeout map[string]json.RawMessage
+	_ = json.Unmarshal(detail.Interaction.CloseoutPayload, &closeout)
 	response := api.OperatorAIInteractionAnalytics{
+		Evaluation:            jsonMap(closeout["evaluation"]),
 		Id:                    base.Id,
 		PracticeId:            base.PracticeId,
 		LocationId:            base.LocationId,
