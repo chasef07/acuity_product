@@ -1,11 +1,15 @@
 "use client"
 
+import { CallManualTags } from "./call-manual-tags"
+import type { OperatorAiCallTags } from "@/lib/api/generated/types.gen"
+
 import type { MiddlewareRequestDiagnostic } from "@/lib/api/generated"
 import { MiddlewareRequestDetails } from "./middleware-request-details"
 
 import { useEffect, useState } from "react"
 import {
   CalendarCheck2Icon,
+  ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
   PhoneForwardedIcon,
@@ -53,10 +57,20 @@ import { getAccessToken } from "@/lib/auth-client"
 export function OperatorAnalyticsDetailSheet({
   interactionID,
   focus,
+  onPrevious,
+  onNext,
+  navigationLoading = false,
+  navigationError = false,
+  onTagsChange,
   onClose,
 }: {
   interactionID: string
   focus?: DiagnosticFocus
+  onPrevious?: () => void
+  onNext?: () => void
+  navigationLoading?: boolean
+  navigationError?: boolean
+  onTagsChange: (id: string, tags: OperatorAiCallTags) => void
   onClose: () => void
 }) {
   const [request, setRequest] = useState<{
@@ -127,6 +141,21 @@ export function OperatorAnalyticsDetailSheet({
           <SheetDescription className="sr-only">
             Transcript, timing, tool activity, and receipt-backed outcomes.
           </SheetDescription>
+          <nav aria-label="Call navigation" className="flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={!onPrevious || navigationLoading} onClick={onPrevious}>
+              <ChevronLeftIcon aria-hidden="true" />
+              Previous call
+            </Button>
+            <Button variant="outline" size="sm" disabled={!onNext || navigationLoading} onClick={onNext}>
+              {navigationLoading ? "Loading calls…" : "Next call"}
+              <ChevronRightIcon aria-hidden="true" />
+            </Button>
+          </nav>
+          {navigationError && (
+            <p role="status" className="text-xs text-destructive">
+              More calls could not be loaded. Select Next call to retry.
+            </p>
+          )}
         </SheetHeader>
 
         {loading && (
@@ -149,6 +178,7 @@ export function OperatorAnalyticsDetailSheet({
             key={interactionID}
             detail={detail}
             focus={focus}
+            onTagsChange={onTagsChange}
           />
         )}
       </SheetContent>
@@ -159,9 +189,11 @@ export function OperatorAnalyticsDetailSheet({
 function OperatorAnalyticsDetailView({
   detail,
   focus,
+  onTagsChange,
 }: {
   detail: OperatorAiInteractionAnalytics
   focus?: DiagnosticFocus
+  onTagsChange: (id: string, tags: OperatorAiCallTags) => void
 }) {
   const [showTiming, setShowTiming] = useState(true)
   const messageCount = detail.timeline.filter(
@@ -205,15 +237,6 @@ function OperatorAnalyticsDetailView({
           </p>
         )}
       </section>
-      <dl
-        aria-label="Median call timing"
-        className="grid shrink-0 grid-cols-4 border-b px-2 sm:px-3"
-      >
-        <LatencyValue label="P50 STT" value={detail.p50SttMs} />
-        <LatencyValue label="P50 TTFT" value={detail.p50TtftMs} />
-        <LatencyValue label="P50 TTS" value={detail.p50TtsTtfbMs} />
-        <LatencyValue label="P50 E2E" value={detail.p50TotalLatencyMs} />
-      </dl>
       <MessageScrollerProvider
         autoScroll={false}
         defaultScrollPosition={focus ? "last-anchor" : "start"}
@@ -225,6 +248,7 @@ function OperatorAnalyticsDetailView({
                 messageId="conversation"
                 className="[content-visibility:visible]"
               >
+                <CallManualTags key={detail.id} interactionID={detail.id} onChange={onTagsChange} />
                 <section
                   aria-label="Call conversation"
                   className="border-b px-5 py-5 sm:px-6"
@@ -710,17 +734,6 @@ function DetailValue({ label, value }: { label: string; value: string }) {
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-1 truncate font-medium" title={value}>
         {value}
-      </dd>
-    </div>
-  )
-}
-
-function LatencyValue({ label, value }: { label: string; value?: number }) {
-  return (
-    <div className="bg-card px-3 py-3">
-      <dt className="text-[0.6875rem] text-muted-foreground">{label}</dt>
-      <dd className="mt-1 font-mono text-sm font-semibold">
-        {formatLatency(value)}
       </dd>
     </div>
   )

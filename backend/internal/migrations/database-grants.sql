@@ -638,3 +638,7 @@ GRANT INSERT ON TABLE public.knowledge_retrieval_observations TO acuity_portal;
 -- Human reply snapshots and provider-confirmed shared completion.
 GRANT SELECT, INSERT ON work_text_replies TO acuity_portal;
 GRANT SELECT, UPDATE ON work_text_replies TO acuity_worker;
+
+-- Manual call review labels are owned by the operator-facing portal.
+GRANT SELECT, INSERT ON ai_manual_tags TO acuity_portal;
+GRANT SELECT, INSERT, DELETE ON ai_interaction_manual_tags TO acuity_portal;

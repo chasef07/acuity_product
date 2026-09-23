@@ -61,6 +61,7 @@ import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-an
 import { portalClient } from "@/lib/api/client"
 import { queryOperatorAiAnalytics } from "@/lib/api/generated/sdk.gen"
 import type {
+  OperatorAiCallTags,
   OperatorAiAnalyticsPage,
   OperatorAiAnalyticsRange,
   OperatorAiAnalyticsSummary,
@@ -76,11 +77,11 @@ type AnalyticsNextPageState = "idle" | "loading" | "unavailable"
 type AnalyticsTab = "overview" | "cost" | "performance" | "tools" | "calls"
 
 const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
+  { value: "calls", label: "Calls" },
   { value: "overview", label: "Overview" },
   { value: "cost", label: "Cost" },
   { value: "performance", label: "Performance" },
   { value: "tools", label: "Tools" },
-  { value: "calls", label: "Calls" },
 ]
 
 const ranges: Array<{
@@ -115,8 +116,12 @@ export function OperatorAnalytics({
     setOfficeSelection({ key: scopeKey, value })
   const locationID = office === "all" ? "" : office
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("7d")
-  const [tab, setTab] = useState<AnalyticsTab>("overview")
+  const [tab, setTab] = useState<AnalyticsTab>("calls")
   const costView = tab === "cost"
+  const [tagFilter, setTagFilter] = useState({ practiceID, value: "" })
+  const manualTag = tagFilter.practiceID === practiceID ? tagFilter.value : ""
+  const setManualTag = (value: string) => setTagFilter({ practiceID, value })
+  const activeTag = tab === "calls" ? manualTag : ""
   const [requestVersion, setRequestVersion] = useState(0)
   const [request, setRequest] = useState<{
     key: string
@@ -129,7 +134,7 @@ export function OperatorAnalytics({
     key: string
     state: AnalyticsNextPageState
   }>({ key: "", state: "idle" })
-  const requestKey = `${practiceID}:${locationID}:${range}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${activeTag}:${requestVersion}`
   const currentRequest =
     request.key === requestKey
       ? request
@@ -153,6 +158,7 @@ export function OperatorAnalytics({
             practiceId: practiceID,
             locationId: locationID || undefined,
             range,
+            manualTag: activeTag || undefined,
             limit: 50,
           },
           signal: controller.signal,
@@ -175,7 +181,7 @@ export function OperatorAnalytics({
       }
     })
     return () => controller.abort()
-  }, [locationID, practiceID, range, requestKey, costView])
+  }, [locationID, practiceID, range, requestKey, costView, activeTag])
 
   async function loadNextPage() {
     if (
@@ -204,6 +210,7 @@ export function OperatorAnalytics({
           practiceId: practiceID,
           locationId: locationID || undefined,
           range,
+          manualTag: activeTag || undefined,
           cursor,
           limit: 50,
         },
@@ -231,9 +238,38 @@ export function OperatorAnalytics({
         }
       })
       setNextPageRequest({ key: requestKey, state: "idle" })
+      return result.data.calls[0]?.id
     } catch {
       setNextPageRequest({ key: requestKey, state: "unavailable" })
     }
+  }
+
+  const calls = currentRequest.data?.calls ?? []
+  const selectedIndex = calls.findIndex((call) => call.id === selectedCall.id)
+  const previousCall = selectedIndex > 0 ? calls[selectedIndex - 1] : undefined
+  const nextCall = selectedIndex >= 0 ? calls[selectedIndex + 1] : undefined
+  const canLoadNextCall = selectedIndex === calls.length - 1 && selectedIndex >= 0 && Boolean(currentRequest.data?.nextCursor)
+
+  async function selectNextCall() {
+    if (nextCall) {
+      selectCall(nextCall.id)
+    } else if (canLoadNextCall) {
+      const nextID = await loadNextPage()
+      if (nextID) {
+        setSelectedCall((current) => current.id === selectedCall.id ? { id: nextID } : current)
+      }
+    }
+  }
+
+  function updateCallTags(id: string, tags: OperatorAiCallTags) {
+    setRequest((current) => current.key === requestKey && current.data ? {
+      ...current,
+      data: {
+        ...current.data,
+        availableTags: tags.available,
+        calls: current.data.calls.map((call) => call.id === id ? { ...call, manualTags: tags.selected } : call),
+      },
+    } : current)
   }
 
   const offices = [
@@ -296,7 +332,18 @@ export function OperatorAnalytics({
             </ToggleGroup>
           </>
         }
-        tabs={<AnalyticsTabs tab={tab} onChange={setTab} />}
+        tabs={<div className="w-full space-y-3">
+          <AnalyticsTabs tab={tab} onChange={setTab} />
+          {tab === "calls" && ((currentRequest.data?.availableTags?.length ?? 0) > 0 || manualTag) && (
+            <div aria-label="Filter calls by tag" className="flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-xs text-muted-foreground">Tags</span>
+              <Button size="xs" variant={manualTag ? "outline" : "secondary"} aria-pressed={!manualTag} onClick={() => setManualTag("")}>All calls</Button>
+              {Array.from(new Set([...(currentRequest.data?.availableTags ?? []), ...(manualTag ? [manualTag] : [])])).map((tag) => (
+                <Button key={tag} size="xs" variant={manualTag === tag ? "secondary" : "outline"} aria-pressed={manualTag === tag} onClick={() => setManualTag(tag)}>{tag}</Button>
+              ))}
+            </div>
+          )}
+        </div>}
       >
         {costView ? (
           <CostOverview
@@ -337,7 +384,15 @@ export function OperatorAnalytics({
       <OperatorAnalyticsDetailSheet
         interactionID={selectedCall.id}
         focus={selectedCall.focus}
-        onClose={() => setSelectedCall({ id: "" })}
+        onPrevious={previousCall ? () => selectCall(previousCall.id) : undefined}
+        onNext={nextCall || canLoadNextCall ? selectNextCall : undefined}
+        navigationLoading={nextPageState === "loading"}
+        navigationError={canLoadNextCall && nextPageState === "unavailable"}
+        onTagsChange={updateCallTags}
+        onClose={() => {
+          setSelectedCall({ id: "" })
+          if (manualTag) setRequestVersion((current) => current + 1)
+        }}
       />
     </section>
   )
@@ -540,19 +595,16 @@ function CallLedger({
       </div>
 
       <div className="hidden overflow-hidden rounded-xl border bg-card xl:block">
-          <Table className="min-w-[78rem]">
+          <Table className="min-w-[54rem]">
             <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
               <TableRow className="hover:bg-transparent">
                 <TableHead>Date / time</TableHead>
                 <TableHead>Caller</TableHead>
                 <TableHead>Office</TableHead>
                 <TableHead>Duration</TableHead>
-                <TableHead>P50 STT</TableHead>
-                <TableHead>P50 TTFT</TableHead>
-                <TableHead>P50 TTS</TableHead>
-                <TableHead>P50 E2E</TableHead>
                 <TableHead>Actions</TableHead>
                 <TableHead>Tool errors</TableHead>
+                <TableHead>Tags</TableHead>
                 <TableHead>Transfer</TableHead>
               </TableRow>
             </TableHeader>
@@ -581,19 +633,18 @@ function CallLedger({
                   <TableCell className="tabular-nums">
                     {formatDuration(call.durationSeconds)}
                   </TableCell>
-                  <TableCell className="font-mono">{formatLatency(call.p50SttMs)}</TableCell>
-                  <TableCell className="font-mono">{formatLatency(call.p50TtftMs)}</TableCell>
-                  <TableCell className="font-mono">{formatLatency(call.p50TtsTtfbMs)}</TableCell>
-                  <TableCell className="font-mono font-semibold">
-                    {formatLatency(call.p50TotalLatencyMs)}
-                  </TableCell>
                   <TableCell>
                     <ActionBadges actions={call.toolActions} />
                   </TableCell>
                   <TableCell>
                     <Badge variant={call.toolErrorCount > 0 ? "destructive" : "outline"}>
-                      {call.toolErrorCount} / {call.toolCallCount}
+                      {call.toolErrorCount}
                     </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex max-w-56 flex-wrap gap-1">
+                      {call.manualTags?.map((tag) => <Badge key={tag} variant="secondary" className="max-w-full whitespace-normal break-words">{tag}</Badge>)}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <TransferBadge transferred={call.transferred} />
@@ -625,16 +676,16 @@ function CallLedger({
                 aria-hidden="true"
               />
             </div>
-            <dl className="mt-4 grid grid-cols-3 gap-3 border-y py-3">
+            <dl className="mt-4 grid grid-cols-2 gap-3 border-y py-3">
               <CompactValue label="Duration" value={formatDuration(call.durationSeconds)} />
-              <CompactValue label="P50 E2E" value={formatLatency(call.p50TotalLatencyMs)} />
               <CompactValue
                 label="Tool errors"
-                value={`${call.toolErrorCount} / ${call.toolCallCount}`}
+                value={String(call.toolErrorCount)}
               />
             </dl>
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               <ActionBadges actions={call.toolActions} />
+              {call.manualTags?.map((tag) => <Badge key={tag} variant="secondary">{tag}</Badge>)}
               <TransferBadge transferred={call.transferred} />
               {!call.transcriptAvailable && (
                 <Badge variant="outline">Transcript missing</Badge>
@@ -789,11 +840,6 @@ function formatDateTime(value: string): string {
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds)) return "—"
   return `${Math.floor(seconds / 60)}m ${Math.max(0, Math.round(seconds)) % 60}s`
-}
-
-function formatLatency(value?: number): string {
-  if (value === undefined) return "—"
-  return value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${Math.round(value)} ms`
 }
 
 function formatRate(value: number): string {
