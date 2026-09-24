@@ -2,11 +2,13 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestIgnoredReceiptMigrationAllowsWritesAndResumesIndexBuild(t *testing.T) {
@@ -33,17 +35,18 @@ func TestIgnoredReceiptMigrationAllowsWritesAndResumesIndexBuild(t *testing.T) {
 			<-done
 		}
 	}()
+	var migrationPID int
 	for {
-		var waiting bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS (
-			SELECT 1 FROM pg_stat_activity
-			WHERE pid <> pg_backend_pid() AND state = 'active'
+		if err := pool.QueryRow(ctx, `SELECT COALESCE((
+			SELECT pid FROM pg_stat_activity
+			WHERE datname = current_database()
+				AND pid <> pg_backend_pid() AND state = 'active'
 				AND wait_event_type = 'Lock'
 				AND query LIKE '%CREATE INDEX%human_calling_staff_provider_session_idx%'
-		)`).Scan(&waiting); err != nil {
+		), 0)`).Scan(&migrationPID); err != nil {
 			t.Fatal(err)
 		}
-		if waiting {
+		if migrationPID != 0 {
 			break
 		}
 		select {
@@ -76,11 +79,21 @@ func TestIgnoredReceiptMigrationAllowsWritesAndResumesIndexBuild(t *testing.T) {
 	if !validated {
 		t.Fatal("receipt constraint was not validated before index build")
 	}
-	stopMigration()
+	// Context cancellation can return before PostgreSQL stops the build. Keep
+	// the writer lock until the server acknowledges cancellation, otherwise
+	// releasing it can let the index finish before the cancel request arrives.
+	var canceled bool
+	if err := pool.QueryRow(ctx, `SELECT pg_cancel_backend($1)`, migrationPID).Scan(&canceled); err != nil {
+		t.Fatal(err)
+	}
+	if !canceled {
+		t.Fatal("index build cancellation was not sent")
+	}
 	err = <-done
 	finished = true
-	if err == nil {
-		t.Fatal("interrupted index build unexpectedly succeeded")
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "57014" {
+		t.Fatalf("expected server to cancel index build: %v", err)
 	}
 	if err := blocker.Rollback(ctx); err != nil {
 		t.Fatal(err)
