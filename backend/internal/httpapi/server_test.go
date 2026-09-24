@@ -220,3 +220,47 @@ func TestAvailabilityResultTreatsCallingNotModifiedAsAvailable(t *testing.T) {
 		t.Fatalf("Calling State 304 = %q/%q", outcome, stage)
 	}
 }
+
+func TestAIInteractionEligibilityPreservesBatchInsuranceResolution(t *testing.T) {
+	for _, test := range []struct{ status, outcome string }{
+		{"resolved", "accepted"}, {"resolved", "not_accepted"}, {"unmapped", ""}, {"conflicting", ""}, {"unavailable", ""},
+	} {
+		t.Run(test.status+test.outcome, func(t *testing.T) {
+			resolution := map[string]any{"status": test.status, "plans": []string{"SILVERELITE"}}
+			if test.outcome != "" {
+				resolution["decision"] = map[string]string{"outcome": test.outcome, "canonicalPlan": "Example Mapped Plan"}
+			}
+			raw, err := json.Marshal(map[string]any{"eligibilityChecks": []any{map[string]any{
+				"status": "complete", "request": map[string]string{"plan": "Original Label", "coverageType": "routine_vision"},
+				"result": map[string]any{"insuranceResolution": resolution, "providerResults": []any{map[string]any{
+					"status": "active", "identity": map[string]any{"status": "exact_name_dob", "reviewRequired": false},
+					"provider": map[string]string{"profileId": "synthetic-provider"},
+				}}},
+			}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := aiInteractionDetailResponse(interaction.Interaction{
+				ID: uuid.NewString(), PracticeID: uuid.NewString(), LocationID: uuid.NewString(), CloseoutPayload: raw,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.EligibilityChecks == nil || len(*response.EligibilityChecks) != 1 {
+				t.Fatal("missing checks")
+			}
+			check := (*response.EligibilityChecks)[0]
+			got := check.InsuranceResolution
+			if check.Status != "active" || got == nil || got.Status != test.status || len(got.Plans) != 1 || got.Plans[0] != "SILVERELITE" {
+				t.Fatalf("mapping lost or coverage overwritten: %+v", check)
+			}
+			if test.outcome == "" {
+				if got.CanonicalPlan != nil || got.DecisionOutcome != nil {
+					t.Fatal("invented fallback canonical plan")
+				}
+			} else if got.CanonicalPlan == nil || *got.CanonicalPlan != "Example Mapped Plan" || got.DecisionOutcome == nil || *got.DecisionOutcome != test.outcome {
+				t.Fatalf("mapping decision lost: %+v", got)
+			}
+		})
+	}
+}

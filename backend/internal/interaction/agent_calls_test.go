@@ -14,12 +14,12 @@ func TestAgentCallRequiresAppointmentOutcomeEvidence(t *testing.T) {
 		want     []AppointmentAction
 	}{
 		{"attempt alone", Interaction{AppointmentAction: AppointmentBooked}, `[]`, []AppointmentAction{}},
-		{"blocked receipt", Interaction{}, `[{"outcome":"booked","status":"blocked"}]`, []AppointmentAction{}},
-		{"confirmed booking", Interaction{AppointmentOutcome: OutcomeBooking}, `[]`, []AppointmentAction{AppointmentBooked}},
-		{"confirmed reschedule", Interaction{AppointmentOutcome: OutcomeReschedule}, `[]`, []AppointmentAction{AppointmentRescheduled}},
-		{"partial reschedule", Interaction{AppointmentOutcome: OutcomePartial, BookingResult: json.RawMessage(`{"status":"booked"}`)}, `[]`, []AppointmentAction{AppointmentBooked}},
+		{"blocked receipt", Interaction{AppointmentOutcome: OutcomeBooking}, `[{"outcome":"booked","status":"blocked"}]`, []AppointmentAction{}},
+		{"confirmed booking", Interaction{AppointmentOutcome: OutcomeBooking}, ``, []AppointmentAction{AppointmentBooked}},
+		{"confirmed reschedule", Interaction{AppointmentOutcome: OutcomeReschedule}, ``, []AppointmentAction{AppointmentRescheduled}},
+		{"partial reschedule", Interaction{AppointmentOutcome: OutcomePartial, BookingResult: json.RawMessage(`{"status":"booked"}`)}, ``, []AppointmentAction{AppointmentBooked}},
 		{"multiple actions deduplicated", Interaction{}, `[{"outcome":"booked","status":"success"},{"outcome":"booked","status":"success"},{"outcome":"cancelled","status":"success"}]`, []AppointmentAction{AppointmentBooked, AppointmentCancelled}},
-		{"replay excluded", Interaction{}, `[{"outcome":"booked","status":"success","evidence":{"replayed":true}}]`, []AppointmentAction{}},
+		{"replay excluded", Interaction{AppointmentOutcome: OutcomeBooking}, `[{"outcome":"booked","status":"success","evidence":{"replayed":true}}]`, []AppointmentAction{}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

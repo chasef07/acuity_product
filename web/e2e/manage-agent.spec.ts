@@ -115,7 +115,29 @@ test("staff review calls and persist an issue for Acuity", async ({
       panel.getByRole("textbox", { name: "What went wrong?" }),
     ).toHaveValue("Please review the appointment instructions.")
     await page.unroute(`**/v1/agent-calls/${id}/issue`)
+    // A concurrent report must not clear this staff member's draft.
+    await page.route(`**/v1/agent-calls/${id}/issue`, (route) =>
+      route.fulfill({ status: 409, contentType: "application/json", body: "{}" }),
+    )
     await panel.getByRole("button", { name: "Flag issue", exact: true }).click()
+    await expect(panel.getByRole("alert")).toContainText("already has a report")
+    await expect(panel.getByRole("textbox", { name: "What went wrong?" }))
+      .toHaveValue("Please review the appointment instructions.")
+    await page.unroute(`**/v1/agent-calls/${id}/issue`)
+    // Keep the panel mounted until the durable save finishes.
+    let releaseSave!: () => void
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve })
+    await page.route(`**/v1/agent-calls/${id}/issue`, async (route) => {
+      await saveGate
+      await route.continue()
+    })
+    await panel.getByRole("button", { name: "Flag issue", exact: true }).click()
+    await expect(panel.getByRole("button", { name: /Saving…/ })).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(panel).toBeVisible()
+    await panel.getByRole("button", { name: "Close", exact: true }).click()
+    await expect(panel).toBeVisible()
+    releaseSave()
     await expect(
       panel.getByText("Issue flagged", { exact: true }),
     ).toBeVisible()

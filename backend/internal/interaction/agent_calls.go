@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -141,11 +142,9 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 
 func agentCall(stored Interaction, receipts json.RawMessage, flagged bool) AgentCall {
 	actions := []AppointmentAction{}
-	seen := map[AppointmentAction]bool{}
 	add := func(action AppointmentAction) {
-		if action != "" && !seen[action] {
+		if !slices.Contains(actions, action) {
 			actions = append(actions, action)
-			seen[action] = true
 		}
 	}
 	var outcomes []map[string]any
@@ -165,7 +164,7 @@ func agentCall(stored Interaction, receipts json.RawMessage, flagged bool) Agent
 	}
 	// Historical calls retain receipt-derived appointment outcomes. An attempted
 	// action or a successful tool invocation alone is never appointment proof.
-	if len(actions) == 0 {
+	if len(receipts) == 0 {
 		switch stored.AppointmentOutcome {
 		case OutcomeBooking:
 			add(AppointmentBooked)
@@ -245,8 +244,12 @@ func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identit
 		return AgentCallIssue{}, err
 	}
 	var issue AgentCallIssue
-	if err := tx.QueryRow(ctx, `SELECT note, created_at FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Note, &issue.CreatedAt); err != nil {
+	var reporter string
+	if err := tx.QueryRow(ctx, `SELECT note, created_at, reported_by FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Note, &issue.CreatedAt, &reporter); err != nil {
 		return AgentCallIssue{}, err
+	}
+	if issue.Note != note || reporter != identity.Subject {
+		return AgentCallIssue{}, ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AgentCallIssue{}, err

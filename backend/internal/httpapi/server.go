@@ -523,6 +523,9 @@ func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// A closeout can contain multiple bounded provider responses plus its transcript.
+const aiInteractionMaxBodyBytes = 32 * 1024 * 1024
+
 func (server *Server) IngestAIInteraction(w http.ResponseWriter, r *http.Request) {
 	if !server.portalOnly(w, r) {
 		return
@@ -532,7 +535,7 @@ func (server *Server) IngestAIInteraction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var body api.AIInteractionIngestRequest
-	if !server.decodeJSONLimit(w, r, &body, 8*1024*1024) {
+	if !server.decodeJSONLimit(w, r, &body, aiInteractionMaxBodyBytes) {
 		return
 	}
 	command := interaction.IngestCommand{
@@ -731,6 +734,7 @@ func (server *Server) QueryOperatorAIAnalytics(
 		ctx,
 		interaction.QueryAnalyticsCommand{
 			Identity:   identity,
+			ManualTag:  stringValue(body.ManualTag),
 			PracticeID: body.PracticeId.String(),
 			LocationID: uuidString(body.LocationId),
 			Range:      interaction.AnalyticsRange(body.Range),
@@ -3274,6 +3278,10 @@ func taskResponse(task work.Task) (api.Task, error) {
 	if task.CallerName != "" {
 		response.CallerName = &task.CallerName
 	}
+	if interactionID := task.SourceInteractionID(); interactionID != "" {
+		response.SourceInteractionId = &interactionID
+		response.SourceReviewKey = stringPointer(task.SourceReviewKey)
+	}
 	if task.SourceCallID != "" {
 		response.SourceCallId = &task.SourceCallID
 	}
@@ -3807,6 +3815,29 @@ func aiInteractionDetailResponse(
 		CreatedAt:             stored.CreatedAt,
 		UpdatedAt:             stored.UpdatedAt,
 	}
+	if checks := interaction.ProjectEligibilityChecks(stored); len(checks) > 0 {
+		projected := make([]api.AIEligibilityCheck, 0, len(checks))
+		for _, check := range checks {
+			var resolution *api.AIInsuranceResolution
+			if saved := check.InsuranceResolution; saved != nil {
+				resolution = &api.AIInsuranceResolution{Status: saved.Status, Plans: append([]string{}, saved.Plans...)}
+				if saved.Decision != nil {
+					resolution.DecisionOutcome = stringPointer(saved.Decision.Outcome)
+					resolution.CanonicalPlan = stringPointer(saved.Decision.CanonicalPlan)
+				}
+			}
+			projected = append(projected, api.AIEligibilityCheck{
+				InsuranceResolution: resolution,
+				CoverageType:        stringPointer(check.CoverageType),
+				ProviderCheck:       &check.ProviderCheck, ProviderProfileId: stringPointer(check.ProviderProfileID), ProviderName: stringPointer(check.ProviderName), ProviderNpi: stringPointer(check.ProviderNPI), AppointmentReviewKeys: &check.AppointmentReviewKeys,
+				Status: api.AIEligibilityCheckStatus(check.Status), PatientName: check.PatientName, SubmittedName: check.SubmittedName,
+				Plan: check.Plan, PlanName: stringPointer(check.PlanName), MemberIdLast4: check.MemberIDLast4,
+				CheckedAt: check.CheckedAt, Reason: check.Reason, Benefits: check.Benefits,
+				IdentityReasons: &check.IdentityReasons, CheckId: stringPointer(check.CheckID), EligibilitySearchId: stringPointer(check.EligibilitySearchID),
+			})
+		}
+		response.EligibilityChecks = &projected
+	}
 	if appointment.PreviousAppointment != nil {
 		previous := aiAppointmentFactsResponse(*appointment.PreviousAppointment)
 		response.PreviousAppointment = &previous
@@ -3913,8 +3944,9 @@ func operatorAIAnalyticsPageResponse(
 	page interaction.AnalyticsPage,
 ) (api.OperatorAIAnalyticsPage, error) {
 	response := api.OperatorAIAnalyticsPage{
-		Calls:      make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
-		NextCursor: page.NextCursor,
+		AvailableTags: &page.AvailableTags,
+		Calls:         make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
+		NextCursor:    page.NextCursor,
 	}
 	if page.Summary != nil {
 		response.Summary = &api.OperatorAIAnalyticsSummary{
@@ -3957,6 +3989,8 @@ func operatorAIAnalyticsPageResponse(
 		}
 		response.Calls = append(response.Calls, api.OperatorAICallAnalytics{
 			Id:                  id,
+			ManualTags:          &call.ManualTags,
+			ReviewReasons:       &call.ReviewReasons,
 			LocationId:          locationID,
 			LocationName:        call.LocationName,
 			SourceCallId:        call.SourceCallID,
@@ -3986,7 +4020,10 @@ func operatorAIInteractionAnalyticsResponse(
 	if err != nil {
 		return api.OperatorAIInteractionAnalytics{}, err
 	}
+	var closeout map[string]json.RawMessage
+	_ = json.Unmarshal(detail.Interaction.CloseoutPayload, &closeout)
 	response := api.OperatorAIInteractionAnalytics{
+		Evaluation:            jsonMap(closeout["evaluation"]),
 		Id:                    base.Id,
 		PracticeId:            base.PracticeId,
 		LocationId:            base.LocationId,

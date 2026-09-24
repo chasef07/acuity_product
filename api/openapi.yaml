@@ -1228,6 +1228,8 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
   /v1/operator/ai-costs/query:
@@ -1300,6 +1302,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OperatorAIInteractionAnalytics"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/ai-interactions/{interactionId}/manual-tags:
+    parameters:
+      - name: interactionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getOperatorAICallTags
+      summary: Read or update manual call tags as a Platform Operator.
+      responses:
+        "200":
+          description: Available practice tags and tags applied to this call.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OperatorAICallTags"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      operationId: setOperatorAICallTag
+      summary: Read or update manual call tags as a Platform Operator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, applied]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 60}
+                applied: {type: boolean}
+      responses:
+        "200":
+          description: Available practice tags and tags applied to this call.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OperatorAICallTags"}
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3284,6 +3337,12 @@ components:
           $ref: "#/components/schemas/StaffTaskCategory"
         callerName:
           type: string
+        sourceReviewKey:
+          description: Immutable source appointment outcome key.
+          type: string
+        sourceInteractionId:
+          description: Exact source AI interaction for this appointment review.
+          type: string
         sourceCallId:
           type: string
         preview:
@@ -3529,7 +3588,9 @@ components:
         One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence;
         OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses
         a terminal status with endedAt, optional transcript and appointmentOutcome,
-        and required closeoutPayload. The service validates these kind-specific
+        and required closeoutPayload. The authenticated envelope is limited to 32 MiB,
+        including all eligibility responses and transcript. Oversized envelopes are
+        rejected without truncating evidence. The service validates these kind-specific
         requirements.
       additionalProperties: false
       required:
@@ -3719,6 +3780,74 @@ components:
             $ref: "#/components/schemas/AgentCallMessage"
         issue:
           $ref: "#/components/schemas/AgentCallIssue"
+    AIInsuranceResolution:
+      type: object
+      additionalProperties: false
+      required: [status, plans]
+      properties:
+        status:
+          type: string
+        plans:
+          type: array
+          items:
+            type: string
+        decisionOutcome:
+          type: string
+        canonicalPlan:
+          type: string
+    AIEligibilityCheck:
+      type: object
+      additionalProperties: false
+      required: [status, patientName, submittedName, plan, memberIdLast4, checkedAt, reason, benefits]
+      properties:
+        insuranceResolution:
+          $ref: "#/components/schemas/AIInsuranceResolution"
+        coverageType:
+          type: string
+          description: Intake coverage type; routine_vision selects vision-exam benefits.
+        providerCheck:
+          type: boolean
+        providerProfileId:
+          type: string
+        providerName:
+          type: string
+        providerNpi:
+          type: string
+        appointmentReviewKeys:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, inactive, review, unknown, unavailable, pending]
+          x-enum-varnames: [EligibilityActive, EligibilityInactive, EligibilityReview, EligibilityUnknown, EligibilityUnavailable, EligibilityPending]
+        patientName:
+          type: string
+        submittedName:
+          type: string
+        plan:
+          type: string
+        planName:
+          type: string
+        memberIdLast4:
+          type: string
+        checkedAt:
+          type: string
+        reason:
+          type: string
+        identityReasons:
+          type: array
+          items:
+            type: string
+        checkId:
+          type: string
+        eligibilitySearchId:
+          type: string
+        benefits:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
     AIInteractionDetail:
       type: object
       additionalProperties: false
@@ -3737,6 +3866,10 @@ components:
         - createdAt
         - updatedAt
       properties:
+        eligibilityChecks:
+          type: array
+          items:
+            $ref: "#/components/schemas/AIEligibilityCheck"
         id:
           type: string
           format: uuid
@@ -4173,6 +4306,12 @@ components:
         cacheSavingsUsd: {type: number, minimum: 0}
         items: {type: array, items: {$ref: "#/components/schemas/OperatorAICostItem"}}
         daily: {type: array, items: {$ref: "#/components/schemas/OperatorAICostDay"}}
+    OperatorAICallTags:
+      type: object
+      required: [available, selected]
+      properties:
+        available: {type: array, items: {type: string}}
+        selected: {type: array, items: {type: string}}
     OperatorAIAnalyticsRange:
       type: string
       enum: [24h, 7d, 30d]
@@ -4181,6 +4320,7 @@ components:
       additionalProperties: false
       required: [practiceId, range]
       properties:
+        manualTag: {type: string, maxLength: 60}
         practiceId:
           type: string
           format: uuid
@@ -4403,6 +4543,8 @@ components:
         - transferred
         - transcriptAvailable
       properties:
+        reviewReasons: {type: array, items: {type: string}}
+        manualTags: {type: array, items: {type: string}}
         id:
           type: string
           format: uuid
@@ -4459,6 +4601,7 @@ components:
       additionalProperties: false
       required: [calls, nextCursor]
       properties:
+        availableTags: {type: array, items: {type: string}}
         summary:
           $ref: "#/components/schemas/OperatorAIAnalyticsSummary"
         calls:
@@ -4595,6 +4738,10 @@ components:
         - timeline
         - toolExecutions
       properties:
+        evaluation:
+          type: object
+          additionalProperties: true
+          description: Complete stored evaluator result, including version, status, answers and usage.
         id:
           type: string
           format: uuid

@@ -439,6 +439,14 @@ export type Task = {
     urgency: StaffTaskUrgency;
     category?: StaffTaskCategory;
     callerName?: string;
+    /**
+     * Immutable source appointment outcome key.
+     */
+    sourceReviewKey?: string;
+    /**
+     * Exact source AI interaction for this appointment review.
+     */
+    sourceInteractionId?: string;
     sourceCallId?: string;
     /**
      * Latest incoming text preview for the workspace list.
@@ -545,7 +553,7 @@ export type AiAppointmentEvidence = {
 };
 
 /**
- * One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence; OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses a terminal status with endedAt, optional transcript and appointmentOutcome, and required closeoutPayload. The service validates these kind-specific requirements.
+ * One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence; OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses a terminal status with endedAt, optional transcript and appointmentOutcome, and required closeoutPayload. The authenticated envelope is limited to 32 MiB, including all eligibility responses and transcript. Oversized envelopes are rejected without truncating evidence. The service validates these kind-specific requirements.
  */
 export type AiInteractionIngestRequest = {
     kind: AiInteractionMessageKind;
@@ -632,7 +640,42 @@ export type AgentCallDetail = {
     issue?: AgentCallIssue;
 };
 
+export type AiInsuranceResolution = {
+    status: string;
+    plans: Array<string>;
+    decisionOutcome?: string;
+    canonicalPlan?: string;
+};
+
+export type AiEligibilityCheck = {
+    insuranceResolution?: AiInsuranceResolution;
+    /**
+     * Intake coverage type; routine_vision selects vision-exam benefits.
+     */
+    coverageType?: string;
+    providerCheck?: boolean;
+    providerProfileId?: string;
+    providerName?: string;
+    providerNpi?: string;
+    appointmentReviewKeys?: Array<string>;
+    status: 'active' | 'inactive' | 'review' | 'unknown' | 'unavailable' | 'pending';
+    patientName: string;
+    submittedName: string;
+    plan: string;
+    planName?: string;
+    memberIdLast4: string;
+    checkedAt: string;
+    reason: string;
+    identityReasons?: Array<string>;
+    checkId?: string;
+    eligibilitySearchId?: string;
+    benefits: Array<{
+        [key: string]: unknown;
+    }>;
+};
+
 export type AiInteractionDetail = {
+    eligibilityChecks?: Array<AiEligibilityCheck>;
     id: string;
     practiceId: string;
     locationId: string;
@@ -920,9 +963,15 @@ export type OperatorAiCostAnalytics = {
     daily: Array<OperatorAiCostDay>;
 };
 
+export type OperatorAiCallTags = {
+    available: Array<string>;
+    selected: Array<string>;
+};
+
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
+    manualTag?: string;
     practiceId: string;
     locationId?: string;
     range: OperatorAiAnalyticsRange;
@@ -1033,6 +1082,8 @@ export type OperatorAiAnalyticsDiagnostics = {
 };
 
 export type OperatorAiCallAnalytics = {
+    reviewReasons?: Array<string>;
+    manualTags?: Array<string>;
     id: string;
     locationId: string;
     locationName: string;
@@ -1057,6 +1108,7 @@ export type OperatorAiCallAnalytics = {
  * The first page includes a fresh range summary. Cursor continuations return calls only within the initial reporting window; refresh without a cursor to obtain a new summary and window.
  */
 export type OperatorAiAnalyticsPage = {
+    availableTags?: Array<string>;
     summary?: OperatorAiAnalyticsSummary;
     calls: Array<OperatorAiCallAnalytics>;
     nextCursor: string;
@@ -1140,6 +1192,12 @@ export type ProviderErrorDiagnostic = {
 };
 
 export type OperatorAiInteractionAnalytics = {
+    /**
+     * Complete stored evaluator result, including version, status, answers and usage.
+     */
+    evaluation?: {
+        [key: string]: unknown;
+    };
     id: string;
     practiceId: string;
     locationId: string;
@@ -3011,6 +3069,10 @@ export type FlagAgentCallIssueErrors = {
      */
     403: ErrorEnvelope;
     /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
      * A required dependency is temporarily unavailable.
      */
     503: ErrorEnvelope;
@@ -3143,6 +3205,87 @@ export type GetOperatorAiInteractionAnalyticsResponses = {
 };
 
 export type GetOperatorAiInteractionAnalyticsResponse = GetOperatorAiInteractionAnalyticsResponses[keyof GetOperatorAiInteractionAnalyticsResponses];
+
+export type GetOperatorAiCallTagsData = {
+    body?: never;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/operator/ai-interactions/{interactionId}/manual-tags';
+};
+
+export type GetOperatorAiCallTagsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetOperatorAiCallTagsError = GetOperatorAiCallTagsErrors[keyof GetOperatorAiCallTagsErrors];
+
+export type GetOperatorAiCallTagsResponses = {
+    /**
+     * Available practice tags and tags applied to this call.
+     */
+    200: OperatorAiCallTags;
+};
+
+export type GetOperatorAiCallTagsResponse = GetOperatorAiCallTagsResponses[keyof GetOperatorAiCallTagsResponses];
+
+export type SetOperatorAiCallTagData = {
+    body: {
+        name: string;
+        applied: boolean;
+    };
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/operator/ai-interactions/{interactionId}/manual-tags';
+};
+
+export type SetOperatorAiCallTagErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type SetOperatorAiCallTagError = SetOperatorAiCallTagErrors[keyof SetOperatorAiCallTagErrors];
+
+export type SetOperatorAiCallTagResponses = {
+    /**
+     * Available practice tags and tags applied to this call.
+     */
+    200: OperatorAiCallTags;
+};
+
+export type SetOperatorAiCallTagResponse = SetOperatorAiCallTagResponses[keyof SetOperatorAiCallTagResponses];
 
 export type CreateStaffTaskData = {
     body: CreateStaffTaskRequest;

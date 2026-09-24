@@ -107,6 +107,36 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
           { items },
           call % 2 === 0 ? "ESCALATED" : "COMPLETED",
           {
+            ...(call === 0 ? { evaluation: {
+              evaluator: "jev", evaluatorVersion: "typesafe-trace-v4", model: "typesafe-ai/jev",
+              status: "complete", evaluatedAt: start.toISOString(),
+              results: {
+                outcome: { answers: {
+                  request_fulfilled: { type: "boolean", probability: 0.4 },
+                  handoff_required: { type: "boolean", probability: 0.9 },
+                  claims_supported: { type: "boolean", probability: 0.15 },
+                }, usage: { total_tokens: 123 } },
+                clarity: { answers: {
+                  request_specificity: { type: "score", score: 2.7, probabilities: { "2": 0.3, "3": 0.7 } },
+                  in_scope: { type: "boolean", probability: 0.95 },
+                } },
+                reaction: { answers: {
+                  expressed_sentiment: { type: "score", score: 1, probabilities: { "1": 1 } },
+                  reports_unresolved: { type: "boolean", probability: 0.85 },
+                } },
+              },
+            } } : call === 7 ? { evaluation: {
+              evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v1", model: "typesafe-ai/jev",
+              status: "incomplete", reason: "judge_errors", evaluatedAt: start.toISOString(),
+              results: {
+                request_understood: { answers: { request_understood: { type: "noul", noul: 0.95 } } },
+                appointment_datetime_correct: { answers: { appointment_datetime_correct: { type: "noul", noul: 0.8 } } },
+                office_rules_grounded: { answers: { office_rules_grounded: { type: "noul", noul: 0.9 } } },
+                results_reported_truthfully: { answers: { results_reported_truthfully: { type: "noul", noul: 0.1 } } },
+                expressed_sentiment: { answers: { expressed_sentiment: { type: "score", score: 2.5, probabilities: { "2": 0.5, "3": 0.5 } } } },
+              },
+              errors: { resolved_or_handed_off: { cause: "HTTPStatusError", httpStatus: 503, attempts: 2 } },
+            } } : {}),
             domainOutcomes: [
               {
                 callId: "tool-0",
@@ -154,6 +184,13 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await page
       .getByRole("option", { name: "Fixture Location 6", exact: true })
       .click()
+    const flaggedCall = diagnostics.getByRole("row").filter({ hasText: "Possible unsupported claim" })
+    await expect(flaggedCall).toHaveCount(1)
+    await expect(flaggedCall).toContainText("Caller reports unresolved issue")
+    await expect(flaggedCall).toHaveClass(/bg-destructive/)
+    await expect(diagnostics.getByRole("button", { name: "Calls", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await expect(diagnostics.getByRole("columnheader", { name: /P50/ })).toHaveCount(0)
+    await diagnostics.getByRole("button", { name: "Overview", exact: true }).click()
     const volume = diagnostics.getByRole("region", {
       name: "Call volume over time",
       exact: true,
@@ -205,10 +242,42 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       .first()
       .click()
     const callSheet = page.getByRole("dialog", { name: "AI call evidence" })
+    await expect(callSheet.getByRole("button", { name: "Previous call", exact: true })).toBeDisabled()
+    await callSheet.getByRole("button", { name: "Next call", exact: true }).click()
+    await expect(callSheet.getByRole("button", { name: "Previous call", exact: true })).toBeEnabled()
+    const scorecard = callSheet.getByRole("region", { name: "AI evaluation", exact: true })
+    await expect(scorecard.getByText("Caller request understood", { exact: true })).toBeVisible()
+    await expect(scorecard.getByText("0.95 / 1", { exact: true })).toBeVisible()
+    await expect(scorecard.getByText("2.50 / 4", { exact: true })).toBeVisible()
+    await expect(scorecard.getByText("Neutral or mixed: 50.0%", { exact: true })).toBeVisible()
+    await expect(scorecard.getByText(/Judge failed: HTTPStatusError/)).toBeVisible()
+    await expect(scorecard.getByText("Evaluation incomplete: judge errors", { exact: true })).toBeVisible()
+    await scorecard.screenshot({ path: testInfo.outputPath("judge-scorecard.png") })
+    await callSheet.getByRole("button", { name: "Previous call", exact: true }).click()
+    await expect(callSheet.getByRole("button", { name: "Previous call", exact: true })).toBeDisabled()
+    const evaluation = callSheet.getByRole("region", { name: "AI evaluation", exact: true })
+    await expect(evaluation.getByText("Factual claims supported", { exact: true })).toBeVisible()
+    await expect(evaluation.getByText("15.0% likely true", { exact: true })).toBeVisible()
+    await expect(evaluation.getByText("85.0% likely true", { exact: true })).toBeVisible()
+    await evaluation.getByText("Full evaluation data, including usage", { exact: true }).click()
+    await expect(evaluation.locator("pre")).toContainText('"total_tokens": 123')
+    await evaluation.getByText("Full evaluation data, including usage", { exact: true }).click()
+    const manualTags = callSheet.getByRole("region", { name: "Manual tags", exact: true })
+    await manualTags.getByRole("textbox", { name: "New tag", exact: true }).fill("Good recovery")
+    await manualTags.getByRole("button", { name: "Add tag", exact: true }).click()
+    await expect(manualTags.getByRole("button", { name: "Good recovery", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await callSheet.getByRole("button", { name: "Next call", exact: true }).click()
+    await expect(manualTags.getByRole("button", { name: "Good recovery", exact: true })).toHaveAttribute("aria-pressed", "false")
+    await manualTags.getByRole("button", { name: "Good recovery", exact: true }).click()
+    await expect(manualTags.getByRole("button", { name: "Good recovery", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await callSheet.getByRole("button", { name: "Previous call", exact: true }).click()
+    await expect(manualTags.getByRole("button", { name: "Good recovery", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await manualTags.getByRole("button", { name: "Good recovery", exact: true }).click()
+    await expect(manualTags.getByRole("button", { name: "Good recovery", exact: true })).toHaveAttribute("aria-pressed", "false")
     await expect(
       callSheet.getByRole("button", { name: "Turn timing" }),
     ).toHaveAttribute("aria-pressed", "true")
-    await expect(callSheet.getByText("P50 STT", { exact: true })).toBeVisible()
+    await expect(callSheet.getByText("P50 STT", { exact: true })).toHaveCount(0)
     await expect(callSheet.getByLabel("Caller message").first()).toContainText(
       "STT final",
     )
@@ -220,6 +289,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
         name: "Appointment and receipt evidence",
       }),
     ).toHaveCount(0)
+    await callSheet.getByLabel("Caller message").first().scrollIntoViewIfNeeded()
     await expect(
       callSheet.getByLabel("Caller message").first(),
     ).toBeInViewport()
@@ -246,12 +316,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await transcript.evaluate((element) => {
       element.scrollTop = 500
     })
-    await expect(
-      callSheet.getByText("P50 STT", { exact: true }),
-    ).toBeInViewport()
-    await expect(
-      callSheet.getByText("P50 E2E", { exact: true }),
-    ).toBeInViewport()
+    await expect(callSheet.getByRole("button", { name: "Next call", exact: true })).toBeInViewport()
     await transcript.evaluate((element) => {
       element.scrollTop = 0
     })
@@ -261,7 +326,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       animations: "disabled",
     })
     await callSheet.getByRole("button", { name: "Turn timing" }).click()
-    await expect(callSheet.getByText("P50 STT", { exact: true })).toBeVisible()
+    await expect(callSheet.getByText("P50 STT", { exact: true })).toHaveCount(0)
     await callSheet.getByRole("button", { name: "Turn timing" }).click()
     await page.setViewportSize({ width: 390, height: 844 })
     expect(
@@ -276,6 +341,10 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     })
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.setViewportSize({ width: 1440, height: 1320 })
+    const tagFilters = diagnostics.getByLabel("Filter calls by tag", { exact: true })
+    await tagFilters.getByRole("button", { name: "Good recovery", exact: true }).click()
+    await expect(diagnostics.getByText("1 shown · 1 total", { exact: false })).toBeVisible()
+    await tagFilters.getByRole("button", { name: "All calls", exact: true }).click()
     await diagnostics
       .getByRole("button", { name: "Performance", exact: true })
       .click()

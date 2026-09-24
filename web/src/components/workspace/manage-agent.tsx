@@ -138,7 +138,7 @@ export function ManageAgent({
   }, [key, practiceID, office, range, phone, flaggedOnly])
 
   async function loadMore(navigateFrom?: string) {
-    if (!current?.data?.nextCursor || (more.key === key && more.loading)) return
+    if (!current?.data?.nextCursor || loadingMore) return
     setMore({ key, loading: true })
     try {
       const token = await getAccessToken()
@@ -374,15 +374,11 @@ export function ManageAgent({
                 <div className="py-5 text-center">
                   <Button
                     variant="outline"
-                    disabled={more.key === key && more.loading}
+                    disabled={loadingMore}
                     onClick={() => void loadMore()}
                   >
-                    {more.key === key && more.loading && (
-                      <Spinner data-icon="inline-start" />
-                    )}
-                    {more.key === key && more.loading
-                      ? "Loading…"
-                      : "Load more calls"}
+                    {loadingMore && <Spinner data-icon="inline-start" />}
+                    {loadingMore ? "Loading…" : "Load more calls"}
                   </Button>
                 </div>
               )}

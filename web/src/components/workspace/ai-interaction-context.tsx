@@ -1,5 +1,6 @@
 "use client"
 
+import { EligibilitySummary } from "./eligibility-summary"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
@@ -85,6 +86,8 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
             )}
         </section>
       )}
+
+      <EligibilitySummary checks={detail.eligibilityChecks} />
 
       <details className="group border-t px-5 py-4">
         <summary className="cursor-pointer text-sm font-medium">Details</summary>

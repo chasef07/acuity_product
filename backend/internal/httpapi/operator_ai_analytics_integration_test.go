@@ -424,6 +424,72 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	}
 	_ = deniedDetail.Body.Close()
 
+	t.Run("manual tags persist, deduplicate, filter and enforce operator access", func(t *testing.T) {
+		tagURL := server.URL + "/v1/operator/ai-interactions/" + richID + "/manual-tags"
+		for _, method := range []string{http.MethodGet, http.MethodPut} {
+			var body []byte
+			if method == http.MethodPut {
+				body = []byte(`{"name":"Good recovery","applied":true}`)
+			}
+			denied := request(t, server.Client(), method, tagURL, "admin-token", body)
+			if denied.StatusCode != http.StatusForbidden {
+				t.Fatalf("non-operator tags: %d %s", denied.StatusCode, readBody(t, denied))
+			}
+			denied.Body.Close()
+		}
+		mutate := func(id, name string, applied bool) api.OperatorAICallTags {
+			t.Helper()
+			body, _ := json.Marshal(map[string]any{"name": name, "applied": applied})
+			response := request(t, server.Client(), http.MethodPut, server.URL+"/v1/operator/ai-interactions/"+id+"/manual-tags", "operator-token", body)
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("save tags: %d %s", response.StatusCode, readBody(t, response))
+			}
+			var tags api.OperatorAICallTags
+			decode(t, response, &tags)
+			return tags
+		}
+		mutate(richID, "  Good   recovery  ", true)
+		tags := mutate(richID, "good recovery", true)
+		if len(tags.Available) != 1 || len(tags.Selected) != 1 || tags.Selected[0] != "Good recovery" {
+			t.Fatalf("duplicate tags: %+v", tags)
+		}
+		mutate(richID, "Needs review", true)
+		tags = mutate(escalatedID, "GOOD RECOVERY", true)
+		if len(tags.Available) != 2 || len(tags.Selected) != 1 {
+			t.Fatalf("shared catalog: %+v", tags)
+		}
+		body, _ := json.Marshal(map[string]any{"practiceId": practiceID, "range": "7d", "manualTag": "Good recovery", "limit": 1})
+		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "operator-token", body)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("filtered calls: %s", readBody(t, response))
+		}
+		var page api.OperatorAIAnalyticsPage
+		decode(t, response, &page)
+		if page.Summary.TotalCalls != 2 || len(page.Calls) != 1 || page.Calls[0].ManualTags == nil || page.NextCursor == "" {
+			t.Fatalf("filtered page: %+v", page)
+		}
+		body, _ = json.Marshal(map[string]any{"practiceId": practiceID, "range": "7d", "manualTag": "Needs review", "cursor": page.NextCursor})
+		mismatch := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "operator-token", body)
+		if mismatch.StatusCode != http.StatusBadRequest {
+			t.Fatalf("cursor crossed filters: %d", mismatch.StatusCode)
+		}
+		mismatch.Body.Close()
+		tags = mutate(richID, "good recovery", false)
+		if len(tags.Selected) != 1 || tags.Selected[0] != "Needs review" || len(tags.Available) != 2 {
+			t.Fatalf("remove lost unrelated tag/catalog: %+v", tags)
+		}
+		response = request(t, server.Client(), http.MethodGet, tagURL, "operator-token", nil)
+		decode(t, response, &tags)
+		if len(tags.Selected) != 1 || tags.Selected[0] != "Needs review" {
+			t.Fatalf("tags not durable: %+v", tags)
+		}
+		invalid := request(t, server.Client(), http.MethodPut, tagURL, "operator-token", []byte(`{"name":"   ","applied":true}`))
+		if invalid.StatusCode != http.StatusBadRequest {
+			t.Fatalf("blank tag accepted: %d", invalid.StatusCode)
+		}
+		invalid.Body.Close()
+	})
+
 	// Exercise the real cost endpoint under its SQL budget with large session
 	// reports. Conversation size must not determine the range-read payload.
 	largeReport, _ := json.Marshal(map[string]any{

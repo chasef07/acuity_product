@@ -2,9 +2,10 @@
 
 `offices/*.yaml` is the reviewed source for each office's reusable, non-patient
 knowledge. PostgreSQL/pgvector holds published immutable revisions and generated
-embeddings. After a successful application release, GitHub Actions automatically
-publishes changed offices from that deployed commit, with a visible receipt for
-every office. A merge validates sources but does not publish ahead of deployment.
+embeddings. The manually dispatched Knowledge workflow publishes changed offices,
+with a visible receipt for every office. A merge validates sources but does not
+publish. Knowledge publication and retrieval verification run independently of
+application releases; their failures do not change application release status.
 
 ```yaml
 practiceId: 11111111-1111-4111-8111-111111111111
@@ -38,15 +39,13 @@ AI call rewrites the facts.
    empty content, and entries exceeding the importer limits. Review the actual
    facts and preserve their conditions; structural validation is not fact-checking.
 2. Merge the reviewed PR into `main`.
-3. After release verification and deployment succeed, **Release** calls the
-   **Knowledge** workflow with the exact deployed commit. It checks every
-   office against its active database revision. It publishes changed content and
-   skips unchanged offices without generating new embeddings or revisions.
-4. For a manual rerun, use **Actions → Knowledge → Run workflow** on `main`.
-   First confirm the deployed backend supports the source and retrieval checks;
-   manual dispatch does not deploy code. Leave `office` as `all` to process every
-   office, or enter one office filename without `.yaml`. No database revision
-   input is needed.
+3. Confirm the deployed backend supports the source and retrieval checks; knowledge
+   publication does not deploy code.
+4. Use **Actions → Knowledge → Run workflow** on `main`. Leave `office` as `all`
+   to process every office, or enter one office filename without `.yaml`. The
+   workflow checks each office against its active database revision, publishes
+   changed content, and skips unchanged offices without generating new embeddings
+   or revisions. No database revision input is needed.
 5. Review the per-office summary and publication receipts. The importer reads the
    current revision automatically, then uses the existing atomic comparison to
    reject a concurrent change. A rerun safely skips offices already up to date.

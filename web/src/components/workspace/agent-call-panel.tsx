@@ -106,7 +106,7 @@ export function AgentCallPanel({
     })
   }
   return (
-    <Sheet open={Boolean(id)} onOpenChange={(open) => !open && onClose()}>
+    <Sheet open={Boolean(id)} onOpenChange={(open) => !open && !saving && onClose()}>
       <SheetContent className="flex h-full flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
         {id && (
           <>
@@ -229,16 +229,16 @@ function CallContent({
         path: { interactionId: id },
         body: { note: note.trim() },
       })
+      if (result.response?.status === 409) {
+        setSaveError(
+          "This call already has a report. Your note has not been saved; copy it before closing.",
+        )
+        return
+      }
       if (!result.data) throw new Error()
       const issue = result.data
       setDetail((previous) =>
-        previous
-          ? {
-              ...previous,
-              issue,
-              call: { ...previous.call, issueFlagged: true },
-            }
-          : previous,
+        previous ? { ...previous, issue } : previous,
       )
       setReporting(false)
       onFlagged(id)
