@@ -412,7 +412,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                 data-testid="context-panel"
                 inert={!contextPanelOpen}
                 className={cn(
-                  "absolute inset-y-0 right-0 flex h-full w-full max-w-full flex-col overflow-hidden border-l sm:max-w-sm bg-background transition-[width,opacity,transform] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:max-w-none lg:shrink-0",
+                  "absolute top-16 right-0 bottom-0 flex w-full max-w-full flex-col overflow-hidden border-l sm:max-w-sm bg-background transition-[width,opacity,transform] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:h-full lg:max-w-none lg:shrink-0",
                   contextPanelOpen
                     ? "translate-x-0 opacity-100 lg:w-80 xl:w-96"
                     : "pointer-events-none translate-x-4 border-transparent opacity-0 lg:w-0",

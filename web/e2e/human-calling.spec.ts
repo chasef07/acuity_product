@@ -211,6 +211,10 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       taskContext.getByRole("heading", { name: "Review voicemail" }),
     ).toBeVisible()
     await expect(taskContext.getByText("1 earlier call")).toBeVisible()
+    const desktopViewport = page.viewportSize()!
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByTitle("Call this Task", { exact: true }).click({ trial: true, timeout: 10_000 })
+    await page.setViewportSize(desktopViewport)
     await taskContext.getByRole("button", { name: "Play" }).click()
     await expect(
       taskContext.getByLabel("Voicemail recording"),

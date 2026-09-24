@@ -21,7 +21,6 @@ import {
 } from "lucide-react"
 
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { AcuityMark } from "@/components/acuity-mark"
 import {
@@ -443,9 +442,9 @@ export function WorkspaceRail({
             <DropdownMenuTrigger
               render={<Button variant="ghost" className="h-auto w-full min-w-0 justify-start gap-2 px-2 py-2" aria-label="Account menu" />}
             >
-              <Avatar>
-                <AvatarFallback>{discovery.actor.email.charAt(0).toUpperCase()}</AvatarFallback>
-              </Avatar>
+              <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm text-muted-foreground">
+                {discovery.actor.email.charAt(0).toUpperCase()}
+              </span>
               <span className="truncate text-xs">{discovery.actor.email}</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="top" align="start" className="w-64">

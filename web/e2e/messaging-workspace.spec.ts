@@ -200,7 +200,8 @@ test("rail hover details and the message composer preserve compact context", asy
 
   const appearanceButton = page.getByRole("button", { name: "Account menu" })
   await expect(appearanceButton).toBeVisible()
-  await expect(appearanceButton.locator('[data-slot="avatar"]')).toBeVisible()
+  await expect(appearanceButton.getByText("M", { exact: true })).toBeVisible()
+  await expect(appearanceButton).toContainText("messaging@abita.test")
   await appearanceButton.click()
   await expect(page.getByRole("button", { name: "System", exact: true })).toBeVisible()
   await page.screenshot({
