@@ -1256,3 +1256,30 @@ test("a former Texts selection becomes a persistent independent folder", async (
   assert.deepEqual(restored.getSnapshot().rail.expanded, [])
   restored.stop()
 })
+
+
+test("appointment selection loads only its exact source interaction and clears it on another task", async () => {
+  const appointment = { ...task("appointment-1"), origin: "APPOINTMENT_REVIEW" as const, sourceInteractionId: "interaction-1" }
+  const other = task("other-task")
+  const realtime = deterministicRealtime()
+  const calls: string[] = []
+  let summary = "Exact source"
+  const projection = createWorkspaceProjection({
+    authority: { ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(4), tasks: taskPage([other, appointment]) }), aiInteraction: async (_token, id) => { calls.push(id); return success(aiInteractionDetail(id, summary)) } },
+    realtime: realtime.adapter,
+    preferences: { read: () => null, write: () => {} },
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: appointment })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(calls, ["interaction-1"])
+  assert.equal(projection.getSnapshot().selection.contextView, "task")
+  assert.equal(projection.getSnapshot().selection.aiInteraction?.id, "interaction-1")
+  summary = "Closeout with eligibility"
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.aiInteraction?.summary, summary)
+  await projection.dispatch({ type: "select-task", task: other })
+  assert.equal(projection.getSnapshot().selection.aiInteraction, undefined)
+  projection.stop()
+})

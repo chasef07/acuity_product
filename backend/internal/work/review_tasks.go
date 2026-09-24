@@ -3,6 +3,7 @@ package work
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,10 +14,24 @@ const (
 	TaskOriginInboundMessageReview TaskOrigin = "INBOUND_MESSAGE_REVIEW"
 )
 
+// SourceInteractionID identifies the Interaction that created this appointment review.
+func (t Task) SourceInteractionID() string {
+	if t.Origin != TaskOriginAppointmentReview {
+		return ""
+	}
+	id, _, _ := strings.Cut(t.SourceReviewKey, ":")
+	return id
+}
+
+// AppointmentReviewKey identifies a durable outcome at database timestamp precision.
+func AppointmentReviewKey(interactionID string, occurredAt time.Time) string {
+	return interactionID + ":" + occurredAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+}
+
 // EnsureAppointmentReview preserves one review per durable outcome, including
 // after completion. The Interaction owner holds its source lock and transaction.
 func (m *Module) EnsureAppointmentReview(ctx context.Context, tx pgx.Tx, interactionID, practiceID, locationID, phone, sourceCallID, action, message string, occurredAt time.Time) error {
-	key := interactionID + ":" + occurredAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+	key := AppointmentReviewKey(interactionID, occurredAt)
 	title := map[string]string{"BOOKED": "Review booked appointment", "CANCELLED": "Review cancelled appointment", "RESCHEDULED": "Review appointment change"}[action]
 	if title == "" || occurredAt.IsZero() {
 		return ErrInvalidInput

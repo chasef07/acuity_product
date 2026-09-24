@@ -190,7 +190,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	}
 	_ = unauthenticated.Body.Close()
 	oversizedBody := append([]byte{}, body...)
-	oversizedBody = append(oversizedBody, bytes.Repeat([]byte(" "), 8*1024*1024)...)
+	oversizedBody = append(oversizedBody, bytes.Repeat([]byte(" "), 32*1024*1024)...)
 	oversizedBody = append(oversizedBody, 'x')
 	oversized := request(
 		t, server.Client(), http.MethodPost,
@@ -503,8 +503,16 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			"cancellationResult": map[string]any{"status": "cancelled"},
 		},
 		"closeoutPayload": map[string]any{
-			"callId":      "abita-call-63",
-			"evaluation":  jevEvaluation,
+			"callId":     "abita-call-63",
+			"evaluation": jevEvaluation,
+			"eligibilityChecks": []any{map[string]any{
+				"status": "complete", "request": map[string]any{"firstName": "Jane", "lastName": "Example", "plan": "Example Health", "memberId": "private-4821"},
+				"result": map[string]any{"status": "active", "checkedAt": "2026-09-23T12:00:00Z", "identity": map[string]any{"status": "exact_name_dob", "reviewRequired": false},
+					"providerResponse": map[string]any{"subscriber": map[string]any{"memberId": "private-4821"}, "x12": "private-eligibility-x12",
+						"benefitsInformation": []any{map[string]any{"code": "B", "serviceTypeCodes": []string{"98"}, "benefitAmount": "35", "additionalInformation": []any{map[string]any{"description": "Specific provider tier"}}}},
+					},
+				},
+			}},
 			"callerPhone": "+17275550199",
 			"officeKey":   "spring-hill",
 			"officePhone": "+17275919997",
@@ -661,6 +669,17 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			staffDetail.StatusCode, readBody(t, staffDetail))
 	}
 	staffDetailBody := readBody(t, staffDetail)
+	for _, value := range []string{`"eligibilityChecks"`, `"benefitAmount":"35"`, `Specific provider tier`, `"memberIdLast4":"4821"`} {
+		if !strings.Contains(staffDetailBody, value) {
+			t.Fatalf("staff eligibility missing %s", value)
+		}
+	}
+	for _, value := range []string{"private-4821", "private-eligibility-x12", `"providerResponse"`} {
+		if strings.Contains(staffDetailBody, value) {
+			t.Fatalf("staff summary leaked raw eligibility: %s", value)
+		}
+	}
+
 	if bytes.Contains([]byte(staffDetailBody), []byte(`"transcript"`)) ||
 		bytes.Contains([]byte(staffDetailBody), []byte(`"closeoutPayload"`)) ||
 		bytes.Contains([]byte(staffDetailBody), []byte("Please move my appointment.")) {
@@ -756,6 +775,36 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			deniedDetail.StatusCode, readBody(t, deniedDetail))
 	}
 	_ = deniedDetail.Body.Close()
+	t.Run("multiple full eligibility responses exceed former envelope limit", func(t *testing.T) {
+		providerText := strings.Repeat("synthetic-evidence-", 300000)
+		checks := []any{}
+		for _, name := range []string{"Jane", "John"} {
+			checks = append(checks, map[string]any{
+				"status": "complete", "request": map[string]any{"firstName": name, "lastName": "Example", "plan": "Example Health"},
+				"result": map[string]any{"status": "review", "providerResponse": map[string]any{"x12": providerText}},
+			})
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"kind": "CLOSEOUT", "officeKey": "spring-hill", "officePhone": "+17275919997", "sourceCallId": "large-eligibility-evidence",
+			"callerPhone": "+15555550125", "startedAt": startedAt.Format(time.RFC3339Nano), "endedAt": endedAt.Format(time.RFC3339), "status": "COMPLETED",
+			"transcript":      map[string]any{"items": []any{map[string]any{"role": "user", "text": "Synthetic transcript retained"}}},
+			"closeoutPayload": map[string]any{"eligibilityChecks": checks},
+		})
+		if len(payload) <= 8*1024*1024 || len(payload) >= 32*1024*1024 {
+			t.Fatal("fixture must cross former limit within supported envelope")
+		}
+		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/ai/interactions", "production-interaction-token", payload)
+		if response.StatusCode != http.StatusCreated {
+			t.Fatalf("large evidence rejected: %d", response.StatusCode)
+		}
+		response.Body.Close()
+		var firstLength, secondLength int
+		var transcriptText string
+		err := pool.QueryRow(context.Background(), `SELECT length(closeout_payload->'eligibilityChecks'->0->'result'->'providerResponse'->>'x12'),length(closeout_payload->'eligibilityChecks'->1->'result'->'providerResponse'->>'x12'),transcript->'items'->0->>'text' FROM ai_interactions WHERE source_call_id='large-eligibility-evidence'`).Scan(&firstLength, &secondLength, &transcriptText)
+		if err != nil || firstLength != len(providerText) || secondLength != len(providerText) || transcriptText != "Synthetic transcript retained" {
+			t.Fatalf("large evidence lost: %d %d %q %v", firstLength, secondLength, transcriptText, err)
+		}
+	})
 	postCloseout := func(
 		sourceCallID string,
 		callerPhone string,

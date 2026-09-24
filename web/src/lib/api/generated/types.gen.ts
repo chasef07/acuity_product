@@ -439,6 +439,14 @@ export type Task = {
     urgency: StaffTaskUrgency;
     category?: StaffTaskCategory;
     callerName?: string;
+    /**
+     * Immutable source appointment outcome key.
+     */
+    sourceReviewKey?: string;
+    /**
+     * Exact source AI interaction for this appointment review.
+     */
+    sourceInteractionId?: string;
     sourceCallId?: string;
     /**
      * Latest incoming text preview for the workspace list.
@@ -545,7 +553,7 @@ export type AiAppointmentEvidence = {
 };
 
 /**
- * One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence; OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses a terminal status with endedAt, optional transcript and appointmentOutcome, and required closeoutPayload. The service validates these kind-specific requirements.
+ * One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence; OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses a terminal status with endedAt, optional transcript and appointmentOutcome, and required closeoutPayload. The authenticated envelope is limited to 32 MiB, including all eligibility responses and transcript. Oversized envelopes are rejected without truncating evidence. The service validates these kind-specific requirements.
  */
 export type AiInteractionIngestRequest = {
     kind: AiInteractionMessageKind;
@@ -585,7 +593,42 @@ export type AiAppointmentFacts = {
     startDatetime?: string;
 };
 
+export type AiInsuranceResolution = {
+    status: string;
+    plans: Array<string>;
+    decisionOutcome?: string;
+    canonicalPlan?: string;
+};
+
+export type AiEligibilityCheck = {
+    insuranceResolution?: AiInsuranceResolution;
+    /**
+     * Intake coverage type; routine_vision selects vision-exam benefits.
+     */
+    coverageType?: string;
+    providerCheck?: boolean;
+    providerProfileId?: string;
+    providerName?: string;
+    providerNpi?: string;
+    appointmentReviewKeys?: Array<string>;
+    status: 'active' | 'inactive' | 'review' | 'unknown' | 'unavailable' | 'pending';
+    patientName: string;
+    submittedName: string;
+    plan: string;
+    planName?: string;
+    memberIdLast4: string;
+    checkedAt: string;
+    reason: string;
+    identityReasons?: Array<string>;
+    checkId?: string;
+    eligibilitySearchId?: string;
+    benefits: Array<{
+        [key: string]: unknown;
+    }>;
+};
+
 export type AiInteractionDetail = {
+    eligibilityChecks?: Array<AiEligibilityCheck>;
     id: string;
     practiceId: string;
     locationId: string;
