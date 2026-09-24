@@ -126,13 +126,14 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
                 } },
               },
             } } : call === 7 ? { evaluation: {
-              evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v1", model: "typesafe-ai/jev",
+              evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v2", model: "typesafe-ai/jev",
               status: "incomplete", reason: "judge_errors", evaluatedAt: start.toISOString(),
               results: {
                 request_understood: { answers: { request_understood: { type: "noul", noul: 0.95 } } },
                 appointment_datetime_correct: { answers: { appointment_datetime_correct: { type: "noul", noul: 0.8 } } },
                 office_rules_grounded: { answers: { office_rules_grounded: { type: "noul", noul: 0.9 } } },
                 results_reported_truthfully: { answers: { results_reported_truthfully: { type: "noul", noul: 0.1 } } },
+                conversation_responsive: { answers: { conversation_responsive: { type: "noul", noul: 0.05 } } },
                 expressed_sentiment: { answers: { expressed_sentiment: { type: "score", score: 2.5, probabilities: { "2": 0.5, "3": 0.5 } } } },
               },
               errors: { resolved_or_handed_off: { cause: "HTTPStatusError", httpStatus: 503, attempts: 2 } },
@@ -252,6 +253,11 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await expect(scorecard.getByText("Neutral or mixed: 50.0%", { exact: true })).toBeVisible()
     await expect(scorecard.getByText(/Judge failed: HTTPStatusError/)).toBeVisible()
     await expect(scorecard.getByText("Evaluation incomplete: judge errors", { exact: true })).toBeVisible()
+    await expect(scorecard.getByText("Conversation responsive", { exact: true })).toBeVisible()
+    await expect(scorecard.getByText("0.05 / 1", { exact: true })).toBeVisible()
+    await scorecard.getByText("Full evaluation data, including usage", { exact: true }).click()
+    await expect(scorecard.locator("pre")).toContainText('"noul": 0.05')
+    await scorecard.getByText("Full evaluation data, including usage", { exact: true }).click()
     await scorecard.screenshot({ path: testInfo.outputPath("judge-scorecard.png") })
     await callSheet.getByRole("button", { name: "Previous call", exact: true }).click()
     await expect(callSheet.getByRole("button", { name: "Previous call", exact: true })).toBeDisabled()
