@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.2](https://github.com/chasef07/acuity_product/compare/v1.19.1...v1.19.2) (2026-09-24)
+
+
+### Bug Fixes
+
+* **analytics:** render v2 conversation responsiveness scores ([#360](https://github.com/chasef07/acuity_product/issues/360)) ([5d7d8ac](https://github.com/chasef07/acuity_product/commit/5d7d8aca68476b212ce8e0c50e239a97d3aac39b))
+
 ## [1.19.1](https://github.com/chasef07/acuity_product/compare/v1.19.0...v1.19.1) (2026-09-24)
 
 
