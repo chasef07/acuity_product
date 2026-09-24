@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.19.1](https://github.com/chasef07/acuity_product/compare/v1.19.0...v1.19.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **analytics:** display judge scorecard results ([#357](https://github.com/chasef07/acuity_product/issues/357)) ([19f730a](https://github.com/chasef07/acuity_product/commit/19f730a82f9632296c55c5172ac613d6a5c3fd83))
+
+## [1.19.0](https://github.com/chasef07/acuity_product/compare/v1.18.0...v1.19.0) (2026-09-24)
+
+
+### Features
+
+* **eligibility:** show booked provider medical and vision benefits ([#355](https://github.com/chasef07/acuity_product/issues/355)) ([89a16e8](https://github.com/chasef07/acuity_product/commit/89a16e827f648604b46dcbf1b08233fd40928e67))
+
+## [1.18.0](https://github.com/chasef07/acuity_product/compare/v1.17.1...v1.18.0) (2026-09-23)
+
+
+### Features
+
+* **marketing:** link CTO spotlight on Stedi partner page ([#353](https://github.com/chasef07/acuity_product/issues/353)) ([2c4b2e4](https://github.com/chasef07/acuity_product/commit/2c4b2e46e7b5aaaa62882fc5ee439a059267681f))
+
 ## [1.17.1](https://github.com/chasef07/acuity_product/compare/v1.17.0...v1.17.1) (2026-09-23)
 
 

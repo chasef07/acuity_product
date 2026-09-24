@@ -120,24 +120,53 @@ test("sidebar folders open independently and remember their state", async ({ pag
   await expect(tasks).toBeVisible()
 })
 
-test("appointment review folder is Spring Hill only and does not inflate My Tasks", async ({ page }, testInfo) => {
+for (const coverageType of ["medical", "routine_vision"] as const) {
+test(`appointment review folder is Spring Hill only and does not inflate My Tasks (${coverageType})`, async ({ page }, testInfo) => {
+  const vision = coverageType === "routine_vision"
+  const copayTitle = vision ? "Vision exam copayment" : "Physician visit copayment"
+  const copayAmount = vision ? "$0.00" : "$35.00"
+  const phone = vision ? "+12025550281" : "+12025550280"
+  const phoneLabel = vision ? "(202) 555-0281" : "(202) 555-0280"
+  const message = vision ? "VISION EXAM" : "Specialist visit · specific provider tier"
   test.skip(!process.env.E2E_PROVISIONING_OUTPUT, "E2E fixture required")
   await signInAs(page, "admin@abita.test", "Synthetic Admin")
   for (const [officeKey, officePhone] of [["spring-hill", "+17275550101"], ["hollywood", "+17275550103"]]) {
     const now = new Date()
     const sourceCallId = `review-scope-${officeKey}-${Date.now()}`
+    const batchId = `synthetic-batch-${officeKey}`
+    const appointmentOutcome = {
+      action: "BOOKED", occurredAt: now.toISOString(), externalPatientId: "synthetic-patient",
+      newAppointmentId: sourceCallId,
+      bookingResult: { status: "booked", appointmentId: sourceCallId, eligibilityCheckId: batchId, providerProfileId: "doctor-b" },
+    }
+
     const response = await page.request.post(`${portalURL}/v1/ai/interactions`, {
       headers: { authorization: "Bearer synthetic-production-token" },
-      data: { kind: "CLOSEOUT", officeKey, officePhone, sourceCallId, callerPhone: "+12025550280",
+      data: { kind: "CLOSEOUT", officeKey, officePhone, sourceCallId, callerPhone: phone,
         startedAt: new Date(now.getTime() - 60_000).toISOString(), endedAt: now.toISOString(), status: "COMPLETED",
-        summary: "Synthetic appointment booked", closeoutPayload: { callId: sourceCallId },
-        appointmentOutcome: { action: "BOOKED", occurredAt: now.toISOString(), newAppointmentId: sourceCallId, bookingResult: { status: "booked", appointmentId: sourceCallId } },
+        summary: "Synthetic appointment booked", closeoutPayload: {
+          domainOutcomes: [{ status: "success", evidence: appointmentOutcome }],
+          eligibilityChecks: [{
+            id: batchId, externalPatientId: "synthetic-patient", status: "complete",
+            request: { coverageType, firstName: "Jane", lastName: "Example", plan: "Example Health", memberId: "synthetic-4821" },
+            result: { insuranceResolution: { status: "unmapped", plans: ["SILVERELITE"] }, providerResults: ["doctor-a", "doctor-b", "doctor-c"].map((profileId) => ({
+              provider: { profileId, firstName: "Synthetic", lastName: profileId, npi: "synthetic-npi" },
+              status: "active", checkedAt: now.toISOString(), identity: { status: "exact_name_dob", reviewRequired: false }, providerResponse: {
+                benefitsInformation: [
+                  { code: "B", name: "Co-payment", serviceTypeCodes: [vision ? "AL" : "98"], serviceTypes: [vision ? "Vision (Optometry)" : "Professional (Physician) Visit - Office"], planCoverage: "SILVERELITE", benefitAmount: profileId === "doctor-b" ? (vision ? "0.00" : "35") : "80", coverageLevel: "Individual", inPlanNetworkIndicator: "Yes", additionalInformation: [{ description: message }] },
+                  { code: "C", name: "Deductible", serviceTypeCodes: ["30"], benefitAmount: "1500", coverageLevel: "Individual", timeQualifier: "Remaining", inPlanNetworkIndicator: "Yes" },
+                ],
+              },
+            })) },
+          }],
+        },
+        appointmentOutcome,
       },
     })
     expect([200, 201]).toContain(response.status())
   }
   const search = page.getByLabel("Search tasks, names, or phone")
-  await search.fill("5550280")
+  await search.fill(phone.slice(-7))
   await search.press("Enter")
   await expect(page.getByRole("button", { name: /^My Tasks/ })).toHaveText("My Tasks0")
   const appointments = page.getByRole("button", { name: /^Appointments/ })
@@ -153,12 +182,39 @@ test("appointment review folder is Spring Hill only and does not inflate My Task
   await page.getByRole("button", { name: "Filter All Tasks", exact: true }).click()
   await expect(page.getByRole("menu")).toBeHidden()
   await page.getByRole("group", { name: "Appointments", exact: true }).getByTestId("task-row").getByRole("button").first().click()
-  await expect(page.getByRole("heading", { name: "(202) 555-0280", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: phoneLabel, exact: true })).toBeVisible()
   await page.mouse.move(700, 50)
   await expect(page.getByTestId("rail-hover-details")).toBeHidden()
+  const insurance = page.getByRole("region", { name: "Insurance eligibility" })
+  await expect(page.getByRole("button", { name: "Verify & next" })).toBeVisible()
+  await expect(insurance).toContainText("Active coverage")
+  const mapping = insurance.getByRole("region", { name: "Insurance plan mapping" }).filter({ visible: true })
+  await expect(mapping).toContainText("No specific plan mapping found")
+  await expect(mapping).toContainText("original accepted insurance selection may be used")
+  await expect(mapping).toContainText("SILVERELITE")
+  await expect(insurance.getByText("Synthetic doctor-b", { exact: true })).toBeVisible()
+  await expect(insurance.getByText("Synthetic doctor-a", { exact: true })).not.toBeVisible()
+  await expect(insurance.getByText("Synthetic doctor-c", { exact: true })).not.toBeVisible()
+  await expect(insurance).toContainText("Jane Example")
+  await expect(insurance.getByRole("table", { name: copayTitle }).filter({ visible: true })).toBeVisible()
+  await expect(insurance).toContainText(copayAmount)
+  await expect(insurance).toContainText(message)
+  await insurance.locator("summary").filter({ hasText: /^General plan benefits$/, visible: true }).click()
+  await expect(insurance.getByRole("table", { name: "General plan benefits" }).filter({ visible: true })).toBeVisible()
+  await expect(insurance).toContainText("$1,500.00")
+  // Closing every expanded detail must not hide the booked doctor's copayment.
+  for (const summary of await insurance.locator("details[open] > summary").all()) await summary.click()
+  await expect(insurance.getByRole("table", { name: copayTitle })).toBeVisible()
+  await expect(insurance.getByText(copayAmount, { exact: true })).toBeVisible()
+  await expect(insurance.getByText(message, { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(insurance.getByText("$80.00", { exact: true }).filter({ visible: true })).toHaveCount(0)
+
+  await page.setViewportSize({ width: 1440, height: 1600 })
+  await insurance.screenshot({ path: testInfo.outputPath("eligibility-sidebar.png") })
   await page.screenshot({ path: testInfo.outputPath("spring-hill-folder.png"), fullPage: true })
   await page.getByRole("button", { name: "Workspace selector" }).click()
   await page.getByRole("button", { name: "Fixture Location 3", exact: true }).click()
   await expect(page.getByRole("button", { name: /^Appointments/ })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^All Tasks/ })).toHaveText("All Tasks0")
 })
+}

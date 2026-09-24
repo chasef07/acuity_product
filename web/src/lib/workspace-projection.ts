@@ -549,6 +549,7 @@ export function createWorkspaceProjection({
             selection,
           }
         })
+        loadSelectedAppointmentEligibility()
         requestBudget?.signalDetailRefresh()
       },
     }
@@ -1072,6 +1073,27 @@ export function createWorkspaceProjection({
         contextPanelOpen: Boolean(task),
       },
     }))
+    loadSelectedAppointmentEligibility()
+  }
+
+  function loadSelectedAppointmentEligibility() {
+    const task = state.selection.task
+    const id = task?.origin === "APPOINTMENT_REVIEW" ? task.sourceInteractionId : undefined
+    if (
+      !id || state.selection.contextView !== "task" ||
+      !state.selection.contextPanelOpen || state.selection.aiInteractionID === id
+    ) return
+    patch((current) => ({
+      ...current,
+      selection: {
+        ...current.selection,
+        aiInteractionID: id,
+        aiInteraction: undefined,
+        aiInteractionLoading: true,
+        aiInteractionError: "",
+      },
+    }))
+    void loadAIInteractionDetail(id)
   }
 
   function projectTaskIntent(task: Task, select: boolean) {
@@ -1107,6 +1129,7 @@ export function createWorkspaceProjection({
         detailRevision: current.detailRevision + 1,
       }
     })
+    loadSelectedAppointmentEligibility()
   }
 
   async function openCallContext(callID: string) {
@@ -1157,10 +1180,10 @@ export function createWorkspaceProjection({
         ...current,
         selection: {
           ...current.selection,
-          aiInteractionID: "",
+          aiInteractionID: current.selection.contextView === "task" ? interactionID : "",
           aiInteraction: undefined,
           aiInteractionLoading: false,
-          aiInteractionError: "",
+          aiInteractionError: current.selection.contextView === "task" ? aiInteractionDetailError : "",
           contextPanelOpen:
             current.selection.contextView === "ai-call"
               ? false
