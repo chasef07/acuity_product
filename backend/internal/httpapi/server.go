@@ -3818,9 +3818,18 @@ func aiInteractionDetailResponse(
 	if checks := interaction.ProjectEligibilityChecks(stored); len(checks) > 0 {
 		projected := make([]api.AIEligibilityCheck, 0, len(checks))
 		for _, check := range checks {
+			var resolution *api.AIInsuranceResolution
+			if saved := check.InsuranceResolution; saved != nil {
+				resolution = &api.AIInsuranceResolution{Status: saved.Status, Plans: append([]string{}, saved.Plans...)}
+				if saved.Decision != nil {
+					resolution.DecisionOutcome = stringPointer(saved.Decision.Outcome)
+					resolution.CanonicalPlan = stringPointer(saved.Decision.CanonicalPlan)
+				}
+			}
 			projected = append(projected, api.AIEligibilityCheck{
-				CoverageType:  stringPointer(check.CoverageType),
-				ProviderCheck: &check.ProviderCheck, ProviderProfileId: stringPointer(check.ProviderProfileID), ProviderName: stringPointer(check.ProviderName), ProviderNpi: stringPointer(check.ProviderNPI), AppointmentReviewKeys: &check.AppointmentReviewKeys,
+				InsuranceResolution: resolution,
+				CoverageType:        stringPointer(check.CoverageType),
+				ProviderCheck:       &check.ProviderCheck, ProviderProfileId: stringPointer(check.ProviderProfileID), ProviderName: stringPointer(check.ProviderName), ProviderNpi: stringPointer(check.ProviderNPI), AppointmentReviewKeys: &check.AppointmentReviewKeys,
 				Status: api.AIEligibilityCheckStatus(check.Status), PatientName: check.PatientName, SubmittedName: check.SubmittedName,
 				Plan: check.Plan, PlanName: stringPointer(check.PlanName), MemberIdLast4: check.MemberIDLast4,
 				CheckedAt: check.CheckedAt, Reason: check.Reason, Benefits: check.Benefits,

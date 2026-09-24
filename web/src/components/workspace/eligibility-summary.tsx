@@ -7,17 +7,30 @@ const strings = (value: unknown): string[] =>
     ? value.filter((v): v is string => typeof v === "string")
     : []
 const codes = (row: Benefit) => strings(row.serviceTypeCodes)
+const messages = (row: Benefit): string[] =>
+  Array.isArray(row.additionalInformation)
+    ? row.additionalInformation.flatMap((item) =>
+        item && typeof item === "object" && "description" in item &&
+        typeof item.description === "string" ? [item.description] : [],
+      )
+    : []
 // Ordering is only a reading aid; it does not establish the applicable copay.
-const mentionsSpecialistCopay = (row: Benefit) => row.code === "B" && (
-  Array.isArray(row.additionalInformation) && row.additionalInformation.some((item) =>
-    item && typeof item === "object" && "description" in item &&
-    /\bspecialist\b/i.test(text(item.description)) && !/\b(?:non[ -]?|not a )specialist\b/i.test(text(item.description)),
-  )
+const preferredCopay = (row: Benefit, vision: boolean) => messages(row).some((message) =>
+  vision ? /\bvision exam\b/i.test(message) :
+    /\bspecialist\b/i.test(message) && !/\b(?:non[ -]?|not a )specialist\b/i.test(message),
 )
-const mentionsVisionExam = (row: Benefit) =>
-  Array.isArray(row.additionalInformation) && row.additionalInformation.some((item) =>
-    item && typeof item === "object" && "description" in item && /\bvision exam\b/i.test(text(item.description)),
-  )
+const mappingStatuses: Record<string, string> = {
+  resolved: "Specific plan mapped.",
+  unmapped: "No specific plan mapping found. The original accepted insurance selection may be used for registration.",
+  conflicting: "Conflicting plan mappings. Registration requires review.",
+  unavailable: "Specific plan mapping unavailable. The original accepted insurance selection may be used for registration.",
+}
+const mappingOutcomes: Record<string, string> = {
+  accepted: "Accepted for registration",
+  not_accepted: "Plan not accepted. Registration blocked.",
+  needs_clarification: "Plan needs clarification. Registration blocked.",
+  needs_staff_task: "Plan requires staff review.",
+}
 const labels: Record<AiEligibilityCheck["status"], string> = {
   active: "Active coverage",
   inactive: "Inactive coverage reported",
@@ -66,7 +79,7 @@ export function EligibilitySummary({
     <section aria-label="Insurance eligibility" className="border-t px-5 py-4">
       <h3 className="mb-3 text-sm font-semibold">Insurance</h3>
       {appointmentReviewKey && primary.length === 0 && (
-        <p className="text-sm">Booked provider eligibility needs verification. No check is linked to this appointment’s provider.</p>
+        <p className="text-sm">No provider eligibility check is linked to this appointment review.</p>
       )}
       {primary.map((check, index) => <CheckDetails key={index} check={check} />)}
       {other.length > 0 && (
@@ -81,12 +94,13 @@ export function EligibilitySummary({
 }
 
 function CheckDetails({ check }: { check: AiEligibilityCheck }) {
+  const resolution = check.insuranceResolution
   const vision = check.coverageType === "routine_vision"
   const serviceCode = vision ? "AL" : "98"
   const copayTitle = vision ? "Vision exam copayment" : "Physician visit copayment"
   const visitBenefits = check.benefits.filter((row) => codes(row).includes(serviceCode))
   const copayments = visitBenefits.filter((row) => row.code === "B").toSorted(
-    (a, b) => Number(vision ? mentionsVisionExam(b) : mentionsSpecialistCopay(b)) - Number(vision ? mentionsVisionExam(a) : mentionsSpecialistCopay(a)),
+    (a, b) => Number(preferredCopay(b, vision)) - Number(preferredCopay(a, vision)),
   )
   const statusColor = check.status === "active"
     ? "text-emerald-700 dark:text-emerald-400"
@@ -101,116 +115,125 @@ function CheckDetails({ check }: { check: AiEligibilityCheck }) {
           {check.providerNpi && <p className="text-xs text-muted-foreground">NPI {check.providerNpi}</p>}
         </div>
       )}
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium break-words">
-                {check.plan || "Insurance plan"}
-              </p>
-              {check.planName && (
-                <p className="mt-1 text-xs text-muted-foreground break-words">
-                  {check.planName}
-                </p>
-              )}
-            </div>
-            <span
-              className={`max-w-[48%] shrink-0 text-right text-xs font-medium ${statusColor}`}
-            >
-              {check.status === "active" && <span aria-hidden="true">✓ </span>}
-              {labels[check.status]}
-            </span>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium break-words">
+            {check.plan || "Insurance plan"}
+          </p>
+          {check.planName && (
+            <p className="mt-1 text-xs text-muted-foreground break-words">
+              {check.planName}
+            </p>
+          )}
+        </div>
+        <span
+          className={`max-w-[48%] shrink-0 text-right text-xs font-medium ${statusColor}`}
+        >
+          {check.status === "active" && <span aria-hidden="true">✓ </span>}
+          {labels[check.status]}
+        </span>
+      </div>
+      {resolution && (
+        <section aria-label="Insurance plan mapping" className="mt-3 text-xs leading-5">
+          <h4 className="font-medium">Registration plan mapping</h4>
+          <p>{mappingStatuses[resolution.status] || "Plan mapping needs review."}</p>
+          {resolution.plans.length > 0 && <p>Payer plan: {resolution.plans.join(" · ")}</p>}
+          {resolution.canonicalPlan && <p>Mapped plan: {resolution.canonicalPlan}</p>}
+          {resolution.decisionOutcome && <p>{mappingOutcomes[resolution.decisionOutcome] || "Registration decision needs review."}</p>}
+        </section>
+      )}
+      <p className="mt-2 text-xs break-words">
+        {check.patientName || "Patient name not recorded"}
+        {check.memberIdLast4 &&
+          ` · Member ID ending ${check.memberIdLast4}`}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {check.checkedAt
+          ? `Checked ${checkedAt(check.checkedAt)}`
+          : "Check time not recorded"}
+      </p>
+      {check.reason && (
+        <p className="mt-2 text-xs leading-5">
+          {reasons[check.reason] ||
+            "Review the check details; coverage could not be fully verified."}
+        </p>
+      )}
+      {check.status !== "active" && check.benefits.length > 0 && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Returned benefits are evidence; they do not resolve this check’s
+          status.
+        </p>
+      )}
+      {!vision && check.providerCheck && visitBenefits.length > 0 && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Specialist copay needs verification. Review the listed service,
+          network, and provider tier; active coverage alone does not establish
+          the applicable amount.
+        </p>
+      )}
+      <section aria-label={copayTitle} className="mt-4 border-t pt-3">
+        <h4 className="text-xs font-medium">{copayTitle}</h4>
+        <BenefitTable
+          title={copayTitle}
+          rows={copayments}
+          empty={`${copayTitle} not returned.`}
+        />
+      </section>
+      <BenefitGroup
+        title={vision ? "Other vision exam benefits" : "Other physician office-visit benefits"}
+        rows={visitBenefits.filter((row) => row.code !== "B")}
+      />
+      <BenefitGroup
+        title="General plan benefits"
+        rows={check.benefits.filter((row) => codes(row).includes("30") && !codes(row).includes(serviceCode))}
+        empty="General plan benefits not returned."
+      />
+      <details className="mt-3 text-xs">
+        <summary className="cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-offset-4">
+          Check details
+        </summary>
+        <dl className="mt-2 space-y-2 text-muted-foreground">
+          <div>
+            <dt>Submitted name</dt>
+            <dd className="text-foreground">
+              {check.submittedName || "Not recorded"}
+            </dd>
           </div>
-          <p className="mt-2 text-xs break-words">
-            {check.patientName || "Patient name not recorded"}
-            {check.memberIdLast4 &&
-              ` · Member ID ending ${check.memberIdLast4}`}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {check.checkedAt
-              ? `Checked ${checkedAt(check.checkedAt)}`
-              : "Check time not recorded"}
-          </p>
+          {check.patientName !== check.submittedName && (
+            <div>
+              <dt>Payer-returned name</dt>
+              <dd className="text-foreground">{check.patientName}</dd>
+            </div>
+          )}
+          {check.identityReasons?.length ? <div>
+            <dt>Patient matching</dt>
+            <dd className="text-foreground">
+              {check.identityReasons.map((reason) => reason.replaceAll("_", " ")).join(" · ")}
+            </dd>
+          </div> : null}
+          {check.checkId && <div><dt>Check ID</dt><dd className="break-all">{check.checkId}</dd></div>}
+          {check.eligibilitySearchId && <div><dt>Eligibility reference</dt><dd className="break-all">{check.eligibilitySearchId}</dd></div>}
+          <div>
+            <dt>Source</dt>
+            <dd>
+              Eligibility checked during this call. Each check retains its
+              own submitted patient details.
+            </dd>
+          </div>
           {check.reason && (
-            <p className="mt-2 text-xs leading-5">
-              {reasons[check.reason] ||
-                "Review the check details; coverage could not be fully verified."}
-            </p>
+            <div>
+              <dt>Result reason</dt>
+              <dd className="break-words">
+                {check.reason.replaceAll("_", " ")}
+              </dd>
+            </div>
           )}
-          {check.status !== "active" && check.benefits.length > 0 && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Returned benefits are evidence; they do not resolve this check’s
-              status.
-            </p>
-          )}
-          {!vision && check.providerCheck && visitBenefits.length > 0 && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              Specialist copay needs verification. Review the listed service,
-              network, and provider tier; active coverage alone does not establish
-              the applicable amount.
-            </p>
-          )}
-          <section aria-label={copayTitle} className="mt-4 border-t pt-3">
-            <h4 className="text-xs font-medium">{copayTitle}</h4>
-            <BenefitTable
-              title={copayTitle}
-              rows={copayments}
-              empty={`${copayTitle} not returned.`}
-            />
-          </section>
-          <BenefitGroup
-            title={vision ? "Other vision exam benefits" : "Other physician office-visit benefits"}
-            rows={visitBenefits.filter((row) => row.code !== "B")}
-          />
-          <BenefitGroup
-            title="General plan benefits"
-            rows={check.benefits.filter((row) => codes(row).includes("30") && !codes(row).includes(serviceCode))}
-            empty="General plan benefits not returned."
-          />
-          <details className="mt-3 text-xs">
-            <summary className="cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-offset-4">
-              Check details
-            </summary>
-            <dl className="mt-2 space-y-2 text-muted-foreground">
-              <div>
-                <dt>Submitted name</dt>
-                <dd className="text-foreground">
-                  {check.submittedName || "Not recorded"}
-                </dd>
-              </div>
-              {check.patientName !== check.submittedName && (
-                <div>
-                  <dt>Payer-returned name</dt>
-                  <dd className="text-foreground">{check.patientName}</dd>
-                </div>
-              )}
-              {check.identityReasons?.length ? <div>
-                <dt>Patient matching</dt>
-                <dd className="text-foreground">
-                  {check.identityReasons.map((reason) => reason.replaceAll("_", " ")).join(" · ")}
-                </dd>
-              </div> : null}
-              {check.checkId && <div><dt>Check ID</dt><dd className="break-all">{check.checkId}</dd></div>}
-              {check.eligibilitySearchId && <div><dt>Eligibility reference</dt><dd className="break-all">{check.eligibilitySearchId}</dd></div>}
-              <div>
-                <dt>Source</dt>
-                <dd>
-                  Eligibility checked during this call. Each check retains its
-                  own submitted patient details.
-                </dd>
-              </div>
-              {check.reason && (
-                <div>
-                  <dt>Result reason</dt>
-                  <dd className="break-words">
-                    {check.reason.replaceAll("_", " ")}
-                  </dd>
-                </div>
-              )}
-            </dl>
-          </details>
-          <p className="mt-3 text-[11px] leading-4 text-muted-foreground">
-            Coverage is as of the check date. Benefits depend on the listed
-            service, network, and plan conditions.
-          </p>
+        </dl>
+      </details>
+      <p className="mt-3 text-[11px] leading-4 text-muted-foreground">
+        Coverage is as of the check date. Benefits depend on the listed
+        service, network, and plan conditions.
+      </p>
     </div>
   )
 }
@@ -299,16 +322,8 @@ const displayed = new Set([
   "planCoverage",
 ])
 function BenefitRow({ row }: { row: Benefit }) {
-  const messages = Array.isArray(row.additionalInformation)
-    ? row.additionalInformation.flatMap((item) =>
-        item &&
-        typeof item === "object" &&
-        "description" in item &&
-        typeof item.description === "string"
-          ? [item.description]
-          : [],
-      )
-    : []
+  const descriptions = messages(row)
+  const value = benefitValue(row)
   const qualifiers = [
     text(row.coverageLevel),
     text(row.inPlanNetworkIndicator) === "Yes"
@@ -329,9 +344,9 @@ function BenefitRow({ row }: { row: Benefit }) {
         {text(row.name) || `Benefit ${text(row.code) || "detail"}`}
       </th>
       <td className="py-3 break-words">
-        {benefitValue(row) && (
+        {value && (
           <p className={row.code === "B" ? "text-base font-semibold tabular-nums" : "font-medium tabular-nums"}>
-            {benefitValue(row)}
+            {value}
           </p>
         )}
         {qualifiers.length > 0 && (
@@ -343,9 +358,9 @@ function BenefitRow({ row }: { row: Benefit }) {
           </p>
         )}
         {text(row.planCoverage) && <p className="mt-1 text-muted-foreground">Plan: {text(row.planCoverage)}</p>}
-        {messages.length > 0 && (
+        {descriptions.length > 0 && (
           <ul className="mt-2 space-y-1 leading-5">
-            {messages.map((message, index) => (
+            {descriptions.map((message, index) => (
               <li key={index}>{message}</li>
             ))}
           </ul>

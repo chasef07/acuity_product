@@ -149,7 +149,7 @@ test(`appointment review folder is Spring Hill only and does not inflate My Task
           eligibilityChecks: [{
             id: batchId, externalPatientId: "synthetic-patient", status: "complete",
             request: { coverageType, firstName: "Jane", lastName: "Example", plan: "Example Health", memberId: "synthetic-4821" },
-            result: { providerResults: ["doctor-a", "doctor-b", "doctor-c"].map((profileId) => ({
+            result: { insuranceResolution: { status: "unmapped", plans: ["SILVERELITE"] }, providerResults: ["doctor-a", "doctor-b", "doctor-c"].map((profileId) => ({
               provider: { profileId, firstName: "Synthetic", lastName: profileId, npi: "synthetic-npi" },
               status: "active", checkedAt: now.toISOString(), identity: { status: "exact_name_dob", reviewRequired: false }, providerResponse: {
                 benefitsInformation: [
@@ -188,6 +188,10 @@ test(`appointment review folder is Spring Hill only and does not inflate My Task
   const insurance = page.getByRole("region", { name: "Insurance eligibility" })
   await expect(page.getByRole("button", { name: "Verify & next" })).toBeVisible()
   await expect(insurance).toContainText("Active coverage")
+  const mapping = insurance.getByRole("region", { name: "Insurance plan mapping" }).filter({ visible: true })
+  await expect(mapping).toContainText("No specific plan mapping found")
+  await expect(mapping).toContainText("original accepted insurance selection may be used")
+  await expect(mapping).toContainText("SILVERELITE")
   await expect(insurance.getByText("Synthetic doctor-b", { exact: true })).toBeVisible()
   await expect(insurance.getByText("Synthetic doctor-a", { exact: true })).not.toBeVisible()
   await expect(insurance.getByText("Synthetic doctor-c", { exact: true })).not.toBeVisible()

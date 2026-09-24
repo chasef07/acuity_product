@@ -593,7 +593,15 @@ export type AiAppointmentFacts = {
     startDatetime?: string;
 };
 
+export type AiInsuranceResolution = {
+    status: string;
+    plans: Array<string>;
+    decisionOutcome?: string;
+    canonicalPlan?: string;
+};
+
 export type AiEligibilityCheck = {
+    insuranceResolution?: AiInsuranceResolution;
     /**
      * Intake coverage type; routine_vision selects vision-exam benefits.
      */

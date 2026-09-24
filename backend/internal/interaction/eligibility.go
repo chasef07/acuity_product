@@ -12,6 +12,8 @@ import (
 // EligibilityCheck is a staff-facing projection of saved intake evidence. It
 // never joins patients by phone or treats a payer response as a booking receipt.
 type EligibilityCheck struct {
+	InsuranceResolution *InsuranceResolution
+
 	CoverageType                                                                         string
 	Status, PatientName, SubmittedName, Plan, PlanName, MemberIDLast4, CheckedAt, Reason string
 	Benefits                                                                             []map[string]any
@@ -37,7 +39,19 @@ type savedEligibilityCheck struct {
 	Result eligibilityResult `json:"result"`
 }
 
+// InsuranceResolution keeps registration plan mapping distinct from coverage evidence.
+type InsuranceResolution struct {
+	Status   string   `json:"status"`
+	Plans    []string `json:"plans"`
+	Decision *struct {
+		Outcome       string `json:"outcome"`
+		CanonicalPlan string `json:"canonicalPlan"`
+	} `json:"decision"`
+}
+
 type eligibilityResult struct {
+	InsuranceResolution *InsuranceResolution `json:"insuranceResolution"`
+
 	Status              string `json:"status"`
 	CheckedAt           string `json:"checkedAt"`
 	ReviewReason        string `json:"reviewReason"`
@@ -95,6 +109,7 @@ func ProjectEligibilityChecks(stored Interaction) []EligibilityCheck {
 		}
 		for _, result := range results {
 			out := projectEligibilityResult(c, result)
+			out.InsuranceResolution = c.Result.InsuranceResolution
 			out.ProviderCheck = providerCheck
 			out.ProviderProfileID = result.Provider.ProfileID
 			out.ProviderName = strings.TrimSpace(result.Provider.FirstName + " " + result.Provider.LastName)

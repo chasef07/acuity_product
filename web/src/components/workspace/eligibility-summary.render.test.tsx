@@ -133,13 +133,13 @@ test("only the exact booked doctor and intake are prominent, including a failed 
   assert.ok(booked.parentElement?.parentElement?.textContent?.includes("Unable to confirm coverage"))
   assert.ok(document.body.textContent?.includes("provider tier"))
   const missing = renderToStaticMarkup(<EligibilitySummary checks={checks} appointmentReviewKey="event-missing" />)
-  assert.ok(missing.includes("Booked provider eligibility needs verification"))
+  assert.ok(missing.includes("No provider eligibility check is linked to this appointment review."))
 })
 
 test("appointment never substitutes legacy evidence or silently hides absent linked checks", () => {
   for (const checks of [undefined, [], [check]]) {
     const document = new JSDOM(renderToStaticMarkup(<EligibilitySummary checks={checks} appointmentReviewKey="event-a" />)).window.document
-    assert.ok(document.body.textContent?.includes("Booked provider eligibility needs verification"))
+    assert.ok(document.body.textContent?.includes("No provider eligibility check is linked to this appointment review."))
     const active = [...document.querySelectorAll("span")].find((node) => node.textContent?.includes("Active coverage"))
     if (active) assert.ok(active.closest("details:not([open])"))
   }
@@ -227,4 +227,37 @@ test("missing AL copay stays missing even when a physician copay was returned", 
   const html = renderToStaticMarkup(<EligibilitySummary checks={[{ ...check, coverageType: "routine_vision", benefits: [{ code: "B", serviceTypeCodes: ["98"], benefitAmount: "35" }] }]} />)
   assert.ok(html.includes("Vision exam copayment not returned."))
   assert.ok(!html.includes("$35.00"))
+})
+
+
+test("cancellation without eligibility stays factual and does not demand booked-provider verification", () => {
+  const html = renderToStaticMarkup(<EligibilitySummary checks={[]} appointmentReviewKey="cancelled-event" />)
+  assert.ok(html.includes("No provider eligibility check is linked to this appointment review."))
+  assert.ok(!html.includes("Booked provider"))
+  assert.ok(!html.includes("needs verification"))
+})
+
+test("plan mapping remains distinct from active coverage and preserves fallback and rejection", () => {
+  for (const [status, outcome, expected] of [
+    ["resolved", "accepted", "Accepted for registration"],
+    ["unmapped", "", "original accepted insurance selection may be used"],
+    ["conflicting", "", "Registration requires review"],
+    ["resolved", "not_accepted", "Plan not accepted. Registration blocked."],
+    ["resolved", "needs_clarification", "Plan needs clarification. Registration blocked."],
+    ["unavailable", "", "Specific plan mapping unavailable"],
+  ]) {
+    const html = renderToStaticMarkup(<EligibilitySummary checks={[{
+      ...check, insuranceResolution: {status, plans: ["SILVERELITE"], decisionOutcome: outcome, canonicalPlan: outcome ? "Mapped Example" : undefined},
+    }]} />)
+    assert.ok(html.includes("Active coverage"))
+    assert.ok(html.includes(expected), expected)
+    assert.ok(html.includes("Payer plan: SILVERELITE"))
+    if (outcome) assert.ok(html.includes("Mapped plan: Mapped Example"))
+  }
+})
+
+test("staff review does not claim accepted-plan registration was blocked", () => {
+  const html = renderToStaticMarkup(<EligibilitySummary checks={[{ ...check, insuranceResolution: { status: "resolved", plans: ["Example Plan"], decisionOutcome: "needs_staff_task", canonicalPlan: "Example Plan" } }]} />)
+  assert.ok(html.includes("Plan requires staff review."))
+  assert.ok(!html.includes("Registration blocked"))
 })
