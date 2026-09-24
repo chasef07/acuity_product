@@ -3819,6 +3819,7 @@ func aiInteractionDetailResponse(
 		projected := make([]api.AIEligibilityCheck, 0, len(checks))
 		for _, check := range checks {
 			projected = append(projected, api.AIEligibilityCheck{
+				CoverageType:  stringPointer(check.CoverageType),
 				ProviderCheck: &check.ProviderCheck, ProviderProfileId: stringPointer(check.ProviderProfileID), ProviderName: stringPointer(check.ProviderName), ProviderNpi: stringPointer(check.ProviderNPI), AppointmentReviewKeys: &check.AppointmentReviewKeys,
 				Status: api.AIEligibilityCheckStatus(check.Status), PatientName: check.PatientName, SubmittedName: check.SubmittedName,
 				Plan: check.Plan, PlanName: stringPointer(check.PlanName), MemberIdLast4: check.MemberIDLast4,

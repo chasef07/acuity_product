@@ -71,3 +71,11 @@ func TestProviderEligibilityUsesExactBatchProviderAndAppointmentEvent(t *testing
 		}
 	}
 }
+
+func TestVisionCoverageTypeComesFromSavedIntake(t *testing.T) {
+	raw := json.RawMessage(`{"eligibilityChecks":[{"status":"complete","request":{"coverageType":"routine_vision"},"result":{"providerResults":[{"provider":{"profileId":"1983","firstName":"Melissa","lastName":"Otero"},"providerResponse":{"benefitsInformation":[{"code":"B","serviceTypeCodes":["AL"],"benefitAmount":"0.00"}]}}]}},{"status":"complete","request":{},"result":{}}]}`)
+	checks := ProjectEligibilityChecks(Interaction{CloseoutPayload: raw})
+	if len(checks) != 2 || checks[0].CoverageType != "routine_vision" || checks[1].CoverageType != "medical" || checks[0].Benefits[0]["benefitAmount"] != "0.00" {
+		t.Fatalf("wrong coverage projection: %+v", checks)
+	}
+}

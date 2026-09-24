@@ -594,6 +594,10 @@ export type AiAppointmentFacts = {
 };
 
 export type AiEligibilityCheck = {
+    /**
+     * Intake coverage type; routine_vision selects vision-exam benefits.
+     */
+    coverageType?: string;
     providerCheck?: boolean;
     providerProfileId?: string;
     providerName?: string;

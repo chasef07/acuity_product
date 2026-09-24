@@ -14,6 +14,10 @@ const mentionsSpecialistCopay = (row: Benefit) => row.code === "B" && (
     /\bspecialist\b/i.test(text(item.description)) && !/\b(?:non[ -]?|not a )specialist\b/i.test(text(item.description)),
   )
 )
+const mentionsVisionExam = (row: Benefit) =>
+  Array.isArray(row.additionalInformation) && row.additionalInformation.some((item) =>
+    item && typeof item === "object" && "description" in item && /\bvision exam\b/i.test(text(item.description)),
+  )
 const labels: Record<AiEligibilityCheck["status"], string> = {
   active: "Active coverage",
   inactive: "Inactive coverage reported",
@@ -77,9 +81,12 @@ export function EligibilitySummary({
 }
 
 function CheckDetails({ check }: { check: AiEligibilityCheck }) {
-  const officeBenefits = check.benefits.filter((row) => codes(row).includes("98"))
-  const copayments = officeBenefits.filter((row) => row.code === "B").toSorted(
-    (a, b) => Number(mentionsSpecialistCopay(b)) - Number(mentionsSpecialistCopay(a)),
+  const vision = check.coverageType === "routine_vision"
+  const serviceCode = vision ? "AL" : "98"
+  const copayTitle = vision ? "Vision exam copayment" : "Physician visit copayment"
+  const visitBenefits = check.benefits.filter((row) => codes(row).includes(serviceCode))
+  const copayments = visitBenefits.filter((row) => row.code === "B").toSorted(
+    (a, b) => Number(vision ? mentionsVisionExam(b) : mentionsSpecialistCopay(b)) - Number(vision ? mentionsVisionExam(a) : mentionsSpecialistCopay(a)),
   )
   const statusColor = check.status === "active"
     ? "text-emerald-700 dark:text-emerald-400"
@@ -134,35 +141,29 @@ function CheckDetails({ check }: { check: AiEligibilityCheck }) {
               status.
             </p>
           )}
-          {check.providerCheck && officeBenefits.length > 0 && (
+          {!vision && check.providerCheck && visitBenefits.length > 0 && (
             <p className="mt-3 text-xs text-muted-foreground">
               Specialist copay needs verification. Review the listed service,
               network, and provider tier; active coverage alone does not establish
               the applicable amount.
             </p>
           )}
-          <section aria-label="Physician visit copayment" className="mt-4 border-t pt-3">
-            <h4 className="text-xs font-medium">Physician visit copayment</h4>
+          <section aria-label={copayTitle} className="mt-4 border-t pt-3">
+            <h4 className="text-xs font-medium">{copayTitle}</h4>
             <BenefitTable
-              title="Physician visit copayment"
+              title={copayTitle}
               rows={copayments}
-              empty="Physician visit copayment not returned."
+              empty={`${copayTitle} not returned.`}
             />
           </section>
           <BenefitGroup
-            title="Other physician office-visit benefits"
-            rows={officeBenefits.filter((row) => row.code !== "B")}
+            title={vision ? "Other vision exam benefits" : "Other physician office-visit benefits"}
+            rows={visitBenefits.filter((row) => row.code !== "B")}
           />
           <BenefitGroup
             title="General plan benefits"
-            rows={check.benefits.filter((row) => codes(row).includes("30"))}
+            rows={check.benefits.filter((row) => codes(row).includes("30") && !codes(row).includes(serviceCode))}
             empty="General plan benefits not returned."
-          />
-          <BenefitGroup
-            title="Other returned benefits"
-            rows={check.benefits.filter(
-              (row) => !codes(row).includes("98") && !codes(row).includes("30"),
-            )}
           />
           <details className="mt-3 text-xs">
             <summary className="cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-offset-4">
@@ -295,6 +296,7 @@ const displayed = new Set([
   "coverageLevel",
   "inPlanNetworkIndicator",
   "serviceTypes",
+  "planCoverage",
 ])
 function BenefitRow({ row }: { row: Benefit }) {
   const messages = Array.isArray(row.additionalInformation)
@@ -340,6 +342,7 @@ function BenefitRow({ row }: { row: Benefit }) {
             {strings(row.serviceTypes).join(" · ")}
           </p>
         )}
+        {text(row.planCoverage) && <p className="mt-1 text-muted-foreground">Plan: {text(row.planCoverage)}</p>}
         {messages.length > 0 && (
           <ul className="mt-2 space-y-1 leading-5">
             {messages.map((message, index) => (

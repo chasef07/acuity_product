@@ -12,6 +12,7 @@ import (
 // EligibilityCheck is a staff-facing projection of saved intake evidence. It
 // never joins patients by phone or treats a payer response as a booking receipt.
 type EligibilityCheck struct {
+	CoverageType                                                                         string
 	Status, PatientName, SubmittedName, Plan, PlanName, MemberIDLast4, CheckedAt, Reason string
 	Benefits                                                                             []map[string]any
 	IdentityReasons                                                                      []string
@@ -27,10 +28,11 @@ type savedEligibilityCheck struct {
 	Status            string `json:"status"`
 	FailureReason     string `json:"failureReason"`
 	Request           struct {
-		FirstName string `json:"firstName"`
-		LastName  string `json:"lastName"`
-		Plan      string `json:"plan"`
-		MemberID  string `json:"memberId"`
+		CoverageType string `json:"coverageType"`
+		FirstName    string `json:"firstName"`
+		LastName     string `json:"lastName"`
+		Plan         string `json:"plan"`
+		MemberID     string `json:"memberId"`
 	} `json:"request"`
 	Result eligibilityResult `json:"result"`
 }
@@ -117,6 +119,10 @@ func ProjectEligibilityChecks(stored Interaction) []EligibilityCheck {
 func projectEligibilityResult(c savedEligibilityCheck, result eligibilityResult) EligibilityCheck {
 
 	out := EligibilityCheck{Status: "unavailable", SubmittedName: strings.TrimSpace(c.Request.FirstName + " " + c.Request.LastName), Plan: c.Request.Plan, CheckedAt: result.CheckedAt, Reason: c.FailureReason, Benefits: []map[string]any{}}
+	out.CoverageType = "medical"
+	if c.Request.CoverageType == "routine_vision" {
+		out.CoverageType = "routine_vision"
+	}
 	out.PatientName = out.SubmittedName
 	out.CheckID, out.EligibilitySearchID = result.CheckID, result.EligibilitySearchID
 	if result.Identity != nil {

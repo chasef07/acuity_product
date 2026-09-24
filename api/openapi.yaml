@@ -3593,6 +3593,9 @@ components:
       additionalProperties: false
       required: [status, patientName, submittedName, plan, memberIdLast4, checkedAt, reason, benefits]
       properties:
+        coverageType:
+          type: string
+          description: Intake coverage type; routine_vision selects vision-exam benefits.
         providerCheck:
           type: boolean
         providerProfileId:

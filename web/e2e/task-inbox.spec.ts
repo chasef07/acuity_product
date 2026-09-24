@@ -120,7 +120,14 @@ test("sidebar folders open independently and remember their state", async ({ pag
   await expect(tasks).toBeVisible()
 })
 
-test("appointment review folder is Spring Hill only and does not inflate My Tasks", async ({ page }, testInfo) => {
+for (const coverageType of ["medical", "routine_vision"] as const) {
+test(`appointment review folder is Spring Hill only and does not inflate My Tasks (${coverageType})`, async ({ page }, testInfo) => {
+  const vision = coverageType === "routine_vision"
+  const copayTitle = vision ? "Vision exam copayment" : "Physician visit copayment"
+  const copayAmount = vision ? "$0.00" : "$35.00"
+  const phone = vision ? "+12025550281" : "+12025550280"
+  const phoneLabel = vision ? "(202) 555-0281" : "(202) 555-0280"
+  const message = vision ? "VISION EXAM" : "Specialist visit · specific provider tier"
   test.skip(!process.env.E2E_PROVISIONING_OUTPUT, "E2E fixture required")
   await signInAs(page, "admin@abita.test", "Synthetic Admin")
   for (const [officeKey, officePhone] of [["spring-hill", "+17275550101"], ["hollywood", "+17275550103"]]) {
@@ -135,18 +142,18 @@ test("appointment review folder is Spring Hill only and does not inflate My Task
 
     const response = await page.request.post(`${portalURL}/v1/ai/interactions`, {
       headers: { authorization: "Bearer synthetic-production-token" },
-      data: { kind: "CLOSEOUT", officeKey, officePhone, sourceCallId, callerPhone: "+12025550280",
+      data: { kind: "CLOSEOUT", officeKey, officePhone, sourceCallId, callerPhone: phone,
         startedAt: new Date(now.getTime() - 60_000).toISOString(), endedAt: now.toISOString(), status: "COMPLETED",
         summary: "Synthetic appointment booked", closeoutPayload: {
           domainOutcomes: [{ status: "success", evidence: appointmentOutcome }],
           eligibilityChecks: [{
             id: batchId, externalPatientId: "synthetic-patient", status: "complete",
-            request: { firstName: "Jane", lastName: "Example", plan: "Example Health", memberId: "synthetic-4821" },
+            request: { coverageType, firstName: "Jane", lastName: "Example", plan: "Example Health", memberId: "synthetic-4821" },
             result: { providerResults: ["doctor-a", "doctor-b", "doctor-c"].map((profileId) => ({
               provider: { profileId, firstName: "Synthetic", lastName: profileId, npi: "synthetic-npi" },
               status: "active", checkedAt: now.toISOString(), identity: { status: "exact_name_dob", reviewRequired: false }, providerResponse: {
                 benefitsInformation: [
-                  { code: "B", name: "Co-payment", serviceTypeCodes: ["98"], serviceTypes: ["Professional (Physician) Visit - Office"], benefitAmount: profileId === "doctor-b" ? "35" : "80", coverageLevel: "Individual", inPlanNetworkIndicator: "Yes", additionalInformation: [{ description: "Specialist visit · specific provider tier" }] },
+                  { code: "B", name: "Co-payment", serviceTypeCodes: [vision ? "AL" : "98"], serviceTypes: [vision ? "Vision (Optometry)" : "Professional (Physician) Visit - Office"], planCoverage: "SILVERELITE", benefitAmount: profileId === "doctor-b" ? (vision ? "0.00" : "35") : "80", coverageLevel: "Individual", inPlanNetworkIndicator: "Yes", additionalInformation: [{ description: message }] },
                   { code: "C", name: "Deductible", serviceTypeCodes: ["30"], benefitAmount: "1500", coverageLevel: "Individual", timeQualifier: "Remaining", inPlanNetworkIndicator: "Yes" },
                 ],
               },
@@ -159,7 +166,7 @@ test("appointment review folder is Spring Hill only and does not inflate My Task
     expect([200, 201]).toContain(response.status())
   }
   const search = page.getByLabel("Search tasks, names, or phone")
-  await search.fill("5550280")
+  await search.fill(phone.slice(-7))
   await search.press("Enter")
   await expect(page.getByRole("button", { name: /^My Tasks/ })).toHaveText("My Tasks0")
   const appointments = page.getByRole("button", { name: /^Appointments/ })
@@ -175,7 +182,7 @@ test("appointment review folder is Spring Hill only and does not inflate My Task
   await page.getByRole("button", { name: "Filter All Tasks", exact: true }).click()
   await expect(page.getByRole("menu")).toBeHidden()
   await page.getByRole("group", { name: "Appointments", exact: true }).getByTestId("task-row").getByRole("button").first().click()
-  await expect(page.getByRole("heading", { name: "(202) 555-0280", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: phoneLabel, exact: true })).toBeVisible()
   await page.mouse.move(700, 50)
   await expect(page.getByTestId("rail-hover-details")).toBeHidden()
   const insurance = page.getByRole("region", { name: "Insurance eligibility" })
@@ -185,17 +192,17 @@ test("appointment review folder is Spring Hill only and does not inflate My Task
   await expect(insurance.getByText("Synthetic doctor-a", { exact: true })).not.toBeVisible()
   await expect(insurance.getByText("Synthetic doctor-c", { exact: true })).not.toBeVisible()
   await expect(insurance).toContainText("Jane Example")
-  await expect(insurance.getByRole("table", { name: "Physician visit copayment" }).filter({ visible: true })).toBeVisible()
-  await expect(insurance).toContainText("$35.00")
-  await expect(insurance).toContainText("specific provider tier")
+  await expect(insurance.getByRole("table", { name: copayTitle }).filter({ visible: true })).toBeVisible()
+  await expect(insurance).toContainText(copayAmount)
+  await expect(insurance).toContainText(message)
   await insurance.locator("summary").filter({ hasText: /^General plan benefits$/, visible: true }).click()
   await expect(insurance.getByRole("table", { name: "General plan benefits" }).filter({ visible: true })).toBeVisible()
   await expect(insurance).toContainText("$1,500.00")
   // Closing every expanded detail must not hide the booked doctor's copayment.
   for (const summary of await insurance.locator("details[open] > summary").all()) await summary.click()
-  await expect(insurance.getByRole("table", { name: "Physician visit copayment" })).toBeVisible()
-  await expect(insurance.getByText("$35.00", { exact: true })).toBeVisible()
-  await expect(insurance.getByText("Specialist visit · specific provider tier", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(insurance.getByRole("table", { name: copayTitle })).toBeVisible()
+  await expect(insurance.getByText(copayAmount, { exact: true })).toBeVisible()
+  await expect(insurance.getByText(message, { exact: true }).filter({ visible: true })).toBeVisible()
   await expect(insurance.getByText("$80.00", { exact: true }).filter({ visible: true })).toHaveCount(0)
 
   await page.setViewportSize({ width: 1440, height: 1600 })
@@ -206,3 +213,4 @@ test("appointment review folder is Spring Hill only and does not inflate My Task
   await expect(page.getByRole("button", { name: /^Appointments/ })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^All Tasks/ })).toHaveText("All Tasks0")
 })
+}

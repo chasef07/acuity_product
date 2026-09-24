@@ -199,3 +199,32 @@ test("blank copayment amounts remain missing while genuine zero remains visible"
   assert.ok(zero.includes("0%"))
   assert.ok(!zero.includes("Amount not returned"))
 })
+
+test("vision exams promote AL zero copay with visible applicability and plan", () => {
+  const vision: AiEligibilityCheck = {
+    ...check, coverageType: "routine_vision", providerCheck: true,
+    providerName: "Melissa Otero", providerNpi: "1457904765",
+    benefits: [
+      { code: "1", name: "Active coverage", serviceTypeCodes: ["30"] },
+      { code: "B", name: "Co-payment", serviceTypeCodes: ["98"], benefitAmount: "80" },
+      { code: "B", name: "Co-payment", serviceTypeCodes: ["AL"], serviceTypes: ["Vision (Optometry)"], benefitAmount: "0.00", coverageLevel: "Individual", inPlanNetworkIndicator: "Yes", planCoverage: "SILVERELITE", additionalInformation: [{ description: "VISION EXAM" }] },
+      { code: "A", name: "Co-insurance", serviceTypeCodes: ["AL"], benefitPercent: "0", additionalInformation: [{ description: "VISION EXAM" }] },
+    ],
+  }
+  const html = renderToStaticMarkup(<EligibilitySummary checks={[vision]} />)
+  const document = new JSDOM(html).window.document
+  const primary = document.querySelector('section[aria-label="Vision exam copayment"]')
+  assert.ok(primary)
+  assert.equal(primary.closest("details"), null)
+  for (const value of ["$0.00", "Individual", "In network", "SILVERELITE", "VISION EXAM", "Vision (Optometry)"]) assert.ok(primary.textContent?.includes(value), value)
+  assert.ok(!html.includes("$80.00"))
+  assert.ok(!html.includes("Physician visit copayment"))
+  assert.ok(html.includes("0%"))
+  assert.ok(html.includes("Other vision exam benefits"))
+})
+
+test("missing AL copay stays missing even when a physician copay was returned", () => {
+  const html = renderToStaticMarkup(<EligibilitySummary checks={[{ ...check, coverageType: "routine_vision", benefits: [{ code: "B", serviceTypeCodes: ["98"], benefitAmount: "35" }] }]} />)
+  assert.ok(html.includes("Vision exam copayment not returned."))
+  assert.ok(!html.includes("$35.00"))
+})
