@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.1](https://github.com/chasef07/acuity_product/compare/v1.19.0...v1.19.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **analytics:** display judge scorecard results ([#357](https://github.com/chasef07/acuity_product/issues/357)) ([19f730a](https://github.com/chasef07/acuity_product/commit/19f730a82f9632296c55c5172ac613d6a5c3fd83))
+
 ## [1.19.0](https://github.com/chasef07/acuity_product/compare/v1.18.0...v1.19.0) (2026-09-24)
 
 
