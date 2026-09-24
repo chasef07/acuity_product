@@ -98,9 +98,15 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	if err != nil || issue.Note != "Incorrect office hours" {
 		t.Fatalf("issue: %+v %v", issue, err)
 	}
-	retry, err := module.FlagAgentCallIssue(ctx, staff, first, "Do not overwrite")
+	retry, err := module.FlagAgentCallIssue(ctx, staff, first, "Incorrect office hours")
 	if err != nil || retry != issue {
 		t.Fatalf("retry must preserve report: %+v %v", retry, err)
+	}
+	if _, err = module.FlagAgentCallIssue(ctx, staff, first, "Different report"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("different note must conflict: %v", err)
+	}
+	if _, err = module.FlagAgentCallIssue(ctx, operator, first, issue.Note); !errors.Is(err, ErrConflict) {
+		t.Fatalf("different reporter must conflict: %v", err)
 	}
 	detail, err = module.ReadAgentCall(ctx, operator, first)
 	if err != nil || detail.Issue == nil || detail.Issue.Note != issue.Note || !detail.Call.IssueFlagged {
