@@ -13,6 +13,7 @@ import {
   RotateCcwIcon,
 } from "lucide-react"
 
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -382,14 +383,17 @@ function LifecycleStatus({ status }: { status: string }) {
 export function CallingFailureNotice({
   failure,
   onRecover,
+  compact = false,
 }: {
   failure: CallingCardFailure
   onRecover: () => void
+  compact?: boolean
 }) {
   return (
     <CallingFailure
       failure={projectCallingFailure(failure)}
       onRecover={onRecover}
+      compact={compact}
     />
   )
 }
@@ -397,9 +401,11 @@ export function CallingFailureNotice({
 function CallingFailure({
   failure,
   onRecover,
+  compact = false,
 }: {
   failure: CallingCardFailureView
   onRecover: () => void
+  compact?: boolean
 }) {
   const handleAction = () => {
     if (failure.action?.kind === "reload-page") {
@@ -408,6 +414,22 @@ function CallingFailure({
     }
     onRecover()
   }
+
+  if (compact) return (
+    <div role="status" className="flex min-w-0 flex-col items-start gap-1">
+      <Popover>
+        <PopoverTrigger render={<Button variant="ghost" size="sm" aria-label={failure.title} />}>
+          <PhoneOffIcon data-icon="inline-start" />
+          <span className="truncate">{failure.title}</span>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-72 max-w-[calc(100vw-2rem)]">
+          <p className="text-sm font-medium">{failure.title}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{failure.message}</p>
+        </PopoverContent>
+      </Popover>
+      {failure.action && <Button size="sm" variant="outline" onClick={handleAction}>{failure.action.label}</Button>}
+    </div>
+  )
 
   return (
     <Alert className="border-warning/35 bg-warning/10 px-3 py-2.5 text-foreground [&>svg]:text-warning">

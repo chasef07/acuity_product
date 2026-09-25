@@ -6,16 +6,16 @@
   flex: 1;
   flex-direction: column;
   overflow-y: auto;
-  background: var(--background);
+  background: var(--canvas);
   color: var(--foreground);
-  font-size: 13px;
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
 .header {
   min-height: 66px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
-  padding: 0 40px;
+  padding: 0 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -30,13 +30,15 @@
   color: var(--muted-foreground);
 }
 .breadcrumb h1 {
-  font-weight: 550;
+  font-size: 24px;
+  letter-spacing: -0.025em;
+  font-weight: 600;
 }
 .content {
   width: 100%;
   max-width: 1320px;
   margin: 0 auto;
-  padding: 30px 48px 24px;
+  padding: 24px;
 }
 .toolbar {
   display: flex;

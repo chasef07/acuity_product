@@ -40,7 +40,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import { SidebarTrigger } from "@/components/ui/sidebar"
 import {
   Select,
   SelectContent,
@@ -287,7 +286,6 @@ export function OperatorAnalytics({
       <AnalyticsFrame
         section="AI diagnostics"
         title={analyticsTabs.find((item) => item.value === tab)!.label}
-        headerLeading={<SidebarTrigger collapsedOnly />}
         periodLabel={ranges.find((item) => item.value === range)!.label}
         controls={
           <>

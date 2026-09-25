@@ -10,7 +10,7 @@ import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import {
   CheckIcon,
-  ChevronsUpDownIcon,
+  MapPinIcon,
   PanelRightCloseIcon,
   WifiOffIcon,
 } from "lucide-react"
@@ -30,6 +30,7 @@ import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -39,7 +40,7 @@ import {
 import { EligibilitySummary } from "@/components/workspace/eligibility-summary"
 import { AIInteractionContext } from "@/components/workspace/ai-interaction-context"
 import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
-import { TaskCallContext } from "@/components/workspace/task-call-context"
+import { TaskCallContext, TaskCallAction } from "@/components/workspace/task-call-context"
 import { WorkspaceRail } from "@/components/workspace/workspace-rail"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type {
@@ -63,6 +64,8 @@ const PracticeAnalytics = dynamic(
   () => import("@/components/workspace/practice-analytics").then(module => module.PracticeAnalytics),
   { loading: () => <Skeleton aria-label="Loading booking analytics" className="m-6 h-72" /> },
 )
+
+const ManageAgent = dynamic(() => import("@/components/workspace/manage-agent").then(module => module.ManageAgent))
 
 const OperatorAnalytics = dynamic(
   () =>
@@ -305,7 +308,9 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       <>
         <WorkspaceRail
           projection={state}
-          workspaceControl={
+          onIntent={sendIntent}
+          availabilityControl={<CallingAvailabilityControl />}
+          locationControl={
             <WorkspaceSelector
               discovery={discovery}
               practiceID={state.scope.practiceID}
@@ -320,22 +325,23 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
               }
             />
           }
-          availabilityControl={<CallingAvailabilityControl />}
-          onIntent={sendIntent}
         />
         <SidebarInset
           data-testid="mounted-workspace"
+          data-connection={state.connection}
           data-workspace-version={workspace.version}
           className="h-svh min-h-0 min-w-0 overflow-hidden"
         >
-          {view !== "engagement" && view !== "analytics" && view !== "operator-analytics" && (
-            <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
-              <SidebarTrigger collapsedOnly />
-              <div className="flex-1" />
-            </header>
-          )}
+          {view !== "engagement" && <CollapsedSidebarHeader />}
           {view === "analytics" && canViewPracticeAnalytics(discovery, state.scope.practiceID) ? (
             <PracticeAnalytics
+              key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
+              practiceID={state.scope.practiceID}
+              locationScopeID={state.scope.locationScopeID}
+              locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
+            />
+          ) : view === "manage-agent" ? (
+            <ManageAgent
               key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
               practiceID={state.scope.practiceID}
               locationScopeID={state.scope.locationScopeID}
@@ -354,6 +360,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   key={selectedEngagement.phone}
                   engagement={selectedEngagement}
                   practiceID={state.scope.practiceID}
+                  practiceName={practice.name}
                   canMutate
                   revision={state.detailRevision}
                   selectedTaskID={
@@ -372,6 +379,13 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                       : undefined
                   }
                   headerLeading={<SidebarTrigger collapsedOnly />}
+                  callAction={!state.selection.taskGroup && selectedTask && selectedTask.state === "OPEN" && contextView === "task" ? (
+                    <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={callingEnabled && !callingOccupied} historyHint={state.detailRevision} pending={Boolean(taskCallRequest)} onCall={(task) => {
+                      setTaskCallError("")
+                      void projection.dispatch({ type: "remember-return-task", taskID: task.id })
+                      setTaskCallRequest({ id: window.crypto.randomUUID(), taskID: task.id })
+                    }} />
+                  ) : undefined}
                   textTask={textTask}
                   onNextTask={!activeCall && textTask && state.tasks.items.some((task) => task.id !== textTask.id) ? () => { const next = state.tasks.items.find((task) => task.id !== textTask.id); if (next) sendIntent({ type: "select-task", task: next }) } : undefined}
                   onTextTaskUpdated={(task) => sendIntent({ type: "task-committed", task, advance: !activeCall })}
@@ -379,7 +393,12 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                     void projection.dispatch({ type: "task-created", task })
                   }
                   onTaskOpen={(task) =>
-                    void projection.dispatch({ type: "open-task-context", task })
+                    void projection.dispatch(
+                      contextPanelOpen && contextView === "task" &&
+                      !state.selection.taskGroup && selectedTask?.id === task.id
+                        ? { type: "close-context" }
+                        : { type: "open-task-context", task },
+                    )
                   }
                   onCallOpen={(callID) =>
                     void projection.dispatch({ type: "open-call-context", callID })
@@ -399,8 +418,8 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                 data-testid="context-panel"
                 inert={!contextPanelOpen}
                 className={cn(
-                  "absolute top-3 right-3 flex h-fit max-h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:my-3 lg:max-w-none lg:shrink-0",
-                  contextView === "task" && state.selection.taskGroup && "h-[calc(100%-1.5rem)]",
+                  "absolute top-20 right-3 flex h-fit max-h-[calc(100%-5.75rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:my-3 lg:max-h-[calc(100%-1.5rem)] lg:max-w-none lg:shrink-0",
+                  contextView === "task" && state.selection.taskGroup && "h-[calc(100%-5.75rem)] lg:h-[calc(100%-1.5rem)]",
                   contextPanelOpen
                     ? "translate-x-0 opacity-100 lg:mr-3 lg:w-72"
                     : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:mr-0 lg:w-0",
@@ -461,24 +480,11 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                       activeCall={historicalCall ?? activeCall}
                       view={contextView}
                       canMutate
-                      canCall={callingEnabled && !callingOccupied}
                       historyHint={state.detailRevision}
-                      taskCallPending={Boolean(taskCallRequest)}
                       taskCallError={taskCallError}
                       onTaskUpdated={(task, advance) =>
                         void projection.dispatch({ type: "task-committed", task, advance: advance && !activeCall })
                       }
-                      onStartTaskCall={(task) => {
-                        setTaskCallError("")
-                        void projection.dispatch({
-                          type: "remember-return-task",
-                          taskID: task.id,
-                        })
-                        setTaskCallRequest({
-                          id: window.crypto.randomUUID(),
-                          taskID: task.id,
-                        })
-                      }}
                       onReturnToCall={() => {
                         if (activeCall) {
                           void projection.dispatch({ type: "return-to-call" })
@@ -540,19 +546,12 @@ function WorkspaceSelector({
             variant="ghost"
             size="sm"
             disabled={disabled}
-            className="h-auto w-full min-w-0 justify-start gap-2 px-1 py-1 text-left"
+            className="size-9 shrink-0"
+            title={`${practice.name}: ${locationLabel}`}
           />
         }
       >
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold tracking-[-0.01em]">
-            {practice.name}
-          </span>{" "}
-          <span className="block truncate text-[0.6875rem] font-normal text-muted-foreground">
-            {locationLabel}
-          </span>
-        </span>
-        <ChevronsUpDownIcon data-icon="inline-end" />
+        <MapPinIcon />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80">
         <PopoverHeader>
@@ -653,4 +652,10 @@ function WorkspaceFailure({
       </Alert>
     </main>
   )
+}
+
+function CollapsedSidebarHeader() {
+  const { isMobile, state } = useSidebar()
+  if (!isMobile && state === "expanded") return null
+  return <div className="flex h-12 shrink-0 items-center px-4"><SidebarTrigger collapsedOnly /></div>
 }

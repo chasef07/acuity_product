@@ -73,6 +73,7 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -129,11 +130,13 @@ type TimelineSource = {
 type EngagementWorkspaceProps = {
   engagement: EngagementSummary
   practiceID: string
+  practiceName: string
   canMutate: boolean
   revision: number
   selectedTaskID?: string
   selectedCallID?: string
   selectedAIInteractionID?: string
+  callAction?: ReactNode
   headerLeading?: ReactNode
   textTask?: Task
   onTextTaskUpdated?: (task: Task) => void
@@ -161,11 +164,13 @@ export function EngagementWorkspace(props: EngagementWorkspaceProps) {
 export function EngagementWorkspaceView({
   engagement,
   practiceID,
+  practiceName,
   canMutate,
   revision,
   selectedTaskID,
   selectedCallID,
   selectedAIInteractionID,
+  callAction,
   headerLeading,
   textTask,
   onTextTaskUpdated,
@@ -193,12 +198,18 @@ export function EngagementWorkspaceView({
   } = calling
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-3">
+      <header className="group/conversation-header relative flex h-16 shrink-0 sm:h-13 items-center gap-3 px-4 sm:px-6">
         {headerLeading}
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          <h1 className="truncate text-base font-semibold tracking-[-0.015em] tabular-nums sm:text-lg">
-            {formatUSPhone(engagement.phone)}
-          </h1>
+        <div className="flex min-w-0 items-center gap-1">
+          <div className="flex min-w-0 flex-col sm:flex-row sm:items-center sm:gap-2">
+            <span className="truncate text-xs text-muted-foreground sm:text-base">
+              {practiceName}
+            </span>
+            <span aria-hidden="true" className="hidden text-muted-foreground sm:inline">/</span>
+            <h1 className="shrink-0 whitespace-nowrap text-base font-medium tracking-tight tabular-nums">
+              {formatUSPhone(engagement.phone)}
+            </h1>
+          </div>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -206,6 +217,7 @@ export function EngagementWorkspaceView({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
+                  className="[@media(hover:hover)]:opacity-0 group-hover/conversation-header:opacity-100 group-focus-within/conversation-header:opacity-100 focus-visible:opacity-100"
                   aria-label={
                     copyState === "copied" ? "Number copied" : "Copy phone number"
                   }
@@ -235,10 +247,13 @@ export function EngagementWorkspaceView({
                 ? "Phone number could not be copied"
                 : ""}
           </span>
+
+        </div>
+        {callAction ?? (
           <Button
-            className="ml-1 bg-background px-3 text-foreground shadow-none hover:bg-muted"
+            className="h-7 shrink-0 shadow-xs"
             type="button"
-            size="default"
+            size="sm"
             variant="outline"
             title={`Call ${formatUSPhone(engagement.phone)}`}
             disabled={
@@ -265,8 +280,8 @@ export function EngagementWorkspaceView({
               </>
             )}
           </Button>
-        </div>
-        <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
+        )}
+        <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
           {textTask && onTextTaskUpdated && <TextConversationAction key={textTask.id} task={textTask} reviewedTask={reviewedTextTask} onUpdated={onTextTaskUpdated} onNext={onNextTask} />}
           {engagement.locations.length > 1 && (
             <NativeSelect
@@ -491,7 +506,7 @@ function MessageConversation({
             aria-label="Conversation activity"
             data-testid="message-timeline"
             preserveScrollOnPrepend
-            className="px-3 py-4 sm:px-4"
+            className="px-4 py-6 sm:px-6"
             onScroll={(event) => {
               const element = event.currentTarget
               atLatest.current =
@@ -936,7 +951,7 @@ function MessageEntry({
             )}
           </BubbleContent>
         </Bubble>
-        <MessageFooter className="flex-wrap gap-x-2 gap-y-1 tabular-nums">
+        <MessageFooter className={cn("flex-wrap gap-x-2 gap-y-1 tabular-nums", !message.safeFailureCode && message.delivery !== "Failed" && message.delivery !== "Status unknown" && actionClassName)}>
           <time dateTime={message.createdAt}>
             {formatTime(message.createdAt)}
           </time>
@@ -1154,6 +1169,7 @@ function MessageAttachmentView({
   onChanged: () => void
 }) {
   const [objectURL, setObjectURL] = useState("")
+  const [previewAttempt, setPreviewAttempt] = useState(0)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const isPDF = attachment.contentType === "application/pdf"
@@ -1175,7 +1191,10 @@ function MessageAttachmentView({
   const loadBlob = useCallback(async () => {
     if (attachment.state !== "Stored") return
     const token = await getAccessToken()
-    if (!token) return
+    if (!token) {
+      setError("Sign in again to load the attachment.")
+      return
+    }
     const result = await getMessageAttachment({
       client: portalClient(token),
       path: { attachmentId: attachment.id },
@@ -1189,25 +1208,33 @@ function MessageAttachmentView({
 
   useEffect(() => {
     if (isPDF) return
-    let disposed = false
+    let active = true
     let previewURL = ""
     const timeout = window.setTimeout(() => {
+      setPending(true)
       void loadBlob().then((blob) => {
-        if (!blob || disposed) return
+        if (!active) return
+        setPending(false)
+        if (!blob) return
         previewURL = URL.createObjectURL(blob)
         setObjectURL(previewURL)
       })
     }, 0)
     return () => {
-      disposed = true
+      active = false
       window.clearTimeout(timeout)
       if (previewURL) URL.revokeObjectURL(previewURL)
     }
-  }, [isPDF, loadBlob])
+  }, [isPDF, loadBlob, previewAttempt])
 
   async function retry() {
-    setPending(true)
     setError("")
+    if (attachment.state === "Stored") {
+      setObjectURL("")
+      setPreviewAttempt((attempt) => attempt + 1)
+      return
+    }
+    setPending(true)
     const token = await getAccessToken()
     if (!token) {
       setPending(false)
@@ -1241,46 +1268,72 @@ function MessageAttachmentView({
   }
 
   return (
-    <Attachment
-      state={presentationState}
-      size="sm"
-      className="mt-2 w-64 max-w-full"
-    >
-      <AttachmentMedia variant={objectURL && !isPDF ? "image" : "icon"}>
-        {objectURL && !isPDF ? (
-          // eslint-disable-next-line @next/next/no-img-element -- private object URL
-          <img src={objectURL} alt={attachment.fileName} />
-        ) : isPDF ? (
-          <FileTextIcon aria-hidden="true" />
-        ) : (
-          <ImageIcon aria-hidden="true" />
-        )}
-      </AttachmentMedia>
-      <AttachmentContent>
-        <AttachmentTitle>{attachment.fileName}</AttachmentTitle>
-        <AttachmentDescription>{description}</AttachmentDescription>
-      </AttachmentContent>
-      <AttachmentActions>
-        {attachment.state === "Stored" && (
-          <AttachmentAction
-            aria-label={`Download ${attachment.fileName}`}
-            disabled={pending}
-            onClick={() => void download()}
-          >
-            {pending ? <Spinner /> : <DownloadIcon data-icon="inline-start" />}
-          </AttachmentAction>
-        )}
-        {attachment.state === "Attachment unavailable" && canMutate && (
-          <AttachmentAction
-            aria-label={`Retry ${attachment.fileName}`}
-            disabled={pending}
-            onClick={() => void retry()}
-          >
-            {pending ? <Spinner /> : <RefreshCwIcon data-icon="inline-start" />}
-          </AttachmentAction>
-        )}
-      </AttachmentActions>
-    </Attachment>
+    <Sheet>
+      <Attachment
+        state={presentationState}
+        size="sm"
+        className="mt-2 w-64 max-w-full"
+      >
+        <AttachmentMedia variant={objectURL && !isPDF ? "image" : "icon"}>
+          {objectURL && !isPDF ? (
+            <SheetTrigger
+              type="button"
+              aria-label={`Preview ${attachment.fileName}`}
+              className="size-full cursor-zoom-in rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- private object URL */}
+              <img src={objectURL} alt={attachment.fileName} className="size-full object-cover" />
+            </SheetTrigger>
+          ) : isPDF ? (
+            <FileTextIcon aria-hidden="true" />
+          ) : (
+            <ImageIcon aria-hidden="true" />
+          )}
+        </AttachmentMedia>
+        <AttachmentContent>
+          <AttachmentTitle>{attachment.fileName}</AttachmentTitle>
+          <AttachmentDescription>{description}</AttachmentDescription>
+        </AttachmentContent>
+        <AttachmentActions>
+          {attachment.state === "Stored" && (
+            <AttachmentAction
+              aria-label={`Download ${attachment.fileName}`}
+              disabled={pending}
+              onClick={() => void download()}
+            >
+              {pending ? <Spinner /> : <DownloadIcon data-icon="inline-start" />}
+            </AttachmentAction>
+          )}
+          {((attachment.state === "Attachment unavailable" && canMutate) || (attachment.state === "Stored" && !isPDF && !objectURL)) && (
+            <AttachmentAction
+              aria-label={`Retry ${attachment.fileName}`}
+              disabled={pending}
+              onClick={() => void retry()}
+            >
+              {pending ? <Spinner /> : <RefreshCwIcon data-icon="inline-start" />}
+            </AttachmentAction>
+          )}
+        </AttachmentActions>
+      </Attachment>
+      <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+        <SheetHeader className="shrink-0 border-b pr-14">
+          <SheetTitle className="break-words">{attachment.fileName}</SheetTitle>
+          <SheetDescription>Image · {formatBytes(attachment.byteSize)}</SheetDescription>
+        </SheetHeader>
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
+          {objectURL && (
+            // eslint-disable-next-line @next/next/no-img-element -- private object URL
+            <img src={objectURL} alt={attachment.fileName} className="max-h-full max-w-full object-contain" />
+          )}
+        </div>
+        <div className="shrink-0 border-t p-4">
+          <Button variant="outline" onClick={() => void download()} disabled={pending}>
+            {pending ? <Spinner /> : <DownloadIcon />} Download
+          </Button>
+          {error && <p role="alert" className="mt-2 text-sm text-destructive">{error}</p>}
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -1491,66 +1544,10 @@ function MessageComposer({
         <InputGroup
           focusStyle="quiet"
           shape="pill"
-          className="h-auto min-h-16 bg-card px-1.5 shadow-sm"
+          className={cn("h-auto min-h-16 flex-col bg-card px-1.5 shadow-sm", file && "rounded-2xl")}
         >
-          <InputGroupAddon align="inline-start">
-            <InputGroupButton
-              type="button"
-              size="icon-sm"
-              aria-label="Attach one file"
-              disabled={disabled || pending}
-              onClick={() => fileInput.current?.click()}
-            >
-              <PaperclipIcon />
-            </InputGroupButton>
-          </InputGroupAddon>
-          <InputGroupTextarea
-            ref={textarea}
-            aria-label="Message"
-            aria-invalid={Boolean(error)}
-            rows={1}
-            maxLength={maximumMessageLength}
-            placeholder="Message"
-            className="max-h-40 min-h-12 py-3 text-sm leading-5"
-            value={body}
-            disabled={disabled || pending}
-            onChange={(event) => setBody(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault()
-                event.currentTarget.form?.requestSubmit()
-              }
-            }}
-          />
-          <InputGroupAddon align="inline-end">
-            <InputGroupButton
-              type="submit"
-              size="icon-sm"
-              variant="default"
-              aria-label="Send message"
-              className="size-9 rounded-full"
-              disabled={
-                disabled ||
-                pending ||
-                (!body.trim() && !file) ||
-                (!threadID && !destination.trim())
-              }
-            >
-              {pending ? <Spinner /> : <ArrowUpIcon />}
-            </InputGroupButton>
-          </InputGroupAddon>
-        </InputGroup>
-        <input
-          ref={fileInput}
-          type="file"
-          className="sr-only"
-          accept={[...acceptedAttachmentTypes].join(",")}
-          disabled={disabled || pending}
-          onChange={chooseFile}
-        />
-        {(file || body.length >= 1_400) && (
-          <div className="mt-1.5 flex min-h-5 items-start gap-2 text-xs text-muted-foreground">
-            {file && (
+          {file && (
+            <div className="w-full px-3 pt-3">
               <DraftAttachment
                 key={`${file.name}:${file.size}:${file.lastModified}`}
                 file={file}
@@ -1560,13 +1557,68 @@ function MessageComposer({
                   setFile(undefined)
                 }}
               />
-            )}
-            {body.length >= 1_400 && (
-              <span className="ml-auto pt-1 tabular-nums">
-                {body.length}/{maximumMessageLength}
-              </span>
-            )}
+            </div>
+          )}
+          <div className="flex w-full min-w-0 items-center">
+            <InputGroupTextarea
+              ref={textarea}
+              aria-label="Message"
+              aria-invalid={Boolean(error)}
+              rows={1}
+              maxLength={maximumMessageLength}
+              placeholder="Message"
+              className="max-h-40 min-h-12 py-3 text-sm leading-5"
+              value={body}
+              disabled={disabled || pending}
+              onChange={(event) => setBody(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+            />
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton
+                type="button"
+                size="icon-sm"
+                aria-label="Attach one file"
+                disabled={disabled || pending}
+                onClick={() => fileInput.current?.click()}
+              >
+                <PaperclipIcon />
+              </InputGroupButton>
+
+              <InputGroupButton
+                type="submit"
+                size="icon-sm"
+                variant="default"
+                aria-label="Send message"
+                className="size-9 rounded-full"
+                disabled={
+                  disabled ||
+                  pending ||
+                  (!body.trim() && !file) ||
+                  (!threadID && !destination.trim())
+                }
+              >
+                {pending ? <Spinner /> : <ArrowUpIcon />}
+              </InputGroupButton>
+            </InputGroupAddon>
           </div>
+        </InputGroup>
+        <input
+          ref={fileInput}
+          type="file"
+          className="sr-only"
+          accept={[...acceptedAttachmentTypes].join(",")}
+          disabled={disabled || pending}
+          onChange={chooseFile}
+        />
+        {body.length >= 1_400 && (
+          <p className="mt-1.5 text-right text-xs tabular-nums text-muted-foreground">
+            {body.length}/{maximumMessageLength}
+          </p>
         )}
         {(disabledReason || error) && (
           <p

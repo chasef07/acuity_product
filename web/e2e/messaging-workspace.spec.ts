@@ -29,11 +29,11 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   const searchInput = page.getByLabel("Search tasks, names, or phone")
   const submitButton = page.getByRole("button", { name: "Search" })
   await expect(submitButton).toBeVisible()
-  await searchInput.fill("7275550199")
+  await searchInput.fill("7275550188")
   await submitButton.click()
   await page.keyboard.press("Escape")
 
-  await expect(page.getByRole("heading", { name: "(727) 555-0199" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "(727) 555-0188" })).toBeVisible()
   await expect(
     page.getByRole("status", { name: "Loading conversation" }),
   ).toBeVisible()
@@ -83,9 +83,14 @@ test("appointment verification stays open until shared completion and can be reo
     await expect(row).toHaveCount(0)
     await expect(secondRow).toHaveCount(0)
     await expect(second.getByText("Completed for everyone with access.")).toBeVisible()
+    const completedContext = page.getByRole("complementary", { name: "Task context" })
+    await expect(completedContext.getByRole("button", { name: "Reopen", exact: true })).toBeVisible()
+    await completedContext.getByRole("button", { name: "Close context panel" }).click()
+    await expect(completedContext).toBeHidden()
     await page.getByRole("button", { name: "Recently completed", exact: true }).click()
     await expect(row).toBeVisible()
     await row.getByRole("button").first().click()
+    await expect(completedContext).toBeVisible()
     await page.getByRole("button", { name: "Reopen", exact: true }).click()
     await expect(secondRow).toBeVisible()
     await expect(page.getByRole("button", { name: /^Appointments 7d|^Texts 7d|^Mark all/ })).toHaveCount(0)
@@ -198,19 +203,21 @@ test("rail hover details and the message composer preserve compact context", asy
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
 
-  const appearanceButton = page.getByRole("button", { name: "Appearance" })
-  await expect(appearanceButton).toHaveCSS("height", "32px")
-  await expect(appearanceButton.locator("svg")).toHaveCSS("width", "16px")
+  const appearanceButton = page.getByRole("button", { name: "Account menu" })
+  await expect(appearanceButton).toBeVisible()
+  await expect(appearanceButton.getByText("M", { exact: true })).toBeVisible()
+  await expect(appearanceButton).toContainText("messaging@abita.test")
   await appearanceButton.click()
-  await expect(page.getByRole("menuitemradio", { name: "System" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "System", exact: true })).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath("appearance-menu.png"),
     fullPage: true,
   })
-  await page.getByRole("menuitemradio", { name: "Light" }).click()
+  await page.getByRole("button", { name: "Light", exact: true }).click()
+  await page.keyboard.press("Escape")
   await expect(page.locator('[data-slot="sidebar-inner"]')).toHaveCSS(
     "background-color",
-    "lab(98.26 0 0)",
+    "rgb(243, 243, 243)",
   )
 
   await createAIStaffTask(
@@ -338,10 +345,10 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
 
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
-  ).toContainText("Abita Eye Group")
+  ).toHaveAttribute("title", /Abita Eye Group/)
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
-  ).toContainText("Fixture Location 1")
+  ).toHaveAttribute("title", /Fixture Location 1/)
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^My Tasks/ })).toHaveAttribute(
     "aria-expanded",
@@ -401,6 +408,13 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   expect(retryKeys[1]).toBe(retryKeys[0])
   await page.unroute(`${portalURL}/v1/messages`, retryRoute)
 
+  let failPreview = true
+  const previewRoute = async (route: Route) => {
+    if (route.request().method() === "GET" && failPreview) {
+      await route.fulfill({ status: 503, json: { message: "Synthetic attachment outage" } })
+    } else await route.continue()
+  }
+  await page.route(`${portalURL}/v1/attachments/*`, previewRoute)
   const outgoingText = "Your records are ready for pickup."
   await page
     .getByRole("textbox", { name: "Message", exact: true })
@@ -418,6 +432,14 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     .locator('[data-slot="attachment"]')
   await expect(draftAttachment).toHaveAttribute("data-state", "idle")
   await expect(draftAttachment.getByText("fixture-photo.png")).toBeVisible()
+  const composer = page.getByRole("form", { name: "Message composer" })
+  const inputGroup = composer.locator('[data-slot="input-group"]')
+  await expect(inputGroup.getByText("fixture-photo.png")).toBeVisible()
+  const attachBounds = await composer.getByRole("button", { name: "Attach one file" }).boundingBox()
+  const sendBounds = await composer.getByRole("button", { name: "Send message" }).boundingBox()
+  expect(attachBounds!.x).toBeGreaterThan((await composer.getByRole("textbox", { name: "Message", exact: true }).boundingBox())!.x)
+  expect(attachBounds!.x + attachBounds!.width).toBeLessThanOrEqual(sendBounds!.x)
+
   expect(
     (await draftAttachment.locator('[data-slot="attachment-media"]').boundingBox())
       ?.width,
@@ -435,7 +457,14 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(outgoing.getByText("Sending", { exact: true })).toBeVisible()
   await expect(outgoing.getByText("Sent", { exact: true })).toBeVisible()
   const sentAttachment = outgoing.locator('[data-slot="attachment"]')
+  await expect(sentAttachment).toContainText("Attachment unavailable.")
+  failPreview = false
+  const download = page.waitForEvent("download")
+  await sentAttachment.getByRole("button", { name: "Download fixture-photo.png", exact: true }).click()
+  expect((await download).suggestedFilename()).toBe("fixture-photo.png")
+  await sentAttachment.getByRole("button", { name: "Retry fixture-photo.png", exact: true }).click()
   await expect(sentAttachment).toHaveAttribute("data-state", "done")
+  await page.unroute(`${portalURL}/v1/attachments/*`, previewRoute)
   await expect(sentAttachment).not.toContainText("Stored")
   await expect(
     sentAttachment.getByRole("button", { name: "Download fixture-photo.png" }),
@@ -447,6 +476,15 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     (await sentAttachment.locator('[data-slot="attachment-media"]').boundingBox())
       ?.width,
   ).toBeLessThanOrEqual(32)
+
+  const previewButton = sentAttachment.getByRole("button", { name: "Preview fixture-photo.png" })
+  await previewButton.click()
+  const imagePreview = page.getByRole("dialog", { name: "fixture-photo.png", exact: true })
+  await expect(imagePreview.getByRole("img", { name: "fixture-photo.png" })).toBeVisible()
+  await expect(imagePreview.getByRole("button", { name: "Download", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(imagePreview).toBeHidden()
+  await expect(previewButton).toBeFocused()
 
   const providerMessage = await expect
     .poll(async () => {
@@ -695,6 +733,9 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()
+  await expect(sidebarTaskContext).toBeHidden()
+  await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "closed")
+  await sidebarTask.click()
   await expect(sidebarTaskContext).toBeVisible()
   await expect(
     page.getByRole("article").filter({ hasText: inboundText }),

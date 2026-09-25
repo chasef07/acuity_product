@@ -98,40 +98,15 @@ export function CallingAvailabilityControl() {
     recoverCalling,
     setAvailability,
   } = useCallingNavigation()
-  if (!callingEnabled) {
-    return callingFailure ? (
-      <CallingFailureNotice
-        failure={callingFailure}
-        onRecover={recoverCalling}
-      />
-    ) : null
-  }
+  if (!callingEnabled && !callingFailure) return null
   return (
-    <div className="flex w-full shrink-0 flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 text-sm font-medium">
-          Available for calls
-        </span>
-        {availabilityPending && (
-          <Spinner aria-label="Updating availability" />
-        )}
-        <Switch
-          aria-label="Availability"
-          className="data-checked:bg-success"
-          size="sm"
-          checked={available}
-          disabled={
-            availabilityPending || (Boolean(activeCall) && ownsSoftphone)
-          }
-          onCheckedChange={setAvailability}
-        />
-      </div>
-      {callingFailure && (
-        <CallingFailureNotice
-          failure={callingFailure}
-          onRecover={recoverCalling}
-        />
-      )}
+    <div className="flex w-full flex-col gap-2 border-b border-sidebar-border px-2 pb-3 pt-1">
+      {callingEnabled && <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium">Receive calls</span>
+        {availabilityPending && <Spinner aria-label="Updating availability" />}
+        <Switch aria-label="Availability" className="data-checked:bg-success" size="sm" checked={available} disabled={availabilityPending || (Boolean(activeCall) && ownsSoftphone)} onCheckedChange={setAvailability} />
+      </div>}
+      {callingFailure && <CallingFailureNotice compact failure={callingFailure} onRecover={recoverCalling} />}
     </div>
   )
 }

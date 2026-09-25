@@ -1147,6 +1147,91 @@ paths:
           $ref: "#/components/responses/AnalyticsBusy"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/agent-calls/query:
+    post:
+      operationId: queryAgentCalls
+      summary: List AI calls within authorized Locations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentCallsQuery"
+      responses:
+        "200":
+          description: Authorized call data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentCallsPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/agent-calls/{interactionId}:
+    get:
+      operationId: getAgentCall
+      summary: Read a staff-facing conversation and its issue flag.
+      parameters:
+        - name: interactionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Authorized call data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentCallDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/agent-calls/{interactionId}/issue:
+    put:
+      operationId: flagAgentCallIssue
+      summary: Flag a call for Acuity review; the first report is preserved.
+      parameters:
+        - name: interactionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentCallIssueInput"
+      responses:
+        "200":
+          description: Authorized call data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentCallIssue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operator/ai-costs/query:
     post:
       operationId: queryOperatorAICosts
@@ -3595,6 +3680,113 @@ components:
           type: string
         startDatetime:
           type: string
+    AgentCallsQuery:
+      type: object
+      additionalProperties: false
+      required: [practiceId, range]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        range:
+          $ref: "#/components/schemas/OperatorAIAnalyticsRange"
+        phone:
+          type: string
+          maxLength: 32
+        flaggedOnly:
+          type: boolean
+        cursor:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+    AgentCall:
+      type: object
+      additionalProperties: false
+      required: [id, phone, startedAt, appointmentActions, transferred, issueFlagged]
+      properties:
+        id:
+          type: string
+          format: uuid
+        phone:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        durationSeconds:
+          type: integer
+          minimum: 0
+        appointmentActions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AIAppointmentAction"
+        transferred:
+          type: boolean
+        issueFlagged:
+          type: boolean
+    AgentCallsPage:
+      type: object
+      additionalProperties: false
+      required: [calls, nextCursor]
+      properties:
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentCall"
+        nextCursor:
+          type: string
+    AgentCallIssueInput:
+      type: object
+      additionalProperties: false
+      required: [note]
+      properties:
+        note:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    AgentCallIssue:
+      type: object
+      additionalProperties: false
+      required: [note, createdAt]
+      properties:
+        note:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    AgentCallMessage:
+      type: object
+      additionalProperties: false
+      required: [speaker, text, occurredAt]
+      properties:
+        speaker:
+          type: string
+          enum: [Caller, Agent]
+          x-enum-varnames: [CallSpeakerCaller, CallSpeakerAgent]
+        text:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+    AgentCallDetail:
+      type: object
+      additionalProperties: false
+      required: [call, locationName, messages]
+      properties:
+        call:
+          $ref: "#/components/schemas/AgentCall"
+        locationName:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentCallMessage"
+        issue:
+          $ref: "#/components/schemas/AgentCallIssue"
     AIInsuranceResolution:
       type: object
       additionalProperties: false

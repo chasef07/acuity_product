@@ -28,6 +28,49 @@ test("caller ringback is a stable public WAV", async ({ request }) => {
   expect(audio.subarray(8, 12).toString("ascii")).toBe("WAVE")
 })
 
+test("collapsing Task details preserves the Task in the outbound Call request", async ({ page }) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await prepareBrowser(page.context())
+  await signInAs(page, "secondary@abita.test", "Fixture Secondary Staff")
+  await expect(page.getByRole("switch", { name: "Availability" })).toBeChecked({ timeout: 40_000 })
+  const key = `collapsed-task-callback-${Date.now()}`
+  const title = `Collapsed Task callback ${key}`
+  const created = await page.request.post(`${portalURL}/v1/tasks`, {
+    headers: { authorization: "Bearer synthetic-service-token" },
+    data: {
+      callId: key, callerPhone: "+12025550219", category: "optical",
+      idempotencyKey: key, officeKey: "spring-hill", officePhone: "+17275550101",
+      source: "agent", urgency: "normal", summary: title, message: "Synthetic callback request.",
+    },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { taskId } = await created.json()
+  expect(taskId).toEqual(expect.any(String))
+  const search = page.getByLabel("Search tasks, names, or phone")
+  await search.fill(title)
+  await search.press("Enter")
+  const taskRow = page.getByRole("button", { name: title, exact: true })
+  await taskRow.click()
+  const context = page.getByRole("complementary", { name: "Task context" })
+  await expect(context).toBeVisible()
+  await taskRow.click()
+  await expect(context).toBeHidden()
+
+  // Inspect the browser command without starting a provider call.
+  await page.route(`${portalURL}/v1/calling/outbound-calls`, (route) =>
+    route.fulfill({ status: 409, json: { message: "Synthetic outbound request inspection" } }),
+  )
+  const [outbound] = await Promise.all([
+    page.waitForRequest((request) => request.url() === `${portalURL}/v1/calling/outbound-calls` && request.method() === "POST"),
+    page.getByRole("button", { name: "Call", exact: true }).click(),
+  ])
+  expect(outbound.postDataJSON()).toMatchObject({ taskId })
+  expect(outbound.postDataJSON()).not.toHaveProperty("destination")
+  await taskRow.click()
+  await context.getByRole("button", { name: "Complete & next", exact: true }).click()
+  await expect(taskRow).toHaveCount(0)
+})
+
 test("voicemail and meaningful missed calls refresh into their recovery folders", async ({
   page,
 }, testInfo) => {
@@ -211,6 +254,10 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       taskContext.getByRole("heading", { name: "Review voicemail" }),
     ).toBeVisible()
     await expect(taskContext.getByText("1 earlier call")).toBeVisible()
+    const desktopViewport = page.viewportSize()!
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByTitle("Call this Task", { exact: true }).click({ trial: true, timeout: 10_000 })
+    await page.setViewportSize(desktopViewport)
     await taskContext.getByRole("button", { name: "Play" }).click()
     await expect(
       taskContext.getByLabel("Voicemail recording"),
