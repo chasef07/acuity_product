@@ -1633,7 +1633,7 @@ func (m *Module) ReadTask(
 	if err != nil {
 		return Task{}, err
 	}
-	if err := m.loadTaskInteractions(ctx, tx, &task); err != nil {
+	if err := LoadTaskInteractions(ctx, tx, &task); err != nil {
 		return Task{}, err
 	}
 	task.RelatedInteractionCount = len(task.Interactions)
@@ -1652,7 +1652,10 @@ func (m *Module) ReadTask(
 	return task, nil
 }
 
-func (m *Module) loadTaskInteractions(ctx context.Context, tx pgx.Tx, task *Task) error {
+// LoadTaskInteractions loads the ordered call evidence attached to a Task.
+// The caller must authorize access to the Task in the same transaction before
+// returning its contents to the user; this helper does not perform authorization.
+func LoadTaskInteractions(ctx context.Context, tx pgx.Tx, task *Task) error {
 	if task == nil || task.ID == "" {
 		return ErrInvalidInput
 	}

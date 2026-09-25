@@ -1189,19 +1189,21 @@ function MessageAttachmentView({
 
   useEffect(() => {
     if (isPDF) return
+    let disposed = false
+    let previewURL = ""
     const timeout = window.setTimeout(() => {
       void loadBlob().then((blob) => {
-        if (blob) setObjectURL(URL.createObjectURL(blob))
+        if (!blob || disposed) return
+        previewURL = URL.createObjectURL(blob)
+        setObjectURL(previewURL)
       })
     }, 0)
-    return () => window.clearTimeout(timeout)
-  }, [isPDF, loadBlob])
-
-  useEffect(() => {
     return () => {
-      if (objectURL) URL.revokeObjectURL(objectURL)
+      disposed = true
+      window.clearTimeout(timeout)
+      if (previewURL) URL.revokeObjectURL(previewURL)
     }
-  }, [objectURL])
+  }, [isPDF, loadBlob])
 
   async function retry() {
     setPending(true)
