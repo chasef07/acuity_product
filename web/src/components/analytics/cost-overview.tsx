@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react"
 import {
-  Area,
+  Bar,
+  Cell,
   CartesianGrid,
-  ComposedChart,
-  Line,
+  BarChart,
   XAxis,
   YAxis,
 } from "recharts"
@@ -31,6 +31,7 @@ import type {
 import { getAccessToken } from "@/lib/auth-client"
 import { formatDay, formatPercent } from "@/lib/booking-analytics"
 import { useReducedMotion } from "@/lib/reduced-motion"
+import { dailyTotalComparison } from "@/lib/analytics-trend"
 import styles from "./booking-overview.module.css"
 
 function dollars(value: number | null) {
@@ -53,7 +54,7 @@ function rateLabel(item: OperatorAiCostAnalytics["items"][number]) {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: item.rateUsd < 0.01 ? 4 : 2,
-    maximumFractionDigits: item.rateUsd < 0.01 ? 4 : 2,
+    maximumFractionDigits: 4,
   }).format(item.rateUsd)
   return `${rate} / ${quantity === "1" ? "" : `${quantity} `}${item.rateUnit}`
 }
@@ -96,30 +97,6 @@ function CostTooltip({
         </p>
       )}
     </div>
-  )
-}
-
-function CostDot({
-  cx,
-  cy,
-  payload,
-}: {
-  cx?: number
-  cy?: number
-  payload?: OperatorAiCostDay
-}) {
-  if (cx === undefined || cy === undefined || !payload?.calls) return null
-  const partial = payload.pricedCalls < payload.calls
-  return (
-    <circle
-      cx={cx}
-      cy={cy}
-      r={3}
-      fill={partial ? "var(--background)" : "var(--color-cost)"}
-      stroke="var(--color-cost)"
-      strokeWidth={partial ? 2 : 0}
-      aria-hidden="true"
-    />
   )
 }
 
@@ -230,6 +207,7 @@ export function CostOverview({
 function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
   const reducedMotion = useReducedMotion()
   const partial = report.pricedCalls < report.totalCalls
+  const items = report.items.filter((item) => item.calls > 0 || item.id === "gpt_live" || item.id.startsWith("luna_"))
   const summaries = [
     { label: "Average cost per call", value: dollars(report.costPerCallUsd) },
     {
@@ -299,7 +277,7 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
             className="h-[300px] w-full aspect-auto"
             aria-label="Daily estimated AI cost in US dollars"
           >
-            <ComposedChart
+            <BarChart
               accessibilityLayer
               data={report.daily}
               margin={{ top: 20, right: 16, bottom: 8, left: 8 }}
@@ -330,30 +308,22 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
                 content={<CostTooltip />}
                 cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
               />
-              <Area
-                type="monotone"
+              <Bar
                 dataKey="costUsd"
                 fill="var(--color-cost)"
-                fillOpacity={0.055}
-                stroke="none"
-                tooltipType="none"
+                maxBarSize={36}
                 isAnimationActive={!reducedMotion}
-              />
-              <Line
-                type="monotone"
-                dataKey="costUsd"
-                stroke="var(--color-cost)"
-                strokeWidth={2}
-                dot={<CostDot />}
-                activeDot={{
-                  r: 4,
-                  strokeWidth: 2,
-                  stroke: "var(--background)",
-                }}
-                isAnimationActive={!reducedMotion}
-              />
-            </ComposedChart>
+              >
+                {report.daily.map((day) => (
+                  <Cell key={day.day} fillOpacity={day.pricedCalls < day.calls ? 0.35 : 1} />
+                ))}
+              </Bar>
+            </BarChart>
           </ChartContainer>
+          <p className={styles.chartCaption}>
+            {dailyTotalComparison(report.daily.slice(1, -1).map((day) => day.pricedCalls < day.calls ? null : day.costUsd))}
+            {" · "}First and last days may be partial. Faded bars have incomplete usage.
+          </p>
         </div>
       </section>
       <section className={styles.breakdown} aria-label="Cost breakdown">
@@ -361,7 +331,7 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
           <div>
             <h2>Cost breakdown</h2>
             <p className={styles.summaryCaption}>
-              Recorded usage at rates effective{" "}
+              Recorded usage at rates verified{" "}
               {fullDate(report.rateEffectiveDate)}. Percentages show each item’s
               share of the recorded estimated cost.
             </p>
@@ -378,13 +348,13 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {report.items.map((item) => (
+            {items.map((item) => (
               <TableRow key={item.id}>
                 <TableCell>
                   {item.label}
                   {item.calls < report.totalCalls && (
                     <p className={styles.summaryCaption}>
-                      Usage recorded for {item.calls} of {report.totalCalls}{" "}
+                      Usage priced for {item.calls} of {report.totalCalls}{" "}
                       calls
                     </p>
                   )}
@@ -421,9 +391,16 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
           </TableBody>
         </Table>
         <p className={styles.summaryCaption}>
-          AssemblyAI uses recorded audio time. LiveKit media and Telnyx
-          estimates use call duration. Cached input is billed separately from
-          uncached input.
+          GPT Live uses recorded session seconds at $0.05 per minute, without
+          rounding up. Luna uses recorded tokens at Standard short-context rates;
+          cache reads and writes are separate from uncached input. Call reports
+          above 272,000 input tokens cannot establish the per-request context
+          tier, so Luna usage for those calls is unpriced. Long-context rates per
+          1M tokens are $0.20 input, $0.02 cached input, $0.25 cache writes, and
+          $0.75 output. Missing usage is unknown, not free. LiveKit media and
+          Telnyx estimates use call duration. Historical models retain their
+          original rates. Estimates exclude tool charges, regional uplifts,
+          taxes, and credits.
         </p>
       </section>
     </>

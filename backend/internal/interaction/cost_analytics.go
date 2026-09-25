@@ -62,7 +62,7 @@ type CostAnalytics struct {
 }
 
 const (
-	costRateEffectiveDate = "2026-09-03"
+	costRateEffectiveDate = "2026-09-25"
 	costLLMInput          = "llm_input"
 	costLLMCached         = "llm_cached"
 	costLLMOutput         = "llm_output"
@@ -70,6 +70,11 @@ const (
 	costTTS               = "tts"
 	costMedia             = "media"
 	costTelephony         = "telephony"
+	costVoice             = "gpt_live"
+	costLunaInput         = "luna_input"
+	costLunaCached        = "luna_cached"
+	costLunaWrite         = "luna_write"
+	costLunaOutput        = "luna_output"
 )
 
 func costItems() []CostItem {
@@ -79,6 +84,11 @@ func costItems() []CostItem {
 		{ID: costLLMOutput, Label: "Gemma 4 31B IT · output", Unit: "tokens", RateUSD: 1.20, RateQuantity: 1e6, RateUnit: "tokens"},
 		{ID: costSTT, Label: "AssemblyAI · Universal 3.5 Pro", Unit: "minutes", RateUSD: 0.45, RateQuantity: 1, RateUnit: "hour"},
 		{ID: costTTS, Label: "Rime · Coda", Unit: "characters", RateUSD: 0.05, RateQuantity: 1000, RateUnit: "characters"},
+		{ID: costVoice, Label: "GPT Live 1 · voice", Unit: "minutes", RateUSD: 0.05, RateQuantity: 1, RateUnit: "minute"},
+		{ID: costLunaInput, Label: "GPT-6 Luna · uncached input", Unit: "tokens", RateUSD: 0.10, RateQuantity: 1e6, RateUnit: "tokens"},
+		{ID: costLunaCached, Label: "GPT-6 Luna · cached input", Unit: "tokens", RateUSD: 0.01, RateQuantity: 1e6, RateUnit: "tokens"},
+		{ID: costLunaWrite, Label: "GPT-6 Luna · cache writes", Unit: "tokens", RateUSD: 0.125, RateQuantity: 1e6, RateUnit: "tokens"},
+		{ID: costLunaOutput, Label: "GPT-6 Luna · output", Unit: "tokens", RateUSD: 0.50, RateQuantity: 1e6, RateUnit: "tokens"},
 		{ID: costMedia, Label: "LiveKit · media", Unit: "minutes", RateUSD: 0.01, RateQuantity: 1, RateUnit: "minute"},
 		{ID: costTelephony, Label: "Telnyx · inbound SIP", Unit: "minutes", RateUSD: 0.0035, RateQuantity: 1, RateUnit: "minute"},
 	}
@@ -181,12 +191,32 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 	}
 	var entries []map[string]any
 	_ = json.Unmarshal(raw, &entries)
-	unpriced := false
 	unpricedUsage := 0
+	legacy, live := false, false
+	// Session reports aggregate requests. Only totals <=272K prove every
+	// request used short-context pricing; larger totals cannot establish a tier.
+	// Rates: https://developers.openai.com/api/docs/models/gpt-6-luna
+	var lunaInputTotal float64
+	for _, entry := range entries {
+		model, _ := entry["model"].(string)
+		if entry["type"] == "llm_usage" && costModelKey(model) == "gpt_6_luna" {
+			input, valid := usageQuantity(entry, "input_tokens", "inputTokens")
+			if valid {
+				lunaInputTotal += input
+			}
+		}
+	}
 	for _, entry := range entries {
 		provider, _ := entry["provider"].(string)
 		model, _ := entry["model"].(string)
 		provider, model = costModelKey(provider), costModelKey(model)
+		openAI := provider == "openai" || provider == "api_openai_com"
+		if model == "gpt_live_1" || model == "gpt_6_luna" {
+			live = true
+		}
+		if model == "google/gemma_4_31b_it" || entry["type"] == "stt_usage" || entry["type"] == "tts_usage" {
+			legacy = true
+		}
 		switch entry["type"] {
 		case "llm_usage":
 			// LiveKit emits wrapper metrics as well as the underlying provider
@@ -196,11 +226,34 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 			if provider == "unknown" && model == "fallbackadapter" {
 				continue
 			}
+			if model == "gpt_live_1" {
+				seconds, valid := usageQuantity(entry, "session_duration")
+				_, present := entry["session_duration"]
+				if !openAI || !valid || !present {
+					unpricedUsage++
+					continue
+				}
+				quantities[costVoice] += seconds / 60
+				known[costVoice] = true
+				continue
+			}
 			input, a := usageQuantity(entry, "input_tokens", "inputTokens")
 			cached, b := usageQuantity(entry, "input_cached_tokens", "inputCachedTokens")
 			output, c := usageQuantity(entry, "output_tokens", "outputTokens")
+			if model == "gpt_6_luna" {
+				writes, d := usageQuantity(entry, "input_cache_creation_tokens")
+				if !openAI || !a || !b || !c || !d || cached+writes > input || lunaInputTotal > 272000 {
+					unpricedUsage++
+					continue
+				}
+				quantities[costLunaInput] += input - cached - writes
+				quantities[costLunaCached] += cached
+				quantities[costLunaWrite] += writes
+				quantities[costLunaOutput] += output
+				known[costLunaInput], known[costLunaCached], known[costLunaWrite], known[costLunaOutput] = true, true, true, true
+				continue
+			}
 			if (provider != "livekit" && provider != "google") || model != "google/gemma_4_31b_it" || !a || !b || !c || cached > input {
-				unpriced = true
 				unpricedUsage++
 				continue
 			}
@@ -216,7 +269,6 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 			matchedModel := (provider == "livekit" && model == "assemblyai/universal_3_5_pro") ||
 				(provider == "assemblyai" && model == "universal_3_5_pro")
 			if !matchedModel || !valid {
-				unpriced = true
 				unpricedUsage++
 				continue
 			}
@@ -226,7 +278,6 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 			characters, valid := usageQuantity(entry, "characters_count", "charactersCount")
 			matchedModel := (provider == "rime" && model == "coda") || (provider == "livekit" && model == "rime/coda")
 			if !matchedModel || !valid {
-				unpriced = true
 				unpricedUsage++
 				continue
 			}
@@ -234,12 +285,17 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 			known[costTTS] = true
 		}
 	}
-	complete := !unpriced
+	complete := unpricedUsage == 0 && known[costMedia] && known[costTelephony]
+	if live {
+		complete = complete && known[costVoice] && known[costLunaInput]
+	}
+	if legacy || !live {
+		complete = complete && known[costLLMInput] && known[costSTT] && known[costTTS]
+	}
 	var callCost float64
 	for i := range report.Items {
 		item := &report.Items[i]
 		if !known[item.ID] {
-			complete = false
 			continue
 		}
 		quantity := quantities[item.ID]
@@ -293,14 +349,18 @@ func (report *CostAnalytics) finalize() {
 			report.CostPerMinuteUSD = &perMinute
 		}
 	}
-	inputItem := costItemForID(report.Items, costLLMInput)
-	cachedItem := costItemForID(report.Items, costLLMCached)
-	input := inputItem.Quantity + cachedItem.Quantity
+	var input, cached float64
+	for _, pair := range [][2]string{{costLLMInput, costLLMCached}, {costLunaInput, costLunaCached}} {
+		inputItem, cachedItem := costItemForID(report.Items, pair[0]), costItemForID(report.Items, pair[1])
+		input += inputItem.Quantity + cachedItem.Quantity
+		cached += cachedItem.Quantity
+		report.CacheSavingsUSD += cachedItem.Quantity * (inputItem.unitRate() - cachedItem.unitRate())
+	}
+	input += costItemForID(report.Items, costLunaWrite).Quantity
 	if input > 0 {
-		rate := cachedItem.Quantity / input * 100
+		rate := cached / input * 100
 		report.CacheHitRate = &rate
 	}
-	report.CacheSavingsUSD = cachedItem.Quantity * (inputItem.unitRate() - cachedItem.unitRate())
 }
 
 func (item CostItem) unitRate() float64 {

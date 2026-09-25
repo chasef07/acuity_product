@@ -1,10 +1,9 @@
 "use client"
 
 import {
-  Area,
+  Bar,
   CartesianGrid,
-  ComposedChart,
-  Line,
+  BarChart,
   XAxis,
   YAxis,
 } from "recharts"
@@ -34,6 +33,7 @@ import {
   type PatientGroup,
 } from "@/lib/booking-analytics"
 import { useReducedMotion } from "@/lib/reduced-motion"
+import { dailyTotalComparison } from "@/lib/analytics-trend"
 import styles from "./booking-overview.module.css"
 
 type Metric = BookingMetric
@@ -51,9 +51,9 @@ const count = (value: number) => value.toLocaleString("en-US")
 
 type Series = keyof typeof chartConfig
 
-// Only the plotted value uses zero; report metrics retain their missing state.
+// Missing measurements remain gaps, not apparent zero-duration successes.
 function chartValue(summary: BookingSummary, metric: Metric) {
-  return (metric === "duration" ? summary.p50 : summary[metric]) ?? 0
+  return metric === "duration" ? summary.p50 : summary[metric]
 }
 
 function GroupLabel({ group }: { group: keyof typeof chartConfig }) {
@@ -157,7 +157,7 @@ function BookingTrend({
             : "Daily p50 duration by patient status"
       }
     >
-      <ComposedChart
+      <BarChart
         accessibilityLayer
         data={daily}
         margin={{ top: 20, right: 16, bottom: 8, left: 8 }}
@@ -196,32 +196,17 @@ function BookingTrend({
           cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
         />
         {series.map((cohort) => (
-          <Area
-            key={cohort}
-            type="monotone"
-            dataKey={(day: BookingDay) => chartValue(day[cohort], metric)}
-            fill={`var(--color-${cohort})`}
-            fillOpacity={0.055}
-            stroke="none"
-            tooltipType="none"
-            isAnimationActive={!reducedMotion}
-          />
-        ))}
-        {series.map((cohort) => (
-          <Line
+          <Bar
             key={cohort}
             name={chartConfig[cohort].label}
-            type="monotone"
             dataKey={(day: BookingDay) => chartValue(day[cohort], metric)}
-            stroke={`var(--color-${cohort})`}
-            strokeWidth={2}
-            strokeDasharray={cohort === "total" ? "4 3" : undefined}
-            dot={false}
-            activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--background)" }}
+            fill={`var(--color-${cohort})`}
+            stackId={metric === "bookings" ? "bookings" : undefined}
+            maxBarSize={36}
             isAnimationActive={!reducedMotion}
           />
         ))}
-      </ComposedChart>
+      </BarChart>
     </ChartContainer>
   )
 }
@@ -401,7 +386,9 @@ export function BookingOverview({
 }) {
   const partialBreakdown = report.groups.unknown.calls > 0
   const series: readonly Series[] =
-    metric === "conversion"
+    metric === "bookings"
+      ? partialBreakdown ? [...visibleGroups, "unknown"] : visibleGroups
+      : metric === "conversion"
       ? ["total", ...visibleGroups]
       : partialBreakdown
         ? ["total", ...visibleGroups]
@@ -423,9 +410,7 @@ export function BookingOverview({
                   : "Median call duration"}
             </h2>
             <div className={styles.chartLegend}>
-              {(metric === "conversion" || partialBreakdown) && (
-                <GroupLabel group="total" />
-              )}
+              {series.map((group) => <GroupLabel key={group} group={group} />)}
             </div>
           </div>
           {metric === "conversion" && (
@@ -434,11 +419,12 @@ export function BookingOverview({
             </p>
           )}
           <BookingTrend daily={report.daily} metric={metric} series={series} />
-          {metric !== "bookings" && (
-            <p className={styles.chartCaption}>
-              Days without a measurement are shown at zero.
-            </p>
-          )}
+          <p className={styles.chartCaption}>
+            {metric === "bookings"
+              ? dailyTotalComparison(report.daily.map((day) => day.total.bookings))
+              : "Days without measurements are blank."}
+            {" · "}Today is excluded.
+          </p>
         </div>
       </section>
 
