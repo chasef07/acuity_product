@@ -392,7 +392,12 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                     void projection.dispatch({ type: "task-created", task })
                   }
                   onTaskOpen={(task) =>
-                    void projection.dispatch({ type: "open-task-context", task })
+                    void projection.dispatch(
+                      contextPanelOpen && contextView === "task" &&
+                      !state.selection.taskGroup && selectedTask?.id === task.id
+                        ? { type: "close-context" }
+                        : { type: "open-task-context", task },
+                    )
                   }
                   onCallOpen={(callID) =>
                     void projection.dispatch({ type: "open-call-context", callID })
