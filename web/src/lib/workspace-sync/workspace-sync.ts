@@ -63,19 +63,18 @@ export function createWorkspaceSync(
   const sleep = options.sleep ?? wait
   let controller: AbortController | undefined
   let scopeKey = ""
-  let activeScope: WorkspaceSyncScope | undefined
+  let handleRefresh = () => {}
   let handleVisibility = () => {}
 
   function stop() {
     scopeKey = ""
-    activeScope = undefined
+    handleRefresh = () => {}
     controller?.abort()
     controller = undefined
     handleVisibility = () => {}
   }
 
   function start(scope: WorkspaceSyncScope) {
-    activeScope = scope
     scopeKey = `${scope.practiceID}:${scope.locationID}`
     controller = new AbortController()
     options.onStateChange("connecting")
@@ -87,15 +86,6 @@ export function createWorkspaceSync(
     if (nextKey === scopeKey) return
     stop()
     if (!scope) return
-    start(scope)
-  }
-
-  function refresh() {
-    const scope = activeScope
-    if (!scope) return
-    controller?.abort()
-    controller = undefined
-    scopeKey = ""
     start(scope)
   }
 
@@ -114,6 +104,13 @@ export function createWorkspaceSync(
     let hasConnected = false
     let streamReady = false
     let deferredCatchUp: DeferredCatchUp = "none"
+
+    handleRefresh = () => {
+      if (signal.aborted) return
+      resetHintRetry()
+      deferCatchUp(true)
+      queueDeferredCatchUp()
+    }
 
     handleVisibility = () => {
       if (
@@ -177,6 +174,7 @@ export function createWorkspaceSync(
             await reconcile(0, true)
             restoreHealthyStream()
           } catch (error) {
+            if (signal.aborted) return
             if (error instanceof WorkspaceSyncUnauthorizedError) {
               options.onUnauthorized?.()
               return
@@ -204,6 +202,7 @@ export function createWorkspaceSync(
     }
 
     function restoreHealthyStream() {
+      if (signal.aborted) return
       if (!streamReady) {
         resetHintRetry()
       } else if (markHealthy() || !hasConnected) {
@@ -237,6 +236,7 @@ export function createWorkspaceSync(
               restoreHealthyStream()
             })
             .catch((error: unknown) => {
+              if (signal.aborted) return
               if (error instanceof WorkspaceSyncUnauthorizedError) {
                 options.onUnauthorized?.()
                 return
@@ -288,6 +288,7 @@ export function createWorkspaceSync(
       reconciliation = (async () => {
         const targetVersion = highestHint
         const token = await options.getToken()
+        if (signal.aborted) return
         if (!token) {
           throw new WorkspaceSyncUnauthorizedError()
         }
@@ -320,6 +321,7 @@ export function createWorkspaceSync(
       streamReady = false
       try {
         const streamToken = await options.getToken()
+        if (signal.aborted) return
         if (!streamToken) {
           options.onUnauthorized?.()
           return
@@ -334,6 +336,7 @@ export function createWorkspaceSync(
           },
           signal,
         })
+        if (signal.aborted) return
         if (response.status === 401 || response.status === 403) {
           options.onUnauthorized?.()
           return
@@ -395,7 +398,7 @@ export function createWorkspaceSync(
 
   return {
     setScope,
-    refresh,
+    refresh: () => handleRefresh(),
     visibilityChanged: () => handleVisibility(),
     stop,
   }

@@ -110,6 +110,21 @@ func TestQueueReadsProjectConversationAndUnreadInOneAuthorizedFlow(t *testing.T)
 	}
 
 	reads := workspace.New(pool, accessModule)
+	engagements, err := reads.QueryEngagements(context.Background(), workspace.QueryEngagementsCommand{
+		Identity: identity, PracticeID: task.PracticeID, Phone: task.Phone,
+	})
+	if err != nil {
+		t.Fatalf("query Engagement with evidence: %v", err)
+	}
+	if len(engagements.Items) != 1 {
+		t.Fatalf("Engagement page = %#v, want one item", engagements)
+	}
+	engagement := engagements.Items[0]
+	if engagement.Phone != task.Phone || engagement.DisplayName != task.CallerName ||
+		!engagement.LatestActivity.Equal(now) || engagement.OpenTaskCount != 1 || !engagement.Unread ||
+		len(engagement.Locations) != 1 || engagement.Locations[0].ID != task.LocationID {
+		t.Fatalf("Engagement summary = %#v", engagement)
+	}
 	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity: identity, PracticeID: task.PracticeID,
 	})
@@ -224,4 +239,46 @@ func (*workspaceQueryTracer) TraceQueryEnd(
 	*pgx.Conn,
 	pgx.TraceQueryEndData,
 ) {
+}
+
+func TestQueryEngagementsWithoutEvidenceReturnsEmptyPage(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "workspace-read-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "workspace-read-practice",
+			Name: "Workspace Read Practice",
+			Locations: []access.LocationProvision{{
+				Key:             "workspace-read-location",
+				Name:            "Workspace Read Location",
+				AbitaOfficeKeys: []string{"workspace-read-office"},
+			}},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:           "workspace-read-staff",
+				Email:         "staff@workspace-read.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision Workspace read fixture: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "workspace-read-staff-subject",
+		Email:         "staff@workspace-read.test",
+		EmailVerified: true,
+	}
+	authorization := testaccess.Activate(t, accessModule, identity)
+
+	page, err := workspace.New(pool, accessModule).QueryEngagements(context.Background(), workspace.QueryEngagementsCommand{Identity: identity, PracticeID: authorization.Practice.ID, Phone: "+17275550198"})
+	if err != nil {
+		t.Fatalf("empty engagement should be empty success: %v", err)
+	}
+	if page.Items == nil || len(page.Items) != 0 {
+		t.Fatalf("empty Engagement page = %#v, want non-nil empty items", page)
+	}
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { createWorkspaceSync } from "./workspace-sync.ts"
+import { createWorkspaceSync, WorkspaceSyncUnauthorizedError } from "./workspace-sync.ts"
 
 test("startup waits for ready then performs one authoritative reconciliation", async () => {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined
@@ -757,4 +757,121 @@ async function eventually(assertion: () => void) {
     }
   }
   throw lastError
+}
+
+
+test("explicit refresh reconciles once without reconnecting a healthy stream", async () => {
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  let reads = 0
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { streams.push(controller) },
+    })),
+    getToken: async () => "token",
+    reconcile: async () => { reads += 1; return { version: 1, apply: () => {} } },
+    onStateChange: () => {},
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+  await eventually(() => assert.equal(streams.length, 1))
+  streams[0]!.enqueue(readyEvent(1))
+  await eventually(() => assert.equal(reads, 1))
+  sync.refresh()
+  await eventually(() => assert.equal(reads, 2))
+  assert.equal(streams.length, 1)
+  sync.stop()
+})
+
+test("refresh during an in-flight reconciliation queues one fresh read", async () => {
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  const release = deferred<void>()
+  let reads = 0
+  const applied: number[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { stream = controller },
+    })),
+    getToken: async () => "token",
+    reconcile: async () => {
+      const read = ++reads
+      if (read === 1) await release.promise
+      return { version: 1, apply: () => { applied.push(read) } }
+    },
+    onStateChange: () => {},
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+  await eventually(() => assert.ok(stream))
+  stream!.enqueue(readyEvent(1))
+  await eventually(() => assert.equal(reads, 1))
+  sync.refresh()
+  sync.refresh()
+  release.resolve()
+  await eventually(() => assert.deepEqual(applied, [1, 2]))
+  sync.stop()
+})
+
+test("refresh can recover authoritative data before a stream is ready", async () => {
+  let reads = 0
+  let connections = 0
+  const states: string[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () => { connections += 1; return new Response(new ReadableStream()) },
+    getToken: async () => "token",
+    reconcile: async () => { reads += 1; return { version: 1, apply: () => {} } },
+    onStateChange: (state) => states.push(state),
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+  await eventually(() => assert.equal(connections, 1))
+  sync.refresh()
+  await eventually(() => assert.equal(reads, 1))
+  assert.deepEqual(states, ["connecting"], "data recovery does not prove a healthy stream")
+  assert.equal(connections, 1)
+  sync.stop()
+})
+
+for (const outcome of ["success", "unauthorized"] as const) {
+  test(`stopped refresh cannot publish ${outcome} after a new scope connects`, async () => {
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+    const release = deferred<void>()
+    let reads = 0
+    let delay = false
+    const states: string[] = []
+    let unauthorized = 0
+    const sync = createWorkspaceSync({
+      realtimeURL: "https://realtime.example",
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) { streams.push(controller) },
+      })),
+      getToken: async () => "token",
+      reconcile: async ({ scope }) => {
+        reads += 1
+        if (delay && scope.locationID === "location-1") {
+          await release.promise
+          if (outcome === "unauthorized") throw new WorkspaceSyncUnauthorizedError()
+        }
+        return { version: 1, apply: () => {} }
+      },
+      onStateChange: (state) => states.push(state),
+      onUnauthorized: () => { unauthorized += 1 },
+    })
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.equal(streams.length, 1))
+    streams[0]!.enqueue(readyEvent(1))
+    await eventually(() => assert.equal(states.at(-1), "connected"))
+    delay = true
+    sync.refresh()
+    await eventually(() => assert.equal(reads, 2))
+    sync.setScope({ practiceID: "practice-1", locationID: "location-2" })
+    await eventually(() => assert.equal(streams.length, 2))
+    streams[1]!.enqueue(readyEvent(1))
+    await eventually(() => assert.equal(states.at(-1), "connected"))
+    const before = [...states]
+    release.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.deepEqual(states, before)
+    assert.equal(unauthorized, 0)
+    sync.stop()
+  })
 }

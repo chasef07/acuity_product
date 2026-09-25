@@ -308,7 +308,9 @@ export function createWorkspaceProjection({
   }
 
   async function getToken() {
+    const generation = scopeGeneration
     const authentication = await authority.authenticate()
+    if (stopped || generation !== scopeGeneration) return undefined
     if (authentication.status === "authenticated") {
       return authentication.token
     }
@@ -380,6 +382,14 @@ export function createWorkspaceProjection({
           ? authority.aiInteraction(token, selectedAIInteractionID, signal)
           : Promise.resolve(undefined),
       ])
+
+    if (
+      stopped || signal.aborted || generation !== scopeGeneration ||
+      state.scope.practiceID !== scope.practiceID ||
+      state.scope.locationID !== scope.locationID
+    ) {
+      return { version: minimumVersion, apply: () => {} }
+    }
 
     const taskResult = requireTaskCounts(taskPageResult)
     const authorityResults = [
@@ -725,14 +735,12 @@ export function createWorkspaceProjection({
         const next = state.tasks.items.find((task) => task.id !== intent.task.id)
         if (next) selectEngagement(taskEngagement(next), next)
       }
-      realtimeController.refresh()
       return
     }
     if (intent.type === "task-created") {
       queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
       await refreshTaskWindows(state.search.applied)
-      realtimeController.refresh()
       return
     }
     if (intent.type === "visibility-changed") {
@@ -740,12 +748,11 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "refresh-text-attention") {
-      if (state.loadState === "ready") realtimeController.refresh()
+      if (state.loadState === "ready") await refreshTaskWindows(state.search.applied)
       return
     }
     if (intent.type === "retry") {
       if (state.discovery && state.scope.practiceID && state.scope.locationID) {
-        patch((current) => ({ ...current, loadState: "loading" }))
         realtimeController.refresh()
       } else {
         await start()
@@ -1035,7 +1042,6 @@ export function createWorkspaceProjection({
       ...current,
       completion: { pendingTaskID: "", errorTaskID: "", error: "" },
     }))
-    realtimeController.refresh()
   }
 
   function selectFirstVisibleTask() {

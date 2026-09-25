@@ -207,9 +207,13 @@ test("confirmed completion moves a Task to shared completed history and preserve
   const openTask = task("task-1", { category: "insurance" })
   const completedTask = task("task-1", { category: "insurance", state: "COMPLETED", version: 2, completedAt: "2026-08-30T12:10:00Z", completedBy: { kind: "HUMAN", subject: "other-staff" } })
   let completed = false
+  let taskReads = 0
   const authority: WorkspaceAuthorityAdapter = {
     ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(11), tasks: taskPage([openTask]) }),
-    tasks: async (_token, request) => success(taskPage(request.state === "OPEN" ? (completed ? [] : [openTask]) : (completed ? [completedTask] : []))),
+    tasks: async (_token, request) => {
+      taskReads += 1
+      return success(taskPage(request.state === "OPEN" ? (completed ? [] : [openTask]) : (completed ? [completedTask] : [])))
+    },
     completeTask: async () => { completed = true; return success(completedTask) },
     task: async () => success(completed ? completedTask : openTask),
   }
@@ -217,7 +221,9 @@ test("confirmed completion moves a Task to shared completed history and preserve
   await projection.start()
   await realtime.reconcile(0)
   const staleSnapshot = await realtime.prepareReconciliation(0)
+  taskReads = 0
   await projection.dispatch({ type: "complete-task", task: openTask })
+  assert.equal(taskReads, 2, "one authoritative read per Task window")
   staleSnapshot.apply()
   const state = projection.getSnapshot()
   assert.deepEqual(state.tasks.items, [])
@@ -226,7 +232,7 @@ test("confirmed completion moves a Task to shared completed history and preserve
   assert.deepEqual(state.selection.task, completedTask)
   assert.equal(state.selection.contextPanelOpen, true)
   assert.equal(state.completion.pendingTaskID, "")
-  assert.equal(realtime.refreshes, 1)
+  assert.equal(realtime.refreshes, 0)
   projection.stop()
 })
 test("temporary token failure keeps Task completion retryable without expiring the session", async () => {
@@ -656,6 +662,10 @@ function deterministicRealtime() {
     get refreshes() {
       return refreshes
     },
+    setConnection(connection: "connecting" | "connected" | "degraded") {
+      assert.ok(callbacks)
+      callbacks.onStateChange(connection)
+    },
     async getToken() {
       assert.ok(callbacks)
       return callbacks.getToken()
@@ -672,14 +682,13 @@ function deterministicRealtime() {
         throw error
       }
     },
-    async prepareReconciliation(minimumVersion: number) {
+    async prepareReconciliation(minimumVersion: number, signal = new AbortController().signal) {
       assert.ok(callbacks)
       assert.ok(scope)
-      const controller = new AbortController()
       return callbacks.reconcile({
         scope,
         token: "token",
-        signal: controller.signal,
+        signal,
         minimumVersion,
       })
     },
@@ -899,7 +908,7 @@ for (const type of ["task-committed", "task-created"] as const) {
     assert.equal(committedCounts.tasks, type === "task-created" ? 2 : 1)
     pending.apply()
     assert.deepEqual(projection.getSnapshot().tasks.counts, committedCounts)
-    assert.equal(realtime.refreshes, 1)
+    assert.equal(realtime.refreshes, 0)
     projection.stop()
   })
 }
@@ -1040,23 +1049,39 @@ test("Complete and next uses refreshed recent order without moving on remote com
   projection.stop()
 })
 
-test("text attention expiry refreshes without replacing the selected workspace with loading", async () => {
+test("text attention expiry refreshes only Task windows and preserves selected context", async () => {
   const realtime = deterministicRealtime()
+  const open = task("task-1")
+  const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(4), tasks: taskPage([open]) })
+  let taskReads = 0
+  let workspaceReads = 0
+  let expired = false
   const projection = createWorkspaceProjection({
-    authority: deterministicAuthority({
-      discovery: accessDiscovery(), snapshot: workspaceSnapshot(4), tasks: taskPage([task("task-1")]),
-    }),
+    authority: {
+      ...base,
+      workspace: async (...args) => { workspaceReads += 1; return base.workspace(...args) },
+      tasks: async (_token, request) => {
+        taskReads += 1
+        return success(taskPage(expired || request.state === "COMPLETED" ? [] : [open]))
+      },
+    },
     realtime: realtime.adapter,
-    preferences: { read: () => null, write: () => {} },
+    preferences: memoryPreferences(),
   })
   await projection.dispatch({ type: "refresh-text-attention" })
-  assert.equal(realtime.refreshes, 0)
+  assert.equal(taskReads, 0)
   await projection.start()
   await realtime.reconcile(0)
   const selected = projection.getSnapshot().selection.task?.id
-  const before = realtime.refreshes
+  taskReads = 0
+  workspaceReads = 0
+  expired = true
   await projection.dispatch({ type: "refresh-text-attention" })
-  assert.equal(realtime.refreshes, before + 1)
+  assert.equal(taskReads, 2)
+  assert.equal(workspaceReads, 0)
+  assert.equal(realtime.refreshes, 0)
+  assert.deepEqual(projection.getSnapshot().tasks.items, [])
+  assert.equal(projection.getSnapshot().tasks.counts.tasks, 0)
   assert.equal(projection.getSnapshot().loadState, "ready")
   assert.equal(projection.getSnapshot().selection.task?.id, selected)
   projection.stop()
@@ -1101,5 +1126,114 @@ test("appointment selection loads only its exact source interaction and clears i
   assert.equal(projection.getSnapshot().selection.aiInteraction?.summary, summary)
   await projection.dispatch({ type: "select-task", task: other })
   assert.equal(projection.getSnapshot().selection.aiInteraction, undefined)
+  projection.stop()
+})
+
+for (const obsolete of ["scope", "abort", "stop"] as const) {
+  test(`obsolete ${obsolete} denial cannot clear the authorized workspace`, async () => {
+    const realtime = deterministicRealtime()
+    const requested = deferred<void>()
+    const release = deferred<void>()
+    let delay = false
+    const base = deterministicAuthority({
+      discovery: accessDiscovery(), snapshot: workspaceSnapshot(20), tasks: taskPage([task("first")]),
+    })
+    const authority: WorkspaceAuthorityAdapter = {
+      ...base,
+      workspace: async (token, scope, signal) => {
+        if (delay && scope.locationID === "location-1") {
+          requested.resolve()
+          await release.promise
+          return unauthorizedResult()
+        }
+        return base.workspace(token, scope, signal)
+      },
+    }
+    const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
+    await projection.start()
+    await realtime.reconcile(0)
+    delay = true
+    const controller = new AbortController()
+    const pending = realtime.prepareReconciliation(0, controller.signal)
+    await requested.promise
+    if (obsolete === "scope") {
+      await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
+      await realtime.reconcile(0)
+    } else if (obsolete === "abort") {
+      controller.abort()
+    } else {
+      projection.stop()
+    }
+    const authorized = projection.getSnapshot()
+    release.resolve()
+    const stale = await pending
+    stale.apply()
+    assert.equal(projection.getSnapshot(), authorized)
+    assert.equal(projection.getSnapshot().loadState, "ready")
+    projection.stop()
+  })
+}
+
+test("obsolete token expiry cannot clear a newly authorized scope", async () => {
+  const realtime = deterministicRealtime()
+  const release = deferred<void>()
+  let delay = false
+  const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(20), tasks: taskPage([]) })
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...base,
+      authenticate: async () => {
+        if (delay) {
+          await release.promise
+          return { status: "unauthenticated" }
+        }
+        return base.authenticate()
+      },
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  delay = true
+  const pending = realtime.getToken()
+  await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
+  await realtime.reconcile(0)
+  const authorized = projection.getSnapshot()
+  release.resolve()
+  assert.equal(await pending, undefined)
+  assert.equal(projection.getSnapshot(), authorized)
+  assert.equal(projection.getSnapshot().loadState, "ready")
+  projection.stop()
+})
+
+
+test("failed retries without a workspace snapshot preserve unavailable until recovery", async () => {
+  const realtime = deterministicRealtime()
+  let available = false
+  const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(4), tasks: taskPage([]) })
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...base,
+      workspace: async (...args) => available ? base.workspace(...args) : unavailable(),
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
+  realtime.setConnection("degraded")
+  assert.equal(projection.getSnapshot().loadState, "unavailable")
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await projection.dispatch({ type: "retry" })
+    await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
+    assert.equal(projection.getSnapshot().loadState, "unavailable")
+    assert.equal(projection.getSnapshot().workspace, undefined)
+  }
+  available = true
+  await projection.dispatch({ type: "retry" })
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().loadState, "ready")
+  assert.equal(projection.getSnapshot().workspace?.version, 4)
   projection.stop()
 })
