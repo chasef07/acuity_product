@@ -239,32 +239,26 @@ func (m *Module) authorizeReceipt(
 	tx pgx.Tx,
 	command IngestCommand,
 ) (access.ServiceAuthorization, error) {
-	voiceAuthorization, err := m.access.LockServiceVoiceAuthorization(
-		ctx,
-		tx,
-		command.Service,
-		command.OfficePhone,
-		access.ServiceCapabilityIngestAIInteraction,
-	)
+	var authorization access.ServiceAuthorization
+	var err error
+	if command.OfficeKey != "" {
+		// Agent inbound numbers are evidence, not staff telephony configuration.
+		// The authenticated Practice and provisioned office route own access.
+		authorization, err = m.access.LockServiceAuthorization(
+			ctx, tx, command.Service, command.OfficeKey,
+			access.ServiceCapabilityIngestAIInteraction,
+		)
+	} else {
+		// Preserve the existing contract for callers that identify only a number.
+		authorization, err = m.access.LockServiceVoiceAuthorization(
+			ctx, tx, command.Service, command.OfficePhone,
+			access.ServiceCapabilityIngestAIInteraction,
+		)
+	}
 	if err != nil {
 		return access.ServiceAuthorization{}, ErrDenied
 	}
-	if command.OfficeKey == "" {
-		return voiceAuthorization, nil
-	}
-	officeAuthorization, err := m.access.LockServiceAuthorization(
-		ctx,
-		tx,
-		command.Service,
-		command.OfficeKey,
-		access.ServiceCapabilityIngestAIInteraction,
-	)
-	if err != nil ||
-		officeAuthorization.PracticeID != voiceAuthorization.PracticeID ||
-		officeAuthorization.LocationID != voiceAuthorization.LocationID {
-		return access.ServiceAuthorization{}, ErrDenied
-	}
-	return officeAuthorization, nil
+	return authorization, nil
 }
 
 func (m *Module) projectReceipt(

@@ -557,9 +557,15 @@ export type AiAppointmentEvidence = {
  */
 export type AiInteractionIngestRequest = {
     kind: AiInteractionMessageKind;
+    /**
+     * Abita Office Route within the authenticated service Practice. When supplied, this route authorizes and attributes the Interaction; officePhone remains call evidence independent of staff voice numbers. When omitted, officePhone must match an enabled, unambiguous staff voice number within the authenticated Practice.
+     */
     officeKey?: string;
     sourceCallId: string;
     callerPhone: string;
+    /**
+     * Actual dialed inbound number, retained as immutable call evidence.
+     */
     officePhone: string;
     startedAt: string;
     endedAt?: string;
