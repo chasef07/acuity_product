@@ -19,6 +19,28 @@ import {
   WorkspaceProjectionAccessError,
 } from "./workspace-projection.ts"
 
+test("initial workspace shows a conversation without opening Task details", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({
+      discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first]),
+    }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.view, "engagement")
+  assert.equal(projection.getSnapshot().selection.engagement?.phone, first.phone)
+  assert.equal(projection.getSnapshot().selection.contextPanelOpen, false)
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.contextPanelOpen, false)
+  await projection.dispatch({ type: "select-task", task: first })
+  assert.equal(projection.getSnapshot().selection.contextPanelOpen, true)
+  projection.stop()
+})
+
 test("scope changes clear every window and obsolete delayed responses from the old scope", async () => {
   const preferences = new Map<string, string>()
   const realtime = deterministicRealtime()
@@ -216,6 +238,7 @@ test("confirmed completion moves a Task to shared completed history and preserve
   const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
   await projection.start()
   await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: openTask })
   const staleSnapshot = await realtime.prepareReconciliation(0)
   await projection.dispatch({ type: "complete-task", task: openTask })
   staleSnapshot.apply()

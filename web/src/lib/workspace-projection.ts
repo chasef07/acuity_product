@@ -482,7 +482,7 @@ export function createWorkspaceProjection({
               engagement: taskEngagement(firstTask),
               view: "engagement",
               contextView: "task",
-              contextPanelOpen: true,
+              contextPanelOpen: false,
             }
           }
           const aiSelectionStillMatches =
