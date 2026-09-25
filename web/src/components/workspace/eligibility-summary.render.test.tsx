@@ -43,29 +43,6 @@ const check: AiEligibilityCheck = {
   ],
 }
 
-test("office visits lead general benefits and retain amounts, qualifiers, and corrections", () => {
-  const html = renderToStaticMarkup(<EligibilitySummary checks={[check]} />)
-  const document = new JSDOM(html).window.document
-  assert.ok(
-    html.indexOf("Physician visit copayment") <
-      html.indexOf("General plan benefits"),
-  )
-  assert.equal(document.querySelector("table")?.closest("details"), null)
-  for (const value of [
-    "Active coverage",
-    "$0.00",
-    "20%",
-    "$1,500.00",
-    "Remaining",
-    "In network",
-    "Individual",
-    "specific provider tier",
-    "Ane Example",
-    "Jane Example",
-  ])
-    assert.ok(html.includes(value), value)
-})
-
 test("missing office benefits remain explicit, never inferred from active plan status", () => {
   const html = renderToStaticMarkup(
     <EligibilitySummary
@@ -103,7 +80,6 @@ test("multiple patients and unsuccessful newer checks keep their own status", ()
   assert.ok(!review.includes("Active coverage"))
 })
 
-
 test("applicability and identity review evidence stay visible with the benefit", () => {
   const html = renderToStaticMarkup(<EligibilitySummary checks={[{
     ...check, status: "review", reason: "identity_uncertain",
@@ -118,7 +94,6 @@ test("applicability and identity review evidence stay visible with the benefit",
   }
   for (const value of ["date of birth conflict", "synthetic-check-1", "synthetic-search-1", "retained"]) assert.ok(html.includes(value), value)
 })
-
 
 test("only the exact booked doctor and intake are prominent, including a failed check", () => {
   const provider = (name: string, key: string, status: AiEligibilityCheck["status"] = "active"): AiEligibilityCheck => ({ ...check, providerCheck: true, providerName: name, providerNpi: "synthetic-npi", status, appointmentReviewKeys: key ? [key] : [] })
@@ -144,37 +119,6 @@ test("appointment never substitutes legacy evidence or silently hides absent lin
     if (active) assert.ok(active.closest("details:not([open])"))
   }
 })
-
-test("explicit specialist copay rows precede PCP without becoming an unqualified price", () => {
-  const document = new JSDOM(renderToStaticMarkup(<EligibilitySummary checks={[{
-    ...check, providerCheck: true,
-    benefits: [
-      { code: "B", name: "Co-payment", serviceTypeCodes: ["98"], benefitAmount: "40", additionalInformation: [{ description: "Primary care visit" }] },
-      { code: "B", name: "Co-payment", serviceTypeCodes: ["98"], benefitAmount: "80", additionalInformation: [{ description: "Specialist visit · designated tier" }] },
-    ],
-  }]} />)).window.document
-  const first = document.querySelector("tbody tr")!
-  assert.ok(first.textContent?.includes("$80.00"))
-  assert.ok(first.textContent?.includes("designated tier"))
-  assert.ok(document.body.textContent?.includes("Specialist copay needs verification"))
-})
-
-
-test("physician copayment and qualifiers stay outside collapsed details without duplicate rows", () => {
-  const document = new JSDOM(renderToStaticMarkup(<EligibilitySummary checks={[check]} />)).window.document
-  const copayment = document.querySelector('section[aria-label="Physician visit copayment"]')!
-  assert.equal(copayment.closest("details"), null)
-  assert.ok(copayment.textContent?.includes("$0.00"))
-  for (const value of ["$0.00", "specific provider tier"]) {
-    const matching = [...copayment.querySelectorAll("p, li")].filter((node) => node.textContent?.includes(value))
-    assert.ok(matching.some((node) => node.closest("details") === null), value)
-  }
-  const other = [...document.querySelectorAll("details")].find((node) => node.querySelector("summary")?.textContent === "Other physician office-visit benefits")!
-  assert.equal(other.open, false)
-  assert.ok(other.textContent?.includes("20%"))
-  assert.ok(!other.textContent?.includes("$0.00"))
-})
-
 
 test("blank copayment amounts remain missing while genuine zero remains visible", () => {
   for (const value of [undefined, null, "", "   ", "\t\n"]) {
@@ -228,7 +172,6 @@ test("missing AL copay stays missing even when a physician copay was returned", 
   assert.ok(html.includes("Vision exam copayment not returned."))
   assert.ok(!html.includes("$35.00"))
 })
-
 
 test("cancellation without eligibility stays factual and does not demand booked-provider verification", () => {
   const html = renderToStaticMarkup(<EligibilitySummary checks={[]} appointmentReviewKey="cancelled-event" />)

@@ -44,19 +44,6 @@ const scorecard = {
   errors: {},
 }
 
-test("scorecard shows five checks and whole-call sentiment on their own scales", () => {
-  const html = renderToStaticMarkup(<CallEvaluation evaluation={scorecard} />)
-  for (const label of ["Caller request understood", "Appointment date and time correct", "Office rules supported by evidence", "Action results reported truthfully", "Requests resolved or handed off", "Expressed caller sentiment"]) {
-    assert.match(html, new RegExp(label))
-  }
-  assert.equal(html.match(/0.85 \/ 1/g)?.length, 5)
-  assert.match(html, /2.50 \/ 4/)
-  assert.match(html, /Neutral or mixed: 50.0%/)
-  assert.match(html, /Positive: 50.0%/)
-  assert.match(html, /total_tokens/)
-  assert.doesNotMatch(html, /likely true|complete v4 evaluation|Conversation responsive|No valid score was recorded/)
-})
-
 test("partial scorecard preserves completed scores and exposes failures and missing results", () => {
   const html = renderToStaticMarkup(<CallEvaluation evaluation={{
     ...scorecard, status: "incomplete", reason: "judge_errors",

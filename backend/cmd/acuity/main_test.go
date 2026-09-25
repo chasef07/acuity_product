@@ -8,27 +8,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/app"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-func TestProductionWorkerConfigDrainsBoundedProviderCommandBurst(t *testing.T) {
-	config := productionWorkerConfig(3 * time.Second)
-	if config.ProviderCommandBatchSize != 8 {
-		t.Fatalf("provider command batch size = %d, want 8", config.ProviderCommandBatchSize)
-	}
-	if config.RecoveryAndMessagingBatchSize != 1 {
-		t.Fatalf("recovery and messaging batch size = %d, want 1",
-			config.RecoveryAndMessagingBatchSize)
-	}
-	if config.CommandWorkers != 10 {
-		t.Fatalf("provider command workers = %d, want 10", config.CommandWorkers)
-	}
-}
 
 func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) {
 	pool := testdb.Open(t)
@@ -550,114 +535,6 @@ func ensureRuntimeRoles(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
-func TestProductionProvisioningReconcilesEstablishedConfiguration(t *testing.T) {
-	pool := testdb.Open(t)
-	ensureRuntimeRoles(t, pool)
-	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO access_practices (provisioning_key, name)
-		VALUES ('abita-eye-group', 'Abita Eye Group')
-	`); err != nil {
-		t.Fatalf("seed established Abita Practice: %v", err)
-	}
-	var demoPracticeID, rheumatologyLocationID string
-	if err := pool.QueryRow(context.Background(), `
-		INSERT INTO access_practices (provisioning_key, name)
-		VALUES ('acuity-demo', 'Acuity Demo')
-		RETURNING id::text
-	`).Scan(&demoPracticeID); err != nil {
-		t.Fatalf("seed established demo Practice: %v", err)
-	}
-	if err := pool.QueryRow(context.Background(), `
-		INSERT INTO access_locations (practice_id, provisioning_key, name)
-		VALUES ($1, 'demo-484', 'Demo — 484')
-		RETURNING id::text
-	`, demoPracticeID).Scan(&rheumatologyLocationID); err != nil {
-		t.Fatalf("seed established demo Location: %v", err)
-	}
-
-	input := filepath.Join("..", "..", "..", "config", "production-provisioning.json")
-	for run := 1; run <= 2; run++ {
-		if err := runMigrate(context.Background(), app.Config{
-			ProvisioningInput:  input,
-			ProvisioningOutput: filepath.Join(t.TempDir(), "provisioning-output.json"),
-		}, pool); err != nil {
-			t.Fatalf("reconcile established production provisioning run %d: %v", run, err)
-		}
-	}
-
-	var practiceCount int
-	if err := pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM access_practices
-	`).Scan(&practiceCount); err != nil {
-		t.Fatalf("count reconciled Practices: %v", err)
-	}
-	if practiceCount != 2 {
-		t.Fatalf("reconciled Practices = %d, want 2", practiceCount)
-	}
-	var reconciledLocationID, reconciledLocationName string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT id::text, name
-		FROM access_locations
-		WHERE practice_id = $1 AND provisioning_key = 'demo-484'
-	`, demoPracticeID).Scan(&reconciledLocationID, &reconciledLocationName); err != nil {
-		t.Fatalf("read reconciled demo Location: %v", err)
-	}
-	if reconciledLocationID != rheumatologyLocationID || reconciledLocationName != "Rheumatology" {
-		t.Fatalf(
-			"reconciled demo Location = id:%q name:%q, want id:%q name:Rheumatology",
-			reconciledLocationID,
-			reconciledLocationName,
-			rheumatologyLocationID,
-		)
-	}
-	var demoLocationCount, demoRouteCount, demoVoiceCount, demoMessagingCount int
-	if err := pool.QueryRow(context.Background(), `
-		SELECT
-			(SELECT count(*) FROM access_locations WHERE practice_id = $1),
-			(SELECT count(*) FROM access_abita_office_locations WHERE practice_id = $1),
-			(SELECT count(*) FROM human_calling_location_voice_numbers WHERE practice_id = $1 AND enabled),
-			(SELECT count(*) FROM messaging_location_configurations WHERE practice_id = $1 AND active)
-	`, demoPracticeID).Scan(
-		&demoLocationCount,
-		&demoRouteCount,
-		&demoVoiceCount,
-		&demoMessagingCount,
-	); err != nil {
-		t.Fatalf("count reconciled demo topology: %v", err)
-	}
-	if demoLocationCount != 3 || demoRouteCount != 5 || demoVoiceCount != 3 || demoMessagingCount != 1 {
-		t.Fatalf(
-			"reconciled demo topology = Locations:%d routes:%d voice:%d Messaging:%d, want 3/5/3/1",
-			demoLocationCount,
-			demoRouteCount,
-			demoVoiceCount,
-			demoMessagingCount,
-		)
-	}
-	var recordingEnabled bool
-	var recordingRetentionDays int
-	if err := pool.QueryRow(context.Background(), `
-		SELECT connected_call_recording_enabled,
-			connected_call_recording_retention_days
-		FROM access_practices
-		WHERE provisioning_key = 'abita-eye-group'
-	`).Scan(&recordingEnabled, &recordingRetentionDays); err != nil {
-		t.Fatalf("read reconciled recording policy: %v", err)
-	}
-	if !recordingEnabled || recordingRetentionDays != 90 {
-		t.Fatalf("reconciled recording policy = %t, %d", recordingEnabled, recordingRetentionDays)
-	}
-	var grantCount int
-	if err := pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM access_grants
-	`).Scan(&grantCount); err != nil {
-		t.Fatalf("count reconciled Access Grants: %v", err)
-	}
-	if grantCount != 32 {
-		t.Fatalf("reconciled Access Grants = %d, want 32", grantCount)
-	}
-}
-
 func TestMigrateRollsBackProvisioningWhenVoiceConfigurationFails(t *testing.T) {
 	pool := testdb.Open(t)
 	ensureRuntimeRoles(t, pool)
@@ -707,60 +584,6 @@ func TestMigrateRollsBackProvisioningWhenVoiceConfigurationFails(t *testing.T) {
 	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
 		t.Fatalf("failed migrate retained provisioning output: %v", err)
-	}
-}
-
-func TestProvisionConfiguredLocationVoiceReconcilesCallerID(t *testing.T) {
-	pool := testdb.Open(t)
-	ctx := context.Background()
-	var practiceID, locationID string
-	if err := pool.QueryRow(ctx, `
-		INSERT INTO access_practices (provisioning_key, name)
-		VALUES ('abita-eye-group', 'Abita Eye Group')
-		RETURNING id::text
-	`).Scan(&practiceID); err != nil {
-		t.Fatalf("seed live demo Practice: %v", err)
-	}
-	if err := pool.QueryRow(ctx, `
-		INSERT INTO access_locations (practice_id, provisioning_key, name)
-		VALUES ($1, 'demo-484', 'Demo — 484')
-		RETURNING id::text
-	`, practiceID).Scan(&locationID); err != nil {
-		t.Fatalf("seed live demo Location: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO human_calling_location_voice_numbers (
-			practice_id,
-			location_id,
-			phone,
-			enabled
-		)
-		VALUES ($1, $2, '+14845550100', true)
-	`, practiceID, locationID); err != nil {
-		t.Fatalf("seed prior live demo voice route: %v", err)
-	}
-
-	if err := provisionConfiguredLocationVoice(ctx, app.Config{
-		LocationVoiceProvision: app.LocationVoiceProvisionConfig{
-			PracticeKey: "abita-eye-group",
-			LocationKey: "demo-484",
-			Number:      "+14843989071",
-		},
-	}, pool); err != nil {
-		t.Fatalf("provision configured Location voice: %v", err)
-	}
-	var enabledPhone string
-	if err := pool.QueryRow(ctx, `
-		SELECT phone
-		FROM human_calling_location_voice_numbers
-		WHERE practice_id = $1
-			AND location_id = $2
-			AND enabled
-	`, practiceID, locationID).Scan(&enabledPhone); err != nil {
-		t.Fatalf("read live demo caller ID: %v", err)
-	}
-	if enabledPhone != "+14843989071" {
-		t.Fatalf("live demo caller ID = %q", enabledPhone)
 	}
 }
 

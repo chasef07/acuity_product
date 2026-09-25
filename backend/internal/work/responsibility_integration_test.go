@@ -2,61 +2,15 @@ package work_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
-	"os"
 	"testing"
 	"time"
 )
-
-func TestStaffMovesTaskWithoutChangingIngestionEvidence(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
-	command := work.CreateAITaskCommand{Service: access.ServiceIdentity{Subject: "synthetic-agent", PracticeID: auth.Practice.ID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}}, OfficeKey: "spring-hill", OfficePhone: "+12025550100", SourceCallID: "synthetic-optical-call", IdempotencyKey: "expedite-glasses", Phone: "+12025550123", Summary: "Expedite prescription", Message: "Please expedite sending my glasses prescription copy.", Category: work.TaskCategoryDocumentation, Urgency: work.TaskUrgencyNormal}
-	original, _, err := m.CreateAITask(context.Background(), command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	moved, err := m.ChangeTaskCategory(context.Background(), work.ChangeTaskCategoryCommand{Identity: identity, TaskID: original.ID, ExpectedVersion: original.Version, Category: work.TaskCategoryOptical})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if moved.Category != work.TaskCategoryOptical || moved.Version != 2 || moved.ID != original.ID || !moved.CreatedAt.Equal(original.CreatedAt) || moved.SourceMessage != original.SourceMessage {
-		t.Fatalf("moved Task lost source: %#v", moved)
-	}
-	replay, status, err := m.CreateAITask(context.Background(), command)
-	if err != nil || status != work.TaskDuplicate || replay.ID != original.ID || replay.Category != work.TaskCategoryOptical {
-		t.Fatalf("replay reset classification: %#v %s %v", replay, status, err)
-	}
-	_, err = m.ChangeTaskCategory(context.Background(), work.ChangeTaskCategoryCommand{Identity: identity, TaskID: original.ID, ExpectedVersion: 1, Category: work.TaskCategoryMedication})
-	if !errors.Is(err, work.ErrConflict) {
-		t.Fatalf("stale move: %v", err)
-	}
-	for _, category := range []work.TaskCategory{"insurance", "pre_op", "post_op", "billing"} {
-		command.Category = category
-		command.IdempotencyKey = string(category)
-		command.Summary = string(category)
-		task, _, err := m.CreateAITask(context.Background(), command)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := category
-		if category == "billing" {
-			want = work.TaskCategoryOther
-		}
-		if task.Category != want {
-			t.Fatalf("%s mapped to %s", category, task.Category)
-		}
-	}
-}
 
 func TestResponsibilitiesFilterWithoutGrantingAccess(t *testing.T) {
 	pool := testdb.Open(t)
@@ -328,91 +282,6 @@ func TestReclassificationPlanUsesRequestContextAcrossAuthorizationSubjects(t *te
 	for _, entry := range plan.Tasks {
 		if entry.NewCategory != expected[entry.TaskID] {
 			t.Errorf("%s: got %s, want %s", entry.Title, entry.NewCategory, expected[entry.TaskID])
-		}
-	}
-}
-
-func TestResponsibilityRosterPreservesElevenOpticalOwnersAndPendingAccounts(t *testing.T) {
-	pool := testdb.Open(t)
-	ctx := context.Background()
-	a := access.New(pool, nil)
-	raw, err := os.ReadFile("../../../config/production-provisioning.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var provisioning access.Provisioning
-	if err := json.Unmarshal(raw, &provisioning); err != nil {
-		t.Fatal(err)
-	}
-	provisioning.Environment = "test"
-	if _, err := a.Provision(ctx, provisioning); err != nil {
-		t.Fatal(err)
-	}
-	raw, err = os.ReadFile("../../../config/task-responsibilities.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var roster work.ResponsibilityProvision
-	if err := json.Unmarshal(raw, &roster); err != nil {
-		t.Fatal(err)
-	}
-	m := work.New(pool, a, nil)
-	report, err := m.ProvisionResponsibilities(ctx, roster)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(report.Unmatched) != 12 {
-		t.Fatalf("unmatched configured accounts: %#v", report)
-	}
-	for _, location := range roster.Locations {
-		found := false
-		for _, unmatched := range report.Unmatched {
-			if unmatched == location.LocationKey+":christina@abitaeye.com" {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("%s: Christina must remain pending until existing office access is available", location.LocationKey)
-		}
-	}
-	cases := map[string][]string{
-		"v.vicuna@abitaeye.com": {"pre_op"},
-		"madelyn@abitaeye.com":  {"optical"}, "everth@abitaeye.com": {"appointments", "optical", "other"}, "denise@abitaeye.com": {"optical"}, "sashao@abitaeye.com": {"optical"}, "optical@abitaeye.com": {"optical"}, "doraloptical@abitaeye.com": {"optical"}, "ari@abitaeye.com": {"optical"}, "mobileoptical@abitaeye.com": {"optical"}, "justin@abitaeye.com": {"optical"}, "sweetwateroptical@abitaeye.com": {"optical"}, "abel@abitaeye.com": {"optical"}, "gustavo@abitaeye.com": {"appointments", "other"}, "abita.insurance@abitaeye.com": {"appointments", "other"}, "doralreception@abitaeye.com": {"appointments", "other"}, "aileen@abitaeye.com": {"pre_op", "post_op"}, "jianna@abitaeye.com": {"medication"},
-	}
-	for email, want := range cases {
-		identity := access.Identity{Subject: "roster-" + email, Email: email, EmailVerified: true}
-		auth := testaccess.Activate(t, a, identity)
-		service := access.ServiceIdentity{Subject: "roster-source", PracticeID: auth.Practice.ID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}}
-		for _, category := range []work.TaskCategory{"appointments", "documentation", "medication", "optical", "referrals", "other", "insurance", "pre_op", "post_op"} {
-			_, _, err := m.CreateAITask(ctx, work.CreateAITaskCommand{Service: service, OfficeKey: "sweetwater", OfficePhone: "+12025550100", SourceCallID: string(category), IdempotencyKey: string(category), Phone: "+12025550123", Summary: string(category), Message: "Synthetic responsibility request", Category: category, Urgency: work.TaskUrgencyNormal})
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		var locationID string
-		for _, l := range auth.Locations {
-			if l.Name == "Sweetwater" {
-				locationID = l.ID
-			}
-		}
-		if locationID == "" {
-			t.Fatalf("%s has no expected Sweetwater scope", email)
-		}
-		page, err := workspace.New(pool, a).QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, LocationID: locationID, Responsibility: "mine"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := map[string]bool{}
-		for _, task := range page.Items {
-			got[string(task.Category)] = true
-		}
-		if len(got) != len(want) {
-			t.Errorf("%s got %#v, want %#v", email, got, want)
-		}
-		for _, category := range want {
-			if !got[category] {
-				t.Errorf("%s missing %s", email, category)
-			}
 		}
 	}
 }

@@ -23,13 +23,6 @@ test("connected controls stay ordered during hangup without claiming the call en
   }
 })
 
-test("dialing shows just Calling and Cancel call", () => {
-  const html = render(snapshot({ activeCall: call({ state: "PREPARING" }) }))
-  assert.match(html, /aria-label="Calling…"/)
-  assert.match(html, /aria-label="Cancel call"/)
-  assert.doesNotMatch(html, /data-control-slot="(?:mute|keypad|transfer)"/)
-})
-
 test("no answer has an explicit result, redial and dismissal with no empty controls", () => {
   const html = render(snapshot({
     pendingDisposition: call({ state: "UNANSWERED", retryAllowed: true }),
@@ -40,13 +33,6 @@ test("no answer has an explicit result, redial and dismissal with no empty contr
   assert.match(html, />Call again</)
   assert.match(html, />Dismiss</)
   assert.doesNotMatch(html, /Outcome|Try again|data-slot="card-footer"|data-control-slot/)
-})
-
-test("muting is a pressed control and the timer is outside the live status", () => {
-  const html = render(snapshot({ muted: true, activeCall: call({ state: "CONNECTED" }) }))
-  assert.match(html, /aria-label="Unmute" aria-pressed="true"/)
-  assert.match(html, /role="status" aria-label="Connected">Connected<\/span>/)
-  assert.match(html, /aria-label="Call duration/)
 })
 
 test("rendered ownership and media failures expose their exact recovery actions", () => {

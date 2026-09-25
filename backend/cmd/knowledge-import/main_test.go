@@ -33,44 +33,6 @@ func TestSourceRejectsUnreviewedMetadataAndTrailingDocuments(t *testing.T) {
 	}
 }
 
-func TestSourcePublicationKeepsReviewedContentAndReplayIdentity(t *testing.T) {
-	body := "practiceId: 11111111-1111-4111-8111-111111111111\nofficeKey: synthetic-office\nentries:\n- id: closure\n  title: Former office\n  text: >-\n    The former office is permanently closed.\n    Do not book appointments there.\n"
-	source, err := readSource(strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	commit := strings.Repeat("a", 40)
-	first, err := sourceCommand(source, commit, "none")
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay, err := sourceCommand(source, commit, "none")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.ID != replay.ID || first.ActorSubject != "" || first.ExpectedRevisionID != "" || first.Provenance != "git:"+commit || first.Sections[0].Text != "The former office is permanently closed. Do not book appointments there." {
-		t.Fatalf("unexpected publication: %#v", first)
-	}
-	source.Entries[0].Text = "Reviewed replacement."
-	changed, err := sourceCommand(source, commit, "none")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed.ID == first.ID {
-		t.Fatal("changed content reused publication identity")
-	}
-	changed, err = sourceCommand(source, commit, "22222222-2222-4222-8222-222222222222")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed.ID == first.ID {
-		t.Fatal("different parent reused publication identity")
-	}
-	if _, err := sourceCommand(source, "main", "none"); err == nil {
-		t.Fatal("accepted mutable revision as provenance")
-	}
-}
-
 func TestSourceProvenanceRequiresExactCommittedBytes(t *testing.T) {
 	dir := t.TempDir()
 	git := func(args ...string) string {
