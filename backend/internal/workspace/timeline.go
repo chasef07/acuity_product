@@ -375,7 +375,7 @@ const callProjectionSQL = `
 		ON platform_operator.user_subject = bridged_staff.staff_subject
 	WHERE call.practice_id = $1
 		AND call.location_id = ANY($2::uuid[])
-		AND COALESCE(handoff.phone, call.destination_phone) = $3
+		AND call.id IN (` + phoneCallIDsSQL + `)
 		AND ($8::uuid[] IS NULL OR call.id = ANY($8))
 		AND (
 			$4::timestamptz IS NULL
