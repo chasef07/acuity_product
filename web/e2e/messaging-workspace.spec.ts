@@ -420,6 +420,14 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     .locator('[data-slot="attachment"]')
   await expect(draftAttachment).toHaveAttribute("data-state", "idle")
   await expect(draftAttachment.getByText("fixture-photo.png")).toBeVisible()
+  const composer = page.getByRole("form", { name: "Message composer" })
+  const inputGroup = composer.locator('[data-slot="input-group"]')
+  await expect(inputGroup.getByText("fixture-photo.png")).toBeVisible()
+  const attachBounds = await composer.getByRole("button", { name: "Attach one file" }).boundingBox()
+  const sendBounds = await composer.getByRole("button", { name: "Send message" }).boundingBox()
+  expect(attachBounds!.x).toBeGreaterThan((await composer.getByRole("textbox", { name: "Message", exact: true }).boundingBox())!.x)
+  expect(attachBounds!.x + attachBounds!.width).toBeLessThanOrEqual(sendBounds!.x)
+
   expect(
     (await draftAttachment.locator('[data-slot="attachment-media"]').boundingBox())
       ?.width,
@@ -449,6 +457,15 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     (await sentAttachment.locator('[data-slot="attachment-media"]').boundingBox())
       ?.width,
   ).toBeLessThanOrEqual(32)
+
+  const previewButton = sentAttachment.getByRole("button", { name: "Preview fixture-photo.png" })
+  await previewButton.click()
+  const imagePreview = page.getByRole("dialog", { name: "fixture-photo.png", exact: true })
+  await expect(imagePreview.getByRole("img", { name: "fixture-photo.png" })).toBeVisible()
+  await expect(imagePreview.getByRole("button", { name: "Download", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(imagePreview).toBeHidden()
+  await expect(previewButton).toBeFocused()
 
   const providerMessage = await expect
     .poll(async () => {
