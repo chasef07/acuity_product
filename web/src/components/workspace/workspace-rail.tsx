@@ -216,6 +216,14 @@ export function WorkspaceRail({
     onIntent({ type: "set-task-category", category: value })
   }
 
+  function selectTask(task: Task) {
+    const selection = projection.selection
+    const close = selection.view === "engagement" &&
+      selection.contextView === "task" && selection.contextPanelOpen &&
+      (selection.taskGroup?.id ?? selection.task?.id) === task.id
+    onIntent(close ? { type: "close-context" } : { type: "select-task", task })
+  }
+
   function renderTask(task: Task) {
     return (
       <TaskRow
@@ -227,7 +235,7 @@ export function WorkspaceRail({
             Boolean(task.groupMembers?.some((member) => member.id === selectedTaskID))
           )
         }
-        onSelect={() => onIntent({ type: "select-task", task })}
+        onSelect={() => selectTask(task)}
         completionDisabled={Boolean(pendingTaskID)}
         completionPending={pendingTaskID === task.id}
         completionError={
@@ -407,7 +415,7 @@ export function WorkspaceRail({
                   key={task.id}
                   task={task}
                   active={task.id === selectedTaskID}
-                  onSelect={() => onIntent({ type: "select-task", task })}
+                  onSelect={() => selectTask(task)}
                   completionDisabled
                   completionPending={false}
                   completionError=""

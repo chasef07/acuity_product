@@ -20,7 +20,7 @@ import type {
   WorkspaceProjectionState,
 } from "../../lib/workspace-projection.ts"
 
-test("Task rail and canvas render one supplied projection and the rail emits selection intent", async () => {
+test("Task rail toggles the selected context while preserving the conversation", async () => {
   const task = projectedTask()
   const projection = projectedWorkspace(task)
   const railMarkup = renderToStaticMarkup(
@@ -87,7 +87,17 @@ test("Task rail and canvas render one supplied projection and the rail emits sel
   ).find((button) => button.textContent?.includes(task.title))
   assert.ok(taskButton)
   await act(async () => taskButton.click())
-  assert.deepEqual(intents, [{ type: "select-task", task }])
+  assert.deepEqual(intents, [{ type: "close-context" }])
+  await act(async () => root.render(
+    <SidebarProvider>
+      <WorkspaceRail
+        projection={{ ...projection, selection: { ...projection.selection, contextPanelOpen: false } }}
+        onIntent={(intent) => intents.push(intent)}
+      />
+    </SidebarProvider>,
+  ))
+  await act(async () => taskButton.click())
+  assert.deepEqual(intents, [{ type: "close-context" }, { type: "select-task", task }])
   await act(async () => root.unmount())
   dom.window.close()
 })
