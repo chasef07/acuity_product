@@ -197,7 +197,7 @@ export function EngagementWorkspaceView({
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="group/conversation-header relative flex h-16 shrink-0 items-center gap-3 px-4 sm:px-6">
         {headerLeading}
-        <div className="flex min-w-0 flex-1 items-center gap-1">
+        <div className="flex min-w-0 items-center gap-1">
           <h1 className="truncate text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
             {formatUSPhone(engagement.phone)}
           </h1>
@@ -240,27 +240,6 @@ export function EngagementWorkspaceView({
           </span>
 
         </div>
-        <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
-          {textTask && onTextTaskUpdated && <TextConversationAction key={textTask.id} task={textTask} reviewedTask={reviewedTextTask} onUpdated={onTextTaskUpdated} onNext={onNextTask} />}
-          {engagement.locations.length > 1 && (
-            <NativeSelect
-              aria-label="Sender office"
-              className="max-w-24 md:max-w-none"
-              size="sm"
-              value={route}
-              onChange={(event) => setRoute(event.target.value)}
-            >
-              <NativeSelectOption value="" disabled>
-                Choose office
-              </NativeSelectOption>
-              {engagement.locations.map((location) => (
-                <NativeSelectOption key={location.id} value={location.id}>
-                  {location.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          )}
-        </div>
         {callAction ?? (
           <Button
             className="shrink-0 shadow-sm"
@@ -293,6 +272,27 @@ export function EngagementWorkspaceView({
             )}
           </Button>
         )}
+        <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
+          {textTask && onTextTaskUpdated && <TextConversationAction key={textTask.id} task={textTask} reviewedTask={reviewedTextTask} onUpdated={onTextTaskUpdated} onNext={onNextTask} />}
+          {engagement.locations.length > 1 && (
+            <NativeSelect
+              aria-label="Sender office"
+              className="max-w-24 md:max-w-none"
+              size="sm"
+              value={route}
+              onChange={(event) => setRoute(event.target.value)}
+            >
+              <NativeSelectOption value="" disabled>
+                Choose office
+              </NativeSelectOption>
+              {engagement.locations.map((location) => (
+                <NativeSelectOption key={location.id} value={location.id}>
+                  {location.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          )}
+        </div>
         {callError && (
           <p className="absolute right-3 top-[calc(100%+0.5rem)] z-10 rounded-lg border bg-popover px-3 py-2 text-xs text-destructive shadow-sm">
             {callError}
