@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.3](https://github.com/chasef07/acuity_product/compare/v1.19.2...v1.19.3) (2026-09-25)
+
+
+### Bug Fixes
+
+* **interaction:** authorize agent receipts by office route ([#362](https://github.com/chasef07/acuity_product/issues/362)) ([524565f](https://github.com/chasef07/acuity_product/commit/524565f10087b3e040fc86594f755dde70584ca6))
+
 ## [1.19.2](https://github.com/chasef07/acuity_product/compare/v1.19.1...v1.19.2) (2026-09-24)
 
 
