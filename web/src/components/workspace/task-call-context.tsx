@@ -234,9 +234,8 @@ function TaskWorkspace({
   return (
     <section
       aria-label="Focused Task"
-      className="flex h-full min-h-0 flex-1 flex-col bg-transparent"
+      className="h-full min-h-0 flex-1 overflow-y-auto bg-transparent px-5 py-5"
     >
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
       {editing && task.state === "OPEN" ? (
         <div className="flex items-center gap-1">
           <Input
@@ -307,44 +306,8 @@ function TaskWorkspace({
         This Task changed. Review the latest activity before completing it.
         <Button size="sm" variant="outline" className="mt-2" onClick={() => setReviewedVersion(task.version)}>Review latest</Button>
       </div>}
-      {eligibility && <div className="-mx-5 mt-4">{eligibility}</div>}
-      {recovery && (
-        <RecoveryTaskSource task={task} revision={historyHint} onUpdated={onTaskUpdated} />
-      )}
-      <details className="group mt-4 border-t pt-4">
-        <summary className="cursor-pointer text-sm font-medium">
-          Details
-        </summary>
-        <div className="mt-3 flex flex-col gap-3">
-          <TaskSourceDetails task={task} />
-          {task.sourceCallId && (
-            <Metadata label="Source call" value={task.sourceCallId} />
-          )}
-          <Metadata
-            label="Created"
-            value={`${formatDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
-          />
-          {task.automaticAcknowledgement && (
-            <Metadata
-              label="Caller acknowledgement"
-              value={automaticAcknowledgementLabel(
-                task.automaticAcknowledgement,
-              )}
-            />
-          )}
-          <Metadata label="Last changed" value={formatDateTime(task.updatedAt)} />
-          <Metadata
-            label="Completed"
-            value={
-              task.completedAt ? formatDateTime(task.completedAt) : "Not completed"
-            }
-          />
-        </div>
-      </details>
-      </div>
-      <footer className="shrink-0 border-t bg-background p-5">
       {canMutate && (
-        <div className="flex flex-col gap-2">
+        <div className="mt-4 flex flex-col gap-2">
           {task.state === "OPEN" ? (
             <>
               <Button
@@ -384,7 +347,40 @@ function TaskWorkspace({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      </footer>
+      {eligibility && <div className="-mx-5 mt-4">{eligibility}</div>}
+      {recovery && (
+        <RecoveryTaskSource task={task} revision={historyHint} onUpdated={onTaskUpdated} />
+      )}
+      <details className="group mt-4 border-t pt-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          Details
+        </summary>
+        <div className="mt-3 flex flex-col gap-3">
+          <TaskSourceDetails task={task} />
+          {task.sourceCallId && (
+            <Metadata label="Source call" value={task.sourceCallId} />
+          )}
+          <Metadata
+            label="Created"
+            value={`${formatDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
+          />
+          {task.automaticAcknowledgement && (
+            <Metadata
+              label="Caller acknowledgement"
+              value={automaticAcknowledgementLabel(
+                task.automaticAcknowledgement,
+              )}
+            />
+          )}
+          <Metadata label="Last changed" value={formatDateTime(task.updatedAt)} />
+          <Metadata
+            label="Completed"
+            value={
+              task.completedAt ? formatDateTime(task.completedAt) : "Not completed"
+            }
+          />
+        </div>
+      </details>
     </section>
   )
 }

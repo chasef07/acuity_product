@@ -652,7 +652,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     contextPanel.getByRole("heading", { name: "Follow up on text" }),
   ).toBeVisible()
-  await expect(contextPanel).toHaveCSS("width", "384px")
+  await expect(contextPanel).toHaveCSS("width", "288px")
   await expect(contextPanel.getByText("Task context", { exact: true })).toHaveCount(0)
   await expect(contextPanel.getByText("Normal", { exact: true })).toBeHidden()
   await page.screenshot({
