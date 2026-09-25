@@ -198,15 +198,15 @@ export function EngagementWorkspaceView({
   } = calling
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <header className="group/conversation-header relative flex h-16 shrink-0 items-center gap-3 px-4 sm:px-6">
+      <header className="group/conversation-header relative flex h-16 shrink-0 sm:h-13 items-center gap-3 px-4 sm:px-6">
         {headerLeading}
         <div className="flex min-w-0 items-center gap-1">
           <div className="flex min-w-0 flex-col sm:flex-row sm:items-center sm:gap-2">
-            <span className="truncate text-xs text-muted-foreground sm:text-lg">
+            <span className="truncate text-xs text-muted-foreground sm:text-base">
               {practiceName}
             </span>
             <span aria-hidden="true" className="hidden text-muted-foreground sm:inline">/</span>
-            <h1 className="shrink-0 whitespace-nowrap text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
+            <h1 className="shrink-0 whitespace-nowrap text-base font-medium tracking-tight tabular-nums">
               {formatUSPhone(engagement.phone)}
             </h1>
           </div>
@@ -251,9 +251,9 @@ export function EngagementWorkspaceView({
         </div>
         {callAction ?? (
           <Button
-            className="shrink-0 shadow-sm"
+            className="h-7 shrink-0 shadow-xs"
             type="button"
-            size="default"
+            size="sm"
             variant="outline"
             title={`Call ${formatUSPhone(engagement.phone)}`}
             disabled={

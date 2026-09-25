@@ -884,7 +884,7 @@ export function TaskCallAction({ task, canCall, historyHint, pending, onCall }: 
     ? callReason
     : "Calling is not enabled for this account."
 
-  return <Button variant="outline" className="shadow-sm" disabled={!taskCallingEligible || pending} title={taskCallingEligible ? "Call this Task" : taskCallingReason} onClick={() => onCall(task)}>
+  return <Button variant="outline" size="sm" className="h-7 shadow-xs" disabled={!taskCallingEligible || pending} title={taskCallingEligible ? "Call this Task" : taskCallingReason} onClick={() => onCall(task)}>
     {pending ? <Spinner /> : <PhoneCallIcon />} {pending ? "Preparing…" : "Call"}
   </Button>
 }

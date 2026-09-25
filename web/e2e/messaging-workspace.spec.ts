@@ -29,11 +29,11 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   const searchInput = page.getByLabel("Search tasks, names, or phone")
   const submitButton = page.getByRole("button", { name: "Search" })
   await expect(submitButton).toBeVisible()
-  await searchInput.fill("7275550199")
+  await searchInput.fill("7275550188")
   await submitButton.click()
   await page.keyboard.press("Escape")
 
-  await expect(page.getByRole("heading", { name: "(727) 555-0199" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "(727) 555-0188" })).toBeVisible()
   await expect(
     page.getByRole("status", { name: "Loading conversation" }),
   ).toBeVisible()
