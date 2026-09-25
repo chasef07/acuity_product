@@ -129,6 +129,7 @@ type TimelineSource = {
 type EngagementWorkspaceProps = {
   engagement: EngagementSummary
   practiceID: string
+  practiceName: string
   canMutate: boolean
   revision: number
   selectedTaskID?: string
@@ -162,6 +163,7 @@ export function EngagementWorkspace(props: EngagementWorkspaceProps) {
 export function EngagementWorkspaceView({
   engagement,
   practiceID,
+  practiceName,
   canMutate,
   revision,
   selectedTaskID,
@@ -198,9 +200,15 @@ export function EngagementWorkspaceView({
       <header className="group/conversation-header relative flex h-16 shrink-0 items-center gap-3 px-4 sm:px-6">
         {headerLeading}
         <div className="flex min-w-0 items-center gap-1">
-          <h1 className="truncate text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
-            {formatUSPhone(engagement.phone)}
-          </h1>
+          <div className="flex min-w-0 flex-col sm:flex-row sm:items-center sm:gap-2">
+            <span className="truncate text-xs text-muted-foreground sm:text-lg">
+              {practiceName}
+            </span>
+            <span aria-hidden="true" className="hidden text-muted-foreground sm:inline">/</span>
+            <h1 className="shrink-0 whitespace-nowrap text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
+              {formatUSPhone(engagement.phone)}
+            </h1>
+          </div>
           <Tooltip>
             <TooltipTrigger
               render={

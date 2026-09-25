@@ -360,6 +360,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   key={selectedEngagement.phone}
                   engagement={selectedEngagement}
                   practiceID={state.scope.practiceID}
+                  practiceName={practice.name}
                   canMutate
                   revision={state.detailRevision}
                   selectedTaskID={

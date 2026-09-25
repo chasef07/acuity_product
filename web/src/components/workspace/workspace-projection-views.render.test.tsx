@@ -35,6 +35,7 @@ test("Task rail toggles the selected context while preserving the conversation",
   )
   const canvasMarkup = renderToStaticMarkup(
     <EngagementWorkspaceView
+      practiceName="Synthetic Practice"
       engagement={projection.selection.engagement!}
       practiceID={projection.scope.practiceID}
       canMutate
@@ -278,6 +279,7 @@ function conversationHarness(t: TestContext) {
     await act(async () => {
       root.render(
         <EngagementWorkspaceView
+          practiceName="Synthetic Practice"
           engagement={projection.selection.engagement!}
           practiceID={projection.scope.practiceID}
           canMutate={false}
