@@ -73,7 +73,7 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
+import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -1169,7 +1169,7 @@ function MessageAttachmentView({
   onChanged: () => void
 }) {
   const [objectURL, setObjectURL] = useState("")
-  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewAttempt, setPreviewAttempt] = useState(0)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const isPDF = attachment.contentType === "application/pdf"
@@ -1191,7 +1191,10 @@ function MessageAttachmentView({
   const loadBlob = useCallback(async () => {
     if (attachment.state !== "Stored") return
     const token = await getAccessToken()
-    if (!token) return
+    if (!token) {
+      setError("Sign in again to load the attachment.")
+      return
+    }
     const result = await getMessageAttachment({
       client: portalClient(token),
       path: { attachmentId: attachment.id },
@@ -1208,8 +1211,11 @@ function MessageAttachmentView({
     let active = true
     let previewURL = ""
     const timeout = window.setTimeout(() => {
+      setPending(true)
       void loadBlob().then((blob) => {
-        if (!blob || !active) return
+        if (!active) return
+        setPending(false)
+        if (!blob) return
         previewURL = URL.createObjectURL(blob)
         setObjectURL(previewURL)
       })
@@ -1219,11 +1225,16 @@ function MessageAttachmentView({
       window.clearTimeout(timeout)
       if (previewURL) URL.revokeObjectURL(previewURL)
     }
-  }, [isPDF, loadBlob])
+  }, [isPDF, loadBlob, previewAttempt])
 
   async function retry() {
-    setPending(true)
     setError("")
+    if (attachment.state === "Stored") {
+      setObjectURL("")
+      setPreviewAttempt((attempt) => attempt + 1)
+      return
+    }
+    setPending(true)
     const token = await getAccessToken()
     if (!token) {
       setPending(false)
@@ -1257,7 +1268,7 @@ function MessageAttachmentView({
   }
 
   return (
-    <Sheet open={previewOpen} onOpenChange={setPreviewOpen}>
+    <Sheet>
       <Attachment
         state={presentationState}
         size="sm"
@@ -1265,15 +1276,14 @@ function MessageAttachmentView({
       >
         <AttachmentMedia variant={objectURL && !isPDF ? "image" : "icon"}>
           {objectURL && !isPDF ? (
-            <button
+            <SheetTrigger
               type="button"
               aria-label={`Preview ${attachment.fileName}`}
               className="size-full cursor-zoom-in rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
-              onClick={() => setPreviewOpen(true)}
             >
               {/* eslint-disable-next-line @next/next/no-img-element -- private object URL */}
               <img src={objectURL} alt={attachment.fileName} className="size-full object-cover" />
-            </button>
+            </SheetTrigger>
           ) : isPDF ? (
             <FileTextIcon aria-hidden="true" />
           ) : (
@@ -1294,7 +1304,7 @@ function MessageAttachmentView({
               {pending ? <Spinner /> : <DownloadIcon data-icon="inline-start" />}
             </AttachmentAction>
           )}
-          {attachment.state === "Attachment unavailable" && canMutate && (
+          {((attachment.state === "Attachment unavailable" && canMutate) || (attachment.state === "Stored" && !isPDF && !objectURL)) && (
             <AttachmentAction
               aria-label={`Retry ${attachment.fileName}`}
               disabled={pending}

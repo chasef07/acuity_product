@@ -250,6 +250,7 @@ test("call navigation preserves drafts and crosses page boundaries with retry", 
     issueFlagged: false,
   }))
   let failNextPage = true
+  let firstCallReported = false
   const requests: Array<Record<string, unknown>> = []
   await page.route("**/v1/agent-calls/query", async (route) => {
     const body = route.request().postDataJSON()
@@ -270,6 +271,10 @@ test("call navigation preserves drafts and crosses page boundaries with retry", 
         json: {
           call: calls[index],
           locationName: "Synthetic office",
+          issue: index === 0 && firstCallReported ? {
+            note: "Another staff member saved this report.",
+            createdAt: calls[index].startedAt,
+          } : undefined,
           messages: Array.from({ length: 30 }, (_, turn) => ({
             speaker: turn % 2 ? "Agent" : "Caller",
             text: `Call ${index + 1}, message ${turn + 1}. Synthetic conversation.`,
@@ -365,4 +370,22 @@ test("call navigation preserves drafts and crosses page boundaries with retry", 
     animations: "disabled",
     path: testInfo.outputPath("call-navigation.png"),
   })
+  // Another staff member reports this call while our unsaved draft remains.
+  firstCallReported = true
+  await next.click()
+  await previous.click()
+  const unsavedNote = panel.getByRole("textbox", { name: "Your unsaved note" })
+  await expect(panel.getByText("Another staff member saved this report.")).toBeVisible()
+  await expect(unsavedNote).toHaveValue("Keep this unfinished note for the first call.")
+  await expect(unsavedNote).toHaveAttribute("readonly", "")
+  await expect(panel.getByRole("button", { name: "Flag issue", exact: true })).toHaveCount(0)
+  await page.keyboard.press("Escape")
+  await page.getByRole("button", { name: /Open call from \(555\) 555-0100/ }).click()
+  await expect(unsavedNote).toHaveValue("Keep this unfinished note for the first call.")
+  await panel.getByRole("button", { name: "Discard unsaved note" }).click()
+  await expect(unsavedNote).toHaveCount(0)
+  await next.click()
+  await previous.click()
+  await expect(panel.getByText("Another staff member saved this report.")).toBeVisible()
+  await expect(unsavedNote).toHaveCount(0)
 })

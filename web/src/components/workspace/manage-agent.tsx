@@ -69,6 +69,7 @@ export function ManageAgent({
     key: string
     data?: AgentCallsPage
     error?: string
+    signal?: AbortSignal
   }>({ key: "" })
   const [more, setMore] = useState<{
     key: string
@@ -83,7 +84,7 @@ export function ManageAgent({
     flaggedOnly,
     version,
   ])
-  const current = request.key === key ? request : undefined
+  const current = request.key === key && !request.signal?.aborted ? request : undefined
   const calls = current?.data?.calls ?? []
   const selectedIndex = calls.findIndex((call) => call.id === selectedID)
   const loadingMore = more.key === key && more.loading
@@ -120,7 +121,10 @@ export function ManageAgent({
         })
         if (!result.data)
           throw new Error("Calls could not be loaded. Try again.")
-        if (!controller.signal.aborted) setRequest({ key, data: result.data })
+        if (!controller.signal.aborted) {
+          setRequest({ key, data: result.data, signal: controller.signal })
+          setMore({ key, loading: false })
+        }
       } catch (error) {
         if (!controller.signal.aborted)
           setRequest({
@@ -137,13 +141,15 @@ export function ManageAgent({
   }, [key, practiceID, office, range, phone, flaggedOnly])
 
   async function loadMore(navigateFrom?: string) {
-    if (!current?.data?.nextCursor || loadingMore) return
+    const signal = current?.signal
+    if (!current?.data?.nextCursor || loadingMore || !signal || signal.aborted) return
     setMore({ key, loading: true })
     try {
       const token = await getAccessToken()
       if (!token) throw new Error()
       const result = await queryAgentCalls({
         client: portalClient(token),
+        signal,
         body: {
           practiceId: practiceID,
           locationId: office === "all" ? undefined : office,
@@ -154,12 +160,13 @@ export function ManageAgent({
           cursor: current.data.nextCursor,
         },
       })
+      if (signal.aborted) return
       if (!result.data) throw new Error()
       const next = result.data
       setRequest((previous) =>
-        previous.key === key && previous.data
+        previous.signal === signal && previous.data
           ? {
-              key,
+              ...previous,
               data: {
                 calls: [...previous.data.calls, ...next.calls],
                 nextCursor: next.nextCursor,
@@ -174,6 +181,7 @@ export function ManageAgent({
         )
       }
     } catch {
+      if (signal.aborted) return
       setMore({
         key,
         loading: false,

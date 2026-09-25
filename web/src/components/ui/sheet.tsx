@@ -11,6 +11,8 @@ function Sheet({ ...props }: SheetPrimitive.Root.Props) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
 }
 
+const SheetTrigger = SheetPrimitive.Trigger
+
 function SheetPortal({ ...props }: SheetPrimitive.Portal.Props) {
   return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />
 }
@@ -108,4 +110,4 @@ function SheetDescription({
   )
 }
 
-export { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription }
+export { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle, SheetDescription }

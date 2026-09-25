@@ -379,7 +379,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                       : undefined
                   }
                   headerLeading={<SidebarTrigger collapsedOnly />}
-                  callAction={contextPanelOpen && !state.selection.taskGroup && selectedTask && selectedTask.state === "OPEN" && contextView === "task" ? (
+                  callAction={!state.selection.taskGroup && selectedTask && selectedTask.state === "OPEN" && contextView === "task" ? (
                     <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={callingEnabled && !callingOccupied} historyHint={state.detailRevision} pending={Boolean(taskCallRequest)} onCall={(task) => {
                       setTaskCallError("")
                       void projection.dispatch({ type: "remember-return-task", taskID: task.id })

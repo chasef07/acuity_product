@@ -151,7 +151,19 @@ func agentCall(stored Interaction, receipts json.RawMessage, flagged bool) Agent
 	_ = json.Unmarshal(receipts, &outcomes)
 	for _, outcome := range outcomes {
 		evidence := recordValue(outcome["evidence"])
-		if stringValue(outcome["status"]) != "success" || len(evidence) == 0 || boolValue(evidence["replayed"]) {
+		if len(evidence) == 0 || boolValue(evidence["replayed"]) {
+			continue
+		}
+		if stringValue(outcome["status"]) == "partial" && appointmentDomainOutcome(stringValue(outcome["outcome"])) {
+			if stringValue(recordValue(evidence["bookingResult"])["status"]) == "booked" {
+				add(AppointmentBooked)
+			}
+			if stringValue(recordValue(evidence["cancellationResult"])["status"]) == "cancelled" {
+				add(AppointmentCancelled)
+			}
+			continue
+		}
+		if stringValue(outcome["status"]) != "success" {
 			continue
 		}
 		switch stringValue(outcome["outcome"]) {

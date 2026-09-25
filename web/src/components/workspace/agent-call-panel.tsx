@@ -327,113 +327,119 @@ function CallContent({
                     </p>
                   </AlertDescription>
                 </Alert>
+                {note && (
+                  <FieldGroup className="mt-4">
+                    <label htmlFor="agent-unsaved-note" className="text-sm font-medium">
+                      Your unsaved note
+                    </label>
+                    <Textarea id="agent-unsaved-note" value={note} readOnly aria-describedby="agent-unsaved-note-help" />
+                    <p id="agent-unsaved-note-help" className="text-xs text-muted-foreground">
+                      A report was saved while you were writing. Your note was not submitted; you can select and copy it.
+                    </p>
+                    <Button type="button" variant="ghost" className="w-fit" onClick={() => onNoteChange("")}>
+                      Discard unsaved note
+                    </Button>
+                  </FieldGroup>
+                )}
               </div>
             ) : (
               reporting && (
-                <div>
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault()
-                      void flagIssue()
-                    }}
-                  >
-                    <FieldGroup>
-                      <label
-                        htmlFor="agent-issue-note"
-                        className="text-sm font-medium"
-                      >
-                        What went wrong?
-                      </label>
-                      <Textarea
-                        id="agent-issue-note"
-                        autoFocus
-                        className="min-h-24"
-                        value={note}
-                        onChange={(event) => onNoteChange(event.target.value)}
-                        maxLength={2000}
-                        required
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void flagIssue()
+                  }}
+                >
+                  <FieldGroup>
+                    <label
+                      htmlFor="agent-issue-note"
+                      className="text-sm font-medium"
+                    >
+                      What went wrong?
+                    </label>
+                    <Textarea
+                      id="agent-issue-note"
+                      autoFocus
+                      className="min-h-24"
+                      value={note}
+                      onChange={(event) => onNoteChange(event.target.value)}
+                      maxLength={2000}
+                      required
+                      disabled={saving}
+                      aria-describedby={
+                        saveError
+                          ? "agent-issue-help agent-issue-error"
+                          : "agent-issue-help"
+                      }
+                    />
+                    <p
+                      id="agent-issue-help"
+                      className="text-xs text-muted-foreground"
+                    >
+                      This call and your note will be saved for Acuity review.
+                    </p>
+                    {saveError && (
+                      <FieldError id="agent-issue-error">
+                        {saveError}
+                      </FieldError>
+                    )}
+                    <div className="flex gap-2">
+                      <Button type="submit" disabled={saving || !note.trim()}>
+                        {saving && <Spinner data-icon="inline-start" />}
+                        {saving ? "Saving…" : "Flag issue"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
                         disabled={saving}
-                        aria-describedby={
-                          saveError
-                            ? "agent-issue-help agent-issue-error"
-                            : "agent-issue-help"
-                        }
-                      />
-                      <p
-                        id="agent-issue-help"
-                        className="text-xs text-muted-foreground"
+                        onClick={() => setReporting(false)}
                       >
-                        This call and your note will be saved for Acuity review.
-                      </p>
-                      {saveError && (
-                        <FieldError id="agent-issue-error">
-                          {saveError}
-                        </FieldError>
-                      )}
-                      <div className="flex gap-2">
-                        <Button type="submit" disabled={saving || !note.trim()}>
-                          {saving && <Spinner data-icon="inline-start" />}
-                          {saving ? "Saving…" : "Flag issue"}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          disabled={saving}
-                          onClick={() => setReporting(false)}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </FieldGroup>
-                  </form>
-                </div>
+                        Cancel
+                      </Button>
+                    </div>
+                  </FieldGroup>
+                </form>
               )
             )}
-            <div>
-              <h2 className="text-sm font-medium">Transcript</h2>
-            </div>
+            <h2 className="text-sm font-medium">Transcript</h2>
             {detail.messages.length ? (
               detail.messages.map((message, index) => (
-                <div key={index}>
-                  <Message>
-                    <MessageContent>
-                      <MessageHeader>{message.speaker}</MessageHeader>
-                      <Bubble
-                        variant={
-                          message.speaker === "Agent" ? "muted" : "ghost"
-                        }
-                      >
-                        <BubbleContent className="whitespace-pre-wrap">
-                          {message.text}
-                        </BubbleContent>
-                      </Bubble>
-                      <MessageFooter>
-                        <time dateTime={message.occurredAt}>
-                          {new Date(message.occurredAt).toLocaleTimeString(
-                            undefined,
-                            {
-                              hour: "numeric",
-                              minute: "2-digit",
-                              second: "2-digit",
-                            },
-                          )}
-                        </time>
-                      </MessageFooter>
-                    </MessageContent>
-                  </Message>
-                </div>
+                <Message key={index}>
+                  <MessageContent>
+                    <MessageHeader>{message.speaker}</MessageHeader>
+                    <Bubble
+                      variant={
+                        message.speaker === "Agent" ? "muted" : "ghost"
+                      }
+                    >
+                      <BubbleContent className="whitespace-pre-wrap">
+                        {message.text}
+                      </BubbleContent>
+                    </Bubble>
+                    <MessageFooter>
+                      <time dateTime={message.occurredAt}>
+                        {new Date(message.occurredAt).toLocaleTimeString(
+                          undefined,
+                          {
+                            hour: "numeric",
+                            minute: "2-digit",
+                            second: "2-digit",
+                          },
+                        )}
+                      </time>
+                    </MessageFooter>
+                  </MessageContent>
+                </Message>
               ))
             ) : (
-              <div>
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyTitle>No transcript available</EmptyTitle>
-                    <EmptyDescription>
-                      No conversation was recorded for this call.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              </div>
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>No transcript available</EmptyTitle>
+                  <EmptyDescription>
+                    No conversation was recorded for this call.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
             )}
           </div>
         </div>

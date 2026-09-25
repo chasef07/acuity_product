@@ -83,9 +83,14 @@ test("appointment verification stays open until shared completion and can be reo
     await expect(row).toHaveCount(0)
     await expect(secondRow).toHaveCount(0)
     await expect(second.getByText("Completed for everyone with access.")).toBeVisible()
+    const completedContext = page.getByRole("complementary", { name: "Task context" })
+    await expect(completedContext.getByRole("button", { name: "Reopen", exact: true })).toBeVisible()
+    await completedContext.getByRole("button", { name: "Close context panel" }).click()
+    await expect(completedContext).toBeHidden()
     await page.getByRole("button", { name: "Recently completed", exact: true }).click()
     await expect(row).toBeVisible()
     await row.getByRole("button").first().click()
+    await expect(completedContext).toBeVisible()
     await page.getByRole("button", { name: "Reopen", exact: true }).click()
     await expect(secondRow).toBeVisible()
     await expect(page.getByRole("button", { name: /^Appointments 7d|^Texts 7d|^Mark all/ })).toHaveCount(0)
@@ -403,6 +408,13 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   expect(retryKeys[1]).toBe(retryKeys[0])
   await page.unroute(`${portalURL}/v1/messages`, retryRoute)
 
+  let failPreview = true
+  const previewRoute = async (route: Route) => {
+    if (route.request().method() === "GET" && failPreview) {
+      await route.fulfill({ status: 503, json: { message: "Synthetic attachment outage" } })
+    } else await route.continue()
+  }
+  await page.route(`${portalURL}/v1/attachments/*`, previewRoute)
   const outgoingText = "Your records are ready for pickup."
   await page
     .getByRole("textbox", { name: "Message", exact: true })
@@ -445,7 +457,14 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(outgoing.getByText("Sending", { exact: true })).toBeVisible()
   await expect(outgoing.getByText("Sent", { exact: true })).toBeVisible()
   const sentAttachment = outgoing.locator('[data-slot="attachment"]')
+  await expect(sentAttachment).toContainText("Attachment unavailable.")
+  failPreview = false
+  const download = page.waitForEvent("download")
+  await sentAttachment.getByRole("button", { name: "Download fixture-photo.png", exact: true }).click()
+  expect((await download).suggestedFilename()).toBe("fixture-photo.png")
+  await sentAttachment.getByRole("button", { name: "Retry fixture-photo.png", exact: true }).click()
   await expect(sentAttachment).toHaveAttribute("data-state", "done")
+  await page.unroute(`${portalURL}/v1/attachments/*`, previewRoute)
   await expect(sentAttachment).not.toContainText("Stored")
   await expect(
     sentAttachment.getByRole("button", { name: "Download fixture-photo.png" }),
@@ -714,6 +733,9 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()
+  await expect(sidebarTaskContext).toBeHidden()
+  await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "closed")
+  await sidebarTask.click()
   await expect(sidebarTaskContext).toBeVisible()
   await expect(
     page.getByRole("article").filter({ hasText: inboundText }),
