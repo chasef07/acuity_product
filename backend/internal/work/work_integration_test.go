@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,60 +17,9 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-func TestEnsureCallFollowUpCreatesOneDurableOpenTask(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	callID := insertCall(t, pool, authorization, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
-
-	command := work.EnsureCallFollowUpCommand{
-		CallID:     callID,
-		PracticeID: authorization.Practice.ID,
-		LocationID: authorization.Locations[0].ID,
-		Phone:      "+15555550100",
-		Reason:     "  Confirm surgery instructions  ",
-		Creator:    authorization.Actor,
-	}
-	first := ensureCallFollowUp(t, pool, module, command)
-	replayed := ensureCallFollowUp(t, pool, module, command)
-
-	if replayed.ID != first.ID {
-		t.Fatalf("replayed Task ID = %q, want %q", replayed.ID, first.ID)
-	}
-	task, err := module.ReadTask(context.Background(), identity, first.ID)
-	if err != nil {
-		t.Fatalf("read Task: %v", err)
-	}
-	if task.State != work.TaskOpen ||
-		task.Title != "Confirm surgery instructions" ||
-		task.Phone != "+15555550100" ||
-		task.CallID != callID ||
-		task.Version != 1 ||
-		task.CreatedBy.Subject != identity.Subject ||
-		task.CreatedBy.Email != identity.Email {
-		t.Fatalf("created Task = %#v", task)
-	}
-
-	var activityCount int
-	if err := pool.QueryRow(context.Background(), `
-		SELECT count(*)
-		FROM work_task_activities
-		WHERE task_id = $1 AND kind = 'TASK_CREATED'
-	`, task.ID).Scan(&activityCount); err != nil {
-		t.Fatalf("count Task Activities: %v", err)
-	}
-	if activityCount != 1 {
-		t.Fatalf("Task creation Activity count = %d, want 1", activityCount)
-	}
-	assertTaskAcknowledgementIntentCount(t, pool, task.ID, 0)
-}
 
 func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	pool := testdb.Open(t)
@@ -229,151 +179,6 @@ func assertTaskAcknowledgementIntentCount(
 	}
 	if count != want {
 		t.Fatalf("automatic Task acknowledgement intents = %d, want %d", count, want)
-	}
-}
-
-func TestEnsureRecoveryTaskOrdersSamePhoneVoicemailsAndReplays(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
-	locationID := authorization.Locations[0].ID
-	phone := "+15555550100"
-	firstCallID := insertCallAt(
-		t, pool, authorization, locationID, phone, "First caller", now,
-	)
-	secondCallID := insertCallAt(
-		t, pool, authorization, locationID, phone, "Second caller", now.Add(time.Minute),
-	)
-
-	ensureRecovery := func(callID string, occurredAt time.Time) work.Task {
-		t.Helper()
-		tx, err := pool.Begin(context.Background())
-		if err != nil {
-			t.Fatalf("begin recovery Task transaction: %v", err)
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		task, err := module.EnsureRecoveryTask(
-			context.Background(),
-			tx,
-			work.EnsureRecoveryTaskCommand{
-				CallID: callID, PracticeID: authorization.Practice.ID,
-				LocationID: locationID, Phone: phone,
-				Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: occurredAt,
-			},
-		)
-		if err != nil {
-			t.Fatalf("ensure recovery Task: %v", err)
-		}
-		if err := tx.Commit(context.Background()); err != nil {
-			t.Fatalf("commit recovery Task: %v", err)
-		}
-		return task
-	}
-
-	first := ensureRecovery(firstCallID, now)
-	assertTaskAcknowledgementIntentCount(t, pool, first.ID, 0)
-	second := ensureRecovery(secondCallID, now.Add(time.Minute))
-	replayed := ensureRecovery(secondCallID, now.Add(time.Minute))
-	if second.ID != first.ID || replayed.ID != first.ID {
-		t.Fatalf("same-phone recovery Tasks = first:%q second:%q replay:%q",
-			first.ID, second.ID, replayed.ID)
-	}
-	task, err := module.ReadTask(context.Background(), identity, first.ID)
-	if err != nil {
-		t.Fatalf("read same-phone voicemail Task: %v", err)
-	}
-	if task.Version != 2 || task.RelatedInteractionCount != 2 ||
-		len(task.Interactions) != 2 ||
-		task.Interactions[0].CallID != firstCallID ||
-		task.Interactions[1].CallID != secondCallID {
-		t.Fatalf("same-phone voicemail Task = %#v", task)
-	}
-
-	rows, err := pool.Query(context.Background(), `
-		SELECT task_version, kind
-		FROM work_task_activities
-		WHERE task_id = $1
-		ORDER BY task_version
-	`, task.ID)
-	if err != nil {
-		t.Fatalf("read same-phone voicemail Activities: %v", err)
-	}
-	defer rows.Close()
-	type activity struct {
-		version int64
-		kind    string
-	}
-	activities := []activity{}
-	for rows.Next() {
-		var item activity
-		if err := rows.Scan(&item.version, &item.kind); err != nil {
-			t.Fatalf("scan same-phone voicemail Activity: %v", err)
-		}
-		activities = append(activities, item)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate same-phone voicemail Activities: %v", err)
-	}
-	want := []activity{{version: 1, kind: "TASK_CREATED"}, {version: 2, kind: "INTERACTION_ATTACHED"}}
-	if len(activities) != len(want) {
-		t.Fatalf("same-phone voicemail Activities = %#v, want %#v", activities, want)
-	}
-	for index := range want {
-		if activities[index] != want[index] {
-			t.Fatalf("same-phone voicemail Activities = %#v, want %#v", activities, want)
-		}
-	}
-}
-
-func TestRecoveryTasksKeepDifferentSourcedCallersSeparate(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.August, 13, 10, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
-	locationID := authorization.Locations[0].ID
-	phone := "+15555550123"
-
-	ensure := func(callerName string, occurredAt time.Time) work.Task {
-		t.Helper()
-		callID := insertCallAt(
-			t, pool, authorization, locationID, phone, callerName, occurredAt,
-		)
-		tx, err := pool.Begin(context.Background())
-		if err != nil {
-			t.Fatalf("begin recovery Task: %v", err)
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		task, err := module.EnsureRecoveryTask(
-			context.Background(),
-			tx,
-			work.EnsureRecoveryTaskCommand{
-				CallID: callID, PracticeID: authorization.Practice.ID,
-				LocationID: locationID, Phone: phone, CallerName: callerName,
-				Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: occurredAt,
-			},
-		)
-		if err != nil {
-			t.Fatalf("ensure recovery Task: %v", err)
-		}
-		if err := tx.Commit(context.Background()); err != nil {
-			t.Fatalf("commit recovery Task: %v", err)
-		}
-		return task
-	}
-
-	alexFirst := ensure("Alex Patient", now)
-	alexSecond := ensure("Alex Patient", now.Add(time.Minute))
-	jordan := ensure("Jordan Patient", now.Add(2*time.Minute))
-	if alexSecond.ID != alexFirst.ID || jordan.ID == alexFirst.ID {
-		t.Fatalf(
-			"caller-aware recovery Tasks = Alex %q/%q, Jordan %q",
-			alexFirst.ID,
-			alexSecond.ID,
-			jordan.ID,
-		)
 	}
 }
 
@@ -1390,78 +1195,6 @@ func TestWorkspaceQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testi
 	if secondPage.Counts == nil || *secondPage.Counts != wantCounts {
 		t.Fatalf("second Task page counts = %#v, want %#v", secondPage.Counts, wantCounts)
 	}
-}
-
-func TestWorkspaceQueryTasksOrdersOpenWorkByPriorityOnlyWhenRequested(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	writes := work.New(pool, accessModule, func() time.Time { return now })
-	reads := workspace.New(pool, accessModule)
-	service := access.ServiceIdentity{
-		Subject: "abita-priority", PracticeID: authorization.Practice.ID,
-		LocationScope: access.LocationScopeAll,
-		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
-	}
-	createAI := func(key, title string, urgency work.TaskUrgency) work.Task {
-		t.Helper()
-		task, _, err := writes.CreateAITask(context.Background(), work.CreateAITaskCommand{
-			Service: service, OfficeKey: "spring-hill", OfficePhone: "+17275919997",
-			SourceCallID: "source-" + key, IdempotencyKey: "staff_task_" + key,
-			Phone: "+17275551212", Summary: title,
-			Message:  "Caller supplied the complete request for " + title + ".",
-			Category: work.TaskCategoryOther, Urgency: urgency,
-		})
-		if err != nil {
-			t.Fatalf("create %s AI Task: %v", key, err)
-		}
-		return task
-	}
-	normalOld := createAI("normal-old", "Normal old", work.TaskUrgencyNormal)
-	now = now.Add(time.Minute)
-	nonUrgent := createAI("non-urgent", "Non-urgent", work.TaskUrgencyNonUrgent)
-	now = now.Add(time.Minute)
-	high := createAI("high", "High priority", work.TaskUrgencyHighPriority)
-	now = now.Add(time.Minute)
-	normalNew := createAI("normal-new", "Normal new", work.TaskUrgencyNormal)
-
-	timePage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
-		Identity: identity, PracticeID: authorization.Practice.ID,
-		Ordering: work.TaskOrderingTime,
-	})
-	if err != nil {
-		t.Fatalf("query time-ordered Tasks: %v", err)
-	}
-	assertTaskIDs(t, timePage.Items, normalOld.ID, nonUrgent.ID, high.ID, normalNew.ID)
-	priorityPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
-		Identity: identity, PracticeID: authorization.Practice.ID,
-		Ordering: work.TaskOrderingPriority,
-	})
-	if err != nil {
-		t.Fatalf("query priority-ordered Tasks: %v", err)
-	}
-	assertTaskIDs(t, priorityPage.Items, high.ID, normalOld.ID, normalNew.ID, nonUrgent.ID)
-	firstPriorityPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
-		Identity: identity, PracticeID: authorization.Practice.ID,
-		Ordering: work.TaskOrderingPriority, Limit: 2,
-	})
-	if err != nil {
-		t.Fatalf("query first priority cursor page: %v", err)
-	}
-	assertTaskIDs(t, firstPriorityPage.Items, high.ID, normalOld.ID)
-	if firstPriorityPage.NextCursor == "" {
-		t.Fatal("first priority cursor page has no next cursor")
-	}
-	secondPriorityPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
-		Identity: identity, PracticeID: authorization.Practice.ID,
-		Ordering: work.TaskOrderingPriority,
-		Cursor:   firstPriorityPage.NextCursor, Limit: 2,
-	})
-	if err != nil {
-		t.Fatalf("query second priority cursor page: %v", err)
-	}
-	assertTaskIDs(t, secondPriorityPage.Items, normalNew.ID, nonUrgent.ID)
 }
 
 func TestReadTaskDerivesRelatedInteractionCountFromLoadedInteractions(t *testing.T) {

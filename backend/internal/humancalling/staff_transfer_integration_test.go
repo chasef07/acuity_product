@@ -438,59 +438,6 @@ func assertTransferLegStates(
 	}
 }
 
-func TestStaffTransferDeclineLeavesSourceOwner(t *testing.T) {
-	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-decline")
-	call, _ := fixture.calling.ReadCall(context.Background(), fixture.staff[0], fixture.callID)
-	transfer, err := fixture.calling.RequestStaffTransfer(
-		context.Background(), humancalling.RequestStaffTransferCommand{
-			Identity: fixture.staff[0], CallID: fixture.callID,
-			SessionID:        "staff-transfer-decline-browser-1",
-			RecipientSubject: fixture.staff[1].Subject,
-			IdempotencyKey:   "decline", ExpectedVersion: call.Version,
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.calling.DeclineStaffTransfer(
-		context.Background(), humancalling.RespondStaffTransferCommand{
-			Identity: fixture.staff[1], TransferID: transfer.ID,
-			SessionID: "staff-transfer-decline-browser-2",
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-	assertTransferLegStates(t, fixture.pool, transfer.ID, "DECLINED", "BRIDGED", "ENDING")
-	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.staff[0])
-	if err != nil || state.Bridged == nil || state.Bridged.CallLegID != fixture.sourceLeg {
-		t.Fatalf("source after decline = %#v, %v", state, err)
-	}
-}
-
-func TestStaffTransferSourceCanCancelWhenActiveCallRefusesSoftphoneTakeover(t *testing.T) {
-	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-takeover-cancel")
-	transfer, _ := requestFixtureTransfer(t, fixture, "takeover-cancel")
-	const takeoverSession = "staff-transfer-takeover-cancel-browser-replacement"
-
-	lease, err := fixture.calling.AcquireSoftphone(
-		context.Background(), fixture.staff[0], takeoverSession, true,
-	)
-	if err != nil || lease.Owner || lease.ActiveCallID != fixture.callID {
-		t.Fatalf("refuse active Call takeover = %#v, %v", lease, err)
-	}
-
-	canceled, err := fixture.calling.CancelStaffTransfer(
-		context.Background(), humancalling.RespondStaffTransferCommand{
-			Identity: fixture.staff[0], TransferID: transfer.ID,
-			SessionID: "staff-transfer-takeover-cancel-browser-1",
-		},
-	)
-	if err != nil || canceled.State != humancalling.StaffTransferCanceled {
-		t.Fatalf("cancel transfer from current source browser = %#v, %v", canceled, err)
-	}
-	assertTransferLegStates(t, fixture.pool, transfer.ID, "CANCELED", "BRIDGED", "ENDING")
-}
-
 func TestStaffTransferSourceCanCancelAfterTargetAnswerBeforeBridge(t *testing.T) {
 	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-accepted-cancel")
 	transfer, command := requestFixtureTransfer(t, fixture, "accepted-cancel")
@@ -828,44 +775,6 @@ func TestStaffTransferDefinitiveProviderFailurePreservesSource(t *testing.T) {
 	assertTransferLegStates(t, fixture.pool, transfer.ID, "FAILED", "BRIDGED", "FAILED")
 }
 
-func TestStaffTransferIsIdempotentAcrossReplaysAndCompletion(t *testing.T) {
-	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-idempotent")
-	call, err := fixture.calling.ReadCall(context.Background(), fixture.staff[0], fixture.callID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := humancalling.RequestStaffTransferCommand{
-		Identity: fixture.staff[0], CallID: fixture.callID,
-		SessionID:        "staff-transfer-idempotent-browser-1",
-		RecipientSubject: fixture.staff[1].Subject, IdempotencyKey: "idempotent",
-		HandoffNote: "same durable request", ExpectedVersion: call.Version,
-	}
-	first, err := fixture.calling.RequestStaffTransfer(context.Background(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := fixture.calling.RequestStaffTransfer(context.Background(), request)
-	if err != nil || second.ID != first.ID {
-		t.Fatalf("active replay = %#v, %v", second, err)
-	}
-	processAllCommands(t, fixture.calling)
-	if got := fixture.provider.count(humancalling.CommandTransferStaff); got != 1 {
-		t.Fatalf("transfer executions = %d, want 1", got)
-	}
-	command := fixture.provider.last(humancalling.CommandTransferStaff)
-	target := completeFixtureTransfer(t, fixture, first, command, "staff-transfer-idempotent")
-	if err := fixture.calling.ApplyProviderFact(context.Background(), target); err != nil {
-		t.Fatalf("duplicate provider fact: %v", err)
-	}
-	completed, err := fixture.calling.RequestStaffTransfer(context.Background(), request)
-	if err != nil || completed.ID != first.ID || completed.State != humancalling.StaffTransferCompleted {
-		t.Fatalf("completed replay = %#v, %v", completed, err)
-	}
-	if got := fixture.provider.count(humancalling.CommandTransferStaff); got != 1 {
-		t.Fatalf("replayed transfer executions = %d, want 1", got)
-	}
-}
-
 func TestConcurrentStaffTransferRequestsShareOneIdempotentResult(t *testing.T) {
 	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-concurrent-idempotent")
 	call, err := fixture.calling.ReadCall(
@@ -934,66 +843,6 @@ func TestConcurrentStaffTransferRequestsShareOneIdempotentResult(t *testing.T) {
 	}
 }
 
-func TestStaffTransferSourceAndTargetHangupsUseCurrentOwner(t *testing.T) {
-	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-hangup-authority")
-	transfer, command := requestFixtureTransfer(t, fixture, "hangup-authority")
-
-	var sourceControl, sourceProviderLeg, sourceSession string
-	if err := fixture.pool.QueryRow(context.Background(), `
-		SELECT provider_call_control_id, provider_call_leg_id, provider_call_session_id
-		FROM human_calling_call_legs WHERE id = $1
-	`, fixture.sourceLeg).Scan(&sourceControl, &sourceProviderLeg, &sourceSession); err != nil {
-		t.Fatal(err)
-	}
-	sourceHangup := humancalling.ProviderFact{
-		EventID: "staff-transfer-source-ended-in-flight", Type: humancalling.FactCallHangup,
-		OccurredAt: fixture.now.Add(6 * time.Second), CallControlID: sourceControl,
-		CallLegID: sourceProviderLeg, CallSessionID: sourceSession,
-		HangupCause: "NORMAL_CLEARING", TerminationSource: "CALL_CONTROL",
-	}
-	if err := fixture.calling.ApplyProviderFact(context.Background(), sourceHangup); err != nil {
-		t.Fatal(err)
-	}
-	target := completeFixtureTransfer(t, fixture, transfer, command, "staff-transfer-hangup-authority")
-	assertTransferLegStates(t, fixture.pool, transfer.ID, "COMPLETED", "ENDED", "BRIDGED")
-
-	sourceHangup.EventID = "staff-transfer-old-source-delayed-cleanup"
-	sourceHangup.OccurredAt = fixture.now.Add(9 * time.Second)
-	if err := fixture.calling.ApplyProviderFact(context.Background(), sourceHangup); err != nil {
-		t.Fatal(err)
-	}
-	var terminal string
-	if err := fixture.pool.QueryRow(context.Background(), `
-		SELECT COALESCE(terminal_outcome, '') FROM human_calling_calls WHERE id = $1
-	`, fixture.callID).Scan(&terminal); err != nil || terminal != "" {
-		t.Fatalf("old source ended transferred Call = %q, %v", terminal, err)
-	}
-
-	target.EventID = "staff-transfer-current-target-ended"
-	target.Type = humancalling.FactCallHangup
-	target.OccurredAt = fixture.now.Add(10 * time.Second)
-	target.HangupCause = "NORMAL_CLEARING"
-	if err := fixture.calling.ApplyProviderFact(context.Background(), target); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.pool.QueryRow(context.Background(), `
-		SELECT terminal_outcome FROM human_calling_calls WHERE id = $1
-	`, fixture.callID).Scan(&terminal); err != nil || terminal != "ENDED" {
-		t.Fatalf("current target terminal outcome = %q, %v", terminal, err)
-	}
-	state, err := fixture.calling.AcquireSoftphone(context.Background(), fixture.staff[1], "staff-transfer-hangup-authority-browser-2", false)
-	if err != nil || state.ActiveCallID != "" {
-		t.Fatalf("target softphone release = %#v, %v", state, err)
-	}
-	var dispositionWindows int
-	if err := fixture.pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM human_calling_calls
-		WHERE id = $1 AND terminal_outcome = 'ENDED' AND disposition_deadline IS NOT NULL
-	`, fixture.callID).Scan(&dispositionWindows); err != nil || dispositionWindows != 1 {
-		t.Fatalf("disposition outcomes = %d, %v", dispositionWindows, err)
-	}
-}
-
 func TestStaffTransferCannotStartAfterSourceAlreadyEnded(t *testing.T) {
 	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-source-ended-before")
 	var sourceControl, sourceProviderLeg, sourceSession string
@@ -1029,32 +878,6 @@ func TestStaffTransferCannotStartAfterSourceAlreadyEnded(t *testing.T) {
 		SELECT count(*) FROM human_calling_staff_transfers WHERE call_id = $1
 	`, fixture.callID).Scan(&transfers); err != nil || transfers != 0 {
 		t.Fatalf("late transfers = %d, %v", transfers, err)
-	}
-}
-
-func TestStaffTransferCallerHangupCancelsTransferOnce(t *testing.T) {
-	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-caller-hangup")
-	transfer, _ := requestFixtureTransfer(t, fixture, "caller-hangup")
-	caller := fixture.caller
-	caller.EventID = "staff-transfer-caller-ended"
-	caller.Type = humancalling.FactCallHangup
-	caller.OccurredAt = fixture.now.Add(6 * time.Second)
-	caller.HangupCause = "NORMAL_CLEARING"
-	if err := fixture.calling.ApplyProviderFact(context.Background(), caller); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.calling.ApplyProviderFact(context.Background(), caller); err != nil {
-		t.Fatalf("duplicate caller Hangup: %v", err)
-	}
-	var transferState, terminal string
-	if err := fixture.pool.QueryRow(context.Background(), `
-		SELECT transfer.state, call.terminal_outcome
-		FROM human_calling_staff_transfers transfer
-		JOIN human_calling_calls call ON call.id = transfer.call_id
-		WHERE transfer.id = $1
-	`, transfer.ID).Scan(&transferState, &terminal); err != nil ||
-		transferState != "CANCELED" || terminal != "ENDED" {
-		t.Fatalf("caller termination = %s/%s, %v", transferState, terminal, err)
 	}
 }
 

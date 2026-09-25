@@ -6,6 +6,7 @@ const labels: Record<string, string> = {
   office_rules_grounded: "Office rules supported by evidence",
   results_reported_truthfully: "Action results reported truthfully",
   resolved_or_handed_off: "Requests resolved or handed off",
+  conversation_responsive: "Conversation responsive",
   request_fulfilled: "Request fulfilled",
   handoff_required: "Handoff required",
   claims_supported: "Factual claims supported",
@@ -35,15 +36,15 @@ const scorecardChecks = [
   "office_rules_grounded",
   "results_reported_truthfully",
   "resolved_or_handed_off",
-  "expressed_sentiment",
 ]
 
 function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
+  const checks = [...scorecardChecks, ...(evaluation.evaluatorVersion === "typesafe-scorecard-v2" ? ["conversation_responsive"] : []), "expressed_sentiment"]
   return <>
     <dl className="mt-4 divide-y rounded-lg border px-3">
-      {scorecardChecks.map((name) => {
+      {checks.map((name) => {
         const answer = record(record(record(results[name]).answers)[name])
         const failed = Object.hasOwn(errors, name)
         const error = record(errors[name])
@@ -58,6 +59,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
             <dt>{labels[name]}</dt>
             <dd className="shrink-0 font-mono tabular-nums">{valid ? `${value.toFixed(2)} / ${maximum}` : "Unavailable"}</dd>
           </div>
+          {name === "conversation_responsive" && <dd className="mt-1 text-muted-foreground">Transcript evidence of a responsive conversation, not measured silence or its technical cause. Lower scores indicate caller evidence of stalls, even if the conversation later recovered. Ordinary greetings, clarifications, and caller-requested pauses do not count as stalls.</dd>}
           {failed ? <dd className="mt-1 text-destructive">
             Judge failed{typeof error.cause === "string" ? `: ${title(error.cause)}` : ""}
             {typeof error.httpStatus === "number" ? ` · HTTP ${error.httpStatus}` : ""}
@@ -78,7 +80,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
 export function CallEvaluation({ evaluation }: { evaluation?: Record<string, unknown> }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
-  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1"
+  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2"
   return (
     <section aria-label="AI evaluation" className="border-b px-5 py-4 sm:px-6">
       <div className="flex flex-wrap items-center gap-2">

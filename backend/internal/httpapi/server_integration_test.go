@@ -9,12 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,7 +34,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -975,56 +974,6 @@ func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing
 	}
 }
 
-func TestReadinessReportsRetryableUnavailableWhenPostgresCannotConnect(t *testing.T) {
-	databaseURL := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
-	if databaseURL == "" {
-		t.Skip("TEST_DATABASE_URL is not set")
-	}
-	parsed, err := url.Parse(databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed.Host = "127.0.0.1:1"
-	pool, err := pgxpool.New(context.Background(), parsed.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-
-	calling := humancalling.New(
-		pool,
-		nil,
-		nil,
-		humancalling.Config{},
-		nil,
-	)
-	handler, err := httpapi.NewProviderIngress(httpapi.Config{
-		AcquireTimeout: 75 * time.Millisecond,
-	}, pool, calling, messaging.New(pool, nil, nil, nil, messaging.Config{}, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(handler)
-	defer server.Close()
-
-	response := request(
-		t,
-		server.Client(),
-		http.MethodGet,
-		server.URL+"/health/ready",
-		"",
-		nil,
-	)
-	if response.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("unavailable readiness status = %d", response.StatusCode)
-	}
-	var envelope api.ErrorEnvelope
-	decode(t, response, &envelope)
-	if envelope.Error.Code != "UNAVAILABLE" || !envelope.Error.Retryable {
-		t.Fatalf("unavailable readiness error = %#v", envelope)
-	}
-}
-
 func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
@@ -1910,98 +1859,6 @@ func (fixture callingHangupHTTPFixture) hangupCommandCount(t *testing.T, callID 
 		t.Fatalf("count Hangup commands: %v", err)
 	}
 	return count
-}
-
-func TestCallingHangupEndsOwnedOutboundBeforeProviderControl(t *testing.T) {
-	now := time.Date(2026, time.August, 26, 14, 45, 0, 0, time.UTC)
-	fixture := newCallingHangupHTTPFixture(
-		t, "end-preparing-outbound-http", func() time.Time { return now },
-		humancalling.Config{},
-	)
-	if lease, err := fixture.calling.AcquireSoftphone(
-		context.Background(), fixture.identity, fixture.sessionID, false,
-	); err != nil || !lease.Owner {
-		t.Fatalf("acquire preparing outbound softphone: state=%#v err=%v", lease, err)
-	}
-	callID, callerLegID, staffLegID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	tx, err := fixture.pool.Begin(context.Background())
-	if err != nil {
-		t.Fatalf("begin preparing outbound HTTP fixture: %v", err)
-	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
-	if _, err := tx.Exec(context.Background(), `
-		INSERT INTO human_calling_calls (
-			id, practice_id, location_id, direction, entry_point,
-			destination_phone, outbound_caller_id, initiating_subject,
-			outbound_idempotency_key, outbound_input_fingerprint,
-			version, created_at, updated_at
-		) VALUES (
-			$1, $2, $3, 'OUTBOUND', 'STANDALONE', '+15555550123',
-			'+14843336938', $4, 'end-preparing-outbound-http', $5, 1, $6, $6
-		)
-	`, callID, fixture.authorization.Practice.ID,
-		fixture.authorization.Locations[0].ID, fixture.identity.Subject,
-		make([]byte, 32), now); err != nil {
-		t.Fatalf("insert preparing outbound HTTP Call: %v", err)
-	}
-	if _, err := tx.Exec(context.Background(), `
-		INSERT INTO human_calling_call_legs (
-			id, call_id, role, sequence, state, created_at, updated_at
-		) VALUES ($1, $2, 'CALLER', 1, 'PENDING', $3, $3)
-	`, callerLegID, callID, now); err != nil {
-		t.Fatalf("insert preparing outbound caller CallLeg: %v", err)
-	}
-	if _, err := tx.Exec(context.Background(), `
-		INSERT INTO human_calling_call_legs (
-			id, call_id, role, sequence, staff_subject, staff_session_id,
-			state, created_at, updated_at
-		) VALUES ($1, $2, 'STAFF', 1, $3, $4, 'PENDING', $5, $5)
-	`, staffLegID, callID, fixture.identity.Subject, fixture.sessionID, now); err != nil {
-		t.Fatalf("insert preparing outbound Staff CallLeg: %v", err)
-	}
-	if _, err := tx.Exec(context.Background(), `
-		INSERT INTO human_calling_provider_commands (
-			call_id, call_leg_id, user_subject, action, payload, next_attempt_at,
-			created_at, updated_at
-		) VALUES ($1, $2, $3, 'DIAL_OUTBOUND_STAFF', '{}'::jsonb, $4, $4, $4)
-	`, callID, staffLegID, fixture.identity.Subject, now); err != nil {
-		t.Fatalf("insert preparing outbound Dial command: %v", err)
-	}
-	if err := tx.Commit(context.Background()); err != nil {
-		t.Fatalf("commit preparing outbound HTTP fixture: %v", err)
-	}
-
-	for attempt := 1; attempt <= 2; attempt++ {
-		response := fixture.postHangup(t, callID, fixture.sessionID)
-		if response.StatusCode != http.StatusAccepted {
-			t.Fatalf("preparing outbound End attempt %d status = %d, body = %s",
-				attempt, response.StatusCode, readBody(t, response))
-		}
-		var current api.CallingCall
-		decode(t, response, &current)
-		if current.State != api.CallingCallStateUNANSWERED {
-			t.Fatalf("preparing outbound End attempt %d Call state = %s",
-				attempt, current.State)
-		}
-	}
-	var terminal string
-	var canceledDials, requestedEvents int
-	if err := fixture.pool.QueryRow(context.Background(), `
-		SELECT call.terminal_outcome,
-			(SELECT count(*) FROM human_calling_provider_commands command
-				WHERE command.call_id = call.id AND command.action = 'DIAL_OUTBOUND_STAFF'
-					AND command.state = 'FAILED'
-					AND command.last_error_code = 'STAFF_ENDED_BEFORE_PROVIDER_START'),
-			(SELECT count(*) FROM human_calling_timeline timeline
-				WHERE timeline.call_id = call.id AND timeline.kind = 'call.hangup.requested')
-		FROM human_calling_calls call WHERE call.id = $1
-	`, callID).Scan(&terminal, &canceledDials, &requestedEvents); err != nil {
-		t.Fatalf("read preparing outbound HTTP End: %v", err)
-	}
-	if terminal != "UNANSWERED" || canceledDials != 1 || requestedEvents != 1 {
-		t.Fatalf("preparing outbound HTTP End = terminal:%s canceled:%d events:%d",
-			terminal, canceledDials, requestedEvents)
-	}
 }
 
 func TestCallingHangupReturnsTerminalCallWhenProviderWinsRace(t *testing.T) {

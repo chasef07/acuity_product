@@ -262,24 +262,24 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			poisonedStart.StatusCode, readBody(t, poisonedStart))
 	}
 	_ = poisonedStart.Body.Close()
-	mismatchedLocationBody, _ := json.Marshal(map[string]any{
+	unknownOfficeBody, _ := json.Marshal(map[string]any{
 		"kind":         "START",
-		"officeKey":    "spring-hill",
-		"sourceCallId": "abita-mismatched-location-63",
+		"officeKey":    "unknown-office",
+		"sourceCallId": "abita-unknown-office-63",
 		"callerPhone":  "+17275550197",
 		"officePhone":  "+17275919996",
 		"startedAt":    startedAt.Format(time.RFC3339Nano),
 		"status":       "IN_PROGRESS",
 	})
-	mismatchedLocation := request(
+	unknownOffice := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "production-interaction-token", mismatchedLocationBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", unknownOfficeBody,
 	)
-	if mismatchedLocation.StatusCode != http.StatusForbidden {
-		t.Fatalf("mismatched Location AI Interaction status = %d, body = %s",
-			mismatchedLocation.StatusCode, readBody(t, mismatchedLocation))
+	if unknownOffice.StatusCode != http.StatusForbidden {
+		t.Fatalf("unknown office AI Interaction status = %d, body = %s",
+			unknownOffice.StatusCode, readBody(t, unknownOffice))
 	}
-	_ = mismatchedLocation.Body.Close()
+	_ = unknownOffice.Body.Close()
 
 	concurrentBody, _ := json.Marshal(map[string]any{
 		"kind":         "START",

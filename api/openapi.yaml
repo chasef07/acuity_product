@@ -3604,6 +3604,12 @@ components:
         kind:
           $ref: "#/components/schemas/AIInteractionMessageKind"
         officeKey:
+          description: >-
+            Abita Office Route within the authenticated service Practice. When
+            supplied, this route authorizes and attributes the Interaction;
+            officePhone remains call evidence independent of staff voice numbers.
+            When omitted, officePhone must match an enabled, unambiguous staff
+            voice number within the authenticated Practice.
           type: string
           minLength: 1
           maxLength: 100
@@ -3615,6 +3621,7 @@ components:
           type: string
           pattern: '^\+[1-9][0-9]{7,14}$'
         officePhone:
+          description: Actual dialed inbound number, retained as immutable call evidence.
           type: string
           pattern: '^\+[1-9][0-9]{7,14}$'
         startedAt:

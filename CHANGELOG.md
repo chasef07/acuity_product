@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.19.3](https://github.com/chasef07/acuity_product/compare/v1.19.2...v1.19.3) (2026-09-25)
+
+
+### Bug Fixes
+
+* **interaction:** authorize agent receipts by office route ([#362](https://github.com/chasef07/acuity_product/issues/362)) ([524565f](https://github.com/chasef07/acuity_product/commit/524565f10087b3e040fc86594f755dde70584ca6))
+
+## [1.19.2](https://github.com/chasef07/acuity_product/compare/v1.19.1...v1.19.2) (2026-09-24)
+
+
+### Bug Fixes
+
+* **analytics:** render v2 conversation responsiveness scores ([#360](https://github.com/chasef07/acuity_product/issues/360)) ([5d7d8ac](https://github.com/chasef07/acuity_product/commit/5d7d8aca68476b212ce8e0c50e239a97d3aac39b))
+
 ## [1.19.1](https://github.com/chasef07/acuity_product/compare/v1.19.0...v1.19.1) (2026-09-24)
 
 

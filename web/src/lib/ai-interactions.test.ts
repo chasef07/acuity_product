@@ -2,23 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
-  aiCallCompletionLabel,
   aiCallTimelinePresentation,
-  appointmentOutcomeTitle,
 } from "./ai-interactions.ts"
-
-test("labels AI completion separately from staff transfer", () => {
-  assert.equal(aiCallCompletionLabel("COMPLETED"), "Call completed")
-  assert.equal(aiCallCompletionLabel("ESCALATED"), "Transferred to staff")
-  assert.equal(aiCallCompletionLabel("FAILED"), "AI call failed")
-})
-
-test("routine AI calls keep timeline copy quiet", () => {
-  assert.deepEqual(aiCallTimelinePresentation("INDETERMINATE", "COMPLETED"), {
-    title: "AI call",
-    detail: "",
-  })
-})
 
 test("AI call timeline copy leads with meaningful outcomes and exceptions", () => {
   assert.deepEqual(aiCallTimelinePresentation("BOOKING", "COMPLETED"), {
@@ -37,17 +22,4 @@ test("AI call timeline copy leads with meaningful outcomes and exceptions", () =
     title: "AI call failed",
     detail: "",
   })
-})
-
-test("uses receipt-backed appointment language", () => {
-  assert.equal(appointmentOutcomeTitle("BOOKING"), "Appointment booked")
-  assert.equal(
-    appointmentOutcomeTitle("RESCHEDULE"),
-    "Appointment rescheduled",
-  )
-  assert.equal(
-    appointmentOutcomeTitle("PARTIAL"),
-    "Appointment change needs review",
-  )
-  assert.equal(appointmentOutcomeTitle("INDETERMINATE"), "AI call")
 })

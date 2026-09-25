@@ -33,13 +33,6 @@ import {
   MessageFooter,
 } from "@/components/ui/message"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
-import {
-  MessageScrollerProvider,
-  MessageScroller,
-  MessageScrollerViewport,
-  MessageScrollerContent,
-  MessageScrollerItem,
-} from "@/components/ui/message-scroller"
 import { Badge } from "@/components/ui/badge"
 
 const actions = {
@@ -106,7 +99,10 @@ export function AgentCallPanel({
     })
   }
   return (
-    <Sheet open={Boolean(id)} onOpenChange={(open) => !open && !saving && onClose()}>
+    <Sheet
+      open={Boolean(id)}
+      onOpenChange={(open) => !open && !saving && onClose()}
+    >
       <SheetContent className="flex h-full flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
         {id && (
           <>
@@ -237,9 +233,7 @@ function CallContent({
       }
       if (!result.data) throw new Error()
       const issue = result.data
-      setDetail((previous) =>
-        previous ? { ...previous, issue } : previous,
-      )
+      setDetail((previous) => (previous ? { ...previous, issue } : previous))
       setReporting(false)
       onFlagged(id)
     } catch {
@@ -313,155 +307,136 @@ function CallContent({
           <Skeleton className="h-16 w-2/3" />
         </div>
       ) : (
-        <MessageScrollerProvider
-          autoScroll={false}
-          defaultScrollPosition="start"
+        <div
+          aria-label="Call transcript"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 scrollbar-thin"
         >
-          <MessageScroller className="min-h-0 flex-1">
-            <MessageScrollerViewport aria-label="Call transcript">
-              <MessageScrollerContent className="p-6" aria-live="off">
-                {detail.issue ? (
-                  <MessageScrollerItem
-                    messageId="issue"
-                    className="[content-visibility:visible]"
+          <div className="flex flex-col gap-6">
+            {detail.issue ? (
+              <div>
+                <Alert role="status">
+                  <FlagIcon aria-hidden="true" />
+                  <AlertTitle>Issue flagged</AlertTitle>
+                  <AlertDescription>
+                    <p className="whitespace-pre-wrap break-words">
+                      {detail.issue.note}
+                    </p>
+                    <p>
+                      Saved for Acuity review ·{" "}
+                      {new Date(detail.issue.createdAt).toLocaleString()}
+                    </p>
+                  </AlertDescription>
+                </Alert>
+              </div>
+            ) : (
+              reporting && (
+                <div>
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      void flagIssue()
+                    }}
                   >
-                    <Alert role="status">
-                      <FlagIcon aria-hidden="true" />
-                      <AlertTitle>Issue flagged</AlertTitle>
-                      <AlertDescription>
-                        <p className="whitespace-pre-wrap break-words">
-                          {detail.issue.note}
-                        </p>
-                        <p>
-                          Saved for Acuity review ·{" "}
-                          {new Date(detail.issue.createdAt).toLocaleString()}
-                        </p>
-                      </AlertDescription>
-                    </Alert>
-                  </MessageScrollerItem>
-                ) : (
-                  reporting && (
-                    <MessageScrollerItem
-                      messageId="issue-form"
-                      className="[content-visibility:visible]"
-                    >
-                      <form
-                        onSubmit={(event) => {
-                          event.preventDefault()
-                          void flagIssue()
-                        }}
+                    <FieldGroup>
+                      <label
+                        htmlFor="agent-issue-note"
+                        className="text-sm font-medium"
                       >
-                        <FieldGroup>
-                          <label
-                            htmlFor="agent-issue-note"
-                            className="text-sm font-medium"
-                          >
-                            What went wrong?
-                          </label>
-                          <Textarea
-                            id="agent-issue-note"
-                            autoFocus
-                            className="min-h-24"
-                            value={note}
-                            onChange={(event) =>
-                              onNoteChange(event.target.value)
-                            }
-                            maxLength={2000}
-                            required
-                            disabled={saving}
-                            aria-describedby={
-                              saveError
-                                ? "agent-issue-help agent-issue-error"
-                                : "agent-issue-help"
-                            }
-                          />
-                          <p
-                            id="agent-issue-help"
-                            className="text-xs text-muted-foreground"
-                          >
-                            This call and your note will be saved for Acuity
-                            review.
-                          </p>
-                          {saveError && (
-                            <FieldError id="agent-issue-error">
-                              {saveError}
-                            </FieldError>
+                        What went wrong?
+                      </label>
+                      <Textarea
+                        id="agent-issue-note"
+                        autoFocus
+                        className="min-h-24"
+                        value={note}
+                        onChange={(event) => onNoteChange(event.target.value)}
+                        maxLength={2000}
+                        required
+                        disabled={saving}
+                        aria-describedby={
+                          saveError
+                            ? "agent-issue-help agent-issue-error"
+                            : "agent-issue-help"
+                        }
+                      />
+                      <p
+                        id="agent-issue-help"
+                        className="text-xs text-muted-foreground"
+                      >
+                        This call and your note will be saved for Acuity review.
+                      </p>
+                      {saveError && (
+                        <FieldError id="agent-issue-error">
+                          {saveError}
+                        </FieldError>
+                      )}
+                      <div className="flex gap-2">
+                        <Button type="submit" disabled={saving || !note.trim()}>
+                          {saving && <Spinner data-icon="inline-start" />}
+                          {saving ? "Saving…" : "Flag issue"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={saving}
+                          onClick={() => setReporting(false)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </FieldGroup>
+                  </form>
+                </div>
+              )
+            )}
+            <div>
+              <h2 className="text-sm font-medium">Transcript</h2>
+            </div>
+            {detail.messages.length ? (
+              detail.messages.map((message, index) => (
+                <div key={index}>
+                  <Message>
+                    <MessageContent>
+                      <MessageHeader>{message.speaker}</MessageHeader>
+                      <Bubble
+                        variant={
+                          message.speaker === "Agent" ? "muted" : "ghost"
+                        }
+                      >
+                        <BubbleContent className="whitespace-pre-wrap">
+                          {message.text}
+                        </BubbleContent>
+                      </Bubble>
+                      <MessageFooter>
+                        <time dateTime={message.occurredAt}>
+                          {new Date(message.occurredAt).toLocaleTimeString(
+                            undefined,
+                            {
+                              hour: "numeric",
+                              minute: "2-digit",
+                              second: "2-digit",
+                            },
                           )}
-                          <div className="flex gap-2">
-                            <Button
-                              type="submit"
-                              disabled={saving || !note.trim()}
-                            >
-                              {saving && <Spinner data-icon="inline-start" />}
-                              {saving ? "Saving…" : "Flag issue"}
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              disabled={saving}
-                              onClick={() => setReporting(false)}
-                            >
-                              Cancel
-                            </Button>
-                          </div>
-                        </FieldGroup>
-                      </form>
-                    </MessageScrollerItem>
-                  )
-                )}
-                <MessageScrollerItem messageId="transcript-heading">
-                  <h2 className="text-sm font-medium">Transcript</h2>
-                </MessageScrollerItem>
-                {detail.messages.length ? (
-                  detail.messages.map((message, index) => (
-                    <MessageScrollerItem
-                      key={index}
-                      messageId={`message-${index}`}
-                    >
-                      <Message>
-                        <MessageContent>
-                          <MessageHeader>{message.speaker}</MessageHeader>
-                          <Bubble
-                            variant={
-                              message.speaker === "Agent" ? "muted" : "ghost"
-                            }
-                          >
-                            <BubbleContent className="whitespace-pre-wrap">
-                              {message.text}
-                            </BubbleContent>
-                          </Bubble>
-                          <MessageFooter>
-                            <time dateTime={message.occurredAt}>
-                              {new Date(message.occurredAt).toLocaleTimeString(
-                                undefined,
-                                {
-                                  hour: "numeric",
-                                  minute: "2-digit",
-                                  second: "2-digit",
-                                },
-                              )}
-                            </time>
-                          </MessageFooter>
-                        </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
-                  ))
-                ) : (
-                  <MessageScrollerItem messageId="empty-transcript">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyTitle>No transcript available</EmptyTitle>
-                        <EmptyDescription>
-                          No conversation was recorded for this call.
-                        </EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  </MessageScrollerItem>
-                )}
-              </MessageScrollerContent>
-            </MessageScrollerViewport>
-          </MessageScroller>
-        </MessageScrollerProvider>
+                        </time>
+                      </MessageFooter>
+                    </MessageContent>
+                  </Message>
+                </div>
+              ))
+            ) : (
+              <div>
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyTitle>No transcript available</EmptyTitle>
+                    <EmptyDescription>
+                      No conversation was recorded for this call.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </>
   )

@@ -298,7 +298,7 @@ test("call navigation preserves drafts and crosses page boundaries with retry", 
   const next = panel.getByRole("button", { name: "Next call", exact: true })
   await expect(previous).toBeDisabled()
   await expect(panel.getByText("Call 1 of 2+", { exact: true })).toBeVisible()
-  const transcript = panel.locator('[data-slot="message-scroller-viewport"]')
+  const transcript = panel.getByLabel("Call transcript", { exact: true })
   await expect(transcript).toBeVisible()
   await transcript.evaluate(element => { element.scrollTop = element.scrollHeight })
   await expect(panel.getByRole("button", { name: "Flag an issue", exact: true })).toBeInViewport()
@@ -319,7 +319,7 @@ test("call navigation preserves drafts and crosses page boundaries with retry", 
   await expect(
     panel.getByRole("textbox", { name: "What went wrong?" }),
   ).toHaveValue("Keep this unfinished note for the first call.")
-  const scroll = panel.locator('[data-slot="message-scroller-viewport"]')
+  const scroll = panel.getByLabel("Call transcript", { exact: true })
   await scroll.evaluate((element) => {
     element.scrollTop = element.scrollHeight
   })
