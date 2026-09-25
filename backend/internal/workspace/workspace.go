@@ -148,7 +148,7 @@ func (m *Module) QueryEngagements(
 			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 			WHERE call.practice_id = $1
 				AND call.location_id = ANY($2::uuid[])
-				AND COALESCE(handoff.phone, call.destination_phone) = $3
+				AND call.id IN (`+phoneCallIDsSQL+`)
 			UNION ALL
 			SELECT
 				task.location_id,
@@ -223,9 +223,8 @@ func (m *Module) QueryEngagements(
 			UNION
 			SELECT call.location_id
 			FROM human_calling_calls call
-			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 			WHERE call.practice_id = $1
-				AND COALESCE(handoff.phone, call.destination_phone) = $3
+				AND call.id IN (`+phoneCallIDsSQL+`)
 			UNION
 			SELECT location_id
 			FROM work_tasks
