@@ -162,7 +162,7 @@ func (m *Module) ReadTask(
 	if err != nil {
 		return work.Task{}, fmt.Errorf("read Task: %w", err)
 	}
-	if err := loadTaskInteractions(ctx, tx, &task); err != nil {
+	if err := work.LoadTaskInteractions(ctx, tx, &task); err != nil {
 		return work.Task{}, err
 	}
 	task.RelatedInteractionCount = len(task.Interactions)
@@ -546,35 +546,6 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 		}
 	}
 	return task, nil
-}
-
-func loadTaskInteractions(ctx context.Context, tx pgx.Tx, task *work.Task) error {
-	rows, err := tx.Query(ctx, `
-		SELECT
-			interaction.call_id::text,
-			interaction.occurred_at,
-			CASE WHEN voicemail.outcome = 'VOICEMAIL' THEN 'VOICEMAIL' ELSE 'CALL' END
-		FROM work_task_interactions interaction
-		LEFT JOIN human_calling_voicemails voicemail
-			ON voicemail.call_id = interaction.call_id
-		WHERE interaction.task_id = $1
-		ORDER BY interaction.occurred_at, interaction.call_id
-	`, task.ID)
-	if err != nil {
-		return fmt.Errorf("query related Task Interactions: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var interaction work.TaskInteraction
-		if err := rows.Scan(&interaction.CallID, &interaction.OccurredAt, &interaction.Type); err != nil {
-			return fmt.Errorf("scan related Task Interaction: %w", err)
-		}
-		task.Interactions = append(task.Interactions, interaction)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate related Task Interactions: %w", err)
-	}
-	return nil
 }
 
 func queryTaskFolderCounts(

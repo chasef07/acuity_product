@@ -129,7 +129,6 @@ func (m *Module) QueryEngagements(
 	}
 
 	var summary EngagementSummary
-	var found bool
 	err = tx.QueryRow(ctx, `
 		WITH evidence AS (
 			SELECT
@@ -178,7 +177,7 @@ func (m *Module) QueryEngagements(
 				ORDER BY occurred_at DESC
 				LIMIT 1
 			), ''),
-			COALESCE(max(occurred_at), '-infinity'::timestamptz),
+			max(occurred_at),
 			(
 				SELECT count(*)
 				FROM work_tasks task
@@ -195,25 +194,24 @@ func (m *Module) QueryEngagements(
 					AND thread.location_id = ANY($2::uuid[])
 					AND thread.external_phone = $3
 					AND unread.user_subject = $4
-			),
-			count(*) > 0
+			)
 		FROM evidence
+		HAVING count(*) > 0
 	`, command.PracticeID, locationIDs, phone, command.Identity.Subject).Scan(
 		&summary.Phone,
 		&summary.DisplayName,
 		&summary.LatestActivity,
 		&summary.OpenTaskCount,
 		&summary.Unread,
-		&found,
 	)
-	if err != nil {
-		return EngagementPage{}, fmt.Errorf("query Engagement summary: %w", err)
-	}
-	if !found {
+	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
 			return EngagementPage{}, fmt.Errorf("commit empty Engagement lookup: %w", err)
 		}
 		return EngagementPage{Items: []EngagementSummary{}}, nil
+	}
+	if err != nil {
+		return EngagementPage{}, fmt.Errorf("query Engagement summary: %w", err)
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT DISTINCT location.id::text, location.name

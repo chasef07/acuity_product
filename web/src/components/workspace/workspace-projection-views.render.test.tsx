@@ -13,6 +13,7 @@ import { clearAccessToken } from "../../lib/auth-client.ts"
 import type {
   AiInteractionDetail,
   ConversationTimelineItem,
+  Message,
   Task,
 } from "../../lib/api/generated/types.gen.ts"
 import type {
@@ -226,6 +227,49 @@ test("linked call history stays brief and opens its existing detail panels", asy
 
 })
 
+test("image download finishing after navigation does not allocate an object URL", async (t) => {
+  const view = attachmentHarness(t)
+  await view.render(0)
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+  assert.equal(view.attachmentRequests, 1)
+  await act(async () => view.root.unmount())
+  await act(async () => view.release())
+  assert.equal(view.createURL.mock.callCount(), 0)
+})
+
+test("loaded attachment previews revoke their object URL on navigation", async (t) => {
+  const view = attachmentHarness(t)
+  await view.render(0)
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+  await act(async () => view.release())
+  assert.equal(view.host.querySelector("img")?.getAttribute("src"), "blob:synthetic-image")
+  assert.equal(view.createURL.mock.callCount(), 1)
+  assert.equal(view.revokeURL.mock.callCount(), 0)
+  await act(async () => view.root.unmount())
+  assert.deepEqual(view.revokeURL.mock.calls.map((call) => call.arguments), [["blob:synthetic-image"]])
+})
+
+function attachmentHarness(t: TestContext) {
+  const view = conversationHarness(t)
+  let release!: () => void
+  view.attachmentGate = new Promise<void>((resolve) => { release = resolve })
+  view.items = [{ type: "MESSAGE", id: message.id, occurredAt: timestamp, message }]
+  t.after(release)
+  return Object.assign(view, {
+    release,
+    createURL: t.mock.method(URL, "createObjectURL", () => "blob:synthetic-image"),
+    revokeURL: t.mock.method(URL, "revokeObjectURL", () => {}),
+  })
+}
+
+const timestamp = "2026-09-25T12:00:00Z"
+const message: Message = {
+  id: "message-1", direction: "INBOUND", body: "Synthetic attachment", sender: "+15551234567", destination: "+15557654321", delivery: "Delivered", version: 1,
+  createdAt: timestamp, updatedAt: timestamp,
+  thread: { id: "thread-1", practiceId: "practice-1", locationId: "location-1", locationName: "Test location", officePhone: "+15557654321", externalPhone: "+15551234567", outboundBlocked: false, createdAt: timestamp, updatedAt: timestamp },
+  attachment: { id: "attachment-1", direction: "INBOUND", state: "Stored", fileName: "synthetic.png", contentType: "image/png", byteSize: 15, createdAt: timestamp, updatedAt: timestamp },
+}
+
 function conversationHarness(t: TestContext) {
   const dom = installDOM()
   const host = document.createElement("div")
@@ -236,7 +280,10 @@ function conversationHarness(t: TestContext) {
   clearAccessToken()
   const conversation = {
     host,
+    root,
     render,
+    attachmentRequests: 0,
+    attachmentGate: undefined as Promise<void> | undefined,
     timelineStatus: 200,
     timelineRequests: 0,
     tokenStatus: 200,
@@ -258,6 +305,11 @@ function conversationHarness(t: TestContext) {
         { token: "synthetic-token" },
         { status: conversation.tokenStatus },
       )
+    }
+    if (url.includes("/attachments/")) {
+      conversation.attachmentRequests++
+      await conversation.attachmentGate
+      return new Response(new Blob(["synthetic image"], { type: "image/png" }), { headers: { "Content-Type": "image/png" } })
     }
     if (url.includes("/v1/tasks/") && url.endsWith("/complete")) {
       const body = await (input as Request).json()

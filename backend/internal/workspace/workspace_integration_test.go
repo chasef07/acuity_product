@@ -110,6 +110,30 @@ func TestQueueReadsProjectConversationAndUnreadInOneAuthorizedFlow(t *testing.T)
 	}
 
 	reads := workspace.New(pool, accessModule)
+	engagements, err := reads.QueryEngagements(context.Background(), workspace.QueryEngagementsCommand{
+		Identity: identity, PracticeID: task.PracticeID, Phone: task.Phone,
+	})
+	if err != nil {
+		t.Fatalf("query Engagement with evidence: %v", err)
+	}
+	if len(engagements.Items) != 1 {
+		t.Fatalf("Engagement page = %#v, want one item", engagements)
+	}
+	engagement := engagements.Items[0]
+	if engagement.Phone != task.Phone || engagement.DisplayName != task.CallerName ||
+		!engagement.LatestActivity.Equal(now) || engagement.OpenTaskCount != 1 || !engagement.Unread ||
+		len(engagement.Locations) != 1 || engagement.Locations[0].ID != task.LocationID {
+		t.Fatalf("Engagement summary = %#v", engagement)
+	}
+	empty, err := reads.QueryEngagements(context.Background(), workspace.QueryEngagementsCommand{
+		Identity: identity, PracticeID: task.PracticeID, Phone: "+17275550198",
+	})
+	if err != nil {
+		t.Fatalf("query Engagement without evidence: %v", err)
+	}
+	if empty.Items == nil || len(empty.Items) != 0 {
+		t.Fatalf("empty Engagement page = %#v, want non-nil empty items", empty)
+	}
 	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity: identity, PracticeID: task.PracticeID,
 	})
