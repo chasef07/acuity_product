@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.20.1](https://github.com/chasef07/acuity_product/compare/v1.20.0...v1.20.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **analytics:** correct costs, conversion, and daily trends ([#367](https://github.com/chasef07/acuity_product/issues/367)) ([e2f92f5](https://github.com/chasef07/acuity_product/commit/e2f92f55808564e50e08e87a98fd0e9c09d8d319))
+
+
+### Performance Improvements
+
+* **workspace:** optimize indexed phone history lookups ([#368](https://github.com/chasef07/acuity_product/issues/368)) ([757353c](https://github.com/chasef07/acuity_product/commit/757353c70dd7d9531b274e3b96fe913cdd6978c9))
+
 ## [1.20.0](https://github.com/chasef07/acuity_product/compare/v1.19.3...v1.20.0) (2026-09-25)
 
 
