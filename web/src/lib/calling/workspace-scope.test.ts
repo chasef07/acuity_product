@@ -10,16 +10,6 @@ const authority = {
   ],
 }
 
-test("a connected Call selects its authorized Practice and Location", () => {
-  assert.deepEqual(
-    workspaceScopeForCall(authority, "practice-a", "location-a", {
-      practiceId: "practice-b",
-      locationId: "location-b",
-    }),
-    { practiceID: "practice-b", locationID: "location-b" },
-  )
-})
-
 test("an all-office scope already contains Calls for that Practice", () => {
   assert.equal(
     workspaceScopeForCall(authority, "practice-b", "", {

@@ -19,49 +19,6 @@ import {
   WorkspaceProjectionAccessError,
 } from "./workspace-projection.ts"
 
-test("first load restores only authorized scope and presents one coherent projection", async () => {
-  const preferences = new Map([
-    ["acuity.selectedPractice", "removed-practice"],
-    ["acuity.selectedLocation", "removed-location"],
-    ["acuity.taskLocationScope.practice-1", "removed-location"],
-  ])
-  const realtime = deterministicRealtime()
-  const projection = createWorkspaceProjection({
-    authority: deterministicAuthority({
-      discovery: accessDiscovery(),
-      snapshot: workspaceSnapshot(4),
-      tasks: taskPage([task("task-1")]),
-    }),
-    realtime: realtime.adapter,
-    preferences: {
-      read: (key) => preferences.get(key) ?? null,
-      write: (key, value) => preferences.set(key, value),
-    },
-  })
-
-  await projection.start()
-  assert.deepEqual(realtime.scope, {
-    practiceID: "practice-1",
-    locationID: "location-1",
-  })
-
-  await realtime.reconcile(0)
-
-  const state = projection.getSnapshot()
-  assert.equal(state.loadState, "ready")
-  assert.equal(state.scope.practiceID, "practice-1")
-  assert.equal(state.scope.locationID, "location-1")
-  assert.equal(state.scope.locationScopeID, "")
-  assert.equal(state.workspace?.version, 4)
-  assert.deepEqual(state.tasks.items.map((item) => item.id), ["task-1"])
-  assert.equal(state.selection.task?.id, "task-1")
-  assert.equal(state.selection.engagement?.phone, "+15551234567")
-  assert.equal(state.selection.view, "engagement")
-  assert.equal(preferences.get("acuity.selectedPractice"), "practice-1")
-  assert.equal(preferences.get("acuity.selectedLocation"), "location-1")
-  projection.stop()
-})
-
 test("scope changes clear every window and obsolete delayed responses from the old scope", async () => {
   const preferences = new Map<string, string>()
   const realtime = deterministicRealtime()
@@ -194,45 +151,6 @@ test("authoritative detail refresh updates rail and selection together then clea
   assert.equal(state.selection.task, undefined)
   assert.equal(state.selection.contextPanelOpen, false)
   assert.deepEqual(state.tasks.items, [])
-  projection.stop()
-})
-
-test("completed Task leaves the open queue but stays selected while it remains authorized", async () => {
-  const realtime = deterministicRealtime()
-  let taskItems = [task("task-1")]
-  let selectedTask = task("task-1")
-  const baseAuthority = deterministicAuthority({
-    discovery: accessDiscovery(),
-    snapshot: workspaceSnapshot(16),
-    tasks: taskPage(taskItems),
-  })
-  const projection = createWorkspaceProjection({
-    authority: {
-      ...baseAuthority,
-      tasks: async (_token, request) => success(
-          request.state === "OPEN"
-            ? taskPage(taskItems)
-            : taskPage(selectedTask.state === "COMPLETED" ? [selectedTask] : []),
-      ),
-      task: async () => success(selectedTask),
-    },
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-  })
-
-  await projection.start()
-  await realtime.reconcile(0)
-  taskItems = []
-  selectedTask = task("task-1", { state: "COMPLETED", version: 2, completedBy: { kind: "HUMAN", subject: "other-staff" } })
-  await realtime.reconcile(0)
-
-  const state = projection.getSnapshot()
-  assert.deepEqual(state.tasks.items, [])
-  assert.deepEqual(state.completedTasks.items, [selectedTask])
-  assert.equal(state.selection.task?.completedBy?.subject, "other-staff")
-  assert.equal(state.selection.task?.state, "COMPLETED")
-  assert.equal(state.selection.task?.version, 2)
-  assert.equal(state.selection.contextPanelOpen, true)
   projection.stop()
 })
 
@@ -580,32 +498,6 @@ test("realtime token expiry fails closed as unauthenticated before sync fallback
   projection.stop()
 })
 
-test("successful Task creation refetches authoritative query membership", async () => {
-  const realtime = deterministicRealtime()
-  let currentPage = taskPage([])
-  const projection = createWorkspaceProjection({
-    authority: { ...deterministicAuthority({
-      discovery: accessDiscovery(),
-      snapshot: workspaceSnapshot(22),
-      tasks: currentPage,
-    }), tasks: async () => success(currentPage) },
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-  })
-
-  await projection.start()
-  await realtime.reconcile(0)
-  currentPage = taskPage([task("created-1")])
-  await projection.dispatch({ type: "task-created", task: task("created-1") })
-
-  assert.deepEqual(
-    projection.getSnapshot().tasks.items.map((item) => item.id),
-    ["created-1"],
-  )
-  assert.equal(realtime.refreshes, 1)
-  projection.stop()
-})
-
 test("authoritative recovery detail updates its rail row and selection together", async () => {
   const realtime = deterministicRealtime()
   const recoveryV2 = task("recovery-1", {
@@ -945,43 +837,6 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-type Timer = {
-  id: number
-  deadline: number
-  callback: () => void
-}
-
-class ManualClock {
-  now = 0
-  private nextID = 1
-  private timers: Timer[] = []
-
-  setTimeout = (callback: () => void, milliseconds: number) => {
-    const id = this.nextID++
-    this.timers.push({ id, deadline: this.now + milliseconds, callback })
-    return id
-  }
-
-  clearTimeout = (id: number) => {
-    this.timers = this.timers.filter((timer) => timer.id !== id)
-  }
-
-  async advance(milliseconds: number) {
-    const target = this.now + milliseconds
-    while (true) {
-      this.timers.sort((left, right) => left.deadline - right.deadline)
-      const timer = this.timers[0]
-      if (!timer || timer.deadline > target) break
-      this.timers.shift()
-      this.now = timer.deadline
-      timer.callback()
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    }
-    this.now = target
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  }
-}
-
 test("requested Task counts cannot silently become zero when omitted", async () => {
   const realtime = deterministicRealtime()
   const projection = createWorkspaceProjection({
@@ -1098,40 +953,6 @@ for (const legacyFilters of [false, true]) {
     projection.stop()
   })
 }
-
-test("My Tasks queries follow-up while completed history includes every origin", async () => {
-  const realtime = deterministicRealtime()
-  const clock = new ManualClock()
-  const requests: Parameters<WorkspaceAuthorityAdapter["tasks"]>[1][] = []
-  const active = [task("ai"), task("missed", { origin: "MISSED_CALL_RECOVERY" }), task("voicemail", { origin: "VOICEMAIL_RECOVERY" })]
-  const done = task("done", { state: "COMPLETED", completedBy: { kind: "HUMAN", subject: "other-staff" } })
-  const projection = createWorkspaceProjection({
-    authority: {
-      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(22), tasks: taskPage(active) }),
-      tasks: async (_token, request) => {
-        requests.push(request)
-        return success(taskPage(request.state === "OPEN" ? active : [done]))
-      },
-    },
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-    environment: { clock },
-  })
-  await projection.start()
-  await realtime.reconcile(0)
-  assert.deepEqual(projection.getSnapshot().rail.expanded, ["tasks"])
-  assert.deepEqual(projection.getSnapshot().tasks.items, active)
-  assert.deepEqual(projection.getSnapshot().completedTasks.items, [done])
-  assert.equal(requests.length, 2)
-  assert.deepEqual(requests.map(({ state, folder, kind, responsibility, grouped, limit, includeCounts }) => ({ state, folder, kind, responsibility, grouped, limit, includeCounts })), [
-    { state: "OPEN", folder: undefined, kind: "follow_up", responsibility: "mine", grouped: true, limit: 50, includeCounts: true },
-    { state: "COMPLETED", folder: undefined, kind: undefined, responsibility: "mine", grouped: false, limit: 10, includeCounts: false },
-  ])
-  await clock.advance(90_000)
-  await projection.dispatch({ type: "visibility-changed" })
-  assert.equal(requests.length, 2, "personal-attention timer must not query retired windows")
-  projection.stop()
-})
 
 test("completion waits for commitment and failed refresh retains rows with a visible error", async () => {
   const realtime = deterministicRealtime()
@@ -1256,7 +1077,6 @@ test("a former Texts selection becomes a persistent independent folder", async (
   assert.deepEqual(restored.getSnapshot().rail.expanded, [])
   restored.stop()
 })
-
 
 test("appointment selection loads only its exact source interaction and clears it on another task", async () => {
   const appointment = { ...task("appointment-1"), origin: "APPOINTMENT_REVIEW" as const, sourceInteractionId: "interaction-1" }

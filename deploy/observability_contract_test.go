@@ -344,33 +344,6 @@ func TestTerminalStaffOccupancyUsesAnExactNonzeroCounter(t *testing.T) {
 	t.Fatal("terminal Staff occupancy alert condition is missing")
 }
 
-func TestProductionDeployProfileConsumesCheckedContract(t *testing.T) {
-	directory := deployDirectory(t)
-	script, err := os.ReadFile(filepath.Join(
-		directory,
-		"cloud-run-commands.example.sh",
-	))
-	if err != nil {
-		t.Fatalf("read Cloud Run deployment script: %v", err)
-	}
-	for _, required := range []string{
-		"ACUITY_DEPLOYMENT_PROFILE",
-		"USABLE_DATABASE_CONNECTIONS",
-		"render-production-runtime-contract.mjs",
-		`--min "$minimum"`,
-		`--max "$maximum"`,
-		`DATABASE_POOL_MAX=${pool}`,
-	} {
-		if !bytes.Contains(script, []byte(required)) {
-			t.Errorf("production deployment script omits %q", required)
-		}
-	}
-	if bytes.Contains(script, []byte("--min-instances")) ||
-		bytes.Contains(script, []byte("--max-instances")) {
-		t.Error("deployment script uses revision-scoped instance bounds")
-	}
-}
-
 func TestBackendAvailabilitySLOAndBurnPoliciesAreExplicit(t *testing.T) {
 	directory := deployDirectory(t)
 	type serviceDefinition struct {

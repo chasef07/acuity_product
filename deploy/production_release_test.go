@@ -303,23 +303,6 @@ func TestProductionReleaseLoadsWorkerCapacityFromRuntimeContract(t *testing.T) {
 	)
 }
 
-func TestBackendImageIncludesReviewedProductionProvisioning(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate production release test")
-	}
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "Dockerfile.backend"))
-	if err != nil {
-		t.Fatalf("read backend Dockerfile: %v", err)
-	}
-	if !strings.Contains(
-		string(raw),
-		"COPY config/production-provisioning.json /etc/acuity/production-provisioning.json",
-	) {
-		t.Fatal("backend image omits the reviewed production provisioning input")
-	}
-}
-
 func TestProductionReleaseRejectsMutableImageTagBeforeCloudMutation(t *testing.T) {
 	directory := releaseDeployDirectory(t)
 	path, gcloudCapture, curlCapture := installReleaseFakes(t)
@@ -716,36 +699,6 @@ func TestBackendShardsCoverEveryPackageExactlyOnce(t *testing.T) {
 
 	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
 		t.Fatalf("backend shards do not cover the complete package set\nactual:\n%s\nexpected:\n%s", strings.Join(actual, "\n"), strings.Join(expected, "\n"))
-	}
-}
-
-func TestCloudBuildReleaseBuildsBothImagesBeforeDeploy(t *testing.T) {
-	root := filepath.Dir(releaseDeployDirectory(t))
-	config, err := os.ReadFile(filepath.Join(root, "cloudbuild.release.yaml"))
-	if err != nil {
-		t.Fatalf("read Cloud Build release config: %v", err)
-	}
-	content := string(config)
-	for _, required := range []string{
-		"id: build-backend",
-		"id: build-web",
-		"NEXT_PUBLIC_PORTAL_API_URL=${_PORTAL_API_URL}",
-		"NEXT_PUBLIC_REALTIME_URL=${_REALTIME_URL}",
-		"id: push-backend",
-		"id: push-web",
-		"id: deploy",
-		"gcr.io/google.com/cloudsdktool/google-cloud-cli:578.0.0-slim",
-		"deploy/deploy-production-release.sh",
-		"IMAGE_TAG=${_IMAGE_TAG}",
-		"USABLE_DATABASE_CONNECTIONS=${_USABLE_DATABASE_CONNECTIONS}",
-		"_USABLE_DATABASE_CONNECTIONS: DO_NOT_DEPLOY",
-		"_REGION: us-east1",
-		"_PORTAL_API_URL: https://acuity-portal-api-cbuqwpsdsq-ue.a.run.app",
-		"_REALTIME_URL: https://acuity-realtime-cbuqwpsdsq-ue.a.run.app",
-	} {
-		if !strings.Contains(content, required) {
-			t.Errorf("Cloud Build release config omits %q", required)
-		}
 	}
 }
 

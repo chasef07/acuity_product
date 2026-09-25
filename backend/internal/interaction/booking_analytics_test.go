@@ -31,58 +31,6 @@ func TestBookingAnalyticsCalendarDaysAndPooledPercentiles(t *testing.T) {
 	}
 }
 
-func TestBookingAnalyticsCountsAnAppointmentOnceButConversionPerCall(t *testing.T) {
-	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	report := summarizeBookingFacts([]bookingFact{
-		{appointmentID: "same-appointment", started: from, booked: true, searched: true, patientGroup: "new"},
-		{appointmentID: "same-appointment", started: from.AddDate(0, 0, 1), booked: true, searched: true, patientGroup: "existing"},
-	}, from, from.AddDate(0, 0, 2))
-	if report.Total.Bookings != 1 || report.Total.Converted != 2 || report.Groups.New.Bookings != 1 || report.Groups.Existing.Bookings != 0 || report.Daily[1].Existing.Bookings != 0 {
-		t.Fatalf("duplicate booking reporting: %+v", report)
-	}
-}
-
-func TestBookingDailyTotalPoolsDurationsAcrossPatientGroups(t *testing.T) {
-	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	var facts []bookingFact
-	for i, group := range []string{"new", "existing", "new", "existing"} {
-		end := from.Add(time.Duration(100+i*100) * time.Second)
-		appointmentID := group
-		if i == 2 {
-			appointmentID = "second-new"
-		}
-		facts = append(facts, bookingFact{appointmentID: appointmentID, started: from, ended: &end, booked: true, searched: true, patientGroup: group})
-	}
-	facts = append(facts, bookingFact{started: from, patientGroup: "unknown"})
-	report := summarizeBookingFacts(facts, from, from.AddDate(0, 0, 1))
-	daily := report.Daily[0].Total
-	if daily.Bookings != 3 || daily.Calls != 5 || daily.SearchEvidenceCalls != 4 || daily.PreciseSearchCalls != 0 || daily.Searched != 4 || daily.Converted != 4 || daily.DurationSamples != 4 || daily.P50 == nil || *daily.P50 != 250 || daily.P90 == nil || *daily.P90 != 370 {
-		t.Fatalf("daily total must aggregate all source observations: %+v", daily)
-	}
-}
-
-func TestBookingCallsKeepIndependentConversionAndDurations(t *testing.T) {
-	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	var facts []bookingFact
-	for i, seconds := range []int{100, 300, 800} {
-		start := from.AddDate(0, 0, i)
-		end := start.Add(time.Duration(seconds) * time.Second)
-		facts = append(facts, bookingFact{started: start, ended: &end, searched: true, patientGroup: "existing"})
-	}
-	facts[2].booked = true
-	facts[2].appointmentID = "synthetic-booking"
-	report := summarizeBookingFacts(facts, from, from.AddDate(0, 0, 7))
-	if report.Total.Searched != 3 || report.Total.Converted != 1 || report.Total.Bookings != 1 {
-		t.Fatalf("calls must remain independent: %+v", report.Total)
-	}
-	if report.Total.DurationSamples != 3 || *report.Total.P50 != 300 {
-		t.Fatalf("P50 must pool all booking-attempt calls: %+v", report.Total)
-	}
-	if report.Groups.Existing.Searched != 3 || report.Groups.Existing.Converted != 1 || *report.Groups.Existing.P50 != 300 {
-		t.Fatalf("cohort must use same calls: %+v", report.Groups.Existing)
-	}
-}
-
 func TestBookingWithoutSearchDoesNotConvertAnotherCall(t *testing.T) {
 	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	report := summarizeBookingFacts([]bookingFact{

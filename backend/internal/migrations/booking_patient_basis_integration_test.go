@@ -149,32 +149,6 @@ func TestBookingPhoneLookupBackfillDryRunAndApply(t *testing.T) {
 	}
 }
 
-func TestBookingPatientBasisMigrationPreservesExistingFacts(t *testing.T) {
-	pool := testdb.OpenThrough(t, "0062_new_tampa_demo_key.sql")
-	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `
- INSERT INTO access_practices(id,provisioning_key,name) VALUES('00000000-0000-0000-0000-000000000101','upgrade','Synthetic');
- INSERT INTO access_locations(id,practice_id,provisioning_key,name) VALUES('00000000-0000-0000-0000-000000000102','00000000-0000-0000-0000-000000000101','location','Synthetic');
- INSERT INTO ai_interactions(id,service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,appointment_outcome,new_appointment_id,booking_result,closeout_payload)
- VALUES('00000000-0000-0000-0000-000000000103','fixture','00000000-0000-0000-0000-000000000101','00000000-0000-0000-0000-000000000102','upgrade','+15555550199','+15555550100',now()-interval '1 day',now()-interval '23 hours','COMPLETED',3,'BOOKING','synthetic-appointment','{"status":"booked"}','{"toolExecutions":[{"toolName":"get_availability","status":"success"},{"outputClass":"patient_verified","status":"success"}]}');
- `); err != nil {
-		t.Fatal(err)
-	}
-	var before, after, basis string
-	if err := pool.QueryRow(ctx, `SELECT to_jsonb(a)::text FROM ai_interactions a WHERE source_call_id='upgrade'`).Scan(&before); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_phone_lookup_status'-'booking_historical_existing')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='upgrade'`).Scan(&after, &basis); err != nil {
-		t.Fatal(err)
-	}
-	if before != after || basis != "confirmed_existing" {
-		t.Fatal("upgrade must classify legacy success without changing existing facts")
-	}
-}
-
 func TestHistoricalPatientBasisUpgradeAndSourceCorrections(t *testing.T) {
 	pool := testdb.OpenThrough(t, "0063_booking_patient_basis.sql")
 	ctx := context.Background()

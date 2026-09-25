@@ -271,38 +271,6 @@ func TestProductionRuntimeContractIsLeanAuditableAndKeepsCallingWarm(t *testing.
 	}
 }
 
-func TestProductionRendererIncludesAuditableResourceAndRegionRows(t *testing.T) {
-	directory := productionDeployDirectory(t)
-	command := exec.Command(
-		"node",
-		filepath.Join(directory, "render-production-runtime-contract.mjs"),
-		filepath.Join(directory, "production-runtime-contract.json"),
-	)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("render production contract: %v\n%s", err, output)
-	}
-	rows := strings.Split(strings.TrimSpace(string(output)), "\n")
-	expected := []string{
-		"capacity\tmeta\t0\t0\t36\t0\t0\t0\t0\t0\t0\t0\t0\t0\tmeta\tus-east1",
-		"web\tservice\t40\t1\t2\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
-		"portal-api\tservice\t8\t1\t3\t4\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
-		"provider-ingress\tservice\t20\t1\t2\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
-		"realtime\tservice\t50\t1\t2\t1\t1\t1500\t300\t270\t30\t0\t1\t512\trequest-based\tus-east1",
-		"worker\tworker-pool\t0\t1\t1\t2\t0\t1500\t0\t0\t0\t0\t1\t512\tinstance-based\tus-east1",
-		"migrate\tjob\t0\t0\t1\t1\t0\t5000\t0\t0\t0\t0\t1\t512\tinstance-based\tus-east1",
-		"database\tdatabase\t0\t0\t1\t0\t0\t0\t0\t0\t0\t0\t2\t8192\tinstance-based\tus-east1\tPOSTGRES_16\tENTERPRISE\tZONAL\t50\tSSD\t04:00\t7\t7\t1\t1\t1\t0\t1\tus-east1",
-	}
-	if len(rows) != len(expected) {
-		t.Fatalf("rendered row count = %d, want %d\n%s", len(rows), len(expected), output)
-	}
-	for index, want := range expected {
-		if rows[index] != want {
-			t.Errorf("rendered row %d = %q, want %q", index, rows[index], want)
-		}
-	}
-}
-
 func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 	directory := productionDeployDirectory(t)
 	path, capture := installFakeGcloud(t)

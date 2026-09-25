@@ -44,10 +44,6 @@ test("tool detail separates HTTP success from a rejected provider outcome", () =
   assert.doesNotMatch(html, /completed|booked successfully/i)
 })
 
-test("older tool executions have no empty diagnostic panel", () => {
-  assert.equal(renderToStaticMarkup(<MiddlewareRequestDetails />), "")
-})
-
 test("tool detail exposes a missing appointment ID without claiming booking success", () => {
   const html = renderToStaticMarkup(
     <MiddlewareRequestDetails

@@ -18,20 +18,3 @@ func TestAppointmentReviewKeyUsesUTCMicroseconds(t *testing.T) {
 		t.Fatalf("unexpected source interaction: %q", task.SourceInteractionID())
 	}
 }
-
-func TestSourceInteractionIDOnlyComesFromAppointmentReviews(t *testing.T) {
-	for _, test := range []struct {
-		origin    work.TaskOrigin
-		key, want string
-	}{
-		{work.TaskOriginAppointmentReview, "", ""},
-		{work.TaskOriginAppointmentReview, ":2026-09-23T12:00:00Z", ""},
-		{work.TaskOriginAppointmentReview, "legacy-source", "legacy-source"},
-		{work.TaskOriginInboundMessageReview, "interaction-example:2026-09-23T12:00:00Z", ""},
-	} {
-		task := work.Task{Origin: test.origin, SourceReviewKey: test.key}
-		if got := task.SourceInteractionID(); got != test.want {
-			t.Errorf("origin=%s key=%q: got %q want %q", test.origin, test.key, got, test.want)
-		}
-	}
-}

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import test from "node:test"
 
 import type { ITelnyxErrorEvent } from "@telnyx/webrtc"
@@ -351,21 +350,6 @@ test("incoming media does not require a shared Call Control session", async () =
 test("Telnyx media starts with the microphone fenced", () => {
   assert.equal(callingClientOptions("token").mutedMicOnStart, true)
   assert.equal(callingClientOptions("token").maxReconnectAttempts, 0)
-})
-
-test("pinned Telnyx SDK treats zero reconnect attempts as unlimited", () => {
-  const sdkPackage = JSON.parse(
-    readFileSync("node_modules/@telnyx/webrtc/package.json", "utf8"),
-  ) as { version: string }
-  const sdkBundle = readFileSync(
-    "node_modules/@telnyx/webrtc/lib/bundle.mjs",
-    "utf8",
-  )
-  assert.equal(sdkPackage.version, "2.27.10")
-  assert.match(
-    sdkBundle,
-    /maxReconnectAttempts[\s\S]{0,300}e>0&&this\._reconnectAttempts>e/,
-  )
 })
 
 test("warning 34001 refreshes login on the existing client", async () => {

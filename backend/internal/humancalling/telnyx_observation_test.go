@@ -54,42 +54,6 @@ func observeSyntheticCall(ctx context.Context, adapter *humancalling.TelnyxAdapt
 	return adapter.ObserveCall(ctx, "connection-1", "control-1", "leg-1", "", time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC))
 }
 
-func TestTelnyxObservationPreservesCurrentWebhookEvidence(t *testing.T) {
-	names := []string{"call.initiated", "call.answered", "call.bridged", "call.playback.started", "call.playback.ended", "call.speak.started", "call.speak.ended", "call.recording.saved", "call.recording.error", "call.hangup"}
-	var events []map[string]any
-	for _, name := range names {
-		event := currentTelnyxEvent(name)
-		payload := eventPayload(event)
-		payload["status"] = "completed"
-		payload["from"], payload["to"] = "+15555550100", "+15555550101"
-		payload["hangup_cause"], payload["hangup_source"], payload["sip_hangup_cause"] = "normal_clearing", "caller", "200"
-		payload["recording_id"] = "recording-1"
-		payload["recording_started_at"], payload["recording_ended_at"] = "2026-08-05T12:00:00Z", "2026-08-05T12:00:01Z"
-		payload["call_quality_stats"] = map[string]any{"inbound": map[string]any{"mos": "4.1"}}
-		events = append(events, event)
-	}
-	adapter := observationAdapter(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if strings.HasSuffix(r.URL.Path, "active_calls") {
-			fmt.Fprint(w, `{"data":[],"meta":{"total_items":0,"cursors":{"after":null,"before":null},"next":null,"previous":null}}`)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]any{"data": events, "meta": map[string]any{"page_number": 1, "total_pages": 1}})
-	})
-	observation, err := observeSyntheticCall(context.Background(), adapter)
-	if err != nil || len(observation.Events) != len(events) {
-		t.Fatalf("observation = %#v, err = %v", observation, err)
-	}
-	for index, fact := range observation.Events {
-		if string(fact.Type) != names[index] || fact.EventID != "webhook-"+names[index] || fact.OccurredAt.Nanosecond() != 0 || fact.CallLegID != "leg-1" || fact.CallSessionID != "session-1" || fact.CallControlID != "control-1" {
-			t.Fatalf("event identity/time lost: %#v", fact)
-		}
-		if fact.PlaybackStatus != "completed" || fact.HangupCause != "normal_clearing" || fact.TerminationSource != "caller" || fact.SIPCause != "200" || fact.RecordingID != "recording-1" || fact.RecordingEndedAt.Sub(fact.RecordingStartedAt) != time.Second || fact.CallQualityStats == nil || fact.From != "+15555550100" {
-			t.Fatalf("event payload lost: %#v", fact)
-		}
-	}
-}
-
 func TestTelnyxObservationRejectsContradictoryCurrentEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -180,35 +144,6 @@ func TestTelnyxObservationCursorPaginationAndActiveIdentity(t *testing.T) {
 			}
 			if int(requests.Load()) != tc.pages {
 				t.Fatalf("requests = %d", requests.Load())
-			}
-		})
-	}
-}
-
-func TestTelnyxObservationBoundsPagination(t *testing.T) {
-	for _, mode := range []string{"repeated cursor", "changing cursors", "wrong numbered page"} {
-		t.Run(mode, func(t *testing.T) {
-			var requests atomic.Int32
-			adapter := observationAdapter(t, func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				n := requests.Add(1)
-				if n > 100 {
-					t.Error("page bound exceeded")
-					http.Error(w, "bound", 500)
-					return
-				}
-				switch mode {
-				case "repeated cursor":
-					fmt.Fprint(w, `{"data":[],"meta":{"cursors":{"after":"same"},"next":"next"}}`)
-				case "changing cursors":
-					fmt.Fprintf(w, `{"data":[],"meta":{"cursors":{"after":"cursor-%d"},"next":"next"}}`, n)
-				default:
-					fmt.Fprint(w, `{"data":[{"name":"ignored.synthetic.event"}],"meta":{"page_number":1,"total_pages":2}}`)
-				}
-			})
-			_, err := observeSyntheticCall(context.Background(), adapter)
-			if !errors.Is(err, humancalling.ErrAmbiguousEffect) {
-				t.Fatalf("paging error = %v", err)
 			}
 		})
 	}

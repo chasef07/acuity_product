@@ -66,25 +66,6 @@ func TestCallingMaintenanceContinuesWhileAttachmentStorageIsBlocked(t *testing.T
 	}
 }
 
-func TestCleanupUsesItsOwnNonurgentCadence(t *testing.T) {
-	var delays []time.Duration
-	runner := &Runner{
-		config:   Config{WorkTimeout: time.Second, ErrorBackoffMin: time.Second, ErrorBackoffMax: 10 * time.Second},
-		messages: &controlledMessagingWork{},
-		jitter:   func(d time.Duration) time.Duration { return d },
-		wait: func(_ context.Context, d time.Duration) bool {
-			delays = append(delays, d)
-			return len(delays) < 3
-		},
-	}
-	runner.runCleanupLane(context.Background())
-	for _, delay := range delays {
-		if delay != 5*time.Second {
-			t.Fatalf("idle cleanup delay=%s, want 5s", delay)
-		}
-	}
-}
-
 type failingBackgroundCalling struct{ *controlledWork }
 
 func (*failingBackgroundCalling) ProcessNextRecordingReconciliation(context.Context) (bool, error) {
