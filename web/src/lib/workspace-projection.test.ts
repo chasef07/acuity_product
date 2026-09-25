@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { createWorkspaceSync } from "./workspace-sync/workspace-sync.ts"
+
 import type {
   AccessDiscovery,
   AiInteractionDetail,
@@ -1174,38 +1176,81 @@ for (const obsolete of ["scope", "abort", "stop"] as const) {
   })
 }
 
-test("obsolete token expiry cannot clear a newly authorized scope", async () => {
-  const realtime = deterministicRealtime()
-  const release = deferred<void>()
-  let delay = false
-  const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(20), tasks: taskPage([]) })
-  const projection = createWorkspaceProjection({
-    authority: {
-      ...base,
-      authenticate: async () => {
-        if (delay) {
-          await release.promise
-          return { status: "unauthenticated" }
-        }
-        return base.authenticate()
+for (const outcome of ["authenticated", "unauthenticated"] as const) {
+  test(`obsolete ${outcome} token cannot clear a same-Location scope change`, async (t) => {
+    const release = deferred<void>()
+    const authenticating = deferred<void>()
+    let delay = false
+    let connections = 0
+    let workspaceReads = 0
+    const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(20), tasks: taskPage([]) })
+    const projection = createWorkspaceProjection({
+      authority: {
+        ...base,
+        workspace: async (...args) => {
+          workspaceReads += 1
+          return base.workspace(...args)
+        },
+        authenticate: async () => {
+          if (delay) {
+            delay = false
+            authenticating.resolve()
+            await release.promise
+            return outcome === "authenticated"
+              ? { status: "authenticated", token: "token" }
+              : { status: "unauthenticated" }
+          }
+          return base.authenticate()
+        },
       },
-    },
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
+      realtime: {
+        connect: (callbacks) => createWorkspaceSync({
+          ...callbacks,
+          realtimeURL: "https://realtime.example",
+          fetch: async () => {
+            connections += 1
+            return new Response(new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode(
+                  'event: ready\ndata: {"practiceId":"practice-1","version":20}\n\n',
+                ))
+              },
+            }))
+          },
+        }),
+      },
+      preferences: memoryPreferences(),
+    })
+    t.after(() => projection.stop())
+    await projection.start()
+    await waitUntil(() => projection.getSnapshot().loadState === "ready")
+    const previous = projection.getSnapshot().scope
+    delay = true
+    await projection.dispatch({ type: "retry" })
+    await authenticating.promise
+    const locationScopeID = previous.locationScopeID ? "" : previous.locationID
+    await projection.dispatch({
+      type: "select-scope",
+      practiceID: previous.practiceID,
+      locationScopeID,
+    })
+    assert.equal(projection.getSnapshot().scope.locationID, previous.locationID)
+    release.resolve()
+    await waitUntil(() => projection.getSnapshot().loadState === "unauthorized" || workspaceReads === 2)
+    assert.equal(projection.getSnapshot().loadState, "ready")
+    assert.ok(projection.getSnapshot().discovery)
+    assert.equal(projection.getSnapshot().scope.locationScopeID, locationScopeID)
+    assert.equal(connections, 1)
   })
-  await projection.start()
-  await realtime.reconcile(0)
-  delay = true
-  const pending = realtime.getToken()
-  await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
-  await realtime.reconcile(0)
-  const authorized = projection.getSnapshot()
-  release.resolve()
-  assert.equal(await pending, undefined)
-  assert.equal(projection.getSnapshot(), authorized)
-  assert.equal(projection.getSnapshot().loadState, "ready")
-  projection.stop()
-})
+}
+
+async function waitUntil(predicate: () => boolean) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.fail("workspace did not reach the expected state")
+}
 
 
 test("failed retries without a workspace snapshot preserve unavailable until recovery", async () => {

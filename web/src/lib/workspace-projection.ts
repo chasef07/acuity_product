@@ -310,7 +310,9 @@ export function createWorkspaceProjection({
   async function getToken() {
     const generation = scopeGeneration
     const authentication = await authority.authenticate()
-    if (stopped || generation !== scopeGeneration) return undefined
+    if (stopped || generation !== scopeGeneration) {
+      throw new Error("workspace authentication request is obsolete")
+    }
     if (authentication.status === "authenticated") {
       return authentication.token
     }
