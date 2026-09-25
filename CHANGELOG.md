@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.20.0](https://github.com/chasef07/acuity_product/compare/v1.19.3...v1.20.0) (2026-09-25)
+
+
+### Features
+
+* **workspace:** add agent call review and refine staff workflows ([#349](https://github.com/chasef07/acuity_product/issues/349)) ([71183c0](https://github.com/chasef07/acuity_product/commit/71183c07c6c703d920392257713799f3d88f7802))
+
+
+### Bug Fixes
+
+* **workspace:** harden refresh, history, and attachment handling ([#365](https://github.com/chasef07/acuity_product/issues/365)) ([bb6a577](https://github.com/chasef07/acuity_product/commit/bb6a577407e1ac7252ad180b261498109dc45562))
+
 ## [1.19.3](https://github.com/chasef07/acuity_product/compare/v1.19.2...v1.19.3) (2026-09-25)
 
 
