@@ -201,10 +201,12 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	usage := `[{"type":"llm_usage","provider":"livekit","model":"google/gemma-4-31b-it","input_tokens":1000000,"input_cached_tokens":250000,"output_tokens":100000},{"type":"stt_usage","provider":"livekit","model":"assemblyai/universal-3-5-pro","audio_duration":120},{"type":"tts_usage","provider":"rime","model":"coda","characters_count":10000}]`
-	// Native LiveKit reports also contain duplicate stream usage from the
-	// fallback wrapper. It must neither add cost nor suppress the averages.
-	usage = strings.TrimSuffix(usage, "]") + `,{"type":"llm_usage","provider":"unknown","model":"FallbackAdapter","input_tokens":1000000,"input_cached_tokens":250000,"output_tokens":100000}]`
+	// Use the current recorded voice/delegator usage contract. Legacy models
+	// remain unpriced rather than inheriting another model's rates.
+	usage := `[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-live-1","session_duration":120},{"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10000,"input_cached_tokens":2000,"input_cache_creation_tokens":1000,"output_tokens":500}]`
+	// $0.10 voice + $0.001095 delegator + $0.405 for 30 call minutes.
+	const pricedCallCost = 0.506095
+	const totalCost = pricedCallCost + 5*(0.01+0.0035)
 	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET transcript = jsonb_set(transcript, '{usage}', $2::jsonb) WHERE id=$1::uuid`, richID, usage); err != nil {
 		t.Fatal(err)
 	}
@@ -228,11 +230,12 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		var costs interaction.CostAnalytics
 		decode(t, response, &costs)
 		if costs.TotalCalls != 2 || costs.PricedCalls != 1 || costs.UnpricedUsage != 0 || costs.CostPerCallUSD == nil ||
-			math.Abs(*costs.CostPerCallUSD-1.39) > 1e-9 || costs.CostPerMinuteUSD == nil ||
-			math.Abs(*costs.CostPerMinuteUSD-(1.39/30)) > 1e-9 || math.Abs(costs.TotalCostUSD-1.4575) > 1e-9 {
+			math.Abs(*costs.CostPerCallUSD-pricedCallCost) > 1e-9 || costs.CostPerMinuteUSD == nil ||
+			math.Abs(*costs.CostPerMinuteUSD-(pricedCallCost/30)) > 1e-9 || math.Abs(costs.TotalCostUSD-totalCost) > 1e-9 {
 			t.Fatalf("scoped partial cost estimate: %+v", costs)
 		}
-		if costs.Items[0].Quantity != 750000 || costs.Items[1].Quantity != 250000 || costs.Items[3].Quantity != 2 {
+		if costs.Items[0].Quantity != 2 || costs.Items[1].Quantity != 7000 ||
+			costs.Items[2].Quantity != 2000 || costs.Items[3].Quantity != 1000 || costs.Items[4].Quantity != 500 {
 			t.Fatalf("native usage quantities: %+v", costs.Items)
 		}
 		var shares, daily float64
@@ -247,6 +250,22 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		if math.Abs(shares-100) > 1e-9 || math.Abs(daily-costs.TotalCostUSD) > 1e-9 {
 			t.Fatal("cost breakdown does not reconcile")
 		}
+	}
+	// Unknown usage must remain visible and exclude the affected call from
+	// fully priced averages without discarding its known component costs.
+	unknownUsage := strings.TrimSuffix(usage, "]") + `,{"type":"llm_usage","provider":"unknown","model":"UnsupportedModel","input_tokens":1000}]`
+	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET transcript=jsonb_set(transcript,'{usage}',$2::jsonb) WHERE id=$1::uuid`, richID, unknownUsage); err != nil {
+		t.Fatal(err)
+	}
+	unknownResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", "operator-token", costBody)
+	if unknownResponse.StatusCode != http.StatusOK {
+		t.Fatalf("unknown usage cost query = %d: %s", unknownResponse.StatusCode, readBody(t, unknownResponse))
+	}
+	var unknownCosts interaction.CostAnalytics
+	decode(t, unknownResponse, &unknownCosts)
+	if unknownCosts.PricedCalls != 0 || unknownCosts.UnpricedUsage != 1 || unknownCosts.CostPerCallUSD != nil ||
+		unknownCosts.CostPerMinuteUSD != nil || math.Abs(unknownCosts.TotalCostUSD-totalCost) > 1e-9 {
+		t.Fatalf("unknown usage was hidden or lost known costs: %+v", unknownCosts)
 	}
 	invalidCostBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "range": "7d", "timeZone": "Not/AZone"})
 	invalidCost := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", "operator-token", invalidCostBody)
@@ -510,7 +529,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	var largeCosts interaction.CostAnalytics
 	decode(t, largeCostResponse, &largeCosts)
 	t.Logf("cost HTTP read: %d calls with %d-byte reports in %s", largeCalls, len(largeReport), time.Since(started))
-	if largeCosts.TotalCalls != largeCalls+1 || largeCosts.PricedCalls != largeCalls || largeCosts.Items[0].Quantity != largeCalls*750000 {
+	if largeCosts.TotalCalls != largeCalls+1 || largeCosts.PricedCalls != largeCalls || largeCosts.Items[0].Quantity != largeCalls*2 {
 		t.Fatalf("large cost query lost usage: %+v", largeCosts)
 	}
 	// Correcting source usage must replace the derived estimate immediately.
@@ -523,7 +542,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	}
 	var corrected interaction.CostAnalytics
 	decode(t, correctedResponse, &corrected)
-	if corrected.PricedCalls != largeCalls-1 || corrected.Items[0].Quantity != (largeCalls-1)*750000 {
+	if corrected.PricedCalls != largeCalls-1 || corrected.Items[0].Quantity != (largeCalls-1)*2 {
 		t.Fatalf("cost query ignored corrected usage: %+v", corrected)
 	}
 }
