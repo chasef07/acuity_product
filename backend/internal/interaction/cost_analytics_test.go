@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestCostAnalyticsDoesNotPriceUnknownOrInvalidUsageAsGemma(t *testing.T) {
+func TestCostAnalyticsDoesNotPriceUnsupportedUsage(t *testing.T) {
 	started := time.Date(2026, 9, 3, 1, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name, raw string
@@ -65,9 +65,6 @@ func TestGPTLiveAndLunaRecordedCosts(t *testing.T) {
 	assertCostClose(t, report.TotalCostUSD, .104345)
 	assertCostClose(t, *report.CacheHitRate, 20)
 	assertCostClose(t, report.CacheSavingsUSD, .00018)
-	if costItemForID(report.Items, costLLMInput).CostUSD != nil {
-		t.Fatal("repriced historical model")
-	}
 }
 
 func TestGPTLiveCostsKeepUnknownUsageVisible(t *testing.T) {
@@ -98,7 +95,7 @@ func TestGPTLiveCostsKeepUnknownUsageVisible(t *testing.T) {
 	}
 }
 
-func TestCostAnalyticsMixedModelHistory(t *testing.T) {
+func TestCostAnalyticsLeavesLegacyUsageUnpriced(t *testing.T) {
 	started := time.Date(2026, 9, 25, 1, 0, 0, 0, time.UTC)
 	report := newCostAnalytics(started, started.Add(time.Hour), time.UTC)
 	for _, usage := range []string{
@@ -111,10 +108,10 @@ func TestCostAnalyticsMixedModelHistory(t *testing.T) {
 		report.addCall(started, started.Add(time.Minute), json.RawMessage(usage), time.UTC)
 	}
 	report.finalize()
-	if report.PricedCalls != 2 || report.UnpricedUsage != 0 {
+	if report.PricedCalls != 1 || report.UnpricedUsage != 3 {
 		t.Fatalf("mixed coverage lost: %+v", report)
 	}
-	assertCostClose(t, report.TotalCostUSD, .536)
-	assertCostClose(t, *report.CostPerCallUSD, .268)
-	assertCostClose(t, *report.CostPerMinuteUSD, .268)
+	assertCostClose(t, report.TotalCostUSD, .0785)
+	assertCostClose(t, *report.CostPerCallUSD, .065)
+	assertCostClose(t, *report.CostPerMinuteUSD, .065)
 }

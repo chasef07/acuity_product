@@ -63,11 +63,6 @@ type CostAnalytics struct {
 
 const (
 	costRateEffectiveDate = "2026-09-25"
-	costLLMInput          = "llm_input"
-	costLLMCached         = "llm_cached"
-	costLLMOutput         = "llm_output"
-	costSTT               = "stt"
-	costTTS               = "tts"
 	costMedia             = "media"
 	costTelephony         = "telephony"
 	costVoice             = "gpt_live"
@@ -79,11 +74,6 @@ const (
 
 func costItems() []CostItem {
 	return []CostItem{
-		{ID: costLLMInput, Label: "Gemma 4 31B IT · uncached input", Unit: "tokens", RateUSD: 0.40, RateQuantity: 1e6, RateUnit: "tokens"},
-		{ID: costLLMCached, Label: "Gemma 4 31B IT · cached input", Unit: "tokens", RateUSD: 0.20, RateQuantity: 1e6, RateUnit: "tokens"},
-		{ID: costLLMOutput, Label: "Gemma 4 31B IT · output", Unit: "tokens", RateUSD: 1.20, RateQuantity: 1e6, RateUnit: "tokens"},
-		{ID: costSTT, Label: "AssemblyAI · Universal 3.5 Pro", Unit: "minutes", RateUSD: 0.45, RateQuantity: 1, RateUnit: "hour"},
-		{ID: costTTS, Label: "Rime · Coda", Unit: "characters", RateUSD: 0.05, RateQuantity: 1000, RateUnit: "characters"},
 		{ID: costVoice, Label: "GPT Live 1 · voice", Unit: "minutes", RateUSD: 0.05, RateQuantity: 1, RateUnit: "minute"},
 		{ID: costLunaInput, Label: "GPT-6 Luna · uncached input", Unit: "tokens", RateUSD: 0.10, RateQuantity: 1e6, RateUnit: "tokens"},
 		{ID: costLunaCached, Label: "GPT-6 Luna · cached input", Unit: "tokens", RateUSD: 0.01, RateQuantity: 1e6, RateUnit: "tokens"},
@@ -192,7 +182,6 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 	var entries []map[string]any
 	_ = json.Unmarshal(raw, &entries)
 	unpricedUsage := 0
-	legacy, live := false, false
 	// Session reports aggregate requests. Only totals <=272K prove every
 	// request used short-context pricing; larger totals cannot establish a tier.
 	// Rates: https://developers.openai.com/api/docs/models/gpt-6-luna
@@ -211,21 +200,8 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 		model, _ := entry["model"].(string)
 		provider, model = costModelKey(provider), costModelKey(model)
 		openAI := provider == "openai" || provider == "api_openai_com"
-		if model == "gpt_live_1" || model == "gpt_6_luna" {
-			live = true
-		}
-		if model == "google/gemma_4_31b_it" || entry["type"] == "stt_usage" || entry["type"] == "tts_usage" {
-			legacy = true
-		}
 		switch entry["type"] {
 		case "llm_usage":
-			// LiveKit emits wrapper metrics as well as the underlying provider
-			// metrics. This is duplicated stream usage, not another billed model.
-			// Only provider rows establish known LLM costs below, so a report
-			// containing just the wrapper still has incomplete coverage.
-			if provider == "unknown" && model == "fallbackadapter" {
-				continue
-			}
 			if model == "gpt_live_1" {
 				seconds, valid := usageQuantity(entry, "session_duration")
 				_, present := entry["session_duration"]
@@ -253,45 +229,12 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 				known[costLunaInput], known[costLunaCached], known[costLunaWrite], known[costLunaOutput] = true, true, true, true
 				continue
 			}
-			if (provider != "livekit" && provider != "google") || model != "google/gemma_4_31b_it" || !a || !b || !c || cached > input {
-				unpricedUsage++
-				continue
-			}
-			quantities[costLLMInput] += input - cached
-			quantities[costLLMCached] += cached
-			quantities[costLLMOutput] += output
-			known[costLLMInput], known[costLLMCached], known[costLLMOutput] = true, true, true
-		case "stt_usage":
-			audio, valid := usageQuantity(entry, "audio_duration", "audio_duration_ms", "audioDurationMs")
-			if _, seconds := entry["audio_duration"]; seconds {
-				audio *= 1000
-			}
-			matchedModel := (provider == "livekit" && model == "assemblyai/universal_3_5_pro") ||
-				(provider == "assemblyai" && model == "universal_3_5_pro")
-			if !matchedModel || !valid {
-				unpricedUsage++
-				continue
-			}
-			quantities[costSTT] += audio / 60000
-			known[costSTT] = true
-		case "tts_usage":
-			characters, valid := usageQuantity(entry, "characters_count", "charactersCount")
-			matchedModel := (provider == "rime" && model == "coda") || (provider == "livekit" && model == "rime/coda")
-			if !matchedModel || !valid {
-				unpricedUsage++
-				continue
-			}
-			quantities[costTTS] += characters
-			known[costTTS] = true
+			unpricedUsage++
+		case "stt_usage", "tts_usage":
+			unpricedUsage++
 		}
 	}
-	complete := unpricedUsage == 0 && known[costMedia] && known[costTelephony]
-	if live {
-		complete = complete && known[costVoice] && known[costLunaInput]
-	}
-	if legacy || !live {
-		complete = complete && known[costLLMInput] && known[costSTT] && known[costTTS]
-	}
+	complete := unpricedUsage == 0 && known[costMedia] && known[costTelephony] && known[costVoice] && known[costLunaInput]
 	var callCost float64
 	for i := range report.Items {
 		item := &report.Items[i]
@@ -349,29 +292,17 @@ func (report *CostAnalytics) finalize() {
 			report.CostPerMinuteUSD = &perMinute
 		}
 	}
-	var input, cached float64
-	for _, pair := range [][2]string{{costLLMInput, costLLMCached}, {costLunaInput, costLunaCached}} {
-		inputItem, cachedItem := costItemForID(report.Items, pair[0]), costItemForID(report.Items, pair[1])
-		input += inputItem.Quantity + cachedItem.Quantity
-		cached += cachedItem.Quantity
-		report.CacheSavingsUSD += cachedItem.Quantity * (inputItem.unitRate() - cachedItem.unitRate())
-	}
-	input += costItemForID(report.Items, costLunaWrite).Quantity
+	inputItem, cachedItem := costItemForID(report.Items, costLunaInput), costItemForID(report.Items, costLunaCached)
+	input := inputItem.Quantity + cachedItem.Quantity + costItemForID(report.Items, costLunaWrite).Quantity
 	if input > 0 {
-		rate := cached / input * 100
+		rate := cachedItem.Quantity / input * 100
 		report.CacheHitRate = &rate
 	}
-}
-
-func (item CostItem) unitRate() float64 {
-	if item.RateUnit == "hour" {
-		return item.RateUSD / (item.RateQuantity * 60)
-	}
-	return item.RateUSD / item.RateQuantity
+	report.CacheSavingsUSD = inputItem.cost(cachedItem.Quantity) - cachedItem.cost(cachedItem.Quantity)
 }
 
 func (item CostItem) cost(quantity float64) float64 {
-	return quantity * item.unitRate()
+	return quantity * item.RateUSD / item.RateQuantity
 }
 
 func costItemForID(items []CostItem, id string) *CostItem {

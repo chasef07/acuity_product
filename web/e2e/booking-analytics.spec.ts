@@ -45,29 +45,31 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
         }
         toolItems.push({
           type: "function_call",
-          name: "get_availability",
+          name: "list_available_appointments",
           call_id: `availability-${i}`,
         })
         if (i !== 10) {
           toolItems.push({
             type: "function_call_output",
-            name: "get_availability",
+            name: "list_available_appointments",
             call_id: `availability-${i}`,
             is_error: i === 9,
+            output: i === 9 ? "blocked: Availability unavailable." : "success: Found eligible openings.",
           })
         }
         if (i === 0) {
           toolItems.push(
             {
               type: "function_call",
-              name: "get_availability",
+              name: "list_available_appointments",
               call_id: "availability-repeat",
             },
             {
               type: "function_call_output",
-              name: "get_availability",
+              name: "list_available_appointments",
               call_id: "availability-repeat",
               is_error: false,
+              output: "no_results: No openings in the searched window.",
             },
           )
         }

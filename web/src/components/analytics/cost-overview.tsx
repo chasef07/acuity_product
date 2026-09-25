@@ -207,7 +207,6 @@ export function CostOverview({
 function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
   const reducedMotion = useReducedMotion()
   const partial = report.pricedCalls < report.totalCalls
-  const items = report.items.filter((item) => item.calls > 0 || item.id === "gpt_live" || item.id.startsWith("luna_"))
   const summaries = [
     { label: "Average cost per call", value: dollars(report.costPerCallUsd) },
     {
@@ -348,7 +347,7 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {items.map((item) => (
+            {report.items.map((item) => (
               <TableRow key={item.id}>
                 <TableCell>
                   {item.label}
@@ -398,8 +397,7 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
           tier, so Luna usage for those calls is unpriced. Long-context rates per
           1M tokens are $0.20 input, $0.02 cached input, $0.25 cache writes, and
           $0.75 output. Missing usage is unknown, not free. LiveKit media and
-          Telnyx estimates use call duration. Historical models retain their
-          original rates. Estimates exclude tool charges, regional uplifts,
+          Telnyx estimates use call duration. Other models remain unpriced. Estimates exclude tool charges, regional uplifts,
           taxes, and credits.
         </p>
       </section>
