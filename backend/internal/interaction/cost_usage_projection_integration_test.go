@@ -30,6 +30,7 @@ func TestCostUsageProjectionPreservesPricingAndCorrections(t *testing.T) {
 	}
 	cases := []string{
 		`null`, `{}`, `[]`,
+		`[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-live-1","session_duration":91.5},{"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10000,"input_cached_tokens":2000,"input_cache_creation_tokens":1000,"output_tokens":500}]`,
 		`[null,4,"Synthetic invalid entry",[],{}]`,
 		`[{"type":"llm_usage","provider":"livekit","model":"google/gemma-4-31b-it","input_tokens":1000000,"input_cached_tokens":250000,"output_tokens":100000}, {"type":"stt_usage","provider":"livekit","model":"assemblyai/universal-3-5-pro","audio_duration":600}, {"type":"tts_usage","provider":"rime","model":"coda","characters_count":10000}]`,
 		`[{"type":"llm_usage","provider":"google","model":"google/gemma_4_31b_it","inputTokens":1000000,"inputCachedTokens":250000,"outputTokens":100000}, {"type":"stt_usage","provider":"assemblyai","model":"universal-3.5-pro","audioDurationMs":600000}, {"type":"tts_usage","provider":"livekit","model":"rime/coda","charactersCount":10000}]`,
@@ -55,6 +56,9 @@ func TestCostUsageProjectionPreservesPricingAndCorrections(t *testing.T) {
 		t.Fatalf("incomplete projection must fail visibly: %v", err)
 	}
 	if err := migrations.ApplyThrough(ctx, pool, "0059_backfill_ai_cost_usage.sql"); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrations.ApplyThrough(ctx, pool, "0076_backfill_gpt_live_cost_usage.sql"); err != nil {
 		t.Fatal(err)
 	}
 	for i, usage := range cases {

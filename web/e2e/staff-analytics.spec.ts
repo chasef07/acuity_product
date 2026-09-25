@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { expectConnectedZeroBaseline, signInAs } from "./support"
+import { signInAs } from "./support"
 
 test("Staff analytics measures connected phone time and the 48-hour task goal", async ({
   page,
@@ -140,10 +140,13 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
         .getByRole("columnheader")
         .filter({ hasText: "Inbound time" }),
     ).toHaveAttribute("aria-sort", "descending")
-    await expect(performance.locator(".recharts-line")).toHaveCount(1)
-    await expect(performance.locator(".recharts-area")).toHaveCount(1)
-    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(0)
-    await expectConnectedZeroBaseline(performance, 1)
+    await expect(performance.getByRole("heading", { name: "Tasks completed per day" })).toBeVisible()
+    await expect(performance.getByText(/Up from zero · Last 3 complete days vs preceding 3/)).toBeVisible()
+    await expect(performance.locator(".recharts-bar")).toHaveCount(1)
+    await performance.getByRole("button", { name: "Completion time", exact: true }).click()
+    await expect(performance.getByText(/Lower is faster/)).toBeVisible()
+    await expect(performance.getByText("48-hour target", { exact: true })).toBeVisible()
+    await performance.getByRole("button", { name: "Tasks completed", exact: true }).click()
     await expect(
       page.getByRole("button", { name: "Staff", exact: true }),
     ).toHaveAttribute("aria-pressed", "true")

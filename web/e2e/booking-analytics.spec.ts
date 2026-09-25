@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { expectConnectedZeroBaseline, signInAs } from "./support"
+import { signInAs } from "./support"
 
 test("Practice Admin booking analytics uses real scoped aggregates and clear copy", async ({
   page,
@@ -45,29 +45,31 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
         }
         toolItems.push({
           type: "function_call",
-          name: "get_availability",
+          name: "list_available_appointments",
           call_id: `availability-${i}`,
         })
         if (i !== 10) {
           toolItems.push({
             type: "function_call_output",
-            name: "get_availability",
+            name: "list_available_appointments",
             call_id: `availability-${i}`,
             is_error: i === 9,
+            output: i === 9 ? "blocked: Availability unavailable." : "success: Found eligible openings.",
           })
         }
         if (i === 0) {
           toolItems.push(
             {
               type: "function_call",
-              name: "get_availability",
+              name: "list_available_appointments",
               call_id: "availability-repeat",
             },
             {
               type: "function_call_output",
-              name: "get_availability",
+              name: "list_available_appointments",
               call_id: "availability-repeat",
               is_error: false,
+              output: "no_results: No openings in the searched window.",
             },
           )
         }
@@ -148,8 +150,8 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       performance.getByText("Call volume", { exact: true }),
     ).toHaveCount(0)
-    await expect(performance.locator(".recharts-line")).toHaveCount(2)
-    await expectConnectedZeroBaseline(performance, 2)
+    await expect(performance.getByText(/Up from zero · Last 3 complete days vs preceding 3/)).toBeVisible()
+    await expect(performance.locator(".recharts-bar")).toHaveCount(2)
     await page.screenshot({
       path: testInfo.outputPath("admin-bookings.png"),
       fullPage: true,
@@ -220,13 +222,8 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
     ).toHaveText(["Total", "4", "6", "66.7%"])
-    // Conversion uses the same total/new/existing chart treatment as Bookings.
-    await expect(performance.locator(".recharts-line")).toHaveCount(3)
-    await expect(performance.locator(".recharts-area")).toHaveCount(3)
-    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(
-      0,
-    )
-    await expectConnectedZeroBaseline(performance, 3)
+    // Conversion compares total/new/existing as grouped daily bars.
+    await expect(performance.locator(".recharts-bar")).toHaveCount(3)
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-conversion.png"),
       fullPage: true,
@@ -241,13 +238,8 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       page.getByRole("button", { name: "Duration", exact: true }),
     ).toHaveAttribute("aria-pressed", "true")
-    await expect(performance.locator(".recharts-line")).toHaveCount(2)
-    await expect(performance.locator(".recharts-area")).toHaveCount(2)
-    // The two new-patient observations connect through zero on the inactive day.
-    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(
-      0,
-    )
-    await expectConnectedZeroBaseline(performance, 2)
+    await expect(performance.locator(".recharts-bar")).toHaveCount(2)
+    // Missing duration measurements remain blank.
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-duration.png"),
       fullPage: true,

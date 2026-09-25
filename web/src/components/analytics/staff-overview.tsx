@@ -4,10 +4,9 @@ import { useMemo, useState } from "react"
 import { ArrowDownIcon, ArrowUpIcon, ArrowUpDownIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
-  Area,
+  Bar,
   CartesianGrid,
-  ComposedChart,
-  Line,
+  BarChart,
   ReferenceLine,
   XAxis,
   YAxis,
@@ -27,6 +26,7 @@ import type {
   StaffTaskDay,
 } from "@/lib/api/generated/types.gen"
 import { formatDay, formatPercent } from "@/lib/booking-analytics"
+import { dailyTotalComparison } from "@/lib/analytics-trend"
 import styles from "./booking-overview.module.css"
 import { useReducedMotion } from "@/lib/reduced-motion"
 
@@ -136,6 +136,7 @@ const columns: Array<{ key: SortKey; label: string }> = [
 
 export function StaffOverview({ report }: { report: StaffAnalytics }) {
   const reducedMotion = useReducedMotion()
+  const [metric, setMetric] = useState<"completed" | "duration">("completed")
   const [sorting, setSorting] = useState<{ key: SortKey; descending: boolean }>(
     { key: "inboundSeconds", descending: true },
   )
@@ -200,7 +201,11 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
         </div>
         <div className={styles.chartSection}>
           <div className={styles.chartHeading}>
-            <h2>Time to task completion</h2>
+            <h2>{metric === "completed" ? "Tasks completed per day" : "Time to task completion"}</h2>
+            <div className="flex gap-1" aria-label="Task chart metric">
+              <Button size="sm" variant={metric === "completed" ? "secondary" : "ghost"} aria-pressed={metric === "completed"} onClick={() => setMetric("completed")}>Tasks completed</Button>
+              <Button size="sm" variant={metric === "duration" ? "secondary" : "ghost"} aria-pressed={metric === "duration"} onClick={() => setMetric("duration")}>Completion time</Button>
+            </div>
           </div>
           <ChartContainer
             config={{
@@ -210,9 +215,9 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
               },
             }}
             className="h-[300px] w-full aspect-auto"
-            aria-label="Median task completion time by day"
+            aria-label={metric === "completed" ? "Tasks completed by day" : "Median task completion time by day"}
           >
-            <ComposedChart
+            <BarChart
               data={report.daily}
               accessibilityLayer
               margin={{ top: 20, right: 24, bottom: 8, left: 8 }}
@@ -232,16 +237,17 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
                 minTickGap={48}
               />
               <YAxis
-                domain={[0, Math.ceil(upper / (24 * 3600)) * 24 * 3600]}
+                domain={metric === "completed" ? [0, "auto"] : [0, Math.ceil(upper / (24 * 3600)) * 24 * 3600]}
+                allowDecimals={false}
                 tickFormatter={(value: number) =>
-                  `${Math.round(value / 3600)}h`
+                  metric === "completed" ? count(value) : `${Math.round(value / 3600)}h`
                 }
                 axisLine={false}
                 tickLine={false}
                 width="auto"
                 tickMargin={10}
               />
-              <ReferenceLine
+              {metric === "duration" && <ReferenceLine
                 y={48 * 3600}
                 stroke="var(--muted-foreground)"
                 strokeDasharray="4 4"
@@ -251,33 +257,24 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
                   fill: "var(--muted-foreground)",
                   fontSize: 11,
                 }}
-              />
+              />}
               <ChartTooltip
                 content={<TaskTooltip />}
                 cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
               />
-              <Area
-                type="monotone"
-                dataKey={(day: StaffTaskDay) => day.p50Seconds ?? 0}
-                fill="var(--color-p50Seconds)"
-                fillOpacity={0.055}
-                stroke="none"
-                tooltipType="none"
+              <Bar
+                dataKey={(day: StaffTaskDay) => metric === "completed" ? day.completed : day.p50Seconds}
+                fill="var(--foreground)"
+                maxBarSize={36}
                 isAnimationActive={!reducedMotion}
               />
-              <Line
-                type="monotone"
-                dataKey={(day: StaffTaskDay) => day.p50Seconds ?? 0}
-                stroke="var(--foreground)"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4 }}
-                isAnimationActive={!reducedMotion}
-              />
-            </ComposedChart>
+            </BarChart>
           </ChartContainer>
           <p className={styles.chartCaption}>
-            Days without task completions are shown at zero.
+            {metric === "completed"
+              ? dailyTotalComparison(report.daily.map((day) => day.completed))
+              : "Lower is faster. Days without task completions are blank."}
+            {" · "}Today is excluded.
           </p>
         </div>
       </section>
