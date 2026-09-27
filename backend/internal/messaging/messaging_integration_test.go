@@ -2571,3 +2571,32 @@ func (store *deleteFailingAttachmentStore) Delete(
 	}
 	return store.AttachmentObjectStore.Delete(ctx, key)
 }
+
+func TestRecategorizedMessageFollowUpStillDeduplicatesItsThread(t *testing.T) {
+	f := newAutomaticAcknowledgementTestFixture(t, false)
+	ctx := context.Background()
+	var threadID string
+	if err := f.pool.QueryRow(ctx, `INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone) VALUES($1,$2,'+15550000000','+15550100001') RETURNING id::text`, f.practiceID, f.locationID).Scan(&threadID); err != nil {
+		t.Fatal(err)
+	}
+	inbound := func(body string) string {
+		t.Helper()
+		var messageID string
+		if err := f.pool.QueryRow(ctx, `INSERT INTO messaging_messages(thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,created_at,updated_at) VALUES($1,$2,$3,'INBOUND',$4,'+15550100001','+15550000000','DELIVERED',$5,$5) RETURNING id::text`, threadID, f.practiceID, f.locationID, body, f.now).Scan(&messageID); err != nil {
+			t.Fatal(err)
+		}
+		return messageID
+	}
+	first, _, err := f.module.CreateFollowUpTask(ctx, messaging.CreateFollowUpTaskCommand{Identity: f.identity, MessageID: inbound("Synthetic first request")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := func() time.Time { return *f.clock }
+	if _, err := work.New(f.pool, access.New(f.pool, clock), clock).ChangeTaskCategory(ctx, work.ChangeTaskCategoryCommand{Identity: f.identity, TaskID: first.ID, ExpectedVersion: first.Version, Category: work.TaskCategoryMedication}); err != nil {
+		t.Fatal(err)
+	}
+	second, status, err := f.module.CreateFollowUpTask(ctx, messaging.CreateFollowUpTaskCommand{Identity: f.identity, MessageID: inbound("Synthetic second request")})
+	if err != nil || status != work.TaskDuplicate || second.ID != first.ID {
+		t.Fatalf("second follow-up = %q, %q, %v; want duplicate of %q", second.ID, status, err, first.ID)
+	}
+}

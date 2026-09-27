@@ -419,7 +419,7 @@ func (m *Module) EnsureMessageFollowUp(
 					AND title = $5
 					AND origin = 'STAFF_MESSAGE_FOLLOW_UP'
 					AND urgency = 'normal'
-					AND category IS NULL
+					AND source_category IS NULL
 					AND caller_name IS NULL
 					AND source_call_id IS NULL
 					AND source_message IS NULL
@@ -1578,7 +1578,7 @@ func (m *Module) ReopenTask(
 		RETURNING version
 	`, task.ID, reopenedAt).Scan(&task.Version); err != nil {
 		var constraint *pgconn.PgError
-		if errors.As(err, &constraint) && constraint.Code == "23505" && constraint.ConstraintName == "work_tasks_open_message_review_idx" {
+		if errors.As(err, &constraint) && constraint.Code == "23505" {
 			return Task{}, ErrConflict
 		}
 		return Task{}, fmt.Errorf("reopen Task: %w", err)
