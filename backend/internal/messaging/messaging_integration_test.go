@@ -606,11 +606,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 				Email:         "staff@message.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-			}, {
-				Key:           "message-staff-two",
-				Email:         "staff-two@message.test",
-				Role:          access.RoleStaff,
-				LocationScope: access.LocationScopeAll,
 			}},
 		}},
 	})
@@ -623,12 +618,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		EmailVerified: true,
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
-	secondIdentity := access.Identity{
-		Subject:       "message-staff-two-subject",
-		Email:         "staff-two@message.test",
-		EmailVerified: true,
-	}
-	testaccess.Activate(t, accessModule, secondIdentity)
 	provider := &providerFixture{}
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -1089,117 +1078,44 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err := pool.QueryRow(context.Background(), `SELECT version FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW'`).Scan(&reviewVersion); err != nil || reviewVersion != 1 {
 		t.Fatalf("duplicate inbound changed review version: %d %v", reviewVersion, err)
 	}
-	firstThreads, err := module.QueryThreads(
+	timelineMessages := phoneTimelineMessages(t, reads, identity, authorization.Practice.ID, "+17275550199")
+	if len(timelineMessages) != 3 ||
+		timelineMessages[0].ID != first.ID ||
+		timelineMessages[2].ProviderMessageID != "provider-inbound-1" ||
+		timelineMessages[2].Direction != messaging.DirectionInbound ||
+		timelineMessages[2].Body != "Thanks, I will pick them up." {
+		t.Fatalf("phone timeline Messages = %#v", timelineMessages)
+	}
+	inbound := timelineMessages[2]
+	newerPage, err := reads.QueryPhoneTimeline(
 		context.Background(),
-		messaging.QueryThreadsCommand{
+		workspace.QueryPhoneTimelineCommand{
+			Ungrouped:  true,
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
-			LocationID: authorization.Locations[0].ID,
-			Search:     "(727) 555-0199",
-		},
-	)
-	if err != nil {
-		t.Fatalf("query first User Threads: %v", err)
-	}
-	secondThreads, err := module.QueryThreads(
-		context.Background(),
-		messaging.QueryThreadsCommand{
-			Identity:   secondIdentity,
-			PracticeID: authorization.Practice.ID,
-			LocationID: authorization.Locations[0].ID,
-		},
-	)
-	if err != nil {
-		t.Fatalf("query second User Threads: %v", err)
-	}
-	if len(firstThreads.Items) != 1 ||
-		len(secondThreads.Items) != 1 ||
-		!firstThreads.Items[0].Unread ||
-		!secondThreads.Items[0].Unread ||
-		firstThreads.Items[0].Preview != "Thanks, I will pick them up." ||
-		firstThreads.Items[0].LatestDirection != messaging.DirectionInbound {
-		t.Fatalf(
-			"inbound Thread projections = %#v, %#v",
-			firstThreads,
-			secondThreads,
-		)
-	}
-	timeline, err := reads.QueryTimeline(
-		context.Background(),
-		workspace.QueryTimelineCommand{
-			Identity: identity,
-			ThreadID: first.Thread.ID,
-		},
-	)
-	if err != nil {
-		t.Fatalf("query Message timeline: %v", err)
-	}
-	if len(timeline.Items) != 3 ||
-		timeline.Items[0].Message.ID != first.ID ||
-		timeline.Items[2].Message.ProviderMessageID != "provider-inbound-1" ||
-		timeline.Items[2].Message.Direction != messaging.DirectionInbound {
-		t.Fatalf("Message timeline = %#v", timeline)
-	}
-	newerPage, err := reads.QueryTimeline(
-		context.Background(),
-		workspace.QueryTimelineCommand{
-			Identity: identity,
-			ThreadID: first.Thread.ID,
-			Limit:    2,
+			Phone:      "+17275550199",
+			Limit:      2,
 		},
 	)
 	if err != nil || len(newerPage.Items) != 2 || newerPage.NextCursor == "" {
 		t.Fatalf("newer timeline page = %#v, %v", newerPage, err)
 	}
-	olderPage, err := reads.QueryTimeline(
+	olderPage, err := reads.QueryPhoneTimeline(
 		context.Background(),
-		workspace.QueryTimelineCommand{
-			Identity: identity,
-			ThreadID: first.Thread.ID,
-			Cursor:   newerPage.NextCursor,
-			Limit:    2,
+		workspace.QueryPhoneTimelineCommand{
+			Ungrouped:  true,
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Phone:      "+17275550199",
+			Cursor:     newerPage.NextCursor,
+			Limit:      2,
 		},
 	)
 	if err != nil ||
-		len(olderPage.Items) != 1 ||
+		len(olderPage.Items) == 0 ||
 		olderPage.Items[0].ID == newerPage.Items[0].ID ||
 		olderPage.Items[0].ID == newerPage.Items[1].ID {
 		t.Fatalf("older timeline page = %#v, %v", olderPage, err)
-	}
-	if err := module.MarkRead(context.Background(), messaging.MarkReadCommand{
-		Identity: identity,
-		ThreadID: first.Thread.ID,
-	}); err != nil {
-		t.Fatalf("mark Thread read: %v", err)
-	}
-	firstThreads, err = module.QueryThreads(
-		context.Background(),
-		messaging.QueryThreadsCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			LocationID: authorization.Locations[0].ID,
-		},
-	)
-	if err != nil {
-		t.Fatalf("query read Thread: %v", err)
-	}
-	secondThreads, err = module.QueryThreads(
-		context.Background(),
-		messaging.QueryThreadsCommand{
-			Identity:   secondIdentity,
-			PracticeID: authorization.Practice.ID,
-			LocationID: authorization.Locations[0].ID,
-		},
-	)
-	if err != nil {
-		t.Fatalf("query second unread Thread: %v", err)
-	}
-	if firstThreads.Items[0].Unread || !secondThreads.Items[0].Unread {
-		t.Fatalf(
-			"per-User unread state = first %t, second %t",
-			firstThreads.Items[0].Unread,
-			secondThreads.Items[0].Unread,
-		)
 	}
 	var taskCount int
 	if err := pool.QueryRow(
@@ -1332,17 +1248,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		!processed {
 		t.Fatalf("process reordered older START = %t, %v", processed, err)
 	}
-	reorderedThreads, err := module.QueryThreads(
-		context.Background(),
-		messaging.QueryThreadsCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			LocationID: authorization.Locations[0].ID,
-		},
-	)
-	if err != nil || len(reorderedThreads.Items) != 1 ||
-		reorderedThreads.Items[0].Preview != "STOP" {
-		t.Fatalf("reordered latest Message projection = %#v, %v", reorderedThreads, err)
+	timelineMessages = phoneTimelineMessages(t, reads, identity, authorization.Practice.ID, "+17275550199")
+	if latest := timelineMessages[len(timelineMessages)-1]; latest.Body != "STOP" {
+		t.Fatalf("reordered latest Message projection = %#v", latest)
 	}
 	rawEqualStart := []byte(fmt.Sprintf(
 		`{"data":{"record_type":"event","event_type":"message.received","id":"zzzz-message-event-equal-start","occurred_at":"%s","payload":{"id":"provider-inbound-equal-start","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100"}],"text":"START"}}}`,
@@ -1424,7 +1332,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		context.Background(),
 		messaging.CreateFollowUpTaskCommand{
 			Identity:  identity,
-			MessageID: timeline.Items[2].Message.ID,
+			MessageID: inbound.ID,
 		},
 	)
 	if err != nil {
@@ -1434,7 +1342,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		context.Background(),
 		messaging.CreateFollowUpTaskCommand{
 			Identity:  identity,
-			MessageID: timeline.Items[2].Message.ID,
+			MessageID: inbound.ID,
 		},
 	)
 	if err != nil {
@@ -1454,22 +1362,23 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if followUp.Origin != work.TaskOriginStaffMessageFollowUp ||
 		followUp.State != work.TaskOpen ||
 		followUp.Title != "Follow up on text" ||
-		followUp.MessageID != timeline.Items[2].Message.ID ||
+		followUp.MessageID != inbound.ID ||
 		followUp.MessageThreadID != first.Thread.ID ||
 		followUp.LocationID != authorization.Locations[0].ID ||
 		followUp.Phone != "+17275550199" {
 		t.Fatalf("Message follow-up Task = %#v", followUp)
 	}
 	taskProjection, err := reads.ReadTask(context.Background(), identity, followUp.ID)
-	if err != nil || !taskProjection.Unread ||
-		taskProjection.ConversationThreadID != first.Thread.ID {
-		t.Fatalf("OPEN Task unread projection = %#v, %v", taskProjection, err)
+	if err != nil || taskProjection.ConversationThreadID != first.Thread.ID {
+		t.Fatalf("OPEN Task conversation projection = %#v, %v", taskProjection, err)
 	}
-	timelineWithTask, err := reads.QueryTimeline(
+	timelineWithTask, err := reads.QueryPhoneTimeline(
 		context.Background(),
-		workspace.QueryTimelineCommand{
-			Identity: identity,
-			ThreadID: first.Thread.ID,
+		workspace.QueryPhoneTimelineCommand{
+			Ungrouped:  true,
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Phone:      "+17275550199",
 		},
 	)
 	if err != nil {
@@ -1478,14 +1387,13 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	taskCards := 0
 	messageLinked := false
 	for _, item := range timelineWithTask.Items {
-		if item.Type == "TASK" {
+		if item.Type == "TASK" && item.Task.ID == followUp.ID {
 			taskCards++
-			if item.Task.ID != followUp.ID || item.Task.State != work.TaskOpen {
+			if item.TaskActivity != "TASK_CREATED" || item.Task.State != work.TaskOpen {
 				t.Fatalf("conversation Task card = %#v", item)
 			}
 		}
-		if item.Type == "MESSAGE" &&
-			item.Message.ID == timeline.Items[2].Message.ID {
+		if item.Type == "MESSAGE" && item.Message.ID == inbound.ID {
 			messageLinked = item.Message.TaskID == followUp.ID
 		}
 	}
@@ -1600,30 +1508,33 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			t.Fatalf("seed unbridged Staff CallLeg %d: %v", index, err)
 		}
 	}
-	timelineWithCall, err := reads.QueryTimeline(
+	timelineWithCall, err := reads.QueryPhoneTimeline(
 		context.Background(),
-		workspace.QueryTimelineCommand{
-			Identity: identity,
-			ThreadID: first.Thread.ID,
+		workspace.QueryPhoneTimelineCommand{
+			Ungrouped:  true,
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Phone:      "+17275550199",
 		},
 	)
 	if err != nil {
 		t.Fatalf("query timeline with Call: %v", err)
 	}
-	callCards := 0
+	callLocations := map[string]bool{}
 	for _, item := range timelineWithCall.Items {
 		if item.Type == "CALL" {
-			callCards++
-			if item.Call.LocationID != authorization.Locations[0].ID ||
-				item.Call.Direction != "INBOUND" ||
+			callLocations[item.Call.LocationID] = true
+			if item.Call.Direction != "INBOUND" ||
 				item.Call.Outcome != humancalling.CallUnanswered ||
 				item.Call.AnsweredByEmail != "" {
 				t.Fatalf("conversation Call card = %#v", item)
 			}
 		}
 	}
-	if callCards != 1 {
-		t.Fatalf("exact-location Call card count = %d", callCards)
+	if len(callLocations) != 2 ||
+		!callLocations[authorization.Locations[0].ID] ||
+		!callLocations[secondLocationID] {
+		t.Fatalf("exact-phone Call Locations = %#v", callLocations)
 	}
 
 	now = now.Add(time.Minute)
@@ -1656,31 +1567,32 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		t.Fatalf("complete Message Task: %v", err)
 	}
 	completedProjection, err := reads.ReadTask(context.Background(), identity, completed.ID)
-	if err != nil || completedProjection.Unread {
-		t.Fatalf("COMPLETED Task unread projection = %#v, %v", completedProjection, err)
+	if err != nil || completedProjection.State != work.TaskCompleted {
+		t.Fatalf("COMPLETED Task projection = %#v, %v", completedProjection, err)
 	}
-	timelineWithTask, err = reads.QueryTimeline(
+	timelineWithTask, err = reads.QueryPhoneTimeline(
 		context.Background(),
-		workspace.QueryTimelineCommand{
-			Identity: identity,
-			ThreadID: first.Thread.ID,
+		workspace.QueryPhoneTimelineCommand{
+			Ungrouped:  true,
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Phone:      "+17275550199",
 		},
 	)
 	if err != nil {
 		t.Fatalf("query timeline with completed Task: %v", err)
 	}
-	taskCards = 0
+	completedActivity := false
 	for _, item := range timelineWithTask.Items {
-		if item.Type == "TASK" {
-			taskCards++
-			if item.Task.ID != completed.ID ||
-				item.Task.State != work.TaskCompleted {
+		if item.Type == "TASK" && item.Task.ID == completed.ID {
+			if item.Task.State != work.TaskCompleted {
 				t.Fatalf("completed conversation Task card = %#v", item)
 			}
+			completedActivity = completedActivity || item.TaskActivity == "TASK_COMPLETED"
 		}
 	}
-	if taskCards != 1 {
-		t.Fatalf("completed conversation Task card count = %d", taskCards)
+	if !completedActivity {
+		t.Fatal("conversation omitted the Task completion Activity")
 	}
 	if _, _, err := module.Send(context.Background(), messaging.SendCommand{
 		Identity:       identity,
@@ -1765,49 +1677,16 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if !locations[authorization.Locations[0].Name] || !locations["Message Office Two"] {
 		t.Fatalf("phone timeline Location provenance = %#v", locations)
 	}
-	secondLocationThreads, err := module.QueryThreads(
-		context.Background(),
-		messaging.QueryThreadsCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			LocationID: secondLocationID,
-			Search:     "+17275550199",
-		},
-	)
-	if err != nil ||
-		len(secondLocationThreads.Items) != 1 ||
-		secondLocationThreads.Items[0].ID != secondLocationMessage.Thread.ID {
-		t.Fatalf(
-			"second Location Thread isolation = %#v, %v",
-			secondLocationThreads,
-			err,
-		)
+	threadLocations := map[string]string{}
+	for _, item := range phoneTimeline.Items {
+		if item.Type == "MESSAGE" {
+			threadLocations[item.Message.Thread.ID] = item.Message.Thread.LocationID
+		}
 	}
-	allLocationThreads, err := module.QueryThreads(
-		context.Background(),
-		messaging.QueryThreadsCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			Search:     "+17275550199",
-		},
-	)
-	if err != nil || len(allLocationThreads.Items) != 2 {
-		t.Fatalf(
-			"all-Location Thread scope = %#v, %v",
-			allLocationThreads,
-			err,
-		)
-	}
-	allLocationIDs := map[string]bool{}
-	for _, thread := range allLocationThreads.Items {
-		allLocationIDs[thread.LocationID] = true
-	}
-	if !allLocationIDs[authorization.Locations[0].ID] ||
-		!allLocationIDs[secondLocationID] {
-		t.Fatalf(
-			"all-Location Thread provenance = %#v",
-			allLocationIDs,
-		)
+	if len(threadLocations) != 2 ||
+		threadLocations[first.Thread.ID] != authorization.Locations[0].ID ||
+		threadLocations[secondLocationMessage.Thread.ID] != secondLocationID {
+		t.Fatalf("phone timeline Thread provenance = %#v", threadLocations)
 	}
 
 	aiTask, status, err := workModule.CreateAITask(
@@ -1870,14 +1749,42 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	}
 	completedPage, err := reads.ReadTask(context.Background(), identity, completedAITask.ID)
 	if err != nil ||
-		completedPage.ConversationThreadID != taskMessage.Thread.ID ||
-		completedPage.Unread {
+		completedPage.ConversationThreadID != taskMessage.Thread.ID {
 		t.Fatalf(
 			"completed Task conversation projection = %#v, %v",
 			completedPage,
 			err,
 		)
 	}
+}
+
+func phoneTimelineMessages(
+	t *testing.T,
+	reads *workspace.Module,
+	identity access.Identity,
+	practiceID string,
+	phone string,
+) []messaging.Message {
+	t.Helper()
+	page, err := reads.QueryPhoneTimeline(
+		context.Background(),
+		workspace.QueryPhoneTimelineCommand{
+			Ungrouped:  true,
+			Identity:   identity,
+			PracticeID: practiceID,
+			Phone:      phone,
+		},
+	)
+	if err != nil {
+		t.Fatalf("query phone timeline: %v", err)
+	}
+	messages := []messaging.Message{}
+	for _, item := range page.Items {
+		if item.Type == "MESSAGE" {
+			messages = append(messages, item.Message)
+		}
+	}
+	return messages
 }
 
 func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
@@ -2233,17 +2140,8 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		!processed {
 		t.Fatalf("project inbound MMS = %t, %v", processed, err)
 	}
-	timeline, err := reads.QueryTimeline(
-		context.Background(),
-		workspace.QueryTimelineCommand{
-			Identity: identity,
-			ThreadID: outbound.Thread.ID,
-		},
-	)
-	if err != nil {
-		t.Fatalf("read inbound MMS timeline: %v", err)
-	}
-	inbound := timeline.Items[len(timeline.Items)-1].Message
+	messages := phoneTimelineMessages(t, reads, identity, authorization.Practice.ID, outbound.Thread.ExternalPhone)
+	inbound := messages[len(messages)-1]
 	if inbound.Attachment == nil ||
 		inbound.Attachment.State != messaging.AttachmentProcessing {
 		t.Fatalf("processing inbound attachment = %#v", inbound)
@@ -2253,17 +2151,10 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		!processed {
 		t.Fatalf("fail expired inbound media copy = %t, %v", processed, err)
 	}
-	timeline, err = reads.QueryTimeline(
-		context.Background(),
-		workspace.QueryTimelineCommand{
-			Identity: identity,
-			ThreadID: outbound.Thread.ID,
-		},
-	)
-	if err != nil ||
-		timeline.Items[len(timeline.Items)-1].Message.Attachment.State !=
-			messaging.AttachmentUnavailable {
-		t.Fatalf("unavailable inbound attachment = %#v, %v", timeline, err)
+	messages = phoneTimelineMessages(t, reads, identity, authorization.Practice.ID, outbound.Thread.ExternalPhone)
+	if latest := messages[len(messages)-1]; latest.Attachment == nil ||
+		latest.Attachment.State != messaging.AttachmentUnavailable {
+		t.Fatalf("unavailable inbound attachment = %#v", latest)
 	}
 	retrying, err := module.RetryAttachment(
 		context.Background(),

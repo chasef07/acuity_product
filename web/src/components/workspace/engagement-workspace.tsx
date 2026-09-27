@@ -95,7 +95,6 @@ import {
 } from "@/lib/api/generated/sdk.gen"
 import type {
   ConversationTimelineItem,
-  EngagementSummary,
   Message,
   MessageAttachment,
   Task,
@@ -104,6 +103,7 @@ import { aiCallTimelinePresentation } from "@/lib/ai-interactions"
 import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
+import type { EngagementSummary } from "@/lib/workspace-projection"
 import {
   callHistoryPresentation,
   conversationDateLabel,

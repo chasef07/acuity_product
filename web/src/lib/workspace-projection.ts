@@ -3,7 +3,6 @@ import type {
   AiInteractionDetail,
   CallingCall,
   CallingDispositionResult,
-  EngagementSummary,
   Task,
   TaskFolderCounts,
   TaskPage,
@@ -40,6 +39,14 @@ export type WorkspaceRailState = {
   taskResponsibility?: "mine" | "all"
   taskCategory: TaskCategoryFilter
   scrollTop: number
+}
+
+export type EngagementSummary = {
+  phone: string
+  displayName?: string
+  locations: Array<{ id: string; name: string }>
+  latestActivity: string
+  openTaskCount: number
 }
 
 export type WorkspaceScope = {
@@ -1558,7 +1565,6 @@ function taskEngagement(task: Task): EngagementSummary {
     locations: [{ id: task.locationId, name: task.locationName }],
     latestActivity: task.updatedAt,
     openTaskCount: task.state === "OPEN" ? 1 : 0,
-    unread: task.unread,
   }
 }
 
@@ -1569,7 +1575,6 @@ function callEngagement(call: CallingCall): EngagementSummary {
     locations: [{ id: call.locationId, name: call.locationName }],
     latestActivity: call.connectedAt ?? new Date().toISOString(),
     openTaskCount: call.recoveryTask?.state === "OPEN" ? 1 : 0,
-    unread: false,
   }
 }
 
@@ -1585,7 +1590,6 @@ function newNumberEngagement(
       : locations,
     latestActivity: new Date().toISOString(),
     openTaskCount: 0,
-    unread: false,
   }
 }
 

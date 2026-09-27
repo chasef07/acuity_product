@@ -69,5 +69,30 @@ func TestAppointmentReceiptCommitsReviewWithSourceFacts(t *testing.T) {
 	if title != "Review appointment change" || outcome != "PARTIAL" || !strings.Contains(body, "unfinished appointment change") || !strings.Contains(body, "remaining follow-up") || strings.Contains(body, "Verify insurance and provider") {
 		t.Fatalf("partial outcome hidden: %s %s %q", title, outcome, body)
 	}
-
+	// A failed call creates no review Task, but its new Interaction evidence
+	// still publishes a workspace refetch hint.
+	var versionBefore, versionAfter int64
+	if err := pool.QueryRow(ctx, `SELECT workspace_version FROM access_practices WHERE id=$1`, practice).Scan(&versionBefore); err != nil {
+		t.Fatal(err)
+	}
+	payload.SourceCallID = "synthetic-failed-call"
+	payload.Status = CallFailed
+	payload.Appointment = nil
+	raw, err = json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint = sha256.Sum256(raw)
+	if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_receipts(service_subject,practice_id,location_id,source_call_id,kind,payload_fingerprint,payload) VALUES('synthetic',$1,$2,$3,'CLOSEOUT',$4,$5)`, practice, location, payload.SourceCallID, fingerprint[:], raw); err != nil {
+		t.Fatal(err)
+	}
+	if processed, err := module.ProcessNextReceipt(ctx); err != nil || !processed {
+		t.Fatalf("project failed receipt: %v %v", processed, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT workspace_version FROM access_practices WHERE id=$1`, practice).Scan(&versionAfter); err != nil {
+		t.Fatal(err)
+	}
+	if versionAfter != versionBefore+1 {
+		t.Fatalf("failed call workspace version = %d, want %d", versionAfter, versionBefore+1)
+	}
 }

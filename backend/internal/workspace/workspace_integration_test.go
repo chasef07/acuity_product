@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestQueueReadsProjectConversationAndUnreadInOneAuthorizedFlow(t *testing.T) {
+func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
@@ -100,40 +100,8 @@ func TestQueueReadsProjectConversationAndUnreadInOneAuthorizedFlow(t *testing.T)
 	if err != nil {
 		t.Fatalf("create Workspace Message: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO messaging_thread_unreads (
-			thread_id, user_subject, unread_since, latest_message_id
-		)
-		VALUES ($1, $2, $3, $4)
-	`, message.Thread.ID, identity.Subject, now, message.ID); err != nil {
-		t.Fatalf("mark Workspace Thread unread: %v", err)
-	}
 
 	reads := workspace.New(pool, accessModule)
-	engagements, err := reads.QueryEngagements(context.Background(), workspace.QueryEngagementsCommand{
-		Identity: identity, PracticeID: task.PracticeID, Phone: task.Phone,
-	})
-	if err != nil {
-		t.Fatalf("query Engagement with evidence: %v", err)
-	}
-	if len(engagements.Items) != 1 {
-		t.Fatalf("Engagement page = %#v, want one item", engagements)
-	}
-	engagement := engagements.Items[0]
-	if engagement.Phone != task.Phone || engagement.DisplayName != task.CallerName ||
-		!engagement.LatestActivity.Equal(now) || engagement.OpenTaskCount != 1 || !engagement.Unread ||
-		len(engagement.Locations) != 1 || engagement.Locations[0].ID != task.LocationID {
-		t.Fatalf("Engagement summary = %#v", engagement)
-	}
-	empty, err := reads.QueryEngagements(context.Background(), workspace.QueryEngagementsCommand{
-		Identity: identity, PracticeID: task.PracticeID, Phone: "+17275550198",
-	})
-	if err != nil {
-		t.Fatalf("query Engagement without evidence: %v", err)
-	}
-	if empty.Items == nil || len(empty.Items) != 0 {
-		t.Fatalf("empty Engagement page = %#v, want non-nil empty items", empty)
-	}
 	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity: identity, PracticeID: task.PracticeID,
 	})
@@ -142,7 +110,7 @@ func TestQueueReadsProjectConversationAndUnreadInOneAuthorizedFlow(t *testing.T)
 	}
 	if len(page.Items) != 1 || page.Items[0].ID != task.ID ||
 		page.Items[0].ConversationThreadID != message.Thread.ID ||
-		!page.Items[0].Unread || page.Items[0].RelatedInteractionCount != 0 {
+		page.Items[0].RelatedInteractionCount != 0 {
 		t.Fatalf("Workspace Queue projection = %#v", page)
 	}
 	tracer := &workspaceQueryTracer{}
@@ -189,17 +157,18 @@ func TestQueueReadsProjectConversationAndUnreadInOneAuthorizedFlow(t *testing.T)
 	if err != nil {
 		t.Fatalf("read Workspace Task: %v", err)
 	}
-	if read.ConversationThreadID != message.Thread.ID || !read.Unread {
+	if read.ConversationThreadID != message.Thread.ID {
 		t.Fatalf("Workspace Task projection = %#v", read)
 	}
-	timeline, err := reads.QueryTimeline(context.Background(), workspace.QueryTimelineCommand{
-		Identity: identity, ThreadID: message.Thread.ID,
+	timeline, err := reads.QueryPhoneTimeline(context.Background(), workspace.QueryPhoneTimelineCommand{
+		Ungrouped: true, Identity: identity, PracticeID: task.PracticeID, Phone: task.Phone,
 	})
 	if err != nil {
 		t.Fatalf("query Workspace conversation: %v", err)
 	}
-	if len(timeline.Items) != 2 || timeline.Items[0].Type != "TASK" ||
-		timeline.Items[1].Type != "MESSAGE" {
+	if len(timeline.Items) != 2 ||
+		timeline.Items[0].Type != "TASK" || timeline.Items[0].Task.ID != task.ID ||
+		timeline.Items[1].Type != "MESSAGE" || timeline.Items[1].Message.ID != message.ID {
 		t.Fatalf("Workspace conversation projection = %#v", timeline)
 	}
 
@@ -210,8 +179,7 @@ func TestQueueReadsProjectConversationAndUnreadInOneAuthorizedFlow(t *testing.T)
 		t.Fatalf("complete Workspace Task: %v", err)
 	}
 	completedRead, err := reads.ReadTask(context.Background(), identity, completed.ID)
-	if err != nil || completedRead.ConversationThreadID != message.Thread.ID ||
-		completedRead.Unread {
+	if err != nil || completedRead.ConversationThreadID != message.Thread.ID {
 		t.Fatalf("completed Workspace Task projection = %#v, %v", completedRead, err)
 	}
 }
@@ -230,7 +198,7 @@ func (tracer *workspaceQueryTracer) TraceQueryStart(
 ) context.Context {
 	if strings.Contains(data.SQL, "FROM work_tasks task") &&
 		strings.Contains(data.SQL, "LEFT JOIN LATERAL") &&
-		strings.Contains(data.SQL, "messaging_thread_unreads") {
+		strings.Contains(data.SQL, "conversation ON true") {
 		tracer.taskResponseQueries.Add(1)
 		tracer.conversationProjectionQueries.Add(1)
 	}

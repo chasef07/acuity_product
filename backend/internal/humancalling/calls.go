@@ -2,11 +2,8 @@ package humancalling
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -216,116 +213,6 @@ func deriveCallState(
 		return CallPreparing
 	}
 	return CallRinging
-}
-
-type callHistoryCursor struct {
-	StartedAt time.Time `json:"startedAt"`
-	ID        string    `json:"id"`
-}
-
-func (m *Module) QueryCallHistory(
-	ctx context.Context,
-	query CallHistoryQuery,
-) (CallHistoryPage, error) {
-	query.Phone = strings.TrimSpace(query.Phone)
-	if m.access == nil || query.Identity.Subject == "" || query.PracticeID == "" ||
-		!canonicalE164.MatchString(query.Phone) {
-		return CallHistoryPage{}, ErrDenied
-	}
-	if query.Limit <= 0 || query.Limit > 100 {
-		query.Limit = 25
-	}
-	var cursor callHistoryCursor
-	if query.Cursor != "" {
-		decoded, err := base64.RawURLEncoding.DecodeString(query.Cursor)
-		if err != nil || json.Unmarshal(decoded, &cursor) != nil ||
-			cursor.StartedAt.IsZero() || cursor.ID == "" {
-			return CallHistoryPage{}, ErrInvalidInput
-		}
-	}
-	rows, err := m.database.Query(ctx, `
-		SELECT call.id::text, call.direction, call.created_at, call.ended_at,
-			GREATEST(0, EXTRACT(EPOCH FROM (
-				COALESCE(call.ended_at, $6) - call.created_at
-			))::bigint), call.location_id::text, location.name,
-			COALESCE(staff_membership.email, staff_operator.email, ''),
-			COALESCE(handoff.transfer_reason, ''),
-			COALESCE(call.terminal_outcome, ''),
-			COALESCE(call.disposition_outcome, ''),
-			COALESCE((
-				SELECT leg.state FROM human_calling_call_legs leg
-				WHERE leg.call_id = call.id AND leg.role = 'STAFF'
-				ORDER BY CASE leg.state WHEN 'BRIDGED' THEN 1 WHEN 'BRIDGE_PENDING' THEN 2 ELSE 3 END
-				LIMIT 1
-			), ''),
-			COALESCE((
-				SELECT leg.state FROM human_calling_call_legs leg
-				WHERE leg.call_id = call.id AND leg.role = 'DESTINATION'
-				ORDER BY leg.sequence DESC LIMIT 1
-			), ''),
-			EXISTS (
-				SELECT 1 FROM human_calling_call_legs leg
-				WHERE leg.call_id = call.id AND leg.bridged_at IS NOT NULL
-			)
-		FROM human_calling_calls call
-		JOIN access_locations location
-			ON location.practice_id = call.practice_id AND location.id = call.location_id
-		JOIN access_calling_scopes calling_scope
-			ON calling_scope.practice_id = call.practice_id
-			AND calling_scope.user_subject = $1
-		LEFT JOIN access_membership_locations allowed
-			ON allowed.membership_id = calling_scope.membership_id
-			AND allowed.location_id = call.location_id
-		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
-		LEFT JOIN human_calling_current_staff_owners current_staff
-			ON current_staff.call_id = call.id
-		LEFT JOIN access_memberships staff_membership
-			ON staff_membership.practice_id = call.practice_id
-			AND staff_membership.user_subject = current_staff.staff_subject
-		LEFT JOIN access_platform_operators staff_operator
-			ON staff_operator.user_subject = current_staff.staff_subject
-		WHERE call.practice_id = $2
-			AND COALESCE(call.caller_phone, call.destination_phone) = $3
-			AND (calling_scope.location_scope = 'ALL' OR allowed.location_id IS NOT NULL)
-			AND ($4::timestamptz IS NULL OR (call.created_at, call.id) < ($4, $5::uuid))
-		ORDER BY call.created_at DESC, call.id DESC
-		LIMIT $7
-	`, query.Identity.Subject, query.PracticeID, query.Phone,
-		nullTime(cursor.StartedAt), nullString(cursor.ID), m.now(), query.Limit+1)
-	if err != nil {
-		return CallHistoryPage{}, fmt.Errorf("query Call history: %w", err)
-	}
-	defer rows.Close()
-	page := CallHistoryPage{Items: []CallHistoryItem{}}
-	for rows.Next() {
-		var item CallHistoryItem
-		var terminal, disposition, staffState, destinationState string
-		var connected bool
-		if err := rows.Scan(
-			&item.ID, &item.Direction, &item.StartedAt, &item.EndedAt,
-			&item.DurationSeconds, &item.LocationID, &item.LocationName,
-			&item.AnsweredByEmail, &item.TransferReason, &terminal, &disposition,
-			&staffState, &destinationState, &connected,
-		); err != nil {
-			return CallHistoryPage{}, fmt.Errorf("scan Call history: %w", err)
-		}
-		item.Type = "CALL"
-		item.Outcome = deriveCallState(terminal, disposition, staffState,
-			destinationState, "", CallDirection(item.Direction), connected)
-		item.Current = item.ID == query.CurrentCallID
-		item.Originating = item.ID == query.OriginatingCallID
-		page.Items = append(page.Items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return CallHistoryPage{}, fmt.Errorf("iterate Call history: %w", err)
-	}
-	if len(page.Items) > query.Limit {
-		last := page.Items[query.Limit-1]
-		encoded, _ := json.Marshal(callHistoryCursor{StartedAt: last.StartedAt, ID: last.ID})
-		page.NextCursor = base64.RawURLEncoding.EncodeToString(encoded)
-		page.Items = page.Items[:query.Limit]
-	}
-	return page, nil
 }
 
 func (m *Module) RequestHangup(
@@ -870,18 +757,4 @@ func (m *Module) ReadOperatorTimeline(
 		result.Entries = append(result.Entries, entry)
 	}
 	return result, rows.Err()
-}
-
-func nullTime(value time.Time) any {
-	if value.IsZero() {
-		return nil
-	}
-	return value
-}
-
-func nullString(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
 }

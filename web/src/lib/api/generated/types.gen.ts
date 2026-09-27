@@ -456,7 +456,6 @@ export type Task = {
     messageId?: string;
     messageThreadId?: string;
     conversationThreadId?: string;
-    unread: boolean;
     createdBy: TaskActor;
     createdAt: string;
     completedBy?: TaskActor;
@@ -507,29 +506,6 @@ export type TaskCategoryCounts = {
     medication: number;
     referrals: number;
     other: number;
-};
-
-export type EngagementLocation = {
-    id: string;
-    name: string;
-};
-
-export type EngagementSummary = {
-    phone: string;
-    displayName?: string;
-    locations: Array<EngagementLocation>;
-    latestActivity: string;
-    openTaskCount: number;
-    unread: boolean;
-};
-
-export type EngagementPage = {
-    items: Array<EngagementSummary>;
-};
-
-export type EngagementQueryRequest = {
-    practiceId: string;
-    phone: string;
 };
 
 export type AiInteractionMessageKind = 'START' | 'CLOSEOUT' | 'OUTCOME_CHECKPOINT';
@@ -711,27 +687,6 @@ export type AiInteractionDetail = {
     updatedAt: string;
 };
 
-export type AiInteractionEvidence = {
-    id: string;
-    transcript?: {
-        [key: string]: unknown;
-    };
-    closeoutPayload?: {
-        [key: string]: unknown;
-    };
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type AiOutcomeQueryRequest = {
-    practiceId: string;
-    locationId?: string;
-    appointmentAction?: AiAppointmentAction;
-    includeCounts?: boolean;
-    cursor?: string;
-    limit?: number;
-};
-
 export type AiOutcomeItem = {
     id: string;
     locationId: string;
@@ -743,24 +698,10 @@ export type AiOutcomeItem = {
     endedAt?: string;
     status: AiInteractionCallStatus;
     summary?: string;
-    appointmentAction?: AiAppointmentAction;
     appointmentOutcome: AiAppointmentOutcome;
     appointmentOccurredAt?: string;
     oldAppointmentId?: string;
     newAppointmentId?: string;
-};
-
-export type AiOutcomePage = {
-    items: Array<AiOutcomeItem>;
-    nextCursor: string;
-    counts?: AiOutcomeCounts;
-};
-
-export type AiOutcomeCounts = {
-    tasks: number;
-    bookings: number;
-    cancellations: number;
-    reschedules: number;
 };
 
 export type StaffPhoneMetrics = {
@@ -1299,41 +1240,6 @@ export type MessageThread = {
     updatedAt: string;
 };
 
-export type MessageThreadSummary = MessageThread & {
-    preview: string;
-    latestDirection: MessageDirection;
-    latestDelivery: MessageDeliveryState;
-    latestActivity: string;
-    openTaskCount: number;
-    unread: boolean;
-};
-
-export type RecentAttentionScope = {
-    practiceId: string;
-    locationId?: string;
-};
-
-export type MessageThreadPage = {
-    items: Array<MessageThreadSummary>;
-    /**
-     * Full eligible phone-number count before pagination, supplied for recentAttention queries.
-     */
-    total?: number;
-    nextCursor: string;
-};
-
-export type MessageThreadQueryRequest = {
-    practiceId: string;
-    locationId?: string;
-    /**
-     * Return only unread conversations with an inbound message in the past seven days and no linked open Task. Paginate phone-number groups and return their full total.
-     */
-    recentAttention?: boolean;
-    search?: string;
-    cursor?: string;
-    limit?: number;
-};
-
 export type Message = {
     id: string;
     thread: MessageThread;
@@ -1398,10 +1304,6 @@ export type SendMessageAgainRequest = {
     duplicateRiskAcknowledged: boolean;
 };
 
-export type MarkMessageThreadReadRequest = {
-    [key: string]: never;
-};
-
 export type CreateMessageFollowUpTaskRequest = {
     title?: string;
 };
@@ -1442,13 +1344,6 @@ export type CallHistoryItem = {
     transferReason: string;
     sourceCallId?: string;
     outcome: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
-    current: boolean;
-    originating: boolean;
-};
-
-export type CallHistoryPage = {
-    items: Array<CallHistoryItem>;
-    nextCursor: string;
 };
 
 export type OperatorCallingTimelineEntry = {
@@ -2348,93 +2243,6 @@ export type RecordCallingDispositionResponses = {
 
 export type RecordCallingDispositionResponse = RecordCallingDispositionResponses[keyof RecordCallingDispositionResponses];
 
-export type GetCallingCallHistoryData = {
-    body?: never;
-    path: {
-        callId: string;
-    };
-    query?: {
-        cursor?: string;
-    };
-    url: '/v1/calling/calls/{callId}/history';
-};
-
-export type GetCallingCallHistoryErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type GetCallingCallHistoryError = GetCallingCallHistoryErrors[keyof GetCallingCallHistoryErrors];
-
-export type GetCallingCallHistoryResponses = {
-    /**
-     * Newest page presented in chronological order.
-     */
-    200: CallHistoryPage;
-};
-
-export type GetCallingCallHistoryResponse = GetCallingCallHistoryResponses[keyof GetCallingCallHistoryResponses];
-
-export type GetCallingEngagementHistoryData = {
-    body?: never;
-    path: {
-        callId: string;
-    };
-    query?: {
-        cursor?: string;
-        limit?: number;
-        /**
-         * Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
-         */
-        groupCalls?: boolean;
-    };
-    url: '/v1/calling/calls/{callId}/engagement-history';
-};
-
-export type GetCallingEngagementHistoryErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type GetCallingEngagementHistoryError = GetCallingEngagementHistoryErrors[keyof GetCallingEngagementHistoryErrors];
-
-export type GetCallingEngagementHistoryResponses = {
-    /**
-     * Chronological Contact Context Engagement History.
-     */
-    200: ConversationTimelinePage;
-};
-
-export type GetCallingEngagementHistoryResponse = GetCallingEngagementHistoryResponses[keyof GetCallingEngagementHistoryResponses];
-
 export type IssueCallingVoicemailPlaybackData = {
     body?: never;
     path: {
@@ -2611,43 +2419,6 @@ export type GetCallingRecordingPlaybackResponses = {
 
 export type GetCallingRecordingPlaybackResponse = GetCallingRecordingPlaybackResponses[keyof GetCallingRecordingPlaybackResponses];
 
-export type QueryEngagementsData = {
-    body: EngagementQueryRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/engagements/query';
-};
-
-export type QueryEngagementsErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type QueryEngagementsError = QueryEngagementsErrors[keyof QueryEngagementsErrors];
-
-export type QueryEngagementsResponses = {
-    /**
-     * Exact-phone results within the current User's Location Scope.
-     */
-    200: EngagementPage;
-};
-
-export type QueryEngagementsResponse = QueryEngagementsResponses[keyof QueryEngagementsResponses];
-
 export type GetEngagementTimelineData = {
     body?: never;
     path: {
@@ -2778,121 +2549,6 @@ export type GetAiInteractionResponses = {
 };
 
 export type GetAiInteractionResponse = GetAiInteractionResponses[keyof GetAiInteractionResponses];
-
-export type GetAiInteractionEvidenceData = {
-    body?: never;
-    path: {
-        interactionId: string;
-    };
-    query?: never;
-    url: '/v1/ai/interactions/{interactionId}/evidence';
-};
-
-export type GetAiInteractionEvidenceErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type GetAiInteractionEvidenceError = GetAiInteractionEvidenceErrors[keyof GetAiInteractionEvidenceErrors];
-
-export type GetAiInteractionEvidenceResponses = {
-    /**
-     * Admin-authorized AI Interaction evidence.
-     */
-    200: AiInteractionEvidence;
-};
-
-export type GetAiInteractionEvidenceResponse = GetAiInteractionEvidenceResponses[keyof GetAiInteractionEvidenceResponses];
-
-export type ReviewAiInteractionOutcomeData = {
-    body?: never;
-    path: {
-        interactionId: string;
-    };
-    query?: never;
-    url: '/v1/ai/interactions/{interactionId}/review';
-};
-
-export type ReviewAiInteractionOutcomeErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type ReviewAiInteractionOutcomeError = ReviewAiInteractionOutcomeErrors[keyof ReviewAiInteractionOutcomeErrors];
-
-export type ReviewAiInteractionOutcomeResponses = {
-    /**
-     * AI appointment outcome reviewed.
-     */
-    204: void;
-};
-
-export type ReviewAiInteractionOutcomeResponse = ReviewAiInteractionOutcomeResponses[keyof ReviewAiInteractionOutcomeResponses];
-
-export type QueryAiInteractionOutcomesData = {
-    body: AiOutcomeQueryRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/ai/interactions/outcomes/query';
-};
-
-export type QueryAiInteractionOutcomesErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type QueryAiInteractionOutcomesError = QueryAiInteractionOutcomesErrors[keyof QueryAiInteractionOutcomesErrors];
-
-export type QueryAiInteractionOutcomesResponses = {
-    /**
-     * Authorized per-User AI outcome attention projection.
-     */
-    200: AiOutcomePage;
-};
-
-export type QueryAiInteractionOutcomesResponse = QueryAiInteractionOutcomesResponses[keyof QueryAiInteractionOutcomesResponses];
 
 export type QueryBookingAnalyticsData = {
     body: PracticeAnalyticsQueryRequest;
@@ -3624,285 +3280,6 @@ export type ReopenTaskResponses = {
 };
 
 export type ReopenTaskResponse = ReopenTaskResponses[keyof ReopenTaskResponses];
-
-export type GetTaskCallHistoryData = {
-    body?: never;
-    path: {
-        taskId: string;
-    };
-    query?: {
-        cursor?: string;
-    };
-    url: '/v1/tasks/{taskId}/history';
-};
-
-export type GetTaskCallHistoryErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type GetTaskCallHistoryError = GetTaskCallHistoryErrors[keyof GetTaskCallHistoryErrors];
-
-export type GetTaskCallHistoryResponses = {
-    /**
-     * Newest page presented in chronological order.
-     */
-    200: CallHistoryPage;
-};
-
-export type GetTaskCallHistoryResponse = GetTaskCallHistoryResponses[keyof GetTaskCallHistoryResponses];
-
-export type GetTaskEngagementHistoryData = {
-    body?: never;
-    path: {
-        taskId: string;
-    };
-    query?: {
-        cursor?: string;
-        limit?: number;
-        /**
-         * Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
-         */
-        groupCalls?: boolean;
-    };
-    url: '/v1/tasks/{taskId}/engagement-history';
-};
-
-export type GetTaskEngagementHistoryErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type GetTaskEngagementHistoryError = GetTaskEngagementHistoryErrors[keyof GetTaskEngagementHistoryErrors];
-
-export type GetTaskEngagementHistoryResponses = {
-    /**
-     * Chronological exact-phone Engagement History.
-     */
-    200: ConversationTimelinePage;
-};
-
-export type GetTaskEngagementHistoryResponse = GetTaskEngagementHistoryResponses[keyof GetTaskEngagementHistoryResponses];
-
-export type QueryMessageThreadsData = {
-    body: MessageThreadQueryRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/message-threads/query';
-};
-
-export type QueryMessageThreadsErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type QueryMessageThreadsError = QueryMessageThreadsErrors[keyof QueryMessageThreadsErrors];
-
-export type QueryMessageThreadsResponses = {
-    /**
-     * Newest authorized Message Threads.
-     */
-    200: MessageThreadPage;
-};
-
-export type QueryMessageThreadsResponse = QueryMessageThreadsResponses[keyof QueryMessageThreadsResponses];
-
-export type MarkRecentMessageThreadsReadData = {
-    body: RecentAttentionScope;
-    path?: never;
-    query?: never;
-    url: '/v1/message-threads/read';
-};
-
-export type MarkRecentMessageThreadsReadErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type MarkRecentMessageThreadsReadError = MarkRecentMessageThreadsReadErrors[keyof MarkRecentMessageThreadsReadErrors];
-
-export type MarkRecentMessageThreadsReadResponses = {
-    /**
-     * Current User attention cleared within the authorized scope, including unloaded pages.
-     */
-    204: void;
-};
-
-export type MarkRecentMessageThreadsReadResponse = MarkRecentMessageThreadsReadResponses[keyof MarkRecentMessageThreadsReadResponses];
-
-export type ReviewRecentAiInteractionOutcomesData = {
-    body: RecentAttentionScope;
-    path?: never;
-    query?: never;
-    url: '/v1/ai/interactions/outcomes/review';
-};
-
-export type ReviewRecentAiInteractionOutcomesErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type ReviewRecentAiInteractionOutcomesError = ReviewRecentAiInteractionOutcomesErrors[keyof ReviewRecentAiInteractionOutcomesErrors];
-
-export type ReviewRecentAiInteractionOutcomesResponses = {
-    /**
-     * Current User attention cleared within the authorized scope, including unloaded pages.
-     */
-    204: void;
-};
-
-export type ReviewRecentAiInteractionOutcomesResponse = ReviewRecentAiInteractionOutcomesResponses[keyof ReviewRecentAiInteractionOutcomesResponses];
-
-export type GetMessageThreadTimelineData = {
-    body?: never;
-    path: {
-        threadId: string;
-    };
-    query?: {
-        cursor?: string;
-        limit?: number;
-    };
-    url: '/v1/message-threads/{threadId}/timeline';
-};
-
-export type GetMessageThreadTimelineErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type GetMessageThreadTimelineError = GetMessageThreadTimelineErrors[keyof GetMessageThreadTimelineErrors];
-
-export type GetMessageThreadTimelineResponses = {
-    /**
-     * Oldest-to-newest authorized conversation page.
-     */
-    200: ConversationTimelinePage;
-};
-
-export type GetMessageThreadTimelineResponse = GetMessageThreadTimelineResponses[keyof GetMessageThreadTimelineResponses];
-
-export type MarkMessageThreadReadData = {
-    body: MarkMessageThreadReadRequest;
-    path: {
-        threadId: string;
-    };
-    query?: never;
-    url: '/v1/message-threads/{threadId}/read';
-};
-
-export type MarkMessageThreadReadErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type MarkMessageThreadReadError = MarkMessageThreadReadErrors[keyof MarkMessageThreadReadErrors];
-
-export type MarkMessageThreadReadResponses = {
-    /**
-     * The User's Thread marker is clear.
-     */
-    204: void;
-};
-
-export type MarkMessageThreadReadResponse = MarkMessageThreadReadResponses[keyof MarkMessageThreadReadResponses];
 
 export type SendMessageData = {
     body: SendMessageRequest;

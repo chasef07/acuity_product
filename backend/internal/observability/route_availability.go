@@ -9,15 +9,14 @@ import (
 type DiagnosticRoute string
 
 const (
-	RouteMessageThreads   DiagnosticRoute = "/v1/message-threads/query"
-	RouteAIOutcomes       DiagnosticRoute = "/v1/ai/interactions/outcomes/query"
+	RouteTaskQuery        DiagnosticRoute = "/v1/tasks/query"
 	RouteCallingReadiness DiagnosticRoute = "/v1/calling/readiness"
 	RouteEvents           DiagnosticRoute = "/v1/events"
 )
 
 func RouteAvailability(route DiagnosticRoute, outcome AvailabilityOutcome, stage FailureStage, duration time.Duration) Event {
 	return event("acuity_backend_route_availability",
-		"route", bounded(string(route), string(RouteMessageThreads), string(RouteAIOutcomes), string(RouteCallingReadiness), string(RouteEvents)),
+		"route", bounded(string(route), string(RouteTaskQuery), string(RouteCallingReadiness), string(RouteEvents)),
 		"outcome", bounded(string(outcome), "available", "unavailable"),
 		"failure_stage", bounded(string(stage), "none", "authentication", "authorization", "dependency", "handler"),
 		"seconds", positive(duration).Seconds())

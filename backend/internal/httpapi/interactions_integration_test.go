@@ -685,30 +685,18 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		bytes.Contains([]byte(staffDetailBody), []byte("Please move my appointment.")) {
 		t.Fatalf("routine AI Interaction detail leaked evidence: %s", staffDetailBody)
 	}
-	evidence := request(
-		t, server.Client(), http.MethodGet,
-		server.URL+"/v1/ai/interactions/"+first.InteractionID+"/evidence",
-		"admin-token", nil,
-	)
-	if evidence.StatusCode != http.StatusOK {
-		t.Fatalf("read AI Interaction evidence status = %d, body = %s",
-			evidence.StatusCode, readBody(t, evidence))
+	var transcript, closeoutPayload map[string]any
+	if err := pool.QueryRow(context.Background(),
+		`SELECT transcript, closeout_payload FROM ai_interactions WHERE id=$1`,
+		first.InteractionID).Scan(&transcript, &closeoutPayload); err != nil {
+		t.Fatalf("read persisted AI Interaction evidence: %v", err)
 	}
-	var storedEvidence struct {
-		Transcript      map[string]any `json:"transcript"`
-		CloseoutPayload map[string]any `json:"closeoutPayload"`
-	}
-	decode(t, evidence, &storedEvidence)
-	chatHistory, _ := storedEvidence.Transcript["chat_history"].(map[string]any)
+	chatHistory, _ := transcript["chat_history"].(map[string]any)
 	chatItems, _ := chatHistory["items"].([]any)
-	if len(chatItems) != 4 || storedEvidence.CloseoutPayload["domainOutcomes"] == nil {
-		t.Fatalf("admin AI Interaction evidence = %#v", storedEvidence)
+	if len(chatItems) != 4 || closeoutPayload["domainOutcomes"] == nil {
+		t.Fatalf("persisted AI Interaction evidence = %#v, %#v", transcript, closeoutPayload)
 	}
 	wantEvaluation, _ := json.Marshal(jevEvaluation)
-	gotEvaluation, _ := json.Marshal(storedEvidence.CloseoutPayload["evaluation"])
-	if !bytes.Equal(gotEvaluation, wantEvaluation) {
-		t.Fatalf("Jev evaluation did not survive ingestion and evidence retrieval: %s", gotEvaluation)
-	}
 	var storedEvaluation json.RawMessage
 	if err := pool.QueryRow(context.Background(),
 		`SELECT closeout_payload->'evaluation' FROM ai_interactions WHERE id=$1`,
@@ -739,16 +727,6 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("START to CLOSEOUT persistence = (%d, %d), want (1, 1)",
 			interactionCount, transcriptEvidenceCount)
 	}
-	staffEvidence := request(
-		t, server.Client(), http.MethodGet,
-		server.URL+"/v1/ai/interactions/"+first.InteractionID+"/evidence",
-		"staff-token", nil,
-	)
-	if staffEvidence.StatusCode != http.StatusForbidden {
-		t.Fatalf("staff AI Interaction evidence status = %d, body = %s",
-			staffEvidence.StatusCode, readBody(t, staffEvidence))
-	}
-	_ = staffEvidence.Body.Close()
 	var receiptCount, duplicateCount, quarantinedCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT
@@ -889,18 +867,6 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		}
 	}
 	booking := adminReviews["abita-booking-63"]
-	var bookingInteractionID string
-	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM ai_interactions WHERE practice_id=$1 AND source_call_id='abita-booking-63'`, practiceID).Scan(&bookingInteractionID); err != nil {
-		t.Fatal(err)
-	}
-	legacyRead := request(t, server.Client(), http.MethodPost, server.URL+"/v1/ai/interactions/"+bookingInteractionID+"/review", "admin-token", nil)
-	if legacyRead.StatusCode != http.StatusNoContent {
-		t.Fatalf("legacy read: %d %s", legacyRead.StatusCode, readBody(t, legacyRead))
-	}
-	_ = legacyRead.Body.Close()
-	if len(queryReviews("admin-token", "OPEN")) != 4 || len(queryReviews("staff-token", "OPEN")) != 4 {
-		t.Fatal("personal read completed shared work")
-	}
 	completeBody, _ := json.Marshal(map[string]any{"expectedVersion": booking.Version})
 	denied := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/"+booking.Id.String()+"/complete", "hidden-token", completeBody)
 	if denied.StatusCode != http.StatusForbidden {

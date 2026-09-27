@@ -333,16 +333,6 @@ type RecoveryTask struct {
 	RelatedInteractionCount int
 }
 
-type CallHistoryQuery struct {
-	Identity          access.Identity
-	PracticeID        string
-	Phone             string
-	CurrentCallID     string
-	OriginatingCallID string
-	Cursor            string
-	Limit             int
-}
-
 type CallHistoryItem struct {
 	ID              string
 	Type            string
@@ -356,13 +346,6 @@ type CallHistoryItem struct {
 	TransferReason  string
 	SourceCallID    string
 	Outcome         CallState
-	Current         bool
-	Originating     bool
-}
-
-type CallHistoryPage struct {
-	Items      []CallHistoryItem
-	NextCursor string
 }
 
 type OperatorTimeline struct {

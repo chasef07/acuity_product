@@ -135,7 +135,7 @@ func TestPhoneLookupPreservesResultsAndUsesIndexes(t *testing.T) {
 		args      []any
 	}{
 		{"call history roots", phoneHistoryRootsSQL, append(append([]any{}, args...), nil, nil, 51)},
-		{"timeline call projection", callProjectionSQL, append(append([]any{}, args...), nil, nil, 51, true, nil)},
+		{"timeline call projection", callProjectionSQL, append(append([]any{}, args...), nil, nil, 51, nil)},
 	}
 	baselines := make([]measurement, len(cases))
 	for i, c := range cases {

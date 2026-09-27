@@ -9,7 +9,7 @@ import (
 
 // Expand all authorized page representatives in one query. Group rows carry the
 // same summary as ordinary Task rows; ReadTask loads Interaction detail on demand.
-func loadGroupMembers(ctx context.Context, tx pgx.Tx, subject string, groups []work.Task) error {
+func loadGroupMembers(ctx context.Context, tx pgx.Tx, groups []work.Task) error {
 	if len(groups) == 0 {
 		return nil
 	}
@@ -27,7 +27,7 @@ func loadGroupMembers(ctx context.Context, tx pgx.Tx, subject string, groups []w
  AND anchor.category IS NOT DISTINCT FROM task.category
  AND anchor.origin=task.origin
  WHERE anchor.id=ANY($1::uuid[]) AND task.state='OPEN'
- ORDER BY task.created_at,task.id`, ids, subject)
+ ORDER BY task.created_at,task.id`, ids)
 	if err != nil {
 		return err
 	}
