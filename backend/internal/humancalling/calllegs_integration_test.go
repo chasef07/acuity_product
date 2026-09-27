@@ -3495,6 +3495,59 @@ func TestCredentialReconciliationExpiresWithoutProviderLookup(t *testing.T) {
 	}
 }
 
+func TestCredentialReconciliationRetriesFailedCreateForActiveStaff(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, staff := provisionConcurrentStaff(t, accessModule, now, "failed-credential-retry", 1)
+	provider := &credentialFailureProvider{executeErr: errors.New("synthetic provider rejection")}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $2, updated_at = $2
+		WHERE user_subject = $1
+	`, staff[0].Subject, now.Add(-6*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if processed, _ := calling.ProcessNextCommand(context.Background()); !processed {
+		t.Fatal("failed credential create was not claimed")
+	}
+	assertCredentialQuarantined(t, pool, staff[0].Subject)
+	credentialRetry := func() (state string, activeCreates int) {
+		t.Helper()
+		if err := calling.ReconcileCredentials(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(context.Background(), `
+			SELECT credential.state, (
+				SELECT count(*) FROM human_calling_provider_commands command
+				WHERE command.user_subject = credential.user_subject
+					AND command.action = 'CREATE_CREDENTIAL'
+					AND command.state IN ('PENDING', 'SENDING', 'AMBIGUOUS')
+			)
+			FROM human_calling_credentials credential
+			WHERE credential.user_subject = $1
+		`, staff[0].Subject).Scan(&state, &activeCreates); err != nil {
+			t.Fatal(err)
+		}
+		return state, activeCreates
+	}
+
+	now = now.Add(14 * time.Minute)
+	if state, creates := credentialRetry(); state != "FAILED" || creates != 0 {
+		t.Fatalf("early retry = %s with %d creates, want FAILED/0", state, creates)
+	}
+	now = now.Add(time.Minute)
+	if state, creates := credentialRetry(); state != "PENDING" || creates != 1 {
+		t.Fatalf("retry = %s with %d creates, want PENDING/1", state, creates)
+	}
+}
+
 func TestCredentialReconciliationOwnsInterruptedCredentialRecovery(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 15, 12, 30, 0, 0, time.UTC)

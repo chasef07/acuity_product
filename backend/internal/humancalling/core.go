@@ -77,6 +77,10 @@ const credentialRetryLifetime = 5 * time.Minute
 
 const credentialRetryExhaustedCode = "CREDENTIAL_RETRY_EXHAUSTED"
 
+// A failed create is retried for Staff who still need calling, slowly enough
+// that a persistent provider rejection does not repeat every tick.
+const credentialFailureRetryDelay = 15 * time.Minute
+
 var telnyxWebhookRetryMilliseconds = []int{1000, 2000, 5000, 15000, 30000}
 
 func telnyxWebhookRetryPolicies(events ...FactType) map[string]any {

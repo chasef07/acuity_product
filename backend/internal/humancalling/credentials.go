@@ -54,6 +54,19 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 	`, now); err != nil {
 		return fmt.Errorf("disable absent revoked credentials: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_credentials credential
+		SET state = 'PENDING', last_error_code = NULL, updated_at = $1
+		WHERE credential.provider_credential_id IS NULL
+			AND credential.state = 'FAILED'
+			AND credential.updated_at <= $2
+			AND EXISTS (
+				SELECT 1 FROM access_operational_users operational
+				WHERE operational.user_subject = credential.user_subject
+			)
+	`, now, now.Add(-credentialFailureRetryDelay)); err != nil {
+		return fmt.Errorf("retry failed credentials: %w", err)
+	}
 
 	type credentialIntent struct {
 		subject string
