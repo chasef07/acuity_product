@@ -4218,6 +4218,24 @@ test("a lost transfer cancellation response reconciles terminal state", async ()
   assert.equal(fixture.runtime.getSnapshot().failure, undefined)
 })
 
+test("a Call that ends while transfer candidates load does not leave transfer pending", async () => {
+  const fixture = await attachedOutboundMediaFixture(
+    "provider-transfer-candidates-ended",
+  )
+  const candidates = deferred<[]>()
+  fixture.backend.listTransferCandidatesHandler = () => candidates.promise
+
+  const loading = fixture.runtime.loadTransferCandidates()
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, true)
+  setAttachedOutboundTerminal(fixture)
+  await fixture.runtime.signalRefresh()
+  assert.equal(fixture.runtime.getSnapshot().activeCall, undefined)
+  candidates.resolve([])
+  await loading
+
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+})
+
 test("declining a Staff transfer rejects only its exact media offer", async () => {
   const backend = new DeterministicBackend()
   const transfer = staffTransfer()

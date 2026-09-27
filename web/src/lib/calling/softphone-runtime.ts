@@ -2416,7 +2416,10 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             signal,
           ),
         )
-        if (snapshot.activeCall?.id !== call.id) return
+        if (snapshot.activeCall?.id !== call.id) {
+          publish({ pending: { ...snapshot.pending, transfer: false } })
+          return
+        }
         publish({
           transferCandidates: candidates,
           pending: { ...snapshot.pending, transfer: false },
