@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.20.2](https://github.com/chasef07/acuity_product/compare/v1.20.1...v1.20.2) (2026-09-27)
+
+
+### Bug Fixes
+
+* **calling:** clear transfer pending when the Call changes mid-load ([#370](https://github.com/chasef07/acuity_product/issues/370)) ([1bf84c9](https://github.com/chasef07/acuity_product/commit/1bf84c950558335280174f0d25491b073bbc94e7))
+* **calling:** retry failed credential creation for active Staff ([#374](https://github.com/chasef07/acuity_product/issues/374)) ([0679205](https://github.com/chasef07/acuity_product/commit/06792058a0f35bf9a16cf50881db4c9aa178aaca))
+* **work:** return conflicts instead of 503 for equivalent open Tasks ([#371](https://github.com/chasef07/acuity_product/issues/371)) ([8de3acd](https://github.com/chasef07/acuity_product/commit/8de3acdc21455f97d5e479b596135c1b5259c83c))
+* **workspace:** keep the sender office within the selected Task's offices ([#372](https://github.com/chasef07/acuity_product/issues/372)) ([a6917f9](https://github.com/chasef07/acuity_product/commit/a6917f91f72b69754235b686d0edfacb14aa8599))
+
 ## [1.20.1](https://github.com/chasef07/acuity_product/compare/v1.20.0...v1.20.1) (2026-09-25)
 
 
