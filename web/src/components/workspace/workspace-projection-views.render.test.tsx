@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test, { type TestContext } from "node:test"
-import { act } from "react"
+import { act, type ComponentProps } from "react"
 import { createRoot } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
@@ -192,6 +192,38 @@ test("a missing access token leaves a retryable conversation error instead of a 
   assert.equal(Boolean(conversation.host.querySelector("[role='alert']")), false)
 })
 
+test("the sender office follows the offices of the selected Task", async (t) => {
+  const conversation = conversationHarness(t)
+  const engagement = projectedWorkspace(projectedTask()).selection.engagement!
+  const officeA = { id: "location-a", name: "Office A" }
+  const officeB = { id: "location-b", name: "Office B" }
+  const started: string[] = []
+  const calling = {
+    callingOccupied: false,
+    callingEnabled: true,
+    outboundPending: false,
+    ownsSoftphone: true,
+    startOutbound: async (locationID: string) => {
+      started.push(locationID)
+      return undefined
+    },
+  }
+  await conversation.render(0, { canMutate: true, calling, engagement: { ...engagement, locations: [officeA, officeB] } })
+  const office = conversation.host.querySelector<HTMLSelectElement>('select[aria-label="Sender office"]')
+  assert.ok(office)
+  await act(async () => {
+    office.value = officeA.id
+    office.dispatchEvent(new window.Event("change", { bubbles: true }))
+  })
+
+  // Same phone, so the workspace stays mounted while its office changes.
+  await conversation.render(0, { canMutate: true, calling, engagement: { ...engagement, locations: [officeB] } })
+  const call = Array.from(conversation.host.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Call")
+  assert.ok(call)
+  await act(async () => call.click())
+  assert.deepEqual(started, [officeB.id])
+})
+
 test("linked call history stays brief and opens its existing detail panels", async (t) => {
   const conversation = conversationHarness(t)
   const task = projectedTask()
@@ -327,7 +359,10 @@ function conversationHarness(t: TestContext) {
         )
   })
   const projection = projectedWorkspace(projectedTask())
-  async function render(revision: number) {
+  async function render(
+    revision: number,
+    overrides: Partial<ComponentProps<typeof EngagementWorkspaceView>> = {},
+  ) {
     await act(async () => {
       root.render(
         <EngagementWorkspaceView
@@ -349,6 +384,7 @@ function conversationHarness(t: TestContext) {
             ownsSoftphone: false,
             startOutbound: async () => undefined,
           }}
+          {...overrides}
         />,
       )
     })

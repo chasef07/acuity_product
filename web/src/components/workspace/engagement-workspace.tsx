@@ -181,10 +181,15 @@ export function EngagementWorkspaceView({
   onAIInteractionOpen,
   calling,
 }: EngagementWorkspaceProps & { calling: EngagementWorkspaceCalling }) {
-  const defaultRoute =
-    engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
   const [reviewedTextTask, setReviewedTextTask] = useState<Task>()
-  const [route, setRoute] = useState(defaultRoute)
+  const [chosenRoute, setRoute] = useState("")
+  // Selecting another Task for this phone can change its offices in place.
+  const route =
+    engagement.locations.length === 1
+      ? engagement.locations[0]!.id
+      : engagement.locations.some((location) => location.id === chosenRoute)
+        ? chosenRoute
+        : ""
   const [callError, setCallError] = useState("")
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
