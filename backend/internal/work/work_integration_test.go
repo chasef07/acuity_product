@@ -1868,3 +1868,39 @@ func assertTaskIDs(t *testing.T, tasks []work.Task, expected ...string) {
 		}
 	}
 }
+
+func TestReopenConflictsWithEquivalentOpenRecoveryTask(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Now().UTC()
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	ctx := context.Background()
+	missedCall := func(at time.Time) work.Task {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		task, err := module.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{CallID: insertCall(t, tx, authorization, at), PracticeID: authorization.Practice.ID, LocationID: authorization.Locations[0].ID, Phone: "+15555550100", Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: at})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+	first := missedCall(now)
+	completed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: first.ID, ExpectedVersion: first.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second := missedCall(now.Add(time.Minute)); second.ID == first.ID {
+		t.Fatal("new missed Call reused the completed Task")
+	}
+	if _, err := module.ReopenTask(ctx, work.ReopenTaskCommand{Identity: identity, TaskID: first.ID, ExpectedVersion: completed.Version}); !errors.Is(err, work.ErrConflict) {
+		t.Fatalf("reopen beside equivalent open Task = %v, want conflict", err)
+	}
+}
