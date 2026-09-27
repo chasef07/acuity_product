@@ -306,6 +306,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   let stopped = true
   let stopInFlight: Promise<void> | undefined
   let lifecycleGeneration = 0
+  let transferGeneration = 0
   let etag: string | undefined
   let temporaryFailures = 0
   let readinessGeneration = 0
@@ -2005,6 +2006,15 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     )
   }
 
+  function beginTransfer() {
+    transferGeneration += 1
+    publish({
+      pending: { ...snapshot.pending, transfer: true },
+      failure: undefined,
+    })
+    return transferGeneration
+  }
+
   async function reconcileSettledTransfer(transferID: string) {
     await requestRefresh(true)
     return !snapshot.staffTransfers.some(
@@ -2405,10 +2415,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     async loadTransferCandidates() {
       const call = snapshot.activeCall
       if (!call || !snapshot.controls.canTransfer) return
-      publish({
-        pending: { ...snapshot.pending, transfer: true },
-        failure: undefined,
-      })
+      const generation = beginTransfer()
       try {
         const candidates = await backendRequest((signal) =>
           options.backend.listTransferCandidates(
@@ -2416,15 +2423,15 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             signal,
           ),
         )
-        if (snapshot.activeCall?.id !== call.id) {
-          publish({ pending: { ...snapshot.pending, transfer: false } })
-          return
-        }
+        // A newer transfer action owns the shared pending flag.
+        if (generation !== transferGeneration) return
         publish({
-          transferCandidates: candidates,
+          transferCandidates:
+            snapshot.activeCall?.id === call.id ? candidates : [],
           pending: { ...snapshot.pending, transfer: false },
         })
       } catch (error) {
+        if (generation !== transferGeneration) return
         publish({
           transferCandidates: [],
           pending: { ...snapshot.pending, transfer: false },
@@ -2443,10 +2450,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         return
       }
       const normalizedNote = handoffNote.trim()
-      publish({
-        pending: { ...snapshot.pending, transfer: true },
-        failure: undefined,
-      })
+      beginTransfer()
       signalStaffIntent()
       try {
         const transfer = await backendRequest((signal) =>
@@ -2491,10 +2495,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     async cancelTransfer() {
       const transfer = activeSourceTransfer()
       if (!transfer || snapshot.pending.transfer) return
-      publish({
-        pending: { ...snapshot.pending, transfer: true },
-        failure: undefined,
-      })
+      beginTransfer()
       try {
         await backendRequest((signal) =>
           options.backend.cancelTransfer(
@@ -2523,10 +2524,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           candidate.staffTransferId,
       )
       if (!offer || snapshot.pending.transfer) return
-      publish({
-        pending: { ...snapshot.pending, transfer: true },
-        failure: undefined,
-      })
+      beginTransfer()
       try {
         await backendRequest((signal) =>
           options.backend.declineTransfer(

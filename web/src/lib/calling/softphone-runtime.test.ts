@@ -4236,6 +4236,45 @@ test("a Call that ends while transfer candidates load does not leave transfer pe
   assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
 })
 
+test("a stale transfer candidate load cannot clear a newer transfer action", async () => {
+  const fixture = await attachedOutboundMediaFixture(
+    "provider-transfer-candidates-stale",
+  )
+  const candidates = deferred<[]>()
+  fixture.backend.listTransferCandidatesHandler = () => candidates.promise
+  const loading = fixture.runtime.loadTransferCandidates()
+
+  fixture.backend.lease = lease({ owner: false })
+  fixture.backend.state = callingState({ softphone: fixture.backend.lease })
+  await fixture.runtime.signalRefresh()
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+  const transfer = staffTransfer()
+  const transferOffer = offer({
+    callId: transfer.callId,
+    callLegId: transfer.targetCallLegId,
+    mediaToken: "stale-candidates-transfer-media-token",
+    offerKind: "STAFF_TRANSFER",
+    staffTransferId: transfer.id,
+  })
+  fixture.backend.lease = lease({ owner: true, available: true })
+  fixture.backend.state = callingState({
+    softphone: fixture.backend.lease,
+    ringing: [transferOffer],
+    staffTransfers: [transfer],
+  })
+  await fixture.runtime.signalRefresh()
+  const decline = deferred<StaffTransfer>()
+  fixture.backend.declineTransferHandler = () => decline.promise
+  const declining = fixture.runtime.declineTransfer(transferOffer.callLegId)
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, true)
+
+  candidates.resolve([])
+  await loading
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, true)
+  decline.resolve({ ...transfer, state: "DECLINED" })
+  await declining
+})
+
 test("declining a Staff transfer rejects only its exact media offer", async () => {
   const backend = new DeterministicBackend()
   const transfer = staffTransfer()
