@@ -1067,12 +1067,16 @@ func TestChainedStaffTransfersKeepOneCurrentOwnerAndHistoryRow(t *testing.T) {
 	`, fixture.callID).Scan(&practiceID, &currentOwnerEmail); err != nil {
 		t.Fatal(err)
 	}
-	history, err := fixture.calling.QueryCallHistory(context.Background(), humancalling.CallHistoryQuery{
-		Identity: fixture.staff[2], PracticeID: practiceID, Phone: "+15555550100", Limit: 25,
-	})
-	if err != nil || len(history.Items) != 1 || history.Items[0].ID != fixture.callID ||
-		history.Items[0].AnsweredByEmail != currentOwnerEmail {
-		t.Fatalf("chained Call history = %#v, %v", history, err)
+	var currentStaffOwnerEmail string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT membership.email
+		FROM human_calling_current_staff_owners owner
+		JOIN access_memberships membership
+			ON membership.practice_id = $2 AND membership.user_subject = owner.staff_subject
+		WHERE owner.call_id = $1
+	`, fixture.callID, practiceID).Scan(&currentStaffOwnerEmail); err != nil ||
+		currentStaffOwnerEmail != currentOwnerEmail {
+		t.Fatalf("chained current staff owner = %q, want %q: %v", currentStaffOwnerEmail, currentOwnerEmail, err)
 	}
 	var bridgedOwners, historicalOwners int
 	if err := fixture.pool.QueryRow(context.Background(), `

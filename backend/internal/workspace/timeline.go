@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -75,11 +74,11 @@ func (m *Module) QueryPhoneTimeline(
 func queryFlatPhoneHistory(ctx context.Context, tx pgx.Tx, practiceID string, locationIDs []string,
 	phone string, cursor *pageCursor, limit int,
 ) (TimelinePage, error) {
-	messages, err := queryTimelineMessages(ctx, tx, practiceID, locationIDs, phone, "", cursor, limit, true, nil)
+	messages, err := queryTimelineMessages(ctx, tx, practiceID, locationIDs, phone, cursor, limit, nil)
 	if err != nil {
 		return TimelinePage{}, err
 	}
-	calls, err := queryTimelineCalls(ctx, tx, practiceID, locationIDs, phone, cursor, limit, true, nil)
+	calls, err := queryTimelineCalls(ctx, tx, practiceID, locationIDs, phone, cursor, limit, nil)
 	if err != nil {
 		return TimelinePage{}, err
 	}
@@ -94,73 +93,7 @@ func queryFlatPhoneHistory(ctx context.Context, tx pgx.Tx, practiceID string, lo
 	items := append(messages, calls...)
 	items = append(items, ai...)
 	items = append(items, tasks...)
-	return paginateTimeline(items, limit, true), nil
-}
-
-func (m *Module) QueryTimeline(
-	ctx context.Context,
-	command QueryTimelineCommand,
-) (TimelinePage, error) {
-	command.ThreadID = strings.TrimSpace(command.ThreadID)
-	if m.database == nil || m.access == nil || command.ThreadID == "" {
-		return TimelinePage{}, ErrInvalidInput
-	}
-	limit, err := timelineLimit(command.Limit)
-	if err != nil {
-		return TimelinePage{}, err
-	}
-	cursor, err := decodePageCursor(command.Cursor)
-	if err != nil {
-		return TimelinePage{}, ErrInvalidInput
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("begin conversation timeline: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	thread, err := loadThread(ctx, tx, command.ThreadID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return TimelinePage{}, ErrDenied
-	}
-	if err != nil {
-		return TimelinePage{}, err
-	}
-	locationIDs, err := m.authorizedLocationIDs(
-		ctx, tx, command.Identity, thread.PracticeID, thread.LocationID,
-	)
-	if err != nil {
-		return TimelinePage{}, err
-	}
-
-	items := make([]TimelineItem, 0, (limit+1)*3)
-	messages, err := queryTimelineMessages(
-		ctx, tx, thread.PracticeID, locationIDs, thread.ExternalPhone,
-		thread.ID, cursor, limit, false, nil,
-	)
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("query conversation Messages: %w", err)
-	}
-	items = append(items, messages...)
-	calls, err := queryTimelineCalls(
-		ctx, tx, thread.PracticeID, locationIDs, thread.ExternalPhone, cursor, limit, false, nil,
-	)
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("query conversation Calls: %w", err)
-	}
-	items = append(items, calls...)
-	tasks, err := queryConversationTasks(
-		ctx, tx, thread, command.Identity.Subject, cursor, limit,
-	)
-	if err != nil {
-		return TimelinePage{}, err
-	}
-	items = append(items, tasks...)
-
-	page := paginateTimeline(items, limit, false)
-	if err := tx.Commit(ctx); err != nil {
-		return TimelinePage{}, fmt.Errorf("commit conversation timeline: %w", err)
-	}
-	return page, nil
+	return paginateTimeline(items, limit), nil
 }
 
 const messageProjectionSQL = `
@@ -208,17 +141,13 @@ const messageProjectionSQL = `
 	WHERE thread.practice_id = $1
 		AND thread.external_phone = $2
 		AND thread.location_id = ANY($3::uuid[])
-		AND ($7::uuid IS NULL OR thread.id = $7)
-		AND ($9::uuid[] IS NULL OR message.id = ANY($9))
+		AND ($7::uuid[] IS NULL OR message.id = ANY($7))
 		AND (
 			$4::timestamptz IS NULL
 			OR message.created_at < $4
 			OR (
 				message.created_at = $4
-				AND (
-					($8 AND 'MESSAGE:' || message.id::text < $5)
-					OR (NOT $8 AND message.id::text < $5)
-				)
+				AND 'MESSAGE:' || message.id::text < $5
 			)
 		)
 	ORDER BY message.created_at DESC, message.id DESC
@@ -230,19 +159,13 @@ func queryTimelineMessages(
 	practiceID string,
 	locationIDs []string,
 	phone string,
-	threadID string,
 	cursor *pageCursor,
 	limit int,
-	keyedCursor bool,
 	selectedIDs []string,
 ) ([]TimelineItem, error) {
-	var threadArgument any
-	if threadID != "" {
-		threadArgument = threadID
-	}
 	rows, err := tx.Query(ctx, messageProjectionSQL,
 		practiceID, phone, locationIDs, nullableCursorTime(cursor),
-		nullableCursorID(cursor), limit+1, threadArgument, keyedCursor, selectedIDs,
+		nullableCursorID(cursor), limit+1, selectedIDs,
 	)
 	if err != nil {
 		return nil, err
@@ -376,16 +299,13 @@ const callProjectionSQL = `
 	WHERE call.practice_id = $1
 		AND call.location_id = ANY($2::uuid[])
 		AND call.id IN (` + phoneCallIDsSQL + `)
-		AND ($8::uuid[] IS NULL OR call.id = ANY($8))
+		AND ($7::uuid[] IS NULL OR call.id = ANY($7))
 		AND (
 			$4::timestamptz IS NULL
 			OR call.created_at < $4
 			OR (
 				call.created_at = $4
-				AND (
-					($7 AND 'CALL:' || call.id::text < $5)
-					OR (NOT $7 AND call.id::text < $5)
-				)
+				AND 'CALL:' || call.id::text < $5
 			)
 		)
 	ORDER BY call.created_at DESC, call.id DESC
@@ -399,12 +319,11 @@ func queryTimelineCalls(
 	phone string,
 	cursor *pageCursor,
 	limit int,
-	keyedCursor bool,
 	selectedIDs []string,
 ) ([]TimelineItem, error) {
 	rows, err := tx.Query(ctx, callProjectionSQL,
 		practiceID, locationIDs, phone, nullableCursorTime(cursor),
-		nullableCursorID(cursor), limit+1, keyedCursor, selectedIDs,
+		nullableCursorID(cursor), limit+1, selectedIDs,
 	)
 	if err != nil {
 		return nil, err
@@ -561,85 +480,10 @@ func queryPhoneTaskActivities(
 	return items, nil
 }
 
-func queryConversationTasks(
-	ctx context.Context,
-	tx pgx.Tx,
-	thread messaging.Thread,
-	userSubject string,
-	cursor *pageCursor,
-	limit int,
-) ([]TimelineItem, error) {
-	rows, err := tx.Query(ctx, conversationTaskQuery,
-		thread.PracticeID, thread.LocationID, thread.ID, thread.ExternalPhone,
-		nullableCursorTime(cursor), nullableCursorID(cursor), limit+1, userSubject,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query conversation Tasks: %w", err)
-	}
-	defer rows.Close()
-	items := make([]TimelineItem, 0, limit+1)
-	for rows.Next() {
-		task, err := scanTaskProjection(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan conversation Task: %w", err)
-		}
-		items = append(items, TimelineItem{
-			Type: "TASK", ID: task.ID, OccurredAt: task.CreatedAt, Task: task,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate conversation Tasks: %w", err)
-	}
-	return items, nil
-}
-
-func loadThread(ctx context.Context, tx pgx.Tx, threadID string) (messaging.Thread, error) {
-	var thread messaging.Thread
-	err := tx.QueryRow(ctx, `
-		SELECT
-			thread.id::text,
-			thread.practice_id::text,
-			thread.location_id::text,
-			location.name,
-			thread.office_phone,
-			thread.external_phone,
-			COALESCE(thread.display_name, ''),
-			COALESCE(thread.name_source, ''),
-			thread.outbound_blocked,
-			thread.created_at,
-			thread.updated_at
-		FROM messaging_threads thread
-		JOIN access_locations location
-			ON location.practice_id = thread.practice_id
-			AND location.id = thread.location_id
-		WHERE thread.id = $1
-		FOR SHARE OF thread
-	`, threadID).Scan(
-		&thread.ID,
-		&thread.PracticeID,
-		&thread.LocationID,
-		&thread.LocationName,
-		&thread.OfficePhone,
-		&thread.ExternalPhone,
-		&thread.DisplayName,
-		&thread.NameSource,
-		&thread.OutboundBlocked,
-		&thread.CreatedAt,
-		&thread.UpdatedAt,
-	)
-	if err != nil {
-		return messaging.Thread{}, err
-	}
-	return thread, nil
-}
-
-func paginateTimeline(items []TimelineItem, limit int, keyed bool) TimelinePage {
+func paginateTimeline(items []TimelineItem, limit int) TimelinePage {
 	sort.Slice(items, func(left int, right int) bool {
 		if items[left].OccurredAt.Equal(items[right].OccurredAt) {
-			if keyed {
-				return timelineItemKey(items[left]) > timelineItemKey(items[right])
-			}
-			return items[left].ID > items[right].ID
+			return timelineItemKey(items[left]) > timelineItemKey(items[right])
 		}
 		return items[left].OccurredAt.After(items[right].OccurredAt)
 	})
@@ -647,11 +491,7 @@ func paginateTimeline(items []TimelineItem, limit int, keyed bool) TimelinePage 
 	if len(items) > limit {
 		items = items[:limit]
 		last := items[len(items)-1]
-		id := last.ID
-		if keyed {
-			id = timelineItemKey(last)
-		}
-		nextCursor = encodePageCursor(pageCursor{OccurredAt: last.OccurredAt, ID: id})
+		nextCursor = encodePageCursor(pageCursor{OccurredAt: last.OccurredAt, ID: timelineItemKey(last)})
 	}
 	for left, right := 0, len(items)-1; left < right; left, right = left+1, right-1 {
 		items[left], items[right] = items[right], items[left]
@@ -681,15 +521,7 @@ func encodePageCursor(cursor pageCursor) string {
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
-func decodePageCursor(raw string) (*pageCursor, error) {
-	return decodeCursor(raw, false)
-}
-
 func decodeTimelineItemCursor(raw string) (*pageCursor, error) {
-	return decodeCursor(raw, true)
-}
-
-func decodeCursor(raw string, keyed bool) (*pageCursor, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
@@ -703,12 +535,6 @@ func decodeCursor(raw string, keyed bool) (*pageCursor, error) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cursor); err != nil || cursor.OccurredAt.IsZero() {
 		return nil, ErrInvalidInput
-	}
-	if !keyed {
-		if uuid.Validate(cursor.ID) != nil {
-			return nil, ErrInvalidInput
-		}
-		return &cursor, nil
 	}
 	parts := strings.SplitN(cursor.ID, ":", 2)
 	if len(parts) != 2 ||

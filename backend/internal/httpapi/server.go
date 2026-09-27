@@ -612,104 +612,6 @@ func (server *Server) GetAIInteraction(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
-func (server *Server) GetAIInteractionEvidence(
-	w http.ResponseWriter,
-	r *http.Request,
-	interactionID openapi_types.UUID,
-) {
-	if !server.portalOnly(w, r) {
-		return
-	}
-	identity, ok := server.authenticate(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	stored, err := server.interactions.ReadEvidence(ctx, identity, interactionID.String())
-	if err != nil {
-		server.writeInteractionError(w, r, err)
-		return
-	}
-	response, err := aiInteractionEvidenceResponse(stored)
-	if err != nil {
-		server.writeInteractionError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) QueryAIInteractionOutcomes(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
-	if !server.portalOnly(w, r) {
-		return
-	}
-	identity, ok := server.authenticate(w, r)
-	if !ok {
-		return
-	}
-	var body api.AIOutcomeQueryRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	appointmentAction := interaction.AppointmentAction("")
-	if body.AppointmentAction != nil {
-		appointmentAction = interaction.AppointmentAction(*body.AppointmentAction)
-	}
-	skipCounts := body.IncludeCounts != nil && !*body.IncludeCounts
-	page, err := server.interactions.QueryOutcomes(
-		ctx,
-		interaction.QueryOutcomesCommand{
-			Identity:          identity,
-			PracticeID:        body.PracticeId.String(),
-			LocationID:        uuidString(body.LocationId),
-			AppointmentAction: appointmentAction,
-			SkipCounts:        skipCounts,
-			Cursor:            stringValue(body.Cursor),
-			Limit:             intValue(body.Limit),
-		},
-	)
-	if err != nil {
-		server.writeInteractionError(w, r, err)
-		return
-	}
-	response, err := aiOutcomePageResponse(page)
-	if err != nil {
-		server.writeInteractionError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) ReviewAIInteractionOutcome(
-	w http.ResponseWriter,
-	r *http.Request,
-	interactionID openapi_types.UUID,
-) {
-	if !server.portalOnly(w, r) {
-		return
-	}
-	identity, ok := server.authenticate(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	if err := server.interactions.ReviewOutcome(
-		ctx,
-		identity,
-		interactionID.String(),
-	); err != nil {
-		server.writeInteractionError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func (server *Server) QueryOperatorAIAnalytics(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1075,77 +977,6 @@ func (server *Server) respondStaffTransfer(
 	response, err := staffTransferResponse(transfer)
 	if err != nil {
 		server.writeCallingError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) GetCallingEngagementHistory(
-	w http.ResponseWriter,
-	r *http.Request,
-	callID openapi_types.UUID,
-	params api.GetCallingEngagementHistoryParams,
-) {
-	identity, ok := server.callingIdentity(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	call, err := server.calling.ReadCall(ctx, identity, callID.String())
-	if err != nil {
-		server.writeCallingError(w, r, err)
-		return
-	}
-	timeline, err := server.workspace.QueryPhoneTimeline(
-		ctx,
-		workspace.QueryPhoneTimelineCommand{
-			Ungrouped:  params.GroupCalls == nil || !*params.GroupCalls,
-			Identity:   identity,
-			PracticeID: call.PracticeID,
-			Phone:      call.Phone,
-			Cursor:     stringValue(params.Cursor),
-			Limit:      intValue(params.Limit),
-		},
-	)
-	if err != nil {
-		server.writeWorkspaceError(w, r, err)
-		return
-	}
-	response, err := conversationTimelineResponse(timeline)
-	if err != nil {
-		server.writeCallingError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.messagingIdentity(w, r)
-	if !ok {
-		return
-	}
-	var body api.EngagementQueryRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	page, err := server.workspace.QueryEngagements(
-		ctx,
-		workspace.QueryEngagementsCommand{
-			Identity:   identity,
-			PracticeID: body.PracticeId.String(),
-			Phone:      body.Phone,
-		},
-	)
-	if err != nil {
-		server.writeWorkspaceError(w, r, err)
-		return
-	}
-	response, err := engagementPageResponse(page)
-	if err != nil {
-		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1573,45 +1404,6 @@ func (server *Server) RecordCallingDisposition(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
-func (server *Server) GetCallingCallHistory(
-	w http.ResponseWriter,
-	r *http.Request,
-	callID openapi_types.UUID,
-	params api.GetCallingCallHistoryParams,
-) {
-	identity, ok := server.callingIdentity(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	call, err := server.calling.ReadCall(ctx, identity, callID.String())
-	if err != nil {
-		server.writeCallingError(w, r, err)
-		return
-	}
-	history, err := server.calling.QueryCallHistory(
-		ctx,
-		humancalling.CallHistoryQuery{
-			Identity:      identity,
-			PracticeID:    call.PracticeID,
-			Phone:         call.Phone,
-			CurrentCallID: call.ID,
-			Cursor:        stringValue(params.Cursor),
-		},
-	)
-	if err != nil {
-		server.writeCallingError(w, r, err)
-		return
-	}
-	response, err := callHistoryResponse(history)
-	if err != nil {
-		server.writeCallingError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
 func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	identity, ok := server.taskIdentity(w, r)
 	if !ok {
@@ -1851,178 +1643,6 @@ func (server *Server) ReopenTask(
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) GetTaskCallHistory(
-	w http.ResponseWriter,
-	r *http.Request,
-	taskID openapi_types.UUID,
-	params api.GetTaskCallHistoryParams,
-) {
-	identity, ok := server.taskIdentity(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	task, err := server.workspace.ReadTask(ctx, identity, taskID.String())
-	if err != nil {
-		server.writeWorkspaceError(w, r, err)
-		return
-	}
-	history, err := server.calling.QueryCallHistory(
-		ctx,
-		humancalling.CallHistoryQuery{
-			Identity:          identity,
-			PracticeID:        task.PracticeID,
-			Phone:             task.Phone,
-			OriginatingCallID: task.CallID,
-			Cursor:            stringValue(params.Cursor),
-		},
-	)
-	if err != nil {
-		server.writeCallingError(w, r, err)
-		return
-	}
-	response, err := callHistoryResponse(history)
-	if err != nil {
-		server.writeWorkError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) GetTaskEngagementHistory(
-	w http.ResponseWriter,
-	r *http.Request,
-	taskID openapi_types.UUID,
-	params api.GetTaskEngagementHistoryParams,
-) {
-	identity, ok := server.taskIdentity(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	task, err := server.workspace.ReadTask(ctx, identity, taskID.String())
-	if err != nil {
-		server.writeWorkspaceError(w, r, err)
-		return
-	}
-	timeline, err := server.workspace.QueryPhoneTimeline(
-		ctx,
-		workspace.QueryPhoneTimelineCommand{
-			Ungrouped:  params.GroupCalls == nil || !*params.GroupCalls,
-			Identity:   identity,
-			PracticeID: task.PracticeID,
-			Phone:      task.Phone,
-			Cursor:     stringValue(params.Cursor),
-			Limit:      intValue(params.Limit),
-		},
-	)
-	if err != nil {
-		server.writeWorkspaceError(w, r, err)
-		return
-	}
-	response, err := conversationTimelineResponse(timeline)
-	if err != nil {
-		server.writeWorkspaceError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) QueryMessageThreads(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.messagingIdentity(w, r)
-	if !ok {
-		return
-	}
-	var body api.MessageThreadQueryRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	page, err := server.messaging.QueryThreads(
-		ctx,
-		messaging.QueryThreadsCommand{
-			Identity:        identity,
-			RecentAttention: body.RecentAttention != nil && *body.RecentAttention,
-			PracticeID:      body.PracticeId.String(),
-			LocationID:      uuidString(body.LocationId),
-			Search:          stringValue(body.Search),
-			Cursor:          stringValue(body.Cursor),
-			Limit:           intValue(body.Limit),
-		},
-	)
-	if err != nil {
-		server.writeMessagingError(w, r, err)
-		return
-	}
-	response, err := messageThreadPageResponse(page)
-	if err != nil {
-		server.writeMessagingError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) GetMessageThreadTimeline(
-	w http.ResponseWriter,
-	r *http.Request,
-	threadID openapi_types.UUID,
-	params api.GetMessageThreadTimelineParams,
-) {
-	identity, ok := server.messagingIdentity(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	page, err := server.workspace.QueryTimeline(
-		ctx,
-		workspace.QueryTimelineCommand{
-			Identity: identity,
-			ThreadID: threadID.String(),
-			Cursor:   stringValue(params.Cursor),
-			Limit:    intValue(params.Limit),
-		},
-	)
-	if err != nil {
-		server.writeWorkspaceError(w, r, err)
-		return
-	}
-	response, err := conversationTimelineResponse(page)
-	if err != nil {
-		server.writeWorkspaceError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) MarkMessageThreadRead(
-	w http.ResponseWriter,
-	r *http.Request,
-	threadID openapi_types.UUID,
-) {
-	identity, ok := server.messagingIdentity(w, r)
-	if !ok {
-		return
-	}
-	var body api.MarkMessageThreadReadRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	if err := server.messaging.MarkRead(ctx, messaging.MarkReadCommand{
-		Identity: identity,
-		ThreadID: threadID.String(),
-	}); err != nil {
-		server.writeMessagingError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (server *Server) SendMessage(w http.ResponseWriter, r *http.Request) {
@@ -3237,7 +2857,6 @@ func taskResponse(task work.Task) (api.Task, error) {
 			Subject: task.CreatedBy.Subject,
 		},
 		CreatedAt:               task.CreatedAt,
-		Unread:                  task.Unread,
 		Version:                 task.Version,
 		UpdatedAt:               task.UpdatedAt,
 		RelatedInteractionCount: task.RelatedInteractionCount,
@@ -3382,75 +3001,6 @@ func messageThreadResponse(thread messaging.Thread) (api.MessageThread, error) {
 	}
 	if thread.NameSource != "" {
 		response.NameSource = &thread.NameSource
-	}
-	return response, nil
-}
-
-func messageThreadPageResponse(
-	page messaging.ThreadPage,
-) (api.MessageThreadPage, error) {
-	response := api.MessageThreadPage{
-		Items:      make([]api.MessageThreadSummary, 0, len(page.Items)),
-		NextCursor: page.NextCursor,
-		Total:      page.Total,
-	}
-	for _, item := range page.Items {
-		thread, err := messageThreadResponse(item.Thread)
-		if err != nil {
-			return api.MessageThreadPage{}, err
-		}
-		summary := api.MessageThreadSummary{
-			Id:              thread.Id,
-			PracticeId:      thread.PracticeId,
-			LocationId:      thread.LocationId,
-			LocationName:    thread.LocationName,
-			OfficePhone:     thread.OfficePhone,
-			ExternalPhone:   thread.ExternalPhone,
-			DisplayName:     thread.DisplayName,
-			NameSource:      thread.NameSource,
-			OutboundBlocked: thread.OutboundBlocked,
-			CreatedAt:       thread.CreatedAt,
-			UpdatedAt:       thread.UpdatedAt,
-			Preview:         item.Preview,
-			LatestDirection: api.MessageDirection(item.LatestDirection),
-			LatestDelivery:  visibleDelivery(item.LatestDelivery),
-			LatestActivity:  item.LatestActivity,
-			OpenTaskCount:   item.OpenTaskCount,
-			Unread:          item.Unread,
-		}
-		response.Items = append(response.Items, summary)
-	}
-	return response, nil
-}
-
-func engagementPageResponse(
-	page workspace.EngagementPage,
-) (api.EngagementPage, error) {
-	response := api.EngagementPage{
-		Items: make([]api.EngagementSummary, 0, len(page.Items)),
-	}
-	for _, item := range page.Items {
-		summary := api.EngagementSummary{
-			Phone:          item.Phone,
-			Locations:      make([]api.EngagementLocation, 0, len(item.Locations)),
-			LatestActivity: item.LatestActivity,
-			OpenTaskCount:  item.OpenTaskCount,
-			Unread:         item.Unread,
-		}
-		if item.DisplayName != "" {
-			summary.DisplayName = &item.DisplayName
-		}
-		for _, itemLocation := range item.Locations {
-			locationID, err := uuid.Parse(itemLocation.ID)
-			if err != nil {
-				return api.EngagementPage{}, err
-			}
-			summary.Locations = append(summary.Locations, api.EngagementLocation{
-				Id:   locationID,
-				Name: itemLocation.Name,
-			})
-		}
-		response.Items = append(response.Items, summary)
 	}
 	return response, nil
 }
@@ -3664,23 +3214,6 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 	return response, nil
 }
 
-func callHistoryResponse(
-	history humancalling.CallHistoryPage,
-) (api.CallHistoryPage, error) {
-	response := api.CallHistoryPage{
-		Items:      make([]api.CallHistoryItem, 0, len(history.Items)),
-		NextCursor: history.NextCursor,
-	}
-	for _, item := range history.Items {
-		converted, err := callHistoryItemResponse(item)
-		if err != nil {
-			return api.CallHistoryPage{}, err
-		}
-		response.Items = append(response.Items, converted)
-	}
-	return response, nil
-}
-
 func callHistoryItemResponse(
 	item humancalling.CallHistoryItem,
 ) (api.CallHistoryItem, error) {
@@ -3704,8 +3237,6 @@ func callHistoryItemResponse(
 		AnsweredByEmail: item.AnsweredByEmail,
 		TransferReason:  item.TransferReason,
 		Outcome:         api.CallHistoryItemOutcome(item.Outcome),
-		Current:         item.Current,
-		Originating:     item.Originating,
 	}
 	if item.SourceCallID != "" {
 		response.SourceCallId = &item.SourceCallID
@@ -3849,22 +3380,6 @@ func aiInteractionDetailResponse(
 	return response, nil
 }
 
-func aiInteractionEvidenceResponse(
-	stored interaction.Interaction,
-) (api.AIInteractionEvidence, error) {
-	id, err := uuid.Parse(stored.ID)
-	if err != nil {
-		return api.AIInteractionEvidence{}, err
-	}
-	return api.AIInteractionEvidence{
-		Id:              id,
-		Transcript:      jsonMap(stored.Transcript),
-		CloseoutPayload: jsonMap(stored.CloseoutPayload),
-		CreatedAt:       stored.CreatedAt,
-		UpdatedAt:       stored.UpdatedAt,
-	}, nil
-}
-
 func aiAppointmentFactsResponse(
 	facts interaction.AppointmentFacts,
 ) api.AIAppointmentFacts {
@@ -3879,31 +3394,6 @@ func aiAppointmentFactsResponse(
 		ProviderName:        stringPointer(facts.ProviderName),
 		StartDatetime:       stringPointer(facts.StartDatetime),
 	}
-}
-
-func aiOutcomePageResponse(
-	page interaction.OutcomePage,
-) (api.AIOutcomePage, error) {
-	response := api.AIOutcomePage{
-		Items:      make([]api.AIOutcomeItem, 0, len(page.Items)),
-		NextCursor: page.NextCursor,
-	}
-	if page.Counts != nil {
-		response.Counts = &api.AIOutcomeCounts{
-			Tasks:         page.Counts.Tasks,
-			Bookings:      page.Counts.Bookings,
-			Cancellations: page.Counts.Cancellations,
-			Reschedules:   page.Counts.Reschedules,
-		}
-	}
-	for _, item := range page.Items {
-		converted, err := aiOutcomeItemResponse(item)
-		if err != nil {
-			return api.AIOutcomePage{}, err
-		}
-		response.Items = append(response.Items, converted)
-	}
-	return response, nil
 }
 
 func aiOutcomeItemResponse(
@@ -3932,10 +3422,6 @@ func aiOutcomeItemResponse(
 		AppointmentOccurredAt: item.AppointmentOccurredAt,
 		OldAppointmentId:      stringPointer(item.OldAppointmentID),
 		NewAppointmentId:      stringPointer(item.NewAppointmentID),
-	}
-	if item.AppointmentAction != "" {
-		action := api.AIAppointmentAction(item.AppointmentAction)
-		response.AppointmentAction = &action
 	}
 	return response, nil
 }
@@ -4132,44 +3618,3 @@ func intValue(value *int) int {
 }
 
 var _ IdentityAuthenticator = (*authn.JWKSAuthenticator)(nil)
-
-// Bulk attention commands use domain-owned mutations and the current User's
-// authorized Location scope, never IDs supplied from a loaded browser page.
-func (server *Server) MarkRecentMessageThreadsRead(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.messagingIdentity(w, r)
-	if !ok {
-		return
-	}
-	var body api.RecentAttentionScope
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	if err := server.messaging.MarkRecentRead(ctx, identity, body.PracticeId.String(), uuidString(body.LocationId)); err != nil {
-		server.writeMessagingError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (server *Server) ReviewRecentAIInteractionOutcomes(w http.ResponseWriter, r *http.Request) {
-	if !server.portalOnly(w, r) {
-		return
-	}
-	identity, ok := server.authenticate(w, r)
-	if !ok {
-		return
-	}
-	var body api.RecentAttentionScope
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	if err := server.interactions.ReviewRecentOutcomes(ctx, identity, body.PracticeId.String(), uuidString(body.LocationId)); err != nil {
-		server.writeInteractionError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}

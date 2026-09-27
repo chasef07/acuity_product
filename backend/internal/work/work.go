@@ -138,7 +138,6 @@ type Task struct {
 	RecoveryOutcome          RecoveryOutcome
 	RelatedInteractionCount  int
 	Interactions             []TaskInteraction
-	Unread                   bool
 	CreatedBy                ActorSnapshot
 	CreatedAt                time.Time
 	CompletedBy              *ActorSnapshot

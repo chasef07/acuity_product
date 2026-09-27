@@ -806,7 +806,6 @@ function task(id: string, overrides: Partial<Task> = {}): Task {
     state: "OPEN",
     origin: "ABITA_AI",
     urgency: "normal",
-    unread: false,
     createdBy: { kind: "SERVICE", subject: "abita" },
     createdAt: "2026-08-30T12:00:00Z",
     version: 1,

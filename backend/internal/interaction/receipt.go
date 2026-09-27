@@ -390,10 +390,6 @@ func (m *Module) projectReceiptWithRecovery(
 			return Interaction{}, "", err
 		}
 	}
-	attentionChanged, err := syncOutcomeAttention(ctx, tx, current, projectedAt)
-	if err != nil {
-		return Interaction{}, "", err
-	}
 	recoveryCompleted := int64(0)
 	if current.AppointmentOccurredAt != nil &&
 		current.AppointmentOutcome == OutcomeBooking &&
@@ -413,7 +409,9 @@ func (m *Module) projectReceiptWithRecovery(
 			return Interaction{}, "", err
 		}
 	}
-	if attentionChanged || recoveryCompleted > 0 || operator != nil {
+	// A reviewable outcome changes the Interaction evidence staff see, so it
+	// publishes a workspace refetch hint like other workspace changes.
+	if reviewableOutcome(current) || recoveryCompleted > 0 || operator != nil {
 		if _, err := m.access.RecordWorkspaceChange(
 			ctx,
 			tx,
@@ -447,63 +445,13 @@ func (m *Module) projectReceiptWithRecovery(
 	return current, status, nil
 }
 
-func syncOutcomeAttention(
-	ctx context.Context,
-	tx pgx.Tx,
-	interaction Interaction,
-	createdAt time.Time,
-) (bool, error) {
-	reviewable := interaction.AppointmentAction == AppointmentBooked ||
+func reviewableOutcome(interaction Interaction) bool {
+	return interaction.AppointmentAction == AppointmentBooked ||
 		interaction.AppointmentAction == AppointmentCancelled ||
 		interaction.AppointmentAction == AppointmentRescheduled ||
 		interaction.Status == CallFailed ||
 		interaction.Status == CallEscalated ||
 		interaction.AppointmentOutcome == OutcomePartial
-	attentionAt := outcomeAttentionAt(interaction)
-	removed, err := tx.Exec(ctx, `
-		DELETE FROM ai_interaction_attention
-		WHERE interaction_id = $1
-			AND reviewed_at IS NULL
-			AND (NOT $2 OR outcome_occurred_at <> $3)
-	`, interaction.ID, reviewable, attentionAt)
-	if err != nil {
-		return false, fmt.Errorf("clear obsolete AI Interaction attention: %w", err)
-	}
-	if !reviewable {
-		return removed.RowsAffected() > 0, nil
-	}
-	tag, err := tx.Exec(ctx, `
-		INSERT INTO ai_interaction_attention (
-			interaction_id,
-			user_subject,
-			outcome_occurred_at,
-			created_at
-		)
-		SELECT
-			$1,
-			operational_scope.user_subject,
-			$2,
-			$3
-		FROM access_operational_scopes operational_scope
-		WHERE operational_scope.practice_id = $4
-			AND (
-				operational_scope.location_scope = 'ALL'
-				OR EXISTS (
-					SELECT 1
-					FROM access_membership_locations location_grant
-					WHERE location_grant.membership_id = operational_scope.membership_id
-						AND location_grant.practice_id = operational_scope.practice_id
-						AND location_grant.location_id = $5
-				)
-			)
-		ON CONFLICT (interaction_id, user_subject, outcome_occurred_at)
-		DO NOTHING
-	`, interaction.ID, attentionAt, createdAt,
-		interaction.PracticeID, interaction.LocationID)
-	if err != nil {
-		return false, fmt.Errorf("seed AI Interaction attention: %w", err)
-	}
-	return removed.RowsAffected() > 0 || tag.RowsAffected() > 0, nil
 }
 
 func (m *Module) quarantineReceipt(

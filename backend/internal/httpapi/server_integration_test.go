@@ -879,25 +879,6 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 		reopened.Title != renamed.Title {
 		t.Fatalf("reopened HTTP Task = %#v", reopened)
 	}
-
-	historyResponse := request(
-		t,
-		server.Client(),
-		http.MethodGet,
-		server.URL+"/v1/tasks/"+task.ID+"/history",
-		"task-token",
-		nil,
-	)
-	if historyResponse.StatusCode != http.StatusOK {
-		t.Fatalf("Task history status = %d, body = %s", historyResponse.StatusCode, readBody(t, historyResponse))
-	}
-	var history api.CallHistoryPage
-	decode(t, historyResponse, &history)
-	if len(history.Items) != 1 ||
-		history.Items[0].Id.String() != callID ||
-		!history.Items[0].Originating {
-		t.Fatalf("Task Call history = %#v", history)
-	}
 }
 
 func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing.T) {

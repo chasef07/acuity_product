@@ -59,8 +59,7 @@ artifacts.
 `acuity_backend_route_availability_seconds` cover the routes omitted by the
 critical-read SLO:
 
-- `POST /v1/message-threads/query`
-- `POST /v1/ai/interactions/outcomes/query`
+- `POST /v1/tasks/query`
 - `PUT /v1/calling/readiness`
 - `GET /v1/events` on the realtime runtime
 

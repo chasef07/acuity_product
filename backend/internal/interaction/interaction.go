@@ -3,7 +3,6 @@ package interaction
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -131,16 +130,6 @@ type Interaction struct {
 	UpdatedAt             time.Time
 }
 
-type QueryOutcomesCommand struct {
-	Identity          access.Identity
-	PracticeID        string
-	LocationID        string
-	AppointmentAction AppointmentAction
-	SkipCounts        bool
-	Cursor            string
-	Limit             int
-}
-
 type OutcomeItem struct {
 	ID                    string
 	LocationID            string
@@ -152,48 +141,16 @@ type OutcomeItem struct {
 	EndedAt               *time.Time
 	Status                CallStatus
 	Summary               string
-	AppointmentAction     AppointmentAction
 	AppointmentOutcome    AppointmentOutcome
 	AppointmentOccurredAt *time.Time
-	AttentionOccurredAt   time.Time
 	OldAppointmentID      string
 	NewAppointmentID      string
-}
-
-type OutcomePage struct {
-	Items      []OutcomeItem
-	NextCursor string
-	Counts     *OutcomeCounts
-}
-
-type OutcomeCounts struct {
-	Tasks         int
-	Bookings      int
-	Cancellations int
-	Reschedules   int
 }
 
 func (m *Module) Read(
 	ctx context.Context,
 	identity access.Identity,
 	interactionID string,
-) (Interaction, error) {
-	return m.read(ctx, identity, interactionID, false)
-}
-
-func (m *Module) ReadEvidence(
-	ctx context.Context,
-	identity access.Identity,
-	interactionID string,
-) (Interaction, error) {
-	return m.read(ctx, identity, interactionID, true)
-}
-
-func (m *Module) read(
-	ctx context.Context,
-	identity access.Identity,
-	interactionID string,
-	requireAdmin bool,
 ) (Interaction, error) {
 	if m.database == nil || m.access == nil {
 		return Interaction{}, ErrInvalidInput
@@ -215,379 +172,19 @@ func (m *Module) read(
 	if err != nil {
 		return Interaction{}, fmt.Errorf("read AI Interaction: %w", err)
 	}
-	authorization, err := m.access.LockReadAuthorization(
+	if _, err := m.access.LockReadAuthorization(
 		ctx,
 		tx,
 		identity,
 		stored.PracticeID,
 		stored.LocationID,
-	)
-	if err != nil {
-		return Interaction{}, ErrDenied
-	}
-	if requireAdmin &&
-		!authorization.PlatformOperator &&
-		authorization.Membership.Role != access.RoleAdmin {
+	); err != nil {
 		return Interaction{}, ErrDenied
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Interaction{}, fmt.Errorf("commit AI Interaction read: %w", err)
 	}
 	return stored, nil
-}
-
-func (m *Module) QueryOutcomes(
-	ctx context.Context,
-	command QueryOutcomesCommand,
-) (OutcomePage, error) {
-	command.PracticeID = strings.TrimSpace(command.PracticeID)
-	command.LocationID = strings.TrimSpace(command.LocationID)
-	if m.database == nil || m.access == nil || command.PracticeID == "" {
-		return OutcomePage{}, ErrInvalidInput
-	}
-	if command.AppointmentAction != "" &&
-		command.AppointmentAction != AppointmentBooked &&
-		command.AppointmentAction != AppointmentCancelled &&
-		command.AppointmentAction != AppointmentRescheduled {
-		return OutcomePage{}, ErrInvalidInput
-	}
-	limit := command.Limit
-	if limit == 0 {
-		limit = 50
-	}
-	if limit < 1 || limit > 50 {
-		return OutcomePage{}, ErrInvalidInput
-	}
-	cursor, err := decodeOutcomeCursor(command.Cursor)
-	if err != nil {
-		return OutcomePage{}, ErrInvalidInput
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return OutcomePage{}, fmt.Errorf("begin AI outcome query: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	authorization, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		command.LocationID,
-	)
-	if err != nil {
-		return OutcomePage{}, ErrDenied
-	}
-	locationIDs := make([]string, 0, len(authorization.Locations))
-	if command.LocationID != "" {
-		locationIDs = append(locationIDs, command.LocationID)
-	} else {
-		for _, location := range authorization.Locations {
-			locationIDs = append(locationIDs, location.ID)
-		}
-	}
-	if len(locationIDs) == 0 {
-		return OutcomePage{}, ErrDenied
-	}
-	now := m.now()
-	cutoff := now.Add(-7 * 24 * time.Hour)
-	page := OutcomePage{Items: []OutcomeItem{}}
-	if !command.SkipCounts {
-		counts := OutcomeCounts{}
-		if err := tx.QueryRow(ctx, `
-		SELECT
-			count(*) FILTER (WHERE interaction.appointment_action IS NULL),
-			count(*) FILTER (WHERE interaction.appointment_action = 'BOOKED'),
-			count(*) FILTER (WHERE interaction.appointment_action = 'CANCELLED'),
-			count(*) FILTER (WHERE interaction.appointment_action = 'RESCHEDULED')
-		FROM ai_interactions interaction
-		JOIN LATERAL (
-			SELECT candidate.outcome_occurred_at
-			FROM ai_interaction_attention candidate
-			WHERE candidate.interaction_id = interaction.id
-				AND candidate.user_subject = $3
-				AND candidate.reviewed_at IS NULL
-				AND candidate.outcome_occurred_at >= $4
-				AND candidate.outcome_occurred_at <= $5
-			ORDER BY candidate.outcome_occurred_at DESC
-			LIMIT 1
-		) attention ON true
-		WHERE interaction.practice_id = $1
-			AND interaction.location_id::text = ANY($2::text[])
-			AND NOT EXISTS (
-				SELECT 1
-				FROM work_tasks task
-				WHERE task.practice_id = interaction.practice_id
-					AND task.source_call_id = interaction.source_call_id
-					AND task.state = 'OPEN'
-			)
-			AND (
-				interaction.appointment_action IN (
-					'BOOKED',
-					'CANCELLED',
-					'RESCHEDULED'
-				)
-				OR interaction.status IN ('FAILED', 'ESCALATED')
-				OR interaction.appointment_outcome = 'PARTIAL'
-			)
-		`, command.PracticeID, locationIDs, command.Identity.Subject, cutoff, now).Scan(
-			&counts.Tasks,
-			&counts.Bookings,
-			&counts.Cancellations,
-			&counts.Reschedules,
-		); err != nil {
-			return OutcomePage{}, fmt.Errorf("count AI outcome attention: %w", err)
-		}
-		page.Counts = &counts
-	}
-	rows, err := tx.Query(ctx, `
-		SELECT
-			interaction.id::text,
-			interaction.location_id::text,
-			location.name,
-			interaction.source_call_id,
-			interaction.phone,
-			COALESCE(interaction.external_patient_id, ''),
-			interaction.started_at,
-			interaction.ended_at,
-			interaction.status,
-			COALESCE(interaction.summary, ''),
-			COALESCE(interaction.appointment_action, ''),
-			interaction.appointment_outcome,
-			interaction.appointment_occurred_at,
-			attention.outcome_occurred_at,
-			COALESCE(interaction.old_appointment_id, ''),
-			COALESCE(interaction.new_appointment_id, '')
-		FROM ai_interactions interaction
-		JOIN LATERAL (
-			SELECT candidate.outcome_occurred_at
-			FROM ai_interaction_attention candidate
-			WHERE candidate.interaction_id = interaction.id
-				AND candidate.user_subject = $3
-				AND candidate.reviewed_at IS NULL
-				AND candidate.outcome_occurred_at >= $9
-				AND candidate.outcome_occurred_at <= $10
-			ORDER BY candidate.outcome_occurred_at DESC
-			LIMIT 1
-		) attention ON true
-		JOIN access_locations location
-			ON location.practice_id = interaction.practice_id
-			AND location.id = interaction.location_id
-		WHERE interaction.practice_id = $1
-			AND interaction.location_id::text = ANY($2::text[])
-			AND NOT EXISTS (
-				SELECT 1
-				FROM work_tasks task
-				WHERE task.practice_id = interaction.practice_id
-					AND task.source_call_id = interaction.source_call_id
-					AND task.state = 'OPEN'
-			)
-			AND (
-				interaction.appointment_action IN (
-					'BOOKED',
-					'CANCELLED',
-					'RESCHEDULED'
-				)
-				OR interaction.status IN ('FAILED', 'ESCALATED')
-				OR interaction.appointment_outcome = 'PARTIAL'
-			)
-			AND ($4::text = '' OR interaction.appointment_action = $4)
-			AND (
-				NOT $5::boolean
-				OR (attention.outcome_occurred_at, interaction.id) <
-					($6::timestamptz, $7::uuid)
-			)
-		ORDER BY attention.outcome_occurred_at DESC, interaction.id DESC
-		LIMIT $8
-	`, command.PracticeID, locationIDs, command.Identity.Subject,
-		command.AppointmentAction, cursor.Present, nullableOutcomeCursorTime(cursor),
-		nullableOutcomeCursorID(cursor), limit+1, cutoff, now)
-	if err != nil {
-		return OutcomePage{}, fmt.Errorf("query AI outcome attention: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var item OutcomeItem
-		if err := rows.Scan(
-			&item.ID,
-			&item.LocationID,
-			&item.LocationName,
-			&item.SourceCallID,
-			&item.Phone,
-			&item.ExternalPatientID,
-			&item.StartedAt,
-			&item.EndedAt,
-			&item.Status,
-			&item.Summary,
-			&item.AppointmentAction,
-			&item.AppointmentOutcome,
-			&item.AppointmentOccurredAt,
-			&item.AttentionOccurredAt,
-			&item.OldAppointmentID,
-			&item.NewAppointmentID,
-		); err != nil {
-			return OutcomePage{}, fmt.Errorf("scan AI outcome attention: %w", err)
-		}
-		page.Items = append(page.Items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return OutcomePage{}, fmt.Errorf("iterate AI outcome attention: %w", err)
-	}
-	rows.Close()
-	nextCursor := ""
-	if len(page.Items) > limit {
-		page.Items = page.Items[:limit]
-		nextCursor, err = encodeOutcomeCursor(page.Items[len(page.Items)-1])
-		if err != nil {
-			return OutcomePage{}, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return OutcomePage{}, fmt.Errorf("commit AI outcome attention query: %w", err)
-	}
-	page.NextCursor = nextCursor
-	return page, nil
-}
-
-type outcomeCursor struct {
-	Present    bool      `json:"-"`
-	OccurredAt time.Time `json:"occurredAt"`
-	ID         string    `json:"id"`
-}
-
-func encodeOutcomeCursor(item OutcomeItem) (string, error) {
-	occurredAt := item.AttentionOccurredAt
-	if occurredAt.IsZero() && item.AppointmentOccurredAt != nil {
-		occurredAt = *item.AppointmentOccurredAt
-	}
-	if occurredAt.IsZero() || uuid.Validate(item.ID) != nil {
-		return "", fmt.Errorf("encode AI outcome cursor: invalid outcome")
-	}
-	encoded, err := json.Marshal(outcomeCursor{
-		OccurredAt: occurredAt,
-		ID:         item.ID,
-	})
-	if err != nil {
-		return "", fmt.Errorf("encode AI outcome cursor: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(encoded), nil
-}
-
-func decodeOutcomeCursor(encoded string) (outcomeCursor, error) {
-	if encoded == "" {
-		return outcomeCursor{}, nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return outcomeCursor{}, err
-	}
-	var cursor outcomeCursor
-	if err := json.Unmarshal(raw, &cursor); err != nil ||
-		cursor.OccurredAt.IsZero() || uuid.Validate(cursor.ID) != nil {
-		return outcomeCursor{}, ErrInvalidInput
-	}
-	cursor.Present = true
-	return cursor, nil
-}
-
-func nullableOutcomeCursorTime(cursor outcomeCursor) any {
-	if !cursor.Present {
-		return nil
-	}
-	return cursor.OccurredAt
-}
-
-func nullableOutcomeCursorID(cursor outcomeCursor) any {
-	if !cursor.Present {
-		return nil
-	}
-	return cursor.ID
-}
-
-func outcomeAttentionAt(stored Interaction) time.Time {
-	if stored.AppointmentOccurredAt != nil {
-		return *stored.AppointmentOccurredAt
-	}
-	if stored.EndedAt != nil {
-		return *stored.EndedAt
-	}
-	return stored.StartedAt
-}
-
-func (m *Module) ReviewOutcome(
-	ctx context.Context,
-	identity access.Identity,
-	interactionID string,
-) error {
-	interactionID = strings.TrimSpace(interactionID)
-	if m.database == nil || m.access == nil {
-		return ErrInvalidInput
-	}
-	if _, err := uuid.Parse(interactionID); err != nil {
-		return ErrInvalidInput
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin AI outcome review: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	stored, err := scanInteraction(tx.QueryRow(ctx, interactionSelect+`
-		WHERE interaction.id = $1
-		FOR UPDATE
-	`, interactionID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrDenied
-	}
-	if err != nil {
-		return fmt.Errorf("lock AI Interaction review: %w", err)
-	}
-	authorization, err := m.access.LockMutationAuthorization(
-		ctx,
-		tx,
-		identity,
-		stored.PracticeID,
-		stored.LocationID,
-	)
-	if err != nil {
-		return ErrDenied
-	}
-	reviewedAt := m.now()
-	tag, err := tx.Exec(ctx, `
-		UPDATE ai_interaction_attention
-		SET reviewed_at = $3
-		WHERE interaction_id = $1
-			AND user_subject = $2
-			AND reviewed_at IS NULL
-	`, stored.ID, identity.Subject, reviewedAt)
-	if err != nil {
-		return fmt.Errorf("review AI Interaction outcome: %w", err)
-	}
-	if tag.RowsAffected() > 0 {
-		if err := m.access.AuditOperatorMutation(
-			ctx,
-			tx,
-			authorization,
-			access.OperatorMutationAudit{
-				Action:          "ai_interaction.review",
-				ResourceType:    "ai_interaction",
-				ResourceID:      stored.ID,
-				ResourceVersion: 1,
-				OccurredAt:      reviewedAt,
-			},
-		); err != nil {
-			return err
-		}
-		if _, err := m.access.RecordWorkspaceChange(
-			ctx,
-			tx,
-			stored.PracticeID,
-		); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit AI outcome review: %w", err)
-	}
-	return nil
 }
 
 type Module struct {

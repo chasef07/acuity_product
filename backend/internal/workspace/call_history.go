@@ -138,9 +138,9 @@ func queryPhoneHistory(ctx context.Context, tx pgx.Tx, practiceID string, locati
 		var items []TimelineItem
 		switch kind {
 		case "MESSAGE":
-			items, err = queryTimelineMessages(ctx, tx, practiceID, locationIDs, phone, "", nil, len(ids), true, ids)
+			items, err = queryTimelineMessages(ctx, tx, practiceID, locationIDs, phone, nil, len(ids), ids)
 		case "CALL":
-			items, err = queryTimelineCalls(ctx, tx, practiceID, locationIDs, phone, nil, len(ids), true, ids)
+			items, err = queryTimelineCalls(ctx, tx, practiceID, locationIDs, phone, nil, len(ids), ids)
 		case "AI_INTERACTION":
 			items, err = queryPhoneInteractions(ctx, tx, practiceID, locationIDs, phone, nil, len(ids), ids)
 		case "TASK":
@@ -169,5 +169,5 @@ func queryPhoneHistory(ctx context.Context, tx pgx.Tx, practiceID string, locati
 			return roots[index].Entries[i].OccurredAt.Before(roots[index].Entries[j].OccurredAt)
 		})
 	}
-	return paginateTimeline(roots, limit, true), nil
+	return paginateTimeline(roots, limit), nil
 }

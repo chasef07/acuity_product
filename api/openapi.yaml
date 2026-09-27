@@ -655,78 +655,6 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/calling/calls/{callId}/history:
-    get:
-      operationId: getCallingCallHistory
-      summary: Read authorized exact-phone Call Engagement History for the active Call.
-      parameters:
-        - name: callId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: cursor
-          in: query
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Newest page presented in chronological order.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CallHistoryPage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/calling/calls/{callId}/engagement-history:
-    get:
-      operationId: getCallingEngagementHistory
-      summary: Compose exact-phone Messages, Calls, and Tasks across currently authorized Practice Locations.
-      parameters:
-        - name: callId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: cursor
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 50
-        - name: groupCalls
-          in: query
-          description: Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
-          schema:
-            type: boolean
-            default: false
-      responses:
-        "200":
-          description: Chronological Contact Context Engagement History.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ConversationTimelinePage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/calling/calls/{callId}/voicemail-playback:
     post:
       operationId: issueCallingVoicemailPlayback
@@ -881,31 +809,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
-  /v1/engagements/query:
-    post:
-      operationId: queryEngagements
-      summary: Resolve one authorized exact-phone Engagement across Practice Locations.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EngagementQueryRequest"
-      responses:
-        "200":
-          description: Exact-phone results within the current User's Location Scope.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EngagementPage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/engagements/{phone}/timeline:
     get:
       operationId: getEngagementTimeline
@@ -1008,79 +911,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AIInteractionDetail"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/ai/interactions/{interactionId}/evidence:
-    get:
-      operationId: getAIInteractionEvidence
-      summary: Read one admin-authorized AI Interaction transcript and closeout payload.
-      parameters:
-        - name: interactionId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: Admin-authorized AI Interaction evidence.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AIInteractionEvidence"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/ai/interactions/{interactionId}/review:
-    post:
-      operationId: reviewAIInteractionOutcome
-      summary: Clear the real User's attention marker for one AI appointment outcome.
-      parameters:
-        - name: interactionId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "204":
-          description: AI appointment outcome reviewed.
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/ai/interactions/outcomes/query:
-    post:
-      operationId: queryAIInteractionOutcomes
-      summary: Read the real User's unreviewed AI appointment outcomes.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AIOutcomeQueryRequest"
-      responses:
-        "200":
-          description: Authorized per-User AI outcome attention projection.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AIOutcomePage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1613,209 +1443,6 @@ paths:
           $ref: "#/components/responses/Denied"
         "409":
           $ref: "#/components/responses/Conflict"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/tasks/{taskId}/history:
-    get:
-      operationId: getTaskCallHistory
-      summary: Read authorized exact-phone Call Engagement History for one Task.
-      parameters:
-        - name: taskId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: cursor
-          in: query
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Newest page presented in chronological order.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CallHistoryPage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/tasks/{taskId}/engagement-history:
-    get:
-      operationId: getTaskEngagementHistory
-      summary: Read authorized exact-phone Engagement History for one Task.
-      parameters:
-        - name: taskId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: cursor
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 50
-        - name: groupCalls
-          in: query
-          description: Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
-          schema:
-            type: boolean
-            default: false
-      responses:
-        "200":
-          description: Chronological exact-phone Engagement History.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ConversationTimelinePage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/message-threads/query:
-    post:
-      operationId: queryMessageThreads
-      summary: Query phone-led Message Threads in one authorized Location.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/MessageThreadQueryRequest"
-      responses:
-        "200":
-          description: Newest authorized Message Threads.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MessageThreadPage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/message-threads/read:
-    post:
-      operationId: markRecentMessageThreadsRead
-      summary: Mark all eligible Texts from the past seven days read for the current User.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RecentAttentionScope"
-      responses:
-        "204":
-          description: Current User attention cleared within the authorized scope, including unloaded pages.
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/ai/interactions/outcomes/review:
-    post:
-      operationId: reviewRecentAIInteractionOutcomes
-      summary: Review all eligible appointment outcomes from the past seven days for the current User.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RecentAttentionScope"
-      responses:
-        "204":
-          description: Current User attention cleared within the authorized scope, including unloaded pages.
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/message-threads/{threadId}/timeline:
-    get:
-      operationId: getMessageThreadTimeline
-      summary: Read one authorized living conversation timeline.
-      parameters:
-        - name: threadId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: cursor
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 50
-      responses:
-        "200":
-          description: Oldest-to-newest authorized conversation page.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ConversationTimelinePage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/message-threads/{threadId}/read:
-    post:
-      operationId: markMessageThreadRead
-      summary: Clear the real User's unread marker for one Thread.
-      parameters:
-        - name: threadId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/MarkMessageThreadReadRequest"
-      responses:
-        "204":
-          description: The User's Thread marker is clear.
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
   /v1/messages:
@@ -3286,7 +2913,6 @@ components:
         - urgency
         - createdBy
         - createdAt
-        - unread
         - version
         - updatedAt
         - relatedInteractionCount
@@ -3359,8 +2985,6 @@ components:
         conversationThreadId:
           type: string
           format: uuid
-        unread:
-          type: boolean
         createdBy:
           $ref: "#/components/schemas/TaskActor"
         createdAt:
@@ -3486,65 +3110,6 @@ components:
         other:
           type: integer
           minimum: 0
-    EngagementLocation:
-      type: object
-      additionalProperties: false
-      required: [id, name]
-      properties:
-        id:
-          type: string
-          format: uuid
-        name:
-          type: string
-    EngagementSummary:
-      type: object
-      additionalProperties: false
-      required:
-        - phone
-        - locations
-        - latestActivity
-        - openTaskCount
-        - unread
-      properties:
-        phone:
-          type: string
-          pattern: '^\+[1-9][0-9]{7,14}$'
-        displayName:
-          type: string
-        locations:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/EngagementLocation"
-        latestActivity:
-          type: string
-          format: date-time
-        openTaskCount:
-          type: integer
-          minimum: 0
-        unread:
-          type: boolean
-    EngagementPage:
-      type: object
-      additionalProperties: false
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/EngagementSummary"
-    EngagementQueryRequest:
-      type: object
-      additionalProperties: false
-      required: [practiceId, phone]
-      properties:
-        practiceId:
-          type: string
-          format: uuid
-        phone:
-          type: string
-          minLength: 1
-          maxLength: 32
     AIInteractionMessageKind:
       type: string
       enum: [START, CLOSEOUT, OUTCOME_CHECKPOINT]
@@ -3935,48 +3500,6 @@ components:
         updatedAt:
           type: string
           format: date-time
-    AIInteractionEvidence:
-      type: object
-      additionalProperties: false
-      required: [id, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-          format: uuid
-        transcript:
-          type: object
-          additionalProperties: true
-        closeoutPayload:
-          type: object
-          additionalProperties: true
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-    AIOutcomeQueryRequest:
-      type: object
-      additionalProperties: false
-      required: [practiceId]
-      properties:
-        practiceId:
-          type: string
-          format: uuid
-        locationId:
-          type: string
-          format: uuid
-        appointmentAction:
-          $ref: "#/components/schemas/AIAppointmentAction"
-        includeCounts:
-          type: boolean
-          default: true
-        cursor:
-          type: string
-        limit:
-          type: integer
-          minimum: 1
-          maximum: 50
     AIOutcomeItem:
       type: object
       additionalProperties: false
@@ -4014,8 +3537,6 @@ components:
           $ref: "#/components/schemas/AIInteractionCallStatus"
         summary:
           type: string
-        appointmentAction:
-          $ref: "#/components/schemas/AIAppointmentAction"
         appointmentOutcome:
           $ref: "#/components/schemas/AIAppointmentOutcome"
         appointmentOccurredAt:
@@ -4025,36 +3546,6 @@ components:
           type: string
         newAppointmentId:
           type: string
-    AIOutcomePage:
-      type: object
-      additionalProperties: false
-      required: [items, nextCursor]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/AIOutcomeItem"
-        nextCursor:
-          type: string
-        counts:
-          $ref: "#/components/schemas/AIOutcomeCounts"
-    AIOutcomeCounts:
-      type: object
-      additionalProperties: false
-      required: [tasks, bookings, cancellations, reschedules]
-      properties:
-        tasks:
-          type: integer
-          minimum: 0
-        bookings:
-          type: integer
-          minimum: 0
-        cancellations:
-          type: integer
-          minimum: 0
-        reschedules:
-          type: integer
-          minimum: 0
     StaffPhoneMetrics:
       type: object
       additionalProperties: false
@@ -4974,83 +4465,6 @@ components:
         updatedAt:
           type: string
           format: date-time
-    MessageThreadSummary:
-      allOf:
-        - $ref: "#/components/schemas/MessageThread"
-        - type: object
-          additionalProperties: false
-          required:
-            - preview
-            - latestDirection
-            - latestDelivery
-            - latestActivity
-            - openTaskCount
-            - unread
-          properties:
-            preview:
-              type: string
-            latestDirection:
-              $ref: "#/components/schemas/MessageDirection"
-            latestDelivery:
-              $ref: "#/components/schemas/MessageDeliveryState"
-            latestActivity:
-              type: string
-              format: date-time
-            openTaskCount:
-              type: integer
-              minimum: 0
-            unread:
-              type: boolean
-    RecentAttentionScope:
-      type: object
-      additionalProperties: false
-      required: [practiceId]
-      properties:
-        practiceId:
-          type: string
-          format: uuid
-        locationId:
-          type: string
-          format: uuid
-    MessageThreadPage:
-      type: object
-      additionalProperties: false
-      required: [items, nextCursor]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/MessageThreadSummary"
-        total:
-          type: integer
-          minimum: 0
-          description: Full eligible phone-number count before pagination, supplied for recentAttention queries.
-        nextCursor:
-          type: string
-    MessageThreadQueryRequest:
-      type: object
-      additionalProperties: false
-      required: [practiceId]
-      properties:
-        practiceId:
-          type: string
-          format: uuid
-        locationId:
-          type: string
-          format: uuid
-        recentAttention:
-          type: boolean
-          default: false
-          description: Return only unread conversations with an inbound message in the past seven days and no linked open Task. Paginate phone-number groups and return their full total.
-        search:
-          type: string
-          maxLength: 40
-        cursor:
-          type: string
-        limit:
-          type: integer
-          minimum: 1
-          maximum: 50
     Message:
       type: object
       additionalProperties: false
@@ -5237,9 +4651,6 @@ components:
           maxLength: 200
         duplicateRiskAcknowledged:
           type: boolean
-    MarkMessageThreadReadRequest:
-      type: object
-      additionalProperties: false
     CreateMessageFollowUpTaskRequest:
       type: object
       additionalProperties: false
@@ -5317,8 +4728,6 @@ components:
         - answeredByEmail
         - transferReason
         - outcome
-        - current
-        - originating
       properties:
         id:
           type: string
@@ -5363,21 +4772,6 @@ components:
             - NEEDS_DISPOSITION
             - RESOLVED
             - FOLLOW_UP_REQUIRED
-        current:
-          type: boolean
-        originating:
-          type: boolean
-    CallHistoryPage:
-      type: object
-      additionalProperties: false
-      required: [items, nextCursor]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/CallHistoryItem"
-        nextCursor:
-          type: string
     OperatorCallingTimelineEntry:
       type: object
       additionalProperties: false

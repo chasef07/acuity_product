@@ -224,33 +224,13 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		t.Fatalf("process HTTP inbound receipt = %t, %v", processed, err)
 	}
 
-	queryBody, _ := json.Marshal(api.MessageThreadQueryRequest{
-		PracticeId: parsedUUID(t, authorization.Practice.ID),
-		LocationId: parsedUUIDPointer(t, authorization.Locations[0].ID),
-	})
-	threadsResponse := request(
-		t,
-		portal.Client(),
-		http.MethodPost,
-		portal.URL+"/v1/message-threads/query",
-		"message-token",
-		queryBody,
-	)
-	if threadsResponse.StatusCode != http.StatusOK {
-		t.Fatalf("query Threads status = %d, body = %s", threadsResponse.StatusCode, readBody(t, threadsResponse))
-	}
-	var threads api.MessageThreadPage
-	decode(t, threadsResponse, &threads)
-	if len(threads.Items) != 1 ||
-		!threads.Items[0].Unread ||
-		threads.Items[0].Preview != "Thank you." {
-		t.Fatalf("HTTP Message Threads = %#v", threads)
-	}
+	engagementTimelineURL := portal.URL + "/v1/engagements/+17275550199/timeline?practiceId=" +
+		url.QueryEscape(authorization.Practice.ID)
 	timelineResponse := request(
 		t,
 		portal.Client(),
 		http.MethodGet,
-		portal.URL+"/v1/message-threads/"+threads.Items[0].Id.String()+"/timeline",
+		engagementTimelineURL,
 		"message-token",
 		nil,
 	)
@@ -259,18 +239,24 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	}
 	var timeline api.ConversationTimelinePage
 	decode(t, timelineResponse, &timeline)
-	if len(timeline.Items) != 2 ||
-		timeline.Items[0].Message == nil ||
-		timeline.Items[0].Message.Delivery != api.MessageDeliveryStateDelivered ||
-		timeline.Items[1].Message == nil ||
-		timeline.Items[1].Message.Direction != api.MessageDirectionINBOUND {
+	var timelineMessages []api.Message
+	for _, item := range timeline.Items {
+		if item.Message != nil {
+			timelineMessages = append(timelineMessages, *item.Message)
+		}
+	}
+	if len(timelineMessages) != 2 ||
+		timelineMessages[0].Delivery != api.MessageDeliveryStateDelivered ||
+		timelineMessages[1].Direction != api.MessageDirectionINBOUND ||
+		timelineMessages[1].Body != "Thank you." {
 		t.Fatalf("HTTP conversation timeline = %#v", timeline)
 	}
+	threadID := timelineMessages[1].Thread.Id
 	taskResponse := request(
 		t,
 		portal.Client(),
 		http.MethodPost,
-		portal.URL+"/v1/messages/"+timeline.Items[1].Id.String()+"/follow-up-task",
+		portal.URL+"/v1/messages/"+timelineMessages[1].Id.String()+"/follow-up-task",
 		"message-token",
 		[]byte(`{}`),
 	)
@@ -307,7 +293,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	origins := map[api.TaskOrigin]bool{}
 	for _, item := range taskPage.Items {
 		origins[item.Origin] = true
-		if item.ConversationThreadId == nil || *item.ConversationThreadId != threads.Items[0].Id || item.LocationId != task.LocationId || item.MessageId == nil || *item.MessageId != *task.MessageId || !item.Unread {
+		if item.ConversationThreadId == nil || *item.ConversationThreadId != threadID || item.LocationId != task.LocationId || item.MessageId == nil || *item.MessageId != *task.MessageId {
 			t.Fatalf("review/follow-up source scope: %#v", item)
 		}
 	}
@@ -328,7 +314,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	var readTask api.Task
 	decode(t, readTaskResponse, &readTask)
 	if readTask.ConversationThreadId == nil ||
-		*readTask.ConversationThreadId != threads.Items[0].Id || !readTask.Unread {
+		*readTask.ConversationThreadId != threadID {
 		t.Fatalf("HTTP Task conversation projection = %#v", readTask)
 	}
 	var engagementCallID string
@@ -376,7 +362,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		t,
 		portal.Client(),
 		http.MethodGet,
-		portal.URL+"/v1/calling/calls/"+engagementCallID+"/engagement-history?groupCalls=true",
+		engagementTimelineURL+"&groupCalls=true",
 		"message-token",
 		nil,
 	)
@@ -424,75 +410,10 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		!types[api.ConversationTimelineItemTypeTASK] {
 		t.Fatalf("combined Engagement History = %#v", engagement)
 	}
-	engagementQueryBody, _ := json.Marshal(api.EngagementQueryRequest{
-		PracticeId: parsedUUID(t, authorization.Practice.ID),
-		Phone:      "(727) 555-0199",
-	})
-	if _, err := workspace.New(pool, accessModule).QueryEngagements(
-		context.Background(),
-		workspace.QueryEngagementsCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			Phone:      "(727) 555-0199",
-		},
-	); err != nil {
-		t.Fatalf("query Engagements module: %v", err)
-	}
-	engagementQueryResponse := request(
-		t,
-		portal.Client(),
-		http.MethodPost,
-		portal.URL+"/v1/engagements/query",
-		"message-token",
-		engagementQueryBody,
-	)
-	if engagementQueryResponse.StatusCode != http.StatusOK {
-		t.Fatalf(
-			"query Engagements status = %d, body = %s",
-			engagementQueryResponse.StatusCode,
-			readBody(t, engagementQueryResponse),
-		)
-	}
-	var engagementPage api.EngagementPage
-	decode(t, engagementQueryResponse, &engagementPage)
-	if len(engagementPage.Items) != 1 ||
-		engagementPage.Items[0].Phone != "+17275550199" ||
-		engagementPage.Items[0].OpenTaskCount != 2 ||
-		len(engagementPage.Items[0].Locations) != 1 {
-		t.Fatalf("phone-led Engagement result = %#v", engagementPage)
-	}
-	for _, endpoint := range []string{
-		portal.URL + "/v1/engagements/+17275550199/timeline?practiceId=" +
-			url.QueryEscape(authorization.Practice.ID),
-		portal.URL + "/v1/tasks/" + task.Id.String() + "/engagement-history?groupCalls=true",
-	} {
-		response := request(
-			t,
-			portal.Client(),
-			http.MethodGet,
-			endpoint,
-			"message-token",
-			nil,
-		)
-		if response.StatusCode != http.StatusOK {
-			t.Fatalf(
-				"phone-led timeline %s status = %d, body = %s",
-				endpoint,
-				response.StatusCode,
-				readBody(t, response),
-			)
-		}
-		var page api.ConversationTimelinePage
-		decode(t, response, &page)
-		if len(page.Items) != len(engagement.Items) {
-			t.Fatalf("phone-led timeline %s = %#v", endpoint, page)
-		}
-	}
 	pagedIDs := map[string]bool{}
 	cursor := ""
 	for pageNumber := 0; pageNumber < 10; pageNumber++ {
-		endpoint := portal.URL + "/v1/calling/calls/" + engagementCallID +
-			"/engagement-history?groupCalls=true&limit=2"
+		endpoint := engagementTimelineURL + "&groupCalls=true&limit=2"
 		if cursor != "" {
 			endpoint += "&cursor=" + url.QueryEscape(cursor)
 		}
@@ -570,7 +491,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	attachmentSendBody, _ := json.Marshal(api.SendMessageRequest{
 		PracticeId:     parsedUUID(t, authorization.Practice.ID),
 		LocationId:     parsedUUID(t, authorization.Locations[0].ID),
-		ThreadId:       &threads.Items[0].Id,
+		ThreadId:       &threadID,
 		Body:           "",
 		AttachmentId:   &attachmentID,
 		IdempotencyKey: "http-message-attachment-1",
@@ -669,11 +590,6 @@ func parsedUUID(t *testing.T, value string) uuid.UUID {
 		t.Fatal(err)
 	}
 	return parsed
-}
-
-func parsedUUIDPointer(t *testing.T, value string) *uuid.UUID {
-	parsed := parsedUUID(t, value)
-	return &parsed
 }
 
 func stringPointer(value string) *string {
