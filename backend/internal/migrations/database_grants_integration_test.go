@@ -863,6 +863,14 @@ func expectedColumnPrivileges() map[string]bool {
 	)
 	grant(
 		"acuity_portal",
+		"public.ai_interaction_issues",
+		"UPDATE",
+		"review_outcome",
+		"reviewed_by",
+		"reviewed_at",
+	)
+	grant(
+		"acuity_portal",
 		"public.ai_interaction_receipts",
 		"SELECT",
 		"id",

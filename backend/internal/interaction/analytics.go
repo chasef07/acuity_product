@@ -105,6 +105,7 @@ type AnalyticsCall struct {
 
 type AnalyticsPage struct {
 	AvailableTags []string
+	PendingIssues []OperatorCallIssue
 	Summary       *AnalyticsSummary
 	Calls         []AnalyticsCall
 	NextCursor    string
@@ -150,6 +151,7 @@ type ToolExecution struct {
 
 type OperatorAnalyticsDetail struct {
 	Interaction       Interaction
+	Issue             *OperatorCallIssue
 	P50SttMs          *int
 	P50TtftMs         *int
 	P50TtsTtfbMs      *int
@@ -226,12 +228,17 @@ func (m *Module) QueryAnalytics(
 	// Continuations retain the original reporting window and the caller's
 	// first-page summary. Only an explicit refresh recalculates the full range.
 	var summary *AnalyticsSummary
+	var pendingIssues []OperatorCallIssue
 	if cursor == nil {
 		value, err := queryAnalyticsSummary(ctx, tx, command, locationIDs, from, to)
 		if err != nil {
 			return AnalyticsPage{}, err
 		}
 		summary = &value
+		pendingIssues, err = pendingCallIssues(ctx, tx, command.PracticeID, locationIDs)
+		if err != nil {
+			return AnalyticsPage{}, fmt.Errorf("query pending call issues: %w", err)
+		}
 	}
 	calls, hasMore, err := queryAnalyticsCalls(
 		ctx,
@@ -253,7 +260,7 @@ func (m *Module) QueryAnalytics(
 		return AnalyticsPage{}, fmt.Errorf("commit operator AI analytics query: %w", err)
 	}
 
-	page := AnalyticsPage{Summary: summary, Calls: calls, AvailableTags: availableTags}
+	page := AnalyticsPage{Summary: summary, Calls: calls, AvailableTags: availableTags, PendingIssues: pendingIssues}
 	if hasMore && len(page.Calls) > 0 {
 		page.NextCursor, err = encodeAnalyticsCursor(command, page.Calls[len(page.Calls)-1], to)
 		if err != nil {
@@ -526,6 +533,10 @@ func (m *Module) ReadOperatorAnalytics(
 	if err != nil || !authorization.PlatformOperator {
 		return OperatorAnalyticsDetail{}, ErrDenied
 	}
+	issue, err := readCallIssue(ctx, tx, interactionID)
+	if err != nil {
+		return OperatorAnalyticsDetail{}, fmt.Errorf("read operator AI call issue: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return OperatorAnalyticsDetail{}, fmt.Errorf("commit operator AI analytics detail: %w", err)
 	}
@@ -537,6 +548,7 @@ func (m *Module) ReadOperatorAnalytics(
 	)
 	return OperatorAnalyticsDetail{
 		Interaction:       stored,
+		Issue:             issue,
 		P50SttMs:          medianMilliseconds(samples.stt),
 		P50TtftMs:         medianMilliseconds(samples.ttft),
 		P50TtsTtfbMs:      medianMilliseconds(samples.ttsTtfb),

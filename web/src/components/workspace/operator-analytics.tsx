@@ -57,9 +57,11 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
+import { PendingCallIssues } from "@/components/workspace/call-issue-review"
 import { portalClient } from "@/lib/api/client"
 import { queryOperatorAiAnalytics } from "@/lib/api/generated/sdk.gen"
 import type {
+  OperatorAiCallIssue,
   OperatorAiCallTags,
   OperatorAiAnalyticsPage,
   OperatorAiAnalyticsRange,
@@ -275,6 +277,17 @@ export function OperatorAnalytics({
     } : current)
   }
 
+  // A reviewed flag leaves the pending list; the review itself lives on the call.
+  function updateCallIssue(issue: OperatorAiCallIssue) {
+    setRequest((current) => current.key === requestKey && current.data ? {
+      ...current,
+      data: {
+        ...current.data,
+        pendingIssues: current.data.pendingIssues?.filter((item) => item.interactionId !== issue.interactionId),
+      },
+    } : current)
+  }
+
   const offices = [
     { value: "all", label: "All offices" },
     ...locations.map((location) => ({
@@ -369,6 +382,12 @@ export function OperatorAnalytics({
                 onRetry={() => setRequestVersion((current) => current + 1)}
               />
             )}
+            {currentRequest.state === "ready" && tab === "calls" && (
+              <PendingCallIssues
+                issues={currentRequest.data?.pendingIssues ?? []}
+                onSelect={selectCall}
+              />
+            )}
             {currentRequest.state === "ready" && currentRequest.data && (
               <AnalyticsReady
                 key={requestKey}
@@ -391,6 +410,7 @@ export function OperatorAnalytics({
         navigationLoading={nextPageState === "loading"}
         navigationError={canLoadNextCall && nextPageState === "unavailable"}
         onTagsChange={updateCallTags}
+        onIssueChange={updateCallIssue}
         onClose={() => {
           setSelectedCall({ id: "" })
           if (manualTag) setRequestVersion((current) => current + 1)

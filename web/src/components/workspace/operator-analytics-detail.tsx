@@ -1,8 +1,9 @@
 "use client"
 
 import { CallEvaluation } from "./call-evaluation"
+import { CallIssueReview } from "./call-issue-review"
 import { CallManualTags } from "./call-manual-tags"
-import type { OperatorAiCallTags } from "@/lib/api/generated/types.gen"
+import type { OperatorAiCallIssue, OperatorAiCallTags } from "@/lib/api/generated/types.gen"
 
 import type { MiddlewareRequestDiagnostic } from "@/lib/api/generated"
 import { MiddlewareRequestDetails } from "./middleware-request-details"
@@ -63,6 +64,7 @@ export function OperatorAnalyticsDetailSheet({
   navigationLoading = false,
   navigationError = false,
   onTagsChange,
+  onIssueChange,
   onClose,
 }: {
   interactionID: string
@@ -72,6 +74,7 @@ export function OperatorAnalyticsDetailSheet({
   navigationLoading?: boolean
   navigationError?: boolean
   onTagsChange: (id: string, tags: OperatorAiCallTags) => void
+  onIssueChange: (issue: OperatorAiCallIssue) => void
   onClose: () => void
 }) {
   const [request, setRequest] = useState<{
@@ -180,6 +183,7 @@ export function OperatorAnalyticsDetailSheet({
             detail={detail}
             focus={focus}
             onTagsChange={onTagsChange}
+            onIssueChange={onIssueChange}
           />
         )}
       </SheetContent>
@@ -191,10 +195,12 @@ function OperatorAnalyticsDetailView({
   detail,
   focus,
   onTagsChange,
+  onIssueChange,
 }: {
   detail: OperatorAiInteractionAnalytics
   focus?: DiagnosticFocus
   onTagsChange: (id: string, tags: OperatorAiCallTags) => void
+  onIssueChange: (issue: OperatorAiCallIssue) => void
 }) {
   const [showTiming, setShowTiming] = useState(true)
   const messageCount = detail.timeline.filter(
@@ -249,6 +255,7 @@ function OperatorAnalyticsDetailView({
                 messageId="conversation"
                 className="[content-visibility:visible]"
               >
+                <CallIssueReview key={`issue-${detail.id}`} interactionID={detail.id} initialIssue={detail.issue} onChange={onIssueChange} />
                 <CallEvaluation evaluation={detail.evaluation} />
                 <CallManualTags key={detail.id} interactionID={detail.id} onChange={onTagsChange} />
                 <section

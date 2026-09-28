@@ -600,12 +600,14 @@ export type AgentCallsPage = {
     nextCursor: string;
 };
 
+export type AgentCallIssueReason = 'WRONG_APPOINTMENT_TYPE' | 'INSURANCE_ISSUE' | 'OTHER';
+
 export type AgentCallIssueInput = {
-    note: string;
+    reason: AgentCallIssueReason;
 };
 
 export type AgentCallIssue = {
-    note: string;
+    reason: AgentCallIssueReason;
     createdAt: string;
 };
 
@@ -910,6 +912,24 @@ export type OperatorAiCostAnalytics = {
     daily: Array<OperatorAiCostDay>;
 };
 
+export type OperatorAiCallIssueOutcome = 'CONFIRMED' | 'NOT_AN_ISSUE';
+
+export type OperatorAiCallIssue = {
+    interactionId: string;
+    phone: string;
+    startedAt: string;
+    reason: AgentCallIssueReason;
+    reportedBy: string;
+    reportedAt: string;
+    review?: OperatorAiCallIssueReview;
+};
+
+export type OperatorAiCallIssueReview = {
+    outcome: OperatorAiCallIssueOutcome;
+    reviewedBy: string;
+    reviewedAt: string;
+};
+
 export type OperatorAiCallTags = {
     available: Array<string>;
     selected: Array<string>;
@@ -1060,6 +1080,10 @@ export type OperatorAiCallAnalytics = {
  */
 export type OperatorAiAnalyticsPage = {
     availableTags?: Array<string>;
+    /**
+     * Staff-flagged calls awaiting Acuity review in the practice and office scope, regardless of range. First page only.
+     */
+    pendingIssues?: Array<OperatorAiCallIssue>;
     summary?: OperatorAiAnalyticsSummary;
     calls: Array<OperatorAiCallAnalytics>;
     nextCursor: string;
@@ -1143,6 +1167,7 @@ export type ProviderErrorDiagnostic = {
 };
 
 export type OperatorAiInteractionAnalytics = {
+    issue?: OperatorAiCallIssue;
     /**
      * Complete stored evaluator result, including version, status, answers and usage.
      */
@@ -2952,6 +2977,47 @@ export type SetOperatorAiCallTagResponses = {
 };
 
 export type SetOperatorAiCallTagResponse = SetOperatorAiCallTagResponses[keyof SetOperatorAiCallTagResponses];
+
+export type ReviewOperatorAiCallIssueData = {
+    body: {
+        outcome: OperatorAiCallIssueOutcome;
+    };
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/operator/ai-interactions/{interactionId}/issue';
+};
+
+export type ReviewOperatorAiCallIssueErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReviewOperatorAiCallIssueError = ReviewOperatorAiCallIssueErrors[keyof ReviewOperatorAiCallIssueErrors];
+
+export type ReviewOperatorAiCallIssueResponses = {
+    /**
+     * The staff report with Acuity's review. A call without a staff report is a bad request.
+     */
+    200: OperatorAiCallIssue;
+};
+
+export type ReviewOperatorAiCallIssueResponse = ReviewOperatorAiCallIssueResponses[keyof ReviewOperatorAiCallIssueResponses];
 
 export type CreateStaffTaskData = {
     body: CreateStaffTaskRequest;

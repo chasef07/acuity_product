@@ -3,7 +3,7 @@ import { Client } from "pg"
 import { expect, test } from "@playwright/test"
 import { signInAs } from "./support"
 
-test("staff review calls and persist an issue for Acuity", async ({
+test("staff flag a call and Acuity reviews it", async ({
   page,
 }, testInfo) => {
   const databaseURL = process.env.E2E_DATABASE_URL
@@ -100,14 +100,23 @@ test("staff review calls and persist an issue for Acuity", async ({
     await panel
       .getByRole("button", { name: "Flag an issue", exact: true })
       .click()
-    await panel
-      .getByRole("textbox", { name: "What went wrong?" })
-      .fill("Please review the appointment instructions.")
+    const reason = panel.getByRole("combobox", {
+      name: "What went wrong?",
+      exact: true,
+    })
+    await expect(
+      panel.getByRole("button", { name: "Flag issue", exact: true }),
+    ).toBeDisabled()
+    await reason.click()
+    await page
+      .getByRole("option", { name: "Wrong Appointment Type", exact: true })
+      .click()
+    await expect(reason).toContainText("Wrong Appointment Type")
     await panel.screenshot({
       animations: "disabled",
       path: testInfo.outputPath("manage-agent-flag-form.png"),
     })
-    // A failed save keeps the note and makes retry explicit.
+    // A failed save keeps the reason and makes retry explicit.
     await page.route(`**/v1/agent-calls/${id}/issue`, (route) =>
       route.fulfill({
         status: 503,
@@ -117,18 +126,7 @@ test("staff review calls and persist an issue for Acuity", async ({
     )
     await panel.getByRole("button", { name: "Flag issue", exact: true }).click()
     await expect(panel.getByRole("alert")).toContainText("could not be saved")
-    await expect(
-      panel.getByRole("textbox", { name: "What went wrong?" }),
-    ).toHaveValue("Please review the appointment instructions.")
-    await page.unroute(`**/v1/agent-calls/${id}/issue`)
-    // A concurrent report must not clear this staff member's draft.
-    await page.route(`**/v1/agent-calls/${id}/issue`, (route) =>
-      route.fulfill({ status: 409, contentType: "application/json", body: "{}" }),
-    )
-    await panel.getByRole("button", { name: "Flag issue", exact: true }).click()
-    await expect(panel.getByRole("alert")).toContainText("already has a report")
-    await expect(panel.getByRole("textbox", { name: "What went wrong?" }))
-      .toHaveValue("Please review the appointment instructions.")
+    await expect(reason).toContainText("Wrong Appointment Type")
     await page.unroute(`**/v1/agent-calls/${id}/issue`)
     // Keep the panel mounted until the durable save finishes.
     let releaseSave!: () => void
@@ -180,15 +178,14 @@ test("staff review calls and persist an issue for Acuity", async ({
     await expect(
       page
         .getByRole("dialog")
-        .getByText("Please review the appointment instructions.", {
-          exact: true,
-        }),
+        .getByText("Wrong Appointment Type", { exact: true }),
     ).toBeVisible()
     const { rows: reports } = await client.query(
-      "SELECT note,reported_by FROM ai_interaction_issues WHERE interaction_id=$1",
+      "SELECT reason,reported_by FROM ai_interaction_issues WHERE interaction_id=$1",
       [id],
     )
     expect(reports).toHaveLength(1)
+    expect(reports[0].reason).toBe("WRONG_APPOINTMENT_TYPE")
     expect(reports[0].reported_by).toBeTruthy()
     await page.setViewportSize({ width: 390, height: 844 })
     await expect(async () => {
@@ -221,10 +218,45 @@ test("staff review calls and persist an issue for Acuity", async ({
     await expect(
       page
         .getByRole("dialog")
-        .getByText("Please review the appointment instructions.", {
-          exact: true,
-        }),
+        .getByText("Wrong Appointment Type", { exact: true }),
     ).toBeVisible()
+    // Acuity reviews the staff flag from AI diagnostics.
+    await page.keyboard.press("Escape")
+    await page
+      .getByRole("button", { name: "AI diagnostics", exact: true })
+      .click()
+    const diagnostics = page.getByRole("region", { name: "AI call analytics" })
+    const pending = diagnostics
+      .getByRole("status")
+      .filter({ hasText: /flagged by staff needs? review/ })
+    await expect(pending).toContainText("(555) 555-0876")
+    await expect(pending).toContainText("Wrong Appointment Type")
+    await expect(pending).toContainText("Flagged by selected@abita.test")
+    await pending
+      .getByRole("button", { name: "Review call from (555) 555-0876" })
+      .click()
+    const flag = page
+      .getByRole("dialog")
+      .getByRole("region", { name: "Staff flag" })
+    await expect(flag).toContainText("Flagged by selected@abita.test")
+    const realIssue = flag.getByRole("button", { name: "Real issue", exact: true })
+    await expect(realIssue).toHaveAttribute("aria-pressed", "false")
+    await realIssue.click()
+    await expect(realIssue).toHaveAttribute("aria-pressed", "true")
+    await expect(flag).toContainText("Reviewed by founder@acuity.test")
+    await flag.screenshot({
+      animations: "disabled",
+      path: testInfo.outputPath("diagnostics-flag-review.png"),
+    })
+    const { rows: reviews } = await client.query(
+      "SELECT review_outcome FROM ai_interaction_issues WHERE interaction_id=$1",
+      [id],
+    )
+    expect(reviews[0].review_outcome).toBe("CONFIRMED")
+    await page.keyboard.press("Escape")
+    await expect(
+      diagnostics.getByRole("button", { name: "Review call from (555) 555-0876" }),
+    ).toHaveCount(0)
     expect(errors).toEqual([])
   } finally {
     await client.query(
@@ -236,7 +268,7 @@ test("staff review calls and persist an issue for Acuity", async ({
   }
 })
 
-test("call navigation preserves drafts and crosses page boundaries with retry", async ({
+test("call navigation crosses page boundaries with retry and shows a concurrent report", async ({
   page,
 }, testInfo) => {
   const ids = [randomUUID(), randomUUID(), randomUUID()]
@@ -272,7 +304,7 @@ test("call navigation preserves drafts and crosses page boundaries with retry", 
           call: calls[index],
           locationName: "Synthetic office",
           issue: index === 0 && firstCallReported ? {
-            note: "Another staff member saved this report.",
+            reason: "INSURANCE_ISSUE",
             createdAt: calls[index].startedAt,
           } : undefined,
           messages: Array.from({ length: 30 }, (_, turn) => ({
@@ -307,23 +339,6 @@ test("call navigation preserves drafts and crosses page boundaries with retry", 
   await expect(transcript).toBeVisible()
   await transcript.evaluate(element => { element.scrollTop = element.scrollHeight })
   await expect(panel.getByRole("button", { name: "Flag an issue", exact: true })).toBeInViewport()
-  await panel
-    .getByRole("button", { name: "Flag an issue", exact: true })
-    .click()
-  await panel
-    .getByRole("textbox", { name: "What went wrong?" })
-    .fill("Keep this unfinished note for the first call.")
-  await next.click()
-  await expect(
-    panel.getByRole("heading", { name: "(555) 555-0101", exact: true }),
-  ).toBeVisible()
-  await expect(
-    panel.getByRole("textbox", { name: "What went wrong?" }),
-  ).toHaveCount(0)
-  await previous.click()
-  await expect(
-    panel.getByRole("textbox", { name: "What went wrong?" }),
-  ).toHaveValue("Keep this unfinished note for the first call.")
   const scroll = panel.getByLabel("Call transcript", { exact: true })
   await scroll.evaluate((element) => {
     element.scrollTop = element.scrollHeight
@@ -363,29 +378,38 @@ test("call navigation preserves drafts and crosses page boundaries with retry", 
   ).toBe(true)
   await previous.click()
   await previous.click()
-  await expect(
-    panel.getByRole("textbox", { name: "What went wrong?" }),
-  ).toHaveValue("Keep this unfinished note for the first call.")
   await panel.screenshot({
     animations: "disabled",
     path: testInfo.outputPath("call-navigation.png"),
   })
-  // Another staff member reports this call while our unsaved draft remains.
-  firstCallReported = true
-  await next.click()
-  await previous.click()
-  const unsavedNote = panel.getByRole("textbox", { name: "Your unsaved note" })
-  await expect(panel.getByText("Another staff member saved this report.")).toBeVisible()
-  await expect(unsavedNote).toHaveValue("Keep this unfinished note for the first call.")
-  await expect(unsavedNote).toHaveAttribute("readonly", "")
-  await expect(panel.getByRole("button", { name: "Flag issue", exact: true })).toHaveCount(0)
+  await panel
+    .getByRole("button", { name: "Flag an issue", exact: true })
+    .click()
+  const reason = panel.getByRole("combobox", {
+    name: "What went wrong?",
+    exact: true,
+  })
+  await reason.click()
+  await page
+    .getByRole("option", { name: "Wrong Appointment Type", exact: true })
+    .click()
+  // Another staff member reports this call first; show their saved reason.
+  await page.route(`**/v1/agent-calls/${ids[0]}/issue`, (route) => {
+    firstCallReported = true
+    return route.fulfill({ status: 409, json: {} })
+  })
+  await panel.getByRole("button", { name: "Flag issue", exact: true }).click()
+  await expect(panel.getByText("Issue flagged", { exact: true })).toBeVisible()
+  await expect(panel.getByText("Insurance Issue", { exact: true })).toBeVisible()
+  await expect(reason).toHaveCount(0)
+  await expect(
+    panel.getByRole("button", { name: "Flag issue", exact: true }),
+  ).toHaveCount(0)
   await page.keyboard.press("Escape")
-  await page.getByRole("button", { name: /Open call from \(555\) 555-0100/ }).click()
-  await expect(unsavedNote).toHaveValue("Keep this unfinished note for the first call.")
-  await panel.getByRole("button", { name: "Discard unsaved note" }).click()
-  await expect(unsavedNote).toHaveCount(0)
-  await next.click()
-  await previous.click()
-  await expect(panel.getByText("Another staff member saved this report.")).toBeVisible()
-  await expect(unsavedNote).toHaveCount(0)
+  await expect(
+    page
+      .getByRole("row")
+      .filter({ hasText: "(555) 555-0100" })
+      .getByLabel("Issue flagged"),
+  ).toBeVisible()
 })
