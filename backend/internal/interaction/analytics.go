@@ -26,13 +26,14 @@ const (
 )
 
 type QueryAnalyticsCommand struct {
-	ManualTag  string
-	Identity   access.Identity
-	PracticeID string
-	LocationID string
-	Range      AnalyticsRange
-	Cursor     string
-	Limit      int
+	NeedsReviewOnly bool
+	ManualTag       string
+	Identity        access.Identity
+	PracticeID      string
+	LocationID      string
+	Range           AnalyticsRange
+	Cursor          string
+	Limit           int
 }
 
 type AnalyticsDay struct {
@@ -158,13 +159,14 @@ type OperatorAnalyticsDetail struct {
 }
 
 type analyticsCursor struct {
-	ManualTag  string         `json:"manualTag,omitempty"`
-	Through    time.Time      `json:"through"`
-	Range      AnalyticsRange `json:"range"`
-	PracticeID string         `json:"practiceId"`
-	LocationID string         `json:"locationId,omitempty"`
-	StartedAt  time.Time      `json:"startedAt"`
-	ID         string         `json:"id"`
+	NeedsReviewOnly bool           `json:"needsReviewOnly,omitempty"`
+	ManualTag       string         `json:"manualTag,omitempty"`
+	Through         time.Time      `json:"through"`
+	Range           AnalyticsRange `json:"range"`
+	PracticeID      string         `json:"practiceId"`
+	LocationID      string         `json:"locationId,omitempty"`
+	StartedAt       time.Time      `json:"startedAt"`
+	ID              string         `json:"id"`
 }
 
 type analyticsProjection struct {
@@ -406,6 +408,12 @@ func queryAnalyticsCalls(
 		cursorStartedAt = cursor.StartedAt
 		cursorID = cursor.ID
 	}
+	// Stream through nonmatching calls before applying the page size so sparse
+	// review results remain reachable without duplicating evaluation policy in SQL.
+	var queryLimit any = command.Limit + 1
+	if command.NeedsReviewOnly {
+		queryLimit = nil
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT
 			interaction.id::text,
@@ -436,7 +444,7 @@ func queryAnalyticsCalls(
 			)
 		ORDER BY interaction.started_at DESC, interaction.id DESC
 		LIMIT $7
-	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, command.Limit+1, command.ManualTag)
+	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, queryLimit, command.ManualTag)
 	if err != nil {
 		return nil, false, fmt.Errorf("query operator AI analytics page: %w", err)
 	}
@@ -463,8 +471,14 @@ func queryAnalyticsCalls(
 			return nil, false, fmt.Errorf("scan operator AI analytics page: %w", err)
 		}
 		projection.call.ReviewReasons = EvaluationReviewReasons(evaluation)
+		if command.NeedsReviewOnly && len(projection.call.ReviewReasons) == 0 {
+			continue
+		}
 		projectAnalyticsCall(&projection, to)
 		projections = append(projections, projection)
+		if len(projections) > command.Limit {
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, fmt.Errorf("iterate operator AI analytics page: %w", err)
@@ -617,13 +631,14 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 
 func encodeAnalyticsCursor(command QueryAnalyticsCommand, call AnalyticsCall, through time.Time) (string, error) {
 	encoded, err := json.Marshal(analyticsCursor{
-		Through:    through,
-		ManualTag:  command.ManualTag,
-		Range:      command.Range,
-		PracticeID: command.PracticeID,
-		LocationID: command.LocationID,
-		StartedAt:  call.StartedAt,
-		ID:         call.ID,
+		Through:         through,
+		NeedsReviewOnly: command.NeedsReviewOnly,
+		ManualTag:       command.ManualTag,
+		Range:           command.Range,
+		PracticeID:      command.PracticeID,
+		LocationID:      command.LocationID,
+		StartedAt:       call.StartedAt,
+		ID:              call.ID,
 	})
 	if err != nil {
 		return "", err
@@ -643,7 +658,7 @@ func decodeAnalyticsCursor(command QueryAnalyticsCommand) (*analyticsCursor, err
 	if err := json.Unmarshal(decoded, &cursor); err != nil {
 		return nil, err
 	}
-	if cursor.ManualTag != command.ManualTag || cursor.Range != command.Range || cursor.PracticeID != command.PracticeID ||
+	if cursor.NeedsReviewOnly != command.NeedsReviewOnly || cursor.ManualTag != command.ManualTag || cursor.Range != command.Range || cursor.PracticeID != command.PracticeID ||
 		cursor.LocationID != command.LocationID || cursor.StartedAt.IsZero() || cursor.Through.IsZero() ||
 		cursor.StartedAt.After(cursor.Through) ||
 		!validUUID(cursor.ID) {

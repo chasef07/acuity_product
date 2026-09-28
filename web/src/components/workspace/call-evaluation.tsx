@@ -54,12 +54,15 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
         const maximum = sentiment ? 4 : 1
         const valid = !failed && answer.type === (sentiment ? "score" : "noul") &&
           typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum
+        const needsReview = valid && !notApplicable && !sentiment && value <= 0.55 &&
+          (evaluation.status === "complete" || evaluation.status === "incomplete")
         const probabilities = record(answer.probabilities)
         return <div key={name} className="py-3 text-xs">
           <div className="flex items-start justify-between gap-3">
             <dt>{labels[name]}</dt>
-            <dd className="shrink-0 font-mono tabular-nums">{notApplicable ? "Not applicable" : valid ? `${value.toFixed(2)} / ${maximum}` : "Unavailable"}</dd>
+            <dd className={`shrink-0 font-mono tabular-nums ${needsReview ? "text-destructive" : ""}`}>{notApplicable ? "Not applicable" : valid ? `${value.toFixed(2)} / ${maximum}` : "Unavailable"}</dd>
           </div>
+          {needsReview && <dd className="mt-1 text-destructive">Needs review</dd>}
           {name === "conversation_responsive" && <dd className="mt-1 text-muted-foreground">Transcript evidence of a responsive conversation, not measured silence or its technical cause. Lower scores indicate caller evidence of stalls, even if the conversation later recovered. Ordinary greetings, clarifications, and caller-requested pauses do not count as stalls.</dd>}
           {failed ? <dd className="mt-1 text-destructive">
             Judge failed{typeof error.cause === "string" ? `: ${title(error.cause)}` : ""}
@@ -74,7 +77,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
         </div>
       })}
     </dl>
-    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. No automatic red highlights are applied to this scorecard.</p>
+    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. Checks at 0.55 or lower are highlighted for review. Sentiment and inapplicable checks do not trigger review alerts.</p>
   </>
 }
 

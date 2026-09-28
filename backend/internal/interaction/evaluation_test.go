@@ -37,3 +37,46 @@ func TestEvaluationReviewReasons(t *testing.T) {
 		}
 	}
 }
+
+func TestScorecardReviewReasons(t *testing.T) {
+	for _, name := range []string{"request_understood", "appointment_datetime_correct", "office_rules_grounded", "results_reported_truthfully", "conversation_responsive"} {
+		for _, tc := range []struct {
+			name                             string
+			value                            any
+			status, resultStatus, answerType string
+			failed                           bool
+			want                             int
+		}{
+			{"inclusive", 0.55, "complete", "", "noul", false, 1},
+			{"above", 0.550001, "complete", "", "noul", false, 0},
+			{"zero", 0.0, "complete", "", "noul", false, 1},
+			{"partial", 0.1, "incomplete", "", "noul", false, 1},
+			{"failed judge", 0.1, "incomplete", "", "noul", true, 0},
+			{"not applicable", 0.1, "complete", "not_applicable", "noul", false, 0},
+			{"missing", nil, "complete", "", "noul", false, 0},
+			{"string", "0.1", "complete", "", "noul", false, 0},
+			{"negative", -0.1, "complete", "", "noul", false, 0},
+			{"wrong type", 0.1, "complete", "", "score", false, 0},
+			{"skipped", 0.1, "skipped", "", "noul", false, 0},
+		} {
+			t.Run(name+"/"+tc.name, func(t *testing.T) {
+				failures := map[string]any{"another_judge": map[string]any{"cause": "TimeoutError"}}
+				if tc.failed {
+					failures[name] = map[string]any{"cause": "TimeoutError"}
+				}
+				raw, _ := json.Marshal(map[string]any{
+					"evaluatorVersion": "typesafe-scorecard-v2", "status": tc.status, "errors": failures,
+					"results": map[string]any{name: map[string]any{"status": tc.resultStatus, "answers": map[string]any{name: map[string]any{"type": tc.answerType, "noul": tc.value}}}},
+				})
+				if got := EvaluationReviewReasons(raw); len(got) != tc.want {
+					t.Fatalf("reasons=%v want %d", got, tc.want)
+				}
+			})
+		}
+	}
+	raw := json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v2","status":"incomplete","results":{"request_understood":{"answers":{"request_understood":{"type":"noul","noul":"bad"}}},"office_rules_grounded":{"answers":{"office_rules_grounded":{"type":"noul","noul":0.55}}},"expressed_sentiment":{"answers":{"expressed_sentiment":{"type":"score","score":0}}},"resolved_or_handed_off":{"answers":{"resolved_or_handed_off":{"type":"noul","noul":0}}}}}`)
+	got := EvaluationReviewReasons(raw)
+	if len(got) != 1 || got[0] != "Office rules grounded needs review · 0.55" {
+		t.Fatalf("invalid or removed judges affected valid result: %v", got)
+	}
+}

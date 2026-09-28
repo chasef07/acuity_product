@@ -106,7 +106,7 @@ test("v2 renders five checks including low responsiveness without inverting the 
   assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, 5)
   assert.match(html, /2.50 \/ 4/)
   assert.match(html, /Neutral or mixed: 50.0%/)
-  assert.doesNotMatch(html, /No valid score was recorded|likely true|text-destructive/)
+  assert.doesNotMatch(html, /No valid score was recorded|likely true/)
   assert.match(html, /Transcript evidence/)
   assert.match(html, /not measured silence or its technical cause/)
   assert.match(html, /&quot;noul&quot;: 0.05/)
@@ -149,4 +149,24 @@ test("v2 responsiveness preserves unavailable and judge error states", () => {
   assert.match(failed, /Conversation responsive<\/dt><dd[^>]*>Unavailable/)
   assert.match(failed, /Judge failed: TimeoutError/)
   assert.doesNotMatch(failed, /0.05 \/ 1/)
+})
+
+test("scorecard flags valid checks at 0.55 inclusive, including partial results", () => {
+  for (const status of ["complete", "incomplete"]) {
+    for (const [value, flagged] of [[0, true], [0.55, true], [0.550001, false], [0.9, false]] as const) {
+      const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+        ...scorecardV2, status,
+        results: { request_understood: { answers: { request_understood: { type: "noul", noul: value } } } },
+      }} />)
+      assert.equal(html.includes(">Needs review<"), flagged)
+    }
+  }
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+    ...scorecardV2, results: {
+      request_understood: { answers: { request_understood: { type: "noul", noul: 0 } } },
+      expressed_sentiment: { answers: { expressed_sentiment: { type: "score", score: 0 } } },
+    }, errors: { request_understood: { cause: "TimeoutError" } },
+  }} />)
+  assert.doesNotMatch(html, />Needs review</)
+  assert.match(html, /Judge failed/)
 })
