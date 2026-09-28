@@ -3436,6 +3436,11 @@ func operatorAIAnalyticsPageResponse(
 		NextCursor:    page.NextCursor,
 	}
 	if page.Summary != nil {
+		pendingIssues, err := operatorAICallIssuesResponse(page.PendingIssues)
+		if err != nil {
+			return api.OperatorAIAnalyticsPage{}, err
+		}
+		response.PendingIssues = pendingIssues
 		response.Summary = &api.OperatorAIAnalyticsSummary{
 			Daily:             make([]api.OperatorAIAnalyticsDay, 0, len(page.Summary.Daily)),
 			Diagnostics:       analyticsDiagnosticsResponse(page.Summary.Diagnostics),
@@ -3571,6 +3576,13 @@ func operatorAIInteractionAnalyticsResponse(
 			DomainStatus:       optionalOperatorAIToolDomainStatus(execution.DomainStatus),
 			TaskId:             stringPointer(execution.TaskID),
 		})
+	}
+	if detail.Issue != nil {
+		issue, err := operatorAICallIssueResponse(*detail.Issue)
+		if err != nil {
+			return api.OperatorAIInteractionAnalytics{}, err
+		}
+		response.Issue = &issue
 	}
 	return response, nil
 }

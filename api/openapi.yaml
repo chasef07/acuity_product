@@ -1191,6 +1191,39 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/operator/ai-interactions/{interactionId}/issue:
+    parameters:
+      - name: interactionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    put:
+      operationId: reviewOperatorAICallIssue
+      summary: Record whether a staff-flagged call is a real issue; practices never see the review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome]
+              properties:
+                outcome: {$ref: "#/components/schemas/OperatorAICallIssueOutcome"}
+      responses:
+        "200":
+          description: The staff report with Acuity's review. A call without a staff report is a bad request.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OperatorAICallIssue"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks:
     post:
       operationId: createStaffTask
@@ -3304,22 +3337,23 @@ components:
             $ref: "#/components/schemas/AgentCall"
         nextCursor:
           type: string
+    AgentCallIssueReason:
+      type: string
+      enum: [WRONG_APPOINTMENT_TYPE, INSURANCE_ISSUE, OTHER]
     AgentCallIssueInput:
       type: object
       additionalProperties: false
-      required: [note]
+      required: [reason]
       properties:
-        note:
-          type: string
-          minLength: 1
-          maxLength: 2000
+        reason:
+          $ref: "#/components/schemas/AgentCallIssueReason"
     AgentCallIssue:
       type: object
       additionalProperties: false
-      required: [note, createdAt]
+      required: [reason, createdAt]
       properties:
-        note:
-          type: string
+        reason:
+          $ref: "#/components/schemas/AgentCallIssueReason"
         createdAt:
           type: string
           format: date-time
@@ -3804,6 +3838,29 @@ components:
         cacheSavingsUsd: {type: number, minimum: 0}
         items: {type: array, items: {$ref: "#/components/schemas/OperatorAICostItem"}}
         daily: {type: array, items: {$ref: "#/components/schemas/OperatorAICostDay"}}
+    OperatorAICallIssueOutcome:
+      type: string
+      enum: [CONFIRMED, NOT_AN_ISSUE]
+    OperatorAICallIssue:
+      type: object
+      additionalProperties: false
+      required: [interactionId, phone, startedAt, reason, reportedBy, reportedAt]
+      properties:
+        interactionId: {type: string, format: uuid}
+        phone: {type: string}
+        startedAt: {type: string, format: date-time}
+        reason: {$ref: "#/components/schemas/AgentCallIssueReason"}
+        reportedBy: {type: string}
+        reportedAt: {type: string, format: date-time}
+        review: {$ref: "#/components/schemas/OperatorAICallIssueReview"}
+    OperatorAICallIssueReview:
+      type: object
+      additionalProperties: false
+      required: [outcome, reviewedBy, reviewedAt]
+      properties:
+        outcome: {$ref: "#/components/schemas/OperatorAICallIssueOutcome"}
+        reviewedBy: {type: string}
+        reviewedAt: {type: string, format: date-time}
     OperatorAICallTags:
       type: object
       required: [available, selected]
@@ -4103,6 +4160,10 @@ components:
       required: [calls, nextCursor]
       properties:
         availableTags: {type: array, items: {type: string}}
+        pendingIssues:
+          description: Staff-flagged calls awaiting Acuity review in the practice and office scope, regardless of range. First page only.
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAICallIssue"}
         summary:
           $ref: "#/components/schemas/OperatorAIAnalyticsSummary"
         calls:
@@ -4239,6 +4300,7 @@ components:
         - timeline
         - toolExecutions
       properties:
+        issue: {$ref: "#/components/schemas/OperatorAICallIssue"}
         evaluation:
           type: object
           additionalProperties: true

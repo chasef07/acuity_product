@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react"
 import { ChevronLeftIcon, ChevronRightIcon, FlagIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Sheet,
   SheetContent,
@@ -13,7 +20,11 @@ import {
 } from "@/components/ui/sheet"
 import { portalClient } from "@/lib/api/client"
 import { flagAgentCallIssue, getAgentCall } from "@/lib/api/generated/sdk.gen"
-import type { AgentCall, AgentCallDetail } from "@/lib/api/generated/types.gen"
+import type {
+  AgentCall,
+  AgentCallDetail,
+  AgentCallIssueReason,
+} from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
@@ -39,6 +50,12 @@ const actions = {
   BOOKED: "Booked",
   RESCHEDULED: "Rescheduled",
   CANCELLED: "Cancelled",
+}
+
+export const issueReasons: Record<AgentCallIssueReason, string> = {
+  WRONG_APPOINTMENT_TYPE: "Wrong Appointment Type",
+  INSURANCE_ISSUE: "Insurance Issue",
+  OTHER: "Other",
 }
 
 export function AppointmentActions({ call }: { call: AgentCall }) {
@@ -88,16 +105,7 @@ export function AgentCallPanel({
   onClose: () => void
   onFlagged: (id: string) => void
 }) {
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
-  function updateDraft(callID: string, note: string) {
-    setDrafts((previous) => {
-      const next = { ...previous }
-      if (note) next[callID] = note
-      else delete next[callID]
-      return next
-    })
-  }
   return (
     <Sheet
       open={Boolean(id)}
@@ -152,14 +160,9 @@ export function AgentCallPanel({
             <CallContent
               key={id}
               id={id}
-              note={drafts[id] ?? ""}
-              onNoteChange={(note) => updateDraft(id, note)}
               saving={saving}
               onSavingChange={setSaving}
-              onFlagged={(callID) => {
-                updateDraft(callID, "")
-                onFlagged(callID)
-              }}
+              onFlagged={onFlagged}
             />
           </>
         )}
@@ -171,22 +174,19 @@ export function AgentCallPanel({
 function CallContent({
   id,
   onFlagged,
-  note,
-  onNoteChange,
   saving,
   onSavingChange,
 }: {
   id: string
   onFlagged: (id: string) => void
-  note: string
-  onNoteChange: (note: string) => void
   saving: boolean
   onSavingChange: (saving: boolean) => void
 }) {
   const [detail, setDetail] = useState<AgentCallDetail>()
   const [error, setError] = useState("")
   const [version, setVersion] = useState(0)
-  const [reporting, setReporting] = useState(Boolean(note))
+  const [reporting, setReporting] = useState(false)
+  const [reason, setReason] = useState<AgentCallIssueReason | null>(null)
   const [saveError, setSaveError] = useState("")
   useEffect(() => {
     const controller = new AbortController()
@@ -214,7 +214,7 @@ function CallContent({
   }, [id, version])
 
   async function flagIssue() {
-    if (!note.trim() || saving) return
+    if (!reason || saving) return
     onSavingChange(true)
     setSaveError("")
     try {
@@ -223,12 +223,14 @@ function CallContent({
       const result = await flagAgentCallIssue({
         client: portalClient(token),
         path: { interactionId: id },
-        body: { note: note.trim() },
+        body: { reason },
       })
       if (result.response?.status === 409) {
-        setSaveError(
-          "This call already has a report. Your note has not been saved; copy it before closing.",
-        )
+        // Someone else reported first; reload to show their saved reason.
+        setDetail(undefined)
+        setVersion((value) => value + 1)
+        setReporting(false)
+        onFlagged(id)
         return
       }
       if (!result.data) throw new Error()
@@ -237,9 +239,7 @@ function CallContent({
       setReporting(false)
       onFlagged(id)
     } catch {
-      setSaveError(
-        "Your issue could not be saved. Your note is still here; try again.",
-      )
+      setSaveError("Your issue could not be saved. Try again.")
     } finally {
       onSavingChange(false)
     }
@@ -313,35 +313,17 @@ function CallContent({
         >
           <div className="flex flex-col gap-6">
             {detail.issue ? (
-              <div>
-                <Alert role="status">
-                  <FlagIcon aria-hidden="true" />
-                  <AlertTitle>Issue flagged</AlertTitle>
-                  <AlertDescription>
-                    <p className="whitespace-pre-wrap break-words">
-                      {detail.issue.note}
-                    </p>
-                    <p>
-                      Saved for Acuity review ·{" "}
-                      {new Date(detail.issue.createdAt).toLocaleString()}
-                    </p>
-                  </AlertDescription>
-                </Alert>
-                {note && (
-                  <FieldGroup className="mt-4">
-                    <label htmlFor="agent-unsaved-note" className="text-sm font-medium">
-                      Your unsaved note
-                    </label>
-                    <Textarea id="agent-unsaved-note" value={note} readOnly aria-describedby="agent-unsaved-note-help" />
-                    <p id="agent-unsaved-note-help" className="text-xs text-muted-foreground">
-                      A report was saved while you were writing. Your note was not submitted; you can select and copy it.
-                    </p>
-                    <Button type="button" variant="ghost" className="w-fit" onClick={() => onNoteChange("")}>
-                      Discard unsaved note
-                    </Button>
-                  </FieldGroup>
-                )}
-              </div>
+              <Alert role="status">
+                <FlagIcon aria-hidden="true" />
+                <AlertTitle>Issue flagged</AlertTitle>
+                <AlertDescription>
+                  <p>{issueReasons[detail.issue.reason]}</p>
+                  <p>
+                    Saved for Acuity review ·{" "}
+                    {new Date(detail.issue.createdAt).toLocaleString()}
+                  </p>
+                </AlertDescription>
+              </Alert>
             ) : (
               reporting && (
                 <form
@@ -351,32 +333,45 @@ function CallContent({
                   }}
                 >
                   <FieldGroup>
-                    <label
-                      htmlFor="agent-issue-note"
+                    <span
+                      id="agent-issue-reason-label"
                       className="text-sm font-medium"
                     >
                       What went wrong?
-                    </label>
-                    <Textarea
-                      id="agent-issue-note"
-                      autoFocus
-                      className="min-h-24"
-                      value={note}
-                      onChange={(event) => onNoteChange(event.target.value)}
-                      maxLength={2000}
-                      required
+                    </span>
+                    <Select
+                      value={reason}
+                      items={issueReasons}
+                      onValueChange={setReason}
                       disabled={saving}
-                      aria-describedby={
-                        saveError
-                          ? "agent-issue-help agent-issue-error"
-                          : "agent-issue-help"
-                      }
-                    />
+                      required
+                    >
+                      <SelectTrigger
+                        aria-labelledby="agent-issue-reason-label"
+                        aria-describedby={
+                          saveError
+                            ? "agent-issue-help agent-issue-error"
+                            : "agent-issue-help"
+                        }
+                        className="w-full sm:w-64"
+                      >
+                        <SelectValue placeholder="Select a reason" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {Object.entries(issueReasons).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
                     <p
                       id="agent-issue-help"
                       className="text-xs text-muted-foreground"
                     >
-                      This call and your note will be saved for Acuity review.
+                      This call and the reason will be saved for Acuity review.
                     </p>
                     {saveError && (
                       <FieldError id="agent-issue-error">
@@ -384,7 +379,7 @@ function CallContent({
                       </FieldError>
                     )}
                     <div className="flex gap-2">
-                      <Button type="submit" disabled={saving || !note.trim()}>
+                      <Button type="submit" disabled={saving || !reason}>
                         {saving && <Spinner data-icon="inline-start" />}
                         {saving ? "Saving…" : "Flag issue"}
                       </Button>
@@ -403,34 +398,36 @@ function CallContent({
             )}
             <h2 className="text-sm font-medium">Transcript</h2>
             {detail.messages.length ? (
-              detail.messages.map((message, index) => (
-                <Message key={index}>
-                  <MessageContent>
-                    <MessageHeader>{message.speaker}</MessageHeader>
-                    <Bubble
-                      variant={
-                        message.speaker === "Agent" ? "muted" : "ghost"
-                      }
-                    >
-                      <BubbleContent className="whitespace-pre-wrap">
-                        {message.text}
-                      </BubbleContent>
-                    </Bubble>
-                    <MessageFooter>
-                      <time dateTime={message.occurredAt}>
-                        {new Date(message.occurredAt).toLocaleTimeString(
-                          undefined,
-                          {
-                            hour: "numeric",
-                            minute: "2-digit",
-                            second: "2-digit",
-                          },
-                        )}
-                      </time>
-                    </MessageFooter>
-                  </MessageContent>
-                </Message>
-              ))
+              detail.messages.map((message, index) => {
+                const align = message.speaker === "Agent" ? "start" : "end"
+                return (
+                  <Message key={index} align={align}>
+                    <MessageContent>
+                      <MessageHeader>{message.speaker}</MessageHeader>
+                      <Bubble
+                        align={align}
+                        variant={align === "start" ? "muted" : "outline"}
+                      >
+                        <BubbleContent className="whitespace-pre-wrap">
+                          {message.text}
+                        </BubbleContent>
+                      </Bubble>
+                      <MessageFooter>
+                        <time dateTime={message.occurredAt}>
+                          {new Date(message.occurredAt).toLocaleTimeString(
+                            undefined,
+                            {
+                              hour: "numeric",
+                              minute: "2-digit",
+                              second: "2-digit",
+                            },
+                          )}
+                        </time>
+                      </MessageFooter>
+                    </MessageContent>
+                  </Message>
+                )
+              })
             ) : (
               <Empty>
                 <EmptyHeader>

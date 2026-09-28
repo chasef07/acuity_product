@@ -62,7 +62,7 @@ func (server *Server) FlagAgentCallIssue(w http.ResponseWriter, r *http.Request,
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	issue, err := server.interactions.FlagAgentCallIssue(ctx, identity, id.String(), body.Note)
+	issue, err := server.interactions.FlagAgentCallIssue(ctx, identity, id.String(), interaction.AgentCallIssueReason(body.Reason))
 	if err != nil {
 		server.writeInteractionError(w, r, err)
 		return

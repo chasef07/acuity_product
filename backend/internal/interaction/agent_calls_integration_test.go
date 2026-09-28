@@ -77,7 +77,7 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	if _, err = module.ReadAgentCall(ctx, staff, forbidden); !errors.Is(err, ErrDenied) {
 		t.Fatalf("denied detail: %v", err)
 	}
-	if _, err = module.FlagAgentCallIssue(ctx, staff, forbidden, "Bad answer"); !errors.Is(err, ErrDenied) {
+	if _, err = module.FlagAgentCallIssue(ctx, staff, forbidden, AgentCallIssueOther); !errors.Is(err, ErrDenied) {
 		t.Fatalf("denied flag: %v", err)
 	}
 	detail, err := module.ReadAgentCall(ctx, staff, first)
@@ -91,30 +91,71 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	if strings.Contains(string(raw), "private") {
 		t.Fatal("staff projection leaked internal evidence")
 	}
-	if _, err = module.FlagAgentCallIssue(ctx, staff, first, "  "); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("blank report: %v", err)
+	if _, err = module.FlagAgentCallIssue(ctx, staff, first, "Incorrect office hours"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("free-text report: %v", err)
 	}
-	issue, err := module.FlagAgentCallIssue(ctx, staff, first, "Incorrect office hours")
-	if err != nil || issue.Note != "Incorrect office hours" {
+	issue, err := module.FlagAgentCallIssue(ctx, staff, first, AgentCallIssueWrongAppointmentType)
+	if err != nil || issue.Reason != AgentCallIssueWrongAppointmentType {
 		t.Fatalf("issue: %+v %v", issue, err)
 	}
-	retry, err := module.FlagAgentCallIssue(ctx, staff, first, "Incorrect office hours")
+	retry, err := module.FlagAgentCallIssue(ctx, staff, first, AgentCallIssueWrongAppointmentType)
 	if err != nil || retry != issue {
 		t.Fatalf("retry must preserve report: %+v %v", retry, err)
 	}
-	if _, err = module.FlagAgentCallIssue(ctx, staff, first, "Different report"); !errors.Is(err, ErrConflict) {
-		t.Fatalf("different note must conflict: %v", err)
+	if _, err = module.FlagAgentCallIssue(ctx, staff, first, AgentCallIssueInsurance); !errors.Is(err, ErrConflict) {
+		t.Fatalf("different reason must conflict: %v", err)
 	}
-	if _, err = module.FlagAgentCallIssue(ctx, operator, first, issue.Note); !errors.Is(err, ErrConflict) {
+	if _, err = module.FlagAgentCallIssue(ctx, operator, first, issue.Reason); !errors.Is(err, ErrConflict) {
 		t.Fatalf("different reporter must conflict: %v", err)
 	}
 	detail, err = module.ReadAgentCall(ctx, operator, first)
-	if err != nil || detail.Issue == nil || detail.Issue.Note != issue.Note || !detail.Call.IssueFlagged {
+	if err != nil || detail.Issue == nil || detail.Issue.Reason != issue.Reason || !detail.Call.IssueFlagged {
 		t.Fatalf("operator review: %+v %v", detail, err)
 	}
 	command = QueryAgentCallsCommand{QueryAnalyticsCommand: QueryAnalyticsCommand{Identity: operator, PracticeID: practice, Range: AnalyticsRange7Days}, FlaggedOnly: true}
 	page, err = module.QueryAgentCalls(ctx, command)
 	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != first {
 		t.Fatalf("review destination: %+v %v", page, err)
+	}
+
+	// Acuity reviews staff flags in AI diagnostics, whatever range is selected.
+	old := insert(allowed, "old", now.Add(-10*24*time.Hour))
+	if _, err = module.FlagAgentCallIssue(ctx, staff, old, AgentCallIssueInsurance); err != nil {
+		t.Fatal(err)
+	}
+	analytics := QueryAnalyticsCommand{Identity: operator, PracticeID: practice, Range: AnalyticsRange24Hours}
+	diagnostics, err := module.QueryAnalytics(ctx, analytics)
+	if err != nil || len(diagnostics.PendingIssues) != 2 || diagnostics.PendingIssues[0].InteractionID != old || diagnostics.PendingIssues[0].ReportedBy != staff.Email {
+		t.Fatalf("pending issues: %+v %v", diagnostics.PendingIssues, err)
+	}
+	if _, err = module.ReviewCallIssue(ctx, staff, first, CallIssueConfirmed); !errors.Is(err, ErrDenied) {
+		t.Fatalf("staff review: %v", err)
+	}
+	if _, err = module.ReviewCallIssue(ctx, operator, second, CallIssueConfirmed); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unflagged review: %v", err)
+	}
+	if _, err = module.ReviewCallIssue(ctx, operator, first, "MAYBE"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unknown outcome: %v", err)
+	}
+	for _, outcome := range []CallIssueOutcome{CallIssueConfirmed, CallIssueNotAnIssue, CallIssueNotAnIssue} {
+		reviewed, err := module.ReviewCallIssue(ctx, operator, first, outcome)
+		if err != nil || reviewed.Review == nil || reviewed.Review.Outcome != outcome || reviewed.Review.ReviewedBy != operator.Email || !reviewed.Review.ReviewedAt.Equal(now) {
+			t.Fatalf("review %s: %+v %v", outcome, reviewed, err)
+		}
+	}
+	var audits []string
+	if err := pool.QueryRow(ctx, `SELECT array_agg(action ORDER BY action) FROM access_audit_events WHERE action LIKE 'ai_interaction.issue_%' AND details->>'resourceId'=$1`, first).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(audits, ",") != "ai_interaction.issue_confirmed,ai_interaction.issue_not_an_issue" {
+		t.Fatalf("each changed outcome must be audited once: %v", audits)
+	}
+	evidence, err := module.ReadOperatorAnalytics(ctx, operator, first)
+	if err != nil || evidence.Issue == nil || evidence.Issue.Review.Outcome != CallIssueNotAnIssue {
+		t.Fatalf("operator evidence issue: %+v %v", evidence.Issue, err)
+	}
+	diagnostics, err = module.QueryAnalytics(ctx, analytics)
+	if err != nil || len(diagnostics.PendingIssues) != 1 || diagnostics.PendingIssues[0].InteractionID != old {
+		t.Fatalf("reviewed issue still pending: %+v %v", diagnostics.PendingIssues, err)
 	}
 }

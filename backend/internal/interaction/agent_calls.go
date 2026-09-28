@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/jackc/pgx/v5"
@@ -24,9 +23,17 @@ type AgentCall struct {
 	Transferred        bool                `json:"transferred"`
 	IssueFlagged       bool                `json:"issueFlagged"`
 }
+type AgentCallIssueReason string
+
+const (
+	AgentCallIssueWrongAppointmentType AgentCallIssueReason = "WRONG_APPOINTMENT_TYPE"
+	AgentCallIssueInsurance            AgentCallIssueReason = "INSURANCE_ISSUE"
+	AgentCallIssueOther                AgentCallIssueReason = "OTHER"
+)
+
 type AgentCallIssue struct {
-	Note      string    `json:"note"`
-	CreatedAt time.Time `json:"createdAt"`
+	Reason    AgentCallIssueReason `json:"reason"`
+	CreatedAt time.Time            `json:"createdAt"`
 }
 type AgentCallMessage struct {
 	Speaker    string    `json:"speaker"`
@@ -209,7 +216,7 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var issue AgentCallIssue
-	err = tx.QueryRow(ctx, `SELECT note, created_at FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Note, &issue.CreatedAt)
+	err = tx.QueryRow(ctx, `SELECT reason, created_at FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Reason, &issue.CreatedAt)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return AgentCallDetail{}, err
 	}
@@ -241,9 +248,10 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 	return detail, nil
 }
 
-func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identity, id, note string) (AgentCallIssue, error) {
-	note = strings.TrimSpace(note)
-	if utf8.RuneCountInString(note) < 1 || utf8.RuneCountInString(note) > 2000 {
+func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identity, id string, reason AgentCallIssueReason) (AgentCallIssue, error) {
+	switch reason {
+	case AgentCallIssueWrongAppointmentType, AgentCallIssueInsurance, AgentCallIssueOther:
+	default:
 		return AgentCallIssue{}, ErrInvalidInput
 	}
 	tx, _, err := m.authorizeAgentCall(ctx, identity, id)
@@ -252,16 +260,17 @@ func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identit
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	// One report per call makes retries safe and preserves the original reporter.
-	_, err = tx.Exec(ctx, `INSERT INTO ai_interaction_issues (interaction_id, reported_by, note) VALUES ($1, $2, $3) ON CONFLICT (interaction_id) DO NOTHING`, id, identity.Subject, note)
+	// note mirrors the reason so the previous release can still read reports.
+	_, err = tx.Exec(ctx, `INSERT INTO ai_interaction_issues (interaction_id, reported_by, reason, note) VALUES ($1, $2, $3, $3) ON CONFLICT (interaction_id) DO NOTHING`, id, identity.Subject, reason)
 	if err != nil {
 		return AgentCallIssue{}, err
 	}
 	var issue AgentCallIssue
 	var reporter string
-	if err := tx.QueryRow(ctx, `SELECT note, created_at, reported_by FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Note, &issue.CreatedAt, &reporter); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT reason, created_at, reported_by FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Reason, &issue.CreatedAt, &reporter); err != nil {
 		return AgentCallIssue{}, err
 	}
-	if issue.Note != note || reporter != identity.Subject {
+	if issue.Reason != reason || reporter != identity.Subject {
 		return AgentCallIssue{}, ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
