@@ -708,7 +708,7 @@ func TestNeedsReviewAnalyticsFiltersBeforePagination(t *testing.T) {
 		if i == 52 || i == 58 {
 			score = 0.55
 		}
-		evaluation := map[string]any{"status": "incomplete", "evaluatorVersion": "typesafe-scorecard-v2", "results": map[string]any{"request_understood": map[string]any{"answers": map[string]any{"request_understood": map[string]any{"type": "noul", "noul": score}}}}}
+		evaluation := map[string]any{"status": "incomplete", "evaluatorVersion": "typesafe-scorecard-v3", "results": map[string]any{"request_understood": map[string]any{"answers": map[string]any{"request_understood": map[string]any{"type": "noul", "noul": score}}}}}
 		insertOperatorAIInteraction(t, pool, operatorAIInteractionFixture{
 			ID: fmt.Sprintf("20000000-0000-0000-0000-%012d", i), PracticeID: practiceID, LocationID: northID,
 			AppointmentOutcome: "INDETERMINATE",

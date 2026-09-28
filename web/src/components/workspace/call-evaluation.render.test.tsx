@@ -170,3 +170,18 @@ test("scorecard flags valid checks at 0.55 inclusive, including partial results"
   assert.doesNotMatch(html, />Needs review</)
   assert.match(html, /Judge failed/)
 })
+
+test("v3 renders the new scorecard contract and preserves review alerts", () => {
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+    ...scorecardV2, evaluatorVersion: "typesafe-scorecard-v3",
+    results: {
+      ...scorecardV2.results,
+      appointment_datetime_correct: { status: "not_applicable", reason: "no_appointment_action_result" },
+    },
+  }} />)
+  assert.match(html, /Appointment date and time correct<\/dt><dd[^>]*>Not applicable/)
+  assert.match(html, /Conversation responsive<\/dt><dd[^>]*>0.05 \/ 1/)
+  assert.match(html, />Needs review</)
+  assert.match(html, /2.50 \/ 4/)
+  assert.doesNotMatch(html, /Requests resolved or handed off|No valid score was recorded|Automatic red highlights apply only/)
+})

@@ -39,7 +39,7 @@ const scorecardChecks = [
 function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
-  const checks = [...scorecardChecks, ...(evaluation.evaluatorVersion === "typesafe-scorecard-v2" ? ["conversation_responsive"] : []), "expressed_sentiment"]
+  const checks = [...scorecardChecks, ...(evaluation.evaluatorVersion !== "typesafe-scorecard-v1" ? ["conversation_responsive"] : []), "expressed_sentiment"]
   return <>
     <dl className="mt-4 divide-y rounded-lg border px-3">
       {checks.map((name) => {
@@ -84,7 +84,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
 export function CallEvaluation({ evaluation }: { evaluation?: Record<string, unknown> }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
-  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2"
+  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3"
   return (
     <section aria-label="AI evaluation" className="border-b px-5 py-4 sm:px-6">
       <div className="flex flex-wrap items-center gap-2">

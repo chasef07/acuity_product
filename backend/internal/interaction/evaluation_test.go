@@ -80,3 +80,22 @@ func TestScorecardReviewReasons(t *testing.T) {
 		t.Fatalf("invalid or removed judges affected valid result: %v", got)
 	}
 }
+
+func TestScorecardReviewVersionCompatibility(t *testing.T) {
+	for _, version := range []string{"typesafe-scorecard-v1", "typesafe-scorecard-v2", "typesafe-scorecard-v3", "typesafe-scorecard-v4"} {
+		raw, _ := json.Marshal(map[string]any{
+			"evaluatorVersion": version, "status": "incomplete",
+			"results": map[string]any{
+				"request_understood":           map[string]any{"answers": map[string]any{"request_understood": map[string]any{"type": "noul", "noul": 0.55}}},
+				"appointment_datetime_correct": map[string]any{"status": "not_applicable", "reason": "no_appointment_action_result"},
+			},
+		})
+		want := 1
+		if version == "typesafe-scorecard-v4" {
+			want = 0
+		}
+		if got := EvaluationReviewReasons(raw); len(got) != want {
+			t.Fatalf("version=%s reasons=%v want %d", version, got, want)
+		}
+	}
+}

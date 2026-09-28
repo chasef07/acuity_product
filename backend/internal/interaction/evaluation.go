@@ -17,7 +17,7 @@ func EvaluationReviewReasons(raw json.RawMessage) []string {
 		Errors  map[string]json.RawMessage `json:"errors"`
 	}
 	if json.Unmarshal(raw, &scorecard) == nil &&
-		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2") &&
+		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3") &&
 		(scorecard.Status == "complete" || scorecard.Status == "incomplete") {
 		for _, check := range []struct{ name, label string }{
 			{"request_understood", "Request understood"},

@@ -126,7 +126,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
                 } },
               },
             } } : call === 7 ? { evaluation: {
-              evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v2", model: "typesafe-ai/jev",
+              evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v3", model: "typesafe-ai/jev",
               status: "incomplete", reason: "judge_errors", evaluatedAt: start.toISOString(),
               results: {
                 request_understood: { answers: { request_understood: { type: "noul", noul: 0.95 } } },
