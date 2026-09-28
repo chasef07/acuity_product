@@ -188,7 +188,7 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 	var lunaInputTotal float64
 	for _, entry := range entries {
 		model, _ := entry["model"].(string)
-		if entry["type"] == "llm_usage" && costModelKey(model) == "gpt_6_luna" {
+		if usageType(entry) == "llm_usage" && costModelKey(model) == "gpt_6_luna" {
 			input, valid := usageQuantity(entry, "input_tokens", "inputTokens")
 			if valid {
 				lunaInputTotal += input
@@ -200,7 +200,7 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 		model, _ := entry["model"].(string)
 		provider, model = costModelKey(provider), costModelKey(model)
 		openAI := provider == "openai" || provider == "api_openai_com"
-		switch entry["type"] {
+		switch usageType(entry) {
 		case "llm_usage":
 			if model == "gpt_live_1" {
 				seconds, valid := usageQuantity(entry, "session_duration")
@@ -316,6 +316,16 @@ func costItemForID(items []CostItem, id string) *CostItem {
 
 func costModelKey(value string) string {
 	return strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToLower(strings.TrimSpace(value)))
+}
+
+// Native LiveKit reports drop each usage summary's type because it equals the
+// default. A typeless summary is an LLM summary priced by model; unknown models
+// stay unpriced.
+func usageType(entry map[string]any) string {
+	if value, _ := entry["type"].(string); value != "" {
+		return value
+	}
+	return "llm_usage"
 }
 
 // Native LiveKit reports omit zero-valued fields. A missing field inside a
