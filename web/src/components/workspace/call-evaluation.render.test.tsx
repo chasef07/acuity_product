@@ -37,7 +37,7 @@ const scorecard = {
   status: "complete",
   evaluatorVersion: "typesafe-scorecard-v1",
   results: Object.fromEntries([
-    ...["request_understood", "appointment_datetime_correct", "office_rules_grounded", "results_reported_truthfully", "resolved_or_handed_off"].map((name) =>
+    ...["request_understood", "appointment_datetime_correct", "office_rules_grounded", "results_reported_truthfully"].map((name) =>
       [name, { answers: { [name]: { type: "noul", noul: 0.85 } }, usage: { total_tokens: 42 } }]),
     ["expressed_sentiment", { answers: { expressed_sentiment: { type: "score", score: 2.5, probabilities: { "2": 0.5, "3": 0.5 } } } }],
   ]),
@@ -67,7 +67,7 @@ test("invalid or failed scorecard answers cannot appear as valid scores", () => 
     assert.match(html, /No valid score was recorded/)
   }
   const failed = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecard, errors: { request_understood: { cause: "TimeoutError" } } }} />)
-  assert.equal(failed.match(/0.85 \/ 1/g)?.length, 4)
+  assert.equal(failed.match(/0.85 \/ 1/g)?.length, 3)
   assert.match(failed, /Judge failed: TimeoutError/)
 })
 
@@ -80,13 +80,33 @@ const scorecardV2 = {
   },
 }
 
-test("v2 renders six checks including low responsiveness without inverting the score", () => {
+test("date and time check distinguishes inapplicability from missing or failed evaluation", () => {
+  const evaluation = {
+    ...scorecardV2,
+    results: {
+      ...scorecardV2.results,
+      appointment_datetime_correct: { status: "not_applicable", reason: "no_appointment_action_result" },
+    },
+  }
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={evaluation} />)
+  assert.match(html, /Appointment date and time correct<\/dt><dd[^>]*>Not applicable/)
+  assert.match(html, /No booking, rescheduling, or cancellation tool returned a result/)
+  assert.doesNotMatch(html, /No valid score was recorded/)
+  assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, 4)
+  const failed = renderToStaticMarkup(<CallEvaluation evaluation={{
+    ...evaluation, errors: { appointment_datetime_correct: { cause: "TimeoutError" } },
+  }} />)
+  assert.match(failed, /Judge failed: TimeoutError/)
+  assert.doesNotMatch(failed, />Not applicable</)
+})
+
+test("v2 renders five checks including low responsiveness without inverting the score", () => {
   const html = renderToStaticMarkup(<CallEvaluation evaluation={scorecardV2} />)
   assert.match(html, /Conversation responsive<\/dt><dd[^>]*>0.05 \/ 1/)
-  assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, 6)
+  assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, 5)
   assert.match(html, /2.50 \/ 4/)
   assert.match(html, /Neutral or mixed: 50.0%/)
-  assert.doesNotMatch(html, /No valid score was recorded|likely true|text-destructive/)
+  assert.doesNotMatch(html, /No valid score was recorded|likely true/)
   assert.match(html, /Transcript evidence/)
   assert.match(html, /not measured silence or its technical cause/)
   assert.match(html, /&quot;noul&quot;: 0.05/)
@@ -108,7 +128,7 @@ test("partial v2 preserves responsiveness and sentiment alongside failed and mis
   assert.match(html, /Judge failed: HTTPStatusError/)
   assert.match(html, /HTTP 503/)
   assert.match(html, /Attempts: 2/)
-  assert.equal(html.match(/No valid score was recorded/g)?.length, 4)
+  assert.equal(html.match(/No valid score was recorded/g)?.length, 3)
 })
 
 test("v2 responsiveness preserves unavailable and judge error states", () => {
@@ -120,7 +140,7 @@ test("v2 responsiveness preserves unavailable and judge error states", () => {
       },
     }} />)
     assert.match(html, /Conversation responsive<\/dt><dd[^>]*>Unavailable/)
-    assert.equal(html.match(/0.85 \/ 1/g)?.length, 5)
+    assert.equal(html.match(/0.85 \/ 1/g)?.length, 4)
     assert.match(html, /No valid score was recorded/)
   }
   const failed = renderToStaticMarkup(<CallEvaluation evaluation={{
@@ -129,4 +149,39 @@ test("v2 responsiveness preserves unavailable and judge error states", () => {
   assert.match(failed, /Conversation responsive<\/dt><dd[^>]*>Unavailable/)
   assert.match(failed, /Judge failed: TimeoutError/)
   assert.doesNotMatch(failed, /0.05 \/ 1/)
+})
+
+test("scorecard flags valid checks at 0.55 inclusive, including partial results", () => {
+  for (const status of ["complete", "incomplete"]) {
+    for (const [value, flagged] of [[0, true], [0.55, true], [0.550001, false], [0.9, false]] as const) {
+      const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+        ...scorecardV2, status,
+        results: { request_understood: { answers: { request_understood: { type: "noul", noul: value } } } },
+      }} />)
+      assert.equal(html.includes(">Needs review<"), flagged)
+    }
+  }
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+    ...scorecardV2, results: {
+      request_understood: { answers: { request_understood: { type: "noul", noul: 0 } } },
+      expressed_sentiment: { answers: { expressed_sentiment: { type: "score", score: 0 } } },
+    }, errors: { request_understood: { cause: "TimeoutError" } },
+  }} />)
+  assert.doesNotMatch(html, />Needs review</)
+  assert.match(html, /Judge failed/)
+})
+
+test("v3 renders the new scorecard contract and preserves review alerts", () => {
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+    ...scorecardV2, evaluatorVersion: "typesafe-scorecard-v3",
+    results: {
+      ...scorecardV2.results,
+      appointment_datetime_correct: { status: "not_applicable", reason: "no_appointment_action_result" },
+    },
+  }} />)
+  assert.match(html, /Appointment date and time correct<\/dt><dd[^>]*>Not applicable/)
+  assert.match(html, /Conversation responsive<\/dt><dd[^>]*>0.05 \/ 1/)
+  assert.match(html, />Needs review</)
+  assert.match(html, /2.50 \/ 4/)
+  assert.doesNotMatch(html, /Requests resolved or handed off|No valid score was recorded|Automatic red highlights apply only/)
 })

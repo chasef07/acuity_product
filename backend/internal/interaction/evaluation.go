@@ -2,13 +2,50 @@ package interaction
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 )
 
-// EvaluationReviewReasons uses only the two agreed criteria from the current
-// evaluator contract. Missing, invalid, or incomplete runs are not passing calls.
+// EvaluationReviewReasons returns evidence that needs operator review.
+// Valid scorecard results remain actionable when another judge fails.
 func EvaluationReviewReasons(raw json.RawMessage) []string {
 	reasons := []string{}
+	var scorecard struct {
+		Version string                     `json:"evaluatorVersion"`
+		Status  string                     `json:"status"`
+		Results map[string]json.RawMessage `json:"results"`
+		Errors  map[string]json.RawMessage `json:"errors"`
+	}
+	if json.Unmarshal(raw, &scorecard) == nil &&
+		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3") &&
+		(scorecard.Status == "complete" || scorecard.Status == "incomplete") {
+		for _, check := range []struct{ name, label string }{
+			{"request_understood", "Request understood"},
+			{"appointment_datetime_correct", "Appointment date/time"},
+			{"office_rules_grounded", "Office rules grounded"},
+			{"results_reported_truthfully", "Results reported truthfully"},
+			{"conversation_responsive", "Conversation responsive"},
+		} {
+			if _, failed := scorecard.Errors[check.name]; failed {
+				continue
+			}
+			var result struct {
+				Status  string `json:"status"`
+				Answers map[string]struct {
+					Type string   `json:"type"`
+					Noul *float64 `json:"noul"`
+				} `json:"answers"`
+			}
+			if json.Unmarshal(scorecard.Results[check.name], &result) != nil || result.Status == "not_applicable" {
+				continue
+			}
+			answer := result.Answers[check.name]
+			if answer.Type == "noul" && answer.Noul != nil && *answer.Noul >= 0 && *answer.Noul <= 0.55 {
+				reasons = append(reasons, fmt.Sprintf("%s needs review · %.2f", check.label, *answer.Noul))
+			}
+		}
+		return reasons
+	}
 	var evaluation struct {
 		Version string `json:"evaluatorVersion"`
 		Status  string `json:"status"`

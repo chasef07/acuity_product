@@ -5,7 +5,6 @@ const labels: Record<string, string> = {
   appointment_datetime_correct: "Appointment date and time correct",
   office_rules_grounded: "Office rules supported by evidence",
   results_reported_truthfully: "Action results reported truthfully",
-  resolved_or_handed_off: "Requests resolved or handed off",
   conversation_responsive: "Conversation responsive",
   request_fulfilled: "Request fulfilled",
   handoff_required: "Handoff required",
@@ -35,36 +34,41 @@ const scorecardChecks = [
   "appointment_datetime_correct",
   "office_rules_grounded",
   "results_reported_truthfully",
-  "resolved_or_handed_off",
 ]
 
 function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
-  const checks = [...scorecardChecks, ...(evaluation.evaluatorVersion === "typesafe-scorecard-v2" ? ["conversation_responsive"] : []), "expressed_sentiment"]
+  const checks = [...scorecardChecks, ...(evaluation.evaluatorVersion !== "typesafe-scorecard-v1" ? ["conversation_responsive"] : []), "expressed_sentiment"]
   return <>
     <dl className="mt-4 divide-y rounded-lg border px-3">
       {checks.map((name) => {
         const answer = record(record(record(results[name]).answers)[name])
         const failed = Object.hasOwn(errors, name)
+        const notApplicable = !failed && name === "appointment_datetime_correct" &&
+          record(results[name]).status === "not_applicable" &&
+          record(results[name]).reason === "no_appointment_action_result"
         const error = record(errors[name])
         const sentiment = name === "expressed_sentiment"
         const value = sentiment ? answer.score : answer.noul
         const maximum = sentiment ? 4 : 1
         const valid = !failed && answer.type === (sentiment ? "score" : "noul") &&
           typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum
+        const needsReview = valid && !notApplicable && !sentiment && value <= 0.55 &&
+          (evaluation.status === "complete" || evaluation.status === "incomplete")
         const probabilities = record(answer.probabilities)
         return <div key={name} className="py-3 text-xs">
           <div className="flex items-start justify-between gap-3">
             <dt>{labels[name]}</dt>
-            <dd className="shrink-0 font-mono tabular-nums">{valid ? `${value.toFixed(2)} / ${maximum}` : "Unavailable"}</dd>
+            <dd className={`shrink-0 font-mono tabular-nums ${needsReview ? "text-destructive" : ""}`}>{notApplicable ? "Not applicable" : valid ? `${value.toFixed(2)} / ${maximum}` : "Unavailable"}</dd>
           </div>
+          {needsReview && <dd className="mt-1 text-destructive">Needs review</dd>}
           {name === "conversation_responsive" && <dd className="mt-1 text-muted-foreground">Transcript evidence of a responsive conversation, not measured silence or its technical cause. Lower scores indicate caller evidence of stalls, even if the conversation later recovered. Ordinary greetings, clarifications, and caller-requested pauses do not count as stalls.</dd>}
           {failed ? <dd className="mt-1 text-destructive">
             Judge failed{typeof error.cause === "string" ? `: ${title(error.cause)}` : ""}
             {typeof error.httpStatus === "number" ? ` · HTTP ${error.httpStatus}` : ""}
             {typeof error.attempts === "number" ? ` · Attempts: ${error.attempts}` : ""}
-          </dd> : !valid ? <dd className="mt-1 text-muted-foreground">No valid score was recorded.</dd> : sentiment ? <>
+          </dd> : notApplicable ? <dd className="mt-1 text-muted-foreground">No booking, rescheduling, or cancellation tool returned a result.</dd> : !valid ? <dd className="mt-1 text-muted-foreground">No valid score was recorded.</dd> : sentiment ? <>
             <dd className="mt-1 text-muted-foreground">{scales.expressed_sentiment.map((label, index) => `${index}: ${label}`).join(" · ")}</dd>
             <dd className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
               {Object.entries(probabilities).map(([label, probability]) => <span key={label}>{scales.expressed_sentiment[Number(label)] ?? label}: {percent(probability)}</span>)}
@@ -73,14 +77,14 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
         </div>
       })}
     </dl>
-    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. No automatic red highlights are applied to this scorecard.</p>
+    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. Checks at 0.55 or lower are highlighted for review. Sentiment and inapplicable checks do not trigger review alerts.</p>
   </>
 }
 
 export function CallEvaluation({ evaluation }: { evaluation?: Record<string, unknown> }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
-  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2"
+  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3"
   return (
     <section aria-label="AI evaluation" className="border-b px-5 py-4 sm:px-6">
       <div className="flex flex-wrap items-center gap-2">

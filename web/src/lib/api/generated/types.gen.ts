@@ -918,6 +918,10 @@ export type OperatorAiCallTags = {
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
+    /**
+     * Return only calls with evaluation review reasons. Summary remains scoped to the full selected range.
+     */
+    needsReviewOnly?: boolean;
     manualTag?: string;
     practiceId: string;
     locationId?: string;

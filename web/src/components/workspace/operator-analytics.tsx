@@ -73,10 +73,11 @@ type AnalyticsSnapshot = OperatorAiAnalyticsPage & { summary: OperatorAiAnalytic
 
 type AnalyticsLoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type AnalyticsNextPageState = "idle" | "loading" | "unavailable"
-type AnalyticsTab = "overview" | "cost" | "performance" | "tools" | "calls"
+type AnalyticsTab = "overview" | "cost" | "performance" | "tools" | "calls" | "review"
 
 const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
   { value: "calls", label: "Calls" },
+  { value: "review", label: "Needs review" },
   { value: "overview", label: "Overview" },
   { value: "cost", label: "Cost" },
   { value: "performance", label: "Performance" },
@@ -117,10 +118,11 @@ export function OperatorAnalytics({
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("7d")
   const [tab, setTab] = useState<AnalyticsTab>("calls")
   const costView = tab === "cost"
+  const needsReviewOnly = tab === "review"
   const [tagFilter, setTagFilter] = useState({ practiceID, value: "" })
   const manualTag = tagFilter.practiceID === practiceID ? tagFilter.value : ""
   const setManualTag = (value: string) => setTagFilter({ practiceID, value })
-  const activeTag = tab === "calls" ? manualTag : ""
+  const activeTag = tab === "calls" || needsReviewOnly ? manualTag : ""
   const [requestVersion, setRequestVersion] = useState(0)
   const [request, setRequest] = useState<{
     key: string
@@ -133,7 +135,7 @@ export function OperatorAnalytics({
     key: string
     state: AnalyticsNextPageState
   }>({ key: "", state: "idle" })
-  const requestKey = `${practiceID}:${locationID}:${range}:${activeTag}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${activeTag}:${needsReviewOnly}:${requestVersion}`
   const currentRequest =
     request.key === requestKey
       ? request
@@ -158,6 +160,7 @@ export function OperatorAnalytics({
             locationId: locationID || undefined,
             range,
             manualTag: activeTag || undefined,
+            needsReviewOnly,
             limit: 50,
           },
           signal: controller.signal,
@@ -180,7 +183,7 @@ export function OperatorAnalytics({
       }
     })
     return () => controller.abort()
-  }, [locationID, practiceID, range, requestKey, costView, activeTag])
+  }, [locationID, practiceID, range, requestKey, costView, activeTag, needsReviewOnly])
 
   async function loadNextPage() {
     if (
@@ -210,6 +213,7 @@ export function OperatorAnalytics({
           locationId: locationID || undefined,
           range,
           manualTag: activeTag || undefined,
+          needsReviewOnly,
           cursor,
           limit: 50,
         },
@@ -332,7 +336,7 @@ export function OperatorAnalytics({
         }
         tabs={<div className="w-full space-y-3">
           <AnalyticsTabs tab={tab} onChange={setTab} />
-          {tab === "calls" && ((currentRequest.data?.availableTags?.length ?? 0) > 0 || manualTag) && (
+          {(tab === "calls" || needsReviewOnly) && ((currentRequest.data?.availableTags?.length ?? 0) > 0 || manualTag) && (
             <div aria-label="Filter calls by tag" className="flex flex-wrap items-center gap-1.5">
               <span className="mr-1 text-xs text-muted-foreground">Tags</span>
               <Button size="xs" variant={manualTag ? "outline" : "secondary"} aria-pressed={!manualTag} onClick={() => setManualTag("")}>All calls</Button>
@@ -416,23 +420,24 @@ function AnalyticsReady({
       {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
       {tab === "performance" && <DiagnosticsPerformance summary={data.summary} onSelect={onSelect} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
-      {tab === "calls" && data.calls.length === 0 ? (
+      {(tab === "calls" || tab === "review") && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <InboxIcon aria-hidden="true" />
             </EmptyMedia>
-            <EmptyTitle>No AI calls in this range</EmptyTitle>
+            <EmptyTitle>{tab === "review" ? "No flagged calls in this range" : "No AI calls in this range"}</EmptyTitle>
             <EmptyDescription>
               Change the time range or workspace office to review another slice
               of call evidence.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
-      ) : tab === "calls" ? (
+      ) : tab === "calls" || tab === "review" ? (
         <CallLedger
           calls={data.calls}
-          totalCalls={data.summary.totalCalls}
+          totalCalls={tab === "review" ? undefined : data.summary.totalCalls}
+          needsReviewOnly={tab === "review"}
           range={range}
           hasNextPage={Boolean(data.nextCursor)}
           nextPageState={nextPageState}
@@ -559,6 +564,7 @@ function OperationalHealth({ summary }: { summary: OperatorAiAnalyticsSummary })
 }
 
 function CallLedger({
+  needsReviewOnly,
   calls,
   totalCalls,
   range,
@@ -568,7 +574,8 @@ function CallLedger({
   onSelect,
 }: {
   calls: OperatorAiCallAnalytics[]
-  totalCalls: number
+  needsReviewOnly: boolean
+  totalCalls?: number
   range: OperatorAiAnalyticsRange
   hasNextPage: boolean
   nextPageState: AnalyticsNextPageState
@@ -583,11 +590,11 @@ function CallLedger({
             Call ledger
           </p>
           <h2 id="call-ledger-title" className="mt-0.5 text-sm font-semibold">
-            AI calls
+            {needsReviewOnly ? "Calls needing review" : "AI calls"}
           </h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          {calls.length.toLocaleString()} shown · {totalCalls.toLocaleString()} total
+          {calls.length.toLocaleString()} shown{totalCalls !== undefined && <> · {totalCalls.toLocaleString()} total</>}
           · {range}
         </p>
       </div>
