@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.21.0](https://github.com/chasef07/acuity_product/compare/v1.20.2...v1.21.0) (2026-09-28)
+
+
+### Features
+
+* **agent:** flag calls by reason and review flags in AI diagnostics ([#377](https://github.com/chasef07/acuity_product/issues/377)) ([8e73237](https://github.com/chasef07/acuity_product/commit/8e732377ab8b63ad90a60c7061a613f83c8b48a3))
+* **diagnostics:** add judge review alerts and filtered call tab ([#376](https://github.com/chasef07/acuity_product/issues/376)) ([8f9f6f7](https://github.com/chasef07/acuity_product/commit/8f9f6f7b13129f561a0572f77e49b68c2c9ac542))
+
 ## [1.20.2](https://github.com/chasef07/acuity_product/compare/v1.20.1...v1.20.2) (2026-09-27)
 
 
