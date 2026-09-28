@@ -49,9 +49,10 @@ func assertCostClose(t *testing.T, got, want float64) {
 func TestGPTLiveAndLunaRecordedCosts(t *testing.T) {
 	started := time.Date(2026, 9, 25, 1, 0, 0, 0, time.UTC)
 	report := newCostAnalytics(started, started.Add(time.Hour), time.UTC)
+	// LiveKit's native session report omits each summary's default type.
 	report.addCall(started, started.Add(2*time.Minute), json.RawMessage(`[
- {"type":"llm_usage","provider":"api.openai.com","model":"gpt-live-1","session_duration":91.5},
- {"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10000,"input_cached_tokens":2000,"input_cache_creation_tokens":1000,"output_tokens":500,"output_reasoning_tokens":200}
+ {"provider":"api.openai.com","model":"gpt-live-1","session_duration":91.5},
+ {"provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10000,"input_cached_tokens":2000,"input_cache_creation_tokens":1000,"output_tokens":500,"output_reasoning_tokens":200}
  ]`), time.UTC)
 	report.finalize()
 	if report.PricedCalls != 1 || report.UnpricedUsage != 0 {
@@ -80,6 +81,7 @@ func TestGPTLiveCostsKeepUnknownUsageVisible(t *testing.T) {
 		{"multiple aggregates exceed tier", `[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":200000},{"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":200000}]`, 2},
 		{"invalid cache writes", `[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10,"input_cached_tokens":5,"input_cache_creation_tokens":6}]`, 1},
 		{"missing delegator", `[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-live-1","session_duration":60}]`, 0},
+		{"typeless unknown model", `[{"provider":"livekit","model":"unknown","audio_duration":60}]`, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			report := newCostAnalytics(started, started.Add(time.Hour), time.UTC)
