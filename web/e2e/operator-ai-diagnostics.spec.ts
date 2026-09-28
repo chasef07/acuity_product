@@ -131,12 +131,11 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
               results: {
                 request_understood: { answers: { request_understood: { type: "noul", noul: 0.95 } } },
                 appointment_datetime_correct: { answers: { appointment_datetime_correct: { type: "noul", noul: 0.8 } } },
-                office_rules_grounded: { answers: { office_rules_grounded: { type: "noul", noul: 0.9 } } },
                 results_reported_truthfully: { answers: { results_reported_truthfully: { type: "noul", noul: 0.1 } } },
                 conversation_responsive: { answers: { conversation_responsive: { type: "noul", noul: 0.05 } } },
                 expressed_sentiment: { answers: { expressed_sentiment: { type: "score", score: 2.5, probabilities: { "2": 0.5, "3": 0.5 } } } },
               },
-              errors: { resolved_or_handed_off: { cause: "HTTPStatusError", httpStatus: 503, attempts: 2 } },
+              errors: { office_rules_grounded: { cause: "HTTPStatusError", httpStatus: 503, attempts: 2 } },
             } } : {}),
             domainOutcomes: [
               {
