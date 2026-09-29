@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/chasef07/acuity_product/compare/v1.22.0...v1.23.0) (2026-09-29)
+
+
+### Features
+
+* **diagnostics:** flag judge scores at 0.4 and support scorecard v4 ([#383](https://github.com/chasef07/acuity_product/issues/383)) ([8a74b8e](https://github.com/chasef07/acuity_product/commit/8a74b8ed6eda9d94b4d23e02b3fd015c0085e1d8))
+
 ## [1.22.0](https://github.com/chasef07/acuity_product/compare/v1.21.1...v1.22.0) (2026-09-29)
 
 
