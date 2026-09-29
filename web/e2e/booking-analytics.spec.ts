@@ -190,27 +190,14 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await page.getByRole("button", { name: "Conversion", exact: true }).click()
     await expect(
       performance.getByRole("status", {
-        name: "Overall booking conversion",
+        name: "Booking conversion",
         exact: true,
       }),
     ).toHaveText("66.7%")
     await expect(
-      performance.getByText(
-        "4 of 6 calls booked after a completed availability search.",
-        { exact: true },
-      ),
-    ).toBeVisible()
-    await expect(
-      performance.getByText(
-        "Repeated completed searches count once per call. Searches with no openings remain included. Failed searches, reschedules, and cancellations are excluded.",
-        { exact: true },
-      ),
-    ).toBeVisible()
-    await expect(
-      performance.getByText(
-        "1 call has no recorded availability history and is excluded from this rate.",
-        { exact: true },
-      ),
+      breakdown.getByText("Excludes 1 call with no availability history.", {
+        exact: true,
+      }),
     ).toBeVisible()
     await expect(breakdown.getByRole("row")).toHaveCount(4)
     await expect(
@@ -222,8 +209,8 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
     ).toHaveText(["Total", "4", "6", "66.7%"])
-    // Conversion compares total/new/existing as grouped daily bars.
-    await expect(performance.locator(".recharts-bar")).toHaveCount(3)
+    // Conversion compares new/existing as grouped daily bars.
+    await expect(performance.locator(".recharts-bar")).toHaveCount(2)
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-conversion.png"),
       fullPage: true,
