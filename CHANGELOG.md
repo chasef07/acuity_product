@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/chasef07/acuity_product/compare/v1.21.1...v1.22.0) (2026-09-29)
+
+
+### Features
+
+* **analytics:** simplify conversion view to match bookings ([#381](https://github.com/chasef07/acuity_product/issues/381)) ([a098dd9](https://github.com/chasef07/acuity_product/commit/a098dd9ea335d5a7d6993e01bcd101138ff595ac))
+
 ## [1.21.1](https://github.com/chasef07/acuity_product/compare/v1.21.0...v1.21.1) (2026-09-28)
 
 
