@@ -194,6 +194,11 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
         exact: true,
       }),
     ).toHaveText("66.7%")
+    await expect(
+      breakdown.getByText("Excludes 1 call with no availability history.", {
+        exact: true,
+      }),
+    ).toBeVisible()
     await expect(breakdown.getByRole("row")).toHaveCount(4)
     await expect(
       breakdown.getByRole("row").filter({ hasText: "New patients" }).getByRole("cell"),

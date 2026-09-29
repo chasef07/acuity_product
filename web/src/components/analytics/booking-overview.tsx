@@ -303,10 +303,19 @@ function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
     })),
     { key: "total", label: <strong>Total</strong>, summary: report.total },
   ]
+  const excluded = report.total.calls - report.total.searchEvidenceCalls
   return (
     <section className={styles.breakdown} aria-label="Breakdown">
       <div className={styles.sectionHeading}>
-        <h2>Breakdown</h2>
+        <div>
+          <h2>Breakdown</h2>
+          {excluded > 0 && (
+            <p className={styles.summaryCaption}>
+              Excludes {count(excluded)} {excluded === 1 ? "call" : "calls"}{" "}
+              with no availability history.
+            </p>
+          )}
+        </div>
       </div>
       <Table>
         <TableHeader>
