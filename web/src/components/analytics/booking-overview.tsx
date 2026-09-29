@@ -28,7 +28,6 @@ import {
   type BookingDay,
   type BookingAnalytics,
   type BookingMetric,
-  bookingConversionExplanation,
   type BookingSummary,
   type PatientGroup,
 } from "@/lib/booking-analytics"
@@ -40,7 +39,7 @@ type Metric = BookingMetric
 const chartConfig = {
   total: {
     label: "All patients",
-    color: "var(--booking-total, var(--muted-foreground))",
+    color: "var(--muted-foreground)",
   },
   new: { label: "New patients", color: "var(--booking-new)" },
   existing: { label: "Existing patients", color: "var(--booking-existing)" },
@@ -104,11 +103,9 @@ function DayTooltip({
                       : formatDuration(summary.p50)}
               </strong>
             </div>
-            {metric === "conversion" && (
+            {metric === "conversion" && summary.searched > 0 && (
               <span className={styles.tooltipSub}>
-                {summary.searched === 0
-                  ? "No completed availability searches"
-                  : `${count(summary.converted)} of ${count(summary.searched)} calls booked`}
+                {count(summary.converted)} of {count(summary.searched)} booked
               </span>
             )}
             {metric === "duration" && (
@@ -123,14 +120,6 @@ function DayTooltip({
           </div>
         )
       })}
-      {metric === "conversion" &&
-        day.total.searchEvidenceCalls < day.total.calls && (
-          <span className={styles.tooltipSub}>
-            Availability history recorded for{" "}
-            {count(day.total.searchEvidenceCalls)} of {count(day.total.calls)}{" "}
-            calls.
-          </span>
-        )}
     </div>
   )
 }
@@ -218,20 +207,13 @@ function ConversionSummary({
   total: BookingSummary
   groups: Record<PatientGroup, BookingSummary>
 }) {
-  const missingHistory = total.calls - total.searchEvidenceCalls
   return (
     <div className={styles.summary}>
       <div>
-        <p className={styles.summaryLabel}>Overall booking conversion</p>
-        <output
-          className={styles.headline}
-          aria-label="Overall booking conversion"
-        >
+        <p className={styles.summaryLabel}>Booking conversion</p>
+        <output className={styles.headline} aria-label="Booking conversion">
           {formatPercent(total.conversion)}
         </output>
-        <p className={styles.summaryCaption}>
-          {bookingConversionExplanation(total)}
-        </p>
       </div>
       <div className={styles.cohorts}>
         {visibleGroups.map((group) => {
@@ -243,25 +225,12 @@ function ConversionSummary({
                 <strong>{formatPercent(summary.conversion)}</strong>
               </div>
               <p>
-                {count(summary.converted)} of {count(summary.searched)} calls
-                booked
+                {count(summary.converted)} of {count(summary.searched)} booked
               </p>
             </div>
           )
         })}
       </div>
-      <p className={styles.summaryNote}>
-        Repeated completed searches count once per call. Searches with no openings remain
-        included. Failed searches, reschedules, and cancellations are excluded.
-      </p>
-      {missingHistory > 0 && (
-        <p className={styles.summaryNote}>
-          {count(missingHistory)}{" "}
-          {missingHistory === 1 ? "call has" : "calls have"} no recorded
-          availability history and {missingHistory === 1 ? "is" : "are"}{" "}
-          excluded from this rate.
-        </p>
-      )}
     </div>
   )
 }
@@ -337,22 +306,14 @@ function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
   return (
     <section className={styles.breakdown} aria-label="Breakdown">
       <div className={styles.sectionHeading}>
-        <div>
-          <h2>Conversion by patient status</h2>
-          <p className={styles.summaryCaption}>
-            New and existing rows cover all {count(report.total.searched)}{" "}
-            completed availability searches.
-          </p>
-        </div>
+        <h2>Breakdown</h2>
       </div>
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Patient status</TableHead>
             <TableHead className="text-right">Booked calls</TableHead>
-            <TableHead className="text-right">
-              Completed availability searches
-            </TableHead>
+            <TableHead className="text-right">Searched calls</TableHead>
             <TableHead className="text-right">Conversion</TableHead>
           </TableRow>
         </TableHeader>
@@ -389,16 +350,13 @@ export function BookingOverview({
     metric === "bookings"
       ? partialBreakdown ? [...visibleGroups, "unknown"] : visibleGroups
       : metric === "conversion"
-      ? ["total", ...visibleGroups]
+      ? visibleGroups
       : partialBreakdown
         ? ["total", ...visibleGroups]
         : visibleGroups
   return (
     <>
-      <section
-        className={`${styles.hero} ${metric === "conversion" ? styles.conversion : ""}`}
-        aria-label="Booking performance"
-      >
+      <section className={styles.hero} aria-label="Booking performance">
         <Summary total={report.total} groups={report.groups} metric={metric} />
         <div className={styles.chartSection}>
           <div className={styles.chartHeading}>
@@ -406,24 +364,21 @@ export function BookingOverview({
               {metric === "bookings"
                 ? "Bookings"
                 : metric === "conversion"
-                  ? "Daily booking conversion"
+                  ? "Conversion"
                   : "Median call duration"}
             </h2>
             <div className={styles.chartLegend}>
               {series.map((group) => <GroupLabel key={group} group={group} />)}
             </div>
           </div>
-          {metric === "conversion" && (
-            <p className={styles.chartCaption}>
-              Booked calls ÷ completed availability searches, each day.
-            </p>
-          )}
           <BookingTrend daily={report.daily} metric={metric} series={series} />
           <p className={styles.chartCaption}>
             {metric === "bookings"
-              ? dailyTotalComparison(report.daily.map((day) => day.total.bookings))
-              : "Days without measurements are blank."}
-            {" · "}Today is excluded.
+              ? `${dailyTotalComparison(report.daily.map((day) => day.total.bookings))} · `
+              : metric === "duration"
+                ? "Days without measurements are blank. · "
+                : ""}
+            Today is excluded.
           </p>
         </div>
       </section>

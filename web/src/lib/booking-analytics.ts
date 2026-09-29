@@ -21,14 +21,6 @@ export function canViewPracticeAnalytics(
   )
 }
 
-export function bookingConversionExplanation(
-  summary: Pick<BookingSummary, "converted" | "searched">,
-): string {
-  return summary.searched === 0
-    ? "No completed availability searches in this period."
-    : `${summary.converted.toLocaleString("en-US")} of ${summary.searched.toLocaleString("en-US")} calls booked after a completed availability search.`
-}
-
 export function formatDuration(seconds: number | null): string {
   if (seconds === null) return "—"
   const rounded = Math.round(seconds)
