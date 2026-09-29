@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.1](https://github.com/chasef07/acuity_product/compare/v1.21.0...v1.21.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **diagnostics:** price LiveKit usage summaries without a type ([#379](https://github.com/chasef07/acuity_product/issues/379)) ([c22a280](https://github.com/chasef07/acuity_product/commit/c22a2808989c0863fa4652a941ce625357074f76))
+
 ## [1.21.0](https://github.com/chasef07/acuity_product/compare/v1.20.2...v1.21.0) (2026-09-28)
 
 
