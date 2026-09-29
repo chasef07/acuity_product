@@ -151,9 +151,9 @@ test("v2 responsiveness preserves unavailable and judge error states", () => {
   assert.doesNotMatch(failed, /0.05 \/ 1/)
 })
 
-test("scorecard flags valid checks at 0.55 inclusive, including partial results", () => {
+test("scorecard flags valid checks at 0.4 inclusive, including partial results", () => {
   for (const status of ["complete", "incomplete"]) {
-    for (const [value, flagged] of [[0, true], [0.55, true], [0.550001, false], [0.9, false]] as const) {
+    for (const [value, flagged] of [[0, true], [0.4, true], [0.400001, false], [0.9, false]] as const) {
       const html = renderToStaticMarkup(<CallEvaluation evaluation={{
         ...scorecardV2, status,
         results: { request_understood: { answers: { request_understood: { type: "noul", noul: value } } } },
@@ -184,4 +184,17 @@ test("v3 renders the new scorecard contract and preserves review alerts", () => 
   assert.match(html, />Needs review</)
   assert.match(html, /2.50 \/ 4/)
   assert.doesNotMatch(html, /Requests resolved or handed off|No valid score was recorded|Automatic red highlights apply only/)
+})
+
+test("v4 omits the removed truthfulness judge while historical scorecards keep it", () => {
+  const v4Results: Record<string, unknown> = { ...scorecardV2.results }
+  delete v4Results.results_reported_truthfully
+  const v4 = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecardV2, evaluatorVersion: "typesafe-scorecard-v4", results: v4Results }} />)
+  assert.doesNotMatch(v4, /Action results reported truthfully|No valid score was recorded|Automatic red highlights apply only/)
+  assert.match(v4, /Conversation responsive<\/dt><dd[^>]*>0.05 \/ 1/)
+  assert.match(v4, />Needs review</)
+  for (const version of ["typesafe-scorecard-v1", "typesafe-scorecard-v2", "typesafe-scorecard-v3"]) {
+    const historical = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecardV2, evaluatorVersion: version }} />)
+    assert.match(historical, /Action results reported truthfully<\/dt><dd[^>]*>0.85 \/ 1/)
+  }
 })

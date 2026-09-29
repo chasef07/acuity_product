@@ -47,8 +47,8 @@ func TestScorecardReviewReasons(t *testing.T) {
 			failed                           bool
 			want                             int
 		}{
-			{"inclusive", 0.55, "complete", "", "noul", false, 1},
-			{"above", 0.550001, "complete", "", "noul", false, 0},
+			{"inclusive", 0.4, "complete", "", "noul", false, 1},
+			{"above", 0.400001, "complete", "", "noul", false, 0},
 			{"zero", 0.0, "complete", "", "noul", false, 1},
 			{"partial", 0.1, "incomplete", "", "noul", false, 1},
 			{"failed judge", 0.1, "incomplete", "", "noul", true, 0},
@@ -74,28 +74,43 @@ func TestScorecardReviewReasons(t *testing.T) {
 			})
 		}
 	}
-	raw := json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v2","status":"incomplete","results":{"request_understood":{"answers":{"request_understood":{"type":"noul","noul":"bad"}}},"office_rules_grounded":{"answers":{"office_rules_grounded":{"type":"noul","noul":0.55}}},"expressed_sentiment":{"answers":{"expressed_sentiment":{"type":"score","score":0}}},"resolved_or_handed_off":{"answers":{"resolved_or_handed_off":{"type":"noul","noul":0}}}}}`)
+	raw := json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v2","status":"incomplete","results":{"request_understood":{"answers":{"request_understood":{"type":"noul","noul":"bad"}}},"office_rules_grounded":{"answers":{"office_rules_grounded":{"type":"noul","noul":0.4}}},"expressed_sentiment":{"answers":{"expressed_sentiment":{"type":"score","score":0}}},"resolved_or_handed_off":{"answers":{"resolved_or_handed_off":{"type":"noul","noul":0}}}}}`)
 	got := EvaluationReviewReasons(raw)
-	if len(got) != 1 || got[0] != "Office rules grounded needs review · 0.55" {
+	if len(got) != 1 || got[0] != "Office rules grounded needs review · 0.40" {
 		t.Fatalf("invalid or removed judges affected valid result: %v", got)
 	}
 }
 
 func TestScorecardReviewVersionCompatibility(t *testing.T) {
-	for _, version := range []string{"typesafe-scorecard-v1", "typesafe-scorecard-v2", "typesafe-scorecard-v3", "typesafe-scorecard-v4"} {
+	for _, version := range []string{"typesafe-scorecard-v1", "typesafe-scorecard-v2", "typesafe-scorecard-v3", "typesafe-scorecard-v4", "typesafe-scorecard-v5"} {
 		raw, _ := json.Marshal(map[string]any{
 			"evaluatorVersion": version, "status": "incomplete",
 			"results": map[string]any{
-				"request_understood":           map[string]any{"answers": map[string]any{"request_understood": map[string]any{"type": "noul", "noul": 0.55}}},
+				"request_understood":           map[string]any{"answers": map[string]any{"request_understood": map[string]any{"type": "noul", "noul": 0.4}}},
 				"appointment_datetime_correct": map[string]any{"status": "not_applicable", "reason": "no_appointment_action_result"},
 			},
 		})
 		want := 1
-		if version == "typesafe-scorecard-v4" {
+		if version == "typesafe-scorecard-v5" {
 			want = 0
 		}
 		if got := EvaluationReviewReasons(raw); len(got) != want {
 			t.Fatalf("version=%s reasons=%v want %d", version, got, want)
+		}
+	}
+}
+
+func TestScorecardV4IgnoresRemovedTruthfulnessJudge(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    int
+	}{{"typesafe-scorecard-v3", 1}, {"typesafe-scorecard-v4", 0}} {
+		raw, _ := json.Marshal(map[string]any{
+			"evaluatorVersion": tc.version, "status": "complete",
+			"results": map[string]any{"results_reported_truthfully": map[string]any{"answers": map[string]any{"results_reported_truthfully": map[string]any{"type": "noul", "noul": 0.1}}}},
+		})
+		if got := EvaluationReviewReasons(raw); len(got) != tc.want {
+			t.Fatalf("version=%s reasons=%v want %d", tc.version, got, tc.want)
 		}
 	}
 }

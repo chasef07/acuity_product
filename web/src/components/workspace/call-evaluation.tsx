@@ -33,13 +33,19 @@ const scorecardChecks = [
   "request_understood",
   "appointment_datetime_correct",
   "office_rules_grounded",
-  "results_reported_truthfully",
 ]
 
 function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
-  const checks = [...scorecardChecks, ...(evaluation.evaluatorVersion !== "typesafe-scorecard-v1" ? ["conversation_responsive"] : []), "expressed_sentiment"]
+  const version = evaluation.evaluatorVersion
+  const checks = [
+    ...scorecardChecks,
+    // Scorecard v4 removed the results-reported-truthfully judge.
+    ...(version !== "typesafe-scorecard-v4" ? ["results_reported_truthfully"] : []),
+    ...(version !== "typesafe-scorecard-v1" ? ["conversation_responsive"] : []),
+    "expressed_sentiment",
+  ]
   return <>
     <dl className="mt-4 divide-y rounded-lg border px-3">
       {checks.map((name) => {
@@ -54,7 +60,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
         const maximum = sentiment ? 4 : 1
         const valid = !failed && answer.type === (sentiment ? "score" : "noul") &&
           typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum
-        const needsReview = valid && !notApplicable && !sentiment && value <= 0.55 &&
+        const needsReview = valid && !notApplicable && !sentiment && value <= 0.4 &&
           (evaluation.status === "complete" || evaluation.status === "incomplete")
         const probabilities = record(answer.probabilities)
         return <div key={name} className="py-3 text-xs">
@@ -77,14 +83,14 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
         </div>
       })}
     </dl>
-    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. Checks at 0.55 or lower are highlighted for review. Sentiment and inapplicable checks do not trigger review alerts.</p>
+    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. Checks at 0.4 or lower are highlighted for review. Sentiment and inapplicable checks do not trigger review alerts.</p>
   </>
 }
 
 export function CallEvaluation({ evaluation }: { evaluation?: Record<string, unknown> }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
-  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3"
+  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3" || evaluation?.evaluatorVersion === "typesafe-scorecard-v4"
   return (
     <section aria-label="AI evaluation" className="border-b px-5 py-4 sm:px-6">
       <div className="flex flex-wrap items-center gap-2">

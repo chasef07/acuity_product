@@ -130,7 +130,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
               status: "incomplete", reason: "judge_errors", evaluatedAt: start.toISOString(),
               results: {
                 request_understood: { answers: { request_understood: { type: "noul", noul: 0.95 } } },
-                appointment_datetime_correct: { answers: { appointment_datetime_correct: { type: "noul", noul: 0.55 } } },
+                appointment_datetime_correct: { answers: { appointment_datetime_correct: { type: "noul", noul: 0.4 } } },
                 results_reported_truthfully: { answers: { results_reported_truthfully: { type: "noul", noul: 0.1 } } },
                 conversation_responsive: { answers: { conversation_responsive: { type: "noul", noul: 0.05 } } },
                 expressed_sentiment: { answers: { expressed_sentiment: { type: "score", score: 2.5, probabilities: { "2": 0.5, "3": 0.5 } } } },
@@ -193,7 +193,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await diagnostics.getByRole("button", { name: "Needs review", exact: true }).click()
     await expect(diagnostics.getByRole("heading", { name: "Calls needing review", exact: true })).toBeVisible()
     await expect(diagnostics.getByRole("table").locator("tbody tr")).toHaveCount(2)
-    await expect(diagnostics.getByRole("row").filter({ hasText: "Appointment date/time needs review · 0.55" })).toHaveClass(/bg-destructive/)
+    await expect(diagnostics.getByRole("row").filter({ hasText: "Appointment date/time needs review · 0.40" })).toHaveClass(/bg-destructive/)
     await expect(diagnostics.getByText("2 shown", { exact: false })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath("needs-review-calls.png"), fullPage: true })
     await diagnostics.getByRole("button", { name: "Calls", exact: true }).click()
