@@ -17,7 +17,7 @@ func EvaluationReviewReasons(raw json.RawMessage) []string {
 		Errors  map[string]json.RawMessage `json:"errors"`
 	}
 	if json.Unmarshal(raw, &scorecard) == nil &&
-		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3") &&
+		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3" || scorecard.Version == "typesafe-scorecard-v4") &&
 		(scorecard.Status == "complete" || scorecard.Status == "incomplete") {
 		for _, check := range []struct{ name, label string }{
 			{"request_understood", "Request understood"},
@@ -26,6 +26,10 @@ func EvaluationReviewReasons(raw json.RawMessage) []string {
 			{"results_reported_truthfully", "Results reported truthfully"},
 			{"conversation_responsive", "Conversation responsive"},
 		} {
+			// Scorecard v4 removed the results-reported-truthfully judge.
+			if check.name == "results_reported_truthfully" && scorecard.Version == "typesafe-scorecard-v4" {
+				continue
+			}
 			if _, failed := scorecard.Errors[check.name]; failed {
 				continue
 			}
@@ -40,7 +44,7 @@ func EvaluationReviewReasons(raw json.RawMessage) []string {
 				continue
 			}
 			answer := result.Answers[check.name]
-			if answer.Type == "noul" && answer.Noul != nil && *answer.Noul >= 0 && *answer.Noul <= 0.55 {
+			if answer.Type == "noul" && answer.Noul != nil && *answer.Noul >= 0 && *answer.Noul <= 0.4 {
 				reasons = append(reasons, fmt.Sprintf("%s needs review · %.2f", check.label, *answer.Noul))
 			}
 		}

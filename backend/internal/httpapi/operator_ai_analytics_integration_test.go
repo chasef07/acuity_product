@@ -706,7 +706,7 @@ func TestNeedsReviewAnalyticsFiltersBeforePagination(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		score := 0.9
 		if i == 52 || i == 58 {
-			score = 0.55
+			score = 0.4
 		}
 		evaluation := map[string]any{"status": "incomplete", "evaluatorVersion": "typesafe-scorecard-v3", "results": map[string]any{"request_understood": map[string]any{"answers": map[string]any{"request_understood": map[string]any{"type": "noul", "noul": score}}}}}
 		insertOperatorAIInteraction(t, pool, operatorAIInteractionFixture{
