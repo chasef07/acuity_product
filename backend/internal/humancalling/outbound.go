@@ -435,10 +435,6 @@ func (m *Module) StartOutboundCall(
 	return m.ReadCall(ctx, command.Identity, callID)
 }
 
-// RetryOutboundCall starts a new attempt linked to an earlier Call the actor can
-// read. A Task Call retries through its Task; a standalone Call retries the same
-// Location and destination. StartOutboundCall still owns the retry's
-// authorization, idempotency, and terminal-attempt checks.
 func (m *Module) RetryOutboundCall(
 	ctx context.Context,
 	command RetryOutboundCallCommand,

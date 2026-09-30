@@ -1,5 +1,3 @@
-// Package knowledge owns imported office facts and their authoritative corpus pointer.
-// This corpus contains reusable, non-patient knowledge and never creates Tasks.
 package knowledge
 
 import (
@@ -67,8 +65,6 @@ type Section struct {
 	Text  string `json:"text"`
 }
 
-// ImportCommand is only accepted by the operator CLI, never a browser or agent API.
-// ExpectedRevisionID is empty only for the first import. ID is the idempotency key.
 type ImportCommand struct {
 	ID                 string    `json:"id"`
 	PracticeID         string    `json:"practiceId"`

@@ -53,7 +53,6 @@ func (server *Server) serveDiagnosticRoute(next http.Handler, w http.ResponseWri
 	completed = true
 }
 
-// Preserve error-aware flushing through the status wrapper.
 type streamResponseWriter struct{ *statusResponseWriter }
 
 func (writer *streamResponseWriter) FlushError() error {

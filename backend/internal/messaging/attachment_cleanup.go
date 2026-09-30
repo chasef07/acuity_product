@@ -14,8 +14,6 @@ func attachmentObjectKey(attachmentID, token string) string {
 	return "attachment-attempts/" + attachmentID + "-" + token
 }
 
-// Reserve cleanup before touching storage. Attempt keys are never reused, so
-// a partial write or late completion cannot corrupt a replacement's bytes.
 func reserveAttachmentWrite(ctx context.Context, tx pgx.Tx, attachmentID, token string, now time.Time) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO messaging_attachment_cleanup (object_key, attachment_id, cleanup_after)
@@ -27,8 +25,6 @@ func reserveAttachmentWrite(ctx context.Context, tx pgx.Tx, attachmentID, token 
 	return nil
 }
 
-// Even cancellation must record that the storage call returned. Failure leaves
-// its intent durable; an uncertain write is never assumed to have stopped.
 func (m *Module) finishAttachmentWrite(ctx context.Context, objectKey string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -62,8 +58,6 @@ func (m *Module) ExpirePendingAttachments(ctx context.Context) error {
 	if m.database == nil || m.config.AttachmentStore == nil {
 		return ErrInvalidInput
 	}
-	// This short statement closes admission before deleting any bytes. Healthy
-	// PENDING uploads need cleanup intent; PROCESSING uploads already own it.
 	if _, err := m.database.Exec(ctx, `
 		WITH expired AS MATERIALIZED (
 			SELECT id, object_key, state FROM messaging_attachments
@@ -94,8 +88,6 @@ func (m *Module) deleteNextAttachmentObject(ctx context.Context) (bool, error) {
 	token, now := uuid.NewString(), m.now()
 	var objectKey, attachmentID string
 	var writeFinished bool
-	// The returned write_finished snapshot matters: a writer may finish AFTER
-	// this delete starts, in which case a later delete must confirm its absence.
 	if err := m.database.QueryRow(ctx, `
 		WITH candidate AS (
 			SELECT object_key FROM messaging_attachment_cleanup
@@ -113,7 +105,6 @@ func (m *Module) deleteNextAttachmentObject(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("claim attachment object deletion: %w", err)
 	}
 	if err := m.config.AttachmentStore.Delete(ctx, objectKey); err != nil {
-		// Lease expiry retries failures, including a crash or cancelled context.
 		return true, fmt.Errorf("delete expired attachment object: %w", err)
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -129,11 +120,6 @@ func (m *Module) deleteNextAttachmentObject(ctx context.Context) (bool, error) {
 		}
 		owned = tag.RowsAffected() == 1
 	} else {
-		// Mounted filesystem calls are not forcibly cancellable. Keep only
-		// uncertain writes as small tombstones, revisited hourly, until a writer
-		// completion followed by deletion proves the object cannot reappear.
-		// Retain the cleanup token: once deletion starts, even a late successful
-		// write must never promote this attempt to a stored attachment.
 		tag, err := tx.Exec(ctx, `
 			UPDATE messaging_attachment_cleanup SET cleanup_after = $3
 			WHERE object_key = $1 AND cleanup_token = $2

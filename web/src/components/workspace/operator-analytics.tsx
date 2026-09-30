@@ -168,7 +168,6 @@ export function OperatorAnalytics({
     }))
   }
 
-  // A reviewed flag leaves the pending list; the review itself lives on the call.
   function updateCallIssue(issue: OperatorAiCallIssue) {
     currentRequest.update((shown) => ({
       ...shown,

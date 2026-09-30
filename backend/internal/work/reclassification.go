@@ -31,7 +31,6 @@ type ReclassificationResult struct {
 	AppliedVersion int64
 }
 
-// PlanReclassification is read-only. Ambiguity is retained for human review.
 func (m *Module) PlanReclassification(ctx context.Context, identity access.Identity, runID, practiceID string, locations []string) (ReclassificationPlan, error) {
 	plan := ReclassificationPlan{RunID: runID, PracticeID: practiceID, LocationIDs: locations, Tasks: []ReclassificationEntry{}}
 	if runID == "" || practiceID == "" || len(locations) == 0 {
@@ -69,8 +68,6 @@ func (m *Module) PlanReclassification(ctx context.Context, identity access.Ident
 	return plan, nil
 }
 
-// ApplyReclassification commits one version-checked Task per transaction. The
-// durable run/Task receipt makes interrupted runs repeatable without duplicate Activity.
 func (m *Module) ApplyReclassification(ctx context.Context, identity access.Identity, plan ReclassificationPlan) ([]ReclassificationResult, error) {
 	if plan.RunID == "" || len(plan.RunID) > 200 || plan.PracticeID == "" || len(plan.LocationIDs) == 0 {
 		return nil, ErrInvalidInput

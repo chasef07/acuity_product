@@ -152,8 +152,6 @@ func TestKnowledgeConfigurationOnlyReachesPortalAPI(t *testing.T) {
 		"GCLOUD_CAPTURE=" + gcloudCapture,
 		"CURL_CAPTURE=" + curlCapture,
 	}, releaseEnvironment()...)
-	// Exercise the environment supplied by Cloud Build, not manually injected
-	// knowledge settings that can hide a broken release configuration.
 	for _, line := range strings.Split(deployStep, "\n") {
 		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "- KNOWLEDGE_"); ok {
 			command.Env = append(command.Env, os.Expand("KNOWLEDGE_"+value, func(key string) string {

@@ -163,10 +163,6 @@ type Discovery struct {
 	Practices        []PracticeAccess `json:"practices"`
 }
 
-// portalCallingEnabled preserves the portal's broad CallingEnabled behavior:
-// every Practice member and every Platform Operator may use calling features.
-// Inbound fanout is narrower and remains Staff-or-operator only through
-// access_calling_scopes.
 func portalCallingEnabled(platformOperator bool, membership *Membership) bool {
 	return platformOperator || membership != nil
 }
@@ -225,8 +221,6 @@ type SignUpEligibility struct {
 	Email string                `json:"email"`
 }
 
-// Module is the Access implementation. Its public methods are the product
-// interface; focused PostgreSQL behavior remains local to this package.
 type Module struct {
 	database productpostgres.Database
 	now      func() time.Time
@@ -454,8 +448,6 @@ func (m *Module) ProvisionInTx(
 	return result, nil
 }
 
-// AuditProvisioning records a provisioner change in the caller's provisioning
-// transaction, so the audit event commits or rolls back with the change.
 func (m *Module) AuditProvisioning(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -574,8 +566,6 @@ func (m *Module) InspectSignUpEligibility(
 	}, nil
 }
 
-// ResolveActor returns current authorization from PostgreSQL. JWT claims never
-// carry Practice, role, or Location authority.
 func (m *Module) ResolveActor(
 	ctx context.Context,
 	identity Identity,
@@ -622,9 +612,6 @@ func (m *Module) ResolveActor(
 	return authorized, nil
 }
 
-// LockMembershipAuthorization resolves current operational authority inside a
-// caller-owned transaction and locks the Membership against concurrent
-// revocation until that transaction commits.
 func (m *Module) LockMembershipAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -635,9 +622,6 @@ func (m *Module) LockMembershipAuthorization(
 	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, true)
 }
 
-// LockMutationAuthorization resolves current customer-data mutation authority
-// inside a caller-owned transaction. Practice Users use their current
-// Membership; Platform Operators write directly under their own identity.
 func (m *Module) LockMutationAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -648,8 +632,6 @@ func (m *Module) LockMutationAuthorization(
 	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, true)
 }
 
-// LockReadAuthorization resolves current read authority inside a caller-owned
-// transaction so revocation cannot race the protected query.
 func (m *Module) LockReadAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -705,8 +687,6 @@ func (m *Module) lockAuthorization(
 	return authorization, nil
 }
 
-// LockServiceAuthorization binds an authenticated service capability and Abita
-// office key to a current Location inside the caller's transaction.
 func (m *Module) LockServiceAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -752,8 +732,6 @@ func (m *Module) LockServiceAuthorization(
 	}, nil
 }
 
-// LockServiceVoiceAuthorization binds an authenticated service capability and
-// one enabled Product voice number to its current Location.
 func (m *Module) LockServiceVoiceAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -808,8 +786,6 @@ func (m *Module) LockServiceVoiceAuthorization(
 	}, nil
 }
 
-// LockOperationalActor holds the actor's current authority against concurrent
-// changes and returns every Practice in which they may operate.
 func (m *Module) LockOperationalActor(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -825,8 +801,6 @@ func (m *Module) LockOperationalActor(
 		return nil, err
 	}
 	if isOperator {
-		// Protect Practice identity without blocking workspace-version updates
-		// from call processing that already holds a Call or softphone lease.
 		rows, err := tx.Query(ctx, `
 			SELECT id::text
 			FROM access_practices
@@ -882,7 +856,6 @@ func (m *Module) LockOperationalActor(
 	return practiceIDs, nil
 }
 
-// DiscoverActor returns every currently authorized Practice and Location.
 func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discovery, error) {
 	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" {
 		return Discovery{}, ErrDenied
@@ -1297,8 +1270,6 @@ func (m *Module) RevokeMembership(
 	return nil
 }
 
-// AuditTrail returns the Practice-scoped immutable audit view for a verified
-// Platform Operator. It never substitutes the target customer as actor.
 func (m *Module) AuditTrail(
 	ctx context.Context,
 	identity Identity,
@@ -1467,9 +1438,6 @@ func resolvePlatformOperator(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", false, fmt.Errorf("resolve bound Platform Operator: %w", err)
 	}
-	// Ordinary Practice members have no operator row to bind. Keep their
-	// authorization path out of the identity-binding advisory locks so one
-	// unrelated bind cannot hold a request role's only database connection.
 	var candidateExists bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -1486,8 +1454,6 @@ func resolvePlatformOperator(
 	return bindPlatformOperator(ctx, tx, identity)
 }
 
-// bindPlatformOperator coordinates first-time identity discovery with operator
-// provisioning before any Access Grant can become a Membership.
 func bindPlatformOperator(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1645,8 +1611,6 @@ func loadLocations(ctx context.Context, tx pgx.Tx, practiceID string) ([]Locatio
 	return locations, nil
 }
 
-// AuditOperatorMutation records a Platform Operator mutation in the caller's
-// transaction. Practice User mutations do not need an operator audit row.
 func (m *Module) AuditOperatorMutation(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1702,8 +1666,6 @@ func (m *Module) AuditOperatorMutation(
 	return nil
 }
 
-// RecordWorkspaceChange advances the authoritative Practice workspace version
-// and publishes a disposable refetch hint in the caller's transaction.
 func (m *Module) RecordWorkspaceChange(
 	ctx context.Context,
 	tx pgx.Tx,

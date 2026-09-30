@@ -11,9 +11,6 @@ import (
 	"time"
 )
 
-// These read endpoints drift independently of the command SDK: active_calls uses
-// cursors, while call_events still uses numbered pages. Keep their wire contracts
-// here and use the SDK only for authenticated, contextual HTTP requests.
 const maxTelnyxObservationPages = 100
 
 type telnyxReadPage[T any] struct {
@@ -36,17 +33,15 @@ type telnyxActiveCall struct {
 }
 
 type telnyxReadEvent struct {
-	Name       string          `json:"name"`
-	LegID      string          `json:"leg_id"`
-	SessionID  string          `json:"application_session_id"`
-	OccurredAt string          `json:"occurred_at"`
-	Payload    json.RawMessage `json:"payload"`
-	// The published endpoint contract still uses these fields. Do not silently
-	// accept conflicting identities if a response contains both representations.
-	CallLegID      string         `json:"call_leg_id"`
-	CallSessionID  string         `json:"call_session_id"`
-	EventTimestamp string         `json:"event_timestamp"`
-	Metadata       map[string]any `json:"metadata"`
+	Name           string          `json:"name"`
+	LegID          string          `json:"leg_id"`
+	SessionID      string          `json:"application_session_id"`
+	OccurredAt     string          `json:"occurred_at"`
+	Payload        json.RawMessage `json:"payload"`
+	CallLegID      string          `json:"call_leg_id"`
+	CallSessionID  string          `json:"call_session_id"`
+	EventTimestamp string          `json:"event_timestamp"`
+	Metadata       map[string]any  `json:"metadata"`
 }
 
 func readTelnyxPages[T any](ctx context.Context, adapter *TelnyxAdapter, path string, query url.Values) ([]T, error) {
@@ -73,8 +68,6 @@ func readTelnyxPages[T any](ctx context.Context, adapter *TelnyxAdapter, path st
 				return nil, fmt.Errorf("%w: repeated Telnyx observation cursor", ErrAmbiguousEffect)
 			}
 			seen[cursor] = true
-			// Never follow a provider-supplied URL with credentials. Only the
-			// opaque cursor travels to the original trusted endpoint.
 			query.Del("page[number]")
 			query.Set("page[after]", cursor)
 			continue
@@ -198,8 +191,6 @@ func (event telnyxReadEvent) fact(legID, sessionID string) (ProviderFact, bool, 
 		if _, err := parseTelnyxTime(timing.OccurredAt); err != nil {
 			return ProviderFact{}, false, fmt.Errorf("%w: invalid Telnyx Call event timestamp", ErrAmbiguousEffect)
 		}
-		// The read envelope's occurred_at is a timezone-free database timestamp.
-		// The nested webhook retains the canonical RFC3339 event time and ID.
 		raw, _ = json.Marshal(map[string]any{"data": map[string]any{
 			"record_type": payload.RecordType, "event_type": payload.EventType,
 			"id": payload.WebhookID, "occurred_at": timing.OccurredAt, "payload": payload.Payload,
@@ -217,8 +208,6 @@ func (event telnyxReadEvent) fact(legID, sessionID string) (ProviderFact, bool, 
 		}
 		return fact, known, nil
 	}
-	// Published legacy summaries have no webhook payload. Only lifecycle facts
-	// (and the explicit recording failure) can be represented without one.
 	switch FactType(event.Name) {
 	case FactCallInitiated, FactCallAnswered, FactCallBridged, FactCallHangup, FactRecordingError:
 	default:

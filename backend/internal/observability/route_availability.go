@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// DiagnosticRoute is separate from the two critical-read routes in the SLO.
 type DiagnosticRoute string
 
 const (
@@ -24,13 +23,10 @@ func RouteAvailability(route DiagnosticRoute, outcome AvailabilityOutcome, stage
 
 type streamReadyContextKey struct{}
 
-// WithStreamReadyObserver connects request timing to the stream owner's first
-// ready flush. HTTP 200 alone does not establish a usable event stream.
 func WithStreamReadyObserver(ctx context.Context, ready func()) context.Context {
 	return context.WithValue(ctx, streamReadyContextKey{}, ready)
 }
 
-// StreamReady records server-side first-ready delivery, not browser receipt.
 func StreamReady(ctx context.Context) {
 	if ready, ok := ctx.Value(streamReadyContextKey{}).(func()); ok {
 		ready()

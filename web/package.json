@@ -11,7 +11,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint && node scripts/check-comments.mjs",
     "typecheck": "tsc --noEmit",
     "icons:generate": "node scripts/generate-icons.mjs",
     "test:unit": "node --experimental-strip-types --test src/lib/*.test.ts src/lib/calling/*.test.ts src/lib/workspace-sync/*.test.ts && node --import ./scripts/register-typescript-test-loader.mjs --test src/lib/clients/*.test.tsx src/components/workspace/*.render.test.tsx",

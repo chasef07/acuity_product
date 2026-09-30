@@ -523,7 +523,6 @@ func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// A closeout can contain multiple bounded provider responses plus its transcript.
 const aiInteractionMaxBodyBytes = 32 * 1024 * 1024
 
 func (server *Server) IngestAIInteraction(w http.ResponseWriter, r *http.Request) {

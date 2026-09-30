@@ -240,10 +240,6 @@ func (m *Module) SetReadiness(
 		return SoftphoneState{}, ErrDenied
 	}
 
-	// Staff occupancy remains global even when access to its Practice is revoked:
-	// the database permits only one occupied Staff Call at a time. The scoped
-	// projection below withholds the revoked Call ID without inventing capacity
-	// for a second provider Call.
 	var state SoftphoneState
 	err = tx.QueryRow(ctx, `
 		UPDATE human_calling_softphone_leases SET

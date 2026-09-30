@@ -13,7 +13,6 @@ import type {
 } from "../api/generated/types.gen"
 import { type PortalQuery, usePortalQuery } from "./portal-request"
 
-/** A report read: denied covers a missing session and a 401 or 403 answer. */
 export type AnalyticsReport<T extends object> = (
   | { state: "loading" | "denied" | "busy" | "unavailable" }
   | ({ state: "ready" } & T)
@@ -30,7 +29,6 @@ export function usePracticeReport({
   kind,
 }: {
   practiceID: string
-  /** Empty means every office in the Practice. */
   locationID: string
   days: 7 | 30 | 90
   kind: PracticeReport["kind"]
@@ -63,7 +61,6 @@ export function useAiCostReport({
   range,
 }: {
   practiceID: string
-  /** Empty means every office in the Practice. */
   locationID: string
   range: OperatorAiAnalyticsRange
 }): AnalyticsReport<{ report: OperatorAiCostAnalytics }> {

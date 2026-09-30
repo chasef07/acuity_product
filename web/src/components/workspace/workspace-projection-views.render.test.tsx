@@ -216,7 +216,6 @@ test("the sender office follows the offices of the selected Task", async (t) => 
     office.dispatchEvent(new window.Event("change", { bubbles: true }))
   })
 
-  // Same phone, so the workspace stays mounted while its office changes.
   await conversation.render(0, { canMutate: true, calling, engagement: { ...engagement, locations: [officeB] } })
   const call = Array.from(conversation.host.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Call")
   assert.ok(call)
@@ -327,9 +326,6 @@ test("a sent Message does not reload its conversation after navigation", async (
   assert.equal(conversation.timelineRequests, 1)
 })
 
-// React DOM loads before installDOM and so detects no input event. Its fallback
-// watches the focused field through legacy attachEvent and reads the new value
-// on key events.
 async function typeInto(textarea: HTMLTextAreaElement, value: string) {
   Object.assign(textarea, { attachEvent() {}, detachEvent() {} })
   await act(async () => {

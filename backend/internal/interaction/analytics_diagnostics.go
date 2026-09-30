@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// Diagnostics use the same observed samples as the range summary. Examples are
-// bounded, content-free links back to authoritative call evidence.
 type AnalyticsDiagnostics struct {
 	Stages []LatencyDistribution
 	Tools  []ToolDiagnostics
@@ -85,8 +83,6 @@ func appendLatencyObservation(values *latencyValueSet, metrics map[string]any, i
 	}
 }
 
-// Transcript event timestamps are provider evidence. Never use synthetic sort
-// timestamps, missing outputs, negative durations, or E2E timing as execution time.
 func toolDuration(call, output map[string]any) *int {
 	if output == nil {
 		return nil
@@ -147,7 +143,6 @@ func (d *diagnosticsAccumulator) add(p analyticsProjection) {
 	for _, sample := range p.latencySamples.observations {
 		a := d.stages[sample.stage]
 		value := int(math.Round(sample.value))
-		// Bucket the original observation, not its rounded display value.
 		index := sort.Search(len(latencyBucketEdges), func(i int) bool { return float64(latencyBucketEdges[i]) > sample.value }) - 1
 		b := &a.result.Buckets[max(index, 0)]
 		b.Count++
@@ -205,7 +200,6 @@ func (d *diagnosticsAccumulator) finish() AnalyticsDiagnostics {
 	result := AnalyticsDiagnostics{Stages: []LatencyDistribution{}, Tools: []ToolDiagnostics{}}
 	for _, stage := range diagnosticStages {
 		a := d.stages[stage]
-		// Empty UTC dates are gaps in the chart, never zero-latency samples.
 		if !d.from.IsZero() && !d.through.IsZero() {
 			for day := d.from.UTC().Truncate(24 * time.Hour); !day.After(d.through); day = day.AddDate(0, 0, 1) {
 				key := day.Format("2006-01-02")

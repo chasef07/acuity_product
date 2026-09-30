@@ -60,7 +60,6 @@ test("recent calls page by cursor and a filter change abandons the old page", as
     appended = view.latest().loadMore()
   })
   await waitFor(() => pages.has("flagged-page"))
-  // The abandoned page's late answer changes nothing.
   pages.get("all-page")!.resolve(Response.json({ calls: [call("stale")], nextCursor: "" }))
   await settle()
   assert.equal(view.latest().loadingMore, true)
@@ -99,7 +98,6 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
     enabled: true,
   } as const
 
-  // A first page without a summary reconstructs nothing.
   await view.render(filters)
   await waitFor(() => view.latest().state !== "loading")
   assert.equal(view.latest().state, "unavailable")
@@ -127,7 +125,6 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   assert.equal(view.latest().state, "ready")
   assert.equal(view.latest().nextPage, "unavailable")
 
-  // A signed-out next page denies the ledger instead of offering a retry.
   answer = (body) =>
     body.cursor
       ? new Response("{}", { status: 401 })
@@ -136,7 +133,6 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   assert.equal(view.latest().state, "denied")
   assert.equal(view.latest().data, undefined)
 
-  // Leaving the ledger keeps its snapshot; returning refreshes it in place.
   await view.render({ ...filters, revision: 3 })
   await waitFor(() => view.latest().state === "ready")
   const sent = backend.requests.length
@@ -164,7 +160,6 @@ test("call commands report conflicts and send the saved choice", async (t) => {
     { path: "/v1/operator/ai-interactions/call-1/manual-tags", body: { name: "callback", applied: true } },
   ])
 
-  // A closed evidence sheet asks the backend for nothing.
   const view = mountHook(t, useAiCallEvidence)
   await view.render("")
   await settle()
@@ -188,7 +183,6 @@ function fakeBackend(
     const path = new URL(request.url).pathname
     const body = request.method === "GET" ? undefined : await request.clone().json()
     backend.requests.push(body === undefined ? { path } : { path, body })
-    // Counts only requests aborted while still waiting for their answer.
     let answered = false
     return new Promise<Response>((resolve, reject) => {
       request.signal.addEventListener("abort", () => {

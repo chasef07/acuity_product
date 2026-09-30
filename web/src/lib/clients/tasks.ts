@@ -42,7 +42,6 @@ export function completeTask(task: TaskVersion) {
   )
 }
 
-/** Completes exactly the reviewed members; the first member addresses the group. */
 export function reopenTask(task: TaskVersion) {
   return portalRequest((transport) =>
     reopenTaskRequest({
@@ -87,10 +86,6 @@ export type ReviewFolderPage = {
   failure?: PortalFailure
 }
 
-/**
- * Open reviews for one folder, independent of the My Tasks filter. `revision`
- * and `count` changes reload the pages already shown; `showMore` appends.
- */
 export function useReviewFolder({
   practiceID,
   locationID,

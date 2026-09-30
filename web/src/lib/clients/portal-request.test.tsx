@@ -141,7 +141,6 @@ test("usePortalQuery shows loading per key, aborts superseded reads, and retries
   assert.deepEqual(view.latest(), { status: "ready", data: { id: "task-2" }, refreshing: false })
   assert.equal(backend.aborted, 1)
 
-  // The superseded response never replaces the current key.
   first.resolve()
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
   assert.deepEqual(view.latest(), { status: "ready", data: { id: "task-2" }, refreshing: false })
@@ -204,7 +203,6 @@ test("usePortalQuery keepPrevious refreshes without blanking and keeps ready dat
     refreshing: false,
   })
 
-  // A disabled read keeps the last answer and is not refreshing.
   await view.render(null)
   assert.equal(view.latest().status, "failed")
   assert.equal(view.latest().refreshing, false)

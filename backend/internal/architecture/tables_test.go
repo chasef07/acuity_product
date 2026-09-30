@@ -14,7 +14,6 @@ import (
 	"testing"
 )
 
-// tablePrefixes maps a table-name prefix to the module that owns the table.
 var tablePrefixes = []struct{ prefix, owner string }{
 	{"access_", "access"},
 	{"ai_", "interaction"},
@@ -24,30 +23,26 @@ var tablePrefixes = []struct{ prefix, owner string }{
 	{"work_", "work"},
 }
 
-// schema_migrations is created by migrations.go rather than a migration file.
 var explicitTableOwners = map[string]string{"schema_migrations": "migrations"}
 
 type access string
 
 const (
 	read  access = "read"
-	lock  access = "lock" // SELECT ... FOR UPDATE/SHARE or LOCK TABLE
+	lock  access = "lock"
 	write access = "write"
 )
 
 type tableUse struct {
-	file  string // slash-separated, relative to the repository root
+	file  string
 	table string
-	use   access // the strongest use of the table anywhere in the file
+	use   access
 }
 
-// sqlBaseline records the cross-module SQL that predates this test. It may
-// only shrink: a listed table the file no longer uses fails the test until it
-// is removed. Do not add entries; move the SQL to the owning module instead.
 var sqlBaseline = []struct {
 	file   string
 	use    access
-	tables string // space-separated
+	tables string
 	reason string
 }{
 	{"backend/cmd/backlog-recovery/main.go", lock, "work_task_acknowledgements", "one-off recovery command retires stuck acknowledgements directly"},
@@ -79,11 +74,8 @@ var sqlBaseline = []struct {
 	{"backend/internal/work/work.go", read, "access_locations ai_interactions human_calling_call_legs human_calling_calls human_calling_handoffs human_calling_voicemails", "task queries and recovery resolution read call and AI evidence"},
 }
 
-// A relation is a table or view created by a migration. Better Auth's quoted
-// tables in the auth schema belong to the web app and are not matched.
 var createdRelation = regexp.MustCompile(`(?i)\bcreate\s+(?:or\s+replace\s+)?(?:unlogged\s+)?(?:table|view)\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z][a-z0-9_]*)`)
 
-// loadTableOwners derives table ownership from every migration's relations.
 func loadTableOwners(t *testing.T) map[string]string {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(repositoryRoot(t), "backend", "internal", "migrations", "sql", "*.sql"))
@@ -134,7 +126,7 @@ func TestBackendSQLRespectsTableOwnership(t *testing.T) {
 			continue
 		}
 		if r == testSupport || name == "migrations" {
-			continue // test helpers and the schema owner are exempt
+			continue
 		}
 		for _, file := range p.GoFiles {
 			path := filepath.Join(p.Dir, file)
@@ -197,15 +189,6 @@ func verb(use access) string {
 	}
 }
 
-// scanGoFile returns the strongest use of each known table in the file's
-// string literals. Adjacent literals joined with + are scanned together.
-//
-// The scanner sees only SQL written as Go string constants. It misses table
-// names assembled at run time (fmt.Sprintf arguments, variables joined with +
-// or +=, strings.Builder), clauses appended that way (a separately appended
-// FOR SHARE OF is not linked to its tables), and SQL executed outside Go, such
-// as migration functions and triggers. It guards against drift; it does not
-// prove isolation.
 func scanGoFile(path string, owners map[string]string) (map[string]access, error) {
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
 	if err != nil {
@@ -260,12 +243,10 @@ func rank(use access) int {
 }
 
 type sqlToken struct {
-	text  string // lower-cased identifier or single punctuation character
+	text  string
 	ident bool
 }
 
-// tokenizeSQL lower-cases identifiers and drops string literals, comments,
-// numbers, and $n parameters, so values like 'work_tasks' never match.
 func tokenizeSQL(sql string) []sqlToken {
 	var tokens []sqlToken
 	for i := 0; i < len(sql); {
@@ -323,7 +304,6 @@ func isIdentStart(c byte) bool {
 	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
-// Identifiers that can follow a table name without being its alias.
 var notAlias = map[string]bool{
 	"cross": true, "default": true, "do": true, "except": true, "for": true,
 	"from": true, "full": true, "group": true, "having": true, "inner": true,
@@ -333,14 +313,6 @@ var notAlias = map[string]bool{
 	"where": true, "window": true,
 }
 
-// scanSQL classifies each table reference in one Go string:
-//   - write: the target of INSERT INTO, UPDATE, DELETE FROM, MERGE INTO, or TRUNCATE;
-//   - lock: named in LOCK TABLE, or in a statement with FOR UPDATE/SHARE.
-//     FOR ... OF limits the lock to the listed tables or aliases; without OF
-//     every table in the statement counts as locked, including subqueries.
-//   - read: any other reference.
-//
-// A name after a dot is a column (alias.work_tasks), except public.<table>.
 func scanSQL(sql string, owners map[string]string) map[string]access {
 	uses := map[string]access{}
 	tokens := tokenizeSQL(sql)
@@ -398,9 +370,9 @@ func scanStatement(tokens []sqlToken, owners map[string]string) map[string]acces
 			continue
 		}
 		if i > 0 && tokens[i-1].text == "." && word(i-2) != "public" {
-			continue // a column qualified by an alias or table
+			continue
 		}
-		before := i - 1 // the token before the (possibly public.-qualified) name
+		before := i - 1
 		if i > 1 && tokens[i-1].text == "." {
 			before = i - 3
 		}

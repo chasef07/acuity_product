@@ -6,8 +6,6 @@ import (
 	"fmt"
 )
 
-// ProviderFailure contains only classifications created by the adapter, never
-// provider bodies, input text, or transport URLs.
 type ProviderFailure struct {
 	Code   string
 	Status int
@@ -18,8 +16,6 @@ func (e *ProviderFailure) Error() string {
 }
 func (e *ProviderFailure) Unwrap() error { return ErrUnavailable }
 
-// FailureCode is the bounded operational diagnostic; the model still receives
-// a temporary_failure outcome and must not attempt a stale-file fallback.
 func FailureCode(err error) string {
 	var provider *ProviderFailure
 	if errors.As(err, &provider) {

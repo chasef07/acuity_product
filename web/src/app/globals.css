@@ -136,7 +136,6 @@
   --sidebar-ring: #f5f5f5;
 }
 
-/* Shared workspace navigation keeps the same contrast on desktop and mobile. */
 [data-slot="sidebar"] {
   --radius: 0.625rem;
   --sidebar-icon-color: var(--sidebar-muted-foreground);

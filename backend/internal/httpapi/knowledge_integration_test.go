@@ -95,7 +95,6 @@ func TestKnowledgeHTTPServiceScopeAndRuntimeDatabaseRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Read-capable runtime cannot import or modify a corpus pointer.
 	if _, err := runtimePool.Exec(ctx, `UPDATE knowledge_corpora SET revision_id=NULL WHERE practice_id=$1`, practice); err == nil {
 		t.Fatal("runtime may update corpus")
 	}

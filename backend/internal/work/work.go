@@ -96,22 +96,16 @@ const (
 	TaskFolderMissedCalls TaskFolder = "missed_calls"
 )
 
-// Task classification predicates read a work_tasks row aliased as task, so
-// every Queue composes the same folder membership and priority order.
 const (
 	callRecoveryOrigins        = `'MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'`
 	communicationReviewOrigins = `'APPOINTMENT_REVIEW','INBOUND_MESSAGE_REVIEW',` + callRecoveryOrigins
 
-	// Missed-call and voicemail recoveries belong to Missed Calls & Voicemails.
-	TaskIsCallRecoverySQL      = `task.origin IN (` + callRecoveryOrigins + `)`
-	TaskIsTextReviewSQL        = `task.origin='INBOUND_MESSAGE_REVIEW'`
-	TaskIsAppointmentReviewSQL = `task.origin='APPOINTMENT_REVIEW'`
-	// Communication reviews appear only in their own folders; every other
-	// origin is follow-up work for My Tasks and All Tasks.
+	TaskIsCallRecoverySQL        = `task.origin IN (` + callRecoveryOrigins + `)`
+	TaskIsTextReviewSQL          = `task.origin='INBOUND_MESSAGE_REVIEW'`
+	TaskIsAppointmentReviewSQL   = `task.origin='APPOINTMENT_REVIEW'`
 	TaskIsCommunicationReviewSQL = `task.origin IN (` + communicationReviewOrigins + `)`
 	TaskIsFollowUpSQL            = `task.origin NOT IN (` + communicationReviewOrigins + `)`
 
-	// TaskUrgencyRankSQL orders priority Queues; Rank encodes it for cursors.
 	TaskUrgencyRankSQL = `CASE task.urgency WHEN 'high_priority' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END`
 )
 
@@ -195,9 +189,6 @@ type TaskAcknowledgementClaim struct {
 	SafeFailureCode string
 }
 
-// TaskInteraction is the authorized communication evidence attached to a
-// Task. It remains a Call owned by HumanCalling rather than a copied Work
-// aggregate.
 type TaskInteraction struct {
 	CallID     string
 	OccurredAt time.Time
@@ -305,7 +296,6 @@ type TaskCategoryCounts struct {
 	Other         int
 }
 
-// Module owns durable Task state and lifecycle behavior.
 type Module struct {
 	database productpostgres.Database
 	access   *access.Module
@@ -323,8 +313,6 @@ func New(
 	return &Module{database: database, access: accessModule, now: now}
 }
 
-// EnsureCallFollowUp creates the one Task linked to a Call. The caller owns the
-// transaction so Call disposition and Task creation can commit atomically.
 func (m *Module) EnsureCallFollowUp(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -379,9 +367,6 @@ func (m *Module) EnsureCallFollowUp(
 	return task, nil
 }
 
-// EnsureMessageFollowUp creates at most one Task from one source Message. The
-// caller owns the transaction so Messaging authorization, Work creation, and
-// any required operator audit can commit or roll back together.
 func (m *Module) EnsureMessageFollowUp(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -498,10 +483,6 @@ func (m *Module) EnsureMessageFollowUp(
 	return task, status, nil
 }
 
-// EnsureRecoveryTask attaches compatible missed-call and voicemail evidence to
-// one recovery Task. HumanCalling owns the caller outcome transaction; Work
-// owns the Task and Interaction attachment written inside it. Replays for an
-// exact Call preserve an already completed Task instead of reopening it.
 func (m *Module) EnsureRecoveryTask(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -720,9 +701,6 @@ func (m *Module) EnsureRecoveryTask(
 	return task, nil
 }
 
-// ResolveRecoveryTasks records one authoritative restored-contact fact and
-// completes every older open recovery Task for the Practice and phone. The
-// caller owns the surrounding provider or AI projection transaction.
 func (m *Module) ResolveRecoveryTasks(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -879,9 +857,6 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 	return completed, nil
 }
 
-// ProcessNextRecoveryReconciliation converges one queued Practice and phone
-// key in a short, restartable transaction. It returns false when rollout
-// reconciliation is complete.
 func (m *Module) ProcessNextRecoveryReconciliation(
 	ctx context.Context,
 ) (bool, error) {
@@ -978,9 +953,6 @@ func (m *Module) ProcessNextRecoveryReconciliation(
 	return true, nil
 }
 
-// LockOpenMessageTask validates the exact destination exposed by a Task
-// composer while serializing against completion. Messaging owns the provider
-// effect; Work owns whether the Task can currently originate it.
 func (m *Module) LockOpenMessageTask(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1012,9 +984,6 @@ func (m *Module) LockOpenMessageTask(
 	return task, nil
 }
 
-// ClaimNextTaskAcknowledgement locks one due acknowledgement intent without
-// locking its Task. Messaging can then follow its normal configuration,
-// Message Thread, and Task lock order before committing delivery intent.
 func (m *Module) ClaimNextTaskAcknowledgement(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1064,8 +1033,6 @@ func (m *Module) ClaimNextTaskAcknowledgement(
 	return claim, true, nil
 }
 
-// LockTaskAcknowledgementTask serializes the final delivery decision against
-// Task completion and rejects a changed Task snapshot.
 func (m *Module) LockTaskAcknowledgementTask(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1175,9 +1142,6 @@ func (m *Module) MarkTaskAcknowledgementNotNeeded(
 	return nil
 }
 
-// LockOpenOutboundTask resolves the immutable Location and destination used by
-// HumanCalling. The caller owns the transaction and must apply current Access
-// authorization before committing a Call.
 func (m *Module) LockOpenOutboundTask(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1196,9 +1160,6 @@ func (m *Module) LockOpenOutboundTask(
 	return task, nil
 }
 
-// ApplyCallTaskDisposition atomically completes the existing Task or preserves
-// it open after a connected Task-originated Call. It never creates another
-// piece of work.
 func (m *Module) ApplyCallTaskDisposition(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1260,9 +1221,6 @@ func (m *Module) ApplyCallTaskDisposition(
 	return task, nil
 }
 
-// CreateAITask accepts one authenticated Abita outcome and commits its Task,
-// immutable source, creation Activity, idempotency fingerprint, and workspace
-// version in one transaction.
 func (m *Module) CreateAITask(
 	ctx context.Context,
 	command CreateAITaskCommand,
@@ -1675,9 +1633,6 @@ func (m *Module) ReadTask(
 	return task, nil
 }
 
-// LoadTaskInteractions loads the ordered call evidence attached to a Task.
-// The caller must authorize access to the Task in the same transaction before
-// returning its contents to the user; this helper does not perform authorization.
 func LoadTaskInteractions(ctx context.Context, tx pgx.Tx, task *Task) error {
 	if task == nil || task.ID == "" {
 		return ErrInvalidInput

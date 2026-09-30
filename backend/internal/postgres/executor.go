@@ -17,8 +17,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Database is the PostgreSQL interface used by domain modules. Executor is the
-// production adapter; pgxpool.Pool remains a useful local test adapter.
 type Database interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
@@ -68,8 +66,6 @@ func CauseOf(err error) Cause {
 	if errors.Is(err, context.Canceled) {
 		return CauseCanceled
 	}
-	// Keep caller cancellation and timeouts distinct from transport failures,
-	// even when a network operation wraps the context error.
 	if errors.Is(err, context.DeadlineExceeded) {
 		return CauseOperationTimeout
 	}
@@ -123,9 +119,6 @@ func (pool poolAcquirer) Acquire(ctx context.Context) (acquiredConnection, error
 	return pool.pool.Acquire(ctx)
 }
 
-// Executor owns connection acquisition and every PostgreSQL operation's
-// deadlines. Domain modules still compose their business transactions using
-// pgx.Tx; the wrapped transaction owns the real commit, rollback, and release.
 type Executor struct {
 	pool     acquirer
 	config   ExecutorConfig

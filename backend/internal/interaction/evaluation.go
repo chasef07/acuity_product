@@ -6,8 +6,6 @@ import (
 	"math"
 )
 
-// EvaluationReviewReasons returns evidence that needs operator review.
-// Valid scorecard results remain actionable when another judge fails.
 func EvaluationReviewReasons(raw json.RawMessage) []string {
 	reasons := []string{}
 	var scorecard struct {
@@ -26,7 +24,6 @@ func EvaluationReviewReasons(raw json.RawMessage) []string {
 			{"results_reported_truthfully", "Results reported truthfully"},
 			{"conversation_responsive", "Conversation responsive"},
 		} {
-			// Scorecard v4 removed the results-reported-truthfully judge.
 			if check.name == "results_reported_truthfully" && scorecard.Version == "typesafe-scorecard-v4" {
 				continue
 			}

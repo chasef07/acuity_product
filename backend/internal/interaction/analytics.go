@@ -43,7 +43,6 @@ type AnalyticsDay struct {
 	TransferRate  *float64
 }
 
-// Include empty UTC dates and partial boundary days in the rolling range.
 func analyticsDays(from, through time.Time) []AnalyticsDay {
 	days := []AnalyticsDay{}
 	for day := from.UTC().Truncate(24 * time.Hour); !day.After(through); day = day.AddDate(0, 0, 1) {
@@ -142,11 +141,11 @@ type ToolExecution struct {
 	CallID             string
 	Name               string
 	OccurredAt         time.Time
-	Status             string // Native LiveKit execution status.
-	OutputClass        string // Historical Agent output classification only.
-	DomainOutcome      string // Correlated Acuity domain outcome, when present.
-	DomainStatus       string // Correlated Acuity business-result status, when present.
-	TaskID             string // Durable Product Task proving Staff Task follow-up.
+	Status             string
+	OutputClass        string
+	DomainOutcome      string
+	DomainStatus       string
+	TaskID             string
 }
 
 type OperatorAnalyticsDetail struct {
@@ -225,8 +224,6 @@ func (m *Module) QueryAnalytics(
 	if len(locationIDs) == 0 {
 		return AnalyticsPage{}, ErrDenied
 	}
-	// Continuations retain the original reporting window and the caller's
-	// first-page summary. Only an explicit refresh recalculates the full range.
 	var summary *AnalyticsSummary
 	var pendingIssues []OperatorCallIssue
 	if cursor == nil {
@@ -391,8 +388,6 @@ func finalizeAnalyticsSummary(summary *AnalyticsSummary) {
 	if summary.ToolCallCount > 0 {
 		summary.ToolFailureRate = float64(summary.ToolErrorCount) / float64(summary.ToolCallCount)
 	}
-	// These arrays are owned by the summary and discarded below. Sort each
-	// once, preserving the exact even-sample median and nearest-rank tails.
 	summary.P50SttMs, summary.P90SttMs, summary.P99SttMs = latencyPercentiles(summary.latencySamples.stt)
 	summary.P50TtftMs, summary.P90TtftMs, summary.P99TtftMs = latencyPercentiles(summary.latencySamples.ttft)
 	summary.P50TtsTtfbMs, summary.P90TtsTtfbMs, summary.P99TtsTtfbMs = latencyPercentiles(summary.latencySamples.ttsTtfb)
@@ -415,8 +410,6 @@ func queryAnalyticsCalls(
 		cursorStartedAt = cursor.StartedAt
 		cursorID = cursor.ID
 	}
-	// Stream through nonmatching calls before applying the page size so sparse
-	// review results remain reachable without duplicating evaluation policy in SQL.
 	var queryLimit any = command.Limit + 1
 	if command.NeedsReviewOnly {
 		queryLimit = nil
@@ -829,7 +822,6 @@ func sortedMedianMilliseconds(ordered []float64) *int {
 	return &result
 }
 
-// latencyPercentiles consumes an owned sample array.
 func latencyPercentiles(values []float64) (p50, p90, p99 *int) {
 	sort.Float64s(values)
 	return sortedMedianMilliseconds(values), sortedPercentileMilliseconds(values, 90), sortedPercentileMilliseconds(values, 99)

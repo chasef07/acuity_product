@@ -145,8 +145,6 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 	if err != nil || allReport.Total.TextsSent != 4 {
 		t.Fatalf("all-Location texts: %+v, %v", allReport.Total, err)
 	}
-	// A completed Call can still be waiting for its staff leg's terminal receipt.
-	// Missing inbound timing must not make complete outbound timing unavailable.
 	incompleteCall := insertCall(locA, "INBOUND", []int{120}, true)
 	if _, err := pool.Exec(ctx, `UPDATE human_calling_call_legs SET state='ENDING', ended_at=NULL WHERE call_id=$1`, incompleteCall); err != nil {
 		t.Fatal(err)

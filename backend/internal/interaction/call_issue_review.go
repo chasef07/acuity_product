@@ -23,7 +23,6 @@ type CallIssueReview struct {
 	ReviewedAt time.Time
 }
 
-// OperatorCallIssue is a staff report on an AI call and Acuity's review of it.
 type OperatorCallIssue struct {
 	InteractionID string
 	Phone         string
@@ -34,7 +33,6 @@ type OperatorCallIssue struct {
 	Review        *CallIssueReview
 }
 
-// Reporter and reviewer subjects resolve to the email they signed in with.
 const operatorCallIssueSelect = `
 SELECT interaction.id::text, interaction.phone, interaction.started_at, issue.reason,
  COALESCE(
@@ -71,7 +69,6 @@ func readCallIssue(ctx context.Context, tx pgx.Tx, interactionID string) (*Opera
 	return &issue, nil
 }
 
-// Staff flag calls by hand, so the unreviewed queue stays human-sized.
 func pendingCallIssues(ctx context.Context, tx pgx.Tx, practiceID string, locationIDs []string) ([]OperatorCallIssue, error) {
 	rows, err := tx.Query(ctx, operatorCallIssueSelect+`
  WHERE interaction.practice_id = $1 AND interaction.location_id = ANY($2::uuid[]) AND issue.review_outcome IS NULL
@@ -84,9 +81,6 @@ func pendingCallIssues(ctx context.Context, tx pgx.Tx, practiceID string, locati
 	})
 }
 
-// ReviewCallIssue records Acuity's review of a staff-flagged call. Practices
-// never see the review. A new outcome replaces the previous one; the audit
-// event names each outcome so earlier decisions stay in history.
 func (m *Module) ReviewCallIssue(ctx context.Context, identity access.Identity, interactionID string, outcome CallIssueOutcome) (OperatorCallIssue, error) {
 	if m.database == nil || m.access == nil || !validUUID(interactionID) || (outcome != CallIssueConfirmed && outcome != CallIssueNotAnIssue) {
 		return OperatorCallIssue{}, ErrInvalidInput

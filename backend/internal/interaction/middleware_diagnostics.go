@@ -54,8 +54,6 @@ func diagnosticHTTPStatus(value *int) *int {
 	return nil
 }
 
-// Project only known diagnostic fields. Agent closeout remains raw evidence;
-// arbitrary messages, identifiers and unknown labels never enter this response.
 func middlewareRequestDiagnostics(value any) []MiddlewareRequestDiagnostic {
 	var result []MiddlewareRequestDiagnostic
 	for _, raw := range arrayValue(value) {

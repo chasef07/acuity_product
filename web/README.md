@@ -40,6 +40,10 @@ password, verification email, recovery flow, or production HTTP capability.
 Components never handle transport. Each backend feature has one module in
 `src/lib/clients/` that exports named hooks and commands built on
 `portalRequest` or `usePortalQuery`, which own the access token, aborts, and
-`ErrorEnvelope` normalization. ESLint enforces this; its baseline must only shrink.
+`ErrorEnvelope` normalization. A `signedOut` failure means nothing was sent;
+`unauthenticated` means the backend answered 401. ESLint enforces the boundary.
+
+Code carries no comments. `pnpm lint` rejects them in TypeScript, JavaScript,
+and CSS, allowing only tool directives such as `eslint-disable`.
 
 Run `pnpm lint`, `pnpm typecheck`, and `pnpm build` before committing.

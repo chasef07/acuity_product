@@ -106,7 +106,6 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 	if _, err := m.Search(ctx, access.ServiceIdentity{Subject: "staff", PracticeID: cmd.PracticeID, LocationScope: access.LocationScopeAll}, "office-a", "hours"); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("missing capability=%v", err)
 	}
-	// Idempotent replay skips provider work and never republishes a superseded revision.
 	before = provider.calls
 	if _, err := m.ReplaceCorpus(ctx, cmd); err != nil {
 		t.Fatal(err)
@@ -153,8 +152,6 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 	if revisions != 2 || passages != 2 {
 		t.Fatalf("partial/replayed revisions persisted: %d %d", revisions, passages)
 	}
-	// Two fully prepared imports compete for the same expected pointer. Exactly
-	// one may commit; the other cannot leave an orphan revision or partial corpus.
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
 	m.embedder = embeddingFunc(func(ctx context.Context, texts []string, task TaskType) ([][]float32, error) {
@@ -190,7 +187,6 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 	if wins != 1 || conflicts != 1 {
 		t.Fatalf("concurrent imports wins=%d conflicts=%d", wins, conflicts)
 	}
-	// A provider that ignores cancellation must still never install late content.
 	canceled, cancel := context.WithCancel(ctx)
 	m.embedder = embeddingFunc(func(ctx context.Context, texts []string, task TaskType) ([][]float32, error) {
 		cancel()
@@ -213,8 +209,6 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 		t.Fatalf("canceled/concurrent imports persisted %d revisions", revisions)
 	}
 
-	// Access provisioning replaces routing rows. It must remain operable after
-	// import; removing a route denies search while retaining historical evidence.
 	provisioning := access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "knowledge-test", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{"office-a", "office-b"}}}}}}
 	if _, err := a.Provision(ctx, provisioning); err != nil {
 		t.Fatalf("reconcile existing routes after import: %v", err)

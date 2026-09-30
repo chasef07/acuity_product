@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// CallingWork is the existing durable HumanCalling work consumed by the worker.
 type CallingWork interface {
 	ProcessNextReceipt(context.Context) (bool, error)
 	ReportReceiptQueue(context.Context) error
@@ -216,9 +215,6 @@ func (runner *Runner) runCallingReceipts(ctx context.Context) {
 	)
 }
 
-// A local hint only asks the coordinator to check committed work. PostgreSQL
-// still decides whether any command can run; missed or remote changes retain
-// the regular polling fallback.
 func (runner *Runner) notifyProviderCommands() {
 	select {
 	case runner.commandReady <- struct{}{}:
@@ -274,8 +270,6 @@ func (runner *Runner) coordinateProviderCommands(
 			case <-available:
 			}
 
-			// A hint that predates this authoritative scan is already covered by
-			// it. Preserve hints arriving during the scan to close the pre-wait race.
 			select {
 			case <-runner.commandReady:
 			default:
@@ -313,9 +307,6 @@ func (runner *Runner) coordinateProviderCommands(
 		}
 
 		delay := runner.config.WorkInterval
-		// A full batch is a fairness boundary, not evidence that the queue is
-		// empty. Yield without adding an idle polling interval to ready work.
-		// Executor tokens still bound claimed work; empty/blocked scans sleep.
 		if claimedCount == runner.config.ProviderCommandBatchSize {
 			delay = 0
 		}
@@ -534,8 +525,6 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	return failed
 }
 
-// Reconciliation can wait briefly when no durable work is due. It never delays
-// call deadlines, and storage has its own lane because filesystem calls can stall.
 func (runner *Runner) reconcileBackgroundWork(ctx context.Context) (bool, error) {
 	var failures error
 	if err := runner.messages.RecoverInterruptedCommands(ctx); err != nil {

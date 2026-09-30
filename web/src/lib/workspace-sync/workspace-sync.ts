@@ -469,7 +469,6 @@ async function* readEvents(
     try {
       await reader.cancel()
     } catch {
-      // The transport may already have closed or been aborted.
     }
     reader.releaseLock()
   }

@@ -7,9 +7,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// RecoverQuarantinedRingtone applies one verified terminal ringtone receipt.
-// The exact original bridge and hangup commands must correlate; the Call must
-// already be terminal with no active work. No provider effect is requested.
 func (m *Module) RecoverQuarantinedRingtone(
 	ctx context.Context,
 	command RequeueQuarantinedReceiptCommand,

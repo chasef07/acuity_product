@@ -52,7 +52,6 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer tx.Rollback(ctx)
-				// Repeated provisioning normalizes and replaces the complete member list.
 				for i := 0; i < 2; i++ {
 					if err := calling.ProvisionLocationRingGroupsInTx(ctx, tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "ring-group-practice", LocationKey: "ring-group-location", MemberEmails: []string{" " + strings.ToUpper(email) + " ", email}}}, "ring-test"); err != nil {
 						t.Fatal(err)
@@ -78,7 +77,6 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// Ring exclusion must not remove the second Staff member's workspace access.
 			if _, err := accessModule.ResolveActor(ctx, staff[1], auth.Practice.ID, auth.Locations[0].ID); err != nil {
 				t.Fatal(err)
 			}

@@ -47,12 +47,12 @@ func TestReceiptOfficeAuthorizationIndependentOfStaffVoice(t *testing.T) {
 	module := New(pool, am, func() time.Time { return now })
 	wm := work.New(pool, am, nil)
 	for _, scenario := range []struct{ name, key, phone, location string }{
-		{"inbound-alias", "medical", "+15555550101", "medical"},              // Unprovisioned inbound alias.
-		{"no-staff-voice", "optical", "+15555550102", "optical"},             // No staff voice number at all.
-		{"office-route-owns-location", "optical", "+15555550100", "optical"}, // Office route owns authorization; phone is evidence.
+		{"inbound-alias", "medical", "+15555550101", "medical"},
+		{"no-staff-voice", "optical", "+15555550102", "optical"},
+		{"office-route-owns-location", "optical", "+15555550100", "optical"},
 		{"demo-tenant", "demo", "+15555550103", "demo"},
 		{"office-key-alias", "legacy-demo", "+15555550104", "demo"},
-		{"phone-only", "", "+15555550100", "medical"}, // Existing phone-only caller.
+		{"phone-only", "", "+15555550100", "medical"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			actor := service

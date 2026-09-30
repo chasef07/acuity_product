@@ -190,8 +190,6 @@ func validTelnyxEvent(
 		payloadPresent
 }
 
-// RequeueQuarantinedReceipt schedules persisted, previously verified evidence
-// for replay by a Platform Operator under their own identity.
 func (m *Module) RequeueQuarantinedReceipt(
 	ctx context.Context,
 	command RequeueQuarantinedReceiptCommand,
@@ -490,8 +488,6 @@ func (m *Module) replayProviderReceipt(
 	if !known {
 		return ReceiptUnknown, ""
 	}
-	// WebRTC emits a second leg for the Staff session. It is evidence, not
-	// another handoff or authority to update the Call Control leg.
 	if m.config.CredentialConnectionID != "" && m.config.CallControlID != "" &&
 		m.config.CredentialConnectionID != m.config.CallControlID &&
 		fact.ConnectionID == m.config.CredentialConnectionID &&
@@ -503,8 +499,6 @@ func (m *Module) replayProviderReceipt(
 			return ReceiptPending, projectionAttachCallRetry
 		}
 		if !attached {
-			// The credential webhook can precede persistence of the Staff leg.
-			// Unmatched or ambiguous sessions remain visible through bounded retry.
 			return ReceiptPending, "WAITING_FOR_RELATED_FACT"
 		}
 		return ReceiptIgnored, ""
@@ -577,8 +571,6 @@ func (m *Module) attachCredentialReceiptCall(ctx context.Context, eventID string
 	return tag.RowsAffected() == 1, nil
 }
 
-// wakeRelatedReceipts brings only exact Call or provider-leg matches forward;
-// the existing retry policy still owns every unresolved receipt's 24-hour bound.
 func (m *Module) wakeRelatedReceipts(
 	ctx context.Context,
 	eventID string,

@@ -68,9 +68,6 @@ func TestAnalyticsLargeTranscriptQueryBudget(t *testing.T) {
 	}
 }
 
-// Compare the existing semantic normalizer against the durable compact form,
-// including historical formats and missing or malformed evidence. The normalizer
-// remains the single owner of metric definitions.
 func TestAnalyticsProjectionPreservesEvidenceAndCorrections(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.OpenThrough(t, "0054_classify_completed_booking_searches.sql")
@@ -99,8 +96,6 @@ func TestAnalyticsProjectionPreservesEvidenceAndCorrections(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The migration is an actual upgrade with pre-existing evidence. Before its
-	// backfill completes, reads fail visibly instead of silently losing calls.
 	if err := migrations.ApplyThrough(ctx, pool, "0055_compact_ai_analytics_evidence.sql"); err != nil {
 		t.Fatal(err)
 	}
@@ -130,8 +125,6 @@ func TestAnalyticsProjectionPreservesEvidenceAndCorrections(t *testing.T) {
 			}
 		}
 		check(c.transcript, c.closeout)
-		// A legacy writer only touches source columns. Corrected evidence must
-		// replace, not append to, the previous analytical projection.
 		corrected := `{"items":[{"metrics":{"e2e_latency_ms":750}}]}`
 		for attempt := 0; attempt < 2; attempt++ {
 			if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET transcript=$2,closeout_payload='{}' WHERE id=$1`, ids[i], []byte(corrected)); err != nil {

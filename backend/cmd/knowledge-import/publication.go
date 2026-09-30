@@ -22,10 +22,6 @@ type publicationReceipt struct {
 	Sections               int                `json:"sections"`
 }
 
-// preparePublication captures one authorized office snapshot. Unchanged is a
-// read-only observation at this statement; a later legitimate publication may
-// supersede it. Changed sources use the captured revision as ReplaceCorpus's CAS
-// expectation, never retrying over another operator's concurrent publication.
 func preparePublication(ctx context.Context, pool *pgxpool.Pool, command knowledge.ImportCommand, email string, automatic bool) (knowledge.ImportCommand, *publicationReceipt, error) {
 	if err := pool.QueryRow(ctx, `SELECT user_subject FROM access_platform_operators WHERE email=$1 AND user_subject IS NOT NULL`, email).Scan(&command.ActorSubject); err != nil {
 		return command, nil, errors.New("import requires an existing bound Platform Operator")

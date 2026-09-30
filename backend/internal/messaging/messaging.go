@@ -182,8 +182,6 @@ type Config struct {
 	HTTPClient         *http.Client
 }
 
-// Module owns location texting configuration, Message Threads, Messages, and
-// their durable provider commands.
 type Module struct {
 	database productpostgres.Database
 	access   *access.Module
@@ -846,9 +844,6 @@ func insertMessageProviderCommand(
 	return err
 }
 
-// QueueNextTaskAcknowledgement turns one committed unresolved Task intent into
-// a linked automatic Message. It commits the Message and provider command
-// before any provider contact, and pre-send failures remain durable and visible.
 func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error) {
 	if m.database == nil || m.access == nil || m.work == nil {
 		return false, ErrInvalidInput
@@ -1141,8 +1136,6 @@ func (m *Module) readMessageForRetry(
 	ctx context.Context,
 	command SendAgainCommand,
 ) (Message, error) {
-	// Match Send's idempotency -> Access -> Message lock order so a replaying
-	// browser request cannot deadlock the transaction creating its first attempt.
 	var practiceID, locationID string
 	if err := m.database.QueryRow(ctx, `
 		SELECT practice_id::text, location_id::text
@@ -1237,10 +1230,6 @@ func (m *Module) loadSendAgainReplay(
 	return replayed, true, nil
 }
 
-// ProcessNextCommand claims one committed send intent, records that the
-// provider write has begun, then performs the external effect outside the
-// PostgreSQL transaction. Any uncertain outcome becomes UNKNOWN and is never
-// selected for another write.
 func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	if m.database == nil || m.access == nil || m.provider == nil {
 		return false, ErrInvalidInput
@@ -1437,9 +1426,6 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// RecoverInterruptedCommands closes the process-crash window after a provider
-// write began. The command is deliberately not replayed because its external
-// effect cannot be known safely.
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 	if m.database == nil || m.access == nil {
 		return ErrInvalidInput
@@ -1509,9 +1495,6 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 	return nil
 }
 
-// ReconcileNextCommand performs one read-only provider lookup for an unknown
-// command that already has a provider Message identity. It never repeats the
-// original write.
 func (m *Module) ReconcileNextCommand(ctx context.Context) (bool, error) {
 	if m.database == nil || m.access == nil || m.provider == nil {
 		return false, ErrInvalidInput
@@ -1667,8 +1650,6 @@ func (m *Module) ReconcileNextCommand(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// ReceiveWebhook verifies the exact raw Telnyx payload and durably receipts
-// the unique provider event before returning. Projection is worker-owned.
 func (m *Module) ReceiveWebhook(
 	ctx context.Context,
 	callbackToken string,

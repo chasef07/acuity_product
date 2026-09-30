@@ -20,7 +20,6 @@ function formatIssueTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date)
 }
 
-// Staff-flagged calls awaiting Acuity review, regardless of the selected range.
 export function PendingCallIssues({ issues, onSelect }: {
   issues: OperatorAiCallIssue[]
   onSelect: (interactionID: string) => void
@@ -49,7 +48,6 @@ export function PendingCallIssues({ issues, onSelect }: {
   )
 }
 
-// Acuity's review of a staff flag. Practices never see this decision.
 export function CallIssueReview({ interactionID, initialIssue, onChange }: {
   interactionID: string
   initialIssue?: OperatorAiCallIssue

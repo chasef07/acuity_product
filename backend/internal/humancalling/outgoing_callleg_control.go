@@ -86,8 +86,6 @@ const nextCallLegCommandQuery = `
 	LIMIT 1
 `
 
-// claimedProviderCommand carries the observed commit boundary across the worker
-// handoff without retaining a database connection or changing provider ownership.
 type claimedProviderCommand struct {
 	id          string
 	action      CommandAction
@@ -103,7 +101,7 @@ func (m *Module) observeCommandClaim(
 	err error,
 ) {
 	if !ok && err == nil {
-		return // Idle polling is not useful work and must not generate a log stream.
+		return
 	}
 	outcome := observability.CommandStageSucceeded
 	if err != nil {

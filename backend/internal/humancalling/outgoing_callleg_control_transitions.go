@@ -129,7 +129,6 @@ func (m *Module) finishEndedCallLeg(
 		}
 	}
 	if ended.terminalOutcome != "" {
-		// Recovery/disposition already owns the terminal outcome.
 	} else if ended.role == "CALLER" && !ended.callBridged {
 		if ended.direction == string(CallInbound) && ended.voicemailStarted {
 			if _, err := m.ensureRecoveryOutcome(
@@ -468,9 +467,6 @@ func (m *Module) failRoutingCall(
 	return err
 }
 
-// Destination termination is the shared boundary for provider hangups and
-// reconciliation. Staff media setup, dialing, and bridging alone do not finish
-// an attempt. A completed attempt clears older recovery without claiming contact.
 func (m *Module) completeCallbackAttempt(ctx context.Context, tx pgx.Tx, callID, destinationLegID string) error {
 	var command work.ResolveRecoveryTasksCommand
 	err := tx.QueryRow(ctx, `
@@ -489,8 +485,6 @@ func (m *Module) completeCallbackAttempt(ctx context.Context, tx pgx.Tx, callID,
 	if err != nil {
 		return err
 	}
-	// The checkpoint cutoff is the start of this destination attempt, so new
-	// missed calls/voicemails arriving during it remain reviewable.
 	command.Kind = work.RecoveryResolutionCallbackAttempt
 	command.SourceID = callID
 	_, err = m.work.ResolveRecoveryTasks(ctx, tx, command)

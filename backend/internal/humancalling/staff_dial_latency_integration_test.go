@@ -21,9 +21,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Keep the inbound answer projection and ringback command intact. Ten ready
-// Staff provider requests remain in flight to prove overlap. Timing is logged
-// for comparison; deterministic scheduler tests own the no-batch-sleep rule.
 func TestInboundStaffDialFanoutProgressesWithTwoDatabaseConnections(t *testing.T) {
 	const staffCount = 10
 	pool, _, _, _ := prepareInboundFanout(t, time.Now().Add(-2*time.Second), "full-inbound-latency", &recordingProvider{}, staffCount)
@@ -83,8 +80,6 @@ func TestInboundStaffDialFanoutProgressesWithTwoDatabaseConnections(t *testing.T
 	}
 	t.Logf("full inbound Runner-start-to-all-dispatched=%s, first-to-last-dial=%s", last.Sub(started), last.Sub(first))
 
-	// Durable ingress and recovery must keep moving while all ten provider
-	// executors are occupied and the production pool still has only two slots.
 	receiptBody := []byte(`{"data":{"record_type":"event","event_type":"call.synthetic_unknown","id":"full-inbound-latency-receipt","occurred_at":"2026-09-04T18:30:00Z","payload":{}}}`)
 	if _, err := database.Exec(context.Background(), `
  INSERT INTO human_calling_provider_receipts (
@@ -152,10 +147,6 @@ func (provider *inboundLatencyProvider) Execute(ctx context.Context, command hum
 	return provider.blockingDialProvider.Execute(ctx, command)
 }
 
-// This is a bounded mixed-workload acceptance scenario, not a production
-// capacity claim. Both Calls follow the real inbound domain path. The synthetic
-// receipt burst starts at the durable ingress seam; HTTP signing is tested by
-// ingress tests. Analytics uses its real authorized module and compact evidence.
 func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -370,8 +361,6 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 	if callsWithDials != 2 {
 		t.Fatalf("Calls with durable Dial outcomes=%d want2", callsWithDials)
 	}
-	// Snapshot the completed workload before shutdown; cancellation is outside
-	// this window so it cannot look like a workload acquisition failure.
 	complete := time.Since(started)
 	logs := metrics.String()
 	if strings.Contains(logs, `"metric":"acuity_backend_database_execution"`) || strings.Contains(logs, `"metric":"acuity_call_center_database_pool_acquire"`) {

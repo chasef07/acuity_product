@@ -77,7 +77,6 @@ func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) 
 		t.Fatal("group omitted a call outcome or linked Task")
 	}
 
-	// A separate call from the same number remains a separate history item.
 	olderTime := now.Add(-time.Hour)
 	olderCallID := insertRecoveryCall(t, pool, authorization, locationID, phone, olderTime)
 	first, err := reads.QueryPhoneTimeline(ctx, workspace.QueryPhoneTimelineCommand{Identity: identity, PracticeID: authorization.Practice.ID, Phone: phone, Limit: 1})
@@ -90,7 +89,6 @@ func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) 
 	}
 	olderID := older.Items[0].ID
 
-	// A late AI closeout enriches the existing transfer instead of adding a row.
 	var olderSource string
 	if err := pool.QueryRow(ctx, `SELECT handoff.source_call_id FROM human_calling_calls call JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id WHERE call.id = $1`, olderCallID).Scan(&olderSource); err != nil {
 		t.Fatal(err)
@@ -103,8 +101,6 @@ func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) 
 		t.Fatalf("late closeout changed identity or lost evidence: %v, %v", older, err)
 	}
 
-	// Completing the Task is still a later Activity, with current state also
-	// available beside the source call. Reading history does not complete work.
 	completed, err := writes.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +116,6 @@ func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) 
 		t.Fatal("Task completion changed call identity")
 	}
 
-	// Other Locations sharing a number cannot contribute evidence to this view.
 	var hiddenLocationID string
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM access_locations WHERE practice_id = $1 AND name = 'Hidden office'`, authorization.Practice.ID).Scan(&hiddenLocationID); err != nil {
 		t.Fatal(err)
@@ -131,8 +126,6 @@ func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) 
 		t.Fatalf("unauthorized Location changed history: %v, %v", scoped, err)
 	}
 
-	// Recovery attachments may link several distinct calls to one Task. The
-	// Task stays reachable from each call without adding bookkeeping rows.
 	recoveryPhone := "+12025550124"
 	recoveryCall := insertRecoveryCall(t, pool, authorization, locationID, recoveryPhone, now)
 	voicemailCall := insertRecoveryCall(t, pool, authorization, locationID, recoveryPhone, now.Add(time.Minute))

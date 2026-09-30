@@ -1,4 +1,3 @@
-// Package contactcontext owns normalization of unverified communication context.
 package contactcontext
 
 import (

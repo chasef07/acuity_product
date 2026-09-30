@@ -23,11 +23,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The measured window starts before signed ingress, with the real Runner already
-// polling. Provider invocation is the endpoint; a local stub cannot prove ringing
-// in a Staff browser. Submission follows an empty receipt scan, deliberately
-// exercising the idle-poll phase; this is not a production percentile sample.
-// Timings are observations, not flaky wall-clock assertions.
 func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 	for _, scenario := range []struct {
 		staff                    int
@@ -180,8 +175,6 @@ func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 					t.Fatal("committed fanout did not dispatch every Staff Dial")
 				}
 			}
-			// APPLIED is a later receipt bookkeeping write, distinct from the atomic
-			// fanout commit observed above. Require both it and durable provider results.
 			for {
 				var applied bool
 				var sentDials, sentRingback int
@@ -229,8 +222,6 @@ func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 	}
 }
 
-// This wrapper only observes the actual production transaction's commit return.
-// It neither changes SQL nor performs additional database reads in that path.
 type fanoutCommitDatabase struct {
 	postgres.Database
 	committed chan fanoutCommitObservation

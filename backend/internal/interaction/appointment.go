@@ -189,8 +189,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// The Task keeps the facts staff were asked to verify even when later outcomes
-// update the Interaction projection. The receipt retains complete source evidence.
 func appointmentReviewMessage(value Interaction) string {
 	instruction := "Verify insurance and provider for this appointment."
 	if value.AppointmentOutcome == OutcomePartial {

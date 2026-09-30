@@ -77,8 +77,6 @@ const credentialRetryLifetime = 5 * time.Minute
 
 const credentialRetryExhaustedCode = "CREDENTIAL_RETRY_EXHAUSTED"
 
-// A failed create is retried for Staff who still need calling, slowly enough
-// that a persistent provider rejection does not repeat every tick.
 const credentialFailureRetryDelay = 15 * time.Minute
 
 var telnyxWebhookRetryMilliseconds = []int{1000, 2000, 5000, 15000, 30000}
@@ -94,21 +92,17 @@ func telnyxWebhookRetryPolicies(events ...FactType) map[string]any {
 }
 
 var (
-	ErrDenied         = errors.New("human calling access denied")
-	ErrInvalidInput   = errors.New("invalid human calling input")
-	ErrConflict       = errors.New("human calling transition conflict")
-	ErrExpired        = errors.New("human calling deadline expired")
-	ErrIneligible     = errors.New("user is not currently call eligible")
-	ErrOccupied       = errors.New("user has an occupying Call")
-	ErrInvalidHandoff = errors.New("invalid handoff")
-	// errTerminalOrObsoleteProviderFact is returned only when persisted Call
-	// evidence proves that a provider fact cannot become applicable later.
+	ErrDenied                         = errors.New("human calling access denied")
+	ErrInvalidInput                   = errors.New("invalid human calling input")
+	ErrConflict                       = errors.New("human calling transition conflict")
+	ErrExpired                        = errors.New("human calling deadline expired")
+	ErrIneligible                     = errors.New("user is not currently call eligible")
+	ErrOccupied                       = errors.New("user has an occupying Call")
+	ErrInvalidHandoff                 = errors.New("invalid handoff")
 	errTerminalOrObsoleteProviderFact = fmt.Errorf(
 		"%w: terminal or obsolete provider fact",
 		ErrConflict,
 	)
-	// errRelatedFactPending is reserved for a missing relation that an earlier
-	// out-of-order provider lifecycle receipt can still create.
 	errRelatedFactPending        = errors.New("related provider fact is pending")
 	ErrHandoffAdmissionClosed    = errors.New("human calling handoff admission is closed")
 	ErrAmbiguousEffect           = errors.New("provider effect is ambiguous")
@@ -560,8 +554,6 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	}
 }
 
-// ProcessNextRecoveryReconciliation exposes Work's bounded rollout lane to the
-// shared worker without adding another owner for HumanCalling dependencies.
 func (m *Module) ProcessNextRecoveryReconciliation(
 	ctx context.Context,
 ) (bool, error) {

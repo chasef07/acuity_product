@@ -15,8 +15,6 @@ import (
 
 func TestExecutorUsesIndependentAcquireAndStatementDeadlines(t *testing.T) {
 	pool := openExecutorPool(t, 1)
-	// Measure acquisition from a ready pool, not scheduler-dependent initial
-	// connection setup, which is outside this deadline-separation scenario.
 	if err := pool.Ping(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +113,6 @@ func newTestExecutor(
 	return executor
 }
 
-// Terminate only the connection owned by this test. A failed transaction must
-// stay failed, while its discarded connection must not poison later work.
 func TestExecutorRecoversPoolAfterConnectionLossWithoutReplayingTransaction(t *testing.T) {
 	pool := openExecutorPool(t, 1)
 	executor := newTestExecutor(t, pool, time.Second, 5*time.Second, time.Second)

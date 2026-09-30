@@ -105,7 +105,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           try {
             window.localStorage.setItem(key, value)
           } catch {
-            // Safe preferences never outrank current authorized state.
           }
         },
       },
@@ -141,7 +140,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
   useEffect(() => () => projection.stop(), [projection])
 
   useEffect(() => {
-    // Aging has no provider event to trigger an SSE refresh.
     const timer = window.setInterval(() => {
       if (!document.hidden && (projection.getSnapshot().tasks.counts.texts ?? 0) > 0) {
         void projection.dispatch({ type: "refresh-text-attention" })

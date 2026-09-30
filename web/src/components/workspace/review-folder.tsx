@@ -8,8 +8,6 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { WorkspaceWindowFailure } from "./workspace-window-failure"
 
-// Each open review folder owns its page independently of the My Tasks filter.
-// The parent keys this by actor, practice, location, search, and review kind.
 export function ReviewFolder({
   practiceID,
   locationID,

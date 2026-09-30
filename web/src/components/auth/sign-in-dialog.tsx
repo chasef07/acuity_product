@@ -91,7 +91,6 @@ export function SignInDialog({
     setError(null)
     clearAccessToken()
     try {
-      // Open synchronously from the click so the browser permits the popup.
       const result = await authClient.signIn.popup({
         provider: "google",
         callbackURL: destination,

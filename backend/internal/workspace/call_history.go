@@ -9,10 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// phoneCallIDsSQL takes Practice, authorized Locations, and phone as $1-$3.
-// Keep handoff phone precedence, including destination fallback for a NULL
-// handoff phone. Separate branches let PostgreSQL seek each phone index before
-// joining; caller_phone is deliberately not a new source for this read.
 const phoneCallIDsSQL = `
  SELECT candidate.id
  FROM human_calling_handoffs source
@@ -26,9 +22,6 @@ const phoneCallIDsSQL = `
  WHERE candidate.practice_id = $1 AND candidate.location_id = ANY($2::uuid[])
   AND candidate.destination_phone = $3 AND source.phone IS NULL`
 
-// Select whole call histories before pagination. Source identity is scoped to
-// the authorized Location; a shared phone number never establishes a link.
-// The deterministic UUID is a display key only, never an authorization key.
 const phoneHistoryRootsSQL = `
  WITH calls AS (
   SELECT call.id, call.location_id, handoff.source_call_id, call.created_at,

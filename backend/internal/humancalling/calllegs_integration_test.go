@@ -1616,9 +1616,6 @@ func TestInboundFanoutRechecksLeaseAfterWaitingOnOutboundReservation(t *testing.
 	go func() {
 		inboundResult <- inbound.ApplyProviderFact(context.Background(), caller)
 	}()
-	// Fanout has taken its statement snapshot but cannot lock the Staff lease.
-	// When outbound commits, PostgreSQL must recheck the updated lease tuple and
-	// reject its now-false desired_available state before returning the row.
 	waitForPostgresLockWaiter(
 		t, barrier.connection, "transactionid", outboundPID,
 	)

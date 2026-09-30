@@ -33,8 +33,6 @@ type ProviderReceiptAudit struct {
 	Quarantine []ProviderReceiptOutcomeAudit `json:"quarantine"`
 }
 
-// providerReceiptAuditErrorCodes is the bounded public audit vocabulary.
-// Stored values outside it collapse into UNCLASSIFIED before aggregation.
 var providerReceiptAuditErrorCodes = []string{
 	"HANDOFF_REJECTED",
 	"INVALID_PROVIDER_EVENT",
@@ -50,8 +48,6 @@ var providerReceiptAuditErrorCodes = []string{
 	"TERMINAL_OR_OBSOLETE_PROVIDER_FACT",
 }
 
-// AuditProviderReceipts returns aggregate durable queue evidence without
-// exposing receipt, Call, provider, phone, or raw webhook identifiers.
 func (m *Module) AuditProviderReceipts(ctx context.Context) (ProviderReceiptAudit, error) {
 	if m.database == nil {
 		return ProviderReceiptAudit{}, ErrInvalidInput

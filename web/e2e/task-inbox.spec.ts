@@ -82,8 +82,6 @@ test("Texts ages out after five days without completing work and new inbound res
   await expect(page.getByTestId("task-row")).toHaveCount(0)
   const { token } = await (await page.request.get("/api/auth/token")).json()
   const discovery = await (await page.request.get(`${portalURL}/v1/access`, { headers: { authorization: `Bearer ${token}` } })).json()
-  // Webhook acceptance precedes worker projection; an empty Texts folder alone
-  // does not prove that the aged review has been created and preserved.
   await expect.poll(async () => {
     const history = await page.request.post(`${portalURL}/v1/tasks/query`, { headers: { authorization: `Bearer ${token}` }, data: { practiceId: discovery.practices[0].id, search: "5550209", state: "OPEN" } })
     expect(history.ok()).toBeTruthy()
@@ -211,7 +209,6 @@ test(`appointment review folder is Spring Hill only and does not inflate My Task
   await insurance.locator("summary").filter({ hasText: /^General plan benefits$/, visible: true }).click()
   await expect(insurance.getByRole("table", { name: "General plan benefits" }).filter({ visible: true })).toBeVisible()
   await expect(insurance).toContainText("$1,500.00")
-  // Closing every expanded detail must not hide the booked doctor's copayment.
   for (const summary of await insurance.locator("details[open] > summary").all()) await summary.click()
   await expect(insurance.getByRole("table", { name: copayTitle })).toBeVisible()
   await expect(insurance.getByText(copayAmount, { exact: true })).toBeVisible()

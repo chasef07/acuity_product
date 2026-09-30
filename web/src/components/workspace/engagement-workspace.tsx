@@ -181,7 +181,6 @@ export function EngagementWorkspaceView({
 }: EngagementWorkspaceProps & { calling: EngagementWorkspaceCalling }) {
   const [reviewedTextTask, setReviewedTextTask] = useState<Task>()
   const [chosenRoute, setRoute] = useState("")
-  // Selecting another Task for this phone can change its offices in place.
   const route =
     engagement.locations.length === 1
       ? engagement.locations[0]!.id
@@ -385,8 +384,6 @@ function MessageConversation({
   const requested = useRef(false)
   const scroller = useRef<HTMLDivElement | null>(null)
   const atLatest = useRef(true)
-  // Capture the Task before requesting its conversation; later Task refreshes
-  // cannot authorize completion of evidence this request did not review.
   const currentReviewTask = useRef(reviewTask)
   useEffect(() => { currentReviewTask.current = reviewTask }, [reviewTask])
 
@@ -409,7 +406,6 @@ function MessageConversation({
     [refresh, onTaskReviewed],
   )
 
-  // Reload a just-sent Message once its first delivery status can show.
   const sentVisibleUntil = sent?.visibleUntil
   useEffect(() => {
     if (sentVisibleUntil === undefined) return
@@ -1127,7 +1123,6 @@ function MessageAttachmentView({
           previewURL = URL.createObjectURL(blob)
           setObjectURL(previewURL)
         },
-        // loadBlob rejects only after this effect aborted it.
         () => undefined,
       )
     }, 0)

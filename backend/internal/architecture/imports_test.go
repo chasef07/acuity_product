@@ -1,5 +1,3 @@
-// Package architecture holds tests that enforce the backend's module
-// boundaries described in README.md ("Code ownership"). It has no runtime code.
 package architecture
 
 import (
@@ -20,16 +18,14 @@ const backendPath = "github.com/chasef07/acuity_product/backend/"
 type role string
 
 const (
-	domain      role = "domain"       // owns durable behavior and its tables
-	query       role = "query"        // cross-domain reads; owns no writes
-	adapter     role = "adapter"      // thin edge: HTTP, auth, worker, realtime, generated API
-	platform    role = "platform"     // shared infrastructure with no product rules
-	composition role = "composition"  // wires the process: config, schema, commands
-	testSupport role = "test support" // imported only by _test.go files
+	domain      role = "domain"
+	query       role = "query"
+	adapter     role = "adapter"
+	platform    role = "platform"
+	composition role = "composition"
+	testSupport role = "test support"
 )
 
-// packageRoles classifies every backend package, keyed by its path below
-// backend/internal/. Packages under backend/cmd/ are composition roots.
 var packageRoles = map[string]role{
 	"access":         domain,
 	"contactcontext": domain,
@@ -58,9 +54,6 @@ var packageRoles = map[string]role{
 	"testdb":       testSupport,
 }
 
-// allowedDomainImports is the reviewed domain-to-domain import graph. Adding
-// an edge couples two modules' behavior; prefer calling through the owning
-// module from an adapter or workspace, and add an edge only with review.
 var allowedDomainImports = []string{
 	"humancalling -> access",
 	"humancalling -> work",
@@ -83,7 +76,6 @@ type goPackage struct {
 
 func (p goPackage) name() string { return packageName(p.ImportPath) }
 
-// packageName shortens a backend import path: "work", "cmd/acuity".
 func packageName(importPath string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(importPath, backendPath), "internal/")
 }
@@ -96,7 +88,6 @@ func roleOf(name string) (role, bool) {
 	return r, ok
 }
 
-// repositoryRoot relies on go test running in this package's directory.
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
@@ -106,7 +97,6 @@ func repositoryRoot(t *testing.T) string {
 	return root
 }
 
-// loadBackendPackages reads the real build graph, excluding _test.go files.
 func loadBackendPackages(t *testing.T) []goPackage {
 	t.Helper()
 	command := exec.Command("go", "list", "-json=ImportPath,Dir,GoFiles,Imports", "./backend/...")
@@ -159,7 +149,7 @@ func importViolations(packages []goPackage) []string {
 			to := packageName(imported)
 			toRole, ok := roleOf(to)
 			if !ok {
-				continue // reported when the imported package itself is visited
+				continue
 			}
 			edge := from + " -> " + to
 			if to == "api" && from != "httpapi" {

@@ -1,24 +1,3 @@
-// The one place browser code turns a generated SDK call into a typed outcome.
-//
-// Convention: components never import transport. Each backend feature has one
-// module in `src/lib/clients/` that exports named hooks (`useReviewFolder`) and
-// commands (`completeTask`). Those modules call the generated SDK only through
-// `portalRequest` or `usePortalQuery`, which own the access token, the
-// `portalClient`, aborts, and ErrorEnvelope normalization. Components choose
-// copy from `PortalFailure.kind`; they never read tokens or HTTP statuses.
-// `signedOut` means no session, so nothing was sent; `unauthenticated` means
-// the backend answered 401. Views choose whether those read the same.
-//
-//   export function completeTask(task: Task) {
-//     return portalRequest((transport) =>
-//       completeTaskRequest({ ...transport, path: { taskId: task.id }, body: { expectedVersion: task.version } }))
-//   }
-//
-// A read that should wait passes a `null` key to `usePortalQuery`; a read that
-// refreshes in place passes `keepPrevious` so the last answer never blanks.
-//
-// `eslint.config.mjs` forbids transport imports under src/components and src/app.
-
 import { useCallback, useEffect, useEffectEvent, useState } from "react"
 
 import { portalClient } from "../api/client"
@@ -26,21 +5,19 @@ import type { ErrorEnvelope } from "../api/generated/types.gen"
 import { getAccessTokenResult } from "../auth-client"
 
 export type PortalFailureKind =
-  | "signedOut" // no access token, so nothing was sent
-  | "unauthenticated" // 401
-  | "unauthorized" // 403
-  | "missing" // 404
-  | "conflict" // 409
-  | "busy" // 429
-  | "rejected" // any other 4xx
-  | "unavailable" // network failure, 5xx, or the token service is unavailable
+  | "signedOut"
+  | "unauthenticated"
+  | "unauthorized"
+  | "missing"
+  | "conflict"
+  | "busy"
+  | "rejected"
+  | "unavailable"
 
 export type PortalFailure = {
   kind: PortalFailureKind
   retryable: boolean
-  /** HTTP status, present only when the backend answered. */
   status?: number
-  /** ErrorEnvelope fields, present only when the backend sent one. */
   code?: string
   message?: string
   correlationId?: string
@@ -55,7 +32,6 @@ export type PortalTransport = {
   signal?: AbortSignal
 }
 
-/** The `fields` result every generated SDK function resolves with. */
 export type PortalResult<T> = {
   data?: T
   error?: unknown
@@ -66,11 +42,6 @@ export type PortalSend<T> = (
   transport: PortalTransport,
 ) => Promise<PortalResult<T>>
 
-/**
- * Acquires the access token, sends one generated SDK call, and normalizes the
- * result. It resolves with an outcome for every answer and failure, and
- * rejects only when `signal` aborts, so a superseded request never reports.
- */
 export async function portalRequest<T>(
   send: PortalSend<T>,
   signal?: AbortSignal,
@@ -98,17 +69,8 @@ export async function portalRequest<T>(
 export type PortalQuery<T> =
   | { status: "loading" }
   | { status: "ready"; data: T }
-  /** With `keepPrevious`, `data` is the last ready answer, if any. */
   | { status: "failed"; failure: PortalFailure; data?: T }
 
-/**
- * Reads one resource for `key`; a `null` key reads no token and sends nothing.
- * A new key or `retry()` shows loading, aborts the superseded request, and
- * sends again; unmount aborts. `key` must change whenever an input to `send`
- * changes. With `keepPrevious`, the last answer stays shown instead of loading
- * (`refreshing` is true while a newer one is in flight), and a failure keeps
- * the last ready `data`.
- */
 export function usePortalQuery<T>(
   key: string | null,
   send: PortalSend<T>,
@@ -139,7 +101,6 @@ export function usePortalQuery<T>(
                 ready: previous?.ready,
               },
         ),
-      // portalRequest rejects only after this effect aborted it.
       () => undefined,
     )
     return () => controller.abort()

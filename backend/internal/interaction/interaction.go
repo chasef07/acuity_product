@@ -65,8 +65,7 @@ type LifecycleStage int16
 
 const (
 	LifecycleStarted LifecycleStage = 1
-	// Stage 2 belongs only to stored historical SUMMARY rows.
-	LifecycleClosed LifecycleStage = 3
+	LifecycleClosed  LifecycleStage = 3
 )
 
 var (

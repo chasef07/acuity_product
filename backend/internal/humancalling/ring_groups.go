@@ -16,8 +16,6 @@ type LocationRingGroupProvision struct {
 	MemberEmails []string
 }
 
-// Omitted groups preserve existing routing. An explicit group must contain at
-// least one account; unavailable members never widen the group to other Staff.
 func (m *Module) ProvisionLocationRingGroupsInTx(
 	ctx context.Context,
 	tx pgx.Tx,

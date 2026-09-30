@@ -17,7 +17,6 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
   onSelect: (task: Task) => void
   onUpdated: (task: Task, advance?: boolean) => void
 }) {
-  // Keep the requests actually shown to staff separate from refreshed membership.
   const [reviewed, setReviewed] = useState(group.groupMembers ?? [group])
   const [pending, setPending] = useState(false)
   const [resolved, setResolved] = useState(false)

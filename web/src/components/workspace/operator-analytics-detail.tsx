@@ -182,7 +182,6 @@ function OperatorAnalyticsDetailView({
       (focus?.callID && item.callId === focus.callID),
     ),
   )
-  // Historical executions can exist without a transcript tool event.
   const focusedExecutionID =
     focusedTimelineIndex === -1
       ? detail.toolExecutions.find(

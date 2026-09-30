@@ -750,7 +750,6 @@ export function TaskCallAction({ task, canCall, historyHint, pending, onCall }: 
   onCall: (task: Task) => void
 }) {
   const eligibility = useTaskCallEligibility({ task, historyHint, enabled: canCall })
-  // Signed out, the route stays unchecked rather than reported unavailable.
   const answer =
     eligibility.status === "loading" ||
     (eligibility.status === "failed" && eligibility.failure.kind === "signedOut")

@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// AgentCall is the staff projection. Diagnostic payloads never cross this boundary.
 type AgentCall struct {
 	ID                 string              `json:"id"`
 	Phone              string              `json:"phone"`
@@ -182,8 +181,6 @@ func agentCall(stored Interaction, receipts json.RawMessage, flagged bool) Agent
 			add(AppointmentCancelled)
 		}
 	}
-	// Historical calls retain receipt-derived appointment outcomes. An attempted
-	// action or a successful tool invocation alone is never appointment proof.
 	if len(receipts) == 0 {
 		switch stored.AppointmentOutcome {
 		case OutcomeBooking:
@@ -259,8 +256,6 @@ func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identit
 		return AgentCallIssue{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	// One report per call makes retries safe and preserves the original reporter.
-	// note mirrors the reason so the previous release can still read reports.
 	_, err = tx.Exec(ctx, `INSERT INTO ai_interaction_issues (interaction_id, reported_by, reason, note) VALUES ($1, $2, $3, $3) ON CONFLICT (interaction_id) DO NOTHING`, id, identity.Subject, reason)
 	if err != nil {
 		return AgentCallIssue{}, err

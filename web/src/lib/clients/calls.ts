@@ -16,7 +16,6 @@ import {
 
 export type RecordingKind = "voicemail" | "call"
 
-/** Issues a short-lived playback capability and resolves with its audio URL. */
 export async function issueRecordingPlayback(
   kind: RecordingKind,
   callID: string,
@@ -37,7 +36,6 @@ export async function issueRecordingPlayback(
   }
 }
 
-/** The recovery Interaction to present: the newest voicemail, else the newest call. */
 export function newestRecoveryInteraction(interactions: Task["interactions"]) {
   const newestFirst = [...interactions].sort((left, right) =>
     right.occurredAt.localeCompare(left.occurredAt),
@@ -51,14 +49,9 @@ export function newestRecoveryInteraction(interactions: Task["interactions"]) {
 export type RecoverySource = {
   interactions: Task["interactions"]
   call?: CallingCall
-  /** The latest failed read of the Task or of its source call. */
   failure?: PortalFailure
 }
 
-/**
- * A recovery Task's linked Interactions and the call behind the newest one.
- * `revision` changes reload it; the last source stays shown meanwhile.
- */
 export function useRecoverySource(
   task: Pick<Task, "id" | "version" | "callId">,
   revision: number,
@@ -70,7 +63,6 @@ export function useRecoverySource(
     { keepPrevious: true },
   )
   const interactions = detail.status === "loading" ? [] : (detail.data?.interactions ?? [])
-  // The source call reloads only after the current Task read lands.
   const callID =
     detail.status === "ready" && !detail.refreshing
       ? (newestRecoveryInteraction(interactions)?.callId ?? task.callId)
@@ -94,10 +86,6 @@ export function useRecoverySource(
   }
 }
 
-/**
- * Whether staff may call this Task now. Loading until the first answer;
- * `historyHint` changes recheck it while the last answer stays shown.
- */
 export function useTaskCallEligibility({
   task,
   historyHint,

@@ -27,10 +27,6 @@ import {
   usePortalQuery,
 } from "./portal-request"
 
-// Manage agent: a Practice's recent AI calls, one call's transcript, and the
-// staff flag that sends a call to Acuity review.
-
-/** Recent calls for the filters; `revision` changes reload the first page. */
 export function useAgentCalls({
   practiceID,
   locationID,
@@ -40,7 +36,6 @@ export function useAgentCalls({
   revision,
 }: {
   practiceID: string
-  /** Empty means every office in the Practice. */
   locationID: string
   range: OperatorAiAnalyticsRange
   phone: string
@@ -76,7 +71,6 @@ export function useAgentCall(interactionID: string) {
   )
 }
 
-/** A `conflict` failure means another staff member flagged the call first. */
 export function flagAgentCallIssue(interactionID: string, reason: AgentCallIssueReason) {
   return portalRequest((transport) =>
     flagAgentCallIssueRequest({
@@ -87,9 +81,6 @@ export function flagAgentCallIssue(interactionID: string, reason: AgentCallIssue
   )
 }
 
-// AI diagnostics: the Platform Operator's evidence for AI calls, Acuity's
-// review of staff flags, and manual tags shared within a Practice.
-
 export type AiCallAnalytics = OperatorAiAnalyticsPage & {
   summary: OperatorAiAnalyticsSummary
 }
@@ -98,17 +89,10 @@ export type AiCallLedger = {
   state: "loading" | "ready" | "denied" | "unavailable"
   data?: AiCallAnalytics
   nextPage: "idle" | "loading" | "unavailable"
-  /** Resolves with the appended page, or undefined when it did not land. */
   loadNextPage: () => Promise<OperatorAiAnalyticsPage | undefined>
-  /** Applies a saved tag or review to the calls already shown. */
   update: (change: (shown: OperatorAiAnalyticsPage) => OperatorAiAnalyticsPage) => void
 }
 
-/**
- * The call ledger and summary. `revision` changes reload the first page;
- * while `enabled` is false nothing loads and the last snapshot stays.
- * Denied covers a missing session and a 401 or 403 answer.
- */
 export function useAiCallAnalytics({
   practiceID,
   locationID,
@@ -119,10 +103,8 @@ export function useAiCallAnalytics({
   enabled,
 }: {
   practiceID: string
-  /** Empty means every office in the Practice. */
   locationID: string
   range: OperatorAiAnalyticsRange
-  /** Empty means every call. */
   manualTag: string
   needsReviewOnly: boolean
   revision: number
@@ -150,7 +132,6 @@ export function useAiCallAnalytics({
       nextCursor: next.nextCursor,
     }),
   )
-  // A signed-out next page denies the whole ledger; other page failures retry.
   const denied =
     pages.status === "failed"
       ? pages.failure.kind === "signedOut" ||
@@ -182,7 +163,6 @@ export function useAiCallAnalytics({
   }
 }
 
-/** One AI call's evidence; an empty `interactionID` sends nothing. */
 export function useAiCallEvidence(interactionID: string) {
   return usePortalQuery(interactionID ? `ai-call:${interactionID}` : null, (transport) =>
     getOperatorAiInteractionAnalytics({ ...transport, path: { interactionId: interactionID } }),
@@ -205,7 +185,6 @@ export function useCallTags(interactionID: string) {
   )
 }
 
-/** Adds or removes one tag, creating it when new; resolves with every tag. */
 export function setCallTag(interactionID: string, name: string, applied: boolean) {
   return portalRequest((transport) =>
     setOperatorAiCallTag({
@@ -219,15 +198,10 @@ export function setCallTag(interactionID: string, name: string, applied: boolean
 type CallPages<P> = PortalQuery<P> & {
   loadingMore: boolean
   moreFailure?: PortalFailure
-  /** Appends the next page and resolves with it, or undefined when it did not land. */
   loadMore: () => Promise<P | undefined>
-  /** Applies a saved change to the pages already shown. */
   update: (change: (shown: P) => P) => void
 }
 
-// Cursor paging over one snapshot per key. A new key shows loading and aborts
-// the superseded first page and any next page begun from it; unmount aborts.
-// usePortalQuery has no cursor paging, so this stays local.
 function useCallPages<P extends { nextCursor: string }>(
   key: string,
   enabled: boolean,
@@ -261,7 +235,6 @@ function useCallPages<P extends { nextCursor: string }>(
         })
         setMore({ key, loading: false })
       },
-      // portalRequest rejects only after this effect aborted it.
       () => undefined,
     )
     return () => controller.abort()

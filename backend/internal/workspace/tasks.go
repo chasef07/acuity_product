@@ -247,8 +247,6 @@ const taskProjectionJoins = `
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin
 
-// Text attention expires from the latest inbound message, not Task updates or
-// outbound activity. The Task and its history remain available in other views.
 const taskHasRecentTextAttention = `(NOT ` + work.TaskIsTextReviewSQL + `
  OR task.state <> 'OPEN'
  OR EXISTS (
@@ -295,8 +293,6 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool
 		} else if ordering == work.TaskOrderingPriority {
 			order = work.TaskUrgencyRankSQL + ",created_at,id"
 		}
-		// Filter before choosing a representative; load complete membership separately
-		// in this snapshot so a search never hides a group resolution target.
 		query = `WITH matching AS (
  SELECT task.* FROM work_tasks task
  JOIN access_locations location ON location.practice_id=task.practice_id AND location.id=task.location_id` + taskQueryFilter + ` AND task.state='OPEN'
@@ -651,8 +647,6 @@ func normalizedDigits(value string) string {
 	return digits.String()
 }
 
-// Responsibilities narrow categorized follow-up within an authorized scope.
-// Communication reviews remain shared even after staff categorize them.
 const taskResponsibilityFilter = `
  AND ($11::text <> 'mine' OR task.category IS NULL
  OR ` + work.TaskIsCommunicationReviewSQL + `
@@ -661,8 +655,6 @@ const taskResponsibilityFilter = `
  WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
  AND responsibility.category=task.category AND responsibility.account_email=$12))`
 
-// Category menu totals span all categories in the responsibility-scoped query.
-// Only the row query applies the selected category.
 func taskCountFilter() string {
 	return strings.NewReplacer("$11", "$6", "$12", "$7").Replace(taskResponsibilityFilter)
 }

@@ -73,7 +73,6 @@ test("recovery source loads the newest voicemail and keeps it through a failed r
     call: { id: "call-voicemail" },
     failure: { kind: "unavailable", retryable: true, status: 503 },
   })
-  // The call reloads once, after the refreshed Task read lands.
   assert.deepEqual(backend.requests.slice(2), [
     "GET /v1/tasks/task-1",
     "GET /v1/calling/calls/call-voicemail",

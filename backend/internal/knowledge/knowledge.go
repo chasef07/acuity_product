@@ -27,8 +27,6 @@ func validateSections(sections []Section) error {
 	}
 	seen := map[string]bool{}
 	for index, section := range sections {
-		// Sections remain whole so restrictions cannot be separated from their facts.
-		// The provider rejects any input exceeding its token limit; never truncate.
 		if !sectionID.MatchString(section.ID) || seen[section.ID] || strings.TrimSpace(section.Title) == "" || utf8.RuneCountInString(section.Title) > 200 || strings.TrimSpace(section.Text) == "" || utf8.RuneCountInString(section.Text) > 6000 {
 			return fmt.Errorf("section %d needs a unique safe ID, nonempty title (up to 200 characters), and complete text (up to 6000 characters): %w", index+1, ErrInvalidInput)
 		}
@@ -48,7 +46,6 @@ func optionalID(id string) any {
 	return id
 }
 
-// ValidateImport validates the non-patient source manifest without provider or DB work.
 func ValidateImport(cmd ImportCommand) error {
 	if _, err := uuid.Parse(cmd.ID); err != nil {
 		return ErrInvalidInput
@@ -70,15 +67,11 @@ func ValidateImport(cmd ImportCommand) error {
 	return nil
 }
 
-// ReplaceCorpus prepares all vectors before opening a transaction. The final
-// transaction inserts complete immutable evidence and changes exactly one pointer.
-// Its caller is the operator CLI using an existing privileged database credential.
 func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision, error) {
 	if err := ValidateImport(cmd); err != nil {
 		return Revision{}, err
 	}
 	hash := hashSections(cmd.Sections)
-	// Read-only preflight rejects bad routes/stale input without a provider request.
 	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Revision{}, err
@@ -101,7 +94,6 @@ func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision
 		return Revision{}, err
 	}
 	defer tx.Rollback(ctx)
-	// The route and corpus locks serialize concurrent import attempts for this scope.
 	var route string
 	if err = tx.QueryRow(ctx, `SELECT office_key FROM access_abita_office_locations WHERE practice_id=$1 AND office_key=$2 FOR SHARE`, cmd.PracticeID, cmd.OfficeKey).Scan(&route); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -223,9 +215,6 @@ func (m *Module) embed(ctx context.Context, texts []string, task TaskType) ([]st
 	return result, nil
 }
 
-// Search authorizes before embedding and again when reading the current pointer.
-// The embedding provider is never called while a DB connection is held. Only the
-// current revision is queried; an unavailable corpus never falls back to files.
 func (m *Module) Search(ctx context.Context, identity access.ServiceIdentity, officeKey, query string) (SearchResult, error) {
 	started := time.Now()
 	empty := SearchResult{Outcome: "temporary_failure", Passages: []Passage{}}
@@ -269,8 +258,6 @@ func (m *Module) Search(ctx context.Context, identity access.ServiceIdentity, of
 	}
 	var revision, model string
 	var dimensions int
-	// Pointer selection is the retrieval linearization point. Revision rows are
-	// immutable, so subsequent passage reads stay coherent if an import commits.
 	err = tx.QueryRow(ctx, `SELECT r.id::text,r.embedding_model,r.embedding_dimensions FROM knowledge_corpora c JOIN knowledge_revisions r ON r.id=c.revision_id WHERE c.practice_id=$1 AND c.office_key=$2 `, identity.PracticeID, officeKey).Scan(&revision, &model, &dimensions)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

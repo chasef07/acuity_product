@@ -19,7 +19,6 @@ import (
 	"github.com/oasdiff/yaml3"
 )
 
-// Source contains only reviewed content and routing, never execution credentials.
 type Source struct {
 	PracticeID string  `yaml:"practiceId" json:"practiceId"`
 	OfficeKey  string  `yaml:"officeKey" json:"officeKey"`
@@ -63,8 +62,6 @@ func sourceCommand(source Source, commit, expected string) (knowledge.ImportComm
 	if err != nil {
 		return knowledge.ImportCommand{}, err
 	}
-	// Same reviewed commit/content/parent is replay-safe. Republishing after another
-	// revision receives a distinct ID; concurrency is still enforced by ReplaceCorpus.
 	id := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(commit+"\n"+expected+"\n"), body...)).String()
 	if expected == "none" {
 		expected = ""
@@ -101,7 +98,6 @@ func runSource(path, commit, expected string, apply bool) error {
 	return applyPublication(command, apply, expected == "")
 }
 
-// Publication provenance must identify the exact reviewed bytes, not a caller claim.
 func verifySourceAtCommit(path, commit string, body []byte) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -145,7 +141,6 @@ func exportSource(practice, office string) error {
 		return err
 	}
 	defer pool.Close()
-	// A single SQL statement observes one active revision and all its passages.
 	rows, err := pool.Query(ctx, `SELECT c.revision_id::text,p.section_id,p.title,p.text FROM knowledge_corpora c JOIN knowledge_passages p ON p.revision_id=c.revision_id WHERE c.practice_id=$1 AND c.office_key=$2 ORDER BY p.section_id`, practice, office)
 	if err != nil {
 		return errors.New("could not read active corpus")

@@ -27,8 +27,6 @@ func TestBookingPatientClassificationUsesSuccessfulRegistration(t *testing.T) {
 	if group != "new" {
 		t.Fatalf("successful new-patient registration classified as %q, want new", group)
 	}
-	// Receipt labels are semantic evidence; provider-specific numeric IDs alone
-	// are not. Exercise every current catalog label through the source trigger.
 	for _, tc := range []struct{ label, want string }{
 		{"New Adult Medical", "new"},
 		{"New Pediatric Medical", "new"},

@@ -209,7 +209,6 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
     ).toHaveText(["Total", "4", "6", "66.7%"])
-    // Conversion compares new/existing as grouped daily bars.
     await expect(performance.locator(".recharts-bar")).toHaveCount(2)
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-conversion.png"),
@@ -226,7 +225,6 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
       page.getByRole("button", { name: "Duration", exact: true }),
     ).toHaveAttribute("aria-pressed", "true")
     await expect(performance.locator(".recharts-bar")).toHaveCount(2)
-    // Missing duration measurements remain blank.
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-duration.png"),
       fullPage: true,

@@ -9,8 +9,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
-// EligibilityCheck is a staff-facing projection of saved intake evidence. It
-// never joins patients by phone or treats a payer response as a booking receipt.
 type EligibilityCheck struct {
 	InsuranceResolution *InsuranceResolution
 
@@ -39,7 +37,6 @@ type savedEligibilityCheck struct {
 	Result eligibilityResult `json:"result"`
 }
 
-// InsuranceResolution keeps registration plan mapping distinct from coverage evidence.
 type InsuranceResolution struct {
 	Status   string   `json:"status"`
 	Plans    []string `json:"plans"`
@@ -172,7 +169,6 @@ func projectEligibilityResult(c savedEligibilityCheck, result eligibilityResult)
 			out.PatientName = strings.TrimSpace(result.MatchedPatient.FirstName + " " + result.MatchedPatient.LastName)
 		}
 	}
-	// Expose benefit evidence, not the raw subscriber, address, member ID, or X12.
 	var provider struct {
 		Benefits   []map[string]any `json:"benefitsInformation"`
 		PlanStatus []struct {

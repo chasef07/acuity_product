@@ -202,7 +202,6 @@ function CallContent({
       setSaveError("Your issue could not be saved. Try again.")
       return
     }
-    // A conflict means someone else reported first; reload to show their reason.
     if (outcome.ok) setFlagged(outcome.data)
     else call.retry()
     setReporting(false)

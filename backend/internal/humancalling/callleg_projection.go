@@ -373,9 +373,6 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 		return err
 	}
 
-	// Inbound fanout is intentionally narrower than the portal's
-	// CallingEnabled field: access_calling_scopes contains Staff and Platform
-	// Operators, while Admin members remain excluded.
 	rows, err := tx.Query(ctx, `
 		SELECT calling_scope.user_subject, lease.session_id, credential.provider_sip_username
 		FROM access_calling_scopes calling_scope
@@ -648,7 +645,6 @@ func (m *Module) applyStaffInitiated(
 			return fmt.Errorf("revalidate Staff answer authorization: %w", err)
 		}
 		if priorLegState == "ANSWERED" || priorLegState == "BRIDGE_PENDING" || priorLegState == "BRIDGED" {
-			// Reordered duplicate answer evidence must not create another Bridge.
 		} else if !staffEligible || !leaseEligible || terminalOutcome != nil ||
 			(priorLegState != "PENDING" && priorLegState != "DIALING" &&
 				priorLegState != "RINGING") {
@@ -1089,8 +1085,6 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			return fmt.Errorf("mark losing Staff CallLeg ending: %w", err)
 		}
 		if loser.controlID == "" {
-			// The Dial effect is uncertain. Its client_state remains reconcilable;
-			// an exact Hangup is committed as soon as provider identity appears.
 			continue
 		}
 		if _, err := m.insertCallLegCommand(
@@ -1407,7 +1401,6 @@ func (m *Module) applyHangupWithObservation(
 	}
 	if observationClaim != nil {
 		if current, err := observationClaim.current(ctx, tx, legID); err != nil || !current {
-			// Roll back the synthetic fact claim along with the stale inference.
 			return err
 		}
 	}

@@ -45,12 +45,9 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 		practices[office.tenant].Locations = append(practices[office.tenant].Locations,
 			access.LocationProvision{Key: office.key, Name: "Synthetic " + office.key, AbitaOfficeKeys: routes})
 	}
-	// This Product handoff route has its own Location. Agent optical trunks use
-	// the canonical sweetwater key, never an inferred corpus alias.
 	practices[0].Locations = append(practices[0].Locations,
 		access.LocationProvision{Key: "sweetwater-optical", Name: "Synthetic optical", AbitaOfficeKeys: []string{"sweetwater-optical"}})
 	for i := range practices {
-		// Identical route keys across Practices must still select different facts.
 		practices[i].Locations = append(practices[i].Locations,
 			access.LocationProvision{Key: "shared-office", Name: "Synthetic shared route", AbitaOfficeKeys: []string{"shared-office"}})
 	}
@@ -75,8 +72,6 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Every passage and query deliberately has the same embedding. Passing this
-	// test therefore proves authorization/scope selection, not convenient ranking.
 	embeddings := &knowledgeEmbeddingDouble{}
 	module, err := knowledge.New(pool, accessModule, embeddings, knowledge.Config{})
 	if err != nil {
@@ -145,7 +140,6 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 		command := manifests[fmt.Sprintf("shared-%d", tenant)]
 		check(tenant, command.OfficeKey, command.ID, command.Sections[0].Text)
 	}
-	// Two populated routes sharing a Location remain independent documents.
 	alias := manifest(1, "dev", "Synthetic legacy route hours differ from the canonical route.")
 	if _, err := module.ReplaceCorpus(ctx, alias); err != nil {
 		t.Fatal(err)

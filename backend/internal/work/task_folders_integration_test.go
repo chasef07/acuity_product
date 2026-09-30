@@ -9,8 +9,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
-// Every stored origin must land in exactly one folder, and priority cursors
-// must rank urgency exactly as the Queue orders it.
 func TestTaskClassificationCoversEveryOriginAndUrgency(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.Open(t)

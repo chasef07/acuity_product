@@ -1,5 +1,3 @@
-// knowledge-import replaces one complete office corpus. It is an explicit
-// operator action and has no browser, agent-write, or background-worker path.
 package main
 
 import (
@@ -140,7 +138,6 @@ func openPool(ctx context.Context) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, errors.New("invalid import database configuration")
 	}
-	// Cloud SQL Proxy connections retain the secret's database/user/password.
 	if host := os.Getenv("KNOWLEDGE_DATABASE_HOST"); host != "" {
 		if host != "127.0.0.1" {
 			return nil, errors.New("KNOWLEDGE_DATABASE_HOST override only supports the loopback Cloud SQL proxy")

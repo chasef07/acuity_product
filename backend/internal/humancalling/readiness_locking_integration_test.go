@@ -10,9 +10,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 )
 
-// Reproduce both production lock cycles: readiness locks the operator's
-// Practices before waiting for a Call or lease, while call processing owns
-// that row and advances the Practice workspace version before committing.
 func TestOperatorReadinessDoesNotDeadlockWorkspaceChange(t *testing.T) {
 	for _, lockedResource := range []string{"lease", "call"} {
 		t.Run(lockedResource, func(t *testing.T) {

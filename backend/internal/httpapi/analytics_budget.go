@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// Aggregate reports share one permit per portal instance. Requests never queue
-// for this permit or acquire another connection while an analytics query runs.
 func (server *Server) beginAnalytics(w http.ResponseWriter, r *http.Request) (context.Context, func(), bool) {
 	if !server.analyticsActive.CompareAndSwap(false, true) {
 		w.Header().Set("Retry-After", "1")
