@@ -1,56 +1,43 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { CheckIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { portalClient } from "@/lib/api/client"
-import { getOperatorAiCallTags, setOperatorAiCallTag } from "@/lib/api/generated/sdk.gen"
 import type { OperatorAiCallTags } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import { setCallTag, useCallTags } from "@/lib/clients/agent-calls"
 
 export function CallManualTags({ interactionID, onChange }: {
   interactionID: string
   onChange: (id: string, tags: OperatorAiCallTags) => void
 }) {
-  const [tags, setTags] = useState<OperatorAiCallTags>()
+  const loaded = useCallTags(interactionID)
+  const [saved, setSaved] = useState<OperatorAiCallTags>()
   const [name, setName] = useState("")
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState("")
-  const [retry, setRetry] = useState(0)
-
-  useEffect(() => {
-    const controller = new AbortController()
-    void (async () => {
-      try {
-        const token = await getAccessToken()
-        if (!token) throw new Error("Sign in again to load tags.")
-        const result = await getOperatorAiCallTags({ client: portalClient(token), path: { interactionId: interactionID }, signal: controller.signal })
-        if (!result.data) throw new Error("Tags could not be loaded.")
-        if (!controller.signal.aborted) { setTags(result.data); setError("") }
-      } catch (error) {
-        if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Tags could not be loaded.")
-      }
-    })()
-    return () => controller.abort()
-  }, [interactionID, retry])
+  const [saveError, setSaveError] = useState("")
+  const tags = saved ?? (loaded.status === "ready" ? loaded.data : undefined)
+  const error =
+    saveError ||
+    (loaded.status === "failed"
+      ? loaded.failure.kind === "signedOut" || loaded.failure.kind === "unauthenticated"
+        ? "Sign in again to load tags."
+        : "Tags could not be loaded."
+      : "")
 
   async function save(tag: string, applied: boolean) {
     if (saving) return
     setSaving(true)
-    setError("")
-    try {
-      const token = await getAccessToken()
-      if (!token) throw new Error("Sign in again to save tags.")
-      const result = await setOperatorAiCallTag({ client: portalClient(token), path: { interactionId: interactionID }, body: { name: tag, applied } })
-      if (!result.data) throw new Error("Tag could not be saved. Please try again.")
-      setTags(result.data)
+    setSaveError("")
+    const result = await setCallTag(interactionID, tag, applied)
+    setSaving(false)
+    if (result.ok) {
+      setSaved(result.data)
       onChange(interactionID, result.data)
       setName("")
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Tag could not be saved. Please try again.")
-    } finally {
-      setSaving(false)
+    } else {
+      const { kind } = result.failure
+      setSaveError(kind === "signedOut" || kind === "unauthenticated" ? "Sign in again to save tags." : "Tag could not be saved. Please try again.")
     }
   }
 
@@ -75,7 +62,7 @@ export function CallManualTags({ interactionID, onChange }: {
         </form>
       </>}
       {saving && <p role="status" className="mt-2 text-xs text-muted-foreground">Saving tag…</p>}
-      {error && <div className="mt-2 text-xs text-destructive" role="alert">{error}{!tags && <Button variant="ghost" size="xs" onClick={() => { setError(""); setRetry((value) => value + 1) }}>Retry loading tags</Button>}</div>}
+      {error && <div className="mt-2 text-xs text-destructive" role="alert">{error}{!tags && <Button variant="ghost" size="xs" onClick={loaded.retry}>Retry loading tags</Button>}</div>}
     </section>
   )
 }

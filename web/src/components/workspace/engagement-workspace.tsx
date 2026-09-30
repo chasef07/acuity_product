@@ -82,17 +82,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useCallingNavigation } from "@/components/workspace/calling-dock"
-import { completeTask, reopenTask } from "@/lib/api/generated/sdk.gen"
-import { portalClient } from "@/lib/api/client"
-import {
-  createMessageFollowUpTask,
-  getEngagementTimeline,
-  getMessageAttachment,
-  retryInboundMessageAttachment,
-  sendMessage,
-  sendMessageAgain,
-  uploadMessageAttachment,
-} from "@/lib/api/generated/sdk.gen"
 import type {
   ConversationTimelineItem,
   Message,
@@ -100,7 +89,16 @@ import type {
   Task,
 } from "@/lib/api/generated/types.gen"
 import { aiCallTimelinePresentation } from "@/lib/ai-interactions"
-import { getAccessToken } from "@/lib/auth-client"
+import {
+  createFollowUpTask,
+  readMessageAttachment,
+  retryMessageAttachment,
+  sendMessage,
+  sendMessageAgain,
+  uploadMessageAttachment,
+  useEngagementTimeline,
+} from "@/lib/clients/engagement"
+import { completeTask, reopenTask } from "@/lib/clients/tasks"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import type { EngagementSummary } from "@/lib/workspace-projection"
@@ -371,71 +369,32 @@ function MessageConversation({
   onCallOpen?: (callID: string) => void
   onAIInteractionOpen?: (interactionID: string) => void
 }) {
-  const timelineKey = `${timelineSource.practiceID}:${timelineSource.phone}`
-  const [items, setItems] = useState<ConversationTimelineItem[]>([])
-  const [cursor, setCursor] = useState("")
-  const [loading, setLoading] = useState(true)
-  const [loadingOlder, setLoadingOlder] = useState(false)
+  const {
+    items,
+    nextCursor: cursor,
+    loading,
+    loadingOlder,
+    failure,
+    sent,
+    refresh,
+    showOlder,
+    showSent,
+  } = useEngagementTimeline(timelineSource)
+  const error = failure ? "The conversation could not be loaded." : ""
   const [newActivity, setNewActivity] = useState(false)
-  const [error, setError] = useState("")
-  const generation = useRef(0)
-  const committedMessage = useRef<
-    { id: string; visibleUntil: number } | undefined
-  >(undefined)
+  const requested = useRef(false)
   const scroller = useRef<HTMLDivElement | null>(null)
   const atLatest = useRef(true)
-  const initialized = useRef(false)
   // Capture the Task before requesting its conversation; later Task refreshes
   // cannot authorize completion of evidence this request did not review.
   const currentReviewTask = useRef(reviewTask)
   useEffect(() => { currentReviewTask.current = reviewTask }, [reviewTask])
 
-  const loadPage = useCallback(
-    (token: string, cursor = "") =>
-      getEngagementTimeline({
-        client: portalClient(token),
-        path: { phone: timelineSource.phone },
-        query: {
-          practiceId: timelineSource.practiceID,
-          groupCalls: true,
-          ...(cursor ? { cursor } : {}),
-          limit: 50,
-        },
-      }).catch(() => undefined),
-    [timelineSource.phone, timelineSource.practiceID],
-  )
-
   const loadLatest = useCallback(
     async (scroll = false) => {
-      if (!timelineKey) return
-      const requestGeneration = ++generation.current
+      requested.current = true
       const reviewedTask = currentReviewTask.current
-      setLoading(true)
-      const token = await getAccessToken()
-      const result = token ? await loadPage(token) : undefined
-      if (requestGeneration !== generation.current) return
-      setLoading(false)
-      if (!result?.data) {
-        setError("The conversation could not be loaded.")
-        return
-      }
-      setError("")
-      initialized.current = true
-      setItems((current) => {
-        const committed = committedMessage.current
-        if (committed && Date.now() < committed.visibleUntil) {
-          const responseItem = current.find((item) => item.id === committed.id)
-          if (responseItem) {
-            return [
-              ...result.data.items.filter((item) => item.id !== committed.id),
-              responseItem,
-            ]
-          }
-        }
-        committedMessage.current = undefined
-        return result.data.items
-      })
-      setCursor(result.data.nextCursor)
+      if (!(await refresh())) return
       onTaskReviewed(reviewedTask)
       setNewActivity(false)
       if (scroll) {
@@ -447,51 +406,35 @@ function MessageConversation({
         )
       }
     },
-    [loadPage, onTaskReviewed, timelineKey],
+    [refresh, onTaskReviewed],
   )
 
+  // Reload a just-sent Message once its first delivery status can show.
+  const sentVisibleUntil = sent?.visibleUntil
   useEffect(() => {
-    const committed = committedMessage.current
-    if (!committed) return
+    if (sentVisibleUntil === undefined) return
     const timeout = window.setTimeout(
       () => void loadLatest(true),
-      Math.max(0, committed.visibleUntil - Date.now()),
+      Math.max(0, sentVisibleUntil - Date.now()),
     )
     return () => window.clearTimeout(timeout)
-  }, [loadLatest])
+  }, [loadLatest, sentVisibleUntil])
 
   useEffect(() => {
-    if (!timelineKey) return
     const timeout = window.setTimeout(() => {
       void loadLatest(true)
     }, 0)
     return () => window.clearTimeout(timeout)
-  }, [loadLatest, timelineKey])
+  }, [loadLatest])
 
   useEffect(() => {
-    if ((!initialized.current && generation.current === 0) || !timelineKey) return
+    if (!requested.current) return
     if (atLatest.current) {
       void loadLatest(true)
     } else {
       setNewActivity(true)
     }
-  }, [loadLatest, revision, timelineKey, reviewTask?.id, reviewTask?.version])
-
-  async function loadOlder() {
-    if (!cursor || loadingOlder) return
-    const requestGeneration = generation.current
-    setLoadingOlder(true)
-    const token = await getAccessToken()
-    if (!token) {
-      setLoadingOlder(false)
-      return
-    }
-    const result = await loadPage(token, cursor)
-    setLoadingOlder(false)
-    if (requestGeneration !== generation.current || !result?.data) return
-    setItems((current) => presentTimeline([...current, ...result.data.items]))
-    setCursor(result.data.nextCursor)
-  }
+  }, [loadLatest, revision, reviewTask?.id, reviewTask?.version])
 
   const conversationThread = items.find(
     (item) => item.message?.thread.locationId === locationID,
@@ -530,7 +473,7 @@ function MessageConversation({
                     variant="outline"
                     className="bg-background"
                     disabled={loadingOlder}
-                    onClick={() => void loadOlder()}
+                    onClick={() => void showOlder()}
                   >
                     {loadingOlder ? <Spinner /> : <RefreshCwIcon />}
                     Earlier activity
@@ -654,18 +597,7 @@ function MessageConversation({
         }
         onSent={(message) => {
           atLatest.current = true
-          if (message.delivery === "Sending") {
-            committedMessage.current = {
-              id: message.id,
-              visibleUntil: Date.now() + 750,
-            }
-            window.setTimeout(() => void loadLatest(true), 750)
-          }
-          setLoading(false)
-          setItems((current) => [
-            ...current.filter((item) => item.id !== message.id),
-            messageTimelineItem(message),
-          ])
+          showSent(message)
         }}
       />
     </div>
@@ -829,15 +761,6 @@ function TimelineEntry({
   return null
 }
 
-function messageTimelineItem(message: Message): ConversationTimelineItem {
-  return {
-    type: "MESSAGE",
-    id: message.id,
-    occurredAt: message.createdAt,
-    message,
-  }
-}
-
 function MessageEntry({
   message,
   showLocation,
@@ -863,22 +786,13 @@ function MessageEntry({
   async function createTask() {
     setPending(true)
     setError("")
-    const token = await getAccessToken()
-    if (!token) {
-      setPending(false)
-      return
-    }
-    const result = await createMessageFollowUpTask({
-      client: portalClient(token),
-      path: { messageId: message.id },
-      body: {},
-    }).catch(() => undefined)
+    const outcome = await createFollowUpTask(message)
     setPending(false)
-    if (!result?.data) {
+    if (!outcome.ok) {
       setError("A follow-up Task could not be created.")
       return
     }
-    onTaskCreated(result.data)
+    onTaskCreated(outcome.data)
     onChanged()
   }
 
@@ -892,24 +806,15 @@ function MessageEntry({
     if (!duplicateRisk) return
     setPending(true)
     setError("")
-    const token = await getAccessToken()
-    if (!token) {
-      setPending(false)
-      return
-    }
     if (!sendAgainAttemptKey.current) {
       sendAgainAttemptKey.current = crypto.randomUUID()
     }
-    const result = await sendMessageAgain({
-      client: portalClient(token),
-      path: { messageId: message.id },
-      body: {
-        idempotencyKey: sendAgainAttemptKey.current,
-        duplicateRiskAcknowledged: duplicateRisk,
-      },
-    }).catch(() => undefined)
+    const outcome = await sendMessageAgain(message, {
+      idempotencyKey: sendAgainAttemptKey.current,
+      duplicateRiskAcknowledged: duplicateRisk,
+    })
     setPending(false)
-    if (!result?.data) {
+    if (!outcome.ok) {
       setError("A new send attempt could not be created.")
       return
     }
@@ -1193,40 +1098,41 @@ function MessageAttachmentView({
       ? "Preparing attachment"
       : `${isPDF ? "PDF" : "Image"} · ${formatBytes(attachment.byteSize)}`
 
-  const loadBlob = useCallback(async () => {
+  const loadBlob = useCallback(async (signal?: AbortSignal) => {
     if (attachment.state !== "Stored") return
-    const token = await getAccessToken()
-    if (!token) {
-      setError("Sign in again to load the attachment.")
+    const outcome = await readMessageAttachment({ id: attachment.id }, signal)
+    if (!outcome.ok) {
+      setError(
+        outcome.failure.kind === "signedOut" ||
+          outcome.failure.kind === "unauthenticated"
+          ? "Sign in again to load the attachment."
+          : "Attachment unavailable.",
+      )
       return
     }
-    const result = await getMessageAttachment({
-      client: portalClient(token),
-      path: { attachmentId: attachment.id },
-    }).catch(() => undefined)
-    if (!result?.data) {
-      setError("Attachment unavailable.")
-      return
-    }
-    return result.data
+    return outcome.data
   }, [attachment.id, attachment.state])
 
   useEffect(() => {
     if (isPDF) return
-    let active = true
+    const request = new AbortController()
     let previewURL = ""
     const timeout = window.setTimeout(() => {
       setPending(true)
-      void loadBlob().then((blob) => {
-        if (!active) return
-        setPending(false)
-        if (!blob) return
-        previewURL = URL.createObjectURL(blob)
-        setObjectURL(previewURL)
-      })
+      loadBlob(request.signal).then(
+        (blob) => {
+          if (request.signal.aborted) return
+          setPending(false)
+          if (!blob) return
+          previewURL = URL.createObjectURL(blob)
+          setObjectURL(previewURL)
+        },
+        // loadBlob rejects only after this effect aborted it.
+        () => undefined,
+      )
     }, 0)
     return () => {
-      active = false
+      request.abort()
       window.clearTimeout(timeout)
       if (previewURL) URL.revokeObjectURL(previewURL)
     }
@@ -1240,18 +1146,9 @@ function MessageAttachmentView({
       return
     }
     setPending(true)
-    const token = await getAccessToken()
-    if (!token) {
-      setPending(false)
-      return
-    }
-    const result = await retryInboundMessageAttachment({
-      client: portalClient(token),
-      path: { attachmentId: attachment.id },
-      body: {},
-    }).catch(() => undefined)
+    const outcome = await retryMessageAttachment(attachment)
     setPending(false)
-    if (!result?.data) {
+    if (!outcome.ok) {
       setError("The attachment copy could not be retried.")
       return
     }
@@ -1481,29 +1378,10 @@ function MessageComposer({
       }
     }
     const attempt = draftAttempt.current
-    const token = await getAccessToken()
-    if (!token) {
-      setPending(false)
-      return
-    }
     let attachmentID = attempt.attachmentID
     if (file && !attachmentID) {
-      const upload = await uploadMessageAttachment({
-        client: portalClient(token),
-        body: {
-          practiceId: practiceID,
-          locationId: locationID,
-          fileName: file.name,
-          contentType: file.type as
-            | "image/jpeg"
-            | "image/png"
-            | "image/gif"
-            | "image/webp"
-            | "application/pdf",
-          contentBase64: await fileToBase64(file),
-        },
-      }).catch(() => undefined)
-      if (!upload?.data) {
+      const upload = await uploadMessageAttachment({ practiceID, locationID, file })
+      if (!upload.ok) {
         setPending(false)
         setError("The attachment could not be prepared.")
         return
@@ -1511,23 +1389,19 @@ function MessageComposer({
       attachmentID = upload.data.id
       attempt.attachmentID = attachmentID
     }
-    const result = await sendMessage({
-      client: portalClient(token),
-      body: {
-        practiceId: practiceID,
-        locationId: locationID,
-        ...(threadID ? { threadId: threadID } : {}),
-        ...(!threadID ? { destination: destination.trim() } : {}),
-        body: body.trim(),
-        ...(attachmentID ? { attachmentId: attachmentID } : {}),
-        idempotencyKey: attempt.idempotencyKey,
-      },
-    }).catch(() => undefined)
+    const outcome = await sendMessage({
+      practiceID,
+      locationID,
+      threadID,
+      destination: destination.trim(),
+      body: body.trim(),
+      attachmentID,
+      idempotencyKey: attempt.idempotencyKey,
+    })
     setPending(false)
-    if (!result?.data) {
-      const status = result?.response?.status
+    if (!outcome.ok) {
       setError(
-        status === 409
+        outcome.failure.kind === "conflict"
           ? "This destination cannot be messaged from the selected office."
           : "The message was not queued. Nothing was sent.",
       )
@@ -1536,7 +1410,7 @@ function MessageComposer({
     setBody("")
     setFile(undefined)
     draftAttempt.current = undefined
-    onSent(result.data.message)
+    onSent(outcome.data.message)
   }
 
   return (
@@ -1641,18 +1515,6 @@ function MessageComposer({
   )
 }
 
-function fileToBase64(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(reader.error)
-    reader.onload = () => {
-      const result = String(reader.result ?? "")
-      resolve(result.slice(result.indexOf(",") + 1))
-    }
-    reader.readAsDataURL(file)
-  })
-}
-
 function taskActivityDetail(
   activity: ConversationTimelineItem["taskActivity"],
   task: Task,
@@ -1741,17 +1603,16 @@ function TextConversationAction({ task, reviewedTask, onUpdated, onNext }: { tas
     if (pending || needsReview) return
     setPending(true)
     setError("")
-    try {
-      const token = await getAccessToken()
-      if (!token) throw new Error("Sign in again to update this conversation.")
-      const result = await (task.state === "OPEN" ? completeTask : reopenTask)({
-        client: portalClient(token), path: { taskId: task.id }, body: { expectedVersion: task.version },
-      })
-      if (!result.data) throw new Error("Could not update this conversation. Review the latest messages and try again.")
-      onUpdated(result.data)
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not update this conversation.")
-    } finally { setPending(false) }
+    const outcome = await (task.state === "OPEN" ? completeTask : reopenTask)(task)
+    setPending(false)
+    if (!outcome.ok) {
+      const { kind } = outcome.failure
+      setError(kind === "signedOut" || kind === "unauthenticated"
+        ? "Sign in again to update this conversation."
+        : "Could not update this conversation. Review the latest messages and try again.")
+      return
+    }
+    onUpdated(outcome.data)
   }
   return <div className="flex items-center gap-2">
     {error && <span role="alert" className="max-w-52 text-xs text-destructive">{error}</span>}

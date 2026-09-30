@@ -82,7 +82,7 @@ func (m *Module) QueryTasks(
 		cursor.Present,
 		cursor.OrderedAt,
 		cursor.ID,
-		urgencyRank(cursor.Urgency),
+		cursor.Urgency.Rank(),
 		limit+1,
 		command.Folder,
 		command.Responsibility, strings.ToLower(command.Identity.Email), command.Category, command.Kind,
@@ -192,7 +192,7 @@ const taskColumns = `
 		task.source_call_id,
 		COALESCE(task.source_review_key, ''),
 		task.source_message,
-        COALESCE(CASE WHEN task.origin='INBOUND_MESSAGE_REVIEW' THEN (
+        COALESCE(CASE WHEN ` + work.TaskIsTextReviewSQL + ` THEN (
           SELECT COALESCE(NULLIF(message.body,''),'Attachment') FROM messaging_messages message
           WHERE message.thread_id=task.message_thread_id AND message.direction='INBOUND'
           ORDER BY message.created_at DESC,message.id DESC LIMIT 1
@@ -249,7 +249,7 @@ const taskProjectionJoins = `
 
 // Text attention expires from the latest inbound message, not Task updates or
 // outbound activity. The Task and its history remain available in other views.
-const taskHasRecentTextAttention = `(task.origin <> 'INBOUND_MESSAGE_REVIEW'
+const taskHasRecentTextAttention = `(NOT ` + work.TaskIsTextReviewSQL + `
  OR task.state <> 'OPEN'
  OR EXISTS (
    SELECT 1 FROM messaging_messages recent_message
@@ -258,22 +258,20 @@ const taskHasRecentTextAttention = `(task.origin <> 'INBOUND_MESSAGE_REVIEW'
      AND recent_message.created_at >= CURRENT_TIMESTAMP - INTERVAL '120 hours'
  ))`
 
-const taskIsSpringHillReview = `(task.origin='APPOINTMENT_REVIEW' AND EXISTS (
+const taskIsSpringHillReview = `(` + work.TaskIsAppointmentReviewSQL + ` AND EXISTS (
  SELECT 1 FROM access_abita_office_locations route
  WHERE route.practice_id=task.practice_id AND route.location_id=task.location_id
  AND route.office_key='spring-hill'
 ))`
-
-const taskIsFollowUp = `task.origin NOT IN ('APPOINTMENT_REVIEW','INBOUND_MESSAGE_REVIEW','MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')`
 
 const taskQueryFilter = `
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter + `
  AND ($13::text = '' OR task.category=$13)
  AND ($14::text <> 'texts' OR ` + taskHasRecentTextAttention + `)
- AND ($14::text = '' OR ($14='texts' AND task.origin='INBOUND_MESSAGE_REVIEW') OR ($14='calls' AND task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))
+ AND ($14::text = '' OR ($14='texts' AND ` + work.TaskIsTextReviewSQL + `) OR ($14='calls' AND ` + work.TaskIsCallRecoverySQL + `)
  OR ($14='appointments' AND ` + taskIsSpringHillReview + `)
- OR ($14='follow_up' AND ` + taskIsFollowUp + `))
+ OR ($14='follow_up' AND ` + work.TaskIsFollowUpSQL + `))
 		AND (
 			$3 = ''
 				OR strpos(lower(task.title), lower($3)) > 0
@@ -284,14 +282,8 @@ const taskQueryFilter = `
 		)
 		AND (
 			$10::text = ''
-			OR ($10::text = 'work' AND task.origin NOT IN (
-				'MISSED_CALL_RECOVERY',
-				'VOICEMAIL_RECOVERY'
-			))
-			OR ($10::text = 'missed_calls' AND task.origin IN (
-				'MISSED_CALL_RECOVERY',
-				'VOICEMAIL_RECOVERY'
-			))
+			OR ($10::text = 'work' AND NOT ` + work.TaskIsCallRecoverySQL + `)
+			OR ($10::text = 'missed_calls' AND ` + work.TaskIsCallRecoverySQL + `)
 		)`
 
 func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool) string {
@@ -301,7 +293,7 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool
 		if ordering == work.TaskOrderingRecent {
 			order = "updated_at DESC,id DESC"
 		} else if ordering == work.TaskOrderingPriority {
-			order = "CASE urgency WHEN 'high_priority' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,created_at,id"
+			order = work.TaskUrgencyRankSQL + ",created_at,id"
 		}
 		// Filter before choosing a representative; load complete membership separately
 		// in this snapshot so a search never hides a group resolution target.
@@ -309,7 +301,7 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool
  SELECT task.* FROM work_tasks task
  JOIN access_locations location ON location.practice_id=task.practice_id AND location.id=task.location_id` + taskQueryFilter + ` AND task.state='OPEN'
  ), ranked AS (
- SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category,origin ORDER BY ` + order + `) AS member_rank FROM matching
+ SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category,origin ORDER BY ` + order + `) AS member_rank FROM matching task
  ), group_candidates AS (SELECT * FROM ranked WHERE member_rank=1) ` + taskQueryColumns + " FROM group_candidates task" + taskProjectionJoins + " WHERE true"
 	}
 	switch {
@@ -318,26 +310,14 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool
 			AND task.state = 'OPEN'
 			AND (
 				NOT $5
-				OR CASE task.urgency
-					WHEN 'high_priority' THEN 0
-					WHEN 'normal' THEN 1
-					ELSE 2
-				END > $8
+				OR ` + work.TaskUrgencyRankSQL + ` > $8
 				OR (
-					CASE task.urgency
-						WHEN 'high_priority' THEN 0
-						WHEN 'normal' THEN 1
-						ELSE 2
-					END = $8
+					` + work.TaskUrgencyRankSQL + ` = $8
 					AND (task.created_at, task.id::text) > ($6, $7)
 				)
 			)
 		ORDER BY
-			CASE task.urgency
-				WHEN 'high_priority' THEN 0
-				WHEN 'normal' THEN 1
-				ELSE 2
-			END,
+			` + work.TaskUrgencyRankSQL + `,
 			task.created_at,
 			task.id
 		LIMIT $9`
@@ -515,11 +495,12 @@ func queryTaskFolderCounts(
 	err := tx.QueryRow(ctx, `
 		WITH scoped AS (
 			SELECT
-				task.origin,
 				task.category,
+                `+work.TaskIsCallRecoverySQL+` AS call_recovery,
+                `+work.TaskIsTextReviewSQL+` AS text_review,
                 `+taskHasRecentTextAttention+` AS recent_text_attention,
                 `+taskIsSpringHillReview+` AS spring_hill_review,
-                `+taskIsFollowUp+` AS follow_up
+                `+work.TaskIsFollowUpSQL+` AS follow_up
 			FROM work_tasks task
 			JOIN access_locations location
 				ON location.practice_id = task.practice_id
@@ -540,7 +521,7 @@ func queryTaskFolderCounts(
 				category,
 				CASE
 					WHEN $9::text='follow_up' AND NOT follow_up THEN 'review'
-                    WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AND $8::text <> ''
+                    WHEN call_recovery AND $8::text <> ''
 						THEN 'missed_calls'
 					ELSE 'tasks'
 				END AS folder
@@ -548,14 +529,14 @@ func queryTaskFolderCounts(
 		)
 		SELECT
 			count(*) FILTER (WHERE folder = 'tasks'),
-			(SELECT count(*) FROM work_tasks recovery JOIN access_locations recovery_location ON recovery_location.id=recovery.location_id
- WHERE recovery.practice_id=$1 AND recovery.location_id=ANY($2::uuid[]) AND recovery.state='OPEN'
- AND recovery.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')
- AND ($3='' OR strpos(lower(recovery.title),lower($3))>0
- OR strpos(lower(COALESCE(recovery.caller_name,'')),lower($3))>0
+			(SELECT count(*) FROM work_tasks task JOIN access_locations recovery_location ON recovery_location.id=task.location_id
+ WHERE task.practice_id=$1 AND task.location_id=ANY($2::uuid[]) AND task.state='OPEN'
+ AND `+work.TaskIsCallRecoverySQL+`
+ AND ($3='' OR strpos(lower(task.title),lower($3))>0
+ OR strpos(lower(COALESCE(task.caller_name,'')),lower($3))>0
  OR strpos(lower(recovery_location.name),lower($3))>0
- OR strpos(lower(COALESCE(recovery.category,'')),lower($3))>0
- OR ($4<>'' AND recovery.phone_digits LIKE '%'||$4||'%'))),
+ OR strpos(lower(COALESCE(task.category,'')),lower($3))>0
+ OR ($4<>'' AND task.phone_digits LIKE '%'||$4||'%'))),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'billing'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'appointments'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'documentation'),
@@ -566,8 +547,8 @@ func queryTaskFolderCounts(
  count(*) FILTER (WHERE folder='tasks' AND category='insurance'),
  count(*) FILTER (WHERE folder='tasks' AND category='pre_op'),
  count(*) FILTER (WHERE folder='tasks' AND category='post_op'),
- (SELECT count(*) FROM scoped WHERE origin='INBOUND_MESSAGE_REVIEW' AND recent_text_attention),
- (SELECT count(*) FROM scoped WHERE origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')),
+ (SELECT count(*) FROM scoped WHERE text_review AND recent_text_attention),
+ (SELECT count(*) FROM scoped WHERE call_recovery),
  (SELECT count(*) FROM scoped WHERE spring_hill_review)
 		FROM foldered
 	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.Folder, command.Kind).Scan(
@@ -660,17 +641,6 @@ func decodeTaskCursor(
 	return cursor, nil
 }
 
-func urgencyRank(urgency work.TaskUrgency) int {
-	switch urgency {
-	case work.TaskUrgencyHighPriority:
-		return 0
-	case work.TaskUrgencyNormal:
-		return 1
-	default:
-		return 2
-	}
-}
-
 func normalizedDigits(value string) string {
 	var digits strings.Builder
 	for _, character := range value {
@@ -685,7 +655,7 @@ func normalizedDigits(value string) string {
 // Communication reviews remain shared even after staff categorize them.
 const taskResponsibilityFilter = `
  AND ($11::text <> 'mine' OR task.category IS NULL
- OR task.origin IN ('APPOINTMENT_REVIEW','INBOUND_MESSAGE_REVIEW','MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')
+ OR ` + work.TaskIsCommunicationReviewSQL + `
  OR NOT EXISTS (SELECT 1 FROM work_responsibility_locations configured WHERE configured.practice_id=task.practice_id AND configured.location_id=task.location_id)
  OR EXISTS (SELECT 1 FROM work_responsibilities responsibility
  WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id

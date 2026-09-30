@@ -33,6 +33,13 @@ type StartOutboundCallCommand struct {
 	RetryOfCallID  string
 }
 
+type RetryOutboundCallCommand struct {
+	Identity       access.Identity
+	SessionID      string
+	IdempotencyKey string
+	CallID         string
+}
+
 type ConfirmOutboundMediaCommand struct {
 	Identity   access.Identity
 	SessionID  string
@@ -426,6 +433,37 @@ func (m *Module) StartOutboundCall(
 		return Call{}, fmt.Errorf("commit outbound Call: %w", err)
 	}
 	return m.ReadCall(ctx, command.Identity, callID)
+}
+
+// RetryOutboundCall starts a new attempt linked to an earlier Call the actor can
+// read. A Task Call retries through its Task; a standalone Call retries the same
+// Location and destination. StartOutboundCall still owns the retry's
+// authorization, idempotency, and terminal-attempt checks.
+func (m *Module) RetryOutboundCall(
+	ctx context.Context,
+	command RetryOutboundCallCommand,
+) (Call, error) {
+	previous, err := m.ReadCall(ctx, command.Identity, command.CallID)
+	if err != nil {
+		return Call{}, err
+	}
+	start := StartOutboundCallCommand{
+		Identity:       command.Identity,
+		SessionID:      command.SessionID,
+		IdempotencyKey: command.IdempotencyKey,
+		RetryOfCallID:  previous.ID,
+	}
+	switch previous.EntryPoint {
+	case CallEntryTask:
+		start.TaskID = previous.TaskID
+	case CallEntryStandalone:
+		start.PracticeID = previous.PracticeID
+		start.LocationID = previous.LocationID
+		start.Destination = previous.Phone
+	default:
+		return Call{}, ErrConflict
+	}
+	return m.StartOutboundCall(ctx, start)
 }
 
 type outboundCallerIDQuerier interface {

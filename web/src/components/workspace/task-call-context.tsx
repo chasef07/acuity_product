@@ -17,22 +17,18 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
-import { portalAPIURL, portalClient } from "@/lib/api/client"
-import {
-  completeTask,
-  getCallingCall,
-  getTaskOutboundEligibility,
-  issueCallingRecordingPlayback,
-  issueCallingVoicemailPlayback,
-  readTask,
-  renameTask,
-  reopenTask,
-} from "@/lib/api/generated/sdk.gen"
 import type {
   CallingCall,
   Task,
 } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import {
+  issueRecordingPlayback,
+  newestRecoveryInteraction,
+  type RecordingKind,
+  useRecoverySource,
+  useTaskCallEligibility,
+} from "@/lib/clients/calls"
+import { completeTask, readTask, renameTask, reopenTask } from "@/lib/clients/tasks"
 import { formatUSPhone } from "@/lib/phone"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 
@@ -70,13 +66,8 @@ export function TaskCallContext({
 }: TaskCallContextProps) {
   const openRecoveryTask = useCallback(
     async (taskID: string) => {
-      const token = await getAccessToken()
-      if (!token) return
-      const result = await readTask({
-        client: portalClient(token),
-        path: { taskId: taskID },
-      }).catch(() => undefined)
-      if (result?.data) onTaskUpdated(result.data)
+      const outcome = await readTask(taskID)
+      if (outcome.ok) onTaskUpdated(outcome.data)
     },
     [onTaskUpdated],
   )
@@ -148,14 +139,8 @@ function TaskWorkspace({
   }
 
   async function refreshTask() {
-    const token = await getAccessToken()
-    if (!token) return undefined
-    const latest = await readTask({
-      client: portalClient(token),
-      path: { taskId: task.id },
-    }).catch(() => undefined)
-    if (latest?.data) onTaskUpdated(latest.data)
-    return latest?.data
+    const latest = await readTask(task.id)
+    if (latest.ok) onTaskUpdated(latest.data)
   }
 
   async function saveTitle() {
@@ -167,26 +152,15 @@ function TaskWorkspace({
     }
     setPending(true)
     setError("")
-    const token = await getAccessToken()
-    if (!token) {
-      setPending(false)
-      return
-    }
-    const result = await renameTask({
-      client: portalClient(token),
-      path: { taskId: task.id },
-      body: {
-        expectedVersion: task.version,
-        title: attempted,
-      },
-    }).catch(() => undefined)
+    const outcome = await renameTask(task, attempted)
     setPending(false)
-    if (result?.data) {
-      acceptUpdate(result.data)
+    if (outcome.ok) {
+      acceptUpdate(outcome.data)
       setEditing(false)
       return
     }
-    if (result?.response?.status === 409) {
+    if (outcome.failure.kind === "signedOut") return
+    if (outcome.failure.kind === "conflict") {
       await refreshTask()
       setDraft(attempted)
       setEditing(true)
@@ -202,25 +176,14 @@ function TaskWorkspace({
     if (pending || (action === "complete" && needsReview)) return
     setPending(true)
     setError("")
-    const token = await getAccessToken()
-    if (!token) {
-      setPending(false)
-      return
-    }
-    const request = action === "complete" ? completeTask : reopenTask
-    const result = await request({
-      client: portalClient(token),
-      path: { taskId: task.id },
-      body: {
-        expectedVersion: task.version,
-      },
-    }).catch(() => undefined)
+    const outcome = await (action === "complete" ? completeTask : reopenTask)(task)
     setPending(false)
-    if (result?.data) {
-      acceptUpdate(result.data, action === "complete")
+    if (outcome.ok) {
+      acceptUpdate(outcome.data, action === "complete")
       return
     }
-    if (result?.response?.status === 409) {
+    if (outcome.failure.kind === "signedOut") return
+    if (outcome.failure.kind === "conflict") {
       await refreshTask()
       setError("This Task changed elsewhere. The latest state is now loaded.")
       return
@@ -409,47 +372,11 @@ function RecoveryTaskSource({
   revision: number
   onUpdated: (task: Task, advance?: boolean) => void
 }) {
-  const [call, setCall] = useState<CallingCall>()
-  const [interactions, setInteractions] = useState<Task["interactions"]>([])
-  const [error, setError] = useState("")
-
-  useEffect(() => {
-    let current = true
-    const timeout = window.setTimeout(async () => {
-      const token = await getAccessToken()
-      if (!token || !current) return
-      const client = portalClient(token)
-      const detail = await readTask({
-        client,
-        path: { taskId: task.id },
-      }).catch(() => undefined)
-      if (!current) return
-      if (!detail?.data) {
-        setError("Recovery source is temporarily unavailable.")
-        return
-      }
-      const linkedInteractions = detail.data.interactions
-      setInteractions(linkedInteractions)
-      const selected = newestRecoveryInteraction(linkedInteractions)
-      const callID = selected?.callId ?? task.callId
-      if (!callID) return
-      const result = await getCallingCall({
-        client,
-        path: { callId: callID },
-      }).catch(() => undefined)
-      if (!current) return
-      if (result?.data) {
-        setCall(result.data)
-        setError("")
-      } else {
-        setError("Recovery source is temporarily unavailable.")
-      }
-    }, 0)
-    return () => {
-      current = false
-      window.clearTimeout(timeout)
-    }
-  }, [revision, task.callId, task.id, task.version])
+  const { call, interactions, failure } = useRecoverySource(task, revision)
+  const error =
+    failure && failure.kind !== "signedOut"
+      ? "Recovery source is temporarily unavailable."
+      : ""
 
   const selected = newestRecoveryInteraction(interactions)
   const otherInteractions = [...interactions]
@@ -486,16 +413,6 @@ function RecoveryTaskSource({
   )
 }
 
-function newestRecoveryInteraction(interactions: Task["interactions"]) {
-  const newestFirst = [...interactions].sort((left, right) =>
-    right.occurredAt.localeCompare(left.occurredAt),
-  )
-  return (
-    newestFirst.find((interaction) => interaction.type === "VOICEMAIL") ??
-    newestFirst[0]
-  )
-}
-
 function VoicemailSource({ call, compact = false, taskID, onUpdated }: {
   call: CallingCall
   compact?: boolean
@@ -511,22 +428,20 @@ function VoicemailSource({ call, compact = false, taskID, onUpdated }: {
     setCompletionError("")
     const id = taskID ?? call.recoveryTask?.id
     if (!id) return
-    const token = await getAccessToken()
-    const result = token ? await readTask({ client: portalClient(token), path: { taskId: id } }).catch(() => undefined) : undefined
-    if (result?.data?.origin === "VOICEMAIL_RECOVERY" && result.data.state === "OPEN") {
+    const result = await readTask(id)
+    if (result.ok && result.data.origin === "VOICEMAIL_RECOVERY" && result.data.state === "OPEN") {
       const latestCallID = newestRecoveryInteraction(result.data.interactions)?.callId ?? result.data.callId
       if (latestCallID === call.id) reviewedTask.current = result.data
       else setCompletionError("A newer call needs review. This playback will keep that work open.")
     }
-    else if (!result?.data) setCompletionError("Could not load voicemail work. Use Mark done after listening.")
+    else if (!result.ok) setCompletionError("Could not load voicemail work. Use Mark done after listening.")
   }
   async function finishReview() {
     const task = reviewedTask.current
     if (!task) return
     reviewedTask.current = undefined
-    const token = await getAccessToken()
-    const result = token ? await completeTask({ client: portalClient(token), path: { taskId: task.id }, body: { expectedVersion: task.version } }).catch(() => undefined) : undefined
-    if (result?.data) onUpdated?.(result.data)
+    const result = await completeTask(task)
+    if (result.ok) onUpdated?.(result.data)
     else setCompletionError("Could not mark voicemail done. Review any new activity and use Mark done.")
   }
   return <>
@@ -547,22 +462,16 @@ function CallRecordingSource({ call }: { call: CallingCall }) {
   )
 }
 
-type RecordingKind = "voicemail" | "call"
-
 const recordingPresentation = {
   voicemail: {
     title: "Voicemail",
     label: "voicemail",
     audioLabel: "Voicemail recording",
-    playbackPath: "voicemail-playback",
-    issuePlayback: issueCallingVoicemailPlayback,
   },
   call: {
     title: "Call recording",
     label: "call recording",
     audioLabel: "Call recording",
-    playbackPath: "recording-playback",
-    issuePlayback: issueCallingRecordingPlayback,
   },
 } as const
 
@@ -607,27 +516,15 @@ function RecordingSource({
           : "Processing"
 
   async function loadAudio() {
-    const token = await getAccessToken()
-    if (!token) return
     setLoading(true)
     setError("")
     await onBeforePlay?.()
-    const issued = await presentation.issuePlayback({
-      client: portalClient(token),
-      path: { callId: call.id },
-    }).catch(() => undefined)
-    if (!issued?.data) {
-      setLoading(false)
-      setError("Playback authorization is unavailable.")
-      return
-    }
-    setAudioURL(
-      new URL(
-        `/v1/calling/${presentation.playbackPath}/${encodeURIComponent(issued.data.token)}`,
-        portalAPIURL(),
-      ).toString(),
-    )
+    const playback = await issueRecordingPlayback(kind, call.id)
     setLoading(false)
+    if (playback.ok) setAudioURL(playback.data)
+    else if (playback.failure.kind !== "signedOut") {
+      setError("Playback authorization is unavailable.")
+    }
   }
 
   return (
@@ -852,37 +749,21 @@ export function TaskCallAction({ task, canCall, historyHint, pending, onCall }: 
   pending: boolean
   onCall: (task: Task) => void
 }) {
-  const [callEligible, setCallEligible] = useState(false)
-  const [callReason, setCallReason] = useState("Checking Call route…")
-  useEffect(() => {
-    if (!canCall) return
-    let current = true
-    const timeout = window.setTimeout(async () => {
-      const token = await getAccessToken()
-      if (!token || !current) return
-      const result = await getTaskOutboundEligibility({
-        client: portalClient(token),
-        path: { taskId: task.id },
-      }).catch(() => undefined)
-      if (!current) return
-      if (!result?.data) {
-        setCallEligible(false)
-        setCallReason("Call eligibility is temporarily unavailable.")
-        return
-      }
-      setCallEligible(result.data.eligible)
-      setCallReason(result.data.reason)
-    }, 0)
-    return () => {
-      current = false
-      window.clearTimeout(timeout)
-    }
-  }, [canCall, historyHint, task.id, task.state, task.version])
-
-  const taskCallingEligible = canCall && callEligible
-  const taskCallingReason = canCall
-    ? callReason
-    : "Calling is not enabled for this account."
+  const eligibility = useTaskCallEligibility({ task, historyHint, enabled: canCall })
+  // Signed out, the route stays unchecked rather than reported unavailable.
+  const answer =
+    eligibility.status === "loading" ||
+    (eligibility.status === "failed" && eligibility.failure.kind === "signedOut")
+      ? undefined
+      : eligibility
+  const taskCallingEligible = canCall && answer?.status === "ready" && answer.data.eligible
+  const taskCallingReason = !canCall
+    ? "Calling is not enabled for this account."
+    : !answer
+      ? "Checking Call route…"
+      : answer.status === "ready"
+        ? answer.data.reason
+        : "Call eligibility is temporarily unavailable."
 
   return <Button variant="outline" size="sm" className="h-7 shadow-xs" disabled={!taskCallingEligible || pending} title={taskCallingEligible ? "Call this Task" : taskCallingReason} onClick={() => onCall(task)}>
     {pending ? <Spinner /> : <PhoneCallIcon />} {pending ? "Preparing…" : "Call"}

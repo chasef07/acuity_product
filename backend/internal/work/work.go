@@ -96,6 +96,36 @@ const (
 	TaskFolderMissedCalls TaskFolder = "missed_calls"
 )
 
+// Task classification predicates read a work_tasks row aliased as task, so
+// every Queue composes the same folder membership and priority order.
+const (
+	callRecoveryOrigins        = `'MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'`
+	communicationReviewOrigins = `'APPOINTMENT_REVIEW','INBOUND_MESSAGE_REVIEW',` + callRecoveryOrigins
+
+	// Missed-call and voicemail recoveries belong to Missed Calls & Voicemails.
+	TaskIsCallRecoverySQL      = `task.origin IN (` + callRecoveryOrigins + `)`
+	TaskIsTextReviewSQL        = `task.origin='INBOUND_MESSAGE_REVIEW'`
+	TaskIsAppointmentReviewSQL = `task.origin='APPOINTMENT_REVIEW'`
+	// Communication reviews appear only in their own folders; every other
+	// origin is follow-up work for My Tasks and All Tasks.
+	TaskIsCommunicationReviewSQL = `task.origin IN (` + communicationReviewOrigins + `)`
+	TaskIsFollowUpSQL            = `task.origin NOT IN (` + communicationReviewOrigins + `)`
+
+	// TaskUrgencyRankSQL orders priority Queues; Rank encodes it for cursors.
+	TaskUrgencyRankSQL = `CASE task.urgency WHEN 'high_priority' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END`
+)
+
+func (urgency TaskUrgency) Rank() int {
+	switch urgency {
+	case TaskUrgencyHighPriority:
+		return 0
+	case TaskUrgencyNormal:
+		return 1
+	default:
+		return 2
+	}
+}
+
 var (
 	ErrDenied       = errors.New("work access denied")
 	ErrInvalidInput = errors.New("invalid work input")
@@ -562,10 +592,7 @@ func (m *Module) EnsureRecoveryTask(
 					AND task.phone = $3
 					AND COALESCE(lower(task.caller_name), '') = lower($4)
 					AND task.state = 'OPEN'
-					AND task.origin IN (
-						'VOICEMAIL_RECOVERY',
-						'MISSED_CALL_RECOVERY'
-					)
+					AND `+TaskIsCallRecoverySQL+`
 				ORDER BY task.created_at, task.id
 				LIMIT 1
 				FOR UPDATE
@@ -791,10 +818,7 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 			WHERE task.practice_id = $1
 				AND task.phone = $2
 				AND task.state = 'OPEN'
-				AND task.origin IN (
-					'MISSED_CALL_RECOVERY',
-					'VOICEMAIL_RECOVERY'
-				)
+				AND `+TaskIsCallRecoverySQL+`
 				AND checkpoint.resolved_at > (
 					SELECT max(interaction.occurred_at)
 					FROM work_task_interactions interaction

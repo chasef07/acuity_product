@@ -1138,29 +1138,15 @@ func (server *Server) RetryOutboundCall(
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	previous, err := server.calling.ReadCall(ctx, identity, callID.String())
-	if err != nil {
-		server.writeCallingError(w, r, err)
-		return
-	}
-	command := humancalling.StartOutboundCallCommand{
-		Identity:       identity,
-		SessionID:      body.SessionId,
-		IdempotencyKey: body.IdempotencyKey,
-		RetryOfCallID:  previous.ID,
-	}
-	switch previous.EntryPoint {
-	case humancalling.CallEntryTask:
-		command.TaskID = previous.TaskID
-	case humancalling.CallEntryStandalone:
-		command.PracticeID = previous.PracticeID
-		command.LocationID = previous.LocationID
-		command.Destination = previous.Phone
-	default:
-		server.writeCallingError(w, r, humancalling.ErrConflict)
-		return
-	}
-	call, err := server.calling.StartOutboundCall(ctx, command)
+	call, err := server.calling.RetryOutboundCall(
+		ctx,
+		humancalling.RetryOutboundCallCommand{
+			Identity:       identity,
+			SessionID:      body.SessionId,
+			IdempotencyKey: body.IdempotencyKey,
+			CallID:         callID.String(),
+		},
+	)
 	if err != nil {
 		server.writeCallingError(w, r, err)
 		return

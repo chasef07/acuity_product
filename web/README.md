@@ -37,4 +37,9 @@ Human authentication is Google-only. End-to-end tests use Better Auth's direct
 test-session utility behind `AUTH_ALLOW_TEST_SESSION=true`; it creates no
 password, verification email, recovery flow, or production HTTP capability.
 
+Components never handle transport. Each backend feature has one module in
+`src/lib/clients/` that exports named hooks and commands built on
+`portalRequest` or `usePortalQuery`, which own the access token, aborts, and
+`ErrorEnvelope` normalization. ESLint enforces this; its baseline must only shrink.
+
 Run `pnpm lint`, `pnpm typecheck`, and `pnpm build` before committing.

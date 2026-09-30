@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { ChevronLeftIcon, ChevronRightIcon, FlagIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,14 +18,12 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet"
-import { portalClient } from "@/lib/api/client"
-import { flagAgentCallIssue, getAgentCall } from "@/lib/api/generated/sdk.gen"
 import type {
   AgentCall,
-  AgentCallDetail,
+  AgentCallIssue,
   AgentCallIssueReason,
 } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
 import { formatUSPhone } from "@/lib/phone"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import {
@@ -182,67 +180,33 @@ function CallContent({
   saving: boolean
   onSavingChange: (saving: boolean) => void
 }) {
-  const [detail, setDetail] = useState<AgentCallDetail>()
-  const [error, setError] = useState("")
-  const [version, setVersion] = useState(0)
+  const call = useAgentCall(id)
+  const [flagged, setFlagged] = useState<AgentCallIssue>()
   const [reporting, setReporting] = useState(false)
   const [reason, setReason] = useState<AgentCallIssueReason | null>(null)
   const [saveError, setSaveError] = useState("")
-  useEffect(() => {
-    const controller = new AbortController()
-    async function load() {
-      try {
-        const token = await getAccessToken()
-        if (!token) throw new Error()
-        const result = await getAgentCall({
-          client: portalClient(token),
-          signal: controller.signal,
-          path: { interactionId: id },
-        })
-        if (!result.data) throw new Error()
-        if (!controller.signal.aborted) {
-          setDetail(result.data)
-          setError("")
-        }
-      } catch {
-        if (!controller.signal.aborted)
-          setError("This call could not be loaded. Try again.")
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [id, version])
+  const detail =
+    call.status === "ready"
+      ? { ...call.data, issue: call.data.issue ?? flagged }
+      : undefined
+  const error =
+    call.status === "failed" ? "This call could not be loaded. Try again." : ""
 
   async function flagIssue() {
     if (!reason || saving) return
     onSavingChange(true)
     setSaveError("")
-    try {
-      const token = await getAccessToken()
-      if (!token) throw new Error()
-      const result = await flagAgentCallIssue({
-        client: portalClient(token),
-        path: { interactionId: id },
-        body: { reason },
-      })
-      if (result.response?.status === 409) {
-        // Someone else reported first; reload to show their saved reason.
-        setDetail(undefined)
-        setVersion((value) => value + 1)
-        setReporting(false)
-        onFlagged(id)
-        return
-      }
-      if (!result.data) throw new Error()
-      const issue = result.data
-      setDetail((previous) => (previous ? { ...previous, issue } : previous))
-      setReporting(false)
-      onFlagged(id)
-    } catch {
+    const outcome = await flagAgentCallIssue(id, reason)
+    onSavingChange(false)
+    if (!outcome.ok && outcome.failure.kind !== "conflict") {
       setSaveError("Your issue could not be saved. Try again.")
-    } finally {
-      onSavingChange(false)
+      return
     }
+    // A conflict means someone else reported first; reload to show their reason.
+    if (outcome.ok) setFlagged(outcome.data)
+    else call.retry()
+    setReporting(false)
+    onFlagged(id)
   }
 
   return (
@@ -289,7 +253,7 @@ function CallContent({
             <Button
               variant="outline"
               className="mt-3 w-fit"
-              onClick={() => setVersion((value) => value + 1)}
+              onClick={call.retry}
             >
               Try again
             </Button>

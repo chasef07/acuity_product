@@ -441,22 +441,46 @@ func (m *Module) ProvisionInTx(
 			}
 		}
 
-		details, _ := json.Marshal(map[string]any{
-			"practiceKey":  practiceInput.Key,
-			"locations":    len(practiceInput.Locations),
-			"accessGrants": len(practiceInput.AccessGrants),
-		})
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO access_audit_events (
-				actor_type, actor_subject, practice_id, action, details
-			)
-			VALUES ('PROVISIONER', $1, $2, 'access.provisioned', $3)
-		`, input.RequestedBy, practiceID, details); err != nil {
-			return Provisioned{}, fmt.Errorf("audit provisioning: %w", err)
+		if err := m.AuditProvisioning(ctx, tx, input.RequestedBy, practiceID,
+			"access.provisioned", map[string]any{
+				"practiceKey":  practiceInput.Key,
+				"locations":    len(practiceInput.Locations),
+				"accessGrants": len(practiceInput.AccessGrants),
+			}); err != nil {
+			return Provisioned{}, err
 		}
 	}
 
 	return result, nil
+}
+
+// AuditProvisioning records a provisioner change in the caller's provisioning
+// transaction, so the audit event commits or rolls back with the change.
+func (m *Module) AuditProvisioning(
+	ctx context.Context,
+	tx pgx.Tx,
+	requestedBy string,
+	practiceID string,
+	action string,
+	details map[string]any,
+) error {
+	if tx == nil || strings.TrimSpace(requestedBy) == "" ||
+		strings.TrimSpace(practiceID) == "" || strings.TrimSpace(action) == "" {
+		return ErrInvalidInput
+	}
+	encoded, err := json.Marshal(details)
+	if err != nil {
+		return fmt.Errorf("encode %s audit: %w", action, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO access_audit_events (
+			actor_type, actor_subject, practice_id, action, details
+		)
+		VALUES ('PROVISIONER', $1, $2, $3, $4)
+	`, requestedBy, practiceID, action, encoded); err != nil {
+		return fmt.Errorf("audit %s: %w", action, err)
+	}
+	return nil
 }
 
 func accessGrantMatchesProvisioning(
