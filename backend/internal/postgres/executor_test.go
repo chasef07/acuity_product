@@ -15,6 +15,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestExecutorKeepsAcquireAndStatementDeadlinesDistinct(t *testing.T) {
@@ -311,6 +312,7 @@ func (rows *deadlineRows) Scan(...any) error                            { return
 func (rows *deadlineRows) Values() ([]any, error)                       { return nil, errors.New("no current row") }
 func (rows *deadlineRows) RawValues() [][]byte                          { return nil }
 func (rows *deadlineRows) Conn() *pgx.Conn                              { return nil }
+func (rows *deadlineRows) TypeMap() *pgtype.Map                         { return nil }
 
 func (rows *deadlineRows) Next() bool {
 	<-rows.ctx.Done()
