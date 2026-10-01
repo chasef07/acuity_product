@@ -535,8 +535,6 @@ func (m *Module) RecordDisposition(
 	return DispositionResult{Call: call, TaskID: taskID}, err
 }
 
-// ExpireDispositions applies the ordinary resolved outcome from durable bridge
-// and hangup evidence when the browser does not submit a disposition in time.
 func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 	if m.work == nil {
 		return 0, ErrInvalidInput

@@ -57,7 +57,6 @@ func TestAutomaticPublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Entry order and a newer Git commit do not create another revision.
 	command.Sections[0], command.Sections[1] = command.Sections[1], command.Sections[0]
 	command.Provenance = "git:" + strings.Repeat("b", 40)
 	_, receipt, err = preparePublication(ctx, pool, command, email, true)
@@ -80,7 +79,6 @@ func TestAutomaticPublication(t *testing.T) {
 	if _, _, err := preparePublication(ctx, pool, unknown, email, true); err == nil {
 		t.Fatal("accepted unknown route")
 	}
-	// Explicit expectations remain authoritative, even when content matches.
 	explicit, receipt, err := preparePublication(ctx, pool, command, email, false)
 	if err != nil || receipt != nil || explicit.ExpectedRevisionID != command.ExpectedRevisionID || explicit.ID != command.ID {
 		t.Fatalf("explicit: %+v, %+v, %v", explicit, receipt, err)
@@ -93,7 +91,6 @@ func TestAutomaticPublication(t *testing.T) {
 	if _, err := module.ReplaceCorpus(ctx, changed); err != nil {
 		t.Fatal(err)
 	}
-	// A prepared publication cannot overwrite an intervening publication.
 	stale := changed
 	stale.ID = uuid.NewString()
 	if _, err := module.ReplaceCorpus(ctx, stale); !errors.Is(err, knowledge.ErrConflict) {

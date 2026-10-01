@@ -46,7 +46,6 @@ test("staff review grouped requests, correct one group, and preserve completed r
   await page.screenshot({ path: testInfo.outputPath("move-task-menu.png"), fullPage: true })
   await page.getByRole("menuitemradio", { name: "Clinical, medication & pharmacy", exact: true }).click()
   await expect(group.getByLabel("2 Tasks")).toBeVisible()
-  // A newly arrived request must be reviewed before it can join group completion.
   const newRequest = await page.request.post(`${portalURL}/v1/tasks`, {
     headers: { authorization: "Bearer synthetic-service-token" },
     data: { callId: "task-groups-frames", callerPhone: "+12025550148", category: "optical", idempotencyKey: "task-groups-frames", officeKey: "spring-hill", officePhone: "+17275550101", source: "agent", urgency: "normal", summary: "Group request frames", message: "Please check whether the frames are ready.", patient: { name: "Drew Example" } },

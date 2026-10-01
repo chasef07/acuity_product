@@ -1,4 +1,3 @@
-// task-maintenance prepares reviewed, version-checked Task classification work.
 package main
 
 import (
@@ -52,8 +51,6 @@ func run() error {
 		d.DisallowUnknownFields()
 		return d.Decode(target)
 	}
-	// Reserve the report path before performing any mutations. A failed write is
-	// recoverable by rerunning the same plan using durable per-Task receipts.
 	f, err := os.OpenFile(*output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err

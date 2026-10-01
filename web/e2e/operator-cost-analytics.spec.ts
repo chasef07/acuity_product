@@ -17,7 +17,6 @@ test("Platform Operator sees recorded costs and incomplete usage", async ({
     const scope = await client.query(
       "SELECT l.id, l.practice_id FROM access_locations l JOIN access_practices p ON p.id=l.practice_id WHERE p.provisioning_key='abita-eye-group' AND l.provisioning_key='fixture-location-6'",
     )
-    // LiveKit's native session report omits each summary's default type.
     const usage = [
       { provider: "api.openai.com", model: "gpt-live-1", session_duration: 600 },
       { provider: "api.openai.com", model: "gpt-6-luna", input_tokens: 100000, input_cached_tokens: 25000, input_cache_creation_tokens: 10000, output_tokens: 10000 },

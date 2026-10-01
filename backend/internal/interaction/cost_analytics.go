@@ -116,8 +116,6 @@ func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyt
 	if len(locations) == 0 {
 		return CostAnalytics{}, ErrDenied
 	}
-	// Source-driven compact usage avoids detoasting full session reports for
-	// every call in the reporting window. Pricing remains owned here.
 	rows, err := tx.Query(ctx, `
 		SELECT started_at, ended_at, cost_usage_evidence
 		FROM ai_interactions
@@ -182,9 +180,6 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 	var entries []map[string]any
 	_ = json.Unmarshal(raw, &entries)
 	unpricedUsage := 0
-	// Session reports aggregate requests. Only totals <=272K prove every
-	// request used short-context pricing; larger totals cannot establish a tier.
-	// Rates: https://developers.openai.com/api/docs/models/gpt-6-luna
 	var lunaInputTotal float64
 	for _, entry := range entries {
 		model, _ := entry["model"].(string)
@@ -318,9 +313,6 @@ func costModelKey(value string) string {
 	return strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToLower(strings.TrimSpace(value)))
 }
 
-// Native LiveKit reports drop each usage summary's type because it equals the
-// default. A typeless summary is an LLM summary priced by model; unknown models
-// stay unpriced.
 func usageType(entry map[string]any) string {
 	if value, _ := entry["type"].(string); value != "" {
 		return value
@@ -328,8 +320,6 @@ func usageType(entry map[string]any) string {
 	return "llm_usage"
 }
 
-// Native LiveKit reports omit zero-valued fields. A missing field inside a
-// recorded usage entry is zero; a missing usage entry is unknown.
 func usageQuantity(entry map[string]any, keys ...string) (float64, bool) {
 	for _, key := range keys {
 		if raw, exists := entry[key]; exists {

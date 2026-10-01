@@ -14,7 +14,6 @@ const (
 	TaskOriginInboundMessageReview TaskOrigin = "INBOUND_MESSAGE_REVIEW"
 )
 
-// SourceInteractionID identifies the Interaction that created this appointment review.
 func (t Task) SourceInteractionID() string {
 	if t.Origin != TaskOriginAppointmentReview {
 		return ""
@@ -23,13 +22,10 @@ func (t Task) SourceInteractionID() string {
 	return id
 }
 
-// AppointmentReviewKey identifies a durable outcome at database timestamp precision.
 func AppointmentReviewKey(interactionID string, occurredAt time.Time) string {
 	return interactionID + ":" + occurredAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
 }
 
-// EnsureAppointmentReview preserves one review per durable outcome, including
-// after completion. The Interaction owner holds its source lock and transaction.
 func (m *Module) EnsureAppointmentReview(ctx context.Context, tx pgx.Tx, interactionID, practiceID, locationID, phone, sourceCallID, action, message string, occurredAt time.Time) error {
 	key := AppointmentReviewKey(interactionID, occurredAt)
 	title := map[string]string{"BOOKED": "Review booked appointment", "CANCELLED": "Review cancelled appointment", "RESCHEDULED": "Review appointment change"}[action]
@@ -49,9 +45,6 @@ func (m *Module) EnsureAppointmentReview(ctx context.Context, tx pgx.Tx, interac
 	return m.recordReviewActivity(ctx, tx, id, practiceID, "TASK_CREATED", "appointment-review", occurredAt, nil)
 }
 
-// EnsureInboundMessageReview runs only for a newly inserted non-opt-out Message.
-// Messaging holds the thread lock. Locking the current Task also serializes new
-// evidence against staff completion; evidence arriving afterward creates new work.
 func (m *Module) EnsureInboundMessageReview(ctx context.Context, tx pgx.Tx, practiceID, locationID, phone, threadID, messageID string, occurredAt time.Time) error {
 	var id string
 	err := tx.QueryRow(ctx, `SELECT id::text FROM work_tasks WHERE message_thread_id=$1 AND origin='INBOUND_MESSAGE_REVIEW' AND state='OPEN' FOR UPDATE`, threadID).Scan(&id)

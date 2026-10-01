@@ -189,7 +189,6 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
     )
     await expect(accounts.getByRole("row").last()).toContainText("Total")
     expect(analyticsRequests).toBe(requestsBeforeSort)
-    // Tick text must fit inside the SVG viewport, including its bottom row.
     await expect(async () => {
       const clippedLabels = await performance
         .locator('[data-slot="chart"]')
@@ -225,8 +224,6 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       path: testInfo.outputPath("admin-staff-analytics.png"),
       fullPage: true,
     })
-    // Incomplete timing must not appear as a shorter average, and must not
-    // affect the other direction or the count of successfully sent texts.
     await db.query(
       "UPDATE human_calling_call_legs SET state='ENDING',ended_at=NULL WHERE call_id=$1",
       [calls[0]],

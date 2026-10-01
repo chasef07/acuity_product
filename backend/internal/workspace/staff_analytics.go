@@ -112,8 +112,6 @@ func (m *Module) QueryStaffAnalytics(ctx context.Context, command QueryStaffAnal
 	}
 
 	report := StaffAnalytics{From: from.Format(time.DateOnly), Through: to.AddDate(0, 0, -1).Format(time.DateOnly), Accounts: []StaffAccountAnalytics{}, Daily: []StaffTaskDay{}}
-	// Keep all accounts visible, including zero-activity and not-yet-activated accounts.
-	// Location filtering changes activity, not the Practice's account directory.
 	rows, err := tx.Query(ctx, `
   SELECT id::text, user_subject, email, role::text,
    CASE WHEN revoked_at IS NULL THEN 'ACTIVE' ELSE 'INACTIVE' END
@@ -150,7 +148,6 @@ func (m *Module) QueryStaffAnalytics(ctx context.Context, command QueryStaffAnal
 		if index, ok := subjects[subject]; ok {
 			return &report.Accounts[index]
 		}
-		// Preserve historical work by accounts no longer in the directory without exposing auth subjects.
 		const other = "other-accounts"
 		if index, ok := subjects[other]; ok {
 			return &report.Accounts[index]
@@ -159,7 +156,6 @@ func (m *Module) QueryStaffAnalytics(ctx context.Context, command QueryStaffAnal
 		report.Accounts = append(report.Accounts, StaffAccountAnalytics{ID: other, Email: "Other accounts", Role: "", Status: "HISTORICAL"})
 		return &report.Accounts[len(report.Accounts)-1]
 	}
-	// One handled call per person and direction; repeated legs add only their connected time.
 	rows, err = tx.Query(ctx, `
   SELECT l.staff_subject, c.id::text, c.direction,
     l.bridged_at, l.ended_at
@@ -225,9 +221,6 @@ func (m *Module) QueryStaffAnalytics(ctx context.Context, command QueryStaffAnal
 		return StaffAnalytics{}, fmt.Errorf("staff analytics exceeds call limit")
 	}
 
-	// Count staff-authored messages with send evidence, excluding automated
-	// acknowledgements and unconfirmed or failed attempts. Use the same scope
-	// and reporting-day boundaries as calls and Tasks.
 	rows, err = tx.Query(ctx, `
   SELECT created_by_subject, count(*)
   FROM messaging_messages
@@ -260,8 +253,6 @@ func (m *Module) QueryStaffAnalytics(ctx context.Context, command QueryStaffAnal
 		return StaffAnalytics{}, fmt.Errorf("staff analytics exceeds message sender limit")
 	}
 
-	// The creation clock never resets on viewing, assignment, or reopening.
-	// Current completed state determines completion credit; reopened work remains unfinished.
 	rows, err = tx.Query(ctx, `
   SELECT created_at, completed_at, state, COALESCE(completed_by_kind,''), COALESCE(completed_by_subject,'')
   FROM work_tasks WHERE practice_id=$1::uuid AND location_id=ANY($2::uuid[])

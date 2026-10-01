@@ -4,10 +4,8 @@ import { useState } from "react"
 import { CheckIcon, FlagIcon } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { portalClient } from "@/lib/api/client"
-import { reviewOperatorAiCallIssue } from "@/lib/api/generated/sdk.gen"
 import type { OperatorAiCallIssue, OperatorAiCallIssueOutcome } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import { reviewCallIssue } from "@/lib/clients/agent-calls"
 import { formatUSPhone } from "@/lib/phone"
 import { issueReasons } from "./agent-call-panel"
 
@@ -22,7 +20,6 @@ function formatIssueTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date)
 }
 
-// Staff-flagged calls awaiting Acuity review, regardless of the selected range.
 export function PendingCallIssues({ issues, onSelect }: {
   issues: OperatorAiCallIssue[]
   onSelect: (interactionID: string) => void
@@ -51,7 +48,6 @@ export function PendingCallIssues({ issues, onSelect }: {
   )
 }
 
-// Acuity's review of a staff flag. Practices never see this decision.
 export function CallIssueReview({ interactionID, initialIssue, onChange }: {
   interactionID: string
   initialIssue?: OperatorAiCallIssue
@@ -65,17 +61,14 @@ export function CallIssueReview({ interactionID, initialIssue, onChange }: {
     if (saving || issue?.review?.outcome === outcome) return
     setSaving(true)
     setError("")
-    try {
-      const token = await getAccessToken()
-      if (!token) throw new Error("Sign in again to save the review.")
-      const result = await reviewOperatorAiCallIssue({ client: portalClient(token), path: { interactionId: interactionID }, body: { outcome } })
-      if (!result.data) throw new Error("The review could not be saved. Please try again.")
+    const result = await reviewCallIssue(interactionID, outcome)
+    setSaving(false)
+    if (result.ok) {
       setIssue(result.data)
       onChange(result.data)
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "The review could not be saved. Please try again.")
-    } finally {
-      setSaving(false)
+    } else {
+      const { kind } = result.failure
+      setError(kind === "signedOut" || kind === "unauthenticated" ? "Sign in again to save the review." : "The review could not be saved. Please try again.")
     }
   }
 

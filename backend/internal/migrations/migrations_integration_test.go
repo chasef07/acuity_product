@@ -31,7 +31,6 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		t.Fatalf("repeat migrations: %v", err)
 	}
 
-	// Verify the complete applied registry, including independently added migrations.
 	files, err := filepath.Glob("sql/*.sql")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("read migration sources: %v", err)

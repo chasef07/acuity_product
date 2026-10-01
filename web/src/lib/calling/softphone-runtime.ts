@@ -429,7 +429,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             try {
               onLateValue?.(value)
             } catch {
-              // The stale lifecycle already finished; cleanup is best effort.
             }
             return
           }
@@ -459,7 +458,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         controller.signal,
       )
     } catch {
-      // Local lifecycle cleanup must finish even when the provider SDK stalls.
     } finally {
       clock.clearTimeout(timeoutID)
     }
@@ -2423,7 +2421,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             signal,
           ),
         )
-        // A newer transfer action owns the shared pending flag.
         if (generation !== transferGeneration) return
         publish({
           transferCandidates:

@@ -52,7 +52,6 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer tx.Rollback(ctx)
-				// Repeated provisioning normalizes and replaces the complete member list.
 				for i := 0; i < 2; i++ {
 					if err := calling.ProvisionLocationRingGroupsInTx(ctx, tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "ring-group-practice", LocationKey: "ring-group-location", MemberEmails: []string{" " + strings.ToUpper(email) + " ", email}}}, "ring-test"); err != nil {
 						t.Fatal(err)
@@ -78,7 +77,6 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// Ring exclusion must not remove the second Staff member's workspace access.
 			if _, err := accessModule.ResolveActor(ctx, staff[1], auth.Practice.ID, auth.Locations[0].ID); err != nil {
 				t.Fatal(err)
 			}
@@ -137,9 +135,67 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 	}
 }
 
+func TestLocationRingGroupAuditCommitsWithProvisioning(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.September, 30, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	auth, staff := provisionConcurrentStaff(t, accessModule, now, "ring-audit", 1)
+	calling := humancalling.New(pool, accessModule, nil, humancalling.Config{}, nil)
+	provision := func(tx pgx.Tx) {
+		t.Helper()
+		if err := calling.ProvisionLocationRingGroupsInTx(ctx, tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "ring-audit-practice", LocationKey: "ring-audit-location", MemberEmails: []string{staff[0].Email}}}, "ring-audit-test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(querier interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}) (groups, audits int) {
+		t.Helper()
+		if err := querier.QueryRow(ctx, `
+			SELECT (SELECT count(*) FROM human_calling_location_ring_groups),
+				(SELECT count(*) FROM access_audit_events
+				 WHERE action = 'calling.ring_group_configured' AND actor_type = 'PROVISIONER'
+					AND actor_subject = 'ring-audit-test' AND practice_id = $1
+					AND details = jsonb_build_object('locationId', $2::text, 'memberCount', 1))
+		`, auth.Practice.ID, auth.Locations[0].ID).Scan(&groups, &audits); err != nil {
+			t.Fatal(err)
+		}
+		return groups, audits
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provision(tx)
+	if groups, audits := count(tx); groups != 1 || audits != 1 {
+		t.Fatalf("in-transaction ring groups=%d audits=%d", groups, audits)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if groups, audits := count(pool); groups != 0 || audits != 0 {
+		t.Fatalf("rolled-back ring groups=%d audits=%d", groups, audits)
+	}
+
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	provision(tx)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if groups, audits := count(pool); groups != 1 || audits != 1 {
+		t.Fatalf("committed ring groups=%d audits=%d", groups, audits)
+	}
+}
+
 func TestLocationRingGroupRejectsEmptyOrInvalidMembers(t *testing.T) {
 	pool := testdb.Open(t)
-	calling := humancalling.New(pool, nil, nil, humancalling.Config{}, nil)
+	calling := humancalling.New(pool, access.New(pool, nil), nil, humancalling.Config{}, nil)
 	for _, emails := range [][]string{nil, {}, {""}, {"not-an-email"}, {"Person <person@synthetic.test>"}} {
 		tx, err := pool.Begin(context.Background())
 		if err != nil {

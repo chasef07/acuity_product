@@ -23,13 +23,10 @@ const (
 	retiredMigrationHeader          = "-- acuity:retired"
 )
 
-// Apply runs every unapplied forward-only migration in filename order.
 func Apply(ctx context.Context, pool *pgxpool.Pool) error {
 	return applyThrough(ctx, pool, "")
 }
 
-// ApplyThrough runs migrations through the named file, inclusive. It exists so
-// migration tests can prove a real upgrade from the immediately prior schema.
 func ApplyThrough(ctx context.Context, pool *pgxpool.Pool, last string) error {
 	if last == "" || strings.ContainsAny(last, `/\\`) {
 		return fmt.Errorf("valid final migration filename is required")
@@ -133,8 +130,6 @@ func applyThrough(ctx context.Context, pool *pgxpool.Pool, last string) error {
 	return nil
 }
 
-// ApplyRuntimeGrants reapplies the reviewed least-privilege runtime authority
-// after forward migrations add or change relations.
 func ApplyRuntimeGrants(ctx context.Context, pool *pgxpool.Pool) error {
 	sql, err := migrationFiles.ReadFile("database-grants.sql")
 	if err != nil {
@@ -215,9 +210,6 @@ func applyNonTransactional(
 		}
 		firstStatement = 1
 	}
-	// Session settings must apply to the same connection as the statement they
-	// protect. These migrations cannot use a transaction (for example, CALLs
-	// that commit batches and CREATE INDEX CONCURRENTLY).
 	connection, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire non-transactional migration %s connection: %w", name, err)
@@ -225,8 +217,6 @@ func applyNonTransactional(
 	succeeded := false
 	defer func() {
 		if !succeeded {
-			// A failed statement may skip the migration's RESET commands. Never
-			// return that session to the pool with its temporary settings intact.
 			closeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = connection.Conn().Close(closeContext)

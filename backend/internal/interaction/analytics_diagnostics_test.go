@@ -32,7 +32,6 @@ func TestToolExecutionDurationRequiresRecordedEndpoints(t *testing.T) {
 func TestDiagnosticsRetainSamplesAndBoundedEvidence(t *testing.T) {
 	summary := AnalyticsSummary{}
 	for i := 0; i < 12; i++ {
-		// Primary E2E observations override transcript E2E; STT falls back per stage.
 		p := analyticsProjection{call: AnalyticsCall{ID: fmt.Sprintf("call-%02d", i), StartedAt: time.Date(2026, 9, 4, 12, i, 0, 0, time.UTC)}, transcript: json.RawMessage(`{"items":[{"id":"reply","role":"assistant","metrics":{"e2eLatencyMs":99999,"sttMs":250}},{"type":"function_call","call_id":"tool","name":"get_availability","created_at":1788508800},{"type":"function_call_output","call_id":"tool","created_at":1788508801,"is_error":true},{"type":"function_call","call_id":"pending","name":"get_availability"}]}`), closeoutPayload: json.RawMessage(`{"domainOutcomes":[],"turnMetrics":[{"itemId":"reply","metrics":{"e2eLatencyMs":500}}]}`)}
 		projectAnalyticsEvidence(&p)
 		summarizeAnalyticsProjection(&summary, p)

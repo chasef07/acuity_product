@@ -83,7 +83,7 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	r = insert(false)
 	insert(true)
 	apply(r, "SENT")
-	assertOpen(1) // newer evidence survives
+	assertOpen(1)
 	r = insert(false)
 	second := insert(false)
 	apply(r, "SENT")
@@ -106,7 +106,7 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	}
 	insert(true)
 	apply(r, "FAILED")
-	assertOpen(1) // a newer review already owns the follow-up
+	assertOpen(1)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	}
 	r = insert(false)
 	apply(r, "SENT")
-	assertOpen(1) // replying never completes the appointment verification
+	assertOpen(1)
 	var openOrigin string
 	if err = pool.QueryRow(ctx, `SELECT origin FROM work_tasks WHERE state='OPEN'`).Scan(&openOrigin); err != nil || openOrigin != "APPOINTMENT_REVIEW" {
 		t.Fatalf("remaining work=%s err=%v", openOrigin, err)

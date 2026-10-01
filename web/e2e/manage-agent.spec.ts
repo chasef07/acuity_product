@@ -116,7 +116,6 @@ test("staff flag a call and Acuity reviews it", async ({
       animations: "disabled",
       path: testInfo.outputPath("manage-agent-flag-form.png"),
     })
-    // A failed save keeps the reason and makes retry explicit.
     await page.route(`**/v1/agent-calls/${id}/issue`, (route) =>
       route.fulfill({
         status: 503,
@@ -128,7 +127,6 @@ test("staff flag a call and Acuity reviews it", async ({
     await expect(panel.getByRole("alert")).toContainText("could not be saved")
     await expect(reason).toContainText("Wrong Appointment Type")
     await page.unroute(`**/v1/agent-calls/${id}/issue`)
-    // Keep the panel mounted until the durable save finishes.
     let releaseSave!: () => void
     const saveGate = new Promise<void>((resolve) => { releaseSave = resolve })
     await page.route(`**/v1/agent-calls/${id}/issue`, async (route) => {
@@ -220,7 +218,6 @@ test("staff flag a call and Acuity reviews it", async ({
         .getByRole("dialog")
         .getByText("Wrong Appointment Type", { exact: true }),
     ).toBeVisible()
-    // Acuity reviews the staff flag from AI diagnostics.
     await page.keyboard.press("Escape")
     await page
       .getByRole("button", { name: "AI diagnostics", exact: true })
@@ -393,7 +390,6 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
   await page
     .getByRole("option", { name: "Wrong Appointment Type", exact: true })
     .click()
-  // Another staff member reports this call first; show their saved reason.
   await page.route(`**/v1/agent-calls/${ids[0]}/issue`, (route) => {
     firstCallReported = true
     return route.fulfill({ status: 409, json: {} })

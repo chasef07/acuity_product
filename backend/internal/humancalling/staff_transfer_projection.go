@@ -271,9 +271,6 @@ func (m *Module) completeStaffTransferIfReady(
 	if targetAnsweredAt.After(completedAt) {
 		completedAt = *targetAnsweredAt
 	}
-	// The transfer's answer + bridge evidence proves the old Staff leg is no
-	// longer the Call owner. Terminalizing it here releases occupancy while the
-	// exact provider Hangup remains durable cleanup.
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_call_legs
 		SET state = 'ENDED', ending_at = COALESCE(ending_at, $2),
@@ -622,12 +619,9 @@ func (m *Module) handleStaffTransferHangupTx(
 		return false, nil
 	}
 	if legID == sourceLegID && state == string(StaffTransferCompleted) {
-		// Provider cleanup for the old source cannot end the transferred Call.
 		return true, nil
 	}
 	if state != string(StaffTransferRequested) && state != string(StaffTransferAccepted) {
-		// A terminal failed transfer leaves the source as owner. Target cleanup is
-		// transfer-local, while loss of that source must end the connected Call.
 		return legID == targetLegID, nil
 	}
 	if legID == sourceLegID {

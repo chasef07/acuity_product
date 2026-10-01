@@ -133,7 +133,6 @@ func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
 			}
 		}
 	}
-	// A grouped page carries summaries; selecting a Task still loads every source.
 	for _, ordering := range []work.TaskOrdering{work.TaskOrderingTime, work.TaskOrderingPriority, work.TaskOrderingRecent} {
 		command := workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Ordering: ordering, Limit: 1}
 		seen := map[string]bool{}

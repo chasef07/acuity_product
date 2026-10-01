@@ -16,15 +16,13 @@ type LocationRingGroupProvision struct {
 	MemberEmails []string
 }
 
-// Omitted groups preserve existing routing. An explicit group must contain at
-// least one account; unavailable members never widen the group to other Staff.
 func (m *Module) ProvisionLocationRingGroupsInTx(
 	ctx context.Context,
 	tx pgx.Tx,
 	provisions []LocationRingGroupProvision,
 	requestedBy string,
 ) error {
-	if tx == nil || strings.TrimSpace(requestedBy) == "" {
+	if tx == nil || m.access == nil || strings.TrimSpace(requestedBy) == "" {
 		return ErrInvalidInput
 	}
 	for _, provision := range provisions {
@@ -65,11 +63,11 @@ func (m *Module) ProvisionLocationRingGroupsInTx(
 		if result.RowsAffected() == 0 {
 			continue
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO access_audit_events (actor_type, actor_subject, practice_id, action, details)
-			VALUES ('PROVISIONER', $1, $2, 'calling.ring_group_configured',
-				jsonb_build_object('locationId', $3::text, 'memberCount', $4::int))
-		`, requestedBy, practiceID, locationID, len(emails)); err != nil {
+		if err := m.access.AuditProvisioning(ctx, tx, requestedBy, practiceID,
+			"calling.ring_group_configured", map[string]any{
+				"locationId":  locationID,
+				"memberCount": len(emails),
+			}); err != nil {
 			return fmt.Errorf("audit Location ring group: %w", err)
 		}
 	}

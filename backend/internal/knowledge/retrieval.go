@@ -5,12 +5,6 @@ import (
 	"unicode/utf8"
 )
 
-// An office corpus is small, so exact scoped vector comparison avoids ANN
-// post-filter recall loss. Reciprocal rank fusion lets lexical matches promote
-// names without comparing incompatible lexical and cosine score scales. The
-// semantic floor still applies: a shared word alone cannot establish relevance.
-// A complete multiword title match can rescue named entries when their semantic
-// score is low.
 const hybridSearchSQL = `
 WITH scoped AS (
  SELECT *,tsvector_to_array(search_document) AS terms FROM knowledge_passages WHERE revision_id=$1
@@ -49,9 +43,6 @@ ORDER BY (1.0/(60+semantic_rank) +
  CASE WHEN lexical>0 THEN 1.0/(60+lexical_rank) ELSE 0 END) DESC,
  distance,section_id LIMIT 24`
 
-// Return complete evidence, never a substring that might lose an exception.
-// A legacy section larger than the budget is returned alone until republished
-// as focused entries. The budget bounds evidence text, not JSON serialization.
 const responseTextBudget = 3000
 
 type searchCandidate struct {
@@ -63,13 +54,6 @@ type searchCandidate struct {
 	queryCoverage float64
 }
 
-// Select enough evidence to cover the query's distinctive terms. Corpus-common
-// vocabulary cannot keep adding unrelated office entries. Stemming is performed
-// by PostgreSQL, and all candidates still satisfy the retrieval relevance gate.
-// Body-only matches cannot replace facts whose topics are explicitly titled.
-// Normalized lexical score breaks equal-coverage ties, followed by hybrid rank.
-// Unfamiliar vocabulary and semantic-only paraphrases preserve bounded candidates:
-// English lexical coverage cannot establish sufficiency for those queries.
 func relevantPassages(candidates []searchCandidate) []Passage {
 	selected := []Passage{}
 	if len(candidates) > 0 && candidates[0].queryCoverage < 0.5 {
@@ -142,7 +126,6 @@ func selectPassages(candidates []Passage, limit int) []Passage {
 		}
 		size := utf8.RuneCountInString(p.Text) + utf8.RuneCountInString(p.Title)
 		if len(selected) > 0 && characters+size > responseTextBudget {
-			// Do not replace stronger evidence with a smaller, weaker result.
 			break
 		}
 		selected = append(selected, p)

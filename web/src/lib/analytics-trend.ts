@@ -1,5 +1,3 @@
-// Callers supply complete daily buckets in date order. Compare equal adjacent
-// groups within the selection; omit the oldest day when the count is odd.
 export function dailyTotalComparison(values: readonly (number | null)[]) {
   const days = Math.floor(values.length / 2)
   if (!days) return "Choose a longer range to compare complete days."

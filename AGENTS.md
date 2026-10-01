@@ -31,6 +31,8 @@ the conflict. Do not silently choose a new product rule.
   cloud resources, or write production data unless the user explicitly asks.
 - Distinguish local, CI, deployed application-path, provider, and durable
   database evidence in every handoff. State what remains unverified.
+- Do not write code comments; `go test ./backend/internal/architecture` and
+  `pnpm --dir web lint` reject them.
 
 ## Repository boundaries
 

@@ -8,7 +8,7 @@ import type { OperatorAiCallIssue, OperatorAiCallTags } from "@/lib/api/generate
 import type { MiddlewareRequestDiagnostic } from "@/lib/api/generated"
 import { MiddlewareRequestDetails } from "./middleware-request-details"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import {
   CalendarCheck2Icon,
   ChevronLeftIcon,
@@ -47,14 +47,12 @@ import {
 } from "@/components/ui/sheet"
 import { Spinner } from "@/components/ui/spinner"
 import { appointmentOutcomeTitle } from "@/lib/ai-interactions"
-import { portalClient } from "@/lib/api/client"
-import { getOperatorAiInteractionAnalytics } from "@/lib/api/generated/sdk.gen"
 import type {
   AiAppointmentFacts,
   OperatorAiInteractionAnalytics,
   OperatorAiTimelineItem,
 } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import { useAiCallEvidence } from "@/lib/clients/agent-calls"
 
 export function OperatorAnalyticsDetailSheet({
   interactionID,
@@ -77,50 +75,17 @@ export function OperatorAnalyticsDetailSheet({
   onIssueChange: (issue: OperatorAiCallIssue) => void
   onClose: () => void
 }) {
-  const [request, setRequest] = useState<{
-    interactionID: string
-    detail?: OperatorAiInteractionAnalytics
-    error?: string
-  }>({ interactionID: "" })
-  const currentRequest =
-    request.interactionID === interactionID ? request : undefined
-  const detail = currentRequest?.detail
-  const error = currentRequest?.error ?? ""
-  const loading = Boolean(interactionID) && !currentRequest
-
-  useEffect(() => {
-    if (!interactionID) return
-    const controller = new AbortController()
-    void getAccessToken().then(async (token) => {
-      if (controller.signal.aborted) return
-      if (!token) {
-        setRequest({
-          interactionID,
-          error: "Your session is not authorized to load this AI call.",
-        })
-        return
-      }
-      const result = await getOperatorAiInteractionAnalytics({
-        client: portalClient(token),
-        path: { interactionId: interactionID },
-        signal: controller.signal,
-      }).catch(() => undefined)
-      if (controller.signal.aborted) return
-      if (result?.data) {
-        setRequest({ interactionID, detail: result.data })
-        return
-      }
-      const unauthorized =
-        result?.response?.status === 401 || result?.response?.status === 403
-      setRequest({
-        interactionID,
-        error: unauthorized
-          ? "Your session is not authorized to load this AI call."
-          : "This AI call evidence is temporarily unavailable.",
-      })
-    })
-    return () => controller.abort()
-  }, [interactionID])
+  const evidence = useAiCallEvidence(interactionID)
+  const detail = evidence.status === "ready" ? evidence.data : undefined
+  const loading = Boolean(interactionID) && evidence.status === "loading"
+  const error =
+    interactionID && evidence.status === "failed"
+      ? evidence.failure.kind === "signedOut" ||
+        evidence.failure.kind === "unauthenticated" ||
+        evidence.failure.kind === "unauthorized"
+        ? "Your session is not authorized to load this AI call."
+        : "This AI call evidence is temporarily unavailable."
+      : ""
 
   return (
     <Sheet
@@ -217,7 +182,6 @@ function OperatorAnalyticsDetailView({
       (focus?.callID && item.callId === focus.callID),
     ),
   )
-  // Historical executions can exist without a transcript tool event.
   const focusedExecutionID =
     focusedTimelineIndex === -1
       ? detail.toolExecutions.find(

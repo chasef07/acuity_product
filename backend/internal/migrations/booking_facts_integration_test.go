@@ -25,12 +25,9 @@ func TestBookingFactsBackfillResumesAndTracksEvidenceChanges(t *testing.T) {
 	if err := migrations.ApplyThrough(ctx, pool, "0049_booking_analytics_facts.sql"); err != nil {
 		t.Fatal(err)
 	}
-	// An overlapping application revision may already have projected some rows.
 	if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET booking_confirmed=NULL WHERE source_call_id='1'`); err != nil {
 		t.Fatal(err)
 	}
-	// Fail the second batch after the first 500 rows have committed. This tests
-	// the actual migration's transaction boundaries, not just repeat application.
 	if _, err := pool.Exec(ctx, `
   CREATE FUNCTION interrupt_booking_backfill() RETURNS trigger LANGUAGE plpgsql AS $$
   BEGIN

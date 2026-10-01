@@ -41,7 +41,6 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
   const version = evaluation.evaluatorVersion
   const checks = [
     ...scorecardChecks,
-    // Scorecard v4 removed the results-reported-truthfully judge.
     ...(version !== "typesafe-scorecard-v4" ? ["results_reported_truthfully"] : []),
     ...(version !== "typesafe-scorecard-v1" ? ["conversation_responsive"] : []),
     "expressed_sentiment",

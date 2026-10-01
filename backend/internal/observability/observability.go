@@ -1,4 +1,3 @@
-// Package observability owns the PHI-free call-center metric contract.
 package observability
 
 import (
@@ -71,7 +70,6 @@ const (
 	CommandObsolete   CommandOutcome = "obsolete"
 )
 
-// CommandStage identifies a directly observed boundary, never inferred readiness.
 type CommandStage string
 
 const (
@@ -202,8 +200,6 @@ const (
 	RecordingMaintenanceFailed      RecordingMaintenanceOutcome = "failed"
 )
 
-// Event values can only be created through the fixed constructors below.
-// Their private fields cannot carry identifiers, errors, SQL, or evidence.
 type Event struct {
 	signal   string
 	fields   []any
@@ -286,8 +282,6 @@ func ProviderCommandCompleted(
 		"duration_seconds", positive(duration).Seconds())
 }
 
-// ProviderCommandStage records elapsed time when that boundary completes. Earlier
-// stages remain observable when a later provider or persistence step fails.
 func ProviderCommandStage(action CommandAction, stage CommandStage, outcome CommandStageOutcome, duration time.Duration) Event {
 	return event("acuity_call_center_provider_command_stage",
 		"action", bounded(string(action), "answer_caller", "start_ring_window", "dial_staff",
@@ -439,8 +433,6 @@ func Record(observer Observer, event Event) {
 	}
 }
 
-// Logger emits fixed structured observations. Cloud Logging can derive
-// counters and distributions without a public endpoint or vendor SDK.
 type Logger struct {
 	logger    *slog.Logger
 	role      string

@@ -56,7 +56,6 @@ test("collapsing Task details preserves the Task in the outbound Call request", 
   await taskRow.click()
   await expect(context).toBeHidden()
 
-  // Inspect the browser command without starting a provider call.
   await page.route(`${portalURL}/v1/calling/outbound-calls`, (route) =>
     route.fulfill({ status: 409, json: { message: "Synthetic outbound request inspection" } }),
   )
@@ -732,8 +731,6 @@ async function startAnsweredInboundCall(
     },
   })
   expect(handoffResponse.status()).toBe(201)
-  // Keep the synthetic provider fact causally after the committed handoff.
-  // JavaScript millisecond rounding can otherwise precede its microsecond timestamp.
   const admittedAt = await database.query<{ occurred_at: string }>(
     `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at`,
   )

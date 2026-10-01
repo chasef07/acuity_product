@@ -44,8 +44,6 @@ func (m *Module) CompleteTaskGroup(ctx context.Context, command CompleteTaskGrou
 	if err != nil {
 		return Task{}, err
 	}
-	// Lock every reviewed member in deterministic order before checking membership.
-	// Newly arriving work is never an implicit target of this command.
 	ids := make([]string, 0, len(expected))
 	for id := range expected {
 		ids = append(ids, id)

@@ -15,9 +15,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 )
 
-// Synthetic values with the nested read-API payload structure observed on
-// 2026-09-08. The envelope timestamp is intentionally different from the event's
-// timestamp, as it is in provider responses; the webhook owns occurrence time.
 func currentTelnyxEvent(name string) map[string]any {
 	return map[string]any{
 		"name": name, "type": "webhook", "leg_id": "leg-1", "application_session_id": "session-1",

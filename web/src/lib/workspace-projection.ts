@@ -548,8 +548,6 @@ export function createWorkspaceProjection({
                 }
               : { ...taskWindow, loading: false, error: taskWindowError }
           }
-          // Cursor requests only replace rows; they must not discard a newer
-          // authoritative count for the same scope and search.
           if (countGeneration === queryGenerations.taskCounts) {
             taskWindow = taskResult.kind === "success"
               ? { ...taskWindow, counts: taskResult.data.counts }
@@ -1115,7 +1113,6 @@ export function createWorkspaceProjection({
     detailGeneration += 1
     patch((current) => {
       const selected = current.selection.task?.id === task.id
-      // Detail commands do not prove membership in the active filtered query.
       return {
         ...current,
         search: select ? { ...current.search, input: "" } : current.search,
@@ -1471,7 +1468,6 @@ function restoreRailPreferences(
     const expanded = Array.isArray(value.expanded)
       ? value.expanded.filter((section): section is WorkspaceRailSection => railSections.includes(section))
       : []
-    // Preserve the open channel when upgrading the former single-view sidebar.
     const formerCategory = String(value.taskCategory)
     if ((formerCategory === "texts" || formerCategory === "calls") && !expanded.includes(formerCategory)) {
       expanded.push(formerCategory)

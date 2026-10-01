@@ -70,8 +70,6 @@ func TestAutomaticAcknowledgementDeadlineAlsoAppliesToQueuedProviderCommand(t *t
 		t.Run(elapsed.String(), func(t *testing.T) {
 			fixture := newAutomaticAcknowledgementTestFixture(t, true)
 			ctx := context.Background()
-			// Queue near the deadline: the five minutes start at the original
-			// acknowledgement intent, not when a worker finally creates its Message.
 			*fixture.clock = fixture.now.Add(4 * time.Minute)
 			if processed, err := fixture.module.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
 				t.Fatalf("queue acknowledgement = %t, %v", processed, err)

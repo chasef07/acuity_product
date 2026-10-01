@@ -14,8 +14,6 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-// GoogleEmbedder uses the pinned regional Vertex prediction contract. The HTTP
-// client is the provider seam; nil selects Application Default Credentials.
 type GoogleEmbedder struct {
 	client   *http.Client
 	endpoint string
@@ -42,8 +40,6 @@ func (g *GoogleEmbedder) Embed(ctx context.Context, texts []string, task TaskTyp
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	vectors := make([][]float32, 0, len(texts))
-	// Five inputs per request keeps the legacy multilingual model's regional
-	// request limit explicit. A failed batch never returns a partial corpus.
 	for start := 0; start < len(texts); start += 5 {
 		end := min(start+5, len(texts))
 		instances := make([]map[string]any, 0, end-start)

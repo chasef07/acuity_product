@@ -132,7 +132,6 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 			}
 		})
 	}
-	// Navigation separates durable follow-up from channel reviews.
 	followUp, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, Responsibility: "all", Kind: "follow_up"})
 	if err != nil || len(followUp.Items) != 2 || followUp.Counts.Tasks != 2 || followUp.Counts.Categories.Appointments != 0 {
 		t.Fatalf("follow-up folder includes communication reviews: %#v, %v", followUp, err)
@@ -148,7 +147,6 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	if err != nil || len(otherOffice.Items) != 0 {
 		t.Fatalf("appointment reviews leaked into another office: %#v, %v", otherOffice, err)
 	}
-	// One staff member checking an appointment clears that shared review for all.
 	checkingStaff := access.Identity{Subject: "call-center", Email: "call-center@shared-review.test", EmailVerified: true}
 	appointments, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: checkingStaff, PracticeID: auth.Practice.ID, Responsibility: "mine", Category: work.TaskCategoryAppointments})
 	if err != nil || len(appointments.Items) != 1 {

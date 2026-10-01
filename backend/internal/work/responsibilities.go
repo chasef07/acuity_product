@@ -7,8 +7,6 @@ import (
 	"strings"
 )
 
-// Responsibility provisioning never creates or widens an Access Grant.
-// It is invoked by the migration/operator CLI, never an ordinary HTTP caller.
 type ResponsibilityProvision struct {
 	PracticeKey string
 	Locations   []ResponsibilityLocation

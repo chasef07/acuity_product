@@ -157,8 +157,6 @@ func (m *Module) RequestStaffTransfer(
 	if err != nil {
 		return StaffTransfer{}, err
 	}
-	// A same-key request can commit while this transaction waits for the Call.
-	// Re-read behind the Call lock before applying the stale expected version.
 	if existing, found, err := m.idempotentStaffTransfer(ctx, tx, command); err != nil {
 		return StaffTransfer{}, err
 	} else if found {
@@ -307,8 +305,6 @@ func (m *Module) RequestStaffTransfer(
 	if err := tx.Commit(ctx); err != nil {
 		return StaffTransfer{}, fmt.Errorf("commit staff transfer request: %w", err)
 	}
-	// Transfer is latency-sensitive. The stable command is issued immediately;
-	// any interruption or uncertain response remains durable for worker repair.
 	_, _ = m.processCommand(ctx, commandID)
 	current, err := scanStaffTransfer(m.database.QueryRow(
 		ctx, staffTransferSelect+` WHERE transfer.id = $1`, transferID,

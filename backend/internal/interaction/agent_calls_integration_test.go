@@ -118,7 +118,6 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 		t.Fatalf("review destination: %+v %v", page, err)
 	}
 
-	// Acuity reviews staff flags in AI diagnostics, whatever range is selected.
 	old := insert(allowed, "old", now.Add(-10*24*time.Hour))
 	if _, err = module.FlagAgentCallIssue(ctx, staff, old, AgentCallIssueInsurance); err != nil {
 		t.Fatal(err)

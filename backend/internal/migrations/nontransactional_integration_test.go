@@ -27,8 +27,6 @@ func TestNonTransactionalMigrationTimeoutPreservesProgressAndResumes(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A one-connection pool also catches attempts to record the migration by
-	// acquiring a second connection while the migration session is still held.
 	config.MaxConns = 1
 	config.ConnConfig.RuntimeParams["statement_timeout"] = "0"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

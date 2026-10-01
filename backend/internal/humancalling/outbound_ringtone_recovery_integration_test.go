@@ -172,7 +172,6 @@ func TestOutboundRingtoneEndedUsesExactHangupCommand(t *testing.T) {
 				t.Fatalf("ordinary Staff recovery error=%v", err)
 			}
 			command.Identity = operator
-			// Change the durable evidence after the operator inspected the timeline.
 			if scenario.blockedBy == "SENT" {
 				if _, err := fixture.pool.Exec(ctx, `UPDATE human_calling_provider_commands SET state='SENT' WHERE call_id=$1 AND call_leg_id=$2 AND action='HANGUP_LEG'`, call.ID, staffDial.CallLegID); err != nil {
 					t.Fatal(err)

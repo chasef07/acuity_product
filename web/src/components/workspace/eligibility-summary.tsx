@@ -14,7 +14,6 @@ const messages = (row: Benefit): string[] =>
         typeof item.description === "string" ? [item.description] : [],
       )
     : []
-// Ordering is only a reading aid; it does not establish the applicable copay.
 const preferredCopay = (row: Benefit, vision: boolean) => messages(row).some((message) =>
   vision ? /\bvision exam\b/i.test(message) :
     /\bspecialist\b/i.test(message) && !/\b(?:non[ -]?|not a )specialist\b/i.test(message),

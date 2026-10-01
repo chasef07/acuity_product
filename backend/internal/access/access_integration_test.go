@@ -1047,8 +1047,6 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 	if len(practiceIDs) != 2 {
 		t.Fatalf("operational Practices = %#v, want both Practices", practiceIDs)
 	}
-	// The operational lock protects Practice identity while concurrent call
-	// processing remains able to publish a workspace-version change.
 	changeContext, cancelChange := context.WithTimeout(context.Background(), time.Second)
 	defer cancelChange()
 	changeTx, err := pool.Begin(changeContext)

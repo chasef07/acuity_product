@@ -2,8 +2,6 @@ import type { ConversationTimelineItem } from "@/lib/api/generated/types.gen"
 import { appointmentOutcomeTitle } from "./ai-interactions.ts"
 import { oldestFirst } from "./workspace-ordering.ts"
 
-// Grouping and authorization belong to the backend. Preserve every returned
-// outcome and replace overlapping page items by their stable history identity.
 export function presentTimeline(items: ConversationTimelineItem[]) {
   return oldestFirst(
     [...new Map(items.map((item) => [`${item.type}:${item.id}`, item])).values()],

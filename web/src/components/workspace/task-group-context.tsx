@@ -4,10 +4,8 @@ import { useState } from "react"
 import { CheckCircle2Icon, ArrowUpRightIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { portalClient } from "@/lib/api/client"
-import { completeTask, completeTaskGroup } from "@/lib/api/generated/sdk.gen"
 import type { Task } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import { completeTask, completeTaskGroup } from "@/lib/clients/tasks"
 import { formatUSPhone } from "@/lib/phone"
 import { taskGroupLabel } from "@/lib/task-groups"
 import { TaskMetadata } from "./task-metadata"
@@ -19,7 +17,6 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
   onSelect: (task: Task) => void
   onUpdated: (task: Task, advance?: boolean) => void
 }) {
-  // Keep the requests actually shown to staff separate from refreshed membership.
   const [reviewed, setReviewed] = useState(group.groupMembers ?? [group])
   const [pending, setPending] = useState(false)
   const [resolved, setResolved] = useState(false)
@@ -41,27 +38,21 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
     if (pending || stale || !canMutate || reviewed.length === 0) return
     setPending(true)
     setError("")
-    try {
-      const token = await getAccessToken()
-      if (!token) throw new Error("Sign in again to resolve this Task.")
-      const client = portalClient(token)
-      const result = member
-        ? await completeTask({ client, path: { taskId: member.id }, body: { expectedVersion: member.version } })
-        : await completeTaskGroup({ client, path: { taskId: reviewed[0].id }, body: { members: reviewed.map((item) => ({ id: item.id, expectedVersion: item.version })) } })
-      if (!result.data) throw new Error(result.response?.status === 409
-        ? "This group changed. Reopen it from Tasks to review the latest requests."
-        : "Resolution could not be saved. Try again.")
-      if (!member || reviewed.length === 1) {
-        setResolved(true)
-        setReviewed([])
-        onUpdated(result.data, true)
-      } else {
-        updated(result.data)
-      }
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Resolution could not be saved.")
-    } finally {
-      setPending(false)
+    const outcome = member ? await completeTask(member) : await completeTaskGroup(reviewed)
+    setPending(false)
+    if (!outcome.ok) {
+      const { kind } = outcome.failure
+      setError(kind === "signedOut" || kind === "unauthenticated"
+        ? "Sign in again to resolve this Task."
+        : kind === "conflict"
+          ? "This group changed. Reopen it from Tasks to review the latest requests."
+          : "Resolution could not be saved. Try again.")
+    } else if (!member || reviewed.length === 1) {
+      setResolved(true)
+      setReviewed([])
+      onUpdated(outcome.data, true)
+    } else {
+      updated(outcome.data)
     }
   }
 

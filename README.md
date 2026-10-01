@@ -111,6 +111,14 @@ The [`workspace/`](backend/internal/workspace) query layer combines authorized
 cross-domain views; it does not own domain writes. HTTP, authentication,
 provider, storage, and worker adapters connect to the owning modules.
 
+The backend test suite enforces these boundaries in
+[`architecture/`](backend/internal/architecture): only `httpapi` imports the
+generated API, domain modules import only reviewed domain edges, and SQL may
+use only its own module's tables (by migration prefix) while `workspace` only
+reads. Existing cross-module SQL is a shrinking baseline in that package. It
+also rejects comments in hand-written Go; only tool directives such as
+`//go:generate` and `//go:embed` are allowed.
+
 Knowledge uses Access for Practice and office authorization, a Google Vertex AI
 adapter for embeddings, and PostgreSQL/pgvector for passages and immutable revisions.
 Embedding requests run outside database transactions; the Agent has read-only access.

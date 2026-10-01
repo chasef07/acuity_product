@@ -32,7 +32,6 @@ func TestPhoneLookupPreservesResultsAndUsesIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Enough unrelated history to expose a scan instead of a selective phone seek.
 	_, err = pool.Exec(ctx, `INSERT INTO human_calling_handoffs
  (id,service_subject,practice_id,location_id,source_call_id,idempotency_key,input_fingerprint,phone,expires_at)
  SELECT md5('handoff-'||i)::uuid,'synthetic',$1,$2,i::text,i::text,'x'::bytea,
@@ -50,7 +49,6 @@ func TestPhoneLookupPreservesResultsAndUsesIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Includes handoff precedence, NULL fallback, no handoff, no phone, and both scope boundaries.
 	_, err = pool.Exec(ctx, `
  UPDATE human_calling_handoffs SET phone=CASE WHEN source_call_id IN ('3','7') THEN NULL ELSE $1 END
  WHERE source_call_id IN ('1','2','3','4','5','7');
@@ -163,7 +161,6 @@ func TestPhoneLookupPreservesResultsAndUsesIndexes(t *testing.T) {
 			t.Fatalf("%s did not reduce buffer work: %s", c.name, after.plan)
 		}
 	}
-	// Compare full projections, including pagination, rather than just matching IDs.
 	for _, c := range cases {
 		read := func(sql string) string {
 			t.Helper()

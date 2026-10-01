@@ -34,8 +34,6 @@ type JWKSConfig struct {
 	Now        func() time.Time
 }
 
-// JWKSAuthenticator is the Better Auth authentication adapter. Its interface
-// returns identity only; Access resolves current product authority separately.
 type JWKSAuthenticator struct {
 	url        string
 	issuer     string
@@ -190,8 +188,6 @@ func (adapter *JWKSAuthenticator) key(
 		}
 		refresh = &keyRefresh{done: make(chan struct{})}
 		adapter.refreshing = refresh
-		// Refresh belongs to the adapter, not whichever request first missed.
-		// Each caller can stop waiting independently; network work is bounded.
 		go adapter.refreshKeys(context.WithoutCancel(ctx), refresh, keyID, fresh)
 	}
 	adapter.mu.Unlock()
@@ -222,8 +218,6 @@ func (adapter *JWKSAuthenticator) refreshKeys(ctx context.Context, refresh *keyR
 		adapter.keys = keys
 		adapter.fetchedAt = adapter.now()
 	}
-	// Cache misses and failures cannot turn a request burst into a fetch burst.
-	// Keep fresh cached keys usable while allowing rotation to retry shortly.
 	if unknownKey || err != nil || keys[keyID] == nil {
 		adapter.nextRefreshAt = adapter.now().Add(jwksRefreshCooldown)
 	}

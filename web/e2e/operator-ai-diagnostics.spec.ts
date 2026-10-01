@@ -458,7 +458,6 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       fullPage: true,
       animations: "disabled",
     })
-    // New scope clears selected tools and never reuses the prior Location's examples.
     await diagnostics
       .getByRole("combobox", { name: "Office", exact: true })
       .click()

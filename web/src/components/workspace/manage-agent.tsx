@@ -34,14 +34,8 @@ import {
   AppointmentActions,
   callDuration,
 } from "./agent-call-panel"
-import { portalClient } from "@/lib/api/client"
-import { queryAgentCalls } from "@/lib/api/generated/sdk.gen"
-import type {
-  AgentCallsPage,
-  AgentCallsQuery,
-  Location,
-} from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import type { AgentCallsQuery, Location } from "@/lib/api/generated/types.gen"
+import { useAgentCalls } from "@/lib/clients/agent-calls"
 import { formatUSPhone } from "@/lib/phone"
 
 const ranges = [
@@ -65,29 +59,21 @@ export function ManageAgent({
   const [flaggedOnly, setFlaggedOnly] = useState(false)
   const [version, setVersion] = useState(0)
   const [selectedID, setSelectedID] = useState("")
-  const [request, setRequest] = useState<{
-    key: string
-    data?: AgentCallsPage
-    error?: string
-    signal?: AbortSignal
-  }>({ key: "" })
-  const [more, setMore] = useState<{
-    key: string
-    loading: boolean
-    error?: string
-  }>({ key: "", loading: false })
-  const key = JSON.stringify([
+  const current = useAgentCalls({
     practiceID,
-    office,
+    locationID: office === "all" ? "" : office,
     range,
     phone,
     flaggedOnly,
-    version,
-  ])
-  const current = request.key === key && !request.signal?.aborted ? request : undefined
-  const calls = current?.data?.calls ?? []
+    revision: version,
+  })
+  const calls = current.status === "ready" ? current.data.calls : []
+  const nextCursor = current.status === "ready" ? current.data.nextCursor : ""
   const selectedIndex = calls.findIndex((call) => call.id === selectedID)
-  const loadingMore = more.key === key && more.loading
+  const loadingMore = current.loadingMore
+  const moreError = current.moreFailure
+    ? "More calls could not be loaded. Try again."
+    : undefined
   const offices = [
     { value: "all", label: "All offices" },
     ...locations.map((location) => ({
@@ -101,92 +87,12 @@ export function ManageAgent({
     return () => clearTimeout(timeout)
   }, [phoneInput])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    async function load() {
-      try {
-        const token = await getAccessToken()
-        if (!token) throw new Error("Sign in again to view calls.")
-        const result = await queryAgentCalls({
-          client: portalClient(token),
-          signal: controller.signal,
-          body: {
-            practiceId: practiceID,
-            locationId: office === "all" ? undefined : office,
-            range,
-            phone,
-            flaggedOnly,
-            limit: 50,
-          },
-        })
-        if (!result.data)
-          throw new Error("Calls could not be loaded. Try again.")
-        if (!controller.signal.aborted) {
-          setRequest({ key, data: result.data, signal: controller.signal })
-          setMore({ key, loading: false })
-        }
-      } catch (error) {
-        if (!controller.signal.aborted)
-          setRequest({
-            key,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Calls could not be loaded. Try again.",
-          })
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [key, practiceID, office, range, phone, flaggedOnly])
-
   async function loadMore(navigateFrom?: string) {
-    const signal = current?.signal
-    if (!current?.data?.nextCursor || loadingMore || !signal || signal.aborted) return
-    setMore({ key, loading: true })
-    try {
-      const token = await getAccessToken()
-      if (!token) throw new Error()
-      const result = await queryAgentCalls({
-        client: portalClient(token),
-        signal,
-        body: {
-          practiceId: practiceID,
-          locationId: office === "all" ? undefined : office,
-          range,
-          phone,
-          flaggedOnly,
-          limit: 50,
-          cursor: current.data.nextCursor,
-        },
-      })
-      if (signal.aborted) return
-      if (!result.data) throw new Error()
-      const next = result.data
-      setRequest((previous) =>
-        previous.signal === signal && previous.data
-          ? {
-              ...previous,
-              data: {
-                calls: [...previous.data.calls, ...next.calls],
-                nextCursor: next.nextCursor,
-              },
-            }
-          : previous,
+    const next = await current.loadMore()
+    if (navigateFrom && next?.calls.length) {
+      setSelectedID((previous) =>
+        previous === navigateFrom ? next.calls[0].id : previous,
       )
-      setMore({ key, loading: false })
-      if (navigateFrom && next.calls.length) {
-        setSelectedID((previous) =>
-          previous === navigateFrom ? next.calls[0].id : previous,
-        )
-      }
-    } catch {
-      if (signal.aborted) return
-      setMore({
-        key,
-        loading: false,
-        error: "More calls could not be loaded. Try again.",
-      })
     }
   }
 
@@ -265,7 +171,7 @@ export function ManageAgent({
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 sm:px-6">
-        {!current && (
+        {current.status === "loading" && (
           <div
             role="status"
             aria-label="Loading calls"
@@ -277,10 +183,15 @@ export function ManageAgent({
             ))}
           </div>
         )}
-        {current?.error && (
+        {current.status === "failed" && (
           <Alert variant="destructive" className="my-6">
             <AlertTitle>Calls unavailable</AlertTitle>
-            <AlertDescription>{current.error}</AlertDescription>
+            <AlertDescription>
+              {current.failure.kind === "signedOut" ||
+              current.failure.kind === "unauthenticated"
+                ? "Sign in again to view calls."
+                : "Calls could not be loaded. Try again."}
+            </AlertDescription>
             <Button
               className="mt-3 w-fit"
               variant="outline"
@@ -290,8 +201,8 @@ export function ManageAgent({
             </Button>
           </Alert>
         )}
-        {current?.data &&
-          (current.data.calls.length ? (
+        {current.status === "ready" &&
+          (calls.length ? (
             <>
               <Table>
                 <TableHeader>
@@ -304,7 +215,7 @@ export function ManageAgent({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {current.data.calls.map((call) => (
+                  {calls.map((call) => (
                     <TableRow
                       key={call.id}
                       className="cursor-pointer"
@@ -370,13 +281,13 @@ export function ManageAgent({
                   ))}
                 </TableBody>
               </Table>
-              {more.key === key && more.error && (
+              {moreError && (
                 <Alert variant="destructive" className="mt-4">
                   <AlertTitle>More calls unavailable</AlertTitle>
-                  <AlertDescription>{more.error}</AlertDescription>
+                  <AlertDescription>{moreError}</AlertDescription>
                 </Alert>
               )}
-              {current.data.nextCursor && (
+              {nextCursor && (
                 <div className="py-5 text-center">
                   <Button
                     variant="outline"
@@ -406,9 +317,9 @@ export function ManageAgent({
         id={selectedID}
         position={selectedIndex + 1}
         loadedCount={calls.length}
-        hasMore={Boolean(current?.data?.nextCursor)}
+        hasMore={Boolean(nextCursor)}
         loadingNext={loadingMore}
-        navigationError={more.key === key ? more.error : undefined}
+        navigationError={moreError}
         onPrevious={
           selectedIndex > 0
             ? () => setSelectedID(calls[selectedIndex - 1].id)
@@ -416,7 +327,7 @@ export function ManageAgent({
         }
         onNext={
           selectedIndex >= 0 &&
-          (selectedIndex < calls.length - 1 || current?.data?.nextCursor)
+          (selectedIndex < calls.length - 1 || nextCursor)
             ? () => {
                 if (selectedIndex < calls.length - 1)
                   setSelectedID(calls[selectedIndex + 1].id)
@@ -426,19 +337,12 @@ export function ManageAgent({
         }
         onClose={() => setSelectedID("")}
         onFlagged={(id) =>
-          setRequest((previous) =>
-            previous.data
-              ? {
-                  ...previous,
-                  data: {
-                    ...previous.data,
-                    calls: previous.data.calls.map((call) =>
-                      call.id === id ? { ...call, issueFlagged: true } : call,
-                    ),
-                  },
-                }
-              : previous,
-          )
+          current.update((shown) => ({
+            ...shown,
+            calls: shown.calls.map((call) =>
+              call.id === id ? { ...call, issueFlagged: true } : call,
+            ),
+          }))
         }
       />
     </section>

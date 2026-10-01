@@ -5,7 +5,6 @@ const require = createRequire(import.meta.url)
 const nextRequire = createRequire(require.resolve("next/package.json"))
 const sharp = nextRequire("sharp")
 
-// Keep every browser and installed-app icon in sync with the SVG source.
 const app = new URL("../src/app/", import.meta.url)
 const publicDir = new URL("../public/", import.meta.url)
 const svg = await readFile(new URL("icon.svg", app), "utf8")

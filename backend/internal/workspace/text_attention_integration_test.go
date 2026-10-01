@@ -68,7 +68,6 @@ func TestTextAttentionExpiresWithoutCompletingWorkAndReturnsOnInbound(t *testing
 		}
 	}
 	check(0)
-	// An outbound message or a Task edit must not renew the inbound window.
 	addMessage("OUTBOUND", now)
 	if _, err := pool.Exec(ctx, `UPDATE work_tasks SET updated_at=$2 WHERE message_thread_id=$1`, threadID, now); err != nil {
 		t.Fatal(err)
@@ -76,7 +75,6 @@ func TestTextAttentionExpiresWithoutCompletingWorkAndReturnsOnInbound(t *testing
 	check(0)
 	addMessage("INBOUND", now.Add(-120*time.Hour+time.Minute))
 	check(1)
-	// Completion still preserves the review in history.
 	page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID})
 	if err != nil {
 		t.Fatal(err)

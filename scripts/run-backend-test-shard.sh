@@ -27,6 +27,7 @@ case "${1:-}" in
       ./backend/cmd/task-maintenance
       ./backend/internal/api
       ./backend/internal/app
+      ./backend/internal/architecture
       ./backend/internal/authn
       ./backend/internal/contactcontext
       ./backend/internal/interaction

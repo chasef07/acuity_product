@@ -7,8 +7,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Expand all authorized page representatives in one query. Group rows carry the
-// same summary as ordinary Task rows; ReadTask loads Interaction detail on demand.
 func loadGroupMembers(ctx context.Context, tx pgx.Tx, groups []work.Task) error {
 	if len(groups) == 0 {
 		return nil

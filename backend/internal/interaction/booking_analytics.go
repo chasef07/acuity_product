@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Booking analytics returns only aggregates. Operator evidence is a separate API.
 type QueryBookingAnalyticsCommand struct {
 	Identity   access.Identity
 	PracticeID string
@@ -32,9 +31,7 @@ type BookingMetrics struct {
 	P90                 *float64 `json:"p90"`
 	DurationSamples     int      `json:"durationSamples"`
 	SearchEvidenceCalls int      `json:"searchEvidenceCalls"`
-	// PreciseSearchCalls is retained for rolling-deploy compatibility with the
-	// prior frontend. It remains zero; new clients use Searched directly.
-	PreciseSearchCalls int `json:"preciseSearchCalls"`
+	PreciseSearchCalls  int      `json:"preciseSearchCalls"`
 }
 
 type BookingGroups struct {
@@ -103,8 +100,6 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 		return BookingAnalytics{}, ErrDenied
 	}
 
-	// Read only stored facts maintained alongside source evidence. Transcript JSON
-	// is never parsed on this path. Fail visibly rather than truncating a report.
 	rows, err := tx.Query(ctx, `
         SELECT started_at, ended_at, booking_confirmed, COALESCE(new_appointment_id, ''),
             booking_searched, booking_search_known,
@@ -160,7 +155,6 @@ func (a *bookingAccumulator) add(f bookingFact) {
 	if f.countBooking {
 		a.metrics.Bookings++
 	}
-	// Include each booking-attempt conversation, whether or not it booked.
 	if !f.booked && !f.searched {
 		return
 	}

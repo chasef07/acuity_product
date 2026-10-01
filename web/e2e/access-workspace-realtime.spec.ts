@@ -520,7 +520,6 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       analyticsRegion.getByRole("button", { name: "Load more calls" }),
     ).toHaveCount(0)
 
-    // Cursor pages omit summary; navigating back must retain the initial metrics.
     await analyticsRegion.getByRole("button", { name: "Tools", exact: true }).click()
     await expect(analyticsRegion.getByRole("region", { name: "Tool execution summary" }).getByText("31", { exact: true })).toBeVisible()
     await analyticsRegion.getByRole("button", { name: "Calls", exact: true }).click()
@@ -744,8 +743,6 @@ async function installControlledReconnectBackoff(
     const originalRandom = Math.random
     let reconnectRandomCalls = 0
     state.__acuityReconnectBackoff = { enabled: false }
-    // Exhaust the short jitter windows, then hold one retry in the 16-second
-    // window that exposed the former 10-second assertion race.
     Math.random = () =>
       state.__acuityReconnectBackoff?.enabled
         ? reconnectRandomCalls++ < 5
