@@ -474,7 +474,7 @@ func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	if body.Source != api.Agent {
+	if body.Source != api.CreateStaffTaskRequestSourceAgent {
 		server.writeWorkError(w, r, work.ErrInvalidInput)
 		return
 	}
@@ -3441,25 +3441,20 @@ func operatorAIAnalyticsPageResponse(
 			return api.OperatorAIAnalyticsPage{}, err
 		}
 		response.PendingIssues = pendingIssues
+		versions, err := analyticsVersionsResponse(page.Summary.Versions)
+		if err != nil {
+			return api.OperatorAIAnalyticsPage{}, err
+		}
 		response.Summary = &api.OperatorAIAnalyticsSummary{
 			Daily:             make([]api.OperatorAIAnalyticsDay, 0, len(page.Summary.Daily)),
 			Diagnostics:       analyticsDiagnosticsResponse(page.Summary.Diagnostics),
+			Quality:           analyticsQualityResponse(page.Summary.Quality),
+			Versions:          versions,
 			TotalCalls:        page.Summary.TotalCalls,
+			TotalCallMinutes:  page.Summary.TotalCallMinutes,
 			BookingCount:      page.Summary.BookingCount,
 			CancellationCount: page.Summary.CancellationCount,
 			RescheduleCount:   page.Summary.RescheduleCount,
-			P50SttMs:          page.Summary.P50SttMs,
-			P90SttMs:          page.Summary.P90SttMs,
-			P99SttMs:          page.Summary.P99SttMs,
-			P50TtftMs:         page.Summary.P50TtftMs,
-			P90TtftMs:         page.Summary.P90TtftMs,
-			P99TtftMs:         page.Summary.P99TtftMs,
-			P50TtsTtfbMs:      page.Summary.P50TtsTtfbMs,
-			P90TtsTtfbMs:      page.Summary.P90TtsTtfbMs,
-			P99TtsTtfbMs:      page.Summary.P99TtsTtfbMs,
-			P50TotalLatencyMs: page.Summary.P50TotalLatencyMs,
-			P90TotalLatencyMs: page.Summary.P90TotalLatencyMs,
-			P99TotalLatencyMs: page.Summary.P99TotalLatencyMs,
 			TransferCount:     page.Summary.TransferCount,
 			TransferRate:      page.Summary.TransferRate,
 			ToolCallCount:     page.Summary.ToolCallCount,
@@ -3467,7 +3462,7 @@ func operatorAIAnalyticsPageResponse(
 			ToolFailureRate:   page.Summary.ToolFailureRate,
 		}
 		for _, day := range page.Summary.Daily {
-			response.Summary.Daily = append(response.Summary.Daily, api.OperatorAIAnalyticsDay{Date: day.Date, TotalCalls: day.TotalCalls, TransferCount: day.TransferCount, TransferRate: day.TransferRate})
+			response.Summary.Daily = append(response.Summary.Daily, api.OperatorAIAnalyticsDay{Date: day.Date, TotalCalls: day.TotalCalls, CallMinutes: day.CallMinutes, TransferCount: day.TransferCount, TransferRate: day.TransferRate})
 		}
 	}
 	for _, call := range page.Calls {

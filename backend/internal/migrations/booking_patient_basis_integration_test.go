@@ -162,7 +162,7 @@ func TestHistoricalPatientBasisUpgradeAndSourceCorrections(t *testing.T) {
 		t.Fatal(err)
 	}
 	var before, after, basis string
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&before, &basis); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing'-'version_agent'-'version_prompts'-'version_tools'-'version_judges'-'version_evaluator'-'version_knowledge')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&before, &basis); err != nil {
 		t.Fatal(err)
 	}
 	if basis != "assumed_new" {
@@ -171,7 +171,7 @@ func TestHistoricalPatientBasisUpgradeAndSourceCorrections(t *testing.T) {
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&after, &basis); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing'-'version_agent'-'version_prompts'-'version_tools'-'version_judges'-'version_evaluator'-'version_knowledge')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&after, &basis); err != nil {
 		t.Fatal(err)
 	}
 	if before != after || basis != "legacy_existing" {

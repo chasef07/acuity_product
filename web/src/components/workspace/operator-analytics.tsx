@@ -8,6 +8,7 @@ import {
   CalendarX2Icon,
   ChartNoAxesCombinedIcon,
   CircleAlertIcon,
+  Clock3Icon,
   InboxIcon,
   PhoneForwardedIcon,
   RefreshCwIcon,
@@ -17,11 +18,17 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AnalyticsFrame } from "@/components/analytics/analytics-layout"
 import {
   DiagnosticsCallTrends,
-  DiagnosticsPerformance,
   DiagnosticsTools,
   type DiagnosticFocus,
   type SelectDiagnostic,
 } from "@/components/analytics/ai-diagnostics"
+import { DiagnosticsQuality } from "@/components/analytics/agent-quality"
+import {
+  defaultVersionSelection,
+  VersionToolbar,
+  type VersionSelection,
+  type VersionView,
+} from "@/components/analytics/version-markers"
 import { CostOverview } from "@/components/analytics/cost-overview"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -75,14 +82,14 @@ type AnalyticsSnapshot = OperatorAiAnalyticsPage & { summary: OperatorAiAnalytic
 
 type AnalyticsLoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type AnalyticsNextPageState = "idle" | "loading" | "unavailable"
-type AnalyticsTab = "overview" | "cost" | "performance" | "tools" | "calls" | "review"
+type AnalyticsTab = "overview" | "cost" | "quality" | "tools" | "calls" | "review"
 
 const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
   { value: "calls", label: "Calls" },
   { value: "review", label: "Needs review" },
   { value: "overview", label: "Overview" },
   { value: "cost", label: "Cost" },
-  { value: "performance", label: "Performance" },
+  { value: "quality", label: "Quality" },
   { value: "tools", label: "Tools" },
 ]
 
@@ -119,6 +126,7 @@ export function OperatorAnalytics({
   const locationID = office === "all" ? "" : office
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("7d")
   const [tab, setTab] = useState<AnalyticsTab>("calls")
+  const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
   const costView = tab === "cost"
   const needsReviewOnly = tab === "review"
   const [tagFilter, setTagFilter] = useState({ practiceID, value: "" })
@@ -392,6 +400,9 @@ export function OperatorAnalytics({
               <AnalyticsReady
                 key={requestKey}
                 data={currentRequest.data}
+                locations={locations}
+                versionSelection={versionSelection}
+                onVersionSelectionChange={setVersionSelection}
                 tab={tab}
                 range={range}
                 nextPageState={nextPageState}
@@ -422,6 +433,9 @@ export function OperatorAnalytics({
 
 function AnalyticsReady({
   data,
+  locations,
+  versionSelection,
+  onVersionSelectionChange,
   tab,
   range,
   nextPageState,
@@ -429,16 +443,27 @@ function AnalyticsReady({
   onSelect,
 }: {
   data: AnalyticsSnapshot
+  locations: Location[]
+  versionSelection: VersionSelection
+  onVersionSelectionChange: (selection: VersionSelection) => void
   tab: AnalyticsTab
   range: OperatorAiAnalyticsRange
   nextPageState: AnalyticsNextPageState
   onLoadNextPage: () => void
   onSelect: SelectDiagnostic
 }) {
+  const versionView: VersionView = {
+    versions: data.summary.versions,
+    selection: versionSelection,
+    locations,
+  }
   return (
     <>
-      {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
-      {tab === "performance" && <DiagnosticsPerformance summary={data.summary} onSelect={onSelect} />}
+      {(tab === "overview" || tab === "quality") && (
+        <VersionToolbar view={versionView} onChange={onVersionSelectionChange} />
+      )}
+      {tab === "overview" && <AnalyticsOverview summary={data.summary} versionView={versionView} />}
+      {tab === "quality" && <DiagnosticsQuality summary={data.summary} versionView={versionView} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
       {(tab === "calls" || tab === "review") && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
@@ -499,13 +524,25 @@ function AnalyticsTabs({
   )
 }
 
-function AnalyticsOverview({ summary }: { summary: OperatorAiAnalyticsSummary }) {
+function AnalyticsOverview({
+  summary,
+  versionView,
+}: {
+  summary: OperatorAiAnalyticsSummary
+  versionView: VersionView
+}) {
   const outcomes = [
     {
       label: "Total calls",
       value: summary.totalCalls.toLocaleString(),
       note: "All calls in selected range",
       icon: ChartNoAxesCombinedIcon,
+    },
+    {
+      label: "Call minutes",
+      value: Math.round(summary.totalCallMinutes).toLocaleString(),
+      note: "Completed AI call time",
+      icon: Clock3Icon,
     },
     {
       label: "Booked",
@@ -528,7 +565,7 @@ function AnalyticsOverview({ summary }: { summary: OperatorAiAnalyticsSummary })
   ]
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         {outcomes.map((item) => (
           <Card key={item.label} size="sm" className="min-w-0">
             <CardHeader className="grid-cols-[1fr_auto]">
@@ -549,7 +586,7 @@ function AnalyticsOverview({ summary }: { summary: OperatorAiAnalyticsSummary })
         ))}
       </div>
 
-      <DiagnosticsCallTrends summary={summary} />
+      <DiagnosticsCallTrends summary={summary} versionView={versionView} />
 
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <OperationalHealth summary={summary} />

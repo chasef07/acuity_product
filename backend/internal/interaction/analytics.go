@@ -39,6 +39,7 @@ type QueryAnalyticsCommand struct {
 type AnalyticsDay struct {
 	Date          string
 	TotalCalls    int
+	CallMinutes   float64 // Completed call time; calls still in progress are excluded.
 	TransferCount int
 	TransferRate  *float64
 }
@@ -55,29 +56,21 @@ func analyticsDays(from, through time.Time) []AnalyticsDay {
 type AnalyticsSummary struct {
 	Daily             []AnalyticsDay
 	Diagnostics       AnalyticsDiagnostics
+	Quality           AnalyticsQuality
+	Versions          AnalyticsVersions
 	diagnostics       *diagnosticsAccumulator
+	quality           *qualityAccumulator
+	versions          *versionAccumulator
 	TotalCalls        int
+	TotalCallMinutes  float64
 	BookingCount      int
 	CancellationCount int
 	RescheduleCount   int
-	P50SttMs          *int
-	P90SttMs          *int
-	P99SttMs          *int
-	P50TtftMs         *int
-	P90TtftMs         *int
-	P99TtftMs         *int
-	P50TtsTtfbMs      *int
-	P90TtsTtfbMs      *int
-	P99TtsTtfbMs      *int
-	P50TotalLatencyMs *int
-	P90TotalLatencyMs *int
-	P99TotalLatencyMs *int
 	TransferCount     int
 	TransferRate      float64
 	ToolCallCount     int
 	ToolErrorCount    int
 	ToolFailureRate   float64
-	latencySamples    latencyValueSet
 }
 
 type AnalyticsCall struct {
@@ -177,7 +170,8 @@ type analyticsProjection struct {
 	appointmentOutcome AppointmentOutcome
 	transcript         json.RawMessage
 	closeoutPayload    json.RawMessage
-	latencySamples     latencyValueSet
+	quality            qualitySample
+	versions           callVersions
 }
 
 func (m *Module) QueryAnalytics(
@@ -278,36 +272,64 @@ func queryAnalyticsSummary(
 	from time.Time,
 	to time.Time,
 ) (AnalyticsSummary, error) {
+	versions := newVersionAccumulator()
+	if err := queryVersionBaseline(ctx, tx, command.PracticeID, locationIDs, from, versions); err != nil {
+		return AnalyticsSummary{}, err
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT
 			interaction.id::text,
 			interaction.started_at,
+			interaction.ended_at,
 			interaction.status,
 			interaction.appointment_outcome,
 			interaction.analytics_evidence -> 'transcript',
-			interaction.analytics_evidence -> 'closeout'
+			interaction.analytics_evidence -> 'closeout',
+			interaction.closeout_payload -> 'evaluation',
+			interaction.closeout_payload -> 'contextFootprint',
+			interaction.cost_usage_evidence,
+			CASE WHEN issue.interaction_id IS NULL THEN '' ELSE COALESCE(issue.review_outcome, 'PENDING') END,
+			interaction.location_id::text,
+			COALESCE(interaction.version_agent, ''),
+			COALESCE(interaction.version_prompts, ''),
+			COALESCE(interaction.version_tools, ''),
+			COALESCE(interaction.version_knowledge, ''),
+			COALESCE(interaction.version_judges, ''),
+			COALESCE(interaction.version_evaluator, '')
 		FROM ai_interactions interaction
+		LEFT JOIN ai_interaction_issues issue ON issue.interaction_id = interaction.id
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.started_at >= $3
 			AND interaction.started_at <= $4
  AND ($5 = '' OR EXISTS (SELECT 1 FROM ai_interaction_manual_tags tag WHERE tag.interaction_id=interaction.id AND tag.practice_id=$1 AND tag.tag_key=lower($5)))
+		ORDER BY interaction.started_at, interaction.id
 	`, command.PracticeID, locationIDs, from, to, command.ManualTag)
 	if err != nil {
 		return AnalyticsSummary{}, fmt.Errorf("query operator AI analytics summary: %w", err)
 	}
 	defer rows.Close()
 	summary := AnalyticsSummary{Daily: analyticsDays(from, to), diagnostics: newDiagnosticsAccumulator()}
-	summary.diagnostics.from, summary.diagnostics.through = from, to
+	summary.quality = newQualityAccumulator(summary.Daily)
+	summary.versions = versions
 	for rows.Next() {
 		var projection analyticsProjection
+		var evaluation, footprint, usage json.RawMessage
+		values := make([]string, len(versionDimensions))
 		if err := rows.Scan(
 			&projection.call.ID,
 			&projection.call.StartedAt,
+			&projection.call.EndedAt,
 			&projection.call.Status,
 			&projection.appointmentOutcome,
 			&projection.transcript,
 			&projection.closeoutPayload,
+			&evaluation,
+			&footprint,
+			&usage,
+			&projection.quality.staffFlag,
+			&projection.versions.locationID,
+			&values[0], &values[1], &values[2], &values[3], &values[4], &values[5],
 		); err != nil {
 			return AnalyticsSummary{}, fmt.Errorf("scan operator AI analytics summary: %w", err)
 		}
@@ -315,6 +337,14 @@ func queryAnalyticsSummary(
 			return AnalyticsSummary{}, errors.New("operator AI analytics evidence backfill is incomplete")
 		}
 		projectAnalyticsEvidence(&projection)
+		projection.quality.startedAt = projection.call.StartedAt
+		projection.quality.evaluation = readEvaluation(evaluation)
+		projection.quality.footprint = contextFootprint(footprint)
+		projection.quality.usage = callTokenUsage(usage)
+		projection.versions.values = map[string]string{}
+		for i, dimension := range versionDimensions {
+			projection.versions.values[dimension] = values[i]
+		}
 		summarizeAnalyticsProjection(&summary, projection)
 	}
 	if err := rows.Err(); err != nil {
@@ -326,11 +356,17 @@ func queryAnalyticsSummary(
 
 func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analyticsProjection) {
 	summary.TotalCalls++
+	var minutes float64
+	if ended := projection.call.EndedAt; ended != nil && ended.After(projection.call.StartedAt) {
+		minutes = ended.Sub(projection.call.StartedAt).Minutes()
+	}
+	summary.TotalCallMinutes += minutes
 	date := projection.call.StartedAt.UTC().Format(time.DateOnly)
 	for i := range summary.Daily {
 		day := &summary.Daily[i]
 		if day.Date == date {
 			day.TotalCalls++
+			day.CallMinutes += minutes
 			if projection.call.Transferred {
 				day.TransferCount++
 			}
@@ -341,6 +377,14 @@ func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analytic
 		summary.diagnostics = newDiagnosticsAccumulator()
 	}
 	summary.diagnostics.add(projection)
+	if summary.quality == nil {
+		summary.quality = newQualityAccumulator(summary.Daily)
+	}
+	summary.quality.add(projection.quality)
+	if summary.versions == nil {
+		summary.versions = newVersionAccumulator()
+	}
+	summary.versions.add(projection.call.StartedAt, projection.versions)
 	switch projection.appointmentOutcome {
 	case OutcomeBooking:
 		summary.BookingCount++
@@ -354,22 +398,6 @@ func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analytic
 	}
 	summary.ToolCallCount += projection.call.ToolCallCount
 	summary.ToolErrorCount += projection.call.ToolErrorCount
-	summary.latencySamples.stt = append(
-		summary.latencySamples.stt,
-		projection.latencySamples.stt...,
-	)
-	summary.latencySamples.ttft = append(
-		summary.latencySamples.ttft,
-		projection.latencySamples.ttft...,
-	)
-	summary.latencySamples.ttsTtfb = append(
-		summary.latencySamples.ttsTtfb,
-		projection.latencySamples.ttsTtfb...,
-	)
-	summary.latencySamples.total = append(
-		summary.latencySamples.total,
-		projection.latencySamples.total...,
-	)
 }
 
 func finalizeAnalyticsSummary(summary *AnalyticsSummary) {
@@ -385,19 +413,22 @@ func finalizeAnalyticsSummary(summary *AnalyticsSummary) {
 	}
 	summary.Diagnostics = summary.diagnostics.finish()
 	summary.diagnostics = nil
+	if summary.quality == nil {
+		summary.quality = newQualityAccumulator(summary.Daily)
+	}
+	summary.Quality = summary.quality.finish()
+	summary.quality = nil
+	if summary.versions == nil {
+		summary.versions = newVersionAccumulator()
+	}
+	summary.Versions = summary.versions.finish()
+	summary.versions = nil
 	if summary.TotalCalls > 0 {
 		summary.TransferRate = float64(summary.TransferCount) / float64(summary.TotalCalls)
 	}
 	if summary.ToolCallCount > 0 {
 		summary.ToolFailureRate = float64(summary.ToolErrorCount) / float64(summary.ToolCallCount)
 	}
-	// These arrays are owned by the summary and discarded below. Sort each
-	// once, preserving the exact even-sample median and nearest-rank tails.
-	summary.P50SttMs, summary.P90SttMs, summary.P99SttMs = latencyPercentiles(summary.latencySamples.stt)
-	summary.P50TtftMs, summary.P90TtftMs, summary.P99TtftMs = latencyPercentiles(summary.latencySamples.ttft)
-	summary.P50TtsTtfbMs, summary.P90TtsTtfbMs, summary.P99TtsTtfbMs = latencyPercentiles(summary.latencySamples.ttsTtfb)
-	summary.P50TotalLatencyMs, summary.P90TotalLatencyMs, summary.P99TotalLatencyMs = latencyPercentiles(summary.latencySamples.total)
-	summary.latencySamples = latencyValueSet{}
 }
 
 func queryAnalyticsCalls(
@@ -619,7 +650,6 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 	projection.call.P50TtftMs = medianMilliseconds(samples.ttft)
 	projection.call.P50TtsTtfbMs = medianMilliseconds(samples.ttsTtfb)
 	projection.call.P50TotalLatencyMs = medianMilliseconds(samples.total)
-	projection.latencySamples = samples
 	executions := normalizeToolExecutions(
 		projection.transcript,
 		projection.closeoutPayload,
@@ -680,11 +710,10 @@ func decodeAnalyticsCursor(command QueryAnalyticsCommand) (*analyticsCursor, err
 }
 
 type latencyValueSet struct {
-	observations []latencyObservation
-	stt          []float64
-	ttft         []float64
-	ttsTtfb      []float64
-	total        []float64
+	stt     []float64
+	ttft    []float64
+	ttsTtfb []float64
+	total   []float64
 }
 
 func latencySamples(raw json.RawMessage) latencyValueSet {
@@ -694,7 +723,7 @@ func latencySamples(raw json.RawMessage) latencyValueSet {
 	for _, value := range entries {
 		entry := recordValue(value)
 		metrics := recordValue(entry["metrics"])
-		appendLatencyObservation(&result, metrics, firstRecordString(entry, "itemId", "item_id"))
+		appendLatencyValues(&result, metrics)
 	}
 	return result
 }
@@ -714,7 +743,7 @@ func analyticsLatencySamples(
 		if itemID := firstRecordString(record, "id"); itemID != "" && len(turnMetrics[itemID]) > 0 {
 			metrics = mergeRecords(metrics, turnMetrics[itemID])
 		}
-		appendLatencyObservation(&transcriptSamples, metrics, firstRecordString(record, "id"))
+		appendLatencyValues(&transcriptSamples, metrics)
 	}
 	return latencySamplesWithFallback(turnSamples, transcriptSamples)
 }
@@ -723,11 +752,6 @@ func latencySamplesWithFallback(
 	primary latencyValueSet,
 	fallback latencyValueSet,
 ) latencyValueSet {
-	for _, observation := range fallback.observations {
-		if len(latencyStageValues(primary, observation.stage)) == 0 {
-			primary.observations = append(primary.observations, observation)
-		}
-	}
 	if len(primary.stt) == 0 {
 		primary.stt = fallback.stt
 	}
@@ -813,10 +837,11 @@ func medianMilliseconds(values []float64) *int {
 	}
 	ordered := append([]float64(nil), values...)
 	sort.Float64s(ordered)
-	return sortedMedianMilliseconds(ordered)
+	return sortedMedian(ordered)
 }
 
-func sortedMedianMilliseconds(ordered []float64) *int {
+// sortedMedian and sortedPercentile round an ascending sample to a whole unit.
+func sortedMedian(ordered []float64) *int {
 	if len(ordered) == 0 {
 		return nil
 	}
@@ -829,13 +854,7 @@ func sortedMedianMilliseconds(ordered []float64) *int {
 	return &result
 }
 
-// latencyPercentiles consumes an owned sample array.
-func latencyPercentiles(values []float64) (p50, p90, p99 *int) {
-	sort.Float64s(values)
-	return sortedMedianMilliseconds(values), sortedPercentileMilliseconds(values, 90), sortedPercentileMilliseconds(values, 99)
-}
-
-func sortedPercentileMilliseconds(ordered []float64, percentile float64) *int {
+func sortedPercentile(ordered []float64, percentile float64) *int {
 	if len(ordered) == 0 || percentile < 0 || percentile > 100 {
 		return nil
 	}

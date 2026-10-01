@@ -3897,7 +3897,7 @@ components:
     OperatorAIAnalyticsDay:
       type: object
       additionalProperties: false
-      required: [date, totalCalls, transferCount]
+      required: [date, totalCalls, callMinutes, transferCount]
       properties:
         date:
           type: string
@@ -3905,6 +3905,11 @@ components:
         totalCalls:
           type: integer
           minimum: 0
+        callMinutes:
+          type: number
+          format: double
+          minimum: 0
+          description: Completed AI call time in minutes, from start to end. Calls still in progress contribute zero.
         transferCount:
           type: integer
           minimum: 0
@@ -3920,7 +3925,10 @@ components:
       additionalProperties: false
       required:
         - daily
+        - quality
+        - versions
         - totalCalls
+        - totalCallMinutes
         - bookingCount
         - cancellationCount
         - rescheduleCount
@@ -3935,8 +3943,14 @@ components:
           description: All UTC dates in the full selected range, including dates without calls; independent of call pagination.
           items: {$ref: "#/components/schemas/OperatorAIAnalyticsDay"}
         diagnostics: {$ref: "#/components/schemas/OperatorAIAnalyticsDiagnostics"}
+        quality: {$ref: "#/components/schemas/OperatorAIAnalyticsQuality"}
+        versions: {$ref: "#/components/schemas/OperatorAIAnalyticsVersions"}
         totalCalls:
           type: integer
+          minimum: 0
+        totalCallMinutes:
+          type: number
+          format: double
           minimum: 0
         bookingCount:
           type: integer
@@ -3945,42 +3959,6 @@ components:
           type: integer
           minimum: 0
         rescheduleCount:
-          type: integer
-          minimum: 0
-        p50SttMs:
-          type: integer
-          minimum: 0
-        p90SttMs:
-          type: integer
-          minimum: 0
-        p99SttMs:
-          type: integer
-          minimum: 0
-        p50TtftMs:
-          type: integer
-          minimum: 0
-        p90TtftMs:
-          type: integer
-          minimum: 0
-        p99TtftMs:
-          type: integer
-          minimum: 0
-        p50TtsTtfbMs:
-          type: integer
-          minimum: 0
-        p90TtsTtfbMs:
-          type: integer
-          minimum: 0
-        p99TtsTtfbMs:
-          type: integer
-          minimum: 0
-        p50TotalLatencyMs:
-          type: integer
-          minimum: 0
-        p90TotalLatencyMs:
-          type: integer
-          minimum: 0
-        p99TotalLatencyMs:
           type: integer
           minimum: 0
         transferCount:
@@ -4002,6 +3980,164 @@ components:
           format: double
           minimum: 0
           maximum: 1
+    OperatorAICheckFlagCount:
+      type: object
+      additionalProperties: false
+      required: [check, calls]
+      properties:
+        check:
+          type: string
+          description: Evaluator check key, such as request_understood or conversation_responsive.
+        calls: {type: integer, minimum: 0}
+    OperatorAIStaffFlagCounts:
+      type: object
+      additionalProperties: false
+      required: [pending, confirmed, notAnIssue]
+      description: Staff-flagged calls by Acuity review state.
+      properties:
+        pending: {type: integer, minimum: 0}
+        confirmed: {type: integer, minimum: 0}
+        notAnIssue: {type: integer, minimum: 0}
+    OperatorAIContextFootprint:
+      type: object
+      additionalProperties: false
+      required: [speakerPromptTokens, thinkerPromptTokens, toolSchemaTokens, toolCount]
+      description: Static context the agent reported at session start, in tokenizer tokens. Excludes conversation history.
+      properties:
+        speakerPromptTokens: {type: integer, minimum: 0}
+        thinkerPromptTokens: {type: integer, minimum: 0}
+        toolSchemaTokens: {type: integer, minimum: 0}
+        toolCount: {type: integer, minimum: 0}
+    OperatorAIQualityDay:
+      type: object
+      additionalProperties: false
+      required:
+        - date
+        - evaluatedCalls
+        - unevaluatedCalls
+        - flaggedCalls
+        - checkFlags
+        - staffFlags
+        - sentimentCalls
+        - sentimentCounts
+        - tokenCalls
+        - footprintCalls
+      properties:
+        date: {type: string, description: UTC call-start date in YYYY-MM-DD format.}
+        evaluatedCalls:
+          type: integer
+          minimum: 0
+          description: Calls with a recognized complete or incomplete evaluator result.
+        unevaluatedCalls:
+          type: integer
+          minimum: 0
+          description: Calls with no usable evaluator result (missing, skipped, or unrecognized). Never counted as clean.
+        flaggedCalls:
+          type: integer
+          minimum: 0
+          description: Evaluated calls with at least one check needing review.
+        checkFlags:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAICheckFlagCount"}
+        staffFlags: {$ref: "#/components/schemas/OperatorAIStaffFlagCounts"}
+        sentimentCalls: {type: integer, minimum: 0}
+        sentimentCounts:
+          type: array
+          minItems: 5
+          maxItems: 5
+          description: Calls by rounded expressed sentiment, index 0 (very negative) through 4 (very positive).
+          items: {type: integer, minimum: 0}
+        meanSentiment: {type: number, format: double, minimum: 0, maximum: 4}
+        tokenCalls:
+          type: integer
+          minimum: 0
+          description: Calls with recorded LLM token usage.
+        p50InputTokens: {type: integer, minimum: 0}
+        p90InputTokens: {type: integer, minimum: 0}
+        p50CachedTokens: {type: integer, minimum: 0}
+        p50OutputTokens: {type: integer, minimum: 0}
+        footprintCalls:
+          type: integer
+          minimum: 0
+          description: Calls that reported a context footprint.
+        footprint: {$ref: "#/components/schemas/OperatorAIContextFootprint"}
+    OperatorAIAnalyticsQuality:
+      type: object
+      additionalProperties: false
+      required:
+        - daily
+        - evaluatedCalls
+        - unevaluatedCalls
+        - flaggedCalls
+        - checkFlags
+        - staffFlags
+        - sentimentCalls
+        - tokenCalls
+        - footprintCalls
+      properties:
+        daily:
+          type: array
+          description: All UTC dates in the selected range, matching summary daily.
+          items: {$ref: "#/components/schemas/OperatorAIQualityDay"}
+        evaluatedCalls: {type: integer, minimum: 0}
+        unevaluatedCalls: {type: integer, minimum: 0}
+        flaggedCalls: {type: integer, minimum: 0}
+        checkFlags:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAICheckFlagCount"}
+        staffFlags: {$ref: "#/components/schemas/OperatorAIStaffFlagCounts"}
+        sentimentCalls: {type: integer, minimum: 0}
+        meanSentiment: {type: number, format: double, minimum: 0, maximum: 4}
+        tokenCalls: {type: integer, minimum: 0}
+        p50InputTokens: {type: integer, minimum: 0}
+        p50CachedTokens: {type: integer, minimum: 0}
+        p50OutputTokens: {type: integer, minimum: 0}
+        footprintCalls: {type: integer, minimum: 0}
+        latestFootprint: {$ref: "#/components/schemas/OperatorAIContextFootprint"}
+    OperatorAIVersionDimension:
+      type: string
+      enum: [agent, prompts, tools, knowledge, judges, evaluator]
+      description: Agent, prompts, tools, and knowledge change how calls behave; judges and evaluator change how calls are measured.
+    OperatorAIVersionInEffect:
+      type: object
+      additionalProperties: false
+      required: [dimension, version]
+      properties:
+        dimension: {$ref: "#/components/schemas/OperatorAIVersionDimension"}
+        version: {type: string}
+        locationId:
+          type: string
+          format: uuid
+          description: Present for knowledge, which is published per office.
+    OperatorAIVersionChange:
+      type: object
+      additionalProperties: false
+      required: [dimension, version, previousVersion, firstSeenAt, date]
+      properties:
+        dimension: {$ref: "#/components/schemas/OperatorAIVersionDimension"}
+        version: {type: string}
+        previousVersion: {type: string}
+        firstSeenAt:
+          type: string
+          format: date-time
+          description: Start of the first call in range served by this version.
+        date: {type: string, description: UTC call-start date of the first call served, in YYYY-MM-DD format.}
+        locationId:
+          type: string
+          format: uuid
+          description: Present for knowledge, which is published per office.
+    OperatorAIAnalyticsVersions:
+      type: object
+      additionalProperties: false
+      required: [inEffect, changes]
+      description: Versions recorded by calls. A change marks the first call served by a version that differs from the one already in effect; versions in effect come from the latest call within 90 days before the range.
+      properties:
+        inEffect:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIVersionInEffect"}
+        changes:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIVersionChange"}
     OperatorAIDiagnosticExample:
       type: object
       additionalProperties: false
@@ -4013,45 +4149,6 @@ components:
         startedAt: {type: string, format: date-time}
         durationMs: {type: integer, minimum: 0}
         status: {type: string}
-    OperatorAILatencyBucket:
-      type: object
-      additionalProperties: false
-      required: [fromMs, count, examples]
-      properties:
-        fromMs: {type: integer, minimum: 0}
-        toMs: {type: integer, minimum: 0}
-        count: {type: integer, minimum: 0}
-        examples:
-          type: array
-          maxItems: 5
-          description: Up to five slowest measured samples in this half-open bucket; not all matching calls.
-          items: {$ref: "#/components/schemas/OperatorAIDiagnosticExample"}
-    OperatorAILatencyTrend:
-      type: object
-      additionalProperties: false
-      required: [date, sampleCount]
-      properties:
-        date: {type: string, description: UTC call-start date in YYYY-MM-DD format.}
-        sampleCount: {type: integer, minimum: 0}
-        p50Ms: {type: integer, minimum: 0}
-        p95Ms: {type: integer, minimum: 0}
-    OperatorAILatencyDistribution:
-      type: object
-      additionalProperties: false
-      required: [stage, sampleCount, measuredCalls, buckets, trend]
-      properties:
-        stage: {type: string, enum: [e2e, stt, llm, tts]}
-        sampleCount: {type: integer, minimum: 0}
-        measuredCalls: {type: integer, minimum: 0}
-        p50Ms: {type: integer, minimum: 0}
-        p95Ms: {type: integer, minimum: 0}
-        p99Ms: {type: integer, minimum: 0}
-        buckets:
-          type: array
-          items: {$ref: "#/components/schemas/OperatorAILatencyBucket"}
-        trend:
-          type: array
-          items: {$ref: "#/components/schemas/OperatorAILatencyTrend"}
     OperatorAIToolDiagnostics:
       type: object
       additionalProperties: false
@@ -4075,11 +4172,8 @@ components:
     OperatorAIAnalyticsDiagnostics:
       type: object
       additionalProperties: false
-      required: [stages, tools]
+      required: [tools]
       properties:
-        stages:
-          type: array
-          items: {$ref: "#/components/schemas/OperatorAILatencyDistribution"}
         tools:
           type: array
           items: {$ref: "#/components/schemas/OperatorAIToolDiagnostics"}

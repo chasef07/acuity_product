@@ -21,23 +21,6 @@ const browserReconnectAssertionMilliseconds =
 const operatorAnalyticsFixture = {
   summary: {
     diagnostics: {
-      stages: [
-        { stage: "e2e", p50Ms: 1240, p95Ms: 2600, p99Ms: 4200 },
-        { stage: "stt", p50Ms: 185, p95Ms: 500, p99Ms: 780 },
-        { stage: "llm", p50Ms: 410, p95Ms: 1100, p99Ms: 1600 },
-        { stage: "tts", p50Ms: 265, p95Ms: 600, p99Ms: 900 },
-      ].map((stage) => ({
-        ...stage,
-        sampleCount: 100,
-        measuredCalls: 42,
-        buckets: [{ fromMs: 0, count: 100, examples: [] }],
-        trend: [{
-          date: "2026-08-10",
-          sampleCount: 100,
-          p50Ms: stage.p50Ms,
-          p95Ms: stage.p95Ms,
-        }],
-      })),
       tools: [{
         name: "book_appointment",
         executionCount: 31,
@@ -48,23 +31,58 @@ const operatorAnalyticsFixture = {
         errors: [],
       }],
     },
-    daily: [{ date: "2026-08-10", totalCalls: 42, transferCount: 5, transferRate: 5 / 42 }],
+    daily: [{ date: "2026-08-10", totalCalls: 42, callMinutes: 126.5, transferCount: 5, transferRate: 5 / 42 }],
+    quality: {
+      daily: [{
+        date: "2026-08-10",
+        evaluatedCalls: 40,
+        unevaluatedCalls: 2,
+        flaggedCalls: 6,
+        checkFlags: [{ check: "request_understood", calls: 4 }, { check: "conversation_responsive", calls: 3 }],
+        staffFlags: { pending: 1, confirmed: 2, notAnIssue: 1 },
+        sentimentCalls: 40,
+        sentimentCounts: [2, 4, 20, 10, 4],
+        meanSentiment: 2.25,
+        tokenCalls: 42,
+        p50InputTokens: 18400,
+        p90InputTokens: 31000,
+        p50CachedTokens: 12000,
+        p50OutputTokens: 640,
+        footprintCalls: 42,
+        footprint: { speakerPromptTokens: 700, thinkerPromptTokens: 3200, toolSchemaTokens: 1800, toolCount: 17 },
+      }],
+      evaluatedCalls: 40,
+      unevaluatedCalls: 2,
+      flaggedCalls: 6,
+      checkFlags: [{ check: "request_understood", calls: 4 }, { check: "conversation_responsive", calls: 3 }],
+      staffFlags: { pending: 1, confirmed: 2, notAnIssue: 1 },
+      sentimentCalls: 40,
+      meanSentiment: 2.25,
+      tokenCalls: 42,
+      p50InputTokens: 18400,
+      p50CachedTokens: 12000,
+      p50OutputTokens: 640,
+      footprintCalls: 42,
+      latestFootprint: { speakerPromptTokens: 700, thinkerPromptTokens: 3200, toolSchemaTokens: 1800, toolCount: 17 },
+    },
+    versions: {
+      inEffect: [
+        { dimension: "agent", version: "0.10.0" },
+        { dimension: "prompts", version: "0.9.0" },
+      ],
+      changes: [{
+        dimension: "prompts",
+        version: "0.10.0",
+        previousVersion: "0.9.0",
+        firstSeenAt: "2026-08-10T14:00:00Z",
+        date: "2026-08-10",
+      }],
+    },
     totalCalls: 42,
+    totalCallMinutes: 126.5,
     bookingCount: 8,
     cancellationCount: 3,
     rescheduleCount: 4,
-    p50SttMs: 185,
-    p90SttMs: 420,
-    p99SttMs: 780,
-    p50TtftMs: 410,
-    p90TtftMs: 900,
-    p99TtftMs: 1600,
-    p50TtsTtfbMs: 265,
-    p90TtsTtfbMs: 540,
-    p99TtsTtfbMs: 900,
-    p50TotalLatencyMs: 1240,
-    p90TotalLatencyMs: 2200,
-    p99TotalLatencyMs: 4200,
     transferCount: 5,
     transferRate: 0.119,
     toolCallCount: 31,
@@ -466,20 +484,24 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       fullPage: true,
     })
     await analyticsRegion
-      .getByRole("button", { name: "Performance", exact: true })
+      .getByRole("button", { name: "Quality", exact: true })
       .click()
-    const latencyPipeline = analyticsRegion.getByRole("region", { name: "Pipeline stages" })
-    await expect(latencyPipeline.getByRole("button", { name: /^STT/ })).toContainText("P50 185 ms")
-    await expect(latencyPipeline.getByRole("button", { name: /^LLM/ })).toContainText("P50 410 ms")
-    await expect(latencyPipeline.getByRole("button", { name: /^TTS/ })).toContainText("P50 265 ms")
-    const performance = analyticsRegion.getByRole("region", { name: "Response performance" })
-    await expect(performance.getByText("2.60 s", { exact: true }).first()).toBeVisible()
-    await expect(performance.getByText("1.24 s", { exact: true }).first()).toBeVisible()
-    await expect(performance.getByText("4.20 s", { exact: true }).first()).toBeVisible()
-    await expect(performance.getByText("100 samples · 42 of 42 calls measured")).toBeVisible()
-    await expect(analyticsRegion.getByRole("region", { name: "Latency distribution" })).toBeVisible()
+    await expect(analyticsRegion.getByText("6 of 40 evaluated calls · 2 not evaluated")).toBeVisible()
+    await expect(analyticsRegion.getByText("5,700 tokens", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByText("2.25 / 4", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByText(/In effect at start: agent 0\.10\.0 · prompts 0\.9\.0/)).toBeVisible()
+    await expect(
+      analyticsRegion
+        .getByRole("region", { name: "Tokens per call over time" })
+        .getByRole("list", { name: "Version changes" }),
+    ).toContainText("prompts 0.10.0")
+    const flagChecks = analyticsRegion.getByRole("region", { name: "Red flags by check" })
+    await expect(flagChecks.getByText("Caller request understood", { exact: true })).toBeVisible()
+    for (const name of ["Red flags over time", "Caller sentiment over time", "Context footprint over time", "Tokens per call over time"]) {
+      await expect(analyticsRegion.getByRole("region", { name }).locator(".recharts-surface")).toBeVisible()
+    }
     await operatorPage.screenshot({
-      path: testInfo.outputPath("operator-analytics-performance.png"),
+      path: testInfo.outputPath("operator-analytics-quality.png"),
       fullPage: true,
     })
 

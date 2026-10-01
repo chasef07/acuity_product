@@ -304,8 +304,8 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 				analyticsResult <- err
 				return
 			}
-			if page.Summary.TotalCalls != analyticsCalls || len(page.Calls) != 25 || page.Summary.P50TotalLatencyMs == nil || *page.Summary.P50TotalLatencyMs != 400 {
-				analyticsResult <- fmt.Errorf("unexpected analytics results: calls=%d page=%d median=%v", page.Summary.TotalCalls, len(page.Calls), page.Summary.P50TotalLatencyMs)
+			if page.Summary.TotalCalls != analyticsCalls || len(page.Calls) != 25 || page.Calls[0].P50TotalLatencyMs == nil || *page.Calls[0].P50TotalLatencyMs != 400 {
+				analyticsResult <- fmt.Errorf("unexpected analytics results: calls=%d page=%d median=%v", page.Summary.TotalCalls, len(page.Calls), page.Calls[0].P50TotalLatencyMs)
 				return
 			}
 		}
