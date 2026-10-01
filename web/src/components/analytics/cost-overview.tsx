@@ -1,6 +1,5 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import {
   Bar,
   Cell,
@@ -21,14 +20,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { portalClient } from "@/lib/api/client"
-import { queryOperatorAiCosts } from "@/lib/api/generated/sdk.gen"
 import type {
   OperatorAiAnalyticsRange,
   OperatorAiCostAnalytics,
   OperatorAiCostDay,
 } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import { useAiCostReport } from "@/lib/clients/analytics"
 import { formatDay, formatPercent } from "@/lib/booking-analytics"
 import { useReducedMotion } from "@/lib/reduced-motion"
 import { dailyTotalComparison } from "@/lib/analytics-trend"
@@ -100,11 +97,6 @@ function CostTooltip({
   )
 }
 
-type Request = { key: string } & (
-  | { state: "loading" | "unavailable" | "denied" | "busy" }
-  | { state: "ready"; report: OperatorAiCostAnalytics }
-)
-
 export function CostOverview({
   practiceID,
   locationID,
@@ -114,60 +106,7 @@ export function CostOverview({
   locationID: string
   range: OperatorAiAnalyticsRange
 }) {
-  const [timeZone] = useState(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
-  )
-  const [revision, setRevision] = useState(0)
-  const key = `${practiceID}:${locationID}:${range}:${timeZone}:${revision}`
-  const [request, setRequest] = useState<Request>({
-    key: "",
-    state: "loading",
-  })
-  const current: Request =
-    request.key === key ? request : { key, state: "loading" }
-  useEffect(() => {
-    const controller = new AbortController()
-    async function load() {
-      try {
-        const token = await getAccessToken()
-        if (controller.signal.aborted) return
-        if (!token) {
-          setRequest({ key, state: "denied" })
-          return
-        }
-        const result = await queryOperatorAiCosts({
-          client: portalClient(token),
-          body: {
-            practiceId: practiceID,
-            locationId: locationID || undefined,
-            range,
-            timeZone,
-          },
-          signal: controller.signal,
-        })
-        if (controller.signal.aborted) return
-        if (result.data) {
-          setRequest({ key, state: "ready", report: result.data })
-          return
-        }
-        const status = result.response?.status
-        setRequest({
-          key,
-          state:
-            status === 401 || status === 403
-              ? "denied"
-              : status === 429
-                ? "busy"
-                : "unavailable",
-        })
-      } catch {
-        if (!controller.signal.aborted)
-          setRequest({ key, state: "unavailable" })
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [key, practiceID, locationID, range, timeZone])
+  const current = useAiCostReport({ practiceID, locationID, range })
   if (current.state === "loading")
     return (
       <Skeleton
@@ -192,10 +131,7 @@ export function CostOverview({
               ? "AI costs require Platform Operator access."
               : "Try again to load the cost breakdown."}
           </p>
-          <Button
-            variant="outline"
-            onClick={() => setRevision((value) => value + 1)}
-          >
+          <Button variant="outline" onClick={current.retry}>
             Retry
           </Button>
         </AlertDescription>

@@ -623,7 +623,6 @@ test("keypad audio is a quiet 120 ms dual tone with click-free ends", async () =
     assert.equal(samples[0], 0)
     assert.equal(samples.at(-1), 0)
     assert.ok(Math.max(...samples.map(Math.abs)) < 0.071)
-    // Check actual spectral energy, not just the generated WAV header.
     const frequencies = [697, 770, 852, 941, 1209, 1336, 1477]
     const strongest = frequencies
       .map((frequency) => {

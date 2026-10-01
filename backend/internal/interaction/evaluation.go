@@ -6,24 +6,18 @@ import (
 	"math"
 )
 
-// evaluationFlag is one judge check that needs operator review.
 type evaluationFlag struct {
 	Check  string
 	Reason string
 }
 
-// evaluationReading is the reviewable content of one stored evaluator result.
-// Evaluated is false when no recognized evaluator produced usable results, so
-// a missing or skipped evaluation is never counted as a clean call.
 type evaluationReading struct {
 	Evaluated bool
 	Version   string
 	Flags     []evaluationFlag
-	Sentiment *float64 // Expressed caller sentiment, 0 (very negative) to 4 (very positive).
+	Sentiment *float64
 }
 
-// EvaluationReviewReasons returns evidence that needs operator review.
-// Valid scorecard results remain actionable when another judge fails.
 func EvaluationReviewReasons(raw json.RawMessage) []string {
 	reasons := []string{}
 	for _, flag := range readEvaluation(raw).Flags {
@@ -74,7 +68,6 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 			{"results_reported_truthfully", "Results reported truthfully"},
 			{"conversation_responsive", "Conversation responsive"},
 		} {
-			// Scorecard v4 removed the results-reported-truthfully judge.
 			if check.name == "results_reported_truthfully" && scorecard.Version == "typesafe-scorecard-v4" {
 				continue
 			}

@@ -495,9 +495,6 @@ func TestStaffTransferSourceCanCancelAfterTargetAnswerBeforeBridge(t *testing.T)
 	`, fixture.staff[1].Subject).Scan(&available); err != nil || !available {
 		t.Fatalf("recipient availability after accepted cancel = %t, %v", available, err)
 	}
-	// Provider bridge and source cleanup can have happened before cancellation
-	// while their webhooks were delayed. That reorder must fail closed instead of
-	// leaving a nonterminal Call with no current Staff owner.
 	target.EventID = "staff-transfer-accepted-cancel-delayed-bridge"
 	target.Type = humancalling.FactCallBridged
 	target.OccurredAt = fixture.now.Add(8 * time.Second)

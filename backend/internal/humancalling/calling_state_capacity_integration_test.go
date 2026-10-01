@@ -22,8 +22,6 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 	authorization, identities := provisionConcurrentStaff(
 		t, access.New(pool, func() time.Time { return now }), now, "calling-state-capacity", 1,
 	)
-	// Production-shaped history: 4,032 Calls, 772 undisposed voicemails,
-	// 15,625 CallLegs, and 32,449 commands, including one 2,836-command Call.
 	if _, err := pool.Exec(ctx, `
 		WITH inserted AS (
 			INSERT INTO human_calling_calls (
@@ -156,7 +154,6 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 	`, hiddenCallID); err != nil {
 		t.Fatal(err)
 	}
-	// An older voicemail's metadata cannot change the one visible voicemail.
 	readConditionally(state, true)
 
 	if _, err := pool.Exec(ctx, `
@@ -228,7 +225,6 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 	`, activeCallID); err != nil {
 		t.Fatal(err)
 	}
-	// A Call without a Caller CallLeg cannot appear in the voicemail projection.
 	readConditionally(state, true)
 
 	if _, err := pool.Exec(ctx, `
@@ -266,7 +262,6 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 	`, authorization.Practice.ID, excludedLocationID, now.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	// A newer voicemail outside the selected Location cannot invalidate state.
 	readConditionally(state, true)
 	if _, err := pool.Exec(ctx, `
 		UPDATE access_memberships SET role = 'ADMIN', location_scope = 'ALL' WHERE id = $1

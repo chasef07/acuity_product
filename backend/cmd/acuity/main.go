@@ -565,7 +565,8 @@ func runMigrate(
 		return fmt.Errorf("begin atomic provisioning: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	provisioned, err := access.New(pool, nil).ProvisionInTx(ctx, tx, input)
+	accessModule := access.New(pool, nil)
+	provisioned, err := accessModule.ProvisionInTx(ctx, tx, input)
 	if err != nil {
 		return err
 	}
@@ -573,7 +574,7 @@ func runMigrate(
 		ProvisionInTx(ctx, tx, messageLocations); err != nil {
 		return err
 	}
-	callingModule := humancalling.New(pool, nil, nil, humancalling.Config{}, nil)
+	callingModule := humancalling.New(pool, accessModule, nil, humancalling.Config{}, nil)
 	if err := callingModule.ProvisionLocationRingGroupsInTx(ctx, tx, ringGroups, input.RequestedBy); err != nil {
 		return err
 	}

@@ -68,7 +68,6 @@ createServer(async (request, response) => {
       response.writeHead(400).end()
       return
     }
-    // A short, playable silent WAV lets browser tests reach the real ended event.
     const audio = Buffer.alloc(44 + 8000)
     audio.write("RIFF", 0)
     audio.writeUInt32LE(audio.length - 8, 4)

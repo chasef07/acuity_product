@@ -43,7 +43,6 @@ test("changing call filters cancels old pages without unlocking the current page
   await more.click()
   await expect.poll(() => pending.has("flagged-page")).toBe(true)
   await pending.get("all-page-1")!.fulfill({ json: { calls: [stale], nextCursor: "" } })
-  // Give the late response a chance to incorrectly clear the other filter's loading state.
   await page.waitForTimeout(150)
   await expect(loading).toBeDisabled()
   await expect(more).toHaveCount(0)
@@ -51,7 +50,6 @@ test("changing call filters cancels old pages without unlocking the current page
   await expect(page.getByRole("button", { name: /Open call from/ })).toHaveCount(2)
   expect(pageRequests.filter(cursor => cursor === "flagged-page")).toHaveLength(1)
 
-  // Repeat A -> B -> A while A's next page is pending; the repeated filter is a new snapshot.
   await filter.click()
   await more.click()
   await expect.poll(() => pending.has("all-page-2")).toBe(true)

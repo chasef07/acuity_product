@@ -91,9 +91,6 @@ func (m *Module) ReadCallingState(
 	return state, err
 }
 
-// ReadCallingStateConditionally checks the authoritative state token before
-// loading the full Calling projection. A matching validator returns only the
-// validator and does not execute the multi-query projection read.
 func (m *Module) ReadCallingStateConditionally(
 	ctx context.Context,
 	identity access.Identity,
@@ -437,12 +434,6 @@ func (m *Module) readCallingStateETag(
 		return "", fmt.Errorf("encode Calling access state: %w", err)
 	}
 
-	// Only the newest scoped voicemail is visible. Match that projection before
-	// loading CallLegs and commands so older voicemail history cannot amplify
-	// every poll. Location and handoff values are immutable after Call admission
-	// or versioned by Discovery.
-	// Provider-command rows remain part of the token because command acceptance
-	// can change ringing or voicemail state before another Call mutation occurs.
 	var callingSnapshot string
 	if err := m.database.QueryRow(ctx, `
 		WITH relevant_call_ids AS MATERIALIZED (

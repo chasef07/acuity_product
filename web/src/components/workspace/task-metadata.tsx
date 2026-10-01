@@ -13,10 +13,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Spinner } from "@/components/ui/spinner"
-import { portalClient } from "@/lib/api/client"
-import { changeTaskCategory } from "@/lib/api/generated/sdk.gen"
 import type { StaffTaskCategory, Task } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import { changeTaskCategory } from "@/lib/clients/tasks"
 import { taskGroups, taskGroupLabel } from "@/lib/task-groups"
 
 export function TaskMetadata({ task, onUpdated, compact = false }: {
@@ -39,23 +37,18 @@ function TaskGroupMenu({ task, onUpdated, compact }: {
     if (pending || category === task.category) return
     setPending(true)
     setError("")
-    try {
-      const token = await getAccessToken()
-      if (!token) throw new Error("Sign in again to move this Task.")
-      const result = await changeTaskCategory({
-        client: portalClient(token),
-        path: { taskId: task.id },
-        body: { expectedVersion: task.version, category },
-      })
-      if (!result.data) throw new Error(result.response?.status === 409
+    const outcome = await changeTaskCategory(task, category)
+    setPending(false)
+    if (outcome.ok) {
+      onUpdated(outcome.data)
+      return
+    }
+    const { kind } = outcome.failure
+    setError(kind === "signedOut" || kind === "unauthenticated"
+      ? "Sign in again to move this Task."
+      : kind === "conflict"
         ? "This Task changed. Reopen it to review the latest group before moving."
         : "The Task could not be moved. Try again.")
-      onUpdated(result.data)
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "The Task could not be moved.")
-    } finally {
-      setPending(false)
-    }
   }
 
   return (

@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// AnalyticsQuality trends the agent's context size, judge and staff flags, and
-// expressed caller sentiment by UTC call-start date. Calls without an evaluation,
-// usage report, or footprint report are counted as unreported, never as clean.
 type AnalyticsQuality struct {
 	Daily            []QualityDay
 	EvaluatedCalls   int
@@ -35,7 +32,7 @@ type QualityDay struct {
 	CheckFlags       []CheckFlagCount
 	StaffFlags       StaffFlagCounts
 	SentimentCalls   int
-	SentimentCounts  []int // Calls by rounded score, index 0 (very negative) to 4 (very positive).
+	SentimentCounts  []int
 	MeanSentiment    *float64
 	TokenCalls       int
 	P50InputTokens   *int
@@ -43,7 +40,7 @@ type QualityDay struct {
 	P50CachedTokens  *int
 	P50OutputTokens  *int
 	FootprintCalls   int
-	Footprint        *ContextFootprint // Median of each component across reporting calls.
+	Footprint        *ContextFootprint
 }
 
 type CheckFlagCount struct {
@@ -51,15 +48,12 @@ type CheckFlagCount struct {
 	Calls int
 }
 
-// StaffFlagCounts counts staff-flagged calls by Acuity review state.
 type StaffFlagCounts struct {
 	Pending    int
 	Confirmed  int
 	NotAnIssue int
 }
 
-// ContextFootprint is the static context the agent reported at session start,
-// in tokenizer tokens. It excludes conversation history.
 type ContextFootprint struct {
 	SpeakerPromptTokens int
 	ThinkerPromptTokens int
@@ -70,7 +64,7 @@ type ContextFootprint struct {
 type qualitySample struct {
 	startedAt  time.Time
 	evaluation evaluationReading
-	staffFlag  string // Empty, PENDING, CONFIRMED, or NOT_AN_ISSUE.
+	staffFlag  string
 	usage      *tokenUsage
 	footprint  *ContextFootprint
 }
@@ -214,7 +208,6 @@ func mean(values []float64) *float64 {
 	return &result
 }
 
-// medianAndP90 sorts an owned sample.
 func medianAndP90(values []float64) (*int, *int) {
 	sort.Float64s(values)
 	return sortedMedian(values), sortedPercentile(values, 90)
@@ -240,9 +233,6 @@ func medianFootprint(values []ContextFootprint) *ContextFootprint {
 	}
 }
 
-// callTokenUsage totals the LLM tokens LiveKit recorded for one call. Usage
-// entries without token counts, such as realtime session-duration summaries,
-// do not contribute; a call with no token entries reports no usage.
 func callTokenUsage(raw json.RawMessage) *tokenUsage {
 	var entries []map[string]any
 	if json.Unmarshal(raw, &entries) != nil {
@@ -273,8 +263,6 @@ func callTokenUsage(raw json.RawMessage) *tokenUsage {
 	return &usage
 }
 
-// contextFootprint reads the footprint abita_s2s reports in its closeout.
-// Partial or invalid reports are unreported, not estimated.
 func contextFootprint(raw json.RawMessage) *ContextFootprint {
 	var value struct {
 		SpeakerPromptTokens *int `json:"speakerPromptTokens"`

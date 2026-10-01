@@ -589,7 +589,6 @@ func TestProductionDeployRequiresExactReleaseVerification(t *testing.T) {
 		}
 	}
 
-	// Every entry point must verify the same complete shard set.
 	for _, forbidden := range []string{"github.event_name", "backend-exact:"} {
 		if strings.Contains(verificationContent, forbidden) {
 			t.Errorf("verification must not select a partial suite by event: %q", forbidden)
@@ -866,8 +865,6 @@ printf '%s\n' "$*" >>"$CURL_CAPTURE"
 	return directory + ":" + os.Getenv("PATH"), gcloudCapture, curlCapture
 }
 
-// These tests own cutover ordering, not the separately tested evidence checker.
-// Ordinary release tests must use the real image's interpreters without shims.
 func installCutoverEvidenceFake(t *testing.T, path string) {
 	t.Helper()
 	node := `#!/bin/sh

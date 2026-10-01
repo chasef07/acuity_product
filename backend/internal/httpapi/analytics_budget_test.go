@@ -25,7 +25,6 @@ func TestAnalyticsBudgetRejectsOverlapAndReleasesOnFinish(t *testing.T) {
 	if busy.Code != 429 || busy.Header().Get("Retry-After") != "1" {
 		t.Fatalf("busy response: %d %v", busy.Code, busy.Header())
 	}
-	// Other HTTP work is unaffected while analytics holds its permit.
 	live := httptest.NewRecorder()
 	server.GetLiveness(live, httptest.NewRequest("GET", "/health/live", nil))
 	if live.Code != 200 {

@@ -28,9 +28,6 @@ func (tiedEmbeddings) Embed(_ context.Context, texts []string, _ knowledge.TaskT
 	return vectors, nil
 }
 
-// Replay non-patient questions found in call evidence through the real importer
-// and retrieval SQL. Tied vectors isolate source granularity and lexical ranking;
-// this does not claim to validate the embedding provider's semantic relevance.
 func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 	for _, fixture := range []struct{ office, caseID string }{
 		{office: "north-miami-beach-optical"},

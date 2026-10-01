@@ -36,8 +36,6 @@ type Hint struct {
 	Version    int64  `json:"version"`
 }
 
-// Hub turns PostgreSQL notifications into disposable, authorized SSE hints.
-// PostgreSQL rows remain authoritative and reconnect always causes a refetch.
 type Hub struct {
 	config   Config
 	access   *access.Module
@@ -75,8 +73,6 @@ func (hub *Hub) Ready() bool {
 	return hub.ready.Load()
 }
 
-// Run owns one dedicated direct LISTEN connection and reconnects with bounded
-// exponential backoff and jitter. Notifications are never treated as state.
 func (hub *Hub) Run(ctx context.Context) {
 	backoff := hub.config.ReconnectMin
 	connectedOnce := false

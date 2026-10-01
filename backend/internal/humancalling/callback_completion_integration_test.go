@@ -96,7 +96,7 @@ func TestCompletedCallbackAttemptClosesOnlyOlderRecovery(t *testing.T) {
 				if err := calling.ApplyProviderFact(ctx, destination); err != nil {
 					t.Fatal(err)
 				}
-				assertState(work.TaskOpen) // dialing never completes work
+				assertState(work.TaskOpen)
 				if scenario != "no_answer" && scenario != "busy" {
 					processAllCommands(t, calling)
 					bridge := provider.last(humancalling.CommandBridge)
@@ -116,7 +116,6 @@ func TestCompletedCallbackAttemptClosesOnlyOlderRecovery(t *testing.T) {
 					if err := calling.ApplyProviderFact(ctx, destination); err != nil {
 						t.Fatal(err)
 					}
-					// Human and voicemail answers have the same media evidence.
 					assertState(work.TaskOpen)
 				}
 				if scenario == "newer_evidence" {

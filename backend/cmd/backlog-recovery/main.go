@@ -1,5 +1,3 @@
-// backlog-recovery is an explicit, audited operator repair tool. It never runs
-// in a worker and never sends provider commands. Default execution is a dry run.
 package main
 
 import (

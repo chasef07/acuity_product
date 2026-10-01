@@ -9,10 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// RecoverSourceClock repairs one explicitly selected historical receipt whose
-// only source conflict is startedAt. It preserves its original payload and
-// fingerprint, applies the normal lifecycle rules, and audits the operator.
-// Retired SUMMARY receipts are immutable history and cannot use this path.
 func (m *Module) RecoverSourceClock(ctx context.Context, operator access.Identity, receiptID string) (Interaction, error) {
 	if m.database == nil || m.access == nil || receiptID == "" {
 		return Interaction{}, ErrInvalidInput
@@ -48,8 +44,6 @@ func (m *Module) RecoverSourceClock(ctx context.Context, operator access.Identit
 	return current, err
 }
 
-// RetireLegacySummary preserves the original payload, fingerprint and error,
-// and links it to an outcome already established by a supported CLOSEOUT.
 func (m *Module) RetireLegacySummary(ctx context.Context, operator access.Identity, receiptID string) error {
 	if m.database == nil || m.access == nil || receiptID == "" {
 		return ErrInvalidInput

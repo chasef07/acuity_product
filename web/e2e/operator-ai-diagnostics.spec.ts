@@ -367,11 +367,9 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await diagnostics
       .getByRole("button", { name: "Quality", exact: true })
       .click()
-    // Two evaluated fixture calls are both flagged; the rest stay unevaluated.
     await expect(
       diagnostics.getByText("2 of 2 evaluated calls · 68 not evaluated"),
     ).toBeVisible()
-    // The fixture's two evaluations use different evaluators: a measurement change.
     const redFlagVersions = diagnostics
       .getByRole("region", { name: "Red flags over time" })
       .getByRole("list", { name: "Version changes" })
@@ -465,7 +463,6 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       fullPage: true,
       animations: "disabled",
     })
-    // New scope clears selected tools and never reuses the prior Location's examples.
     await diagnostics
       .getByRole("combobox", { name: "Office", exact: true })
       .click()

@@ -196,9 +196,6 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	return true, command(ctx)
 }
 
-// ClaimNextCommand commits ownership before returning the provider effect.
-// The returned effect must be invoked at most once and always outside a
-// database transaction.
 func (m *Module) ClaimNextCommand(
 	ctx context.Context,
 ) (func(context.Context) error, bool, error) {
@@ -264,9 +261,6 @@ func (m *Module) recoverInterruptedCommands(ctx context.Context) (bool, error) {
 	return recovered, nil
 }
 
-// MaintainOutgoingCallLegs recovers interrupted provider-command ownership
-// before applying provider observations to one stale CallLeg. Callers do not
-// choose the ordering between those two halves of outgoing control.
 func (m *Module) MaintainOutgoingCallLegs(ctx context.Context) (bool, error) {
 	recovered, err := m.recoverInterruptedCommands(ctx)
 	if err != nil {
@@ -403,8 +397,6 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 	}
 	observationClaim := callLegObservationClaim{checkedAt: checkedAt, stateUpdatedAt: stateUpdatedAt}
 	defer func() {
-		// The result write is fenced against a newer observer. A cancelled
-		// request leaves the committed lease eligible again after one minute.
 		if err := m.finishCallLegObservation(ctx, legID, checkedAt, attempt, resultErr); err != nil {
 			resultErr = errors.Join(resultErr, err)
 		}
@@ -443,8 +435,6 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 	if connectionID == "" && commandAction == CommandTransferStaff {
 		connectionID = m.config.CallControlID
 	}
-	// Keep part of the existing worker budget for the fenced result write.
-	// A provider read timeout must not consume the only chance to save backoff.
 	observationContext := ctx
 	if deadline, ok := ctx.Deadline(); ok {
 		var cancel context.CancelFunc
@@ -578,9 +568,6 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 			return true, nil
 		}
 		if commandID != "" && commandAction == CommandStartRingWindow {
-			// An active Call and an absent event do not prove a finite playback
-			// never started. Preserve the effect as ambiguous until a positive
-			// playback fact or terminal provider state can converge it.
 			if err := m.markUnobservedCommandAmbiguous(
 				ctx, commandID, commandAction, commandCreatedAt, checkedAt,
 			); err != nil {
@@ -610,7 +597,6 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		}
 		return true, nil
 	}
-	// A bridged CallLeg needs explicit hangup evidence or committed Hangup intent.
 	if legState == "BRIDGED" && commandID == "" {
 		return true, nil
 	}
@@ -636,9 +622,6 @@ type callLegObservationClaim struct {
 	stateUpdatedAt time.Time
 }
 
-// current must be called while holding the Call and CallLeg locks. An absent
-// provider effect cannot override a receipt or observer that advanced state
-// while the provider read was in flight.
 func (claim callLegObservationClaim) current(ctx context.Context, tx pgx.Tx, legID string) (bool, error) {
 	var current bool
 	err := tx.QueryRow(ctx, `
@@ -648,8 +631,6 @@ func (claim callLegObservationClaim) current(ctx context.Context, tx pgx.Tx, leg
 	return current, err
 }
 
-// finishCallLegObservation schedules reads only. It never retries a provider
-// effect or claims convergence from an absent event or a successful HTTP read.
 func (m *Module) finishCallLegObservation(
 	ctx context.Context, legID string, checkedAt time.Time, attempt int, observationErr error,
 ) error {

@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// Diagnostics use the same observed samples as the range summary. Examples are
-// bounded, content-free links back to authoritative call evidence.
 type AnalyticsDiagnostics struct {
 	Tools []ToolDiagnostics
 }
@@ -31,8 +29,6 @@ type ToolDiagnostics struct {
 	Errors          []DiagnosticExample
 }
 
-// Transcript event timestamps are provider evidence. Never use synthetic sort
-// timestamps, missing outputs, negative durations, or E2E timing as execution time.
 func toolDuration(call, output map[string]any) *int {
 	if output == nil {
 		return nil

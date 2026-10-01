@@ -9,20 +9,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Version dimensions in display order. Agent, prompts, tools, and knowledge
-// change how calls behave; judges and evaluator change how calls are measured.
 var versionDimensions = []string{"agent", "prompts", "tools", "knowledge", "judges", "evaluator"}
 
-// Knowledge is published per office, so its versions are tracked per Location.
 const versionKnowledge = "knowledge"
 
-// versionBaselineLookback bounds the search for versions in effect before a
-// range so a dimension that was never reported cannot scan all call history.
 const versionBaselineLookback = 90 * 24 * time.Hour
 
-// AnalyticsVersions marks when a new version first served a call in the range.
-// A change is recorded only when a version differs from the one already in
-// effect, so the first call in a range is never mistaken for a release.
 type AnalyticsVersions struct {
 	InEffect []VersionInEffect
 	Changes  []VersionChange
@@ -31,7 +23,7 @@ type AnalyticsVersions struct {
 type VersionInEffect struct {
 	Dimension  string
 	Version    string
-	LocationID string // Knowledge only.
+	LocationID string
 }
 
 type VersionChange struct {
@@ -39,8 +31,8 @@ type VersionChange struct {
 	Version         string
 	PreviousVersion string
 	FirstSeenAt     time.Time
-	Date            string // UTC call-start date of the first call served.
-	LocationID      string // Knowledge only.
+	Date            string
+	LocationID      string
 }
 
 type callVersions struct {
@@ -80,8 +72,6 @@ func (v *versionAccumulator) seed(dimension, locationID, version string) {
 	v.result.InEffect = append(v.result.InEffect, VersionInEffect{Dimension: dimension, Version: version, LocationID: locationID})
 }
 
-// add must receive calls in start order. A version seen earlier in the range,
-// such as during an overlapping rollout, is not marked again.
 func (v *versionAccumulator) add(startedAt time.Time, call callVersions) {
 	for _, dimension := range versionDimensions {
 		version := call.values[dimension]
@@ -120,8 +110,6 @@ func versionColumn(dimension string) string {
 	return "version_" + dimension
 }
 
-// queryVersionBaseline finds the versions in effect when the range began,
-// ignoring manual tag filters: a release applies to every call.
 func queryVersionBaseline(
 	ctx context.Context,
 	tx pgx.Tx,

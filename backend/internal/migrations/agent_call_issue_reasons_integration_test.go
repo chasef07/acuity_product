@@ -24,7 +24,6 @@ func TestAgentCallIssueReasonsKeepPreviousReleaseWorking(t *testing.T) {
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	// The previous release still inserts free-text reports without a reason.
 	if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_issues(interaction_id,reported_by,note) VALUES('00000000-0000-0000-0000-000000000204','synthetic-staff','Previous release report')`); err != nil {
 		t.Fatalf("previous release report rejected: %v", err)
 	}

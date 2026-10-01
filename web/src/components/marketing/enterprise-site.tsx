@@ -25,8 +25,6 @@ const sans = Inter({
   variable: "--font-acuity-sans",
 })
 
-// ABC Favorit Light is the reference display face. Keep Geist until the
-// licensed webfont is available; Inter matches the reference body and navigation.
 const display = Geist({
   subsets: ["latin"],
   variable: "--font-acuity-display",

@@ -20,7 +20,6 @@ func TestIgnoredReceiptMigrationAllowsWritesAndResumesIndexBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = blocker.Rollback(context.Background()) }()
-	// An existing writer makes a concurrent index build wait before scanning.
 	if _, err := blocker.Exec(ctx, `LOCK TABLE human_calling_call_legs IN ROW EXCLUSIVE MODE`); err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +57,6 @@ func TestIgnoredReceiptMigrationAllowsWritesAndResumesIndexBuild(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	// Neither the receipt validation nor the index build may retain a lock
-	// that blocks ingress inserts or live CallLeg updates.
 	writer, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -79,9 +76,6 @@ func TestIgnoredReceiptMigrationAllowsWritesAndResumesIndexBuild(t *testing.T) {
 	if !validated {
 		t.Fatal("receipt constraint was not validated before index build")
 	}
-	// Context cancellation can return before PostgreSQL stops the build. Keep
-	// the writer lock until the server acknowledges cancellation, otherwise
-	// releasing it can let the index finish before the cancel request arrives.
 	var canceled bool
 	if err := pool.QueryRow(ctx, `SELECT pg_cancel_backend($1)`, migrationPID).Scan(&canceled); err != nil {
 		t.Fatal(err)

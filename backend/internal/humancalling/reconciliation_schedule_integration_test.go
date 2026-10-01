@@ -12,8 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// This provider honors the same lower-bound event filter as ObserveCall's
-// Telnyx adapter. A failed read must not move that bound beyond unseen evidence.
 type scheduledObservationProvider struct {
 	recordingProvider
 	err              error
@@ -71,7 +69,6 @@ func TestOutgoingReconciliationBackoffIsDurableAndDoesNotStarveOtherCalls(t *tes
 			if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); !maintained || err != nil {
 				t.Fatalf("failing Call starved another Call: maintained:%t err:%v", maintained, err)
 			}
-			// Retire only the synthetic fixture after proving its progress.
 			if _, err := pool.Exec(context.Background(), `UPDATE human_calling_call_legs SET state = 'ENDED', ended_at = $2 WHERE id = $1`, healthyLegID, now); err != nil {
 				t.Fatal(err)
 			}
@@ -82,8 +79,6 @@ func TestOutgoingReconciliationBackoffIsDurableAndDoesNotStarveOtherCalls(t *tes
 		}
 		now = next
 	}
-	// New durable provider state makes the item eligible after normal stale age,
-	// even when the previous failure was backed off for fifteen minutes.
 	now = now.Add(-14 * time.Minute)
 	if _, err := pool.Exec(context.Background(), `UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1`, legID, now); err != nil {
 		t.Fatal(err)
@@ -188,8 +183,6 @@ func testLateObservation(t *testing.T, withCommand bool) {
 	case <-ctx.Done():
 		t.Fatal("observation did not start")
 	}
-	// Simulate a later committed receipt, then a second worker after the first
-	// observation lease expires. Neither observer owns domain-state timestamps.
 	updatedAt := initialTime.Add(time.Second)
 	if _, err := pool.Exec(ctx, `UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1`, legID, updatedAt); err != nil {
 		t.Fatal(err)
@@ -268,7 +261,6 @@ func TestOutgoingReconciliationPreservesEvidenceWindowAcrossFailure(t *testing.T
 	}
 	now = now.Add(61 * time.Second)
 	provider.err = nil
-	// Recreate the module to prove recovery does not depend on process memory.
 	calling = humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
 	if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); !maintained || err != nil {
 		t.Fatalf("retry observation = maintained:%t err:%v", maintained, err)
@@ -310,8 +302,6 @@ func TestOutgoingReconciliationProviderDeadlinePreservesDurableBackoff(t *testin
 	legID := seedScheduledObservationLeg(t, pool, authorization, now.Add(-2*time.Minute), "deadline")
 	provider := &blockedObservationProvider{started: make(chan struct{}), release: make(chan struct{})}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
-	// A prior failed observation makes this attempt's backoff distinguishable
-	// from the one-minute crash-recovery lease written before provider I/O.
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_call_legs SET reconciliation_attempts = 1,
 			reconciliation_checked_at = $2 WHERE id = $1

@@ -1,6 +1,5 @@
 const toneSources = new Map<string, string>()
 
-// Local confirmation only: never connect this audio to the microphone or RTP.
 export function createKeypadFeedback() {
   let active: HTMLAudioElement | undefined
 
@@ -35,13 +34,10 @@ export function createKeypadFeedback() {
         console.warn("Keypad audio feedback could not play.")
       }
       try {
-        // An empty (or unsupported) sinkId means the browser's default output.
-        // Route before playing; never fall back to a different speaker on error.
         if (output.sinkId) await audio.setSinkId(output.sinkId)
         if (active !== audio) return
         await audio.play()
       } catch {
-        // A newer press or call teardown intentionally aborts pending playback.
         if (active !== audio) return
         stop()
         console.warn("Keypad audio feedback could not play.")
@@ -59,7 +55,7 @@ function toneSource(digit: string) {
   const low = [697, 770, 852, 941][row]
   const high = [1209, 1336, 1477, 1633][keys[row].indexOf(digit)]
   const sampleRate = 8000
-  const samples = 960 // 120 ms, with 5 ms fades to avoid clicks.
+  const samples = 960
   const bytes = new Uint8Array(44 + samples * 2)
   const wav = new DataView(bytes.buffer)
   const text = (offset: number, value: string) => {
@@ -69,7 +65,7 @@ function toneSource(digit: string) {
   wav.setUint32(4, bytes.length - 8, true)
   text(8, "WAVEfmt ")
   wav.setUint32(16, 16, true)
-  wav.setUint16(20, 1, true) // PCM, mono, 16-bit.
+  wav.setUint16(20, 1, true)
   wav.setUint16(22, 1, true)
   wav.setUint32(24, sampleRate, true)
   wav.setUint32(28, sampleRate * 2, true)

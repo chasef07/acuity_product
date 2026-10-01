@@ -9,15 +9,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PoolTracer records acquisition pressure without inspecting SQL or arguments.
-// It implements pgx.QueryTracer only because pgx uses that interface as the
-// configuration slot for optional pool tracers.
 type PoolTracer struct {
 	observer Observer
 }
 
-// PoolAcquireTimeoutCause distinguishes the pool acquisition budget from the
-// enclosing operation deadline. The database executor sets this timeout cause.
 var PoolAcquireTimeoutCause = errors.New("database pool acquisition deadline exceeded")
 
 type acquireStartedAt struct{}

@@ -497,9 +497,6 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     this.output = undefined
     this.quarantine?.remove()
     this.quarantine = undefined
-    // TelnyxRTC.disconnect() sends BYE for every active Call. serverDisconnect
-    // purges local state without BYE and disables reconnect, so server Call
-    // Control remains the sole termination owner.
     if (client) {
       await abortableMediaOperation(client.serverDisconnect(), signal)
     }

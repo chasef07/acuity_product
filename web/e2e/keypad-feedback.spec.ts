@@ -3,8 +3,6 @@ import { expect, test } from "@playwright/test"
 import ts from "typescript"
 
 test("keypad feedback plays a short local tone in the browser", async ({ page }) => {
-  // Exercise the production player with real browser audio decoding/playback.
-  // Hardware routing and provider delivery require separate live acceptance.
   const source = readFileSync(
     new URL("../src/lib/calling/keypad-feedback.ts", import.meta.url),
     "utf8",

@@ -303,8 +303,6 @@
   .callTrends { grid-template-columns: 1fr; }
 }
 
-/* Quality series colors, validated for color-vision deficiency and contrast in
-   each mode. Sentiment diverges red to blue around a neutral gray midpoint. */
 .quality {
   --quality-series-1: #2a78d6;
   --quality-series-2: #eb6834;
@@ -435,8 +433,6 @@
   }
 }
 
-/* Version markers. Behavior changes use the accent; measurement changes stay
-   muted and dashed so they are not read as agent improvements. */
 .callTrends {
   --version-behavior: #b2714c;
 }

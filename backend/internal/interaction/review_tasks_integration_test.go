@@ -47,8 +47,6 @@ func TestAppointmentReceiptCommitsReviewWithSourceFacts(t *testing.T) {
 	if processed, err := module.ProcessNextReceipt(ctx); err != nil || processed {
 		t.Fatalf("projected receipt replayed: %v %v", processed, err)
 	}
-	// A successful cancellation with failed replacement booking is unfinished
-	// work, not a successful reschedule that needs routine verification.
 	payload.SourceCallID = "synthetic-partial-change"
 	payload.Appointment = &AppointmentEvidence{Action: AppointmentRescheduled, OccurredAt: now, OldAppointmentID: "synthetic-old", BookingResult: json.RawMessage(`{"status":"error","reason":"unavailable"}`), CancellationResult: json.RawMessage(`{"status":"cancelled","appointmentId":"synthetic-old"}`)}
 	raw, err = json.Marshal(payload)
@@ -69,8 +67,6 @@ func TestAppointmentReceiptCommitsReviewWithSourceFacts(t *testing.T) {
 	if title != "Review appointment change" || outcome != "PARTIAL" || !strings.Contains(body, "unfinished appointment change") || !strings.Contains(body, "remaining follow-up") || strings.Contains(body, "Verify insurance and provider") {
 		t.Fatalf("partial outcome hidden: %s %s %q", title, outcome, body)
 	}
-	// A failed call creates no review Task, but its new Interaction evidence
-	// still publishes a workspace refetch hint.
 	var versionBefore, versionAfter int64
 	if err := pool.QueryRow(ctx, `SELECT workspace_version FROM access_practices WHERE id=$1`, practice).Scan(&versionBefore); err != nil {
 		t.Fatal(err)

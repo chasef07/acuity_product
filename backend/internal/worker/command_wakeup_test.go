@@ -163,7 +163,6 @@ func TestCommandHintDuringEmptyClaimIsNotLostBeforeWait(t *testing.T) {
 		work := &commandWakeTestWork{controlledWork: newControlledWork()}
 		work.claim = func(ctx context.Context) (func(context.Context) error, bool, error) {
 			if claims.Add(1) == 1 {
-				// The query observed no eligible work before a concurrent commit hint.
 				select {
 				case <-releaseClaim:
 					return nil, false, nil

@@ -1,5 +1,3 @@
-// Package workspace owns the authorized cross-domain read projections shown in
-// the Acuity Portal workspace. Domain modules continue to own their writes.
 package workspace
 
 import (

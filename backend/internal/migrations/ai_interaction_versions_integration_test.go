@@ -51,7 +51,6 @@ func TestAIInteractionVersionsProjectAndBackfill(t *testing.T) {
 	if *agent != "0.11.0" || *prompts != "0.11.0" || *knowledge != "revision-1" {
 		t.Fatalf("current agent=%v prompts=%v knowledge=%v", *agent, *prompts, *knowledge)
 	}
-	// Correcting the source replaces derived versions; direct writes cannot drift.
 	if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET closeout_payload='{}', version_prompts='forged' WHERE source_call_id='current'`); err != nil {
 		t.Fatal(err)
 	}

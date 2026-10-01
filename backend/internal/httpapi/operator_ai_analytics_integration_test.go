@@ -203,10 +203,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	// Use the current recorded voice/delegator usage contract. Legacy models
-	// remain unpriced rather than inheriting another model's rates.
 	usage := `[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-live-1","session_duration":120},{"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10000,"input_cached_tokens":2000,"input_cache_creation_tokens":1000,"output_tokens":500}]`
-	// $0.10 voice + $0.001095 delegator + $0.405 for 30 call minutes.
 	const pricedCallCost = 0.506095
 	const totalCost = pricedCallCost + 5*(0.01+0.0035)
 	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET transcript = jsonb_set(transcript, '{usage}', $2::jsonb) WHERE id=$1::uuid`, richID, usage); err != nil {
@@ -253,8 +250,6 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 			t.Fatal("cost breakdown does not reconcile")
 		}
 	}
-	// Unknown usage must remain visible and exclude the affected call from
-	// fully priced averages without discarding its known component costs.
 	unknownUsage := strings.TrimSuffix(usage, "]") + `,{"type":"llm_usage","provider":"unknown","model":"UnsupportedModel","input_tokens":1000}]`
 	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET transcript=jsonb_set(transcript,'{usage}',$2::jsonb) WHERE id=$1::uuid`, richID, unknownUsage); err != nil {
 		t.Fatal(err)
@@ -335,7 +330,6 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		"limit":      1,
 		"cursor":     firstPage.NextCursor,
 	})
-	// The continuation must not slide the reporting window as time advances.
 	initialNow := now
 	now = now.Add(8 * 24 * time.Hour)
 	secondPageResponse := request(t, server.Client(), http.MethodPost,
@@ -510,8 +504,6 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		invalid.Body.Close()
 	})
 
-	// Exercise the real cost endpoint under its SQL budget with large session
-	// reports. Conversation size must not determine the range-read payload.
 	largeReport, _ := json.Marshal(map[string]any{
 		"items": []any{map[string]any{"type": "message", "content": strings.Repeat("Synthetic conversation content. ", 5000)}},
 		"usage": json.RawMessage(usage),
@@ -533,7 +525,6 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	if largeCosts.TotalCalls != largeCalls+1 || largeCosts.PricedCalls != largeCalls || largeCosts.Items[0].Quantity != largeCalls*2 {
 		t.Fatalf("large cost query lost usage: %+v", largeCosts)
 	}
-	// Correcting source usage must replace the derived estimate immediately.
 	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET transcript=jsonb_set(transcript,'{usage}','[]') WHERE source_call_id='cost-scale-1'`); err != nil {
 		t.Fatal(err)
 	}

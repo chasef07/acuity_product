@@ -143,8 +143,6 @@ func (m *Module) resolveHandoffForRefer(
 	tx pgx.Tx,
 	fact ProviderFact,
 ) (string, string, string, error) {
-	// REFER webhooks can retain the configured SIP destination, with or
-	// without its scheme, instead of normalizing it to a phone number.
 	sipDestination := m.sipDestination()
 	validDestination := canonicalE164.MatchString(fact.To) ||
 		(m.config.HandoffSIPDomain != "" &&

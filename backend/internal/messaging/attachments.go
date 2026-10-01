@@ -105,8 +105,6 @@ func (m *Module) uploadAttachment(
 	if uuid.Validate(requestedID) != nil {
 		return Attachment{}, ErrInvalidInput
 	}
-	// Retried Send-again requests share a durable reservation. Waiting for its
-	// writer does not retain a connection or an authorization lock.
 	ctx, cancel := context.WithTimeout(ctx, attachmentOperationTimeout)
 	defer cancel()
 	var result Attachment
@@ -180,8 +178,6 @@ func (m *Module) uploadAttachment(
 	return result, nil
 }
 
-// claimAttachmentUpload returns an empty token when another request owns the
-// same in-progress reservation. Each resumed writer gets its own immutable key.
 func (m *Module) claimAttachmentUpload(
 	ctx context.Context, command UploadAttachmentCommand, attachmentID, idempotencyKey, retryOfMessageID string,
 ) (Attachment, string, error) {
@@ -291,7 +287,6 @@ func (m *Module) OpenAttachment(
 	if err != nil {
 		return AttachmentContent{}, ErrDenied
 	}
-	// Access or attachment state may have changed during a slow storage read.
 	current, currentKey, err := m.authorizeAttachmentRead(ctx, identity, attachmentID)
 	if err != nil || currentKey != objectKey || current.State != attachment.State {
 		return AttachmentContent{}, ErrDenied

@@ -61,7 +61,7 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 		{north, "patient_verified", false, true, true, yesterday},
 		{north, "", true, false, false, yesterday.Add(-24 * time.Hour)},
 		{south, "patient_verified", true, true, true, yesterday},
-		{north, "patient_verified", true, true, true, now}, // incomplete reporting day excluded
+		{north, "patient_verified", true, true, true, now},
 		{north, "patient_verified", true, true, true, yesterday.Add(-10 * 24 * time.Hour)},
 	} {
 		id := "10000000-0000-0000-0000-00000000000" + string(rune('1'+index))
@@ -147,9 +147,6 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if report.Total.Conversion != nil || report.Total.P50 != nil || report.Total.Bookings != 0 {
 		t.Fatalf("empty report: %+v", report.Total)
 	}
-	// Older calls have completed search evidence but no phoneLookup field. The
-	// report must preserve their historical category until stronger evidence arrives.
-	// Seed migration eligibility here; the migration suite covers its one-time capture.
 	for index, booked := range []bool{true, false} {
 		id := "20000000-0000-0000-0000-00000000000" + string(rune('1'+index))
 		outcome := "INDETERMINATE"
@@ -173,7 +170,6 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 		report.Groups.New.Bookings != 2 || report.Groups.Existing.Bookings != 1 || report.Groups.Existing.Searched != 3 || report.Groups.Existing.Converted != 1 {
 		t.Fatalf("historical patient classification changed report groups: %+v", report)
 	}
-	// Customer access never unlocks the existing operator evidence endpoint.
 	response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "admin", []byte(`{"practiceId":"`+practice+`","range":"7d","limit":1}`))
 	defer response.Body.Close()
 	if response.StatusCode != 403 {

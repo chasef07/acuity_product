@@ -39,12 +39,11 @@ type QueryAnalyticsCommand struct {
 type AnalyticsDay struct {
 	Date          string
 	TotalCalls    int
-	CallMinutes   float64 // Completed call time; calls still in progress are excluded.
+	CallMinutes   float64
 	TransferCount int
 	TransferRate  *float64
 }
 
-// Include empty UTC dates and partial boundary days in the rolling range.
 func analyticsDays(from, through time.Time) []AnalyticsDay {
 	days := []AnalyticsDay{}
 	for day := from.UTC().Truncate(24 * time.Hour); !day.After(through); day = day.AddDate(0, 0, 1) {
@@ -135,11 +134,11 @@ type ToolExecution struct {
 	CallID             string
 	Name               string
 	OccurredAt         time.Time
-	Status             string // Native LiveKit execution status.
-	OutputClass        string // Historical Agent output classification only.
-	DomainOutcome      string // Correlated Acuity domain outcome, when present.
-	DomainStatus       string // Correlated Acuity business-result status, when present.
-	TaskID             string // Durable Product Task proving Staff Task follow-up.
+	Status             string
+	OutputClass        string
+	DomainOutcome      string
+	DomainStatus       string
+	TaskID             string
 }
 
 type OperatorAnalyticsDetail struct {
@@ -219,8 +218,6 @@ func (m *Module) QueryAnalytics(
 	if len(locationIDs) == 0 {
 		return AnalyticsPage{}, ErrDenied
 	}
-	// Continuations retain the original reporting window and the caller's
-	// first-page summary. Only an explicit refresh recalculates the full range.
 	var summary *AnalyticsSummary
 	var pendingIssues []OperatorCallIssue
 	if cursor == nil {
@@ -446,8 +443,6 @@ func queryAnalyticsCalls(
 		cursorStartedAt = cursor.StartedAt
 		cursorID = cursor.ID
 	}
-	// Stream through nonmatching calls before applying the page size so sparse
-	// review results remain reachable without duplicating evaluation policy in SQL.
 	var queryLimit any = command.Limit + 1
 	if command.NeedsReviewOnly {
 		queryLimit = nil
@@ -840,7 +835,6 @@ func medianMilliseconds(values []float64) *int {
 	return sortedMedian(ordered)
 }
 
-// sortedMedian and sortedPercentile round an ascending sample to a whole unit.
 func sortedMedian(ordered []float64) *int {
 	if len(ordered) == 0 {
 		return nil

@@ -12,12 +12,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Open returns a clean, migrated pool to an explicitly named test database.
 func Open(t *testing.T) *pgxpool.Pool {
 	return open(t, "")
 }
 
-// OpenThrough returns a clean pool migrated through the named migration.
 func OpenThrough(t *testing.T, last string) *pgxpool.Pool {
 	t.Helper()
 	return open(t, last)

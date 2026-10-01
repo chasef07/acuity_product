@@ -7,9 +7,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 )
 
-// Activate claims one provisioned Google email grant and returns its current
-// authorization. It keeps integration fixtures on the same sign-in path as the
-// production portal.
 func Activate(t testing.TB, module *access.Module, identity access.Identity) access.Authorization {
 	t.Helper()
 	discovery, err := module.DiscoverActor(context.Background(), identity)

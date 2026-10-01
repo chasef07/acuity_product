@@ -50,7 +50,6 @@ const count = (value: number) => value.toLocaleString("en-US")
 
 type Series = keyof typeof chartConfig
 
-// Missing measurements remain gaps, not apparent zero-duration successes.
 function chartValue(summary: BookingSummary, metric: Metric) {
   return metric === "duration" ? summary.p50 : summary[metric]
 }

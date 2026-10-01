@@ -11,8 +11,6 @@ import styles from "./ai-diagnostics.module.css"
 
 export type VersionSelection = Record<OperatorAiVersionDimension, boolean>
 
-// Behavior changes alter what callers experience; measurement changes alter how
-// calls are judged, so a metric moving after one is not proof the agent improved.
 const dimensions: Array<{
   key: OperatorAiVersionDimension
   label: string
@@ -35,8 +33,6 @@ export const defaultVersionSelection: VersionSelection = {
   evaluator: true,
 }
 
-// Plot insets shared by the trend charts: Y axis width on the left and the
-// chart's right margin. Category bands center each date between them.
 const plotLeft = 44
 const plotRight = 12
 

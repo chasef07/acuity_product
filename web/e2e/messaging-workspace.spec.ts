@@ -832,7 +832,6 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
       const query = response.request().postDataJSON()
       if (query.state !== "OPEN" || query.includeCounts === false) return false
       const result = (await response.json()) as TaskPage
-      // A refresh for the billing write may finish before medication is created.
       return Boolean(result.counts) && result.items.some(
         (task) => task.sourceCallId === "messaging-medication",
       )
@@ -910,8 +909,6 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(completeTask).toHaveCSS("transition-duration", "0s")
   await expect(relativeTime).toHaveCSS("transition-duration", "0s")
 
-  // Install the outage before invalidating the token: background refreshes can
-  // otherwise refill the cache between invalidation and route registration.
   await page.route("**/api/auth/token", (route) =>
     route.fulfill({
       status: 503,
@@ -1184,7 +1181,6 @@ test("Text folder counts include old work and unloaded pages", async ({ page }) 
   await expect(page.getByTestId("task-row")).toHaveCount(50)
   await page.getByRole("button", { name: "Show more", exact: true }).click()
   await expect(page.getByTestId("task-row")).toHaveCount(64)
-  // Opening a conversation is not completion, even after a refresh.
   await page.getByTestId("task-row").first().getByRole("button").first().click()
   await expect(page.getByRole("button", { name: /^Texts/ })).toContainText("64")
   await page.reload()
@@ -1215,7 +1211,6 @@ test("staff replies complete text conversations and new texts return to the inbo
   const reviewID = await row.getAttribute("data-task-id")
   await page.getByRole("button", { name: "Mark done", exact: true }).click()
   await expect(row).toHaveCount(0)
-  // Manual completion advances; reopen the completed review from its history.
   await page.getByRole("button", { name: "Recently completed", exact: true }).click()
   const completedReview = page.locator(`[data-task-id="${reviewID}"]`)
   await completedReview.getByRole("button").first().click()

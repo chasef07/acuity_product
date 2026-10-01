@@ -216,7 +216,6 @@ test("the sender office follows the offices of the selected Task", async (t) => 
     office.dispatchEvent(new window.Event("change", { bubbles: true }))
   })
 
-  // Same phone, so the workspace stays mounted while its office changes.
   await conversation.render(0, { canMutate: true, calling, engagement: { ...engagement, locations: [officeB] } })
   const call = Array.from(conversation.host.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Call")
   assert.ok(call)
@@ -281,6 +280,61 @@ test("loaded attachment previews revoke their object URL on navigation", async (
   assert.deepEqual(view.revokeURL.mock.calls.map((call) => call.arguments), [["blob:synthetic-image"]])
 })
 
+test("a refused send keeps its draft attempt and a sent Message reloads after its hold", async (t) => {
+  const conversation = conversationHarness(t)
+  await conversation.render(0, { canMutate: true })
+  assert.equal(conversation.timelineRequests, 1)
+  const composer = conversation.host.querySelector<HTMLFormElement>('form[aria-label="Message composer"]')!
+  const textarea = composer.querySelector("textarea")!
+  await typeInto(textarea, "Synthetic reply")
+  const submit = () => act(async () => {
+    composer.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+
+  conversation.sendStatus = 409
+  await submit()
+  assert.match(
+    composer.querySelector("[role='alert']")?.textContent ?? "",
+    /This destination cannot be messaged from the selected office\./,
+  )
+  conversation.sendStatus = 201
+  await submit()
+  assert.equal(conversation.sends.length, 2)
+  assert.equal(conversation.sends[0]!.destination, "+15551234567")
+  assert.equal(conversation.sends[1]!.idempotencyKey, conversation.sends[0]!.idempotencyKey, "a retried draft reuses its idempotency key")
+  assert.match(conversation.host.querySelector('[aria-label="Conversation activity"]')?.textContent ?? "", /Synthetic reply/)
+  assert.equal(conversation.timelineRequests, 1)
+
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 800)) })
+  assert.equal(conversation.timelineRequests, 2, "the Sending Message reloads once its hold ends")
+})
+
+test("a sent Message does not reload its conversation after navigation", async (t) => {
+  const conversation = conversationHarness(t)
+  await conversation.render(0, { canMutate: true })
+  const composer = conversation.host.querySelector<HTMLFormElement>('form[aria-label="Message composer"]')!
+  const textarea = composer.querySelector("textarea")!
+  await typeInto(textarea, "Synthetic reply")
+  await act(async () => {
+    composer.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  assert.equal(conversation.sends.length, 1)
+  await act(async () => conversation.root.unmount())
+  await new Promise((resolve) => setTimeout(resolve, 800))
+  assert.equal(conversation.timelineRequests, 1)
+})
+
+async function typeInto(textarea: HTMLTextAreaElement, value: string) {
+  Object.assign(textarea, { attachEvent() {}, detachEvent() {} })
+  await act(async () => {
+    textarea.focus()
+    Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, value)
+    textarea.dispatchEvent(new window.KeyboardEvent("keyup", { bubbles: true }))
+  })
+}
+
 function attachmentHarness(t: TestContext) {
   const view = conversationHarness(t)
   let release!: () => void
@@ -322,6 +376,8 @@ function conversationHarness(t: TestContext) {
     textTask: undefined as Task | undefined,
     timelineGate: undefined as Promise<void> | undefined,
     completions: [] as number[],
+    sends: [] as { idempotencyKey: string; destination?: string; body: string }[],
+    sendStatus: 201,
     items: [] as ConversationTimelineItem[],
     opened: [] as string[],
   }
@@ -342,6 +398,13 @@ function conversationHarness(t: TestContext) {
       conversation.attachmentRequests++
       await conversation.attachmentGate
       return new Response(new Blob(["synthetic image"], { type: "image/png" }), { headers: { "Content-Type": "image/png" } })
+    }
+    if (url.endsWith("/v1/messages")) {
+      const body = await (input as Request).json()
+      conversation.sends.push(body)
+      return conversation.sendStatus === 201
+        ? Response.json({ status: "created", message: { ...message, id: `sent-${conversation.sends.length}`, direction: "OUTBOUND", body: body.body, delivery: "Sending", attachment: undefined } }, { status: 201 })
+        : Response.json({ error: { code: "DESTINATION_UNAVAILABLE", message: "Synthetic conflict", correlationId: "correlation-1", retryable: false } }, { status: conversation.sendStatus })
     }
     if (url.includes("/v1/tasks/") && url.endsWith("/complete")) {
       const body = await (input as Request).json()

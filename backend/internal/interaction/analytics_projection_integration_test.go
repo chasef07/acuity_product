@@ -68,9 +68,6 @@ func TestAnalyticsLargeTranscriptQueryBudget(t *testing.T) {
 	}
 }
 
-// Compare the existing semantic normalizer against the durable compact form,
-// including historical formats and missing or malformed evidence. The normalizer
-// remains the single owner of metric definitions.
 func TestAnalyticsProjectionPreservesEvidenceAndCorrections(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.OpenThrough(t, "0054_classify_completed_booking_searches.sql")
@@ -99,8 +96,6 @@ func TestAnalyticsProjectionPreservesEvidenceAndCorrections(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The migration is an actual upgrade with pre-existing evidence. Before its
-	// backfill completes, reads fail visibly instead of silently losing calls.
 	if err := migrations.ApplyThrough(ctx, pool, "0055_compact_ai_analytics_evidence.sql"); err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +126,6 @@ func TestAnalyticsProjectionPreservesEvidenceAndCorrections(t *testing.T) {
 			}
 		}
 		check(c.transcript, c.closeout)
-		// A legacy writer only touches source columns. Corrected evidence must
-		// replace, not append to, the previous analytical projection.
 		corrected := `{"items":[{"metrics":{"e2e_latency_ms":750}}]}`
 		for attempt := 0; attempt < 2; attempt++ {
 			if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET transcript=$2,closeout_payload='{}' WHERE id=$1`, ids[i], []byte(corrected)); err != nil {
@@ -148,8 +141,6 @@ func projectionLatencySamples(projection analyticsProjection) latencyValueSet {
 	return analyticsLatencySamples(projection.transcript, turnMetrics)
 }
 
-// Quality trends read stored evaluator, usage, footprint, and staff review
-// evidence. Unevaluated and unreported calls stay visible as unreported.
 func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.Open(t)
@@ -161,7 +152,6 @@ func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	// The call before the range sets the versions already in effect.
 	if _, err := pool.Exec(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript,closeout_payload) VALUES('agent',$1,$2,'baseline','+15555550101','+15555550102',$3,$3,'COMPLETED',3,'{"items":[]}',$4)`,
 		practiceID, locationID, now.Add(-2*time.Hour), []byte(`{"versions":{"agent":"0.10.0","prompts":"0.9.0","knowledge":"revision-a"}}`)); err != nil {
 		t.Fatal(err)
@@ -226,7 +216,6 @@ func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 	if q.TokenCalls != 1 || *q.P50InputTokens != 12000 || *q.P50CachedTokens != 8000 || *q.P50OutputTokens != 300 {
 		t.Fatalf("tokens=%+v", q)
 	}
-	// The skipped call reported a partial footprint, which is unreported.
 	if q.FootprintCalls != 1 || q.LatestFootprint == nil || *q.LatestFootprint != (ContextFootprint{700, 3200, 1800, 17}) {
 		t.Fatalf("footprint calls=%d latest=%+v", q.FootprintCalls, q.LatestFootprint)
 	}
@@ -244,7 +233,6 @@ func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 	if !reflect.DeepEqual(versions.InEffect, wantInEffect) {
 		t.Fatalf("in effect=%+v", versions.InEffect)
 	}
-	// The first evaluated call has no earlier evaluator to change from.
 	if len(versions.Changes) != 2 ||
 		versions.Changes[0].Dimension != "agent" || versions.Changes[0].Version != "0.11.0" || versions.Changes[0].PreviousVersion != "0.10.0" ||
 		versions.Changes[1].Dimension != "prompts" || versions.Changes[1].Version != "0.10.0" || versions.Changes[1].PreviousVersion != "0.9.0" ||

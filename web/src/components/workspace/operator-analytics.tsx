@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import {
   ArrowRightIcon,
   CalendarCheck2Icon,
@@ -65,23 +65,21 @@ import {
 } from "@/components/ui/table"
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { PendingCallIssues } from "@/components/workspace/call-issue-review"
-import { portalClient } from "@/lib/api/client"
-import { queryOperatorAiAnalytics } from "@/lib/api/generated/sdk.gen"
 import type {
   OperatorAiCallIssue,
   OperatorAiCallTags,
-  OperatorAiAnalyticsPage,
   OperatorAiAnalyticsRange,
   OperatorAiAnalyticsSummary,
   OperatorAiCallAnalytics,
   Location,
 } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import {
+  type AiCallAnalytics,
+  type AiCallLedger,
+  useAiCallAnalytics,
+} from "@/lib/clients/agent-calls"
 
-type AnalyticsSnapshot = OperatorAiAnalyticsPage & { summary: OperatorAiAnalyticsSummary }
-
-type AnalyticsLoadState = "loading" | "ready" | "unauthorized" | "unavailable"
-type AnalyticsNextPageState = "idle" | "loading" | "unavailable"
+type AnalyticsNextPageState = AiCallLedger["nextPage"]
 type AnalyticsTab = "overview" | "cost" | "quality" | "tools" | "calls" | "review"
 
 const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
@@ -134,127 +132,23 @@ export function OperatorAnalytics({
   const setManualTag = (value: string) => setTagFilter({ practiceID, value })
   const activeTag = tab === "calls" || needsReviewOnly ? manualTag : ""
   const [requestVersion, setRequestVersion] = useState(0)
-  const [request, setRequest] = useState<{
-    key: string
-    state: AnalyticsLoadState
-    data?: AnalyticsSnapshot
-  }>({ key: "", state: "loading" })
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
-  const [nextPageRequest, setNextPageRequest] = useState<{
-    key: string
-    state: AnalyticsNextPageState
-  }>({ key: "", state: "idle" })
   const requestKey = `${practiceID}:${locationID}:${range}:${activeTag}:${needsReviewOnly}:${requestVersion}`
-  const currentRequest =
-    request.key === requestKey
-      ? request
-      : { key: requestKey, state: "loading" as const }
-  const nextPageState =
-    nextPageRequest.key === requestKey ? nextPageRequest.state : "idle"
-
-  useEffect(() => {
-    if (!practiceID || costView) return
-    const controller = new AbortController()
-    void getAccessToken().then(async (token) => {
-      if (controller.signal.aborted) return
-      if (!token) {
-        setRequest({ key: requestKey, state: "unauthorized" })
-        return
-      }
-      try {
-        const result = await queryOperatorAiAnalytics({
-          client: portalClient(token),
-          body: {
-            practiceId: practiceID,
-            locationId: locationID || undefined,
-            range,
-            manualTag: activeTag || undefined,
-            needsReviewOnly,
-            limit: 50,
-          },
-          signal: controller.signal,
-        }).catch(() => undefined)
-        if (controller.signal.aborted) return
-        if (result?.data?.summary) {
-          setRequest({ key: requestKey, state: "ready", data: { ...result.data, summary: result.data.summary } })
-          return
-        }
-        const status = result?.response?.status
-        setRequest({
-          key: requestKey,
-          state:
-            status === 401 || status === 403 ? "unauthorized" : "unavailable",
-        })
-      } catch {
-        if (!controller.signal.aborted) {
-          setRequest({ key: requestKey, state: "unavailable" })
-        }
-      }
-    })
-    return () => controller.abort()
-  }, [locationID, practiceID, range, requestKey, costView, activeTag, needsReviewOnly])
+  const currentRequest = useAiCallAnalytics({
+    practiceID,
+    locationID,
+    range,
+    manualTag: activeTag,
+    needsReviewOnly,
+    revision: requestVersion,
+    enabled: !costView,
+  })
+  const nextPageState = currentRequest.nextPage
 
   async function loadNextPage() {
-    if (
-      currentRequest.state !== "ready" ||
-      !currentRequest.data?.nextCursor ||
-      nextPageState === "loading"
-    ) {
-      return
-    }
-    const cursor = currentRequest.data.nextCursor
-    setNextPageRequest({ key: requestKey, state: "loading" })
-    try {
-      const token = await getAccessToken()
-      if (!token) {
-        setRequest((current) =>
-          current.key === requestKey
-            ? { key: requestKey, state: "unauthorized" }
-            : current,
-        )
-        setNextPageRequest({ key: requestKey, state: "idle" })
-        return
-      }
-      const result = await queryOperatorAiAnalytics({
-        client: portalClient(token),
-        body: {
-          practiceId: practiceID,
-          locationId: locationID || undefined,
-          range,
-          manualTag: activeTag || undefined,
-          needsReviewOnly,
-          cursor,
-          limit: 50,
-        },
-      }).catch(() => undefined)
-      if (!result?.data) {
-        setNextPageRequest({ key: requestKey, state: "unavailable" })
-        return
-      }
-      setRequest((current) => {
-        if (
-          current.key !== requestKey ||
-          current.state !== "ready" ||
-          !current.data
-        ) {
-          return current
-        }
-        return {
-          key: requestKey,
-          state: "ready",
-          data: {
-            ...current.data,
-            calls: [...current.data.calls, ...result.data.calls],
-            nextCursor: result.data.nextCursor,
-          },
-        }
-      })
-      setNextPageRequest({ key: requestKey, state: "idle" })
-      return result.data.calls[0]?.id
-    } catch {
-      setNextPageRequest({ key: requestKey, state: "unavailable" })
-    }
+    const page = await currentRequest.loadNextPage()
+    return page?.calls[0]?.id
   }
 
   const calls = currentRequest.data?.calls ?? []
@@ -275,25 +169,18 @@ export function OperatorAnalytics({
   }
 
   function updateCallTags(id: string, tags: OperatorAiCallTags) {
-    setRequest((current) => current.key === requestKey && current.data ? {
-      ...current,
-      data: {
-        ...current.data,
-        availableTags: tags.available,
-        calls: current.data.calls.map((call) => call.id === id ? { ...call, manualTags: tags.selected } : call),
-      },
-    } : current)
+    currentRequest.update((shown) => ({
+      ...shown,
+      availableTags: tags.available,
+      calls: shown.calls.map((call) => call.id === id ? { ...call, manualTags: tags.selected } : call),
+    }))
   }
 
-  // A reviewed flag leaves the pending list; the review itself lives on the call.
   function updateCallIssue(issue: OperatorAiCallIssue) {
-    setRequest((current) => current.key === requestKey && current.data ? {
-      ...current,
-      data: {
-        ...current.data,
-        pendingIssues: current.data.pendingIssues?.filter((item) => item.interactionId !== issue.interactionId),
-      },
-    } : current)
+    currentRequest.update((shown) => ({
+      ...shown,
+      pendingIssues: shown.pendingIssues?.filter((item) => item.interactionId !== issue.interactionId),
+    }))
   }
 
   const offices = [
@@ -377,7 +264,7 @@ export function OperatorAnalytics({
         ) : (
           <>
             {currentRequest.state === "loading" && <AnalyticsLoading />}
-            {currentRequest.state === "unauthorized" && (
+            {currentRequest.state === "denied" && (
               <AnalyticsFailure
                 title="Analytics access unavailable"
                 description="This session is not authorized to load Platform Operator call evidence."
@@ -442,7 +329,7 @@ function AnalyticsReady({
   onLoadNextPage,
   onSelect,
 }: {
-  data: AnalyticsSnapshot
+  data: AiCallAnalytics
   locations: Location[]
   versionSelection: VersionSelection
   onVersionSelectionChange: (selection: VersionSelection) => void

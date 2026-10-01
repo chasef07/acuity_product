@@ -13,7 +13,7 @@ func TestBookingAnalyticsCalendarDaysAndPooledPercentiles(t *testing.T) {
 	from := time.Date(2026, 3, 7, 0, 0, 0, 0, zone)
 	to := from.AddDate(0, 0, 3)
 	first := from.Add(23 * time.Hour)
-	second := from.AddDate(0, 0, 1).Add(23 * time.Hour) // next local midnight after the DST change
+	second := from.AddDate(0, 0, 1).Add(23 * time.Hour)
 	end1, end2 := first.Add(100*time.Second), second.Add(300*time.Second)
 	report := summarizeBookingFacts([]bookingFact{
 		{appointmentID: "first", started: first, ended: &end1, booked: true, searched: true, patientGroup: "new"},

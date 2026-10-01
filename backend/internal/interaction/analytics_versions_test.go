@@ -12,7 +12,6 @@ func TestVersionChangesMarkFirstServedVersionOnly(t *testing.T) {
 	v.seed("knowledge", "office-a", "revision-1")
 	calls := []callVersions{
 		{"office-a", map[string]string{"agent": "0.10.0", "knowledge": "revision-1"}},
-		// Rollout overlap: the new agent version serves calls alongside the old one.
 		{"office-b", map[string]string{"agent": "0.11.0", "knowledge": "revision-9", "prompts": "0.4.0"}},
 		{"office-a", map[string]string{"agent": "0.10.0", "prompts": "0.5.0"}},
 		{"office-a", map[string]string{"agent": "0.11.0", "knowledge": "revision-2"}},
@@ -36,8 +35,6 @@ func TestVersionChangesMarkFirstServedVersionOnly(t *testing.T) {
 			t.Fatalf("change %d=%+v want %+v", i, change, w)
 		}
 	}
-	// Office B's first knowledge revision and the first reported prompts are a
-	// starting state, not a change; returning to an earlier version is not a release.
 	if got[0].Date != "2026-09-28" || !got[0].FirstSeenAt.Equal(start.Add(time.Hour)) {
 		t.Fatalf("first served=%+v", got[0])
 	}

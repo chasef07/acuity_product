@@ -40,8 +40,6 @@ func availableManualTags(ctx context.Context, tx pgx.Tx, practiceID string) ([]s
 	return names, err
 }
 
-// OperatorManualTags keeps human labels independent of provider closeout and AI analysis.
-// A single-label mutation never overwrites another reviewer's labels.
 func (m *Module) OperatorManualTags(ctx context.Context, identity access.Identity, interactionID string, change *ManualTagChange) (ManualTags, error) {
 	if m.database == nil || m.access == nil || !validUUID(interactionID) {
 		return ManualTags{}, ErrInvalidInput

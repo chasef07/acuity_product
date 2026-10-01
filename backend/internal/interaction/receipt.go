@@ -49,8 +49,6 @@ type storedReceiptPayload struct {
 	CloseoutPayload json.RawMessage      `json:"closeoutPayload,omitempty"`
 }
 
-// ProcessNextReceipt projects one durable receipt left pending by an interrupted
-// or transiently failed HTTP ingestion attempt.
 func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 	if m.database == nil {
 		return false, ErrInvalidInput
@@ -242,14 +240,11 @@ func (m *Module) authorizeReceipt(
 	var authorization access.ServiceAuthorization
 	var err error
 	if command.OfficeKey != "" {
-		// Agent inbound numbers are evidence, not staff telephony configuration.
-		// The authenticated Practice and provisioned office route own access.
 		authorization, err = m.access.LockServiceAuthorization(
 			ctx, tx, command.Service, command.OfficeKey,
 			access.ServiceCapabilityIngestAIInteraction,
 		)
 	} else {
-		// Preserve the existing contract for callers that identify only a number.
 		authorization, err = m.access.LockServiceVoiceAuthorization(
 			ctx, tx, command.Service, command.OfficePhone,
 			access.ServiceCapabilityIngestAIInteraction,
@@ -337,9 +332,6 @@ func (m *Module) projectReceiptWithRecovery(
 		return current, StatusUpdated, nil
 	}
 	if operator != nil {
-		// Historical Agent retries regenerated startedAt for the same source.
-		// An operator may repair only that clock drift; every other immutable
-		// source field and every outcome conflict still use normal validation.
 		if !found || receipt.State != receiptQuarantined ||
 			current.ServiceSubject != receipt.ServiceSubject ||
 			current.LocationID != receipt.LocationID || current.Phone != command.CallerPhone ||
@@ -409,8 +401,6 @@ func (m *Module) projectReceiptWithRecovery(
 			return Interaction{}, "", err
 		}
 	}
-	// A reviewable outcome changes the Interaction evidence staff see, so it
-	// publishes a workspace refetch hint like other workspace changes.
 	if reviewableOutcome(current) || recoveryCompleted > 0 || operator != nil {
 		if _, err := m.access.RecordWorkspaceChange(
 			ctx,

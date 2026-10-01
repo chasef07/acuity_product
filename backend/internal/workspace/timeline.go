@@ -69,8 +69,6 @@ func (m *Module) QueryPhoneTimeline(
 	return page, nil
 }
 
-// Existing clients keep the flat contract while independently deployed web
-// revisions opt into grouped histories. Both paths use the same evidence reads.
 func queryFlatPhoneHistory(ctx context.Context, tx pgx.Tx, practiceID string, locationIDs []string,
 	phone string, cursor *pageCursor, limit int,
 ) (TimelinePage, error) {

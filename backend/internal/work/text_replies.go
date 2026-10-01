@@ -8,8 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// CaptureTextReply records exactly which open review a human reply addresses.
-// Messaging holds the thread lock, so inbound projection cannot cross this snapshot.
 func (m *Module) CaptureTextReply(ctx context.Context, tx pgx.Tx, threadID, messageID string, actor access.Actor) error {
 	_, err := tx.Exec(ctx, `INSERT INTO work_text_replies(message_id,task_id,task_version,actor_subject,actor_email)
  SELECT $1,id,version,$3,$4 FROM work_tasks
@@ -17,7 +15,6 @@ func (m *Module) CaptureTextReply(ctx context.Context, tx pgx.Tx, threadID, mess
 	return err
 }
 
-// ApplyTextReply follows committed provider evidence, never the send click.
 func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string) error {
 	var delivery string
 	var taskID, subject, email string
@@ -33,7 +30,6 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 	if delivery != "SENT" && delivery != "DELIVERED" && delivery != "FAILED" {
 		return nil
 	}
-	// Take the same thread lock as inbound projection before locking its review.
 	if _, err = tx.Exec(ctx, `SELECT id FROM messaging_threads WHERE id=(SELECT message_thread_id FROM work_tasks WHERE id=$1) FOR UPDATE`, taskID); err != nil {
 		return err
 	}
@@ -69,8 +65,6 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 		kind = "TASK_REOPENED"
 		actor = ActorSnapshot{Kind: "SERVICE", Subject: "text-delivery"}
 	} else {
-		// A second reply can also support the same completion. Preserve that
-		// evidence so one failed delivery cannot undo another successful reply.
 		if completedVersion == nil && task.State == TaskCompleted && task.Version == version+1 {
 			_, err = tx.Exec(ctx, `UPDATE work_text_replies SET completed_version=$2 WHERE message_id=$1 AND EXISTS(SELECT 1 FROM work_text_replies prior WHERE prior.task_id=$3 AND prior.completed_version=$2)`, messageID, task.Version, taskID)
 			return err

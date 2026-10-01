@@ -31,8 +31,6 @@ func TestProviderCommandStagesSurviveProviderAndPersistenceFailures(t *testing.T
 		t.Run(scenario.name, func(t *testing.T) {
 			now := time.Now()
 			pool, _, _, _ := prepareInboundFanout(t, now, "command-stage", &recordingProvider{}, 1)
-			// Arrange a ringback that has become eligible before its scheduled Dial.
-			// Once claimed, ordinary Call serialization must keep the Dial blocked.
 			if _, err := pool.Exec(context.Background(), `UPDATE human_calling_provider_commands SET next_attempt_at = $1 WHERE action = 'DIAL_STAFF'`, now.Add(time.Hour)); err != nil {
 				t.Fatal(err)
 			}
@@ -53,8 +51,6 @@ func TestProviderCommandStagesSurviveProviderAndPersistenceFailures(t *testing.T
 			if len(initial) != 2 || initial["claim"]["outcome"] != "succeeded" || initial["created_to_first_claim"]["outcome"] != "succeeded" {
 				t.Fatalf("claim metrics must precede execution: %#v", initial)
 			}
-			// Make the Dial eligible while ringback is SENDING, proving that readiness
-			// is not inferred from next_attempt_at alone.
 			if _, err := pool.Exec(context.Background(), `UPDATE human_calling_provider_commands SET next_attempt_at = $1 WHERE action = 'DIAL_STAFF'`, now); err != nil {
 				t.Fatal(err)
 			}
@@ -93,8 +89,6 @@ func TestProviderCommandStagesSurviveProviderAndPersistenceFailures(t *testing.T
 				t.Fatalf("durable ringback=%s want %s", state, scenario.wantState)
 			}
 			database.failBegin = false
-			// Reclaim a scheduled attempt using the original identity. It must never
-			// publish another first-claim sample or conflate retry age with initial wait.
 			if _, err := pool.Exec(context.Background(), `UPDATE human_calling_provider_commands SET state='PENDING',next_attempt_at=$1 WHERE action='START_RING_WINDOW'`, now); err != nil {
 				t.Fatal(err)
 			}
