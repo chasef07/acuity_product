@@ -3,6 +3,7 @@ package interaction
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,8 +42,16 @@ type callVersions struct {
 }
 
 type versionStream struct {
-	current string
-	seen    map[string]struct{}
+	dimension  string
+	locationID string
+	current    string
+	day        string
+	served     map[string]*versionDayCount
+}
+
+type versionDayCount struct {
+	calls int
+	first time.Time
 }
 
 type versionAccumulator struct {
@@ -57,52 +66,92 @@ func newVersionAccumulator() *versionAccumulator {
 	}
 }
 
-func versionStreamKey(dimension, locationID string) string {
+func (v *versionAccumulator) stream(dimension, locationID string) *versionStream {
 	if dimension != versionKnowledge {
 		locationID = ""
 	}
-	return dimension + "|" + locationID
+	key := dimension + "|" + locationID
+	if v.streams[key] == nil {
+		v.streams[key] = &versionStream{dimension: dimension, locationID: locationID}
+	}
+	return v.streams[key]
 }
 
 func (v *versionAccumulator) seed(dimension, locationID, version string) {
-	if dimension != versionKnowledge {
-		locationID = ""
-	}
-	v.streams[versionStreamKey(dimension, locationID)] = &versionStream{current: version, seen: map[string]struct{}{version: {}}}
-	v.result.InEffect = append(v.result.InEffect, VersionInEffect{Dimension: dimension, Version: version, LocationID: locationID})
+	stream := v.stream(dimension, locationID)
+	stream.current = version
+	v.result.InEffect = append(v.result.InEffect, VersionInEffect{Dimension: dimension, Version: version, LocationID: stream.locationID})
 }
 
 func (v *versionAccumulator) add(startedAt time.Time, call callVersions) {
+	day := startedAt.UTC().Format(time.DateOnly)
 	for _, dimension := range versionDimensions {
 		version := call.values[dimension]
 		if version == "" {
 			continue
 		}
-		key := versionStreamKey(dimension, call.locationID)
-		stream := v.streams[key]
-		if stream == nil {
-			v.streams[key] = &versionStream{current: version, seen: map[string]struct{}{version: {}}}
-			continue
+		stream := v.stream(dimension, call.locationID)
+		if stream.day != day {
+			v.flush(stream)
+			stream.day, stream.served = day, map[string]*versionDayCount{}
 		}
-		if _, seen := stream.seen[version]; !seen {
-			change := VersionChange{
-				Dimension:       dimension,
-				Version:         version,
-				PreviousVersion: stream.current,
-				FirstSeenAt:     startedAt,
-				Date:            startedAt.UTC().Format(time.DateOnly),
-			}
-			if dimension == versionKnowledge {
-				change.LocationID = call.locationID
-			}
-			v.result.Changes = append(v.result.Changes, change)
-			stream.seen[version] = struct{}{}
+		if stream.served[version] == nil {
+			stream.served[version] = &versionDayCount{first: startedAt}
 		}
-		stream.current = version
+		stream.served[version].calls++
 	}
 }
 
+func (v *versionAccumulator) flush(stream *versionStream) {
+	most := 0
+	for _, count := range stream.served {
+		most = max(most, count.calls)
+	}
+	if count := stream.served[stream.current]; most == 0 || count != nil && count.calls == most {
+		return
+	}
+	majority := ""
+	for version, count := range stream.served {
+		if count.calls != most {
+			continue
+		}
+		if leader := stream.served[majority]; leader == nil || count.first.Before(leader.first) || count.first.Equal(leader.first) && version < majority {
+			majority = version
+		}
+	}
+	if stream.current != "" {
+		first := stream.served[majority].first
+		v.result.Changes = append(v.result.Changes, VersionChange{
+			Dimension:       stream.dimension,
+			Version:         majority,
+			PreviousVersion: stream.current,
+			FirstSeenAt:     first,
+			Date:            first.UTC().Format(time.DateOnly),
+			LocationID:      stream.locationID,
+		})
+	}
+	stream.current = majority
+}
+
 func (v *versionAccumulator) finish() AnalyticsVersions {
+	for _, stream := range v.streams {
+		v.flush(stream)
+		stream.served = nil
+	}
+	order := map[string]int{}
+	for i, dimension := range versionDimensions {
+		order[dimension] = i
+	}
+	sort.SliceStable(v.result.Changes, func(i, j int) bool {
+		a, b := v.result.Changes[i], v.result.Changes[j]
+		if !a.FirstSeenAt.Equal(b.FirstSeenAt) {
+			return a.FirstSeenAt.Before(b.FirstSeenAt)
+		}
+		if a.Dimension != b.Dimension {
+			return order[a.Dimension] < order[b.Dimension]
+		}
+		return a.LocationID < b.LocationID
+	})
 	return v.result
 }
 

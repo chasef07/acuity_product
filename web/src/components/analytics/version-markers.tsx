@@ -123,7 +123,7 @@ export function VersionLane({
         const detail = group.changes
           .map(
             (change, i) =>
-              `${labels[i]} (was ${change.previousVersion.slice(0, change.dimension === "knowledge" ? 8 : undefined)}) · first call ${new Date(change.firstSeenAt).toLocaleString()}`,
+              `${labels[i]} (was ${change.previousVersion.slice(0, change.dimension === "knowledge" ? 8 : undefined)}) · most calls this day, first ${new Date(change.firstSeenAt).toLocaleString()}`,
           )
           .join("\n")
         return (
@@ -187,7 +187,7 @@ export function VersionToolbar({
         {inEffect.length
           ? `In effect at start: ${inEffect.map((item) => versionLabel(item.dimension, item.version, locations)).join(" · ")}`
           : "No versions recorded before this range"}
-        . Solid lines change agent behavior; dashed lines change only how calls are judged.
+        . Markers show the UTC day a version first served most calls. Solid lines change agent behavior; dashed lines change only how calls are judged.
       </p>
     </section>
   )

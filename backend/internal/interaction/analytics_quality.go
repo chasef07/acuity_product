@@ -44,8 +44,9 @@ type QualityDay struct {
 }
 
 type CheckFlagCount struct {
-	Check string
-	Calls int
+	Check       string
+	Calls       int
+	ScoredCalls int
 }
 
 type StaffFlagCounts struct {
@@ -73,7 +74,7 @@ type tokenUsage struct{ input, cached, output float64 }
 
 type qualityDayAccumulator struct {
 	day                   QualityDay
-	checks                map[string]int
+	checks                map[string]*CheckFlagCount
 	sentiment             []float64
 	input, cached, output []float64
 	footprints            []ContextFootprint
@@ -82,7 +83,7 @@ type qualityDayAccumulator struct {
 type qualityAccumulator struct {
 	days                  []*qualityDayAccumulator
 	byDate                map[string]*qualityDayAccumulator
-	checks                map[string]int
+	checks                map[string]*CheckFlagCount
 	sentiment             []float64
 	input, cached, output []float64
 	latest                *qualitySample
@@ -90,11 +91,11 @@ type qualityAccumulator struct {
 }
 
 func newQualityAccumulator(days []AnalyticsDay) *qualityAccumulator {
-	q := &qualityAccumulator{byDate: map[string]*qualityDayAccumulator{}, checks: map[string]int{}}
+	q := &qualityAccumulator{byDate: map[string]*qualityDayAccumulator{}, checks: map[string]*CheckFlagCount{}}
 	for _, day := range days {
 		a := &qualityDayAccumulator{
 			day:    QualityDay{Date: day.Date, SentimentCounts: make([]int, 5)},
-			checks: map[string]int{},
+			checks: map[string]*CheckFlagCount{},
 		}
 		q.days = append(q.days, a)
 		q.byDate[day.Date] = a
@@ -117,17 +118,21 @@ func (q *qualityAccumulator) add(sample qualitySample) {
 			day.day.FlaggedCalls++
 			q.result.FlaggedCalls++
 		}
+		for _, check := range sample.evaluation.Scored {
+			checkCount(day.checks, check).ScoredCalls++
+			checkCount(q.checks, check).ScoredCalls++
+		}
 		for _, flag := range sample.evaluation.Flags {
-			day.checks[flag.Check]++
-			q.checks[flag.Check]++
+			checkCount(day.checks, flag.Check).Calls++
+			checkCount(q.checks, flag.Check).Calls++
 		}
-		if score := sample.evaluation.Sentiment; score != nil {
-			day.day.SentimentCalls++
-			q.result.SentimentCalls++
-			day.day.SentimentCounts[int(math.Round(*score))]++
-			day.sentiment = append(day.sentiment, *score)
-			q.sentiment = append(q.sentiment, *score)
-		}
+	}
+	if score := sample.evaluation.Sentiment; score != nil {
+		day.day.SentimentCalls++
+		q.result.SentimentCalls++
+		day.day.SentimentCounts[int(math.Round(*score))]++
+		day.sentiment = append(day.sentiment, *score)
+		q.sentiment = append(q.sentiment, *score)
 	}
 	countStaffFlag(&day.day.StaffFlags, sample.staffFlag)
 	countStaffFlag(&q.result.StaffFlags, sample.staffFlag)
@@ -145,6 +150,13 @@ func (q *qualityAccumulator) add(sample qualitySample) {
 			q.latest = &sample
 		}
 	}
+}
+
+func checkCount(checks map[string]*CheckFlagCount, check string) *CheckFlagCount {
+	if checks[check] == nil {
+		checks[check] = &CheckFlagCount{Check: check}
+	}
+	return checks[check]
 }
 
 func countStaffFlag(counts *StaffFlagCounts, state string) {
@@ -182,10 +194,10 @@ func (q *qualityAccumulator) finish() AnalyticsQuality {
 	return result
 }
 
-func checkFlagCounts(checks map[string]int) []CheckFlagCount {
+func checkFlagCounts(checks map[string]*CheckFlagCount) []CheckFlagCount {
 	result := make([]CheckFlagCount, 0, len(checks))
-	for check, calls := range checks {
-		result = append(result, CheckFlagCount{Check: check, Calls: calls})
+	for _, count := range checks {
+		result = append(result, *count)
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Calls != result[j].Calls {

@@ -14,6 +14,7 @@ type evaluationFlag struct {
 type evaluationReading struct {
 	Evaluated bool
 	Version   string
+	Scored    []string
 	Flags     []evaluationFlag
 	Sentiment *float64
 }
@@ -36,7 +37,7 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 	if json.Unmarshal(raw, &scorecard) == nil &&
 		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3" || scorecard.Version == "typesafe-scorecard-v4") &&
 		(scorecard.Status == "complete" || scorecard.Status == "incomplete") {
-		reading := evaluationReading{Evaluated: true, Version: scorecard.Version, Flags: []evaluationFlag{}}
+		reading := evaluationReading{Version: scorecard.Version, Flags: []evaluationFlag{}}
 		answer := func(name, answerType string) *float64 {
 			if _, failed := scorecard.Errors[name]; failed {
 				return nil
@@ -71,7 +72,12 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 			if check.name == "results_reported_truthfully" && scorecard.Version == "typesafe-scorecard-v4" {
 				continue
 			}
-			if score := answer(check.name, "noul"); score != nil && *score >= 0 && *score <= 0.4 {
+			score := answer(check.name, "noul")
+			if score == nil || *score < 0 || *score > 1 {
+				continue
+			}
+			reading.Scored = append(reading.Scored, check.name)
+			if *score <= 0.4 {
 				reading.Flags = append(reading.Flags, evaluationFlag{
 					Check:  check.name,
 					Reason: fmt.Sprintf("%s needs review · %.2f", check.label, *score),
@@ -81,6 +87,7 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 		if score := answer("expressed_sentiment", "score"); score != nil && *score >= 0 && *score <= 4 {
 			reading.Sentiment = score
 		}
+		reading.Evaluated = len(reading.Scored) > 0
 		return reading
 	}
 	var evaluation struct {
@@ -96,7 +103,7 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 	if json.Unmarshal(raw, &evaluation) != nil || evaluation.Status != "complete" || evaluation.Version != "typesafe-trace-v4" {
 		return evaluationReading{Flags: []evaluationFlag{}}
 	}
-	reading := evaluationReading{Evaluated: true, Version: evaluation.Version, Flags: []evaluationFlag{}}
+	reading := evaluationReading{Version: evaluation.Version, Flags: []evaluationFlag{}}
 	probability := func(group, name string) *float64 {
 		answer := evaluation.Results[group].Answers[name]
 		p := answer.Probability
@@ -105,11 +112,18 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 		}
 		return p
 	}
-	if p := probability("outcome", "claims_supported"); p != nil && *p <= 0.2 {
-		reading.Flags = append(reading.Flags, evaluationFlag{Check: "claims_supported", Reason: "Possible unsupported claim"})
+	if p := probability("outcome", "claims_supported"); p != nil {
+		reading.Scored = append(reading.Scored, "claims_supported")
+		if *p <= 0.2 {
+			reading.Flags = append(reading.Flags, evaluationFlag{Check: "claims_supported", Reason: "Possible unsupported claim"})
+		}
 	}
-	if p := probability("reaction", "reports_unresolved"); p != nil && *p >= 0.8 {
-		reading.Flags = append(reading.Flags, evaluationFlag{Check: "reports_unresolved", Reason: "Caller reports unresolved issue"})
+	if p := probability("reaction", "reports_unresolved"); p != nil {
+		reading.Scored = append(reading.Scored, "reports_unresolved")
+		if *p >= 0.8 {
+			reading.Flags = append(reading.Flags, evaluationFlag{Check: "reports_unresolved", Reason: "Caller reports unresolved issue"})
+		}
 	}
+	reading.Evaluated = len(reading.Scored) > 0
 	return reading
 }

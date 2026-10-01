@@ -285,7 +285,7 @@ function RedFlagTrend({
                   </p>
                   {day.checkFlags.map((flag) => (
                     <p key={flag.check}>
-                      {checkLabel(flag.check)}: {flag.calls}
+                      {checkLabel(flag.check)}: {flag.calls} of {flag.scoredCalls} scored
                     </p>
                   ))}
                   {day.unevaluatedCalls > 0 && <p>{day.unevaluatedCalls} not evaluated</p>}
@@ -323,11 +323,11 @@ function FlagsByCheck({ summary }: { summary: OperatorAiAnalyticsSummary }) {
     <TrendSection
       title="Red flags by check"
       note="Flagged calls in selected range"
-      footnote="A call can be flagged by more than one check. Staff flags are reported by office staff and reviewed by Acuity; they are counted by call start date."
+      footnote="Each check's rate is flagged calls among calls that check scored; errored, not-applicable, and absent checks are excluded. A call can be flagged by more than one check. Staff flags are reported by office staff and reviewed by Acuity; they are counted by call start date."
     >
       {quality.checkFlags.length === 0 ? (
         <p className={styles.chartEmpty}>
-          {quality.evaluatedCalls ? "No checks flagged in this range." : "No evaluated calls in this range."}
+          {quality.evaluatedCalls ? "No checks scored in this range." : "No evaluated calls in this range."}
         </p>
       ) : (
         <ul className={styles.checkBars}>
@@ -339,7 +339,7 @@ function FlagsByCheck({ summary }: { summary: OperatorAiAnalyticsSummary }) {
               </span>
               <strong>
                 {flag.calls.toLocaleString()}
-                <small>{percent(flag.calls / Math.max(quality.evaluatedCalls, 1))}</small>
+                <small>{flag.scoredCalls ? percent(flag.calls / flag.scoredCalls) : "—"}</small>
               </strong>
             </li>
           ))}

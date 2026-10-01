@@ -995,7 +995,14 @@ export type OperatorAiCheckFlagCount = {
      * Evaluator check key, such as request_understood or conversation_responsive.
      */
     check: string;
+    /**
+     * Calls this check flagged for review.
+     */
     calls: number;
+    /**
+     * Calls where this check returned a usable score; errored, not-applicable, and absent checks are excluded.
+     */
+    scoredCalls: number;
 };
 
 /**
@@ -1023,11 +1030,11 @@ export type OperatorAiQualityDay = {
      */
     date: string;
     /**
-     * Calls with a recognized complete or incomplete evaluator result.
+     * Calls with a recognized evaluator result in which at least one red-flag check returned a usable score. Sentiment alone does not count.
      */
     evaluatedCalls: number;
     /**
-     * Calls with no usable evaluator result (missing, skipped, or unrecognized). Never counted as clean.
+     * Calls with no usable red-flag check score (missing, skipped, unrecognized, or every check errored or not applicable). Never counted as clean.
      */
     unevaluatedCalls: number;
     /**
@@ -1036,6 +1043,9 @@ export type OperatorAiQualityDay = {
     flaggedCalls: number;
     checkFlags: Array<OperatorAiCheckFlagCount>;
     staffFlags: OperatorAiStaffFlagCounts;
+    /**
+     * Calls with a usable expressed-sentiment score, whether or not any red-flag check was scored.
+     */
     sentimentCalls: number;
     /**
      * Calls by rounded expressed sentiment, index 0 (very negative) through 4 (very positive).
@@ -1068,11 +1078,20 @@ export type OperatorAiAnalyticsQuality = {
      * All UTC dates in the selected range, matching summary daily.
      */
     daily: Array<OperatorAiQualityDay>;
+    /**
+     * Calls with a recognized evaluator result in which at least one red-flag check returned a usable score. Sentiment alone does not count.
+     */
     evaluatedCalls: number;
+    /**
+     * Calls with no usable red-flag check score (missing, skipped, unrecognized, or every check errored or not applicable). Never counted as clean.
+     */
     unevaluatedCalls: number;
     flaggedCalls: number;
     checkFlags: Array<OperatorAiCheckFlagCount>;
     staffFlags: OperatorAiStaffFlagCounts;
+    /**
+     * Calls with a usable expressed-sentiment score, whether or not any red-flag check was scored.
+     */
     sentimentCalls: number;
     meanSentiment?: number;
     tokenCalls: number;
@@ -1102,11 +1121,11 @@ export type OperatorAiVersionChange = {
     version: string;
     previousVersion: string;
     /**
-     * Start of the first call in range served by this version.
+     * Start of the first call, on the day this version became the majority, served by this version.
      */
     firstSeenAt: string;
     /**
-     * UTC call-start date of the first call served
+     * UTC call-start date on which this version first served the most calls
      */
     date: string;
     /**
@@ -1116,7 +1135,7 @@ export type OperatorAiVersionChange = {
 };
 
 /**
- * Versions recorded by calls. A change marks the first call served by a version that differs from the one already in effect; versions in effect come from the latest call within 90 days before the range.
+ * Versions recorded by calls. Per dimension (and per office for knowledge), each UTC day's majority version is the one serving the most calls that day; a tie keeps the version in effect, else picks the tied version that served first. A change marks a day whose majority differs from the version in effect, and days without calls change nothing. Versions in effect at the start come from the latest call within 90 days before the range.
  */
 export type OperatorAiAnalyticsVersions = {
     inEffect: Array<OperatorAiVersionInEffect>;

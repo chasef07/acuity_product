@@ -64,7 +64,7 @@ func analyticsQualityResponse(value interaction.AnalyticsQuality) api.OperatorAI
 func checkFlagsResponse(values []interaction.CheckFlagCount) []api.OperatorAICheckFlagCount {
 	result := make([]api.OperatorAICheckFlagCount, 0, len(values))
 	for _, value := range values {
-		result = append(result, api.OperatorAICheckFlagCount{Check: value.Check, Calls: value.Calls})
+		result = append(result, api.OperatorAICheckFlagCount{Check: value.Check, Calls: value.Calls, ScoredCalls: value.ScoredCalls})
 	}
 	return result
 }

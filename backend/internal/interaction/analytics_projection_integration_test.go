@@ -156,7 +156,7 @@ func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 		practiceID, locationID, now.Add(-2*time.Hour), []byte(`{"versions":{"agent":"0.10.0","prompts":"0.9.0","knowledge":"revision-a"}}`)); err != nil {
 		t.Fatal(err)
 	}
-	flagged := `{"versions":{"agent":"0.11.0","prompts":"0.9.0","knowledge":"revision-a"},"evaluation":{"evaluatorVersion":"typesafe-scorecard-v4","status":"complete","results":{"request_understood":{"answers":{"request_understood":{"type":"noul","noul":0.2}}},"conversation_responsive":{"answers":{"conversation_responsive":{"type":"noul","noul":0.9}}},"expressed_sentiment":{"answers":{"expressed_sentiment":{"type":"score","score":1.2}}}}},"contextFootprint":{"speakerPromptTokens":700,"thinkerPromptTokens":3200,"toolSchemaTokens":1800,"toolCount":17}}`
+	flagged := `{"versions":{"agent":"0.11.0","prompts":"0.10.0","knowledge":"revision-a"},"evaluation":{"evaluatorVersion":"typesafe-scorecard-v4","status":"complete","results":{"request_understood":{"answers":{"request_understood":{"type":"noul","noul":0.2}}},"conversation_responsive":{"answers":{"conversation_responsive":{"type":"noul","noul":0.9}}},"expressed_sentiment":{"answers":{"expressed_sentiment":{"type":"score","score":1.2}}}}},"contextFootprint":{"speakerPromptTokens":700,"thinkerPromptTokens":3200,"toolSchemaTokens":1800,"toolCount":17}}`
 	clean := `{"agentVersion":"0.11.0","versions":{"prompts":"0.10.0"},"evaluation":{"evaluatorVersion":"typesafe-scorecard-v4","status":"complete","results":{"request_understood":{"answers":{"request_understood":{"type":"noul","noul":0.95}}},"expressed_sentiment":{"answers":{"expressed_sentiment":{"type":"score","score":3}}}}}}`
 	skipped := `{"evaluation":{"evaluatorVersion":"typesafe-scorecard-v4","status":"skipped","reason":"call_too_short"},"contextFootprint":{"speakerPromptTokens":700,"thinkerPromptTokens":3200,"toolSchemaTokens":1800}}`
 	usage := `{"items":[],"usage":[{"type":"llm_usage","provider":"openai","model":"gpt-6-luna","input_tokens":12000,"input_cached_tokens":8000,"output_tokens":300},{"type":"llm_usage","provider":"openai","model":"gpt-live-1","session_duration":90}]}`
@@ -204,7 +204,7 @@ func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 		t.Fatalf("calls=%d minutes=%v", summary.TotalCalls, summary.TotalCallMinutes)
 	}
 	if q.EvaluatedCalls != 2 || q.UnevaluatedCalls != 2 || q.FlaggedCalls != 1 ||
-		len(q.CheckFlags) != 1 || q.CheckFlags[0] != (CheckFlagCount{Check: "request_understood", Calls: 1}) {
+		!reflect.DeepEqual(q.CheckFlags, []CheckFlagCount{{Check: "request_understood", Calls: 1, ScoredCalls: 2}, {Check: "conversation_responsive", Calls: 0, ScoredCalls: 1}}) {
 		t.Fatalf("flags=%+v", q)
 	}
 	if q.StaffFlags != (StaffFlagCounts{Pending: 1, Confirmed: 1, NotAnIssue: 1}) {
@@ -236,7 +236,7 @@ func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 	if len(versions.Changes) != 2 ||
 		versions.Changes[0].Dimension != "agent" || versions.Changes[0].Version != "0.11.0" || versions.Changes[0].PreviousVersion != "0.10.0" ||
 		versions.Changes[1].Dimension != "prompts" || versions.Changes[1].Version != "0.10.0" || versions.Changes[1].PreviousVersion != "0.9.0" ||
-		!versions.Changes[0].FirstSeenAt.Equal(now.Add(-30*time.Minute)) {
+		!versions.Changes[0].FirstSeenAt.Equal(now.Add(-30*time.Minute)) || !versions.Changes[1].FirstSeenAt.Equal(now.Add(-30*time.Minute)) {
 		t.Fatalf("changes=%+v", versions.Changes)
 	}
 }
