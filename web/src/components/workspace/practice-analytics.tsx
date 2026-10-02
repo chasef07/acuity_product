@@ -23,7 +23,7 @@ export function PracticeAnalytics({
   locations: Location[]
 }) {
   const [metric, setMetric] = useState<AnalyticsTab>("bookings")
-  const [period, setPeriod] = useState(30)
+  const [period, setPeriod] = useState(7)
   const [office, setOffice] = useState(locationScopeID || "all")
   const current = usePracticeReport({
     practiceID,

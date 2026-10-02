@@ -53,7 +53,7 @@ export function ManageAgent({
   locations: Location[]
 }) {
   const [office, setOffice] = useState(locationScopeID || "all")
-  const [range, setRange] = useState<AgentCallsQuery["range"]>("7d")
+  const [range, setRange] = useState<AgentCallsQuery["range"]>("24h")
   const [phoneInput, setPhoneInput] = useState("")
   const [phone, setPhone] = useState("")
   const [flaggedOnly, setFlaggedOnly] = useState(false)
@@ -169,6 +169,12 @@ export function ManageAgent({
           <FlagIcon data-icon="inline-start" />
           Flagged calls
         </Button>
+        {current.status === "ready" && (
+          <p role="status" className="ml-auto text-sm tabular-nums text-muted-foreground">
+            {calls.length}
+            {nextCursor ? "+" : ""} {calls.length === 1 && !nextCursor ? "call" : "calls"}
+          </p>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 sm:px-6">
         {current.status === "loading" && (

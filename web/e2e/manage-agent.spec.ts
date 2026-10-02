@@ -369,7 +369,7 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
       .every(
         (request) =>
           request.phone === "555555010" &&
-          request.range === "7d" &&
+          request.range === "24h" &&
           request.cursor === "next-page",
       ),
   ).toBe(true)

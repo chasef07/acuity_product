@@ -22,7 +22,6 @@ export function AnalyticsFrame({
   periodLabel,
   controls,
   tabs,
-  headerLeading,
   children,
 }: {
   section: string
@@ -30,14 +29,12 @@ export function AnalyticsFrame({
   periodLabel: ReactNode
   controls: ReactNode
   tabs: ReactNode
-  headerLeading?: ReactNode
   children: ReactNode
 }) {
   return (
     <div className={styles.dashboard}>
       <header className={styles.header}>
         <div className={styles.breadcrumb}>
-          {headerLeading}
           <span>{section}</span>
           <ChevronRightIcon size={13} />
           <h1>{title}</h1>
@@ -97,7 +94,6 @@ export function AnalyticsLayout({
   offices,
   from,
   through,
-  headerLeading,
   children,
 }: {
   metric: AnalyticsTab
@@ -109,14 +105,12 @@ export function AnalyticsLayout({
   offices: Array<{ value: string; label: string }>
   from?: string
   through?: string
-  headerLeading?: ReactNode
   children: ReactNode
 }) {
   return (
     <AnalyticsFrame
       section="Analytics"
       title={metric === "staff" ? "Staff" : "Confirmed bookings"}
-      headerLeading={headerLeading}
       periodLabel={
         from && through ? (
           <>
