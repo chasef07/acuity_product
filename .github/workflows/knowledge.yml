@@ -46,9 +46,27 @@ jobs:
       - run: python3 scripts/test-knowledge-release.py
       - run: bash scripts/knowledge-validate.sh
 
+  plan:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Decide whether to publish
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: bash scripts/knowledge-plan.sh
+
   publish:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
-    needs: validate
+    if: needs.plan.outputs.publish == 'true'
+    needs: [validate, plan]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production

@@ -2,9 +2,9 @@
 
 `offices/*.yaml` is the reviewed source for each office's reusable, non-patient
 knowledge. PostgreSQL/pgvector holds published immutable revisions and generated
-embeddings. The manually dispatched Knowledge workflow publishes changed offices,
-with a visible receipt for every office. A merge validates sources but does not
-publish. Knowledge publication and retrieval verification run independently of
+embeddings. Merging office content to `main` publishes changed offices
+automatically through the Knowledge workflow, with a visible receipt for every
+office. Knowledge publication and retrieval verification run independently of
 application releases; their failures do not change application release status.
 
 ```yaml
@@ -38,14 +38,19 @@ AI call rewrites the facts.
    sources and rejects unknown fields, duplicate entry IDs, malformed routing,
    empty content, and entries exceeding the importer limits. Review the actual
    facts and preserve their conditions; structural validation is not fact-checking.
-2. Merge the reviewed PR into `main`.
-3. Confirm the deployed backend supports the source and retrieval checks; knowledge
-   publication does not deploy code.
-4. Use **Actions → Knowledge → Run workflow** on `main`. Leave `office` as `all`
-   to process every office, or enter one office filename without `.yaml`. The
-   workflow checks each office against its active database revision, publishes
-   changed content, and skips unchanged offices without generating new embeddings
-   or revisions. No database revision input is needed.
+2. Merge the reviewed PR into `main`. When the merge changes
+   `knowledge/offices/` or `knowledge/evals/`, the Knowledge workflow publishes
+   automatically. It checks each office against its active database revision,
+   publishes changed content, and skips unchanged offices without generating new
+   embeddings or revisions. No database revision input is needed.
+3. A merge that also changes `backend/`, `go.mod`, or `go.sum` is not published
+   automatically, because knowledge publication does not deploy code and the
+   deployed backend must support the source and retrieval checks. The run shows a
+   notice. After the release deploys, use **Actions → Knowledge → Run workflow** on
+   `main`. Leave `office` as `all` to process every office, or enter one office
+   filename without `.yaml`. Manual dispatch also republishes or reverifies at any
+   time.
+4. Merges that change neither office sources nor retrieval fixtures only validate.
 5. Review the per-office summary and publication receipts. The importer reads the
    current revision automatically, then uses the existing atomic comparison to
    reject a concurrent change. A rerun safely skips offices already up to date.
@@ -127,7 +132,7 @@ permission, and Vertex AI embedding permission. It uses short-lived Google
 credentials; database credentials stay in process memory and are never committed
 or printed. The instance must be reachable by Cloud SQL Auth Proxy from the
 runner. Publication is serialized and only permitted from the current `main` commit,
-automatically after a successful release deployment or through manual dispatch.
+automatically after a content-only knowledge merge or through manual dispatch.
 PR runs never authenticate to production. The backend must already support the
 published source and its retrieval checks; content publication does not deploy
 backend code.
