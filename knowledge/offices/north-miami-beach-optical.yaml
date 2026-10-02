@@ -84,6 +84,18 @@ entries:
       Glasses are usually ready in less than 10 business days.
       
       Glasses pickup policy: a readiness text confirms glasses are ready for pickup; patients wait for that text before coming in. This policy does not establish an individual order's readiness.
+  - id: "titanium-frames"
+    title: "Titanium frames"
+    text: |-
+      For titanium frames, North Miami Beach Optical carries Mykita, Lindberg, and Nike Flexon.
+  - id: "meta-eyewear"
+    title: "Meta smart glasses"
+    text: |-
+      North Miami Beach Optical carries Meta eyewear from both Ray-Ban and Oakley.
+  - id: "frame-adjustments"
+    title: "Frame adjustments"
+    text: |-
+      Optical handles frame adjustments, and adjustments are free. No appointment is needed to have current glasses adjusted.
   - id: "payments"
     title: "Payments"
     text: |-
@@ -97,7 +109,7 @@ entries:
   - id: "repairs-and-warranty"
     title: "Repairs and Warranty"
     text: |-
-      Frames include free adjustments and a two- or three-year warranty.
+      Frames include a two- or three-year warranty.
       
       Broken glasses and warranty questions require an in-person inspection of the frame or lenses.
   - id: "scope-of-services"
