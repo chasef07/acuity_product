@@ -297,22 +297,21 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		firstPage.Summary.RescheduleCount != 0 ||
 		firstPage.Summary.ToolCallCount != 3 || firstPage.Summary.ToolErrorCount != 1 ||
 		math.Abs(firstPage.Summary.ToolFailureRate-(1.0/3.0)) > 0.0001 ||
-		firstPage.Summary.P50SttMs != 200 || firstPage.Summary.P50TtftMs != 400 ||
-		firstPage.Summary.P50TtsTtfbMs != 100 ||
-		firstPage.Summary.P50TotalLatencyMs != 1200 ||
-		firstPage.Summary.P90TotalLatencyMs != 2000 ||
-		firstPage.Summary.P99TotalLatencyMs != 2000 {
+		len(firstPage.Summary.Quality.Daily) != len(firstPage.Summary.Daily) ||
+		firstPage.Summary.Quality.EvaluatedCalls+firstPage.Summary.Quality.UnevaluatedCalls != 2 {
 		t.Fatalf("operator analytics summary = %#v", firstPage.Summary)
 	}
 	totalCalls, transfers := 0, 0
+	var callMinutes float64
 	for _, day := range firstPage.Summary.Daily {
+		callMinutes += day.CallMinutes
 		totalCalls += day.TotalCalls
 		transfers += day.TransferCount
 		if day.TotalCalls == 0 && day.TransferRate != nil {
 			t.Fatalf("empty date has rate: %#v", day)
 		}
 	}
-	if len(firstPage.Summary.Daily) < 2 || totalCalls != firstPage.Summary.TotalCalls || transfers != firstPage.Summary.TransferCount {
+	if len(firstPage.Summary.Daily) < 2 || totalCalls != firstPage.Summary.TotalCalls || transfers != firstPage.Summary.TransferCount || math.Abs(callMinutes-firstPage.Summary.TotalCallMinutes) > 0.0001 {
 		t.Fatalf("daily trends do not cover full range: %#v", firstPage.Summary.Daily)
 	}
 
@@ -562,25 +561,20 @@ type operatorAIAnalyticsTestPage struct {
 		Daily []struct {
 			Date          string   `json:"date"`
 			TotalCalls    int      `json:"totalCalls"`
+			CallMinutes   float64  `json:"callMinutes"`
 			TransferCount int      `json:"transferCount"`
 			TransferRate  *float64 `json:"transferRate"`
 		} `json:"daily"`
+		Quality struct {
+			Daily            []json.RawMessage `json:"daily"`
+			EvaluatedCalls   int               `json:"evaluatedCalls"`
+			UnevaluatedCalls int               `json:"unevaluatedCalls"`
+		} `json:"quality"`
 		TotalCalls        int     `json:"totalCalls"`
+		TotalCallMinutes  float64 `json:"totalCallMinutes"`
 		BookingCount      int     `json:"bookingCount"`
 		CancellationCount int     `json:"cancellationCount"`
 		RescheduleCount   int     `json:"rescheduleCount"`
-		P50SttMs          int     `json:"p50SttMs"`
-		P90SttMs          int     `json:"p90SttMs"`
-		P99SttMs          int     `json:"p99SttMs"`
-		P50TtftMs         int     `json:"p50TtftMs"`
-		P90TtftMs         int     `json:"p90TtftMs"`
-		P99TtftMs         int     `json:"p99TtftMs"`
-		P50TtsTtfbMs      int     `json:"p50TtsTtfbMs"`
-		P90TtsTtfbMs      int     `json:"p90TtsTtfbMs"`
-		P99TtsTtfbMs      int     `json:"p99TtsTtfbMs"`
-		P50TotalLatencyMs int     `json:"p50TotalLatencyMs"`
-		P90TotalLatencyMs int     `json:"p90TotalLatencyMs"`
-		P99TotalLatencyMs int     `json:"p99TotalLatencyMs"`
 		TransferCount     int     `json:"transferCount"`
 		TransferRate      float64 `json:"transferRate"`
 		ToolCallCount     int     `json:"toolCallCount"`

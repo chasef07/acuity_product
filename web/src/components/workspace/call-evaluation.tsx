@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge"
 
-const labels: Record<string, string> = {
+export const evaluationLabels: Record<string, string> = {
   request_understood: "Caller request understood",
   appointment_datetime_correct: "Appointment date and time correct",
   office_rules_grounded: "Office rules supported by evidence",
@@ -14,7 +14,7 @@ const labels: Record<string, string> = {
   expressed_sentiment: "Expressed caller sentiment",
   reports_unresolved: "Caller reports unresolved issue",
 }
-const scales: Record<string, string[]> = {
+export const evaluationScales: Record<string, string[]> = {
   request_specificity: ["Contradictory or shifting", "Vague", "Mostly clear", "Fully specified"],
   expressed_sentiment: ["Very negative", "Negative", "Neutral or mixed", "Positive", "Very positive"],
 }
@@ -64,7 +64,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
         const probabilities = record(answer.probabilities)
         return <div key={name} className="py-3 text-xs">
           <div className="flex items-start justify-between gap-3">
-            <dt>{labels[name]}</dt>
+            <dt>{evaluationLabels[name]}</dt>
             <dd className={`shrink-0 font-mono tabular-nums ${needsReview ? "text-destructive" : ""}`}>{notApplicable ? "Not applicable" : valid ? `${value.toFixed(2)} / ${maximum}` : "Unavailable"}</dd>
           </div>
           {needsReview && <dd className="mt-1 text-destructive">Needs review</dd>}
@@ -74,9 +74,9 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
             {typeof error.httpStatus === "number" ? ` · HTTP ${error.httpStatus}` : ""}
             {typeof error.attempts === "number" ? ` · Attempts: ${error.attempts}` : ""}
           </dd> : notApplicable ? <dd className="mt-1 text-muted-foreground">No booking, rescheduling, or cancellation tool returned a result.</dd> : !valid ? <dd className="mt-1 text-muted-foreground">No valid score was recorded.</dd> : sentiment ? <>
-            <dd className="mt-1 text-muted-foreground">{scales.expressed_sentiment.map((label, index) => `${index}: ${label}`).join(" · ")}</dd>
+            <dd className="mt-1 text-muted-foreground">{evaluationScales.expressed_sentiment.map((label, index) => `${index}: ${label}`).join(" · ")}</dd>
             <dd className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
-              {Object.entries(probabilities).map(([label, probability]) => <span key={label}>{scales.expressed_sentiment[Number(label)] ?? label}: {percent(probability)}</span>)}
+              {Object.entries(probabilities).map(([label, probability]) => <span key={label}>{evaluationScales.expressed_sentiment[Number(label)] ?? label}: {percent(probability)}</span>)}
             </dd>
           </> : null}
         </div>
@@ -114,12 +114,12 @@ export function CallEvaluation({ evaluation }: { evaluation?: Record<string, unk
             <dl className="mt-2 divide-y rounded-lg border px-3">
               {Object.entries(answers).map(([name, rawAnswer]) => {
                 const answer = record(rawAnswer)
-                const scale = currentVersion ? scales[name] : undefined
+                const scale = currentVersion ? evaluationScales[name] : undefined
                 const probabilities = record(answer.probabilities)
                 const score = typeof answer.score === "number" && Number.isFinite(answer.score) ? answer.score : undefined
                 return <div key={name} className="py-2.5 text-xs">
                   <div className="flex items-start justify-between gap-3">
-                    <dt>{labels[name] ?? title(name)}</dt>
+                    <dt>{evaluationLabels[name] ?? title(name)}</dt>
                     <dd className="shrink-0 font-mono tabular-nums">{answer.type === "boolean" ? `${percent(answer.probability)} likely true` : score !== undefined ? `${score.toFixed(2)}${scale ? ` / ${scale.length - 1}` : ""}` : "Unavailable"}</dd>
                   </div>
                   {scale && <dd className="mt-1 text-muted-foreground">{scale.map((label, index) => `${index}: ${label}`).join(" · ")}</dd>}

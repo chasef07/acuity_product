@@ -957,6 +957,10 @@ export type OperatorAiAnalyticsDay = {
     date: string;
     totalCalls: number;
     /**
+     * Completed AI call time in minutes, from start to end. Calls still in progress contribute zero.
+     */
+    callMinutes: number;
+    /**
      * Calls with persisted ESCALATED status, matching the summary transfer count.
      */
     transferCount: number;
@@ -972,27 +976,170 @@ export type OperatorAiAnalyticsSummary = {
      */
     daily: Array<OperatorAiAnalyticsDay>;
     diagnostics?: OperatorAiAnalyticsDiagnostics;
+    quality: OperatorAiAnalyticsQuality;
+    versions: OperatorAiAnalyticsVersions;
     totalCalls: number;
+    totalCallMinutes: number;
     bookingCount: number;
     cancellationCount: number;
     rescheduleCount: number;
-    p50SttMs?: number;
-    p90SttMs?: number;
-    p99SttMs?: number;
-    p50TtftMs?: number;
-    p90TtftMs?: number;
-    p99TtftMs?: number;
-    p50TtsTtfbMs?: number;
-    p90TtsTtfbMs?: number;
-    p99TtsTtfbMs?: number;
-    p50TotalLatencyMs?: number;
-    p90TotalLatencyMs?: number;
-    p99TotalLatencyMs?: number;
     transferCount: number;
     transferRate: number;
     toolCallCount: number;
     toolErrorCount: number;
     toolFailureRate: number;
+};
+
+export type OperatorAiCheckFlagCount = {
+    /**
+     * Evaluator check key, such as request_understood or conversation_responsive.
+     */
+    check: string;
+    /**
+     * Calls this check flagged for review.
+     */
+    calls: number;
+    /**
+     * Calls where this check returned a usable score; errored, not-applicable, and absent checks are excluded.
+     */
+    scoredCalls: number;
+};
+
+/**
+ * Staff-flagged calls by Acuity review state.
+ */
+export type OperatorAiStaffFlagCounts = {
+    pending: number;
+    confirmed: number;
+    notAnIssue: number;
+};
+
+/**
+ * Static context the agent reported at session start, in tokenizer tokens. Excludes conversation history.
+ */
+export type OperatorAiContextFootprint = {
+    speakerPromptTokens: number;
+    thinkerPromptTokens: number;
+    toolSchemaTokens: number;
+    toolCount: number;
+};
+
+export type OperatorAiQualityDay = {
+    /**
+     * UTC call-start date in YYYY-MM-DD format.
+     */
+    date: string;
+    /**
+     * Calls with a recognized evaluator result in which at least one red-flag check returned a usable score. Sentiment alone does not count.
+     */
+    evaluatedCalls: number;
+    /**
+     * Calls with no usable red-flag check score (missing, skipped, unrecognized, or every check errored or not applicable). Never counted as clean.
+     */
+    unevaluatedCalls: number;
+    /**
+     * Evaluated calls with at least one check needing review.
+     */
+    flaggedCalls: number;
+    checkFlags: Array<OperatorAiCheckFlagCount>;
+    staffFlags: OperatorAiStaffFlagCounts;
+    /**
+     * Calls with a usable expressed-sentiment score, whether or not any red-flag check was scored.
+     */
+    sentimentCalls: number;
+    /**
+     * Calls by rounded expressed sentiment, index 0 (very negative) through 4 (very positive).
+     */
+    sentimentCounts: [
+        number,
+        number,
+        number,
+        number,
+        number
+    ];
+    meanSentiment?: number;
+    /**
+     * Calls with recorded LLM token usage.
+     */
+    tokenCalls: number;
+    p50InputTokens?: number;
+    p90InputTokens?: number;
+    p50CachedTokens?: number;
+    p50OutputTokens?: number;
+    /**
+     * Calls that reported a context footprint.
+     */
+    footprintCalls: number;
+    footprint?: OperatorAiContextFootprint;
+};
+
+export type OperatorAiAnalyticsQuality = {
+    /**
+     * All UTC dates in the selected range, matching summary daily.
+     */
+    daily: Array<OperatorAiQualityDay>;
+    /**
+     * Calls with a recognized evaluator result in which at least one red-flag check returned a usable score. Sentiment alone does not count.
+     */
+    evaluatedCalls: number;
+    /**
+     * Calls with no usable red-flag check score (missing, skipped, unrecognized, or every check errored or not applicable). Never counted as clean.
+     */
+    unevaluatedCalls: number;
+    flaggedCalls: number;
+    checkFlags: Array<OperatorAiCheckFlagCount>;
+    staffFlags: OperatorAiStaffFlagCounts;
+    /**
+     * Calls with a usable expressed-sentiment score, whether or not any red-flag check was scored.
+     */
+    sentimentCalls: number;
+    meanSentiment?: number;
+    tokenCalls: number;
+    p50InputTokens?: number;
+    p50CachedTokens?: number;
+    p50OutputTokens?: number;
+    footprintCalls: number;
+    latestFootprint?: OperatorAiContextFootprint;
+};
+
+/**
+ * Agent, prompts, tools, and knowledge change how calls behave; judges and evaluator change how calls are measured.
+ */
+export type OperatorAiVersionDimension = 'agent' | 'prompts' | 'tools' | 'knowledge' | 'judges' | 'evaluator';
+
+export type OperatorAiVersionInEffect = {
+    dimension: OperatorAiVersionDimension;
+    version: string;
+    /**
+     * Present for knowledge, which is published per office.
+     */
+    locationId?: string;
+};
+
+export type OperatorAiVersionChange = {
+    dimension: OperatorAiVersionDimension;
+    version: string;
+    previousVersion: string;
+    /**
+     * Start of the first call, on the day this version became the majority, served by this version.
+     */
+    firstSeenAt: string;
+    /**
+     * UTC call-start date on which this version first served the most calls
+     */
+    date: string;
+    /**
+     * Present for knowledge, which is published per office.
+     */
+    locationId?: string;
+};
+
+/**
+ * Versions recorded by calls. Per dimension (and per office for knowledge), each UTC day's majority version is the one serving the most calls that day; a tie keeps the version in effect, else picks the tied version that served first. A change marks a day whose majority differs from the version in effect, and days without calls change nothing. Versions in effect at the start come from the latest call within 90 days before the range.
+ */
+export type OperatorAiAnalyticsVersions = {
+    inEffect: Array<OperatorAiVersionInEffect>;
+    changes: Array<OperatorAiVersionChange>;
 };
 
 export type OperatorAiDiagnosticExample = {
@@ -1002,37 +1149,6 @@ export type OperatorAiDiagnosticExample = {
     startedAt: string;
     durationMs?: number;
     status?: string;
-};
-
-export type OperatorAiLatencyBucket = {
-    fromMs: number;
-    toMs?: number;
-    count: number;
-    /**
-     * Up to five slowest measured samples in this half-open bucket; not all matching calls.
-     */
-    examples: Array<OperatorAiDiagnosticExample>;
-};
-
-export type OperatorAiLatencyTrend = {
-    /**
-     * UTC call-start date in YYYY-MM-DD format.
-     */
-    date: string;
-    sampleCount: number;
-    p50Ms?: number;
-    p95Ms?: number;
-};
-
-export type OperatorAiLatencyDistribution = {
-    stage: 'e2e' | 'stt' | 'llm' | 'tts';
-    sampleCount: number;
-    measuredCalls: number;
-    p50Ms?: number;
-    p95Ms?: number;
-    p99Ms?: number;
-    buckets: Array<OperatorAiLatencyBucket>;
-    trend: Array<OperatorAiLatencyTrend>;
 };
 
 export type OperatorAiToolDiagnostics = {
@@ -1048,7 +1164,6 @@ export type OperatorAiToolDiagnostics = {
 };
 
 export type OperatorAiAnalyticsDiagnostics = {
-    stages: Array<OperatorAiLatencyDistribution>;
     tools: Array<OperatorAiToolDiagnostics>;
 };
 

@@ -1,13 +1,13 @@
 package interaction
 
 import (
-	"math/rand/v2"
 	"reflect"
 	"slices"
+	"sort"
 	"testing"
 )
 
-func TestLatencyPercentilesPreserveExactStatistics(t *testing.T) {
+func TestPercentilesPreserveExactStatistics(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		values []float64
@@ -26,9 +26,11 @@ func TestLatencyPercentilesPreserveExactStatistics(t *testing.T) {
 			if !reflect.DeepEqual(before, tc.values) {
 				t.Fatal("per-call median mutated shared samples")
 			}
-			p50, p90, p99 := latencyPercentiles(tc.values)
+			ordered := slices.Clone(tc.values)
+			sort.Float64s(ordered)
+			p50, p90, p99 := sortedMedian(ordered), sortedPercentile(ordered, 90), sortedPercentile(ordered, 99)
 			if len(tc.values) == 0 {
-				if p50 != nil || p90 != nil || p99 != nil {
+				if p50 != nil || p90 != nil || p99 != nil || median != nil {
 					t.Fatal("missing samples became zero")
 				}
 				return
@@ -37,17 +39,5 @@ func TestLatencyPercentilesPreserveExactStatistics(t *testing.T) {
 				t.Fatalf("got %d/%d/%d want %v", *p50, *p90, *p99, tc.want)
 			}
 		})
-	}
-}
-
-func BenchmarkLatencyPercentiles(b *testing.B) {
-	random := rand.New(rand.NewPCG(1, 2))
-	values := make([]float64, 100000)
-	for i := range values {
-		values[i] = random.Float64() * 10000
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		latencyPercentiles(slices.Clone(values))
 	}
 }

@@ -209,6 +209,11 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       exact: true,
     })
     await expect(volume.getByRole("strong")).toHaveText("70")
+    await expect(
+      diagnostics
+        .getByRole("region", { name: "Call minutes over time", exact: true })
+        .getByRole("strong"),
+    ).toHaveText("140 min")
     await expect(transfers.getByRole("strong")).toHaveText("50.0%")
     await expect(
       transfers.getByText("35 of 70 calls transferred"),
@@ -360,37 +365,37 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await expect(diagnostics.getByText("1 shown · 1 total", { exact: false })).toBeVisible()
     await tagFilters.getByRole("button", { name: "All calls", exact: true }).click()
     await diagnostics
-      .getByRole("button", { name: "Performance", exact: true })
+      .getByRole("button", { name: "Quality", exact: true })
       .click()
     await expect(
-      diagnostics.getByText("700 samples · 70 of 70 calls measured"),
+      diagnostics.getByText("2 of 2 evaluated calls · 68 not evaluated"),
+    ).toBeVisible()
+    const redFlagVersions = diagnostics
+      .getByRole("region", { name: "Red flags over time" })
+      .getByRole("list", { name: "Version changes" })
+    await expect(redFlagVersions).toContainText("evaluator trace-v4")
+    await expect(redFlagVersions.getByRole("listitem")).toHaveAttribute("data-measurement", "true")
+    await expect(
+      diagnostics
+        .getByRole("region", { name: "Tokens per call over time" })
+        .getByRole("list", { name: "Version changes" }),
+    ).toHaveCount(0)
+    const checks = diagnostics.getByRole("region", { name: "Red flags by check" })
+    await expect(checks.getByText("Conversation responsive", { exact: true })).toBeVisible()
+    await expect(checks.getByText("Factual claims supported", { exact: true })).toBeVisible()
+    await expect(
+      diagnostics.getByText("No calls in this range reported a context footprint."),
     ).toBeVisible()
     await expect(
       diagnostics
-        .getByRole("region", { name: "Response performance" })
-        .locator(".recharts-line-curve"),
-    ).toHaveCount(2)
+        .getByRole("region", { name: "Caller sentiment over time" })
+        .locator(".recharts-bar-rectangle"),
+    ).not.toHaveCount(0)
     await page.screenshot({
-      path: testInfo.outputPath("performance.png"),
+      path: testInfo.outputPath("quality.png"),
       fullPage: true,
       animations: "disabled",
     })
-    await diagnostics.getByRole("button", { name: /10s\+:.*samples/ }).click()
-    const samples = diagnostics.getByRole("region", { name: "Samples · 10s+" })
-    await expect(samples.getByRole("button")).toHaveCount(5)
-    await samples.getByRole("button").first().click()
-    await expect(page.locator("[data-diagnostic-selected=true]")).toContainText(
-      "Synthetic assistant response",
-    )
-    await expect(page.locator("[data-diagnostic-selected=true]")).toContainText(
-      "Response 10.80 s",
-    )
-    await page.getByRole("button", { name: "Close", exact: true }).click()
-    await expect(page.getByRole("dialog")).toHaveCount(0)
-    await diagnostics.getByRole("button", { name: /^STT/ }).click()
-    await expect(
-      diagnostics.getByRole("heading", { name: "STT distribution" }),
-    ).toBeVisible()
     await diagnostics
       .getByRole("button", { name: "Tools", exact: true })
       .click()
