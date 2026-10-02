@@ -30,7 +30,6 @@ function title(value: string): string {
 }
 
 const scorecardChecks = [
-  "request_understood",
   "appointment_datetime_correct",
   "office_rules_grounded",
 ]
@@ -40,8 +39,9 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
   const errors = record(evaluation.errors)
   const version = evaluation.evaluatorVersion
   const checks = [
+    ...(version !== "typesafe-scorecard-v5" ? ["request_understood"] : []),
     ...scorecardChecks,
-    ...(version !== "typesafe-scorecard-v4" ? ["results_reported_truthfully"] : []),
+    ...(version !== "typesafe-scorecard-v4" && version !== "typesafe-scorecard-v5" ? ["results_reported_truthfully"] : []),
     ...(version !== "typesafe-scorecard-v1" ? ["conversation_responsive"] : []),
     "expressed_sentiment",
   ]
@@ -89,7 +89,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
 export function CallEvaluation({ evaluation }: { evaluation?: Record<string, unknown> }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
-  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3" || evaluation?.evaluatorVersion === "typesafe-scorecard-v4"
+  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3" || evaluation?.evaluatorVersion === "typesafe-scorecard-v4" || evaluation?.evaluatorVersion === "typesafe-scorecard-v5"
   return (
     <section aria-label="AI evaluation" className="border-b px-5 py-4 sm:px-6">
       <div className="flex flex-wrap items-center gap-2">

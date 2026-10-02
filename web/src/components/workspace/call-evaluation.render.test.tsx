@@ -198,3 +198,27 @@ test("v4 omits the removed truthfulness judge while historical scorecards keep i
     assert.match(historical, /Action results reported truthfully<\/dt><dd[^>]*>0.85 \/ 1/)
   }
 })
+
+test("v5 omits the request-understood judge and keeps active review alerts and historical scores", () => {
+  const results: Record<string, unknown> = { ...scorecardV2.results }
+  delete results.request_understood
+  delete results.results_reported_truthfully
+  for (const status of ["complete", "incomplete"]) {
+    const html = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecardV2, status, evaluatorVersion: "typesafe-scorecard-v5", results }} />)
+    assert.doesNotMatch(html, /Caller request understood|Action results reported truthfully|No valid score was recorded|Automatic red highlights apply only/)
+    assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, 3)
+    assert.match(html, /Conversation responsive<\/dt><dd[^>]*>0.05 \/ 1/)
+    assert.match(html, />Needs review</)
+    assert.match(html, /2.50 \/ 4/)
+  }
+  const failed = renderToStaticMarkup(<CallEvaluation evaluation={{
+    ...scorecardV2, status: "incomplete", evaluatorVersion: "typesafe-scorecard-v5", results,
+    errors: { conversation_responsive: { cause: "TimeoutError" } },
+  }} />)
+  assert.match(failed, /Judge failed: TimeoutError/)
+  assert.doesNotMatch(failed, /Caller request understood|>Needs review</)
+  for (const version of ["typesafe-scorecard-v1", "typesafe-scorecard-v2", "typesafe-scorecard-v3", "typesafe-scorecard-v4"]) {
+    const historical = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecardV2, evaluatorVersion: version }} />)
+    assert.match(historical, /Caller request understood<\/dt><dd[^>]*>0.85 \/ 1/)
+  }
+})

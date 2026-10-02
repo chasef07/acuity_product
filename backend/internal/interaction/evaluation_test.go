@@ -2,6 +2,7 @@ package interaction
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -104,13 +105,35 @@ func TestScorecardV4IgnoresRemovedTruthfulnessJudge(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		want    int
-	}{{"typesafe-scorecard-v3", 1}, {"typesafe-scorecard-v4", 0}} {
+	}{{"typesafe-scorecard-v3", 1}, {"typesafe-scorecard-v4", 0}, {"typesafe-scorecard-v5", 0}} {
 		raw, _ := json.Marshal(map[string]any{
 			"evaluatorVersion": tc.version, "status": "complete",
 			"results": map[string]any{"results_reported_truthfully": map[string]any{"answers": map[string]any{"results_reported_truthfully": map[string]any{"type": "noul", "noul": 0.1}}}},
 		})
 		if got := EvaluationReviewReasons(raw); len(got) != tc.want {
 			t.Fatalf("version=%s reasons=%v want %d", tc.version, got, tc.want)
+		}
+	}
+}
+
+func TestScorecardV5IgnoresRemovedJudgesAndKeepsActiveChecks(t *testing.T) {
+	for _, status := range []string{"complete", "incomplete"} {
+		raw, _ := json.Marshal(map[string]any{
+			"evaluatorVersion": "typesafe-scorecard-v5", "status": status,
+			"results": map[string]any{
+				"request_understood":           map[string]any{"answers": map[string]any{"request_understood": map[string]any{"type": "noul", "noul": 0.1}}},
+				"results_reported_truthfully":  map[string]any{"answers": map[string]any{"results_reported_truthfully": map[string]any{"type": "noul", "noul": 0.1}}},
+				"appointment_datetime_correct": map[string]any{"status": "not_applicable", "reason": "no_appointment_action_result"},
+				"office_rules_grounded":        map[string]any{"answers": map[string]any{"office_rules_grounded": map[string]any{"type": "noul", "noul": 0.4}}},
+				"conversation_responsive":      map[string]any{"answers": map[string]any{"conversation_responsive": map[string]any{"type": "noul", "noul": 0.9}}},
+			},
+		})
+		if got := EvaluationReviewReasons(raw); len(got) != 1 || got[0] != "Office rules grounded needs review · 0.40" {
+			t.Fatalf("status=%s reasons=%v", status, got)
+		}
+		reading := readEvaluation(raw)
+		if !reading.Evaluated || !slices.Equal(reading.Scored, []string{"office_rules_grounded", "conversation_responsive"}) {
+			t.Fatalf("status=%s reading=%+v", status, reading)
 		}
 	}
 }
