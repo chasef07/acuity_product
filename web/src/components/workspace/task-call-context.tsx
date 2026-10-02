@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ArrowLeftIcon,
   AudioLinesIcon,
@@ -37,7 +37,6 @@ import { TaskMetadata } from "./task-metadata"
 
 type TaskCallContextProps = {
   task: Task | undefined
-  eligibility?: ReactNode
   group?: Task
   taskRows?: Task[]
   onSelectTask?: (task: Task) => void
@@ -52,7 +51,6 @@ type TaskCallContextProps = {
 
 export function TaskCallContext({
   task,
-  eligibility,
   group,
   taskRows,
   onSelectTask,
@@ -89,7 +87,6 @@ export function TaskCallContext({
       <TaskWorkspace
         key={task.id}
         task={task}
-        eligibility={eligibility}
         onNextTask={onSelectTask && taskRows?.some((row) => row.id !== task.id)
           ? () => onSelectTask(taskRows.find((row) => row.id !== task.id)!) : undefined}
         activeCall={activeCall}
@@ -106,7 +103,6 @@ export function TaskCallContext({
 
 function TaskWorkspace({
   task,
-  eligibility,
   onNextTask,
   activeCall,
   canMutate,
@@ -116,7 +112,6 @@ function TaskWorkspace({
   onReturnToCall,
 }: {
   task: Task
-  eligibility?: ReactNode
   onNextTask?: () => void
   activeCall: CallingCall | undefined
   canMutate: boolean
@@ -310,7 +305,6 @@ function TaskWorkspace({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      {eligibility && <div className="-mx-5 mt-4">{eligibility}</div>}
       {recovery && (
         <RecoveryTaskSource task={task} revision={historyHint} onUpdated={onTaskUpdated} />
       )}

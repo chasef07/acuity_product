@@ -153,7 +153,6 @@ type Task struct {
 	Category                 TaskCategory
 	CallerName               string
 	SourceCallID             string
-	SourceReviewKey          string
 	SourceMessage            string
 	Preview                  string
 	MessageID                string
@@ -1784,7 +1783,6 @@ func insertTask(
 			task.category,
 			task.caller_name,
 			task.source_call_id,
-		COALESCE(task.source_review_key, ''),
 			task.source_message,
 			task.source_message_id::text,
 			task.message_thread_id::text,
@@ -1848,7 +1846,6 @@ func insertTask(
 		&category,
 		&callerName,
 		&sourceCall,
-		&task.SourceReviewKey,
 		&sourceMessage,
 		&messageID,
 		&messageThreadID,
@@ -1905,7 +1902,6 @@ func loadTask(
 			task.category,
 			task.caller_name,
 			task.source_call_id,
-		COALESCE(task.source_review_key, ''),
 			task.source_message,
 			task.source_message_id::text,
 			task.message_thread_id::text,
@@ -1957,7 +1953,6 @@ func lockTask(
 			task.category,
 			task.caller_name,
 			task.source_call_id,
-		COALESCE(task.source_review_key, ''),
 			task.source_message,
 			task.source_message_id::text,
 			task.message_thread_id::text,
@@ -2041,7 +2036,6 @@ func scanTask(scanner taskScanner) (Task, error) {
 		&category,
 		&callerName,
 		&sourceCall,
-		&task.SourceReviewKey,
 		&sourceMessage,
 		&messageID,
 		&messageThreadID,

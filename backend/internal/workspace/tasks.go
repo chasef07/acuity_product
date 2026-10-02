@@ -190,7 +190,6 @@ const taskColumns = `
 		task.category,
 		task.caller_name,
 		task.source_call_id,
-		COALESCE(task.source_review_key, ''),
 		task.source_message,
         COALESCE(CASE WHEN ` + work.TaskIsTextReviewSQL + ` THEN (
           SELECT COALESCE(NULLIF(message.body,''),'Attachment') FROM messaging_messages message
@@ -399,7 +398,6 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 		&category,
 		&callerName,
 		&sourceCall,
-		&task.SourceReviewKey,
 		&sourceMessage,
 		&task.Preview,
 		&messageID,
