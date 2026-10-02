@@ -87,9 +87,21 @@ entries:
       
       Betty is the licensed optician. She has over 30 years of eyecare experience and specializes in frames, lenses, and fittings.
       
-      No appointment is needed to look at glasses or have current glasses adjusted. Betty and Oliva are in the office Monday–Friday 8:30 AM–4:30 PM.
+      No appointment is needed to look at glasses. Betty and Oliva are in the office Monday–Friday 8:30 AM–4:30 PM.
       
       Glasses pickup policy: a readiness text confirms glasses are ready for pickup; patients wait for that text before coming in. This policy does not establish an individual order's readiness.
+  - id: "titanium-frames"
+    title: "Titanium frames"
+    text: |-
+      For titanium frames, Sweetwater carries Mykita, Lindberg, and Nike Flexon.
+  - id: "meta-eyewear"
+    title: "Meta smart glasses"
+    text: |-
+      Sweetwater carries Meta eyewear from both Ray-Ban and Oakley.
+  - id: "frame-adjustments"
+    title: "Frame adjustments"
+    text: |-
+      Optical handles frame adjustments. No appointment is needed to have current glasses adjusted.
   - id: "payments"
     title: "Payments"
     text: |-
@@ -120,7 +132,7 @@ entries:
   - id: "repairs-and-warranty"
     title: "Repairs and Warranty"
     text: |-
-      Betty can complete minor repairs in the office at no cost when possible. No appointment is needed to have current glasses adjusted.
+      Betty can complete minor repairs in the office at no cost when possible.
   - id: "scope-of-services"
     title: "Scope of Services"
     text: |-
