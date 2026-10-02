@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.23.3](https://github.com/chasef07/acuity_product/compare/v1.23.2...v1.23.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **knowledge:** add titanium, Meta eyewear, and adjustment answers for optical offices ([#393](https://github.com/chasef07/acuity_product/issues/393)) ([b604d5c](https://github.com/chasef07/acuity_product/commit/b604d5c1c3a6d24dd29c79b48ab21dbf9e150529))
+* **knowledge:** stop hyphenated titles and broad entries from hiding the answer ([#395](https://github.com/chasef07/acuity_product/issues/395)) ([469606f](https://github.com/chasef07/acuity_product/commit/469606f5881ed55e395d13a1f43bb55be9970525))
+* **knowledge:** stop Spring Hill address questions returning the Lutz address ([#396](https://github.com/chasef07/acuity_product/issues/396)) ([7f5e54e](https://github.com/chasef07/acuity_product/commit/7f5e54e2f6e8944fa8ba86accad09e488ff05a21))
+
 ## [1.23.2](https://github.com/chasef07/acuity_product/compare/v1.23.1...v1.23.2) (2026-10-02)
 
 
