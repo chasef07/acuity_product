@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.1](https://github.com/chasef07/acuity_product/compare/v1.23.0...v1.23.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **web:** upgrade Next.js to 16.3.6 for GHSA-vcvr-r3jv-pc5j ([#386](https://github.com/chasef07/acuity_product/issues/386)) ([ed25f56](https://github.com/chasef07/acuity_product/commit/ed25f56cbe2f50fc2f07024aec3ebd54ede8a0b3))
+
 ## [1.23.0](https://github.com/chasef07/acuity_product/compare/v1.22.0...v1.23.0) (2026-09-29)
 
 
