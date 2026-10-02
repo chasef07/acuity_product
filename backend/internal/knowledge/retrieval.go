@@ -56,7 +56,7 @@ type searchCandidate struct {
 	queryCoverage float64
 }
 
-func relevantPassages(candidates []searchCandidate) []Passage {
+func relevantPassages(candidates []searchCandidate, limit int) []Passage {
 	selected := []Passage{}
 	if len(candidates) > 0 && candidates[0].queryCoverage < 0.5 {
 		for _, candidate := range candidates {
@@ -117,7 +117,8 @@ func relevantPassages(candidates []searchCandidate) []Passage {
 		strongest = max(strongest, candidates[best].similarity)
 	}
 	if len(selected) > 0 && !used[0] && candidates[0].similarity > strongest && addsTopic(candidates[0], titles[0], selectedTitles, covered) {
-		selected = append(selected, candidates[0].Passage)
+		position := min(len(selected), max(limit-1, 0))
+		selected = slices.Insert(selected, position, candidates[0].Passage)
 	}
 	if len(selected) == 0 && len(candidates) > 0 {
 		for _, candidate := range candidates {

@@ -288,7 +288,7 @@ func (m *Module) Search(ctx context.Context, identity access.ServiceIdentity, of
 	if err != nil {
 		return empty, err
 	}
-	result.Passages = selectPassages(relevantPassages(candidates), m.config.MaxPassages)
+	result.Passages = selectPassages(relevantPassages(candidates, m.config.MaxPassages), m.config.MaxPassages)
 	for _, p := range result.Passages {
 		ids = append(ids, p.SectionID)
 	}
