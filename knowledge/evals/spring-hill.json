@@ -175,72 +175,6 @@
     ]
   },
   {
-    "id": "titanium-frames",
-    "query": "Do you carry titanium frames?",
-    "expectedOutcome": "found",
-    "expectedSectionIds": [
-      "titanium-frames"
-    ],
-    "excludedSectionIds": [
-      "hours",
-      "billing"
-    ],
-    "maxResponseCharacters": 2600,
-    "allowedSectionIds": [
-      "titanium-frames",
-      "frame-brands",
-      "meta-eyewear",
-      "optical-walk-ins",
-      "optician-hours",
-      "repairs-and-warranty",
-      "sunglasses"
-    ]
-  },
-  {
-    "id": "meta-eyewear",
-    "query": "Do you sell the Ray-Ban Meta or Oakley Meta smart glasses?",
-    "expectedOutcome": "found",
-    "expectedSectionIds": [
-      "meta-eyewear"
-    ],
-    "excludedSectionIds": [
-      "hours",
-      "billing"
-    ],
-    "maxResponseCharacters": 2600,
-    "allowedSectionIds": [
-      "meta-eyewear",
-      "frame-brands",
-      "titanium-frames",
-      "optical-walk-ins",
-      "optician-hours",
-      "repairs-and-warranty",
-      "sunglasses"
-    ]
-  },
-  {
-    "id": "frame-adjustments",
-    "query": "Do I need an appointment to get my glasses adjusted?",
-    "expectedOutcome": "found",
-    "expectedSectionIds": [
-      "optical-walk-ins"
-    ],
-    "excludedSectionIds": [
-      "hours",
-      "billing"
-    ],
-    "maxResponseCharacters": 2600,
-    "allowedSectionIds": [
-      "optical-walk-ins",
-      "frame-brands",
-      "titanium-frames",
-      "meta-eyewear",
-      "optician-hours",
-      "repairs-and-warranty",
-      "sunglasses"
-    ]
-  },
-  {
     "id": "unknown",
     "query": "Can I park a spaceship on the moon?",
     "expectedOutcome": "no_relevant_information",
@@ -314,7 +248,7 @@
   },
   {
     "id": "spanish-closure-address",
-    "query": "\u00bfEst\u00e1 cerrada la oficina de Medical Drive y cu\u00e1l es la direcci\u00f3n actual?",
+    "query": "¿Está cerrada la oficina de Medical Drive y cuál es la dirección actual?",
     "expectedOutcome": "found",
     "expectedSectionIds": [
       "medical-drive-closure",
@@ -325,7 +259,7 @@
   },
   {
     "id": "spanish-address-hours",
-    "query": "\u00bfCu\u00e1l es la direcci\u00f3n y el horario de la oficina?",
+    "query": "¿Cuál es la dirección y el horario de la oficina?",
     "expectedOutcome": "found",
     "expectedSectionIds": [
       "current-address",

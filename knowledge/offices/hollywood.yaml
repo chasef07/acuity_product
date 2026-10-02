@@ -87,9 +87,21 @@ entries:
       
       Katie is the licensed optician. She has over 5 years of eyecare experience and specializes in frames, lenses, and fittings.
       
-      No appointment is needed to look at glasses or have current glasses adjusted. Sasha and Denise are in the office Monday–Thursday 8:30 AM–4:30 PM and Friday 8:30 AM–2:30 PM.
+      No appointment is needed to look at glasses. Sasha and Denise are in the office Monday–Thursday 8:30 AM–4:30 PM and Friday 8:30 AM–2:30 PM.
       
       Glasses pickup policy: a readiness text confirms glasses are ready for pickup; patients wait for that text before coming in. This policy does not establish an individual order's readiness.
+  - id: "titanium-frames"
+    title: "Titanium frames"
+    text: |-
+      For titanium frames, Hollywood carries Mykita, Lindberg, and Nike Flexon.
+  - id: "meta-eyewear"
+    title: "Meta smart glasses"
+    text: |-
+      Hollywood carries Meta eyewear from both Ray-Ban and Oakley.
+  - id: "frame-adjustments"
+    title: "Frame adjustments"
+    text: |-
+      Optical handles frame adjustments. No appointment is needed to have current glasses adjusted.
   - id: "payments"
     title: "Payments"
     text: |-
@@ -121,7 +133,7 @@ entries:
   - id: "repairs-and-warranty"
     title: "Repairs and Warranty"
     text: |-
-      Katie can complete minor repairs in the office at no cost when possible. No appointment is needed to have current glasses adjusted.
+      Katie can complete minor repairs in the office at no cost when possible.
   - id: "scope-of-services"
     title: "Scope of Services"
     text: |-

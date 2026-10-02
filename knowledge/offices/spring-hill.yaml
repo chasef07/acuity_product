@@ -61,14 +61,6 @@ entries:
     title: "Glasses frame brands"
     text: |-
       Spring Hill stocks frames from YSL, Ferragamo, Gucci, Ray-Ban, Nike, Bebe, Anne Klein, Vivid, Lacoste, and Puma.
-  - id: "titanium-frames"
-    title: "Titanium frames"
-    text: |-
-      For titanium frames, Spring Hill carries Mykita, Lindberg, and Nike Flexon.
-  - id: "meta-eyewear"
-    title: "Meta smart glasses"
-    text: |-
-      Spring Hill carries Meta eyewear from both Ray-Ban and Oakley.
   - id: "glasses-turnaround"
     title: "Lens upgrades and glasses turnaround"
     text: |-
@@ -92,7 +84,7 @@ entries:
   - id: "optical-walk-ins"
     title: "Optical walk-ins and minor repairs"
     text: |-
-      Optical handles frame adjustments. No appointment is needed for browsing frames, adjustments, or free minor repairs.
+      No appointment is needed for browsing frames, adjustments, or free minor repairs.
   - id: "cataract-provider"
     title: "Cataract visits and evaluations"
     text: |-
