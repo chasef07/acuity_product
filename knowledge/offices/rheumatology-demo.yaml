@@ -6,9 +6,9 @@ practiceId: "6b8e7d2c-1d5b-48d5-bc01-983c92a85495"
 officeKey: "rheumatology-demo"
 entries:
   - id: "scope-of-services"
-    title: "Services and New Patients"
+    title: "Services, Pediatric Care for Children, and New Patients"
     text: |-
-      Isla Community Health is a nonprofit Federally Qualified Health Center serving Saipan and Tinian. Services listed on its website include primary care, pediatrics, women's health, and mental health.
+      Isla Community Health is a nonprofit Federally Qualified Health Center serving Saipan and Tinian. Services listed on its website include primary care, pediatrics (care for children), women's health, and mental health.
       Patients do not have to live in a clinic's neighborhood to register. Specific age limits, referral requirements, and service availability at each clinic require staff confirmation. A rheumatology specialty service is not established by the website.
   - id: "location-and-contact"
     title: "Clinic Locations and Phone Numbers"
@@ -41,7 +41,7 @@ entries:
       Isla's FAQ lists Medicaid, Medicare, Aetna, Staywell, Netcare, TriCare, TakeCare, and Calvo's.
       This is a published general list, not verification of an individual's plan, network, benefits, or payment. Staff or the insurer must confirm the exact plan, coverage, costs, referral requirements, and authorizations. The generic demo insurance catalog does not establish Isla participation.
   - id: "self-pay-pricing"
-    title: "Uninsured Patients and Sliding Fees"
+    title: "No Insurance: Sliding Fees and Help With Costs"
     text: |-
       Isla offers a sliding fee program for eligible patients that considers income, family size, and other eligibility factors for services and prescription medications. Patients without insurance can ask staff about applying.
       Exact fees, eligibility decisions, required financial documents, and discounts require staff confirmation. There is no supplied fixed self-pay price or guarantee of free care.
