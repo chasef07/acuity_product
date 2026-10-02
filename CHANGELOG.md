@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/chasef07/acuity_product/compare/v1.23.3...v1.24.0) (2026-10-02)
+
+
+### Features
+
+* **workspace:** add icon rail and card layout to the staff workspace ([#399](https://github.com/chasef07/acuity_product/issues/399)) ([796bc6a](https://github.com/chasef07/acuity_product/commit/796bc6add793ab98d8b26740712b0c3c0dab6c73))
+
 ## [1.23.3](https://github.com/chasef07/acuity_product/compare/v1.23.2...v1.23.3) (2026-10-02)
 
 
