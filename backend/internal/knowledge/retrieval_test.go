@@ -108,3 +108,37 @@ func TestRelevanceSelectionPrefersTopicsToIncidentalMentions(t *testing.T) {
 		t.Fatalf("address and fax must not be replaced by a records policy mentioning both: %+v", got)
 	}
 }
+
+func TestRelevanceSelectionIgnoresHyphenatedTitleCollisions(t *testing.T) {
+	got := relevantPassages([]searchCandidate{
+		{Passage: Passage{SectionID: "after-hours", Title: "After-hours doctor contact"}, queryCoverage: 1, lexical: .2, matchedTerms: []string{"hour"}, titleTerms: []string{"hour"}},
+		{Passage: Passage{SectionID: "hours", Title: "Office hours"}, queryCoverage: 1, lexical: .1, matchedTerms: []string{"hour"}, titleTerms: []string{"hour"}},
+	})
+	if len(got) != 1 || got[0].SectionID != "hours" {
+		t.Fatalf("hours query must return office hours, not an after-hours title fragment: %+v", got)
+	}
+	got = relevantPassages([]searchCandidate{
+		{Passage: Passage{SectionID: "self-pay", Title: "Self-pay pricing"}, queryCoverage: 1, lexical: .2, matchedTerms: []string{"pay"}, titleTerms: []string{"pay"}},
+		{Passage: Passage{SectionID: "billing", Title: "Billing questions"}, queryCoverage: 1, lexical: .1, matchedTerms: []string{"balanc"}},
+	})
+	if len(got) != 1 || got[0].SectionID != "self-pay" {
+		t.Fatalf("hyphenated title without a standalone rival must still match: %+v", got)
+	}
+}
+
+func TestRelevanceSelectionKeepsTopRankedTopicBehindBroadEntry(t *testing.T) {
+	got := relevantPassages([]searchCandidate{
+		{Passage: Passage{SectionID: "hours", Title: "Office hours"}, similarity: .7, queryCoverage: 1, lexical: .1, matchedTerms: []string{"lunch"}},
+		{Passage: Passage{SectionID: "optical", Title: "Optical and glasses"}, similarity: .6, queryCoverage: 1, lexical: .3, matchedTerms: []string{"close", "offic"}},
+	})
+	if len(got) != 2 || got[0].SectionID != "optical" || got[1].SectionID != "hours" {
+		t.Fatalf("closer top-ranked entry adding an uncovered term must not be dropped for a broader entry: %+v", got)
+	}
+	got = relevantPassages([]searchCandidate{
+		{Passage: Passage{SectionID: "hours", Title: "Office hours"}, similarity: .6, queryCoverage: 1, lexical: .1, matchedTerms: []string{"lunch"}},
+		{Passage: Passage{SectionID: "optical", Title: "Optical and glasses"}, similarity: .6, queryCoverage: 1, lexical: .3, matchedTerms: []string{"close", "offic"}},
+	})
+	if len(got) != 1 || got[0].SectionID != "optical" {
+		t.Fatalf("top-ranked entry without a semantic advantage must not be added as filler: %+v", got)
+	}
+}

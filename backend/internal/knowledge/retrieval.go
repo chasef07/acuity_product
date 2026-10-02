@@ -1,7 +1,9 @@
 package knowledge
 
 import (
+	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -62,13 +64,16 @@ func relevantPassages(candidates []searchCandidate) []Passage {
 		}
 		return selected
 	}
+	titles := topicTitleTerms(candidates)
 	titled := map[string]bool{}
-	for _, candidate := range candidates {
-		for _, term := range candidate.titleTerms {
+	for _, terms := range titles {
+		for _, term := range terms {
 			titled[term] = true
 		}
 	}
 	covered := map[string]bool{}
+	selectedTitles := map[string]bool{}
+	strongest := -1.0
 	used := make([]bool, len(candidates))
 	for {
 		best, gain := -1, 0
@@ -86,7 +91,7 @@ func relevantPassages(candidates []searchCandidate) []Passage {
 				}
 			}
 			titleAdded := 0
-			for _, term := range c.titleTerms {
+			for _, term := range titles[i] {
 				if !covered[term] {
 					titleAdded++
 				}
@@ -106,6 +111,13 @@ func relevantPassages(candidates []searchCandidate) []Passage {
 		for _, term := range candidates[best].matchedTerms {
 			covered[term] = true
 		}
+		for _, term := range titles[best] {
+			selectedTitles[term] = true
+		}
+		strongest = max(strongest, candidates[best].similarity)
+	}
+	if len(selected) > 0 && !used[0] && candidates[0].similarity > strongest && addsTopic(candidates[0], titles[0], selectedTitles, covered) {
+		selected = append(selected, candidates[0].Passage)
 	}
 	if len(selected) == 0 && len(candidates) > 0 {
 		for _, candidate := range candidates {
@@ -113,6 +125,55 @@ func relevantPassages(candidates []searchCandidate) []Passage {
 		}
 	}
 	return selected
+}
+
+func topicTitleTerms(candidates []searchCandidate) [][]string {
+	titles := make([][]string, len(candidates))
+	for i, c := range candidates {
+		for _, term := range c.titleTerms {
+			if hyphenOnly(term, c.Title) && standaloneElsewhere(term, i, candidates) {
+				continue
+			}
+			titles[i] = append(titles[i], term)
+		}
+	}
+	return titles
+}
+
+func standaloneElsewhere(term string, index int, candidates []searchCandidate) bool {
+	for j, other := range candidates {
+		if j != index && slices.Contains(other.titleTerms, term) && !hyphenOnly(term, other.Title) {
+			return true
+		}
+	}
+	return false
+}
+
+func hyphenOnly(term, title string) bool {
+	hyphenated, standalone := false, false
+	for _, word := range strings.FieldsFunc(strings.ToLower(title), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '\''
+	}) {
+		if strings.Contains(word, "-") {
+			hyphenated = hyphenated || strings.Contains(word, term)
+		} else if strings.HasPrefix(word, term) {
+			standalone = true
+		}
+	}
+	return hyphenated && !standalone
+}
+
+func addsTopic(c searchCandidate, titles []string, selectedTitles, covered map[string]bool) bool {
+	terms, seen := c.matchedTerms, covered
+	if len(titles) > 0 {
+		terms, seen = titles, selectedTitles
+	}
+	for _, term := range terms {
+		if !seen[term] {
+			return true
+		}
+	}
+	return false
 }
 
 func selectPassages(candidates []Passage, limit int) []Passage {
