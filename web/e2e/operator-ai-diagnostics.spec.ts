@@ -136,6 +136,14 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
                 expressed_sentiment: { answers: { expressed_sentiment: { type: "score", score: 2.5, probabilities: { "2": 0.5, "3": 0.5 } } } },
               },
               errors: { office_rules_grounded: { cause: "HTTPStatusError", httpStatus: 503, attempts: 2 } },
+            } } : call === 1 ? { evaluation: {
+              evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v3", model: "typesafe-ai/jev",
+              status: "incomplete", reason: "judge_errors", evaluatedAt: start.toISOString(),
+              results: {}, errors: { request_understood: { message: "Synthetic judge error" } },
+            } } : call === 14 ? { evaluation: {
+              evaluator: "jev", evaluatorVersion: "typesafe-trace-v4", model: "typesafe-ai/jev",
+              status: "incomplete", reason: "judge_errors", evaluatedAt: start.toISOString(),
+              results: {},
             } } : {}),
             domainOutcomes: [
               {
