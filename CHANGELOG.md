@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.23.2](https://github.com/chasef07/acuity_product/compare/v1.23.1...v1.23.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **evaluation:** support scorecard v5 after judge removal ([a7d9682](https://github.com/chasef07/acuity_product/commit/a7d9682f26726ea0d838f9e20b7e6117ca4149b7))
+* **evaluation:** support scorecard v5 after judge removal ([241a27d](https://github.com/chasef07/acuity_product/commit/241a27d8159f02c9b734dd932c1a52c86bc7ab8b))
+
 ## [1.23.1](https://github.com/chasef07/acuity_product/compare/v1.23.0...v1.23.1) (2026-10-01)
 
 
