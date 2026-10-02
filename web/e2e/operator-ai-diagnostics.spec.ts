@@ -192,6 +192,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await page
       .getByRole("option", { name: "Fixture Location 6", exact: true })
       .click()
+    await diagnostics.getByRole("button", { name: "Last 7 days", exact: true }).click()
     const flaggedCall = diagnostics.getByRole("row").filter({ hasText: "Possible unsupported claim" })
     await expect(flaggedCall).toHaveCount(1)
     await expect(flaggedCall).toContainText("Caller reports unresolved issue")

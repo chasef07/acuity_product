@@ -14,7 +14,7 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await page.setViewportSize({ width: 390, height: 844 })
   await signInAs(page, "admin@abita.test", "Fixture Admin")
-  await page.getByRole("button", { name: "Toggle Sidebar" }).click()
+  await page.getByRole("button", { name: "Home", exact: true }).click()
 
   let releaseTimeline = () => {}
   const timelineGate = new Promise<void>((resolve) => {
@@ -205,7 +205,7 @@ test("rail hover details and the message composer preserve compact context", asy
 
   const appearanceButton = page.getByRole("button", { name: "Account menu" })
   await expect(appearanceButton).toBeVisible()
-  await expect(appearanceButton.getByText("M", { exact: true })).toBeVisible()
+  await expect(appearanceButton.locator("img")).toBeVisible()
   await expect(appearanceButton).toContainText("messaging@abita.test")
   await appearanceButton.click()
   await expect(page.getByRole("button", { name: "System", exact: true })).toBeVisible()
@@ -217,7 +217,7 @@ test("rail hover details and the message composer preserve compact context", asy
   await page.keyboard.press("Escape")
   await expect(page.locator('[data-slot="sidebar-inner"]')).toHaveCSS(
     "background-color",
-    "rgb(243, 243, 243)",
+    "rgb(250, 250, 250)",
   )
 
   await createAIStaffTask(

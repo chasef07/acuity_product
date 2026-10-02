@@ -7,7 +7,6 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
 import {
   Sheet,
   SheetContent,
@@ -20,7 +19,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -240,37 +238,6 @@ function Sidebar({
   )
 }
 
-function SidebarTrigger({
-  className,
-  onClick,
-  collapsedOnly = false,
-  ...props
-}: React.ComponentProps<typeof Button> & { collapsedOnly?: boolean }) {
-  const { isMobile, openMobile, state, toggleSidebar } = useSidebar()
-
-  if (collapsedOnly && (isMobile ? openMobile : state !== "collapsed")) {
-    return null
-  }
-
-  return (
-    <Button
-      data-sidebar="trigger"
-      data-slot="sidebar-trigger"
-      variant="ghost"
-      size="icon-sm"
-      className={cn(className)}
-      onClick={(event) => {
-        onClick?.(event)
-        toggleSidebar()
-      }}
-      {...props}
-    >
-      {state === "expanded" ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
-      <span className="sr-only">Toggle Sidebar</span>
-    </Button>
-  )
-}
-
 function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
@@ -459,5 +426,4 @@ export {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
 }

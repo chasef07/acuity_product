@@ -122,7 +122,7 @@ export function OperatorAnalytics({
   const setOffice = (value: string) =>
     setOfficeSelection({ key: scopeKey, value })
   const locationID = office === "all" ? "" : office
-  const [range, setRange] = useState<OperatorAiAnalyticsRange>("7d")
+  const [range, setRange] = useState<OperatorAiAnalyticsRange>("24h")
   const [tab, setTab] = useState<AnalyticsTab>("calls")
   const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
   const costView = tab === "cost"

@@ -135,7 +135,6 @@ type EngagementWorkspaceProps = {
   selectedCallID?: string
   selectedAIInteractionID?: string
   callAction?: ReactNode
-  headerLeading?: ReactNode
   textTask?: Task
   onTextTaskUpdated?: (task: Task) => void
   onNextTask?: () => void
@@ -169,7 +168,6 @@ export function EngagementWorkspaceView({
   selectedCallID,
   selectedAIInteractionID,
   callAction,
-  headerLeading,
   textTask,
   onTextTaskUpdated,
   onNextTask,
@@ -201,7 +199,6 @@ export function EngagementWorkspaceView({
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="group/conversation-header relative flex h-16 shrink-0 sm:h-13 items-center gap-3 px-4 sm:px-6">
-        {headerLeading}
         <div className="flex min-w-0 items-center gap-1">
           <div className="flex min-w-0 flex-col sm:flex-row sm:items-center sm:gap-2">
             <span className="truncate text-xs text-muted-foreground sm:text-base">
@@ -1418,7 +1415,7 @@ function MessageComposer({
         <InputGroup
           focusStyle="quiet"
           shape="pill"
-          className={cn("h-auto min-h-16 flex-col bg-card px-1.5 shadow-sm", file && "rounded-2xl")}
+          className={cn("h-auto min-h-16 flex-col justify-center bg-card px-1.5 shadow-sm", file && "rounded-2xl")}
         >
           {file && (
             <div className="w-full px-3 pt-3">

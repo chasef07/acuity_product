@@ -220,6 +220,7 @@ export type WorkspaceProjectionIntent =
   | { type: "select-analytics" }
   | { type: "select-operator-analytics" }
   | { type: "select-manage-agent" }
+  | { type: "select-work" }
   | { type: "open-ai-context"; interactionID: string }
   | { type: "open-task-context"; task: Task }
   | { type: "open-call-context"; callID: string }
@@ -672,6 +673,10 @@ export function createWorkspaceProjection({
     if (intent.type === "select-task") {
       if (intent.rememberForCall) returnTaskID = intent.task.id
       selectEngagement(taskEngagement(intent.task), intent.task)
+      return
+    }
+    if (intent.type === "select-work") {
+      patch(current => ({ ...current, selection: { ...current.selection, view: current.selection.engagement ? "engagement" : "none" } }))
       return
     }
     if (intent.type === "select-manage-agent") {

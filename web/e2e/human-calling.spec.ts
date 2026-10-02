@@ -96,7 +96,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     )
     const practiceID = scope.rows[0]!.practice_id
     const locationID = scope.rows[0]!.location_id
-    await page.getByRole("button", { name: /^Missed Calls & Voicemails/ }).click()
+    await page.getByRole("button", { name: /^Missed Calls/ }).click()
     const voicemailPhone = "+15555550111"
 
     for (const attempt of ["first", "second"] as const) {

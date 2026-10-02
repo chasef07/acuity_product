@@ -43,6 +43,40 @@ test("initial workspace shows a conversation without opening Task details", asyn
   projection.stop()
 })
 
+test("returning to work restores the selected conversation after another view", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({
+      discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first]),
+    }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-manage-agent" })
+  assert.equal(projection.getSnapshot().selection.view, "manage-agent")
+  await projection.dispatch({ type: "select-work" })
+  assert.equal(projection.getSnapshot().selection.view, "engagement")
+  assert.equal(projection.getSnapshot().selection.engagement?.phone, first.phone)
+  projection.stop()
+})
+
+test("returning to work without a conversation shows the empty workspace", async () => {
+  const realtime = deterministicRealtime()
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await projection.dispatch({ type: "select-manage-agent" })
+  await projection.dispatch({ type: "select-work" })
+  assert.equal(projection.getSnapshot().selection.view, "none")
+  projection.stop()
+})
+
 test("scope changes clear every window and obsolete delayed responses from the old scope", async () => {
   const preferences = new Map<string, string>()
   const realtime = deterministicRealtime()

@@ -1,27 +1,21 @@
 "use client"
 
 import { useEffect, useRef, type ReactNode } from "react"
-import { useTheme } from "next-themes"
-import { useRouter } from "next/navigation"
 import {
   ArrowRightIcon,
   Building2Icon,
-  SparklesIcon,
-  ChartNoAxesCombinedIcon,
   CheckIcon,
   ChevronDownIcon,
   FolderIcon,
   FolderOpenIcon,
-  LogOutIcon,
-  MonitorIcon,
-  MoonIcon,
+  ListFilterIcon,
   PhoneIcon,
   SearchIcon,
-  SunIcon,
+  XIcon,
 } from "lucide-react"
 
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Button } from "@/components/ui/button"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { AcuityMark } from "@/components/acuity-mark"
 import {
   Collapsible,
@@ -31,13 +25,10 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import {
   InputGroup,
@@ -55,7 +46,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -66,8 +56,6 @@ import {
 import { ReviewFolder } from "./review-folder"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { Task, TaskFolderCounts } from "@/lib/api/generated/types.gen"
-import { authClient } from "@/lib/auth-client"
-import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { taskGroups } from "@/lib/task-groups"
@@ -102,69 +90,36 @@ const taskCategoryOptions: Array<{ value: TaskCategoryFilter; label: string }> =
 
 type WorkspaceRailProps = {
   projection: WorkspaceProjectionState
-  availabilityControl?: ReactNode
+  callingStatus?: ReactNode
   locationControl?: ReactNode
   onIntent: (intent: WorkspaceProjectionIntent) => void
 }
 
-export function WorkspaceRail({
-  projection,
-  locationControl,
-  availabilityControl,
-  onIntent,
-}: WorkspaceRailProps) {
-  const discovery = projection.discovery!
-  const practice =
-    discovery.practices.find(
-      (item) => item.id === projection.scope.practiceID,
-    ) ?? discovery.practices[0]!
-  const tasks = projection.tasks.items
+export function workspaceFolders(projection: WorkspaceProjectionState): Array<{
+  section: Exclude<WorkspaceRailSection, "completed">
+  title: string
+  count: number
+}> {
+  const practice = currentPractice(projection)
   const taskCounts = projection.tasks.counts
-  const selectedTaskID = projection.selection.task?.id ?? ""
-  const search = projection.search.input
-  const engagementError = projection.search.error
-  const loading = projection.tasks.loading
-  const taskError = projection.tasks.error
-  const nextCursor = projection.tasks.nextCursor
-  const connection = projection.connection
-  const analyticsActive = projection.selection.view === "analytics"
-  const railStateKey = `${discovery.actor.subject}:${practice.id}`
-  const expanded = projection.rail.expanded
-  const taskCategory = projection.rail.taskCategory
-  const pendingTaskID = projection.completion.pendingTaskID
-  const completionError = projection.completion.error
-    ? {
-        taskID: projection.completion.errorTaskID,
-        message: projection.completion.error,
-      }
-    : undefined
-  const scrollContainer = useRef<HTMLDivElement | null>(null)
-  const searchInput = useRef<HTMLInputElement | null>(null)
-  const router = useRouter()
-  const { setTheme, theme } = useTheme()
   const appointmentLocation = practice.locations.find(
     (location) =>
       location.name.trim().toLowerCase() === "spring hill" &&
       (projection.scope.locationScopeID === location.id ||
         practice.locations.length === 1),
   )
-  const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
-  const folders: Array<{
-    section: Exclude<WorkspaceRailSection, "completed">
-    title: string
-    count: number
-  }> = [
+  return [
     {
       section: "tasks",
       title:
         (projection.rail.taskResponsibility ?? "mine") === "mine"
           ? "My Tasks"
           : "All Tasks",
-      count: selectedTaskCount,
+      count: taskCountForCategory(taskCounts, projection.rail.taskCategory),
     },
     {
       section: "calls",
-      title: "Missed Calls & Voicemails",
+      title: "Missed Calls",
       count: taskCounts.callRecovery ?? 0,
     },
     ...(appointmentLocation || (taskCounts.appointmentReviews ?? 0) > 0
@@ -178,6 +133,48 @@ export function WorkspaceRail({
       : []),
     { section: "texts", title: "Texts", count: taskCounts.texts ?? 0 },
   ]
+}
+
+function currentPractice(projection: WorkspaceProjectionState) {
+  const discovery = projection.discovery!
+  return (
+    discovery.practices.find(
+      (item) => item.id === projection.scope.practiceID,
+    ) ?? discovery.practices[0]!
+  )
+}
+
+export function WorkspaceRail({
+  projection,
+  locationControl,
+  callingStatus,
+  onIntent,
+}: WorkspaceRailProps) {
+  const discovery = projection.discovery!
+  const practice = currentPractice(projection)
+  const tasks = projection.tasks.items
+  const taskCounts = projection.tasks.counts
+  const selectedTaskID = projection.selection.task?.id ?? ""
+  const search = projection.search.input
+  const engagementError = projection.search.error
+  const loading = projection.tasks.loading
+  const taskError = projection.tasks.error
+  const nextCursor = projection.tasks.nextCursor
+  const connection = projection.connection
+  const railStateKey = `${discovery.actor.subject}:${practice.id}`
+  const expanded = projection.rail.expanded
+  const taskCategory = projection.rail.taskCategory
+  const pendingTaskID = projection.completion.pendingTaskID
+  const completionError = projection.completion.error
+    ? {
+        taskID: projection.completion.errorTaskID,
+        message: projection.completion.error,
+      }
+    : undefined
+  const scrollContainer = useRef<HTMLDivElement | null>(null)
+  const searchInput = useRef<HTMLInputElement | null>(null)
+  const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
+  const folders = workspaceFolders(projection)
   const completed = projection.completedTasks
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
@@ -248,13 +245,13 @@ export function WorkspaceRail({
 
   return (
     <>
-      <Sidebar collapsible="offcanvas" className="group/rail">
+      <Sidebar collapsible="offcanvas" className="absolute h-full [&_[data-slot=sidebar-inner]]:bg-canvas">
         <SidebarHeader className="gap-3 p-3 pb-2">
           <div className="flex items-center gap-2 px-1">
             <AcuityMark className="size-7 shrink-0" />
-            <span className="flex-1 text-base font-semibold tracking-tight">Acuity Health</span>
-            <SidebarTrigger className="size-7 shrink-0 text-muted-foreground [@media(hover:hover)]:opacity-0 group-hover/rail:opacity-100 group-focus-within/rail:opacity-100 focus-visible:opacity-100" />
+            <span className="text-base font-semibold tracking-tight">Acuity Health</span>
           </div>
+          {locationControl}
           <div className="flex items-start gap-2">
             <form className="min-w-0 flex-1"
               onSubmit={(event) => {
@@ -294,47 +291,8 @@ export function WorkspaceRail({
                 </p>
               )}
             </form>
-            {locationControl}
           </div>
           {connection === "degraded" && <p role="status" className="px-1 text-xs text-destructive">Live updates delayed. Reconnecting…</p>}
-          <SidebarMenu className="pt-1">
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={projection.selection.view === "manage-agent"}
-                tooltip="Manage agent"
-                onClick={() => onIntent({ type: "select-manage-agent" })}
-              >
-                <SparklesIcon />
-                <span>Manage agent</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            {canViewPracticeAnalytics(discovery, practice.id) && (
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={analyticsActive}
-                  tooltip="Analytics"
-                  onClick={() => onIntent({ type: "select-analytics" })}
-                >
-                  <ChartNoAxesCombinedIcon />
-                  <span>Analytics</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-            {discovery.platformOperator && (
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={projection.selection.view === "operator-analytics"}
-                  tooltip="AI diagnostics"
-                  onClick={() =>
-                    onIntent({ type: "select-operator-analytics" })
-                  }
-                >
-                  <ChartNoAxesCombinedIcon />
-                  <span>AI diagnostics</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-          </SidebarMenu>
         </SidebarHeader>
         <SidebarContent
           ref={scrollContainer}
@@ -351,22 +309,31 @@ export function WorkspaceRail({
                 onToggle={() => toggle(folder.section)}
                 action={
                   folder.section === "tasks" ? (
-                    <TaskViewMenu
-                      category={taskCategory}
-                      responsibility={
-                        projection.rail.taskResponsibility ?? "mine"
-                      }
-                      counts={taskCounts}
-                      onCategoryChange={selectTaskCategory}
-                      onResponsibilityChange={(responsibility) =>
-                        onIntent({ type: "set-task-filters", responsibility })
-                      }
-                    />
+                    <>
+                      <TaskResponsibilityToggle
+                        responsibility={projection.rail.taskResponsibility ?? "mine"}
+                        onChange={(responsibility) =>
+                          onIntent({ type: "set-task-filters", responsibility })
+                        }
+                      />
+                      <TaskCategoryMenu
+                        category={taskCategory}
+                        responsibility={
+                          projection.rail.taskResponsibility ?? "mine"
+                        }
+                        counts={taskCounts}
+                        onCategoryChange={selectTaskCategory}
+                      />
+                    </>
                   ) : undefined
                 }
               >
                 {folder.section === "tasks" ? (
                   <>
+                    <TaskCategoryChip
+                      category={taskCategory}
+                      onClear={() => selectTaskCategory("all")}
+                    />
                     {tasks.map(renderTask)}
                     {loading && tasks.length === 0 && (
                       <RailLoading label="Loading tasks" />
@@ -444,44 +411,7 @@ export function WorkspaceRail({
             </CompletedGroup>
           </div>
         </SidebarContent>
-        <SidebarFooter className="border-t border-sidebar-border p-2">
-          {availabilityControl}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<Button variant="ghost" className="h-auto w-full min-w-0 justify-start gap-2 px-2 py-2" aria-label="Account menu" />}
-            >
-              <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm text-muted-foreground">
-                {discovery.actor.email.charAt(0).toUpperCase()}
-              </span>
-              <span className="truncate text-xs">{discovery.actor.email}</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" className="w-64">
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>Signed in as</DropdownMenuLabel>
-                <p className="truncate px-2 pb-2 text-sm" title={discovery.actor.email}>{discovery.actor.email}</p>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-              <div className="flex items-center justify-between gap-4 px-2 py-2">
-                <span className="text-xs text-muted-foreground">Theme</span>
-                <ToggleGroup aria-label="Theme" variant="outline" size="sm" spacing={0}
-                  value={[theme ?? "system"]}
-                  onValueChange={(values) => { if (values[0]) setTheme(values[0]) }}>
-                  <ToggleGroupItem value="light" aria-label="Light" title="Light"><SunIcon /></ToggleGroupItem>
-                  <ToggleGroupItem value="dark" aria-label="Dark" title="Dark"><MoonIcon /></ToggleGroupItem>
-                  <ToggleGroupItem value="system" aria-label="System" title="System"><MonitorIcon /></ToggleGroupItem>
-                </ToggleGroup>
-              </div>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <DropdownMenuItem onClick={() => void authClient.signOut().then((result) => {
-                  if (!result.error) router.push("/sign-in")
-                })}>
-                  <span>Sign out</span><LogOutIcon className="ml-auto" />
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </SidebarFooter>
+        <SidebarFooter className="border-t border-sidebar-border p-2 empty:hidden">{callingStatus}</SidebarFooter>
       </Sidebar>
     </>
   )
@@ -595,23 +525,46 @@ function CompletedGroup({
   )
 }
 
-function TaskViewMenu({
+function TaskResponsibilityToggle({
+  responsibility,
+  onChange,
+}: {
+  responsibility: "mine" | "all"
+  onChange: (value: "mine" | "all") => void
+}) {
+  return (
+    <ToggleGroup
+      aria-label="Task view"
+      variant="segmented"
+      size="sm"
+      spacing={0}
+      value={[responsibility]}
+      onValueChange={(values) => {
+        const value = values[0]
+        if (value === "mine" || value === "all") onChange(value)
+      }}
+    >
+      <ToggleGroupItem value="mine" aria-label="Show My Tasks" className="h-5 px-1.5 text-[11px] data-pressed:bg-background data-pressed:shadow-xs">
+        Mine
+      </ToggleGroupItem>
+      <ToggleGroupItem value="all" aria-label="Show All Tasks" className="h-5 px-1.5 text-[11px] data-pressed:bg-background data-pressed:shadow-xs">
+        All
+      </ToggleGroupItem>
+    </ToggleGroup>
+  )
+}
+
+function TaskCategoryMenu({
   category,
   responsibility,
   counts,
   onCategoryChange,
-  onResponsibilityChange,
 }: {
   category: TaskCategoryFilter
   responsibility: "mine" | "all"
   counts: TaskFolderCounts
   onCategoryChange: (value: TaskCategoryFilter) => void
-  onResponsibilityChange: (value: "mine" | "all") => void
 }) {
-  const activeLabel =
-    taskFilterLabels[category] ??
-    taskCategoryOptions.find((option) => option.value === category)?.label ??
-    "All types"
   const visibleCategories = taskCategoryOptions.filter(
     (option) =>
       responsibility === "all" ||
@@ -627,31 +580,15 @@ function TaskViewMenu({
           <Button
             variant="ghost"
             size="sm"
-            aria-label={`Filter ${viewLabel}${category === "all" ? "" : ` · ${activeLabel}`}`}
-            title={`${viewLabel} · ${activeLabel}`}
-            className="size-7 shrink-0 p-0 text-muted-foreground"
+            aria-label={`Filter ${viewLabel}${category === "all" ? "" : ` · ${taskCategoryLabel(category)}`}`}
+            title="Filter by type"
+            className={cn("size-7 shrink-0 p-0 text-muted-foreground", category !== "all" && "text-foreground")}
           />
         }
       >
-        <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
+        <ListFilterIcon aria-hidden="true" className="size-3.5 shrink-0" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuRadioGroup
-          value={responsibility}
-          onValueChange={(value) => {
-            if (value === "mine" || value === "all")
-              onResponsibilityChange(value)
-          }}
-        >
-          <DropdownMenuLabel>View</DropdownMenuLabel>
-          <DropdownMenuRadioItem value="mine" closeOnClick>
-            My Tasks
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="all" closeOnClick>
-            All Tasks
-          </DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
-        <DropdownMenuSeparator />
         <DropdownMenuRadioGroup
           value={category}
           onValueChange={(value) =>
@@ -675,6 +612,40 @@ function TaskViewMenu({
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+function TaskCategoryChip({
+  category,
+  onClear,
+}: {
+  category: TaskCategoryFilter
+  onClear: () => void
+}) {
+  if (category === "all") return null
+  const label = taskCategoryLabel(category)
+  return (
+    <div className="px-1 pb-1">
+      <span className="inline-flex h-6 items-center gap-1 rounded-full bg-sidebar-accent pr-1 pl-2.5 text-xs text-sidebar-foreground">
+        {label}
+        <button
+          type="button"
+          aria-label={`Clear ${label} filter`}
+          className="flex size-4 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
+          onClick={onClear}
+        >
+          <XIcon aria-hidden="true" className="size-3" />
+        </button>
+      </span>
+    </div>
+  )
+}
+
+function taskCategoryLabel(category: TaskCategoryFilter) {
+  return (
+    taskFilterLabels[category] ??
+    taskCategoryOptions.find((option) => option.value === category)?.label ??
+    "All types"
   )
 }
 
@@ -743,7 +714,7 @@ function TaskRow({
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>
-      <span className="pointer-events-none absolute top-0 right-1 h-7 w-7 [@media(pointer:coarse)]:h-11">
+      <span className="pointer-events-none absolute top-0 right-1 h-8 w-7 [@media(pointer:coarse)]:h-11">
         <time
           className={`absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
           dateTime={taskRelativeAt(task)}

@@ -10,6 +10,7 @@ import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import {
   CheckIcon,
+  ChevronsUpDownIcon,
   MapPinIcon,
   PanelRightCloseIcon,
   WifiOffIcon,
@@ -29,17 +30,17 @@ import {
 import {
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
-  useSidebar,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   CallingAvailabilityControl,
   CallingDock,
+  CallingFailureStatus,
 } from "@/components/workspace/calling-dock"
 import { AIInteractionContext } from "@/components/workspace/ai-interaction-context"
 import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
 import { TaskCallContext, TaskCallAction } from "@/components/workspace/task-call-context"
+import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
 import { WorkspaceRail } from "@/components/workspace/workspace-rail"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type {
@@ -228,7 +229,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       callingOccupied: boolean,
     ) => ReactNode,
   ) => (
-    <SidebarProvider defaultOpen={defaultSidebarOpen}>
+    <SidebarProvider defaultOpen={defaultSidebarOpen} className="bg-sidebar">
       <CallingDock
         key={discovery.actor.subject}
         actorSubject={discovery.actor.subject}
@@ -303,184 +304,189 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
     }
     return (
       <>
-        <WorkspaceRail
+        <WorkspaceNavRail
           projection={state}
           onIntent={sendIntent}
           availabilityControl={<CallingAvailabilityControl />}
-          locationControl={
-            <WorkspaceSelector
-              discovery={discovery}
-              practiceID={state.scope.practiceID}
-              locationScopeID={state.scope.locationScopeID}
-              disabled={callingOccupied}
-              onSelect={(practiceID, locationScopeID) =>
-                void projection.dispatch({
-                  type: "select-scope",
-                  practiceID,
-                  locationScopeID,
-                })
-              }
-            />
-          }
         />
-        <SidebarInset
-          data-testid="mounted-workspace"
-          data-connection={state.connection}
-          data-workspace-version={workspace.version}
-          className="h-svh min-h-0 min-w-0 overflow-hidden"
-        >
-          {view !== "engagement" && <CollapsedSidebarHeader />}
-          {view === "analytics" && canViewPracticeAnalytics(discovery, state.scope.practiceID) ? (
-            <PracticeAnalytics
-              key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
-              practiceID={state.scope.practiceID}
-              locationScopeID={state.scope.locationScopeID}
-              locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
-            />
-          ) : view === "manage-agent" ? (
-            <ManageAgent
-              key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
-              practiceID={state.scope.practiceID}
-              locationScopeID={state.scope.locationScopeID}
-              locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
-            />
-          ) : view === "operator-analytics" && discovery.platformOperator ? (
-            <OperatorAnalytics
-              practiceID={state.scope.practiceID}
-              locationScopeID={state.scope.locationScopeID}
-              locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
-            />
-          ) : view === "engagement" && selectedEngagement ? (
-            <div className="relative flex min-h-0 flex-1 bg-background">
-              <div className="flex min-h-0 min-w-0 flex-1 bg-background">
-                <EngagementWorkspace
-                  key={selectedEngagement.phone}
-                  engagement={selectedEngagement}
-                  practiceID={state.scope.practiceID}
-                  practiceName={practice.name}
-                  canMutate
-                  revision={state.detailRevision}
-                  selectedTaskID={
-                    contextPanelOpen && contextView === "task"
-                      ? selectedTask?.id
-                      : undefined
-                  }
-                  selectedCallID={
-                    contextPanelOpen && contextView === "call"
-                      ? (historicalCall ?? activeCall)?.id
-                      : undefined
-                  }
-                  selectedAIInteractionID={
-                    contextPanelOpen && contextView === "ai-call"
-                      ? selectedAIInteractionID
-                      : undefined
-                  }
-                  headerLeading={<SidebarTrigger collapsedOnly />}
-                  callAction={!state.selection.taskGroup && selectedTask && selectedTask.state === "OPEN" && contextView === "task" ? (
-                    <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={callingEnabled && !callingOccupied} historyHint={state.detailRevision} pending={Boolean(taskCallRequest)} onCall={(task) => {
-                      setTaskCallError("")
-                      void projection.dispatch({ type: "remember-return-task", taskID: task.id })
-                      setTaskCallRequest({ id: window.crypto.randomUUID(), taskID: task.id })
-                    }} />
-                  ) : undefined}
-                  textTask={textTask}
-                  onNextTask={!activeCall && textTask && state.tasks.items.some((task) => task.id !== textTask.id) ? () => { const next = state.tasks.items.find((task) => task.id !== textTask.id); if (next) sendIntent({ type: "select-task", task: next }) } : undefined}
-                  onTextTaskUpdated={(task) => sendIntent({ type: "task-committed", task, advance: !activeCall })}
-                  onTaskCreated={(task) =>
-                    void projection.dispatch({ type: "task-created", task })
-                  }
-                  onTaskOpen={(task) =>
-                    void projection.dispatch(
-                      contextPanelOpen && contextView === "task" &&
-                      !state.selection.taskGroup && selectedTask?.id === task.id
-                        ? { type: "close-context" }
-                        : { type: "open-task-context", task },
-                    )
-                  }
-                  onCallOpen={(callID) =>
-                    void projection.dispatch({ type: "open-call-context", callID })
-                  }
-                  onAIInteractionOpen={(interactionID) =>
-                    void projection.dispatch({
-                      type: "open-ai-context",
-                      interactionID,
-                    })
-                  }
-                />
-              </div>
-              <aside
-                aria-label={contextPanelLabel}
-                aria-hidden={!contextPanelOpen}
-                data-state={contextPanelOpen ? "open" : "closed"}
-                data-testid="context-panel"
-                inert={!contextPanelOpen}
-                className={cn(
-                  "absolute top-20 right-3 flex h-fit max-h-[calc(100%-5.75rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:my-3 lg:max-h-[calc(100%-1.5rem)] lg:max-w-none lg:shrink-0",
-                  contextView === "task" && state.selection.taskGroup && "h-[calc(100%-5.75rem)] lg:h-[calc(100%-1.5rem)]",
-                  contextPanelOpen
-                    ? "translate-x-0 opacity-100 lg:mr-3 lg:w-72"
-                    : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:mr-0 lg:w-0",
-                )}
-                onTransitionEnd={(event) => {
-                  if (event.currentTarget === event.target) {
-                    void projection.dispatch({ type: "context-transition-ended" })
-                  }
-                }}
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="absolute top-3 right-3 z-10"
-                  aria-label="Close context panel"
-                  onClick={() => void projection.dispatch({ type: "close-context" })}
-                >
-                  <PanelRightCloseIcon />
-                </Button>
-                <div className="flex min-h-0 flex-1">
-                  {contextView === "ai-call" ? (
-                    <AIInteractionContext
-                      detail={state.selection.aiInteraction}
-                      loading={state.selection.aiInteractionLoading}
-                      error={state.selection.aiInteractionError}
-                    />
-                  ) : contextView === "task" && state.selection.taskError ? (
-                    <div className="flex-1 p-4">
-                      <WorkspaceWindowFailure
-                        message={state.selection.taskError}
-                        onRetry={() =>
-                          void projection.dispatch({ type: "retry" })
-                        }
-                      />
-                    </div>
-                  ) : (
-                    <TaskCallContext
-                      task={selectedTask}
-                      group={state.selection.taskGroup}
-                      taskRows={state.tasks.items}
-                      onSelectTask={(task) => sendIntent({ type: "select-task", task })}
-                      activeCall={historicalCall ?? activeCall}
-                      view={contextView}
-                      canMutate
-                      historyHint={state.detailRevision}
-                      taskCallError={taskCallError}
-                      onTaskUpdated={(task, advance) =>
-                        void projection.dispatch({ type: "task-committed", task, advance: advance && !activeCall })
-                      }
-                      onReturnToCall={() => {
-                        if (activeCall) {
-                          void projection.dispatch({ type: "return-to-call" })
-                        }
-                      }}
-                    />
-                  )}
+        <div className="relative flex h-svh min-w-0 flex-1 overflow-hidden bg-background md:my-2 md:mr-2 md:h-[calc(100svh-1rem)] md:rounded-xl md:border md:border-sidebar-border md:shadow-xs">
+          <WorkspaceRail
+            projection={state}
+            onIntent={sendIntent}
+            callingStatus={<CallingFailureStatus />}
+            locationControl={
+              <WorkspaceSelector
+                discovery={discovery}
+                practiceID={state.scope.practiceID}
+                locationScopeID={state.scope.locationScopeID}
+                disabled={callingOccupied}
+                onSelect={(practiceID, locationScopeID) =>
+                  void projection.dispatch({
+                    type: "select-scope",
+                    practiceID,
+                    locationScopeID,
+                  })
+                }
+              />
+            }
+          />
+          <SidebarInset
+            data-testid="mounted-workspace"
+            data-connection={state.connection}
+            data-workspace-version={workspace.version}
+            className="h-full min-h-0 min-w-0 overflow-hidden"
+          >
+            {view === "analytics" && canViewPracticeAnalytics(discovery, state.scope.practiceID) ? (
+              <PracticeAnalytics
+                key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
+                practiceID={state.scope.practiceID}
+                locationScopeID={state.scope.locationScopeID}
+                locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
+              />
+            ) : view === "manage-agent" ? (
+              <ManageAgent
+                key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
+                practiceID={state.scope.practiceID}
+                locationScopeID={state.scope.locationScopeID}
+                locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
+              />
+            ) : view === "operator-analytics" && discovery.platformOperator ? (
+              <OperatorAnalytics
+                practiceID={state.scope.practiceID}
+                locationScopeID={state.scope.locationScopeID}
+                locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
+              />
+            ) : view === "engagement" && selectedEngagement ? (
+              <div className="relative flex min-h-0 flex-1 bg-background">
+                <div className="flex min-h-0 min-w-0 flex-1 bg-background">
+                  <EngagementWorkspace
+                    key={selectedEngagement.phone}
+                    engagement={selectedEngagement}
+                    practiceID={state.scope.practiceID}
+                    practiceName={practice.name}
+                    canMutate
+                    revision={state.detailRevision}
+                    selectedTaskID={
+                      contextPanelOpen && contextView === "task"
+                        ? selectedTask?.id
+                        : undefined
+                    }
+                    selectedCallID={
+                      contextPanelOpen && contextView === "call"
+                        ? (historicalCall ?? activeCall)?.id
+                        : undefined
+                    }
+                    selectedAIInteractionID={
+                      contextPanelOpen && contextView === "ai-call"
+                        ? selectedAIInteractionID
+                        : undefined
+                    }
+                    callAction={!state.selection.taskGroup && selectedTask && selectedTask.state === "OPEN" && contextView === "task" ? (
+                      <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={callingEnabled && !callingOccupied} historyHint={state.detailRevision} pending={Boolean(taskCallRequest)} onCall={(task) => {
+                        setTaskCallError("")
+                        void projection.dispatch({ type: "remember-return-task", taskID: task.id })
+                        setTaskCallRequest({ id: window.crypto.randomUUID(), taskID: task.id })
+                      }} />
+                    ) : undefined}
+                    textTask={textTask}
+                    onNextTask={!activeCall && textTask && state.tasks.items.some((task) => task.id !== textTask.id) ? () => { const next = state.tasks.items.find((task) => task.id !== textTask.id); if (next) sendIntent({ type: "select-task", task: next }) } : undefined}
+                    onTextTaskUpdated={(task) => sendIntent({ type: "task-committed", task, advance: !activeCall })}
+                    onTaskCreated={(task) =>
+                      void projection.dispatch({ type: "task-created", task })
+                    }
+                    onTaskOpen={(task) =>
+                      void projection.dispatch(
+                        contextPanelOpen && contextView === "task" &&
+                        !state.selection.taskGroup && selectedTask?.id === task.id
+                          ? { type: "close-context" }
+                          : { type: "open-task-context", task },
+                      )
+                    }
+                    onCallOpen={(callID) =>
+                      void projection.dispatch({ type: "open-call-context", callID })
+                    }
+                    onAIInteractionOpen={(interactionID) =>
+                      void projection.dispatch({
+                        type: "open-ai-context",
+                        interactionID,
+                      })
+                    }
+                  />
                 </div>
-              </aside>
-            </div>
-          ) : (
-            <section aria-label="No number selected" className="min-h-0 flex-1" />
-          )}
-        </SidebarInset>
+                <aside
+                  aria-label={contextPanelLabel}
+                  aria-hidden={!contextPanelOpen}
+                  data-state={contextPanelOpen ? "open" : "closed"}
+                  data-testid="context-panel"
+                  inert={!contextPanelOpen}
+                  className={cn(
+                    "absolute top-20 right-3 flex h-fit max-h-[calc(100%-5.75rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:h-auto lg:max-h-none lg:max-w-none lg:shrink-0 lg:self-stretch lg:rounded-none lg:border-y-0 lg:border-r-0 lg:bg-background lg:shadow-none",
+                    contextView === "task" && state.selection.taskGroup && "h-[calc(100%-5.75rem)] lg:h-auto",
+                    contextPanelOpen
+                      ? "translate-x-0 opacity-100 lg:w-72"
+                      : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:w-0",
+                  )}
+                  onTransitionEnd={(event) => {
+                    if (event.currentTarget === event.target) {
+                      void projection.dispatch({ type: "context-transition-ended" })
+                    }
+                  }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="absolute top-3 right-3 z-10"
+                    aria-label="Close context panel"
+                    onClick={() => void projection.dispatch({ type: "close-context" })}
+                  >
+                    <PanelRightCloseIcon />
+                  </Button>
+                  <div className="flex min-h-0 flex-1">
+                    {contextView === "ai-call" ? (
+                      <AIInteractionContext
+                        detail={state.selection.aiInteraction}
+                        loading={state.selection.aiInteractionLoading}
+                        error={state.selection.aiInteractionError}
+                      />
+                    ) : contextView === "task" && state.selection.taskError ? (
+                      <div className="flex-1 p-4">
+                        <WorkspaceWindowFailure
+                          message={state.selection.taskError}
+                          onRetry={() =>
+                            void projection.dispatch({ type: "retry" })
+                          }
+                        />
+                      </div>
+                    ) : (
+                      <TaskCallContext
+                        task={selectedTask}
+                        group={state.selection.taskGroup}
+                        taskRows={state.tasks.items}
+                        onSelectTask={(task) => sendIntent({ type: "select-task", task })}
+                        activeCall={historicalCall ?? activeCall}
+                        view={contextView}
+                        canMutate
+                        historyHint={state.detailRevision}
+                        taskCallError={taskCallError}
+                        onTaskUpdated={(task, advance) =>
+                          void projection.dispatch({ type: "task-committed", task, advance: advance && !activeCall })
+                        }
+                        onReturnToCall={() => {
+                          if (activeCall) {
+                            void projection.dispatch({ type: "return-to-call" })
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
+                </aside>
+              </div>
+            ) : (
+              <section aria-label="No number selected" className="min-h-0 flex-1" />
+            )}
+          </SidebarInset>
+        </div>
       </>
     )
   })
@@ -528,12 +534,17 @@ function WorkspaceSelector({
             variant="ghost"
             size="sm"
             disabled={disabled}
-            className="size-9 shrink-0"
+            className="h-8 w-full min-w-0 justify-start gap-2 px-2 hover:bg-sidebar-accent"
             title={`${practice.name}: ${locationLabel}`}
           />
         }
       >
-        <MapPinIcon />
+        <MapPinIcon className="text-muted-foreground" />
+        <span className="truncate font-medium">{locationLabel}</span>
+        {discovery.practices.length > 1 && (
+          <span className="truncate text-muted-foreground">{practice.name}</span>
+        )}
+        <ChevronsUpDownIcon className="ml-auto text-muted-foreground" />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80">
         <PopoverHeader>
@@ -634,10 +645,4 @@ function WorkspaceFailure({
       </Alert>
     </main>
   )
-}
-
-function CollapsedSidebarHeader() {
-  const { isMobile, state } = useSidebar()
-  if (!isMobile && state === "expanded") return null
-  return <div className="flex h-12 shrink-0 items-center px-4"><SidebarTrigger collapsedOnly /></div>
 }

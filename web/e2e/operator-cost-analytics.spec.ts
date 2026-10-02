@@ -51,6 +51,7 @@ test("Platform Operator sees recorded costs and incomplete usage", async ({
     await page
       .getByRole("option", { name: "Fixture Location 6", exact: true })
       .click()
+    await diagnostics.getByRole("button", { name: "Last 7 days", exact: true }).click()
 
     const overview = diagnostics.getByRole("region", {
       name: "AI cost overview",

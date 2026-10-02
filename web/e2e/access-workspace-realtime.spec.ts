@@ -525,7 +525,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       .poll(() => analyticsRequests.at(-1))
       .toMatchObject({
         practiceId: operatorPractice!.id,
-        range: "7d",
+        range: "24h",
       })
     expect(analyticsRequests.at(-1)?.locationId).toBeUndefined()
 
