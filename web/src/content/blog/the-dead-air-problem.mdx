@@ -1,0 +1,128 @@
+A caller spells their first name for our voice agent. The agent replies, _&ldquo;One moment while I look you up in the system.&rdquo;_ Then nobody says anything.
+
+The caller waits. Then they say &ldquo;hello? ¿hola?&rdquo; The agent says it&rsquo;s still there and goes quiet again. In one day of production calls, **11 of 239 had more than two minutes of dead air.** Some ran 34 to 60 minutes.
+
+The agent wasn&rsquo;t down, and no error fired. The voice had promised work that the system behind it never started. We call this the dead air problem. Any system where one model tells another what to do can fail this way. In voice, the caller hears it.
+
+## Why we bet on speech-to-speech
+
+Acuity Health builds AI voice infrastructure for medical enterprises. Our callers vary widely in age, and many are elderly. Some speak slowly and pause mid-thought, and others talk fast. Many switch between Spanish and English, interrupt, or spell names one letter at a time.
+
+The standard way to build a voice agent is a cascaded pipeline. Speech-to-text (STT) transcribes the caller, an LLM decides what to say, and text-to-speech (TTS) speaks the reply. Every stage adds delay. The pipeline also has to guess when the caller has finished talking, usually from the length of a pause. That guess cuts off slow speakers and talks over fast ones. Tone and hesitation are also lost once speech becomes text.
+
+We&rsquo;ve always believed AI should talk the way people do. Think C-3PO, not a phone tree: it listens while it talks, takes interruptions in stride, and keeps pace with whoever is on the line. A cascaded pipeline can&rsquo;t get there. Every handoff between stages costs time and strips out what the voice was carrying.
+
+So when GPT-Live came out, we moved our production calls to full-duplex speech-to-speech right away. We wanted to be first movers. This is where voice AI is going, and we&rsquo;d rather learn its failure modes now than catch up later. One model listens and talks at the same time, and it hands real work to a second model that takes the actions:
+
+- **The speaker** handles the conversation: listening, turn-taking, tone, and language.
+- **The thinker** runs the tools: chart lookup, insurance checks, scheduling, and staff tasks.
+
+The speaker decides when to hand work to the thinker. That handoff is where the problem lives. If the speaker doesn&rsquo;t hand off, nothing runs, and nothing errors. The speaker keeps sounding helpful (&ldquo;let me check on that&rdquo;) until the call goes quiet.
+
+This is the trade-off with speech-to-speech. The conversation sounds better, but saying and doing are now two separate jobs, and the speaker can do the first without the second.
+
+## Detecting it: a judge, then the traces
+
+You can&rsquo;t fix dead air until you can see it, and logs don&rsquo;t show it. Every log line looks healthy: the agent spoke, the session was up, and no tool failed. The failure is something that _didn&rsquo;t_ happen.
+
+So we judge every call with Jev, TypeSafe&rsquo;s judge model. We don&rsquo;t ask an LLM for an open-ended grade. Each call gets a scorecard of narrow yes/no conditions, and for us that&rsquo;s more consistent and much cheaper than LLM-as-a-judge. One condition, `conversation_responsive`, asks: did the caller have to get the agent&rsquo;s attention back? It looks for what callers actually do when the line goes quiet:
+
+- saying &ldquo;hello? hello?&rdquo; or &ldquo;are you there?&rdquo;
+- repeating an answer the agent ignored
+- saying the line went quiet or seems disconnected
+
+A judge is only as good as the failures it catches, and it can be wrong in two ways:
+
+- **A false positive.** The judge flags a call that was actually fine. It wastes review time, and too many of them teach the team to ignore the judge.
+- **A false negative.** The judge passes a call that actually failed. Nobody reviews it, it never becomes a test, and the next caller gets the same silence.
+
+A false negative costs far more than a false positive. So we write each condition to catch every real stall first, then trim the false positives by spelling out what doesn&rsquo;t count: an opening greeting, a normal clarification, a correction, or a pause the caller asked for.
+
+Before this fix, the judge failed calls like these for responsiveness, and **about 5% of all calls** (11 of 239 in one day) had more than two minutes of dead air.
+
+The judge tells you _where_ to look. The traces tell you _why_. Reviewing the flagged calls showed the same four steps every time:
+
+<Steps>
+  <Step n={1}>
+    The thinker needs a detail and asks, &ldquo;What is the patient&rsquo;s first
+    name?&rdquo;
+  </Step>
+  <Step n={2}>The speaker relays the question.</Step>
+  <Step n={3}>The caller answers in one word (&ldquo;Lana&rdquo;) or spells it out.</Step>
+  <Step n={4} alert last>
+    The speaker never passes the answer back.
+  </Step>
+</Steps>
+
+## Fixing it: six teams, six approaches
+
+The obvious fix is to tell the model to stop doing that. We had a guess, but a guess isn&rsquo;t a fix. So we turned the failure into a test and had several fixes compete against it.
+
+**The test.** We wrote six LiveKit audio simulation scenarios, in which a simulated caller talks to the real agent over audio. In each, a simulated caller answers a question and then waits without saying anything else:
+
+- a Spanish caller spells a name for a chart lookup
+- a Spanish caller asks whether an insurance plan is accepted
+- a Spanish caller asks staff to follow up on exam results
+- an English caller gives the exact plan name
+- a Spanish caller asks when their appointment is
+- an English caller says &ldquo;go ahead and check&rdquo;
+
+A run counts as a **stall** when the caller spoke and then the agent neither handed off nor asked a question before the silence check-in. Every flagged case was reviewed by hand.
+
+**The teams.** Six agent teams each took a different approach to the prompt and ran it against the scenarios. Every team had the same goal: **the lowest stall rate with the smallest prompt change.** A smaller change is easier to review, less likely to break something else, and easier to roll back.
+
+<ApproachChart />
+
+Two results stood out.
+
+**Telling the model to behave didn&rsquo;t work. Giving it a trigger did.** Approach A spelled out the lesson: saying you&rsquo;ll check is not checking. The speaker still stalled. It kept collecting details itself (&ldquo;I heard Lana. What&rsquo;s your last name?&rdquo;) instead of handing them off. Approach E added one line to the original prompt, &ldquo;the caller gives information you asked for, or corrects it,&rdquo; and had zero stalls.
+
+<PullQuote cite="The rule that lost, and the one line that won.">&ldquo;Saying you&rsquo;ll check is not checking&rdquo; still stalled. &ldquo;The caller gives information you asked for&rdquo; didn&rsquo;t.</PullQuote>
+
+**Stricter wording made things worse.** Approach D tied the trigger to answers to the _backend&rsquo;s_ questions. It missed cases where the speaker asked a question itself, and it caused a new stall on a promised transfer.
+
+The shipped version (C2) adds the two triggers and removes an ambiguous paragraph, so **the prompt got shorter**. Across all the stall scenarios, stalls fell from **6 of 45 runs (13%) to 1 of 47 (about 2%)**. The average agent message stayed the same length. Handoffs per call rose from about 3.5 to 4.3, which is expected now that answers get passed on.
+
+## Shipping with a fallback, then measuring
+
+A passing simulation is evidence, not proof. So the fix ships with two layers:
+
+1. **The prompt fix** stops the stall: the speaker hands off as soon as the caller answers.
+2. **The silence check-in** catches what the prompt misses. If nothing is running in the backend after about 15 seconds, it tells the speaker to hand off anything the caller said that hasn&rsquo;t been handled yet, and only then to say it&rsquo;s still there. A missed handoff now costs about 15 seconds instead of minutes.
+
+We&rsquo;re also clear about what the simulations can&rsquo;t tell us:
+
+- **Long stalls can&rsquo;t be reproduced.** The simulator ends a run after 30 seconds of agent silence, so we can&rsquo;t recreate the 5 to 12 minute stalls from production.
+- **The samples are small.** With 12 to 47 valid runs per approach, adding the trigger is a clear signal. The differences between C, D, and E are noise.
+
+So we&rsquo;re watching production, not the simulator. We&rsquo;re tracking three numbers against their baselines: the share of calls the judge fails for responsiveness, calls with more than two minutes of dead air (11 of 239 in one day), and handoffs per call.
+
+<Stats>
+  <Stat
+    label="Audio simulation"
+    before="13%"
+    after="2%"
+    note="Stalled runs across all stall scenarios: 6 of 45 before, 1 of 47 after."
+  />
+  <Stat
+    tone="production"
+    label="First day in production"
+    before="10.5%"
+    after="4.8%"
+    note="Scored calls the judge failed for responsiveness, 807 calls before and 189 after. Encouraging, not proven: another handoff fix shipped the same night, and one day is a small sample."
+  />
+</Stats>
+
+The judge runs on every call, so we&rsquo;ll keep watching and post a fuller update in a few weeks.
+
+## Dead air is a delegation problem
+
+We found this in voice, but it isn&rsquo;t a voice problem. Any system where one model tells another what to do has the same weak spot. An orchestrator says it will look something up. A planner says it delegated a task. A front-end agent tells the user &ldquo;working on it.&rdquo; Each one can sound right while the handoff never happens. In text, that&rsquo;s a confident answer with nothing behind it. In voice, it&rsquo;s silence.
+
+More instructions won&rsquo;t fix it. Our best-worded rule, &ldquo;saying you&rsquo;ll check is not checking,&rdquo; lost to one line that named the exact moment to hand off. What fixed it was a process:
+
+<LoopDiagram />
+
+The judge finds the failure in production. The traces explain it. The failure becomes a scenario, the teams compete to fix it, and the fix ships with a fallback. The scenario then stays in the suite, so this stall can&rsquo;t come back without a test catching it.
+
+Speech-to-speech is where voice AI is going, and dead air is one of its first growing pains. The more human an agent sounds, the harder it is to notice when it stops working: a confident &ldquo;one moment&rdquo; hides a handoff that never happened. Better instructions won&rsquo;t close that gap. A system that hears what callers hear will: a judge on every call, simulations that reproduce the failure, and fixes that compete on evidence. Build that loop, and every failure makes the agent better.
