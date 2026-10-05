@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.27.0](https://github.com/chasef07/acuity_product/compare/v1.26.0...v1.27.0) (2026-10-05)
+
+
+### Features
+
+* **workspace:** keep the selected Task and view in the URL across refresh ([#405](https://github.com/chasef07/acuity_product/issues/405)) ([d03099b](https://github.com/chasef07/acuity_product/commit/d03099bd3ff936ac430c0d74b44f498df81907a9))
+
+
+### Bug Fixes
+
+* **workspace:** drop the gray tile behind the loading mark ([#406](https://github.com/chasef07/acuity_product/issues/406)) ([cefdd30](https://github.com/chasef07/acuity_product/commit/cefdd300a223adb21cc809e18633ae8c1e6dfc3d))
+
 ## [1.26.0](https://github.com/chasef07/acuity_product/compare/v1.25.0...v1.26.0) (2026-10-05)
 
 
