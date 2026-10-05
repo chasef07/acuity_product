@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { createWorkspaceSync } from "./workspace-sync/workspace-sync.ts"
+import type { WorkspaceLocation } from "./workspace-location.ts"
 
 import type {
   AccessDiscovery,
@@ -1316,3 +1317,231 @@ test("failed retries without a workspace snapshot preserve unavailable until rec
   assert.equal(projection.getSnapshot().workspace?.version, 4)
   projection.stop()
 })
+
+test("refresh reopens the Task named in the URL instead of the first Task", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const second = task("second-task", { phone: "+15557654321" })
+  const navigation = memoryNavigation({ view: "task", taskID: second.id })
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first, second]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.task?.id, second.id)
+  assert.equal(projection.getSnapshot().selection.engagement?.phone, second.phone)
+  assert.deepEqual(navigation.writes, [])
+  await projection.dispatch({ type: "select-task", task: first })
+  assert.deepEqual(navigation.writes, [{ location: { view: "task", taskID: first.id }, mode: "push" }])
+  projection.stop()
+})
+
+test("an unavailable URL Task falls back to the first Task without adding history", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const navigation = memoryNavigation({ view: "task", taskID: "gone-task" })
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.task?.id, first.id)
+  assert.deepEqual(navigation.writes, [{ location: { view: "task", taskID: first.id }, mode: "replace" }])
+  projection.stop()
+})
+
+test("refresh restores authorized page views and drops unauthorized ones", async () => {
+  for (const [requested, expected] of [["manage-agent", "manage-agent"], ["analytics", "engagement"]] as const) {
+    const realtime = deterministicRealtime()
+    const navigation = memoryNavigation({ view: requested })
+    const projection = createWorkspaceProjection({
+      authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([task("first-task")]) }),
+      realtime: realtime.adapter,
+      preferences: memoryPreferences(),
+      navigation,
+    })
+    await projection.start()
+    await realtime.reconcile(0)
+    assert.equal(projection.getSnapshot().selection.view, expected)
+    assert.deepEqual(navigation.writes.map((write) => write.mode), expected === "engagement" ? ["replace"] : [])
+    projection.stop()
+  }
+})
+
+test("restored Task keeps its group once the Task window arrives", async () => {
+  const realtime = deterministicRealtime()
+  const member = task("member-task")
+  const anchor = task("anchor-task", { groupMembers: [task("anchor-task"), member] })
+  const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([anchor]) })
+  const projection = createWorkspaceProjection({
+    authority: { ...base, task: async (_token, taskID) => taskID === anchor.id ? success(task(anchor.id)) : missing() },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation: memoryNavigation({ view: "task", taskID: anchor.id }),
+  })
+  await projection.start()
+  assert.equal(projection.getSnapshot().selection.taskGroup, undefined)
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.task?.id, anchor.id)
+  assert.deepEqual(projection.getSnapshot().selection.taskGroup?.groupMembers?.map((item) => item.id), [anchor.id, member.id])
+  projection.stop()
+})
+
+test("back and forward restore the Task or page view in the URL", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const second = task("second-task", { phone: "+15557654321" })
+  const navigation = memoryNavigation()
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first, second]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: second })
+  await projection.dispatch({ type: "select-manage-agent" })
+  assert.deepEqual(navigation.writes, [
+    { location: { view: "task", taskID: first.id }, mode: "replace" },
+    { location: { view: "task", taskID: second.id }, mode: "push" },
+    { location: { view: "manage-agent" }, mode: "push" },
+  ])
+  navigation.go({ view: "task", taskID: second.id })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().selection.view, "engagement")
+  assert.equal(projection.getSnapshot().selection.task?.id, second.id)
+  navigation.go({ view: "task", taskID: first.id })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().selection.task?.id, first.id)
+  navigation.go({ view: "manage-agent" })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().selection.view, "manage-agent")
+  navigation.go({ view: "task", taskID: "gone-task" })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().selection.view, "manage-agent")
+  assert.deepEqual(navigation.writes.slice(3), [{ location: { view: "manage-agent" }, mode: "replace" }])
+  projection.stop()
+})
+
+test("a URL Task from another authorized Practice opens in that Practice", async () => {
+  const realtime = deterministicRealtime()
+  const discovery = accessDiscovery()
+  const otherPractice = { ...discovery.practices[0], id: "practice-2", name: "Second Eye Group", locations: [location("location-3")] }
+  const linked = task("linked-task", { practiceId: otherPractice.id, locationId: "location-3" })
+  const preferences = memoryPreferences()
+  preferences.write("acuity.selectedPractice", "practice-1")
+  const base = deterministicAuthority({ discovery: { ...discovery, practices: [...discovery.practices, otherPractice] }, snapshot: workspaceSnapshot(1), tasks: taskPage([task("first-task")]) })
+  const projection = createWorkspaceProjection({
+    authority: { ...base, task: async (_token, taskID) => taskID === linked.id ? success(linked) : missing() },
+    realtime: realtime.adapter,
+    preferences,
+    navigation: memoryNavigation({ view: "task", taskID: linked.id }),
+  })
+  await projection.start()
+  assert.deepEqual(realtime.scope, { practiceID: otherPractice.id, locationID: "location-3" })
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.task?.id, linked.id)
+  assert.equal(preferences.read("acuity.selectedPractice"), otherPractice.id)
+  projection.stop()
+})
+
+test("a Task chosen while back is loading wins over the restored Task", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const second = task("second-task", { phone: "+15557654321" })
+  const third = task("third-task", { phone: "+15550001111" })
+  const pending = deferred<WorkspaceAuthorityResult<Task>>()
+  const navigation = memoryNavigation()
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first, second, third]) }),
+      task: () => pending.promise,
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: second })
+  navigation.go({ view: "task", taskID: first.id })
+  const restoring = projection.dispatch({ type: "navigation-changed" })
+  await projection.dispatch({ type: "select-task", task: third })
+  pending.resolve(success(first))
+  await restoring
+  assert.equal(projection.getSnapshot().selection.task?.id, third.id)
+  assert.deepEqual(navigation.writes.at(-1), { location: { view: "task", taskID: third.id }, mode: "push" })
+  projection.stop()
+})
+
+test("a temporarily unavailable URL Task stays in the URL behind a visible retry", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const navigation = memoryNavigation({ view: "task", taskID: first.id })
+  let available = false
+  const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first]) })
+  const projection = createWorkspaceProjection({
+    authority: { ...base, task: async (...args) => available ? base.task(...args) : unavailable() },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  assert.equal(projection.getSnapshot().loadState, "unavailable")
+  assert.deepEqual(navigation.writes, [])
+  available = true
+  await projection.dispatch({ type: "retry" })
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.task?.id, first.id)
+  assert.deepEqual(navigation.writes, [])
+  available = false
+  navigation.go({ view: "task", taskID: "other-task" })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().loadState, "unavailable")
+  assert.deepEqual(navigation.writes, [])
+  projection.stop()
+})
+
+test("back during the initial load restores the newer URL", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const second = task("second-task", { phone: "+15557654321" })
+  const navigation = memoryNavigation({ view: "task", taskID: first.id })
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first, second]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  assert.equal(projection.getSnapshot().loadState, "loading")
+  navigation.go({ view: "task", taskID: second.id })
+  await projection.dispatch({ type: "navigation-changed" })
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.task?.id, second.id)
+  assert.deepEqual(navigation.writes, [])
+  projection.stop()
+})
+
+function memoryNavigation(initial: WorkspaceLocation = { view: "none" }) {
+  let current = initial
+  const writes: Array<{ location: WorkspaceLocation; mode: "push" | "replace" }> = []
+  return {
+    writes,
+    go(location: WorkspaceLocation) {
+      current = location
+    },
+    read: () => current,
+    write(location: WorkspaceLocation, mode: "push" | "replace") {
+      current = location
+      writes.push({ location, mode })
+    },
+  }
+}

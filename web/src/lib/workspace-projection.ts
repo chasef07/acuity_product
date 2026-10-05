@@ -11,6 +11,12 @@ import type {
 } from "./api/generated/types.gen.ts"
 import { appendUniqueByID } from "./workspace-ordering.ts"
 import { canViewPracticeAnalytics } from "./booking-analytics.ts"
+import {
+  selectedWorkspaceLocation,
+  type WorkspaceLocation,
+  workspaceLocationSearch,
+  type WorkspacePageView,
+} from "./workspace-location.ts"
 import { resolveWorkspaceSearch } from "./workspace-search.ts"
 import {
   createWorkspaceRequestBudget,
@@ -187,6 +193,11 @@ export type WorkspacePreferences = {
   write: (key: string, value: string) => void
 }
 
+export type WorkspaceNavigation = {
+  read: () => WorkspaceLocation
+  write: (location: WorkspaceLocation, mode: "push" | "replace") => void
+}
+
 export type WorkspaceProjectionEnvironment = {
   clock: {
     setTimeout: (callback: () => void, milliseconds: number) => number
@@ -239,6 +250,7 @@ export type WorkspaceProjectionIntent =
   | { type: "set-task-category"; category: TaskCategoryFilter }
   | { type: "set-task-filters"; responsibility?: "mine" | "all"; category?: TaskCategoryFilter }
   | { type: "remember-rail-scroll"; scrollTop: number }
+  | { type: "navigation-changed" }
 
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
@@ -257,11 +269,13 @@ export function createWorkspaceProjection({
   authority,
   realtime,
   preferences,
+  navigation,
   environment,
 }: {
   authority: WorkspaceAuthorityAdapter
   realtime: WorkspaceRealtimeAdapter
   preferences: WorkspacePreferences
+  navigation?: WorkspaceNavigation
   environment?: WorkspaceProjectionEnvironment
 }): WorkspaceProjection {
   let state = initialState()
@@ -271,6 +285,10 @@ export function createWorkspaceProjection({
   let returnTaskID = ""
   let focusedCallID = ""
   let railScrollTop = 0
+  let navigationSearch = ""
+  let navigationGeneration = 0
+  let replaceNavigation = false
+  let restoredTaskID = ""
   const requestBudget: WorkspaceRequestBudget | undefined = environment
     ? createWorkspaceRequestBudget({
         clock: environment.clock,
@@ -296,7 +314,19 @@ export function createWorkspaceProjection({
       next.selection.view === "engagement" &&
         Boolean(next.selection.engagement),
     )
+    syncNavigation(next)
     for (const listener of listeners) listener()
+  }
+
+  function syncNavigation(next: WorkspaceProjectionState) {
+    if (!navigation || next.loadState !== "ready") return
+    const mode = replaceNavigation ? "replace" : "push"
+    replaceNavigation = false
+    const location = selectedWorkspaceLocation(next.selection)
+    const search = workspaceLocationSearch(location)
+    if (location.view === "none" || search === navigationSearch) return
+    navigationSearch = search
+    navigation.write(location, mode)
   }
 
   function patch(
@@ -505,6 +535,14 @@ export function createWorkspaceProjection({
               contextPanelOpen: false,
             }
           }
+          if (taskWindowCurrent && restoredTaskID) {
+            const group = tasks.find((task) =>
+              task.id === restoredTaskID && (task.groupMembers?.length ?? 0) > 1)
+            if (group && selection.task?.id === restoredTaskID && !selection.taskGroup) {
+              selection = { ...selection, taskGroup: group }
+            }
+            restoredTaskID = ""
+          }
           const aiSelectionStillMatches =
             Boolean(selectedAIInteractionID) &&
             selection.aiInteractionID === selectedAIInteractionID
@@ -616,7 +654,24 @@ export function createWorkspaceProjection({
       if (!failIfAccessLost(result)) failClosed("unavailable")
       return
     }
-    const scope = restoreAuthorizedScope(result.data, preferences)
+    const requested = navigation?.read() ?? { view: "none" }
+    navigationGeneration += 1
+    navigationSearch = workspaceLocationSearch(requested)
+    replaceNavigation = true
+    const restored = requested.view === "task"
+      ? await authority.task(authentication.token, requested.taskID, controller.signal)
+      : undefined
+    if (controller.signal.aborted) return
+    if (restored?.kind === "unauthenticated") {
+      failClosed("unauthenticated")
+      return
+    }
+    if (restored && !settledTaskRead(restored)) {
+      failClosed("unavailable")
+      return
+    }
+    const restoredTask = restored?.kind === "success" ? restored.data : undefined
+    const scope = restoreAuthorizedScope(result.data, preferences, restoredTask?.practiceId)
     if (!scope) {
       failClosed("unauthorized")
       return
@@ -636,10 +691,71 @@ export function createWorkspaceProjection({
       scope,
       rail,
     })
+    if (restoredTask?.practiceId === scope.practiceID) {
+      showTask(restoredTask)
+    } else if (requested.view !== "task" && requested.view !== "none") {
+      selectPageView(requested.view)
+    }
     realtimeController.setScope({
       practiceID: scope.practiceID,
       locationID: scope.locationID,
     })
+  }
+
+  async function restoreNavigation() {
+    if (!navigation) return
+    if (state.loadState === "loading" && accessController) {
+      await start()
+      return
+    }
+    if (state.loadState !== "ready") return
+    const location = navigation.read()
+    const generation = ++navigationGeneration
+    const departedSearch = navigationSearch
+    const selected = location.view === "task" &&
+      state.selection.view === "engagement" && state.selection.task?.id === location.taskID
+    const result = location.view === "task" && !selected
+      ? await authenticatedRequest((token, signal) => authority.task(token, location.taskID, signal))
+      : undefined
+    if (generation !== navigationGeneration || navigationSearch !== departedSearch || stopped) return
+    if (result?.kind === "unauthenticated") {
+      failClosed("unauthenticated")
+      return
+    }
+    if (result && !settledTaskRead(result)) {
+      failClosed("unavailable")
+      return
+    }
+    navigationSearch = workspaceLocationSearch(location)
+    replaceNavigation = true
+    if (result?.kind === "success") showTask(result.data)
+    else if (location.view !== "task" && location.view !== "none") selectPageView(location.view)
+    syncNavigation(state)
+  }
+
+  function showTask(task: Task) {
+    const discovery = state.discovery
+    if (!discovery) return
+    if (task.practiceId !== state.scope.practiceID) {
+      const scope = restoreAuthorizedScope(discovery, preferences, task.practiceId)
+      if (scope?.practiceID !== task.practiceId) return
+      selectScope({ type: "select-scope", practiceID: scope.practiceID, locationScopeID: scope.locationScopeID })
+    }
+    restoredTaskID = task.id
+    const group = state.tasks.items.find((item) =>
+      item.id === task.id && (item.groupMembers?.length ?? 0) > 1)
+    selectEngagement(taskEngagement(task), group ?? task)
+  }
+
+  function selectPageView(view: WorkspacePageView) {
+    const discovery = state.discovery
+    if (!discovery?.practices.some((practice) => practice.id === state.scope.practiceID)) return
+    if (view === "analytics" && !canViewPracticeAnalytics(discovery, state.scope.practiceID)) return
+    if (view === "operator-analytics" && !discovery.platformOperator) return
+    patch((current) => ({
+      ...current,
+      selection: { ...current.selection, view, contextPanelOpen: false },
+    }))
   }
 
   async function dispatch(intent: WorkspaceProjectionIntent): Promise<void> {
@@ -680,21 +796,15 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "select-manage-agent") {
-      if (!state.discovery?.practices.some(practice => practice.id === state.scope.practiceID)) return
-      patch(current => ({ ...current, selection: { ...current.selection, view: "manage-agent", contextPanelOpen: false } }))
+      selectPageView("manage-agent")
       return
     }
-    if (intent.type === "select-analytics" || intent.type === "select-operator-analytics") {
-      const operator = state.discovery?.platformOperator
-      if (intent.type === "select-operator-analytics" ? !operator : !canViewPracticeAnalytics(state.discovery, state.scope.practiceID)) return
-      patch((current) => ({
-        ...current,
-        selection: {
-          ...current.selection,
-          view: intent.type === "select-analytics" ? "analytics" : "operator-analytics",
-          contextPanelOpen: false,
-        },
-      }))
+    if (intent.type === "select-analytics") {
+      selectPageView("analytics")
+      return
+    }
+    if (intent.type === "select-operator-analytics") {
+      selectPageView("operator-analytics")
       return
     }
     if (intent.type === "open-ai-context") {
@@ -826,6 +936,10 @@ export function createWorkspaceProjection({
     if (intent.type === "remember-rail-scroll") {
       railScrollTop = Math.max(0, intent.scrollTop)
       persistRail({ ...state.rail, scrollTop: railScrollTop })
+      return
+    }
+    if (intent.type === "navigation-changed") {
+      await restoreNavigation()
     }
   }
 
@@ -1469,12 +1583,18 @@ function restoreRailPreferences(
   }
 }
 
+function settledTaskRead(result: WorkspaceAuthorityResult<Task>) {
+  return result.kind === "success" || result.kind === "missing" || result.kind === "unauthorized"
+}
+
 function restoreAuthorizedScope(
   discovery: AccessDiscovery,
   preferences: WorkspacePreferences,
+  requestedPracticeID?: string,
 ): WorkspaceScope | undefined {
   const storedPractice = preferences.read(practiceStorageKey)
   const practice =
+    discovery.practices.find((item) => item.id === requestedPracticeID) ??
     discovery.practices.find((item) => item.id === storedPractice) ??
     discovery.practices[0]
   if (!practice) return undefined

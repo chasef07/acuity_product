@@ -52,6 +52,10 @@ import { workspaceScopeForCall } from "@/lib/calling/workspace-scope"
 import { cn } from "@/lib/utils"
 import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
 import {
+  parseWorkspaceLocation,
+  workspaceLocationSearch,
+} from "@/lib/workspace-location"
+import {
   createWorkspaceProjection,
   type WorkspaceProjectionIntent,
 } from "@/lib/workspace-projection"
@@ -108,6 +112,14 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           }
         },
       },
+      navigation: {
+        read: () => parseWorkspaceLocation(window.location.search),
+        write: (location, mode) => {
+          const url = `${workspacePath}${workspaceLocationSearch(location)}`
+          if (mode === "push") window.history.pushState(null, "", url)
+          else window.history.replaceState(null, "", url)
+        },
+      },
       environment: {
         clock: {
           setTimeout: (callback, milliseconds) =>
@@ -131,7 +143,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
   useEffect(() => {
     if (session.isPending) return
     if (!sessionID) {
-      router.replace("/sign-in?next=%2Fworkspace")
+      router.replace(signInURL())
       return
     }
     void projection.start()
@@ -146,6 +158,16 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       }
     }, 60_000)
     return () => window.clearInterval(timer)
+  }, [projection])
+
+  useEffect(() => {
+    const navigationChanged = () => {
+      if (window.location.pathname === workspacePath) {
+        void projection.dispatch({ type: "navigation-changed" })
+      }
+    }
+    window.addEventListener("popstate", navigationChanged)
+    return () => window.removeEventListener("popstate", navigationChanged)
   }, [projection])
 
   useEffect(() => {
@@ -169,7 +191,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
         title="Session expired"
         description="Sign in again to reconstruct your authorized workspace."
         action="Return to sign in"
-        onAction={() => void router.push("/sign-in?next=%2Fworkspace")}
+        onAction={() => void router.push(signInURL())}
       />
     )
   }
@@ -490,6 +512,12 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       </>
     )
   })
+}
+
+const workspacePath = "/workspace"
+
+function signInURL() {
+  return `/sign-in?${new URLSearchParams({ next: `${window.location.pathname}${window.location.search}` })}`
 }
 
 function WorkspaceSelector({

@@ -733,10 +733,14 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()
-  await expect(sidebarTaskContext).toBeHidden()
-  await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "closed")
-  await sidebarTask.click()
-  await expect(sidebarTaskContext).toBeVisible()
+  await expect(page).toHaveURL(/\/workspace\?task=[^&]+$/)
+  await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "open")
+  await expect(
+    sidebarTaskContext.getByRole("heading", {
+      name: "Follow up on text",
+      exact: true,
+    }),
+  ).toBeVisible()
   await expect(
     page.getByRole("article").filter({ hasText: inboundText }),
   ).toBeVisible()
@@ -1216,4 +1220,29 @@ test("staff replies complete text conversations and new texts return to the inbo
   await completedReview.getByRole("button").first().click()
   await page.getByRole("button", { name: "Reopen", exact: true }).click()
   await expect(completedReview).toBeVisible()
+})
+
+test("refresh and back keep the selected Task", async ({ page }) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+  await sendInbound(page, "location-first", "First synthetic location question", "+15550601111")
+  await sendInbound(page, "location-second", "Second synthetic location question", "+15550602222")
+  await page.getByRole("button", { name: /^Texts/ }).click()
+  const first = page.getByTestId("task-row").filter({ hasText: "(555) 060-1111" })
+  const second = page.getByTestId("task-row").filter({ hasText: "(555) 060-2222" })
+  await expect(first).toBeVisible({ timeout: 30_000 })
+  await expect(second).toBeVisible()
+  const firstID = await first.getAttribute("data-task-id")
+  const secondID = await second.getAttribute("data-task-id")
+  await first.getByRole("button").first().click()
+  await expect(page).toHaveURL(new RegExp(`/workspace\\?task=${firstID}$`))
+  await second.getByRole("button").first().click()
+  await expect(page).toHaveURL(new RegExp(`/workspace\\?task=${secondID}$`))
+  await page.reload()
+  await expect(page.getByRole("article").filter({ hasText: "Second synthetic location question" })).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/workspace\\?task=${secondID}$`))
+  await page.goBack()
+  await expect(page).toHaveURL(new RegExp(`/workspace\\?task=${firstID}$`))
+  await expect(page.getByRole("article").filter({ hasText: "First synthetic location question" })).toBeVisible()
+  await expect(page.getByRole("article").filter({ hasText: "Second synthetic location question" })).toHaveCount(0)
 })
