@@ -616,10 +616,10 @@ function WorkspaceLoading() {
         <Skeleton className="mt-3 h-64 w-full" />
       </aside>
       <main className="flex flex-1 items-center justify-center">
-        <Skeleton className="p-3" role="status">
+        <div role="status" className="animate-pulse text-muted-foreground motion-reduce:animate-none">
           <AcuityMark className="size-12" />
           <span className="sr-only">Loading Acuity workspace</span>
-        </Skeleton>
+        </div>
       </main>
     </div>
   )
