@@ -18,7 +18,6 @@ export type BlogPost = {
   date: string
   readingTime: string
   category: string
-  tags: string[]
   author: BlogAuthor
   hero?: "dead-air"
   load: () => Promise<{ default: ComponentType }>
@@ -41,7 +40,6 @@ export const blogPosts: BlogPost[] = [
     date: "2026-10-06",
     readingTime: "8 min read",
     category: "Voice AI",
-    tags: ["Speech-to-speech", "Evals", "LLM judges", "Multi-agent", "LiveKit"],
     author: chase,
     hero: "dead-air",
     load: () => import("@/content/blog/the-dead-air-problem.mdx"),

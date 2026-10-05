@@ -1,10 +1,10 @@
 import styles from "./blog.module.css"
 
-const agentBars = Array.from({ length: 44 }, (_, i) =>
+export const agentBars = Array.from({ length: 44 }, (_, i) =>
   Math.round(10 + 46 * Math.abs(Math.sin(i * 1.7) * Math.cos(i * 0.45))),
 )
 
-const callerBars = Array.from({ length: 16 }, (_, i) =>
+export const callerBars = Array.from({ length: 16 }, (_, i) =>
   Math.round(8 + 34 * Math.abs(Math.sin(i * 2.3 + 1) * Math.cos(i * 0.9))),
 )
 

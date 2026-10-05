@@ -21,7 +21,7 @@ export default function BlogIndexPage() {
     <MarketingFrame current="/blog">
       <div className={styles.page}>
         <section className={styles.index}>
-          <header className={styles.indexHeader}>
+          <header>
             <h1>Blog</h1>
             <p>Field notes from building voice AI for medicine.</p>
           </header>

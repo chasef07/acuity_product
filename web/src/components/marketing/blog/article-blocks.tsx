@@ -99,38 +99,3 @@ export function Stat({
     </div>
   )
 }
-
-export function PullQuote({ children, cite }: { children: ReactNode; cite?: string }) {
-  return (
-    <figure className={styles.pullQuote}>
-      <blockquote>{children}</blockquote>
-      {cite ? <figcaption>{cite}</figcaption> : null}
-    </figure>
-  )
-}
-
-export function Steps({ children }: { children: ReactNode }) {
-  return <div className={styles.steps}>{children}</div>
-}
-
-export function Step({
-  n,
-  children,
-  alert = false,
-  last = false,
-}: {
-  n: number
-  children: ReactNode
-  alert?: boolean
-  last?: boolean
-}) {
-  return (
-    <div className={cn(styles.step, alert && styles.stepAlert)}>
-      <div className={styles.stepRail}>
-        <span className={styles.stepNumber}>{n}</span>
-        {last ? null : <span className={styles.stepLine} />}
-      </div>
-      <div className={styles.stepBody}>{children}</div>
-    </div>
-  )
-}

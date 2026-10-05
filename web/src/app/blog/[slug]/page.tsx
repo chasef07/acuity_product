@@ -1,12 +1,11 @@
 import type { Metadata } from "next"
 import Image from "next/image"
 import Link from "next/link"
-import { permanentRedirect } from "next/navigation"
-import { ArrowLeft, ArrowRight, ArrowUpRight } from "lucide-react"
+import { notFound } from "next/navigation"
+import { ArrowLeft, ArrowRight } from "lucide-react"
 
 import styles from "@/components/marketing/blog/blog.module.css"
 import { DeadAirWaveform } from "@/components/marketing/blog/dead-air-waveform"
-import { ReadingProgress } from "@/components/marketing/blog/reading-progress"
 import { MarketingFrame } from "@/components/marketing/enterprise-site"
 import { blogPosts, formatBlogDate, getBlogPost } from "@/lib/blog"
 import { siteConfig } from "@/lib/site"
@@ -15,21 +14,19 @@ type PageProps = {
   params: Promise<{ slug: string }>
 }
 
+export const dynamicParams = false
+
 export function generateStaticParams() {
   return blogPosts.map((post) => ({ slug: post.slug }))
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const { slug } = await params
-  const post = getBlogPost(slug)
-  if (!post) {
-    return { title: "Blog" }
-  }
+  const post = getBlogPost((await params).slug)
+  if (!post) notFound()
   const path = `/blog/${post.slug}`
   return {
     title: post.title,
     description: post.description,
-    keywords: post.tags,
     authors: [{ name: post.author.name }],
     alternates: { canonical: path },
     openGraph: {
@@ -41,7 +38,6 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       locale: "en_US",
       publishedTime: post.date,
       authors: [post.author.name],
-      tags: post.tags,
     },
     twitter: {
       card: "summary_large_image",
@@ -53,11 +49,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function BlogPostPage({ params }: PageProps) {
-  const { slug } = await params
-  const post = getBlogPost(slug)
-  if (!post) {
-    permanentRedirect("/blog")
-  }
+  const post = getBlogPost((await params).slug)
+  if (!post) notFound()
 
   const { default: Content } = await post.load()
   const url = new URL(`/blog/${post.slug}`, siteConfig.url).toString()
@@ -67,10 +60,7 @@ export default async function BlogPostPage({ params }: PageProps) {
     headline: post.title,
     description: post.description,
     datePublished: post.date,
-    dateModified: post.date,
     url,
-    keywords: post.tags.join(", "),
-    mainEntityOfPage: { "@type": "WebPage", "@id": url },
     author: { "@type": "Person", name: post.author.name },
     publisher: { "@id": `${siteConfig.url}/#organization` },
   }
@@ -78,57 +68,25 @@ export default async function BlogPostPage({ params }: PageProps) {
   return (
     <MarketingFrame current="/blog">
       <div className={styles.page}>
-        <ReadingProgress targetId="blog-article" />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
             __html: JSON.stringify(articleSchema).replace(/</g, "\\u003c"),
           }}
         />
-
         <header className={styles.hero}>
-          <div className={styles.heroGlow} aria-hidden="true" />
-          <div className={styles.heroInner}>
-            <Link className={styles.backLink} href="/blog">
-              <ArrowLeft size={16} aria-hidden="true" />
-              Blog
-            </Link>
-            <p className={styles.meta}>
-              <span className={styles.category}>{post.category}</span>
-              <span>{formatBlogDate(post.date)}</span>
-              <span aria-hidden="true">·</span>
-              <span>{post.readingTime}</span>
-            </p>
-            <h1 className={styles.title}>{post.title}</h1>
-            <p className={styles.dek}>{post.dek}</p>
-            <div className={styles.byline}>
-              <Image className={styles.avatar} src={post.author.portrait} alt="" width={44} height={44} />
-              <span className={styles.bylineText}>
-                <span className={styles.bylineName}>{post.author.name}</span>
-                <span className={styles.bylineRole}>{post.author.role}</span>
-              </span>
-            </div>
-            {post.hero === "dead-air" ? (
-              <div className={styles.waveCard}>
-                <DeadAirWaveform />
-              </div>
-            ) : null}
-          </div>
-        </header>
-
-        <div id="blog-article" className={styles.article}>
-          <Content />
-        </div>
-
-        <div className={styles.tags}>
-          {post.tags.map((tag) => (
-            <span className={styles.tag} key={tag}>
-              {tag}
-            </span>
-          ))}
-        </div>
-
-        <div className={styles.authorCard}>
+          <Link className={styles.backLink} href="/blog">
+            <ArrowLeft size={16} aria-hidden="true" />
+            Blog
+          </Link>
+          <p className={styles.meta}>
+            <span className={styles.category}>{post.category}</span>
+            <span>{formatBlogDate(post.date)}</span>
+            <span aria-hidden="true">·</span>
+            <span>{post.readingTime}</span>
+          </p>
+          <h1 className={styles.title}>{post.title}</h1>
+          <p className={styles.dek}>{post.dek}</p>
           <div className={styles.byline}>
             <Image className={styles.avatar} src={post.author.portrait} alt="" width={44} height={44} />
             <span className={styles.bylineText}>
@@ -136,13 +94,16 @@ export default async function BlogPostPage({ params }: PageProps) {
               <span className={styles.bylineRole}>{post.author.role}</span>
             </span>
           </div>
-          {post.author.x ? (
-            <a className={styles.xLink} href={`https://x.com/${post.author.x}`} rel="noreferrer" target="_blank">
-              @{post.author.x}
-              <ArrowUpRight size={14} aria-hidden="true" />
-            </a>
+          {post.hero === "dead-air" ? (
+            <div className={styles.waveCard}>
+              <DeadAirWaveform />
+            </div>
           ) : null}
-        </div>
+        </header>
+
+        <article className={styles.article}>
+          <Content />
+        </article>
 
         <section className={styles.cta}>
           <h2>Voice AI agents for patient access, judged on every call.</h2>
@@ -155,7 +116,6 @@ export default async function BlogPostPage({ params }: PageProps) {
             <ArrowRight size={16} aria-hidden="true" />
           </Link>
         </section>
-        <div className={styles.bottomSpacer} />
       </div>
     </MarketingFrame>
   )
