@@ -3,14 +3,17 @@
 import { useEffect, useRef, type ReactNode } from "react"
 import {
   ArrowRightIcon,
+  BookOpenIcon,
   Building2Icon,
   CheckIcon,
   ChevronDownIcon,
   FolderIcon,
   FolderOpenIcon,
   ListFilterIcon,
+  MessageSquareTextIcon,
   PhoneIcon,
   SearchIcon,
+  ShieldCheckIcon,
   XIcon,
 } from "lucide-react"
 
@@ -46,6 +49,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -60,6 +64,7 @@ import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { taskGroups } from "@/lib/task-groups"
 import type {
+  ManageAgentPage,
   WorkspaceConnectionState,
   WorkspaceProjectionIntent,
   WorkspaceProjectionState,
@@ -71,6 +76,12 @@ import {
 } from "@/lib/workspace-triage"
 
 export type ConnectionState = WorkspaceConnectionState
+
+const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
+  { value: "transcripts", label: "Transcripts", icon: MessageSquareTextIcon },
+  { value: "knowledge", label: "Knowledge base", icon: BookOpenIcon },
+  { value: "insurance", label: "Insurance list", icon: ShieldCheckIcon },
+]
 
 const taskFilterLabels: Partial<Record<TaskCategoryFilter, string>> = {
   appointments: "Scheduling follow-up",
@@ -173,16 +184,18 @@ export function WorkspaceRail({
   const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
   const folders = workspaceFolders(projection)
   const completed = projection.completedTasks
+  const manageAgent = projection.selection.view === "manage-agent"
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (
+        !searchInput.current ||
         !(event.metaKey || event.ctrlKey) ||
         event.key.toLowerCase() !== "k"
       ) {
         return
       }
       event.preventDefault()
-      searchInput.current?.focus()
+      searchInput.current.focus()
     }
     window.addEventListener("keydown", openSearch)
     return () => window.removeEventListener("keydown", openSearch)
@@ -193,7 +206,7 @@ export function WorkspaceRail({
       scrollContainer.current?.scrollTo({ top: projection.rail.scrollTop })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [projection.rail.scrollTop, railStateKey])
+  }, [projection.rail.scrollTop, railStateKey, manageAgent])
 
   function toggle(section: WorkspaceRailSection) {
     onIntent({ type: "toggle-rail-section", section })
@@ -249,7 +262,7 @@ export function WorkspaceRail({
             <span className="text-base font-semibold tracking-tight">Acuity Health</span>
           </div>
           {locationControl}
-          <div className="flex items-start gap-2">
+          {!manageAgent && <div className="flex items-start gap-2">
             <form className="min-w-0 flex-1"
               onSubmit={(event) => {
                 event.preventDefault()
@@ -288,9 +301,17 @@ export function WorkspaceRail({
                 </p>
               )}
             </form>
-          </div>
+          </div>}
           {connection === "degraded" && <p role="status" className="px-1 text-xs text-destructive">Live updates delayed. Reconnecting…</p>}
         </SidebarHeader>
+        {manageAgent ? (
+          <SidebarContent className="overflow-y-auto px-2 py-2">
+            <ManageAgentNavigation
+              page={projection.selection.agentPage}
+              onPage={(page) => onIntent({ type: "select-manage-agent", page })}
+            />
+          </SidebarContent>
+        ) : (
         <SidebarContent
           ref={scrollContainer}
           className="gap-2 overflow-y-auto px-2 py-2"
@@ -408,9 +429,47 @@ export function WorkspaceRail({
             </CompletedGroup>
           </div>
         </SidebarContent>
+        )}
         <SidebarFooter className="border-t border-sidebar-border p-2 empty:hidden">{callingStatus}</SidebarFooter>
       </Sidebar>
     </>
+  )
+}
+
+function ManageAgentNavigation({
+  page,
+  onPage,
+}: {
+  page: ManageAgentPage
+  onPage: (page: ManageAgentPage) => void
+}) {
+  const { isMobile, setOpenMobile } = useSidebar()
+  return (
+    <SidebarGroup className="p-0" role="navigation" aria-label="Manage agent">
+      <p className="flex h-8 items-center px-2.5 text-xs font-medium text-muted-foreground">
+        Manage agent
+      </p>
+      <SidebarGroupContent>
+        <SidebarMenu className="gap-0.5">
+          {manageAgentPages.map((item) => (
+            <SidebarMenuItem key={item.value}>
+              <SidebarMenuButton
+                isActive={page === item.value}
+                aria-current={page === item.value ? "page" : undefined}
+                className="h-8 px-2.5"
+                onClick={() => {
+                  onPage(item.value)
+                  if (isMobile) setOpenMobile(false)
+                }}
+              >
+                <item.icon aria-hidden="true" />
+                <span>{item.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   )
 }
 

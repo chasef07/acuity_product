@@ -39,6 +39,13 @@ func (p *testEmbedder) Embed(_ context.Context, texts []string, _ TaskType) ([][
 	}
 	return result, nil
 }
+func TestMissingEmbeddingProviderIsNamedAsTheFailureCause(t *testing.T) {
+	_, err := (&Module{}).embed(context.Background(), []string{"office hours"}, RetrievalQuery)
+	if !errors.Is(err, ErrUnavailable) || FailureCode(err) != "provider_not_configured" {
+		t.Fatalf("embed without provider = %v (%s)", err, FailureCode(err))
+	}
+}
+
 func TestValidateImport(t *testing.T) {
 	cases := []struct {
 		name     string

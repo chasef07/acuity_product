@@ -77,11 +77,13 @@ jobs:
           CALLLEG_SCHEMA_CUTOVER_COMPLETE: ${{ vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE }}
           RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
           USABLE_DATABASE_CONNECTIONS: ${{ vars.USABLE_DATABASE_CONNECTIONS }}
+          MIDDLEWARE_BASE_URL: ${{ vars.MIDDLEWARE_BASE_URL }}
+          MIDDLEWARE_API_SECRET_SECRET: ${{ vars.MIDDLEWARE_API_SECRET_SECRET }}
         run: |
           gcloud builds submit \
             --project="${{ vars.GCP_PROJECT_ID }}" \
             --region="${{ vars.GCP_REGION }}" \
             --service-account="projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" \
             --config=cloudbuild.release.yaml \
-            --substitutions="_IMAGE_TAG=${RELEASE_SHA},_CALLLEG_SCHEMA_CUTOVER_COMPLETE=${CALLLEG_SCHEMA_CUTOVER_COMPLETE},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS}" \
+            --substitutions="_IMAGE_TAG=${RELEASE_SHA},_CALLLEG_SCHEMA_CUTOVER_COMPLETE=${CALLLEG_SCHEMA_CUTOVER_COMPLETE},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS},_MIDDLEWARE_BASE_URL=${MIDDLEWARE_BASE_URL},_MIDDLEWARE_API_SECRET_SECRET=${MIDDLEWARE_API_SECRET_SECRET}" \
             .

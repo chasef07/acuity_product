@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+var errProviderNotConfigured = fmt.Errorf("%w: embedding provider is not configured", ErrUnavailable)
+
 type ProviderFailure struct {
 	Code   string
 	Status int
@@ -44,6 +46,9 @@ func FailureCode(err error) string {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "deadline_exceeded"
+	}
+	if errors.Is(err, errProviderNotConfigured) {
+		return "provider_not_configured"
 	}
 	if errors.Is(err, ErrUnavailable) {
 		return "corpus_or_provider_unavailable"

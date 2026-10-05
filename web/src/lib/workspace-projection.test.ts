@@ -799,8 +799,11 @@ test("booking analytics is Admin-only and operator diagnostics remain separate",
     }
     await projection.dispatch({ type: "select-manage-agent" })
     assert.equal(projection.getSnapshot().selection.view, "manage-agent")
+    assert.equal(projection.getSnapshot().selection.agentPage, "transcripts")
+    await projection.dispatch({ type: "select-manage-agent", page: "insurance" })
     await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
     assert.equal(projection.getSnapshot().selection.view, "manage-agent")
+    assert.equal(projection.getSnapshot().selection.agentPage, "insurance")
     projection.stop()
   }
 })
@@ -1427,6 +1430,35 @@ test("back and forward restore the Task or page view in the URL", async () => {
   await projection.dispatch({ type: "navigation-changed" })
   assert.equal(projection.getSnapshot().selection.view, "manage-agent")
   assert.deepEqual(navigation.writes.slice(3), [{ location: { view: "manage-agent" }, mode: "replace" }])
+  projection.stop()
+})
+
+test("Manage agent pages are kept in the URL and restored by refresh and back", async () => {
+  const realtime = deterministicRealtime()
+  const navigation = memoryNavigation({ view: "manage-agent", page: "knowledge" })
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([task("first-task")]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.view, "manage-agent")
+  assert.equal(projection.getSnapshot().selection.agentPage, "knowledge")
+  await projection.dispatch({ type: "select-manage-agent", page: "insurance" })
+  await projection.dispatch({ type: "select-manage-agent", page: "transcripts" })
+  assert.deepEqual(navigation.writes, [
+    { location: { view: "manage-agent", page: "insurance" }, mode: "push" },
+    { location: { view: "manage-agent" }, mode: "push" },
+  ])
+  navigation.go({ view: "manage-agent", page: "insurance" })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().selection.agentPage, "insurance")
+  navigation.go({ view: "manage-agent" })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().selection.agentPage, "transcripts")
+  assert.equal(navigation.writes.length, 2)
   projection.stop()
 })
 

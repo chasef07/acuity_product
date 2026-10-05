@@ -30,6 +30,7 @@ var packageRoles = map[string]role{
 	"access":         domain,
 	"contactcontext": domain,
 	"humancalling":   domain,
+	"insurance":      domain,
 	"interaction":    domain,
 	"knowledge":      domain,
 	"messaging":      domain,
@@ -57,6 +58,7 @@ var packageRoles = map[string]role{
 var allowedDomainImports = []string{
 	"humancalling -> access",
 	"humancalling -> work",
+	"insurance -> access",
 	"interaction -> access",
 	"interaction -> work",
 	"knowledge -> access",

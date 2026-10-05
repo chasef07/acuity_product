@@ -288,6 +288,74 @@ Acceptance requires one eligible Google login, one ineligible Google login
 rejection, and proof that the eligible User receives only the scope authorized
 by `Access`. Production has no password or verification-email authentication.
 
+## Insurance rules (optional)
+
+The read-only Insurance list in Manage agent reads plans from the Abita
+middleware. It is optional. Until it is configured, the Insurance list says
+"Insurance rules aren't available right now" and nothing else changes.
+`acuity-portal-api` refuses to start when only one of `MIDDLEWARE_BASE_URL`
+and `MIDDLEWARE_API_SECRET` is set, so the release applies both together and
+only to `acuity-portal-api`.
+
+Store the middleware's existing API secret; do not mint a new value. Read it
+without echoing it to the terminal or shell history:
+
+```sh
+read -rs MIDDLEWARE_API_SECRET_VALUE
+printf '%s' "$MIDDLEWARE_API_SECRET_VALUE" |
+  gcloud secrets create acuity-product-middleware-api-secret \
+    --project acuity-health-prod \
+    --replication-policy user-managed \
+    --locations us-east1 \
+    --data-file=-
+unset MIDDLEWARE_API_SECRET_VALUE
+```
+
+Grant only the portal API runtime identity access to that secret:
+
+```sh
+PORTAL_API_SERVICE_ACCOUNT="$(
+  gcloud run services describe acuity-portal-api \
+    --project acuity-health-prod \
+    --region us-east1 \
+    --format 'value(spec.template.spec.serviceAccountName)'
+)"
+gcloud secrets add-iam-policy-binding acuity-product-middleware-api-secret \
+  --project acuity-health-prod \
+  --member "serviceAccount:${PORTAL_API_SERVICE_ACCOUNT}" \
+  --role roles/secretmanager.secretAccessor
+```
+
+Then set two GitHub variables (repository or `production` environment) and let
+the next release apply them:
+
+- `MIDDLEWARE_BASE_URL`: the middleware's `https://` base URL, with no
+  credentials, query, or commas.
+- `MIDDLEWARE_API_SECRET_SECRET`: the Secret Manager secret name,
+  `acuity-product-middleware-api-secret`.
+
+The release validates both before any Cloud Run change and fails if only one is
+set. It adds `MIDDLEWARE_BASE_URL` with `--update-env-vars` and binds
+`MIDDLEWARE_API_SECRET=<secret>:latest` with `--update-secrets` on the new
+`acuity-portal-api` revision, keeping every existing variable and secret. With
+neither variable set, the release commands are unchanged.
+
+Removing the GitHub variables does not remove live configuration. To turn the
+Insurance list off again, remove both values in one update:
+
+```sh
+gcloud run services update acuity-portal-api \
+  --project acuity-health-prod \
+  --region us-east1 \
+  --remove-env-vars MIDDLEWARE_BASE_URL \
+  --remove-secrets MIDDLEWARE_API_SECRET \
+  --quiet
+```
+
+A green release proves only that the revision started with the configuration,
+not that the middleware answered. Open the Insurance list in Manage agent and
+confirm it shows plans before relying on it.
+
 ## Clean-stack bootstrap
 
 A schema-only database is intentionally unusable for provider traffic. Before

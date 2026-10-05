@@ -103,6 +103,13 @@ func applyPublication(command knowledge.ImportCommand, apply, automatic bool) er
 		return err
 	}
 	if unchanged != nil {
+		module, err := knowledge.New(pool, access.New(pool, nil), nil, knowledge.Config{})
+		if err != nil {
+			return err
+		}
+		if err := module.RecordSectionOrder(ctx, command, unchanged.Revision.ID); err != nil {
+			return fmt.Errorf("unchanged corpus section order could not be recorded: %w", err)
+		}
 		return json.NewEncoder(os.Stdout).Encode(unchanged)
 	}
 	location := os.Getenv("KNOWLEDGE_GOOGLE_LOCATION")

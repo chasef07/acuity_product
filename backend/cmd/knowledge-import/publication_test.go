@@ -69,6 +69,28 @@ func TestAutomaticPublication(t *testing.T) {
 	if embedder.calls != 1 {
 		t.Fatalf("unchanged source embedded again: %d", embedder.calls)
 	}
+	positions := func() string {
+		t.Helper()
+		var order string
+		if err := pool.QueryRow(ctx, `SELECT string_agg(section_id || '=' || coalesce(position::text, 'null'), ',' ORDER BY section_id) FROM knowledge_passages WHERE revision_id = $1`, revision.ID).Scan(&order); err != nil {
+			t.Fatal(err)
+		}
+		return order
+	}
+	if err := module.RecordSectionOrder(ctx, command, revision.ID); err != nil || positions() != "hours=0,parking=1" {
+		t.Fatalf("recorded positions were rewritten: %s, %v", positions(), err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE knowledge_passages SET position = NULL WHERE revision_id = $1`, revision.ID); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := module.RecordSectionOrder(ctx, command, revision.ID); err != nil || positions() != "hours=1,parking=0" {
+			t.Fatalf("unchanged source order = %s, %v", positions(), err)
+		}
+	}
+	if err := module.RecordSectionOrder(ctx, command, uuid.NewString()); !errors.Is(err, knowledge.ErrConflict) {
+		t.Fatalf("section order for a superseded revision: %v", err)
+	}
 	for _, actor := range []string{"", "unknown@example.com"} {
 		if _, _, err := preparePublication(ctx, pool, command, actor, true); err == nil {
 			t.Fatal("unchanged source bypassed operator check")

@@ -14,14 +14,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
   Table,
   TableBody,
   TableCell,
@@ -34,9 +26,13 @@ import {
   AppointmentActions,
   callDuration,
 } from "./agent-call-panel"
+import { InsuranceList } from "./insurance-list"
+import { KnowledgeBase } from "./knowledge-base"
+import { AgentPageHeader, OptionSelect } from "./manage-agent-page"
 import type { AgentCallsQuery, Location } from "@/lib/api/generated/types.gen"
 import { useAgentCalls } from "@/lib/clients/agent-calls"
 import { formatUSPhone } from "@/lib/phone"
+import type { ManageAgentPage } from "@/lib/workspace-projection"
 
 const ranges = [
   { value: "24h", label: "Last 24 hours" },
@@ -44,6 +40,31 @@ const ranges = [
   { value: "30d", label: "Last 30 days" },
 ]
 export function ManageAgent({
+  practiceID,
+  locationScopeID,
+  locations,
+  page,
+}: {
+  practiceID: string
+  locationScopeID: string
+  locations: Location[]
+  page: ManageAgentPage
+}) {
+  const props = { practiceID, locationScopeID, locations }
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-canvas">
+      {page === "knowledge" ? (
+        <KnowledgeBase {...props} />
+      ) : page === "insurance" ? (
+        <InsuranceList {...props} />
+      ) : (
+        <AgentTranscripts {...props} />
+      )}
+    </div>
+  )
+}
+
+function AgentTranscripts({
   practiceID,
   locationScopeID,
   locations,
@@ -98,23 +119,22 @@ export function ManageAgent({
 
   return (
     <section
-      aria-label="Manage agent"
-      className="flex min-h-0 flex-1 flex-col bg-canvas"
+      aria-label="Transcripts"
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
-      <header className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-6 sm:px-6">
-        <h1 className="flex-1 text-2xl font-semibold tracking-tight">
-          Manage agent
-        </h1>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Refresh calls"
-          onClick={() => setVersion((value) => value + 1)}
-        >
-          <RefreshCwIcon />
-        </Button>
-      </header>
-      <div className="flex flex-wrap items-center gap-2 px-4 pb-5 pt-2 sm:px-6">
+      <AgentPageHeader
+        title="Transcripts"
+        action={
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Refresh calls"
+            onClick={() => setVersion((value) => value + 1)}
+          >
+            <RefreshCwIcon />
+          </Button>
+        }
+      >
         <Input
           aria-label="Search phone number"
           placeholder="Search phone number"
@@ -123,44 +143,13 @@ export function ManageAgent({
           maxLength={32}
           className="w-full sm:w-56"
         />
-        <Select
-          value={office}
-          items={offices}
-          onValueChange={(value) => value && setOffice(value)}
-        >
-          <SelectTrigger aria-label="Office">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {offices.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        <Select
+        <OptionSelect label="Office" value={office} items={offices} onChange={setOffice} />
+        <OptionSelect
+          label="Date range"
           value={range}
           items={ranges}
-          onValueChange={(value) =>
-            value && setRange(value as AgentCallsQuery["range"])
-          }
-        >
-          <SelectTrigger aria-label="Date range">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {ranges.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+          onChange={(value) => setRange(value as AgentCallsQuery["range"])}
+        />
         <Button
           variant={flaggedOnly ? "secondary" : "ghost"}
           aria-pressed={flaggedOnly}
@@ -175,7 +164,7 @@ export function ManageAgent({
             {nextCursor ? "+" : ""} {calls.length === 1 && !nextCursor ? "call" : "calls"}
           </p>
         )}
-      </div>
+      </AgentPageHeader>
       <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 sm:px-6">
         {current.status === "loading" && (
           <div

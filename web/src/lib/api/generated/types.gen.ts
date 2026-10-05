@@ -4,6 +4,71 @@ export type ClientOptions = {
     baseUrl: 'https://api.acuity.example' | (string & {});
 };
 
+export type LocationKnowledgeQuery = {
+    practiceId: string;
+    locationId: string;
+};
+
+export type LocationKnowledge = {
+    locationId: string;
+    revision?: KnowledgeRevisionSummary;
+    sections: Array<KnowledgeSection>;
+};
+
+export type KnowledgeRevisionSummary = {
+    id: string;
+    createdAt: string;
+};
+
+export type KnowledgeSection = {
+    id: string;
+    title: string;
+    text: string;
+};
+
+export type InsuranceCoverage = 'medical' | 'routine_vision';
+
+export type InsuranceOutcome = 'accepted' | 'not_accepted' | 'needs_staff_task';
+
+export type InsurancePlansQuery = {
+    practiceId: string;
+    locationId: string;
+    coverage: InsuranceCoverage;
+};
+
+export type InsurancePlansPage = {
+    locationId: string;
+    coverage: InsuranceCoverage;
+    plans: Array<InsurancePlanRule>;
+};
+
+export type InsurancePlanRule = {
+    planId: string;
+    label: string;
+    /**
+     * Other ways callers name this plan, excluding the label.
+     */
+    names: Array<string>;
+    carrierCode?: string;
+    carrierId?: string;
+    /**
+     * AdvancedMD carrier directory name.
+     */
+    carrierName?: string;
+    outcome: InsuranceOutcome;
+    allowedProviders: Array<string>;
+    requirements: Array<'prior_authorization' | 'pcp_referral' | 'staff_verify'>;
+    callerNotice?: string;
+    /**
+     * Practice insurance list comment, verbatim.
+     */
+    note?: string;
+    /**
+     * Other offices on the same list that accept this plan when this one does not.
+     */
+    acceptedAt: Array<string>;
+};
+
 export type KnowledgeSearchResult = {
     outcome: 'found' | 'no_relevant_information' | 'temporary_failure';
     revisionId?: string;
@@ -3849,6 +3914,80 @@ export type RequeueOperatorProviderReceiptResponses = {
 };
 
 export type RequeueOperatorProviderReceiptResponse = RequeueOperatorProviderReceiptResponses[keyof RequeueOperatorProviderReceiptResponses];
+
+export type QueryInsurancePlansData = {
+    body: InsurancePlansQuery;
+    path?: never;
+    query?: never;
+    url: '/v1/insurance/plans/query';
+};
+
+export type QueryInsurancePlansErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryInsurancePlansError = QueryInsurancePlansErrors[keyof QueryInsurancePlansErrors];
+
+export type QueryInsurancePlansResponses = {
+    /**
+     * Plans for the Location and visit coverage.
+     */
+    200: InsurancePlansPage;
+};
+
+export type QueryInsurancePlansResponse = QueryInsurancePlansResponses[keyof QueryInsurancePlansResponses];
+
+export type QueryLocationKnowledgeData = {
+    body: LocationKnowledgeQuery;
+    path?: never;
+    query?: never;
+    url: '/v1/knowledge/query';
+};
+
+export type QueryLocationKnowledgeErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryLocationKnowledgeError = QueryLocationKnowledgeErrors[keyof QueryLocationKnowledgeErrors];
+
+export type QueryLocationKnowledgeResponses = {
+    /**
+     * The current knowledge for the Location, or no revision when none has been imported.
+     */
+    200: LocationKnowledge;
+};
+
+export type QueryLocationKnowledgeResponse = QueryLocationKnowledgeResponses[keyof QueryLocationKnowledgeResponses];
 
 export type SearchOfficeKnowledgeData = {
     body: {

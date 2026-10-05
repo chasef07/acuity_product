@@ -18,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/insurance"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/knowledge"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
@@ -286,13 +287,25 @@ func runAuthorizedHTTP(
 		if err != nil {
 			return err
 		}
-		var knowledgeModule *knowledge.Module
+		var embedder knowledge.Embedder
 		if config.KnowledgeGoogleProject != "" {
 			provider, providerErr := knowledge.NewGoogleEmbedder(ctx, config.KnowledgeGoogleProject, config.KnowledgeGoogleLocation, nil)
 			if providerErr != nil {
 				return providerErr
 			}
-			knowledgeModule, err = knowledge.New(database, accessModule, provider, knowledge.Config{ProviderTimeout: 3 * time.Second})
+			embedder = provider
+		}
+		knowledgeModule, err := knowledge.New(database, accessModule, embedder, knowledge.Config{ProviderTimeout: 3 * time.Second})
+		if err != nil {
+			return err
+		}
+		var insuranceModule *insurance.Module
+		if config.Middleware.BaseURL != "" {
+			rules, rulesErr := insurance.NewMiddlewareClient(config.Middleware.BaseURL, config.Middleware.APISecret, nil)
+			if rulesErr != nil {
+				return rulesErr
+			}
+			insuranceModule, err = insurance.New(accessModule, rules)
 			if err != nil {
 				return err
 			}
@@ -311,6 +324,7 @@ func runAuthorizedHTTP(
 			Work:                 workModule,
 			Workspace:            workspace.New(database, accessModule),
 			Knowledge:            knowledgeModule,
+			Insurance:            insuranceModule,
 			ServiceAuthenticator: serviceAuth,
 		})
 		if err != nil {

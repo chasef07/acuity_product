@@ -41,6 +41,12 @@ type Config struct {
 	Messaging               MessagingConfig
 	KnowledgeGoogleProject  string
 	KnowledgeGoogleLocation string
+	Middleware              MiddlewareConfig
+}
+
+type MiddlewareConfig struct {
+	BaseURL   string
+	APISecret string
 }
 
 type LocationVoiceProvisionConfig struct {
@@ -186,6 +192,13 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if role == RolePortalAPI {
 		if config.Service, err = loadServiceConfig(getenv); err != nil {
 			return Config{}, err
+		}
+		config.Middleware = MiddlewareConfig{
+			BaseURL:   strings.TrimSpace(getenv("MIDDLEWARE_BASE_URL")),
+			APISecret: strings.TrimSpace(getenv("MIDDLEWARE_API_SECRET")),
+		}
+		if (config.Middleware.BaseURL == "") != (config.Middleware.APISecret == "") {
+			return Config{}, fmt.Errorf("MIDDLEWARE_BASE_URL and MIDDLEWARE_API_SECRET must be set together")
 		}
 	}
 	if role == RolePortalAPI || role == RoleWorker {
