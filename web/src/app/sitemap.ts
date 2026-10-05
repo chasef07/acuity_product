@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next"
 
+import { blogPosts } from "@/lib/blog"
 import { siteConfig } from "@/lib/site"
 
 const publicRoutes = [
@@ -23,16 +24,28 @@ const publicRoutes = [
   },
   { path: "/who-we-are", changeFrequency: "monthly", priority: 0.7, lastModified: "2026-09-06" },
   { path: "/work-with-us", changeFrequency: "monthly", priority: 0.8, lastModified: "2026-09-06" },
+  { path: "/blog", changeFrequency: "weekly", priority: 0.7, lastModified: "2026-10-06" },
 ] as const
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  return publicRoutes.map(({ path, changeFrequency, priority, lastModified }) => ({
-    url: new URL(path, siteConfig.url).toString(),
-    changeFrequency,
-    priority,
-    lastModified,
-    ...(path === "/who-we-are"
-      ? { images: [`${siteConfig.url}/marketing/michael-venincasa-md.jpg`] }
-      : {}),
+  const blogRoutes: MetadataRoute.Sitemap = blogPosts.map((post) => ({
+    url: new URL(`/blog/${post.slug}`, siteConfig.url).toString(),
+    changeFrequency: "monthly",
+    priority: 0.7,
+    lastModified: post.date,
   }))
+
+  const pageRoutes: MetadataRoute.Sitemap = publicRoutes.map(
+    ({ path, changeFrequency, priority, lastModified }) => ({
+      url: new URL(path, siteConfig.url).toString(),
+      changeFrequency,
+      priority,
+      lastModified,
+      ...(path === "/who-we-are"
+        ? { images: [`${siteConfig.url}/marketing/michael-venincasa-md.jpg`] }
+        : {}),
+    }),
+  )
+
+  return [...pageRoutes, ...blogRoutes]
 }

@@ -41,6 +41,7 @@ export type MarketingRoute =
   | "/privacy-policy"
   | "/terms-of-service"
   | "/security"
+  | "/blog"
 
 const navigation: Array<{ href: MarketingRoute; label: string }> = [
   { href: "/", label: "Home" },
@@ -60,6 +61,7 @@ const footerNavigation = [
     label: "Company",
     links: [
       { href: "/who-we-are", label: "Who We Are" },
+      { href: "/blog", label: "Blog" },
       { href: "/work-with-us", label: "Work With Us" },
       { href: "/sign-in", label: "Sign in" },
     ],

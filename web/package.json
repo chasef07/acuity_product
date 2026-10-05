@@ -22,6 +22,9 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@mdx-js/loader": "^3.1.1",
+    "@mdx-js/react": "^3.1.1",
+    "@next/mdx": "16.3.8",
     "@shadcn/react": "^0.3.1",
     "@telnyx/webrtc": "2.27.10",
     "better-auth": "~1.6.33",
@@ -42,6 +45,7 @@
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/jsdom": "^30.0.0",
+    "@types/mdx": "^2.0.14",
     "@types/node": "^24.19.0",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
