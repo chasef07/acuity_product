@@ -665,6 +665,10 @@ export function createWorkspaceProjection({
       failClosed("unauthenticated")
       return
     }
+    if (restored && !settledTaskRead(restored)) {
+      failClosed("unavailable")
+      return
+    }
     const restoredTask = restored?.kind === "success" ? restored.data : undefined
     const scope = restoreAuthorizedScope(result.data, preferences, restoredTask?.practiceId)
     if (!scope) {
@@ -698,7 +702,12 @@ export function createWorkspaceProjection({
   }
 
   async function restoreNavigation() {
-    if (!navigation || state.loadState !== "ready") return
+    if (!navigation) return
+    if (state.loadState === "loading" && accessController) {
+      await start()
+      return
+    }
+    if (state.loadState !== "ready") return
     const location = navigation.read()
     const generation = ++navigationGeneration
     const departedSearch = navigationSearch
@@ -710,6 +719,10 @@ export function createWorkspaceProjection({
     if (generation !== navigationGeneration || navigationSearch !== departedSearch || stopped) return
     if (result?.kind === "unauthenticated") {
       failClosed("unauthenticated")
+      return
+    }
+    if (result && !settledTaskRead(result)) {
+      failClosed("unavailable")
       return
     }
     navigationSearch = workspaceLocationSearch(location)
@@ -1563,6 +1576,10 @@ function restoreRailPreferences(
   } catch {
     return emptyRailState()
   }
+}
+
+function settledTaskRead(result: WorkspaceAuthorityResult<Task>) {
+  return result.kind === "success" || result.kind === "missing" || result.kind === "unauthorized"
 }
 
 function restoreAuthorizedScope(

@@ -1447,6 +1447,55 @@ test("a Task chosen while back is loading wins over the restored Task", async ()
   projection.stop()
 })
 
+test("a temporarily unavailable URL Task stays in the URL behind a visible retry", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const navigation = memoryNavigation({ view: "task", taskID: first.id })
+  let available = false
+  const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first]) })
+  const projection = createWorkspaceProjection({
+    authority: { ...base, task: async (...args) => available ? base.task(...args) : unavailable() },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  assert.equal(projection.getSnapshot().loadState, "unavailable")
+  assert.deepEqual(navigation.writes, [])
+  available = true
+  await projection.dispatch({ type: "retry" })
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.task?.id, first.id)
+  assert.deepEqual(navigation.writes, [])
+  available = false
+  navigation.go({ view: "task", taskID: "other-task" })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().loadState, "unavailable")
+  assert.deepEqual(navigation.writes, [])
+  projection.stop()
+})
+
+test("back during the initial load restores the newer URL", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const second = task("second-task", { phone: "+15557654321" })
+  const navigation = memoryNavigation({ view: "task", taskID: first.id })
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first, second]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  assert.equal(projection.getSnapshot().loadState, "loading")
+  navigation.go({ view: "task", taskID: second.id })
+  await projection.dispatch({ type: "navigation-changed" })
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.task?.id, second.id)
+  assert.deepEqual(navigation.writes, [])
+  projection.stop()
+})
+
 function memoryNavigation(initial: WorkspaceLocation = { view: "none" }) {
   let current = initial
   const writes: Array<{ location: WorkspaceLocation; mode: "push" | "replace" }> = []
