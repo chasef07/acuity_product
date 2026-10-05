@@ -114,7 +114,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       navigation: {
         read: () => parseWorkspaceLocation(window.location.search),
         write: (location, mode) => {
-          const url = `${window.location.pathname}${workspaceLocationSearch(location)}`
+          const url = `${workspacePath}${workspaceLocationSearch(location)}`
           if (mode === "push") window.history.pushState(null, "", url)
           else window.history.replaceState(null, "", url)
         },
@@ -161,7 +161,9 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
 
   useEffect(() => {
     const navigationChanged = () => {
-      void projection.dispatch({ type: "navigation-changed" })
+      if (window.location.pathname === workspacePath) {
+        void projection.dispatch({ type: "navigation-changed" })
+      }
     }
     window.addEventListener("popstate", navigationChanged)
     return () => window.removeEventListener("popstate", navigationChanged)
@@ -505,6 +507,8 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
     )
   })
 }
+
+const workspacePath = "/workspace"
 
 function signInURL() {
   return `/sign-in?${new URLSearchParams({ next: `${window.location.pathname}${window.location.search}` })}`

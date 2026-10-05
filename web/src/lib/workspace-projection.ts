@@ -286,7 +286,6 @@ export function createWorkspaceProjection({
   let railScrollTop = 0
   let navigationSearch = ""
   let navigationGeneration = 0
-  let navigationPending = false
   let replaceNavigation = false
   let restoredTaskID = ""
   const requestBudget: WorkspaceRequestBudget | undefined = environment
@@ -319,7 +318,7 @@ export function createWorkspaceProjection({
   }
 
   function syncNavigation(next: WorkspaceProjectionState) {
-    if (!navigation || navigationPending || next.loadState !== "ready") return
+    if (!navigation || next.loadState !== "ready") return
     const mode = replaceNavigation ? "replace" : "push"
     replaceNavigation = false
     const location = selectedWorkspaceLocation(next.selection)
@@ -656,7 +655,6 @@ export function createWorkspaceProjection({
     }
     const requested = navigation?.read() ?? { view: "none" }
     navigationGeneration += 1
-    navigationPending = false
     navigationSearch = workspaceLocationSearch(requested)
     replaceNavigation = true
     const restored = requested.view === "task"
@@ -703,68 +701,36 @@ export function createWorkspaceProjection({
     if (!navigation || state.loadState !== "ready") return
     const location = navigation.read()
     const generation = ++navigationGeneration
-    navigationSearch = workspaceLocationSearch(location)
-    navigationPending = true
-    if (location.view === "task") {
-      if (state.selection.view !== "engagement" || state.selection.task?.id !== location.taskID) {
-        const result = await authenticatedRequest((token, signal) =>
-          authority.task(token, location.taskID, signal),
-        )
-        if (generation !== navigationGeneration || stopped) return
-        if (result.kind === "unauthenticated") {
-          navigationPending = false
-          failClosed("unauthenticated")
-          return
-        }
-        if (result.kind !== "success" || !showTask(result.data)) showHome()
-      }
-    } else if (location.view === "none") {
-      showHome()
-    } else {
-      selectPageView(location.view)
+    const departedSearch = navigationSearch
+    const selected = location.view === "task" &&
+      state.selection.view === "engagement" && state.selection.task?.id === location.taskID
+    const result = location.view === "task" && !selected
+      ? await authenticatedRequest((token, signal) => authority.task(token, location.taskID, signal))
+      : undefined
+    if (generation !== navigationGeneration || navigationSearch !== departedSearch || stopped) return
+    if (result?.kind === "unauthenticated") {
+      failClosed("unauthenticated")
+      return
     }
-    navigationPending = false
+    navigationSearch = workspaceLocationSearch(location)
     replaceNavigation = true
+    if (result?.kind === "success") showTask(result.data)
+    else if (location.view !== "task" && location.view !== "none") selectPageView(location.view)
     syncNavigation(state)
   }
 
   function showTask(task: Task) {
     const discovery = state.discovery
-    if (!discovery) return false
+    if (!discovery) return
     if (task.practiceId !== state.scope.practiceID) {
       const scope = restoreAuthorizedScope(discovery, preferences, task.practiceId)
-      if (scope?.practiceID !== task.practiceId) return false
+      if (scope?.practiceID !== task.practiceId) return
       selectScope({ type: "select-scope", practiceID: scope.practiceID, locationScopeID: scope.locationScopeID })
     }
     restoredTaskID = task.id
     const group = state.tasks.items.find((item) =>
       item.id === task.id && (item.groupMembers?.length ?? 0) > 1)
     selectEngagement(taskEngagement(task), group ?? task)
-    return true
-  }
-
-  function showHome() {
-    const first = state.tasks.items[0]
-    patch((current) => ({
-      ...current,
-      selection: first
-        ? {
-            ...current.selection,
-            task: first,
-            taskGroup: first.groupMembers && first.groupMembers.length > 1 ? first : undefined,
-            taskError: "",
-            engagement: taskEngagement(first),
-            aiInteractionID: "",
-            aiInteraction: undefined,
-            aiInteractionLoading: false,
-            aiInteractionError: "",
-            historicalCall: undefined,
-            view: "engagement",
-            contextView: "task",
-            contextPanelOpen: false,
-          }
-        : { ...current.selection, task: undefined, taskGroup: undefined, view: "none", contextPanelOpen: false },
-    }))
   }
 
   function selectPageView(view: WorkspacePageView) {

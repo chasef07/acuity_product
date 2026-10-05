@@ -1391,9 +1391,8 @@ test("back and forward restore the Task or page view in the URL", async () => {
   assert.equal(projection.getSnapshot().selection.view, "manage-agent")
   navigation.go({ view: "task", taskID: "gone-task" })
   await projection.dispatch({ type: "navigation-changed" })
-  assert.equal(projection.getSnapshot().selection.task?.id, first.id)
-  assert.equal(projection.getSnapshot().selection.view, "engagement")
-  assert.deepEqual(navigation.writes.slice(3), [{ location: { view: "task", taskID: first.id }, mode: "replace" }])
+  assert.equal(projection.getSnapshot().selection.view, "manage-agent")
+  assert.deepEqual(navigation.writes.slice(3), [{ location: { view: "manage-agent" }, mode: "replace" }])
   projection.stop()
 })
 
@@ -1416,6 +1415,35 @@ test("a URL Task from another authorized Practice opens in that Practice", async
   await realtime.reconcile(0)
   assert.equal(projection.getSnapshot().selection.task?.id, linked.id)
   assert.equal(preferences.read("acuity.selectedPractice"), otherPractice.id)
+  projection.stop()
+})
+
+test("a Task chosen while back is loading wins over the restored Task", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first-task")
+  const second = task("second-task", { phone: "+15557654321" })
+  const third = task("third-task", { phone: "+15550001111" })
+  const pending = deferred<WorkspaceAuthorityResult<Task>>()
+  const navigation = memoryNavigation()
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first, second, third]) }),
+      task: () => pending.promise,
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: second })
+  navigation.go({ view: "task", taskID: first.id })
+  const restoring = projection.dispatch({ type: "navigation-changed" })
+  await projection.dispatch({ type: "select-task", task: third })
+  pending.resolve(success(first))
+  await restoring
+  assert.equal(projection.getSnapshot().selection.task?.id, third.id)
+  assert.deepEqual(navigation.writes.at(-1), { location: { view: "task", taskID: third.id }, mode: "push" })
   projection.stop()
 })
 
