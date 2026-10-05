@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.0](https://github.com/chasef07/acuity_product/compare/v1.25.0...v1.26.0) (2026-10-05)
+
+
+### Features
+
+* **web:** add MDX blog with The Dead Air Problem ([#403](https://github.com/chasef07/acuity_product/issues/403)) ([24339a3](https://github.com/chasef07/acuity_product/commit/24339a3b3135f66a8483fabd2fd2fc86068c4e5c))
+
 ## [1.25.0](https://github.com/chasef07/acuity_product/compare/v1.24.0...v1.25.0) (2026-10-05)
 
 
