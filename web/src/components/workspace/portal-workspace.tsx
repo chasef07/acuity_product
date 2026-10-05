@@ -510,6 +510,7 @@ function WorkspaceSelector({
     discovery.practices.find((item) => item.id === practiceID) ??
     discovery.practices[0]
   if (!practice) return null
+  const multiplePractices = discovery.practices.length > 1
   const locationLabel = locationScopeID
     ? (practice.locations.find((item) => item.id === locationScopeID)?.name ??
       "Office")
@@ -534,15 +535,19 @@ function WorkspaceSelector({
             variant="ghost"
             size="sm"
             disabled={disabled}
-            className="h-8 w-full min-w-0 justify-start gap-2 px-2 hover:bg-sidebar-accent"
+            className={cn("h-8 w-full min-w-0 justify-start gap-2 px-2 hover:bg-sidebar-accent", multiplePractices && "h-auto py-1.5")}
             title={`${practice.name}: ${locationLabel}`}
           />
         }
       >
         <MapPinIcon className="text-muted-foreground" />
-        <span className="truncate font-medium">{locationLabel}</span>
-        {discovery.practices.length > 1 && (
-          <span className="truncate text-muted-foreground">{practice.name}</span>
+        {multiplePractices ? (
+          <span className="flex min-w-0 flex-col items-start text-left leading-tight">
+            <span className="w-full truncate font-medium">{practice.name}</span>
+            <span className="w-full truncate text-xs text-muted-foreground">{locationLabel}</span>
+          </span>
+        ) : (
+          <span className="truncate font-medium">{locationLabel}</span>
         )}
         <ChevronsUpDownIcon className="ml-auto text-muted-foreground" />
       </PopoverTrigger>

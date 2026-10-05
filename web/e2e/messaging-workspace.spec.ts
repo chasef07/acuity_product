@@ -350,12 +350,12 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     page.getByRole("button", { name: "Workspace selector" }),
   ).toHaveAttribute("title", /Fixture Location 1/)
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
-  await expect(page.getByRole("button", { name: /^My Tasks/ })).toHaveAttribute(
+  await expect(page.getByRole("button", { name: /^Tasks/ })).toHaveAttribute(
     "aria-expanded",
     "true",
   )
   await expect(
-    page.getByRole("button", { name: /^My Tasks/ }),
+    page.getByRole("button", { name: /^Tasks/ }),
   ).toBeVisible()
   await expect(page.getByLabel("Workspace folders").getByRole("button", { name: /^Texts/ })).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
@@ -869,7 +869,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
   await expect(
-    page.getByRole("button", { name: /^My Tasks/ }),
+    page.getByRole("button", { name: /^Tasks/ }),
   ).toBeVisible()
 
   await page.reload()

@@ -15,6 +15,7 @@ import {
   SunIcon,
 } from "lucide-react"
 
+import { AcuityMark } from "@/components/acuity-mark"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -81,7 +82,6 @@ export function WorkspaceNavRail({
         hint={`${openCount} open`}
         active={workActive}
         expanded={workActive && panelOpen}
-        badge={openCount}
         onClick={selectWork}
       >
         <HouseIcon />
@@ -113,7 +113,11 @@ export function WorkspaceNavRail({
       )}
       {availabilityControl}
       <div className="mt-auto">
-        <AccountMenu email={discovery.actor.email} logo={practiceName ? practiceLogos[practiceName] : undefined} />
+        <AccountMenu
+          email={discovery.actor.email}
+          platformOperator={discovery.platformOperator}
+          logo={practiceName ? practiceLogos[practiceName] : undefined}
+        />
       </div>
     </nav>
   )
@@ -124,7 +128,6 @@ function RailButton({
   hint,
   active,
   expanded,
-  badge,
   onClick,
   children,
 }: {
@@ -132,7 +135,6 @@ function RailButton({
   hint?: string
   active: boolean
   expanded?: boolean
-  badge?: number
   onClick: () => void
   children: ReactNode
 }) {
@@ -148,27 +150,27 @@ function RailButton({
             aria-current={active ? "page" : undefined}
             aria-expanded={expanded}
             data-active={active}
-            className="relative size-11 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs [&_svg]:stroke-[1.75]"
+            className="size-11 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs [&_svg]:stroke-[1.75]"
             onClick={onClick}
           />
         }
       >
         {children}
-        {badge ? (
-          <span
-            aria-hidden="true"
-            className="absolute -top-1 -right-1 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 font-medium tabular-nums text-primary-foreground"
-          >
-            {badge > 99 ? "99+" : badge}
-          </span>
-        ) : null}
       </TooltipTrigger>
       <TooltipContent side="right">{hint ? `${label} · ${hint}` : label}</TooltipContent>
     </Tooltip>
   )
 }
 
-function AccountMenu({ email, logo }: { email: string; logo?: string }) {
+function AccountMenu({
+  email,
+  platformOperator,
+  logo,
+}: {
+  email: string
+  platformOperator: boolean
+  logo?: string
+}) {
   const router = useRouter()
   const { setTheme, theme } = useTheme()
   return (
@@ -176,7 +178,11 @@ function AccountMenu({ email, logo }: { email: string; logo?: string }) {
       <DropdownMenuTrigger
         render={<Button variant="ghost" size="icon" className="size-11 rounded-full hover:bg-sidebar-accent" aria-label="Account menu" />}
       >
-        {logo ? (
+        {platformOperator ? (
+          <span aria-hidden="true" className="flex size-8 items-center justify-center rounded-full bg-background text-foreground ring-1 ring-sidebar-border">
+            <AcuityMark className="size-5" />
+          </span>
+        ) : logo ? (
           <Image src={logo} alt="" width={128} height={128} className="size-8 rounded-full bg-white ring-1 ring-sidebar-border" />
         ) : (
           <span aria-hidden="true" className="flex size-8 items-center justify-center rounded-full bg-background text-sm font-medium text-foreground ring-1 ring-sidebar-border">
