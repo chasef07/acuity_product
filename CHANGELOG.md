@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.0](https://github.com/chasef07/acuity_product/compare/v1.24.0...v1.25.0) (2026-10-05)
+
+
+### Features
+
+* **workspace:** show the Acuity mark for operators and tidy the rail header ([#401](https://github.com/chasef07/acuity_product/issues/401)) ([f7ca1b6](https://github.com/chasef07/acuity_product/commit/f7ca1b6239419eb064bcfbc76b1cf682a7371efb))
+
 ## [1.24.0](https://github.com/chasef07/acuity_product/compare/v1.23.3...v1.24.0) (2026-10-02)
 
 
