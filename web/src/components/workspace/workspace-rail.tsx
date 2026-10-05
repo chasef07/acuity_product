@@ -111,10 +111,7 @@ export function workspaceFolders(projection: WorkspaceProjectionState): Array<{
   return [
     {
       section: "tasks",
-      title:
-        (projection.rail.taskResponsibility ?? "mine") === "mine"
-          ? "My Tasks"
-          : "All Tasks",
+      title: "Tasks",
       count: taskCountForCategory(taskCounts, projection.rail.taskCategory),
     },
     {
