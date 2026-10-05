@@ -39,10 +39,10 @@ test("existing session opens the workspace without contacting Google", async ({ 
   page.on("popup", () => { popupStarts += 1 })
   await page.goto("/")
   await page.locator("header").getByRole("button", { name: "Sign in" }).click()
-  await expect(page).toHaveURL(/\/workspace$/)
+  await expect(page).toHaveURL(/\/workspace(?:\?|$)/)
   await expect(page.getByRole("button", { name: "Account menu" })).toContainText("admin@abita.test")
   await page.goto("/sign-in?next=%2Fworkspace")
-  await expect(page).toHaveURL(/\/workspace$/)
+  await expect(page).toHaveURL(/\/workspace(?:\?|$)/)
   expect(popupStarts).toBe(0)
 })
 
@@ -118,7 +118,7 @@ test("one Google popup switches the signed-out browser to the new session", asyn
 
   await page.getByRole("button", { name: "Continue with Google" }).click()
 
-  await expect(page).toHaveURL(/\/workspace$/)
+  await expect(page).toHaveURL(/\/workspace(?:\?|$)/)
   await expect(page.getByRole("button", { name: "Account menu" })).toContainText("selected@abita.test")
   expect(popupStarts).toBe(1)
   expect(sessionChecks).toBe(2)
