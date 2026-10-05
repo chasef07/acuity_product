@@ -733,10 +733,14 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()
-  await expect(sidebarTaskContext).toBeHidden()
-  await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "closed")
-  await sidebarTask.click()
-  await expect(sidebarTaskContext).toBeVisible()
+  await expect(page).toHaveURL(/\/workspace\?task=[^&]+$/)
+  await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "open")
+  await expect(
+    sidebarTaskContext.getByRole("heading", {
+      name: "Follow up on text",
+      exact: true,
+    }),
+  ).toBeVisible()
   await expect(
     page.getByRole("article").filter({ hasText: inboundText }),
   ).toBeVisible()
