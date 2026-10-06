@@ -77,13 +77,12 @@ func TestReadLocationReturnsTheCurrentRevisionForAnAuthorizedLocation(t *testing
 	if _, err := pool.Exec(ctx, `UPDATE knowledge_passages SET position = NULL WHERE revision_id = $1`, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := m.ReplaceCorpus(ctx, firstCommand)
-	if err != nil || replayed.ID != first.ID {
-		t.Fatalf("replay = %+v, %v", replayed, err)
+	if err := m.RecordSectionOrder(ctx, firstCommand, first.ID); err != nil {
+		t.Fatalf("record section order: %v", err)
 	}
 	got, err = m.ReadLocation(ctx, staff, practiceID, locations["Alpha"])
 	if err != nil || got.Revision == nil || got.Revision.ID != first.ID || !reflect.DeepEqual(got.Sections, sections) {
-		t.Fatalf("replayed revision without positions = %+v, %v", got, err)
+		t.Fatalf("revision after recording section order = %+v, %v", got, err)
 	}
 
 	next := []Section{{ID: "hours", Title: "Office hours", Text: "The synthetic office closes at five."}}
