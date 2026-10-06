@@ -29,6 +29,7 @@ import {
   useTaskCallEligibility,
 } from "@/lib/clients/calls"
 import { completeTask, readTask, renameTask, reopenTask } from "@/lib/clients/tasks"
+import { formatShortDateTime } from "@/lib/format"
 import { formatUSPhone } from "@/lib/phone"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 
@@ -72,6 +73,7 @@ export function TaskCallContext({
   if (view === "call" && activeCall) {
     return (
       <CallWorkspace
+        key={activeCall.id}
         call={activeCall}
         returnTask={task}
         onReturnToTask={task ? () => onTaskUpdated(task) : undefined}
@@ -124,6 +126,26 @@ function TaskWorkspace({
   const [draft, setDraft] = useState(task.title)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const renameButton = useRef<HTMLButtonElement>(null)
+  const restoreRenameFocus = useRef(false)
+
+  useEffect(() => {
+    if (editing || !restoreRenameFocus.current) return
+    restoreRenameFocus.current = false
+    renameButton.current?.focus()
+  }, [editing])
+
+  function openTitleEditor() {
+    setDraft(task.title)
+    setError("")
+    setEditing(true)
+  }
+
+  function closeTitleEditor() {
+    restoreRenameFocus.current = true
+    setError("")
+    setEditing(false)
+  }
 
   const [reviewedVersion, setReviewedVersion] = useState(task.version)
   const reviewRequired = task.origin === "APPOINTMENT_REVIEW" || task.origin === "INBOUND_MESSAGE_REVIEW"
@@ -141,8 +163,7 @@ function TaskWorkspace({
   async function saveTitle() {
     const attempted = draft.trim()
     if (!attempted || attempted === task.title) {
-      setDraft(task.title)
-      setEditing(false)
+      closeTitleEditor()
       return
     }
     setPending(true)
@@ -151,7 +172,7 @@ function TaskWorkspace({
     setPending(false)
     if (outcome.ok) {
       acceptUpdate(outcome.data)
-      setEditing(false)
+      closeTitleEditor()
       return
     }
     if (outcome.failure.kind === "signedOut") return
@@ -205,11 +226,7 @@ function TaskWorkspace({
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") void saveTitle()
-              if (event.key === "Escape") {
-                setDraft(task.title)
-                setEditing(false)
-                setError("")
-              }
+              if (event.key === "Escape") closeTitleEditor()
             }}
           />
           <Button
@@ -223,7 +240,7 @@ function TaskWorkspace({
             size="icon"
             variant="ghost"
             aria-label="Cancel rename"
-            onClick={() => setEditing(false)}
+            onClick={closeTitleEditor}
           >
             <XIcon />
           </Button>
@@ -235,10 +252,11 @@ function TaskWorkspace({
           </h2>
           {task.state === "OPEN" && canMutate && (
             <Button
+              ref={renameButton}
               variant="ghost"
               size="icon"
               aria-label="Rename task"
-              onClick={() => setEditing(true)}
+              onClick={openTitleEditor}
             >
               <PencilIcon />
             </Button>
@@ -259,7 +277,7 @@ function TaskWorkspace({
           {task.sourceMessage}
         </p>
       )}
-      {task.state === "COMPLETED" && <p role="status" className="mt-3 text-sm text-muted-foreground">Completed by {task.completedBy?.email ?? "the team"}{task.completedAt ? ` · ${formatDateTime(task.completedAt)}` : ""}. <span className="block mt-1 text-xs">Completed for everyone with access.</span></p>}
+      {task.state === "COMPLETED" && <p role="status" className="mt-3 text-sm text-muted-foreground">Completed by {task.completedBy?.email ?? "the team"}{task.completedAt ? ` · ${formatShortDateTime(task.completedAt)}` : ""}. <span className="block mt-1 text-xs">Completed for everyone with access.</span></p>}
       {needsReview && <div role="status" className="mt-3 rounded-md border p-3 text-sm">
         This Task changed. Review the latest activity before completing it.
         <Button size="sm" variant="outline" className="mt-2" onClick={() => setReviewedVersion(task.version)}>Review latest</Button>
@@ -319,7 +337,7 @@ function TaskWorkspace({
           )}
           <Metadata
             label="Created"
-            value={`${formatDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
+            value={`${formatShortDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
           />
           {task.automaticAcknowledgement && (
             <Metadata
@@ -329,11 +347,11 @@ function TaskWorkspace({
               )}
             />
           )}
-          <Metadata label="Last changed" value={formatDateTime(task.updatedAt)} />
+          <Metadata label="Last changed" value={formatShortDateTime(task.updatedAt)} />
           <Metadata
             label="Completed"
             value={
-              task.completedAt ? formatDateTime(task.completedAt) : "Not completed"
+              task.completedAt ? formatShortDateTime(task.completedAt) : "Not completed"
             }
           />
         </div>
@@ -385,7 +403,7 @@ function RecoveryTaskSource({
   return (
     <section aria-label="Call recovery source" className="mt-4">
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
-      {call?.voicemail && <VoicemailSource call={call} compact onUpdated={onUpdated} taskID={task.id} />}
+      {call?.voicemail && <VoicemailSource key={call.id} call={call} compact onUpdated={onUpdated} taskID={task.id} />}
       {otherInteractions.length > 0 && (
         <details className="mt-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer">
@@ -397,7 +415,7 @@ function RecoveryTaskSource({
               <li key={interaction.callId}>
                 {interaction.type === "VOICEMAIL" ? "Voicemail" : "Missed call"}
                 {" · "}
-                {formatDateTime(interaction.occurredAt)}
+                {formatShortDateTime(interaction.occurredAt)}
               </li>
             ))}
           </ul>
@@ -659,7 +677,7 @@ function CallWorkspace({
           <Metadata label="Direction" value={formatDirection(call.direction)} />
           <Metadata label="Started from" value={formatEntryPoint(call.entryPoint)} />
           {call.connectedAt && (
-            <Metadata label="Connected" value={formatDateTime(call.connectedAt)} />
+            <Metadata label="Connected" value={formatShortDateTime(call.connectedAt)} />
           )}
         </div>
       </details>
@@ -676,15 +694,6 @@ function Metadata({ label, value }: { label: string; value: string }) {
       <span className="mt-1 block truncate text-foreground">{value}</span>
     </div>
   )
-}
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value))
 }
 
 function formatDuration(seconds: number) {

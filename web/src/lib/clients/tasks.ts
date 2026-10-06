@@ -115,6 +115,12 @@ export function useReviewFolder({
       request.current = controller
       const { signal } = controller
       setPage((current) => ({ ...current, loading: true, failure: undefined }))
+      const fail = (failure: PortalFailure) =>
+        setPage((current) =>
+          cursor
+            ? { ...current, loading: false, failure }
+            : { items: [], nextCursor: "", loading: false, failure },
+        )
       try {
         const items: Task[] = []
         let nextCursor = cursor
@@ -140,7 +146,7 @@ export function useReviewFolder({
             signal,
           )
           if (!outcome.ok) {
-            setPage({ items: [], nextCursor: "", loading: false, failure: outcome.failure })
+            fail(outcome.failure)
             return
           }
           items.push(...outcome.data.items)
@@ -151,8 +157,8 @@ export function useReviewFolder({
           depth.current = combined.length
           return { items: combined, nextCursor, loading: false }
         })
-      } catch (error) {
-        if (!signal.aborted) throw error
+      } catch {
+        if (!signal.aborted) fail({ kind: "unavailable", retryable: true })
       }
     },
     [practiceID, locationID, search, kind],

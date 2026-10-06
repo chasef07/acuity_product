@@ -304,7 +304,7 @@ test("a successful state refresh does not clear an unconfirmed readiness heartbe
   assert.equal(fixture.media.disconnects, 0)
 
   fixture.backend.writeReadinessHandler = undefined
-  await fixture.clock.advance(500)
+  await fixture.clock.advance(8_000)
   await eventually(() => assert.equal(fixture.runtime.getSnapshot().failure, undefined))
 })
 
@@ -1344,6 +1344,61 @@ test("routine heartbeats use a stable per-session stagger without surfacing avai
   assert.ok(firstHeartbeatAt >= 3_500 && firstHeartbeatAt <= 4_000)
   assert.ok(secondHeartbeatAt >= 3_500 && secondHeartbeatAt <= 4_000)
   assert.notEqual(firstHeartbeatAt, secondHeartbeatAt)
+})
+
+test("temporary heartbeat failures back off before retrying readiness", async () => {
+  const clock = new ManualClock()
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    availabilityIntent: true,
+    clock,
+    visibility: visible(),
+  })
+  await runtime.start()
+  let failing = true
+  const writesAt: number[] = []
+  backend.writeReadinessHandler = async (input) => {
+    writesAt.push(clock.now)
+    if (failing) {
+      throw new SoftphoneAdapterError("temporary-request", "Readiness unavailable.", true)
+    }
+    return { ...backend.lease, available: input.available }
+  }
+  async function settleFor(milliseconds: number) {
+    for (let elapsed = 0; elapsed < milliseconds; elapsed += 10) {
+      await clock.advance(10)
+      for (let drain = 0; drain < 10; drain += 1) await drainMicrotasks()
+    }
+  }
+  const gapsFrom = (times: number[]) =>
+    times.slice(1).map((at, index) => at - times[index]!)
+
+  await settleFor(30_000)
+
+  assert.equal(runtime.getSnapshot().failure?.kind, "temporary-request")
+  const failureGaps = gapsFrom(writesAt)
+  const expectedGaps = [500, 1_000, 2_000, 4_000, 8_000, 8_000]
+  assert.ok(
+    failureGaps.length === expectedGaps.length &&
+      failureGaps.every((gap, index) => gap >= expectedGaps[index]! && gap < expectedGaps[index]! + 100),
+    `retry gaps ${failureGaps.join(", ")}`,
+  )
+
+  failing = false
+  const recoveredFrom = writesAt.length
+  await settleFor(20_000)
+
+  assert.equal(runtime.getSnapshot().failure, undefined)
+  const recoveredGaps = gapsFrom(writesAt.slice(recoveredFrom))
+  assert.ok(recoveredGaps.length > 0)
+  assert.ok(recoveredGaps.every((gap) => gap >= 3_500 && gap <= 4_100))
+  await runtime.stop()
 })
 
 test("stop discards local Call projections and abandoned command state", async () => {

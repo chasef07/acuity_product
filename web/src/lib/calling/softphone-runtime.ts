@@ -309,6 +309,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   let transferGeneration = 0
   let etag: string | undefined
   let temporaryFailures = 0
+  let heartbeatFailures = 0
   let readinessGeneration = 0
   let readinessConfirmedGeneration = 0
   let readinessInFlight: Promise<void> | undefined
@@ -1199,9 +1200,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     if (stopped) return
     if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
     const delay = temporaryFailures
-      ? Math.min(
+      ? temporaryRetryDelay(
+          temporaryFailures,
           visibility.isHidden() ? 12_000 : 8_000,
-          500 * 2 ** (temporaryFailures - 1),
         )
       : incomingMedia.size > 0
         ? mediaConfirmationRetryMilliseconds
@@ -1225,13 +1226,17 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           await connectMedia()
         }
         await commitReadiness(true, false, "silent")
-      })().finally(() =>
-        scheduleHeartbeat(
+      })().finally(() => {
+        heartbeatFailures =
           snapshot.failure?.kind === "temporary-request"
-            ? 500
+            ? heartbeatFailures + 1
+            : 0
+        scheduleHeartbeat(
+          heartbeatFailures
+            ? temporaryRetryDelay(heartbeatFailures, 8_000)
             : heartbeatDelayMilliseconds,
-        ),
-      )
+        )
+      })
     }, delay)
   }
 
@@ -2158,6 +2163,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         etag = undefined
         authoritativeRingingMedia.clear()
         temporaryFailures = 0
+        heartbeatFailures = 0
         for (const request of backendRequests) request.abort()
         unsubscribeVisibility?.()
         unsubscribeVisibility = undefined
@@ -2929,6 +2935,10 @@ function refreshDelay(snapshot: SoftphoneRuntimeSnapshot, hidden: boolean) {
     default:
       return 4_000
   }
+}
+
+function temporaryRetryDelay(failures: number, capMilliseconds: number) {
+  return Math.min(capMilliseconds, 500 * 2 ** (failures - 1))
 }
 
 function heartbeatDelay(sessionID: string) {

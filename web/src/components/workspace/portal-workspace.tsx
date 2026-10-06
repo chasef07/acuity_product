@@ -79,6 +79,7 @@ const OperatorAnalytics = dynamic(
   {
     loading: () => (
       <div
+        role="status"
         aria-label="Loading analytics workspace"
         aria-busy="true"
         className="flex min-h-0 flex-1 bg-background p-4 sm:p-6 lg:p-8"

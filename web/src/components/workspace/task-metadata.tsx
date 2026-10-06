@@ -52,7 +52,7 @@ function TaskGroupMenu({ task, onUpdated, compact }: {
   }
 
   return (
-    <div className={compact ? "text-xs" : "border-t pt-2 text-xs"} aria-label="Task group">
+    <div role="group" className={compact ? "text-xs" : "border-t pt-2 text-xs"} aria-label="Task group">
       <div className="flex items-center justify-between gap-2">
         {!compact && <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{taskGroupLabel(task.category)}</p>}
         {task.state === "OPEN" && (

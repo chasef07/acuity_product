@@ -53,6 +53,8 @@ import type {
   OperatorAiTimelineItem,
 } from "@/lib/api/generated/types.gen"
 import { useAiCallEvidence } from "@/lib/clients/agent-calls"
+import { formatMediumDateTime } from "@/lib/format"
+import { formatUSPhoneDigits } from "@/lib/phone"
 
 export function OperatorAnalyticsDetailSheet({
   interactionID,
@@ -192,12 +194,12 @@ function OperatorAnalyticsDetailView({
   return (
     <>
       <section className="shrink-0 border-b px-5 py-4 sm:px-6">
-        <p className="text-sm font-medium">{formatPhone(detail.phone)}</p>
+        <p className="text-sm font-medium">{formatUSPhoneDigits(detail.phone)}</p>
         <p className="mt-1 text-sm text-muted-foreground">
           {detail.locationName}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {formatDateTime(detail.startedAt)} ·{" "}
+          {formatMediumDateTime(detail.startedAt)} ·{" "}
           {formatDuration(detail.startedAt, detail.endedAt)}
         </p>
         {detail.summary ? (
@@ -781,15 +783,6 @@ function formatAppointmentDateTime(facts: AiAppointmentFacts) {
     : dateLabel
 }
 
-function formatDateTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "Unknown"
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date)
-}
-
 function formatTime(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return "Unknown time"
@@ -817,14 +810,6 @@ function formatLatency(value?: number): string {
   return value >= 1000
     ? `${(value / 1000).toFixed(2)} s`
     : `${Math.round(value)} ms`
-}
-
-function formatPhone(value: string): string {
-  const digits = value.replace(/\D/g, "")
-  const local =
-    digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits
-  if (local.length !== 10) return value
-  return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`
 }
 
 function formatPayload(value: unknown): string {

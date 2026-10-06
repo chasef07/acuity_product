@@ -78,6 +78,8 @@ import {
   type AiCallLedger,
   useAiCallAnalytics,
 } from "@/lib/clients/agent-calls"
+import { formatShortDateTime } from "@/lib/format"
+import { formatUSPhoneDigits } from "@/lib/phone"
 
 type AnalyticsNextPageState = AiCallLedger["nextPage"]
 type AnalyticsTab = "overview" | "cost" | "quality" | "tools" | "calls" | "review"
@@ -245,7 +247,7 @@ export function OperatorAnalytics({
         tabs={<div className="w-full space-y-3">
           <AnalyticsTabs tab={tab} onChange={setTab} />
           {(tab === "calls" || needsReviewOnly) && ((currentRequest.data?.availableTags?.length ?? 0) > 0 || manualTag) && (
-            <div aria-label="Filter calls by tag" className="flex flex-wrap items-center gap-1.5">
+            <div role="group" aria-label="Filter calls by tag" className="flex flex-wrap items-center gap-1.5">
               <span className="mr-1 text-xs text-muted-foreground">Tags</span>
               <Button size="xs" variant={manualTag ? "outline" : "secondary"} aria-pressed={!manualTag} onClick={() => setManualTag("")}>All calls</Button>
               {Array.from(new Set([...(currentRequest.data?.availableTags ?? []), ...(manualTag ? [manualTag] : [])])).map((tag) => (
@@ -568,17 +570,17 @@ function CallLedger({
                     <button
                       type="button"
                       className="rounded-sm text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                      aria-label={`Open analytics for call from ${formatDateTime(call.startedAt)}`}
+                      aria-label={`Open analytics for call from ${formatShortDateTime(call.startedAt)}`}
                       onClick={(event) => {
                         event.stopPropagation()
                         onSelect(call.id)
                       }}
                     >
-                      {formatDateTime(call.startedAt)}
+                      {formatShortDateTime(call.startedAt)}
                     </button>
                   </TableCell>
                   <TableCell className="tabular-nums">
-                    {formatPhone(call.phone)}
+                    {formatUSPhoneDigits(call.phone)}
                     <ReviewReasons reasons={call.reviewReasons} />
                   </TableCell>
                   <TableCell>{call.locationName}</TableCell>
@@ -612,15 +614,15 @@ function CallLedger({
           <button
             key={call.id}
             type="button"
-            aria-label={`Open analytics for call from ${formatDateTime(call.startedAt)}`}
+            aria-label={`Open analytics for call from ${formatShortDateTime(call.startedAt)}`}
             className={`rounded-xl border p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/40 ${call.reviewReasons?.length ? "border-destructive/25 bg-destructive/5 hover:bg-destructive/10" : "bg-card hover:bg-muted"}`}
             onClick={() => onSelect(call.id)}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-semibold tabular-nums">{formatPhone(call.phone)}</p>
+                <p className="text-sm font-semibold tabular-nums">{formatUSPhoneDigits(call.phone)}</p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {formatDateTime(call.startedAt)} · {call.locationName}
+                  {formatShortDateTime(call.startedAt)} · {call.locationName}
                 </p>
               </div>
               <ArrowRightIcon
@@ -684,7 +686,7 @@ function ReviewReasons({ reasons }: { reasons?: string[] }) {
 
 function AnalyticsLoading() {
   return (
-    <div aria-label="Loading AI call analytics" aria-busy="true">
+    <div role="status" aria-label="Loading AI call analytics" aria-busy="true">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {Array.from({ length: 4 }, (_, index) => (
           <Card key={index} size="sm">
@@ -786,17 +788,6 @@ function CompactValue({
   )
 }
 
-function formatDateTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "Unknown"
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date)
-}
-
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds)) return "—"
   return `${Math.floor(seconds / 60)}m ${Math.max(0, Math.round(seconds)) % 60}s`
@@ -810,9 +801,3 @@ function formatRate(value: number): string {
   }).format(value)
 }
 
-function formatPhone(value: string): string {
-  const digits = value.replace(/\D/g, "")
-  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits
-  if (local.length !== 10) return value
-  return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`
-}

@@ -99,6 +99,7 @@ import {
   useEngagementTimeline,
 } from "@/lib/clients/engagement"
 import { completeTask, reopenTask } from "@/lib/clients/tasks"
+import { formatElapsedSeconds } from "@/lib/format"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import type { EngagementSummary } from "@/lib/workspace-projection"
@@ -186,9 +187,7 @@ export function EngagementWorkspaceView({
         ? chosenRoute
         : ""
   const [callError, setCallError] = useState("")
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
-    "idle",
-  )
+  const [copyState, setCopyState] = useCopyState()
   const {
     callingOccupied,
     callingEnabled,
@@ -769,9 +768,7 @@ function MessageEntry({
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
-    "idle",
-  )
+  const [copyState, setCopyState] = useCopyState()
   const [selected, setSelected] = useState(false)
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
@@ -1540,7 +1537,7 @@ function taskActivityDetail(
 }
 
 function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
-  const duration = call.durationSeconds > 0 ? formatDuration(call.durationSeconds) : ""
+  const duration = call.durationSeconds > 0 ? formatElapsedSeconds(call.durationSeconds) : ""
   if (call.outcome === "VOICEMAIL") {
     return {
       label: "Voicemail",
@@ -1572,9 +1569,14 @@ function formatTime(value: string) {
   }).format(new Date(value))
 }
 
-function formatDuration(seconds: number) {
-  if (seconds < 60) return `${seconds}s`
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+function useCopyState() {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle")
+  useEffect(() => {
+    if (copyState === "idle") return
+    const timer = window.setTimeout(() => setCopyState("idle"), 2_000)
+    return () => window.clearTimeout(timer)
+  }, [copyState])
+  return [copyState, setCopyState] as const
 }
 
 function sentenceCase(value: string) {

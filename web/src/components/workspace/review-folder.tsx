@@ -49,7 +49,9 @@ export function ReviewFolder({
         </SidebarMenuItem>
       )}
       {error && (
-        <WorkspaceWindowFailure message={error} onRetry={page.retry} />
+        <SidebarMenuItem>
+          <WorkspaceWindowFailure message={error} onRetry={page.retry} />
+        </SidebarMenuItem>
       )}
       {page.nextCursor && (
         <SidebarMenuItem>
