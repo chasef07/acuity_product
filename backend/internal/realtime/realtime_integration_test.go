@@ -127,7 +127,10 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	}
 	reader := bufio.NewReader(response.Body)
 	ready := readSSEEvent(t, reader)
-	if ready.Event != "ready" || ready.Data.PracticeID != practice.ID || !ready.Data.CallingHints {
+	if ready.Event != "ready" ||
+		ready.Data.PracticeID != practice.ID ||
+		!ready.Data.CallingHints ||
+		ready.Data.HeartbeatMilliseconds != 50 {
 		t.Fatalf("ready event = %#v", ready)
 	}
 
@@ -1149,9 +1152,10 @@ func (adapter staticAuthenticator) Authenticate(_ context.Context, token string)
 type sseEvent struct {
 	Event string
 	Data  struct {
-		PracticeID   string `json:"practiceId"`
-		Version      int64  `json:"version"`
-		CallingHints bool   `json:"callingHints"`
+		PracticeID            string `json:"practiceId"`
+		Version               int64  `json:"version"`
+		CallingHints          bool   `json:"callingHints"`
+		HeartbeatMilliseconds int64  `json:"heartbeatMilliseconds"`
 	}
 }
 

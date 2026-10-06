@@ -855,6 +855,60 @@ test("a silent stream is abandoned after the heartbeat window and reconnects", a
   assert.equal(timer.pending, 0)
 })
 
+test("the silence window follows the server heartbeat interval", async () => {
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  const canceled: number[] = []
+  const callingHints = createCallingHintChannel()
+  const timer = new ManualTimer()
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () => {
+      const index = streams.length
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller)
+          },
+          cancel() {
+            canceled.push(index)
+          },
+        }),
+      )
+    },
+    getToken: async () => "token",
+    reconcile: async () => ({ version: 4, apply: () => {} }),
+    onStateChange: () => {},
+    callingHints,
+    timer,
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+  await eventually(() => assert.equal(streams.length, 1))
+  streams[0]!.enqueue(
+    new TextEncoder().encode(
+      'event: ready\ndata: {"practiceId":"practice-1","version":4,"callingHints":true,"heartbeatMilliseconds":60000}\n\n',
+    ),
+  )
+  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
+
+  await timer.advance(121_999)
+  assert.deepEqual(canceled, [])
+  assert.equal(callingHints.covers(["practice-1"]), true)
+
+  await timer.advance(1)
+
+  await eventually(() => assert.equal(streams.length, 2))
+  assert.deepEqual(canceled, [0])
+  streams[1]!.enqueue(callingReadyEvent(5))
+  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
+
+  await timer.advance(31_999)
+  assert.deepEqual(canceled, [0])
+  await timer.advance(1)
+  await eventually(() => assert.deepEqual(canceled, [0, 1]))
+  sync.stop()
+  assert.equal(timer.pending, 0)
+})
+
 class ManualTimer {
   now = 0
   private nextID = 1

@@ -35,9 +35,10 @@ type Config struct {
 }
 
 type Hint struct {
-	PracticeID   string `json:"practiceId"`
-	Version      int64  `json:"version"`
-	CallingHints bool   `json:"callingHints,omitempty"`
+	PracticeID            string `json:"practiceId"`
+	Version               int64  `json:"version"`
+	CallingHints          bool   `json:"callingHints,omitempty"`
+	HeartbeatMilliseconds int64  `json:"heartbeatMilliseconds,omitempty"`
 }
 
 type CallingHint struct {
@@ -207,9 +208,10 @@ func (hub *Hub) Stream(
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	if err := writeEvent(w, "ready", Hint{
-		PracticeID:   practiceID,
-		Version:      authorization.Practice.Version,
-		CallingHints: true,
+		PracticeID:            practiceID,
+		Version:               authorization.Practice.Version,
+		CallingHints:          true,
+		HeartbeatMilliseconds: hub.config.HeartbeatInterval.Milliseconds(),
 	}); err != nil {
 		closeReason = observability.SSEWriteFailed
 		return nil

@@ -60,6 +60,8 @@ const defaultTiming: WorkspaceSyncTiming = {
   streamSilenceMilliseconds: 32_000,
 }
 
+const streamSilenceMarginMilliseconds = 2_000
+
 const defaultTimer: WorkspaceSyncTimer = {
   setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
   clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
@@ -391,6 +393,11 @@ export function createWorkspaceSync(
           }
           if (event.type !== "ready" || ready) continue
           const coverage = event.callingHints ? scope.practiceID : undefined
+          if (event.heartbeatMilliseconds > 0) {
+            silence.setWindow(
+              event.heartbeatMilliseconds * 2 + streamSilenceMarginMilliseconds,
+            )
+          }
           highestHint = Math.max(highestHint, event.version)
           if (options.isHidden?.()) {
             deferCatchUp(true)
@@ -464,6 +471,7 @@ function watchSilence(
 ) {
   const controller = new AbortController()
   let id: unknown
+  let silenceMilliseconds = milliseconds
   const pause = () => {
     if (id !== undefined) timer.clearTimeout(id)
     id = undefined
@@ -479,11 +487,15 @@ function watchSilence(
   const touch = () => {
     if (controller.signal.aborted) return
     pause()
-    id = timer.setTimeout(abort, milliseconds)
+    id = timer.setTimeout(abort, silenceMilliseconds)
+  }
+  const setWindow = (next: number) => {
+    silenceMilliseconds = next
+    if (id !== undefined) touch()
   }
   parent.addEventListener("abort", abort, { once: true })
   touch()
-  return { signal: controller.signal, touch, pause, stop }
+  return { signal: controller.signal, touch, pause, stop, setWindow }
 }
 
 async function* readEvents(
@@ -520,6 +532,7 @@ async function* readEvents(
             practiceId?: unknown
             version?: unknown
             callingHints?: unknown
+            heartbeatMilliseconds?: unknown
           }
           if (type === "calling" && typeof payload.practiceId === "string") {
             yield {
@@ -527,6 +540,7 @@ async function* readEvents(
               practiceID: payload.practiceId,
               version: 0,
               callingHints: false,
+              heartbeatMilliseconds: 0,
             }
             continue
           }
@@ -539,6 +553,11 @@ async function* readEvents(
               practiceID: payload.practiceId,
               version: payload.version as number,
               callingHints: payload.callingHints === true,
+              heartbeatMilliseconds:
+                Number.isSafeInteger(payload.heartbeatMilliseconds) &&
+                (payload.heartbeatMilliseconds as number) > 0
+                  ? (payload.heartbeatMilliseconds as number)
+                  : 0,
             }
           }
         } catch {
