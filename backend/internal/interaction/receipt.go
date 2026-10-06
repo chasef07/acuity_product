@@ -55,6 +55,7 @@ const (
 	firstReceiptRetryDelay       = 5 * time.Second
 	maxReceiptRetryDelay         = 30 * time.Minute
 	receiptRetryExhausted        = "PROJECTION_RETRY_EXHAUSTED"
+	receiptFailureRecordTimeout  = 5 * time.Second
 )
 
 func newStoredReceiptPayload(command IngestCommand) storedReceiptPayload {
@@ -205,6 +206,8 @@ func receiptFailureCode(err error) string {
 }
 
 func (m *Module) recordReceiptFailure(ctx context.Context, receiptID string, attempts int, cause error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), receiptFailureRecordTimeout)
+	defer cancel()
 	if _, err := m.database.Exec(ctx, `
 		UPDATE ai_interaction_receipts
 		SET

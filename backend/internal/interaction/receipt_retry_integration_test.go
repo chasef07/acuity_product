@@ -12,6 +12,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func seedRetryLocation(t *testing.T, pool *pgxpool.Pool, key string) (string, string) {
+	t.Helper()
+	var practice, location string
+	if err := pool.QueryRow(context.Background(), `INSERT INTO access_practices(provisioning_key,name) VALUES($1,'Synthetic') RETURNING id::text`, key).Scan(&practice); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `INSERT INTO access_locations(practice_id,provisioning_key,name) VALUES($1,'main','Main') RETURNING id::text`, practice).Scan(&location); err != nil {
+		t.Fatal(err)
+	}
+	return practice, location
+}
+
 func seedRetryReceipt(t *testing.T, pool *pgxpool.Pool, practice, location, source string, receivedAt time.Time) string {
 	t.Helper()
 	ended := receivedAt.Add(-time.Minute)
@@ -31,13 +43,7 @@ func TestPoisonReceiptRetriesWithoutBlockingThenQuarantinesVisibly(t *testing.T)
 	ctx := context.Background()
 	pool := testdb.Open(t)
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	var practice, location string
-	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('poison-receipt','Synthetic') RETURNING id::text`).Scan(&practice); err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.QueryRow(ctx, `INSERT INTO access_locations(practice_id,provisioning_key,name) VALUES($1,'main','Main') RETURNING id::text`, practice).Scan(&location); err != nil {
-		t.Fatal(err)
-	}
+	practice, location := seedRetryLocation(t, pool, "poison-receipt")
 	if _, err := pool.Exec(ctx, `
 		CREATE FUNCTION synthetic_poison_projection() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
@@ -101,13 +107,7 @@ func TestReceiptWorkerSkipsReceiptLockedByAnotherWorker(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.Open(t)
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	var practice, location string
-	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('locked-receipt','Synthetic') RETURNING id::text`).Scan(&practice); err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.QueryRow(ctx, `INSERT INTO access_locations(practice_id,provisioning_key,name) VALUES($1,'main','Main') RETURNING id::text`, practice).Scan(&location); err != nil {
-		t.Fatal(err)
-	}
+	practice, location := seedRetryLocation(t, pool, "locked-receipt")
 	locked := seedRetryReceipt(t, pool, practice, location, "synthetic-locked", now.Add(-2*time.Hour))
 	free := seedRetryReceipt(t, pool, practice, location, "synthetic-free", now.Add(-time.Hour))
 	holder, err := pool.Begin(ctx)
@@ -130,5 +130,33 @@ func TestReceiptWorkerSkipsReceiptLockedByAnotherWorker(t *testing.T) {
 	}
 	if lockedState != "PENDING" || freeState != "PROJECTED" {
 		t.Fatalf("locked=%s free=%s", lockedState, freeState)
+	}
+}
+
+func TestTimedOutFinalAttemptStillQuarantinesReceipt(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	practice, location := seedRetryLocation(t, pool, "timeout-receipt")
+	id := seedRetryReceipt(t, pool, practice, location, "synthetic-timeout", now.Add(-time.Hour))
+	if _, err := pool.Exec(ctx, `UPDATE ai_interaction_receipts SET projection_attempts=$2 WHERE id=$1`, id, maxReceiptProjectionAttempts-1); err != nil {
+		t.Fatal(err)
+	}
+	module := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
+	_, _, attempts, claimed, err := module.claimReceipt(ctx)
+	if err != nil || !claimed || attempts != maxReceiptProjectionAttempts {
+		t.Fatalf("claim = %t %d %v", claimed, attempts, err)
+	}
+	expired, cancel := context.WithDeadline(ctx, now)
+	cancel()
+	if err := module.recordReceiptFailure(expired, id, attempts, expired.Err()); err != nil {
+		t.Fatalf("record failure after work deadline: %v", err)
+	}
+	var state, errorCode, lastError string
+	if err := pool.QueryRow(ctx, `SELECT state, COALESCE(projection_error_code,''), COALESCE(last_error_code,'') FROM ai_interaction_receipts WHERE id=$1`, id).Scan(&state, &errorCode, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if state != "QUARANTINED" || errorCode != receiptRetryExhausted || lastError != "TIMEOUT" {
+		t.Fatalf("timed-out final attempt: %s %s %s", state, errorCode, lastError)
 	}
 }
