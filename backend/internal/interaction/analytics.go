@@ -192,11 +192,10 @@ func (m *Module) QueryAnalytics(
 		to = cursor.Through
 	}
 	from := to.Add(-duration)
-	scope, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceOperator)
+	tx, locationIDs, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceOperator)
 	if err != nil {
 		return AnalyticsPage{}, err
 	}
-	tx, locationIDs := scope.tx, scope.locationIDs
 	defer func() { _ = tx.Rollback(ctx) }()
 	var summary *AnalyticsSummary
 	var pendingIssues []OperatorCallIssue
@@ -419,7 +418,7 @@ func queryAnalyticsCalls(
 	from time.Time,
 	to time.Time,
 	cursor *analyticsCursor,
-) ([]AnalyticsCall, *analyticsPosition, error) {
+) ([]AnalyticsCall, *AnalyticsCall, error) {
 	var cursorStartedAt any
 	var cursorID any
 	if cursor != nil {
@@ -467,7 +466,7 @@ func queryAnalyticsCalls(
 	defer rows.Close()
 	projections := make([]analyticsProjection, 0, command.Limit+1)
 	scanned := 0
-	var last analyticsPosition
+	var last AnalyticsCall
 	for rows.Next() {
 		var projection analyticsProjection
 		var evaluation json.RawMessage
@@ -489,7 +488,7 @@ func queryAnalyticsCalls(
 			return nil, nil, fmt.Errorf("scan operator AI analytics page: %w", err)
 		}
 		scanned++
-		last = analyticsPosition{StartedAt: projection.call.StartedAt, ID: projection.call.ID}
+		last = projection.call
 		projection.call.ReviewReasons = EvaluationReviewReasons(evaluation)
 		if command.NeedsReviewOnly && len(projection.call.ReviewReasons) == 0 {
 			continue
@@ -503,11 +502,10 @@ func queryAnalyticsCalls(
 	if err := rows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("iterate operator AI analytics page: %w", err)
 	}
-	var next *analyticsPosition
+	var next *AnalyticsCall
 	if len(projections) > command.Limit {
 		projections = projections[:command.Limit]
-		final := projections[len(projections)-1].call
-		next = &analyticsPosition{StartedAt: final.StartedAt, ID: final.ID}
+		next = &projections[len(projections)-1].call
 	} else if scanned == scanLimit {
 		next = &last
 	}
@@ -638,11 +636,6 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 		}
 	}
 	projection.call.Transferred = projection.call.Status == CallEscalated
-}
-
-type analyticsPosition struct {
-	StartedAt time.Time
-	ID        string
 }
 
 func newAnalyticsCursor(command QueryAnalyticsCommand, startedAt time.Time, id string, through time.Time) analyticsCursor {

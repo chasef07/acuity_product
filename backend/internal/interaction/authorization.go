@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -108,29 +107,23 @@ const (
 	analyticsReviewScanLimit = 2000
 )
 
-type analyticsScope struct {
-	tx          pgx.Tx
-	locationIDs []string
-}
-
 func (m *Module) beginAnalyticsScope(
 	ctx context.Context,
 	identity access.Identity,
 	practiceID string,
 	locationID string,
 	who audience,
-) (analyticsScope, error) {
+) (pgx.Tx, []string, error) {
 	if err := m.available(); err != nil {
-		return analyticsScope{}, err
+		return nil, nil, err
 	}
 	if !validUUID(practiceID) || (locationID != "" && !validUUID(locationID)) {
-		return analyticsScope{}, ErrInvalidInput
+		return nil, nil, ErrInvalidInput
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return analyticsScope{}, fmt.Errorf("begin AI analytics: %w", err)
+		return nil, nil, fmt.Errorf("begin AI analytics: %w", err)
 	}
-	scope := analyticsScope{tx: tx}
 	if _, err = tx.Exec(ctx, `SET LOCAL statement_timeout = '1500ms'; SET LOCAL lock_timeout = '100ms'; SET LOCAL max_parallel_workers_per_gather = 0; SET LOCAL work_mem = '4MB'`); err != nil {
 		err = fmt.Errorf("bound AI analytics: %w", err)
 	}
@@ -138,21 +131,22 @@ func (m *Module) beginAnalyticsScope(
 	if err == nil {
 		authorization, err = m.authorize(ctx, tx, identity, practiceID, locationID, false, who)
 	}
+	var locationIDs []string
 	if err == nil {
-		scope.locationIDs = authorizedLocationIDs(authorization, locationID)
-		if len(scope.locationIDs) == 0 {
+		locationIDs = authorizedLocationIDs(authorization, locationID)
+		if len(locationIDs) == 0 {
 			err = ErrDenied
 		}
 	}
 	if err != nil {
 		_ = tx.Rollback(ctx)
-		return analyticsScope{}, err
+		return nil, nil, err
 	}
-	return scope, nil
+	return tx, locationIDs, nil
 }
 
 func reportingZone(name string) (*time.Location, bool) {
-	if strings.TrimSpace(name) == "" || name == "Local" {
+	if name == "" || name == "Local" {
 		return nil, false
 	}
 	zone, err := time.LoadLocation(name)

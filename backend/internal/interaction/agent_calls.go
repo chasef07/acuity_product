@@ -85,11 +85,10 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 		}
 		through, startedAt, id = cursor.Through, cursor.StartedAt, cursor.ID
 	}
-	scope, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceStaff)
+	tx, locations, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceStaff)
 	if err != nil {
 		return AgentCallsPage{}, err
 	}
-	tx, locations := scope.tx, scope.locationIDs
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
   SELECT i.id::text, i.phone, i.started_at, i.ended_at, i.status,
@@ -250,13 +249,12 @@ func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identit
 		return AgentCallIssue{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	now := m.now()
 	result, err := tx.Exec(ctx, `INSERT INTO ai_interaction_issues (interaction_id, reported_by, reason, note) VALUES ($1, $2, $3, $3) ON CONFLICT (interaction_id) DO NOTHING`, id, identity.Subject, reason)
 	if err != nil {
 		return AgentCallIssue{}, fmt.Errorf("record AI call issue: %w", err)
 	}
 	if result.RowsAffected() > 0 {
-		if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{Action: "ai_interaction.issue_reported", ResourceType: "ai_interaction", ResourceID: id, ResourceVersion: 1, OccurredAt: now}); err != nil {
+		if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{Action: "ai_interaction.issue_reported", ResourceType: "ai_interaction", ResourceID: id, ResourceVersion: 1, OccurredAt: m.now()}); err != nil {
 			return AgentCallIssue{}, err
 		}
 	}

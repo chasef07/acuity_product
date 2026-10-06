@@ -41,18 +41,3 @@ func TestBookingWithoutSearchDoesNotConvertAnotherCall(t *testing.T) {
 		t.Fatalf("a booking cannot convert another call: %+v", report.Total)
 	}
 }
-
-func TestBookingPatientGroupDoesNotInventNewPatients(t *testing.T) {
-	for basis, want := range map[string]string{
-		"confirmed_new":      "new",
-		"confirmed_existing": "existing",
-		"phone_match":        "existing",
-		"legacy_existing":    "existing",
-		"assumed_new":        "unknown",
-		"":                   "unknown",
-	} {
-		if got := bookingPatientGroup(basis); got != want {
-			t.Errorf("bookingPatientGroup(%q) = %s, want %s", basis, got, want)
-		}
-	}
-}

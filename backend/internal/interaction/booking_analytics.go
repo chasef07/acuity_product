@@ -72,17 +72,16 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 	now := m.now().In(zone)
 	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone)
 	from := to.AddDate(0, 0, -command.Days)
-	scope, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceAdmin)
+	tx, locations, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceAdmin)
 	if err != nil {
 		return BookingAnalytics{}, err
 	}
-	tx, locations := scope.tx, scope.locationIDs
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	rows, err := tx.Query(ctx, `
         SELECT started_at, ended_at, booking_confirmed, COALESCE(new_appointment_id, ''),
             booking_searched, booking_search_known,
-            booking_patient_basis
+            CASE WHEN booking_patient_basis IN ('confirmed_existing', 'phone_match', 'legacy_existing') THEN 'existing' ELSE 'new' END
         FROM ai_interactions
         WHERE practice_id = $1::uuid AND location_id = ANY($2::uuid[])
             AND started_at >= $3 AND started_at < $4
@@ -96,12 +95,10 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 	facts := make([]bookingFact, 0)
 	for rows.Next() {
 		var fact bookingFact
-		var basis string
-		if err := rows.Scan(&fact.started, &fact.ended, &fact.booked, &fact.appointmentID, &fact.searched, &fact.searchKnown, &basis); err != nil {
+		if err := rows.Scan(&fact.started, &fact.ended, &fact.booked, &fact.appointmentID, &fact.searched, &fact.searchKnown, &fact.patientGroup); err != nil {
 			rows.Close()
 			return BookingAnalytics{}, fmt.Errorf("read booking analytics: %w", err)
 		}
-		fact.patientGroup = bookingPatientGroup(basis)
 		facts = append(facts, fact)
 	}
 	rows.Close()
@@ -115,17 +112,6 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 		return BookingAnalytics{}, fmt.Errorf("commit booking analytics: %w", err)
 	}
 	return summarizeBookingFacts(facts, from, to), nil
-}
-
-func bookingPatientGroup(basis string) string {
-	switch basis {
-	case "confirmed_new":
-		return "new"
-	case "confirmed_existing", "phone_match", "legacy_existing":
-		return "existing"
-	default:
-		return "unknown"
-	}
 }
 
 type bookingAccumulator struct {

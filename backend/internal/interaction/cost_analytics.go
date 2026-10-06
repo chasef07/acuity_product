@@ -91,11 +91,10 @@ func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyt
 	}
 	to := m.now().UTC()
 	from := to.Add(-duration)
-	scope, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceOperator)
+	tx, locations, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceOperator)
 	if err != nil {
 		return CostAnalytics{}, err
 	}
-	tx, locations := scope.tx, scope.locationIDs
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
 		SELECT started_at, ended_at, cost_usage_evidence

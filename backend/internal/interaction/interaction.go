@@ -151,12 +151,13 @@ func (m *Module) Read(
 	identity access.Identity,
 	interactionID string,
 ) (Interaction, error) {
-	tx, _, err := m.beginInteractionAccess(ctx, identity, strings.TrimSpace(interactionID), false, audienceStaff)
+	interactionID = strings.TrimSpace(interactionID)
+	tx, _, err := m.beginInteractionAccess(ctx, identity, interactionID, false, audienceStaff)
 	if err != nil {
 		return Interaction{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	stored, err := readInteraction(ctx, tx, strings.TrimSpace(interactionID))
+	stored, err := readInteraction(ctx, tx, interactionID)
 	if err != nil {
 		return Interaction{}, err
 	}
