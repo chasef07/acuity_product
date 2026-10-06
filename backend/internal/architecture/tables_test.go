@@ -69,7 +69,7 @@ var sqlBaseline = []struct {
 	{"backend/internal/work/responsibilities.go", read, "access_grant_locations access_grants access_locations access_membership_locations access_memberships access_practices", "responsibility routing resolves eligible staff"},
 	{"backend/internal/work/text_replies.go", lock, "messaging_threads", "text reply completion takes the thread lock inbound projection uses"},
 	{"backend/internal/work/text_replies.go", read, "messaging_messages", "text reply completion reads delivery state"},
-	{"backend/internal/work/work.go", read, "access_locations ai_interactions human_calling_call_legs human_calling_calls human_calling_handoffs human_calling_voicemails", "task queries and recovery resolution read call and AI evidence"},
+	{"backend/internal/work/work.go", read, "access_locations human_calling_voicemails", "task queries read Location names and voicemail evidence"},
 }
 
 var createdRelation = regexp.MustCompile(`(?i)\bcreate\s+(?:or\s+replace\s+)?(?:unlogged\s+)?(?:table|view)\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z][a-z0-9_]*)`)

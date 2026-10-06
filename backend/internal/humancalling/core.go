@@ -556,15 +556,6 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	}
 }
 
-func (m *Module) ProcessNextRecoveryReconciliation(
-	ctx context.Context,
-) (bool, error) {
-	if m.work == nil {
-		return false, ErrInvalidInput
-	}
-	return m.work.ProcessNextRecoveryReconciliation(ctx)
-}
-
 func (m *Module) staffMediaToken(callID string, callLegID string) string {
 	mac := hmac.New(sha256.New, m.tokenKey)
 	_, _ = mac.Write([]byte("staff-media-v2\x00" + callID + "\x00" + callLegID))

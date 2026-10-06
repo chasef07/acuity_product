@@ -236,7 +236,6 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"human_calling_outbound_voice_fallbacks",
 		"human_calling_voicemails",
 		"work_task_interactions",
-		"work_recovery_reconciliation_queue",
 		"work_recovery_resolution_checkpoints",
 	} {
 		var exists bool
