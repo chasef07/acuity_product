@@ -1,14 +1,16 @@
 package httpapi
 
 import (
+	"fmt"
+
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/google/uuid"
 )
 
-func operatorMiddlewareRequests(requests []interaction.MiddlewareRequestDiagnostic) *[]api.MiddlewareRequestDiagnostic {
+func operatorMiddlewareRequests(requests []interaction.MiddlewareRequestDiagnostic) (*[]api.MiddlewareRequestDiagnostic, error) {
 	if len(requests) == 0 {
-		return nil
+		return nil, nil
 	}
 	result := make([]api.MiddlewareRequestDiagnostic, 0, len(requests))
 	for _, request := range requests {
@@ -16,8 +18,12 @@ func operatorMiddlewareRequests(requests []interaction.MiddlewareRequestDiagnost
 		for _, provider := range request.ProviderErrors {
 			providers = append(providers, api.ProviderErrorDiagnostic{Operation: provider.Operation, Category: provider.Category, DurationMs: provider.DurationMs, HttpStatus: provider.HTTPStatus, Code: stringPointer(provider.Code)})
 		}
+		requestID, err := uuid.Parse(request.RequestID)
+		if err != nil {
+			return nil, fmt.Errorf("middleware request diagnostic id: %w", err)
+		}
 		item := api.MiddlewareRequestDiagnostic{
-			RequestId: uuid.MustParse(request.RequestID), Operation: request.Operation, Attempt: request.Attempt, DurationMs: request.DurationMs, Result: request.Result,
+			RequestId: requestID, Operation: request.Operation, Attempt: request.Attempt, DurationMs: request.DurationMs, Result: request.Result,
 			HttpStatus: request.HTTPStatus, ResponseStatus: stringPointer(request.ResponseStatus), Outcome: stringPointer(request.Outcome), Category: stringPointer(request.Category),
 			FailureReason: stringPointer(request.FailureReason), Retryable: request.Retryable, ProviderErrorCount: request.ProviderErrorCount,
 		}
@@ -34,5 +40,5 @@ func operatorMiddlewareRequests(requests []interaction.MiddlewareRequestDiagnost
 		}
 		result = append(result, item)
 	}
-	return &result
+	return &result, nil
 }

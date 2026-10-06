@@ -2,7 +2,6 @@ package interaction
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -10,7 +9,6 @@ import (
 	_ "time/tzdata"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
-	"github.com/jackc/pgx/v5"
 )
 
 type QueryBookingAnalyticsCommand struct {
@@ -67,38 +65,18 @@ type bookingFact struct {
 }
 
 func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBookingAnalyticsCommand) (BookingAnalytics, error) {
-	zone, zoneErr := time.LoadLocation(command.TimeZone)
-	if m.database == nil || m.access == nil || !validUUID(command.PracticeID) ||
-		(command.LocationID != "" && !validUUID(command.LocationID)) ||
-		(command.Days != 7 && command.Days != 30 && command.Days != 90) ||
-		command.TimeZone == "" || command.TimeZone == "Local" || zoneErr != nil {
+	zone, validZone := reportingZone(command.TimeZone)
+	if !validZone || (command.Days != 7 && command.Days != 30 && command.Days != 90) {
 		return BookingAnalytics{}, ErrInvalidInput
 	}
 	now := m.now().In(zone)
 	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone)
 	from := to.AddDate(0, 0, -command.Days)
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	tx, locations, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceAdmin)
 	if err != nil {
-		return BookingAnalytics{}, fmt.Errorf("begin booking analytics: %w", err)
+		return BookingAnalytics{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout = '1500ms'; SET LOCAL lock_timeout = '100ms'; SET LOCAL max_parallel_workers_per_gather = 0; SET LOCAL work_mem = '4MB'`); err != nil {
-		return BookingAnalytics{}, err
-	}
-	authorization, err := m.access.LockReadAuthorization(ctx, tx, command.Identity, command.PracticeID, command.LocationID)
-	if errors.Is(err, access.ErrDenied) {
-		return BookingAnalytics{}, ErrDenied
-	}
-	if err != nil {
-		return BookingAnalytics{}, err
-	}
-	if !authorization.PlatformOperator && authorization.Membership.Role != access.RoleAdmin {
-		return BookingAnalytics{}, ErrDenied
-	}
-	locations := authorizedLocationIDs(authorization, command.LocationID)
-	if len(locations) == 0 {
-		return BookingAnalytics{}, ErrDenied
-	}
 
 	rows, err := tx.Query(ctx, `
         SELECT started_at, ended_at, booking_confirmed, COALESCE(new_appointment_id, ''),
@@ -109,8 +87,8 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
             AND started_at >= $3 AND started_at < $4
             AND status <> 'IN_PROGRESS' AND lifecycle_stage = 3
         ORDER BY started_at, id
-        LIMIT 50001
-	`, command.PracticeID, locations, from, to)
+        LIMIT $5
+	`, command.PracticeID, locations, from, to, analyticsRowLimit+1)
 	if err != nil {
 		return BookingAnalytics{}, fmt.Errorf("query booking analytics: %w", err)
 	}
@@ -127,7 +105,7 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 	if err := rows.Err(); err != nil {
 		return BookingAnalytics{}, fmt.Errorf("read booking analytics: %w", err)
 	}
-	if len(facts) > 50000 {
+	if len(facts) > analyticsRowLimit {
 		return BookingAnalytics{}, fmt.Errorf("booking analytics exceeds bounded reporting window")
 	}
 	if err := tx.Commit(ctx); err != nil {

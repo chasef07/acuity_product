@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestAgentCallRequiresAppointmentOutcomeEvidence(t *testing.T) {
@@ -39,5 +40,51 @@ func TestAgentCallRequiresAppointmentOutcomeEvidence(t *testing.T) {
 				t.Fatal("missing end time must not produce a fabricated duration")
 			}
 		})
+	}
+}
+
+func TestCursorsBindTheirQuery(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	command := QueryAnalyticsCommand{PracticeID: "00000000-0000-0000-0000-000000000001", Range: AnalyticsRange7Days, Limit: 10}
+	position := analyticsCursor{}
+	encoded, err := encodeCursor(agentCallsCursor{analyticsCursor: newAnalyticsCursor(command, now.Add(-time.Hour), "00000000-0000-0000-0000-000000000002", now), Phone: "5555", FlaggedOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command.Cursor = encoded
+	var cursor agentCallsCursor
+	if !decodeCursor(command, &cursor, &cursor.analyticsCursor, now) || cursor.Phone != "5555" || !cursor.FlaggedOnly || !cursor.StartedAt.Equal(now.Add(-time.Hour)) {
+		t.Fatalf("agent call cursor = %+v", cursor)
+	}
+	if !decodeCursor(command, &position, &position, now) || position.ID != cursor.ID {
+		t.Fatalf("analytics cursor = %+v", position)
+	}
+	for name, change := range map[string]func(*QueryAnalyticsCommand){
+		"location":     func(c *QueryAnalyticsCommand) { c.LocationID = "00000000-0000-0000-0000-000000000003" },
+		"range":        func(c *QueryAnalyticsCommand) { c.Range = AnalyticsRange30Days },
+		"review":       func(c *QueryAnalyticsCommand) { c.NeedsReviewOnly = true },
+		"tag":          func(c *QueryAnalyticsCommand) { c.ManualTag = "Synthetic" },
+		"corrupt":      func(c *QueryAnalyticsCommand) { c.Cursor = "%%%" },
+		"not a cursor": func(c *QueryAnalyticsCommand) { c.Cursor = "e30" },
+	} {
+		changed := command
+		change(&changed)
+		var decoded analyticsCursor
+		if decodeCursor(changed, &decoded, &decoded, now) {
+			t.Errorf("%s: cursor accepted for a different query", name)
+		}
+	}
+	var future analyticsCursor
+	if decodeCursor(command, &future, &future, now.Add(-time.Minute)) {
+		t.Error("cursor from the future accepted")
+	}
+	stale, err := encodeCursor(newAnalyticsCursor(command, now.Add(-8*24*time.Hour), cursor.ID, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command.Cursor = stale
+	var outside analyticsCursor
+	if decodeCursor(command, &outside, &outside, now) {
+		t.Error("cursor outside its range accepted")
 	}
 }

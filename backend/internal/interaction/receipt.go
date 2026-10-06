@@ -12,6 +12,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type receiptState string
@@ -49,51 +50,38 @@ type storedReceiptPayload struct {
 	CloseoutPayload json.RawMessage      `json:"closeoutPayload,omitempty"`
 }
 
-func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
-	if m.database == nil {
-		return false, ErrInvalidInput
+const (
+	maxReceiptProjectionAttempts = 12
+	firstReceiptRetryDelay       = 5 * time.Second
+	maxReceiptRetryDelay         = 30 * time.Minute
+	receiptRetryExhausted        = "PROJECTION_RETRY_EXHAUSTED"
+	receiptFailureRecordTimeout  = 5 * time.Second
+)
+
+func newStoredReceiptPayload(command IngestCommand) storedReceiptPayload {
+	return storedReceiptPayload{
+		Kind:            command.Kind,
+		OfficeKey:       command.OfficeKey,
+		SourceCallID:    command.SourceCallID,
+		CallerPhone:     command.CallerPhone,
+		OfficePhone:     command.OfficePhone,
+		StartedAt:       command.StartedAt,
+		EndedAt:         command.EndedAt,
+		Status:          command.Status,
+		Summary:         command.Summary,
+		Transcript:      command.Transcript,
+		Appointment:     command.Appointment,
+		CloseoutPayload: command.CloseoutPayload,
 	}
-	var (
-		receipt acceptedReceipt
-		payload storedReceiptPayload
-		raw     []byte
-	)
-	err := m.database.QueryRow(ctx, `
-		SELECT
-			id::text,
-			service_subject,
-			practice_id::text,
-			location_id::text,
-			source_call_id,
-			state,
-			payload
-		FROM ai_interaction_receipts
-		WHERE state = 'PENDING'
-			AND kind IN ('START', 'OUTCOME_CHECKPOINT', 'CLOSEOUT')
-		ORDER BY received_at, id
-		LIMIT 1
-	`).Scan(
-		&receipt.ID,
-		&receipt.ServiceSubject,
-		&receipt.PracticeID,
-		&receipt.LocationID,
-		&receipt.SourceCallID,
-		&receipt.State,
-		&raw,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("load pending AI Interaction receipt: %w", err)
-	}
+}
+
+func receiptCommand(receipt acceptedReceipt, raw []byte) (IngestCommand, LifecycleStage, bool) {
+	var payload storedReceiptPayload
 	if json.Unmarshal(raw, &payload) != nil {
-		return true, m.quarantinePendingReceipt(ctx, receipt.ID, "INVALID_RECEIPT")
+		return IngestCommand{}, 0, false
 	}
 	command := IngestCommand{
-		Service: access.ServiceIdentity{
-			Subject: receipt.ServiceSubject,
-		},
+		Service:         access.ServiceIdentity{Subject: receipt.ServiceSubject},
 		Kind:            payload.Kind,
 		OfficeKey:       payload.OfficeKey,
 		SourceCallID:    payload.SourceCallID,
@@ -109,8 +97,19 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 	}
 	normalizeCommand(&command)
 	stage := messageLifecycleStage(command.Kind)
-	if stage == 0 || !validCommand(command) ||
-		command.SourceCallID != receipt.SourceCallID {
+	return command, stage, stage != 0 && validCommand(command) && command.SourceCallID == receipt.SourceCallID
+}
+
+func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
+	if m.database == nil {
+		return false, errUnavailable
+	}
+	receipt, raw, attempts, claimed, err := m.claimReceipt(ctx)
+	if err != nil || !claimed {
+		return false, err
+	}
+	command, stage, valid := receiptCommand(receipt, raw)
+	if !valid {
 		return true, m.quarantinePendingReceipt(ctx, receipt.ID, "INVALID_RECEIPT")
 	}
 	_, _, err = m.projectReceipt(
@@ -120,27 +119,110 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		stage,
 		m.now().UTC().Truncate(time.Microsecond),
 	)
-	if errors.Is(err, ErrConflict) {
+	if err == nil || errors.Is(err, ErrConflict) {
 		return true, nil
 	}
-	return true, err
+	if recordErr := m.recordReceiptFailure(ctx, receipt.ID, attempts, err); recordErr != nil {
+		return true, errors.Join(err, recordErr)
+	}
+	return true, fmt.Errorf("project AI Interaction receipt attempt %d: %w", attempts, err)
+}
+
+func (m *Module) claimReceipt(ctx context.Context) (acceptedReceipt, []byte, int, bool, error) {
+	now := m.now().UTC().Truncate(time.Microsecond)
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return acceptedReceipt{}, nil, 0, false, fmt.Errorf("begin AI Interaction receipt claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var receipt acceptedReceipt
+	var raw []byte
+	var attempts int
+	err = tx.QueryRow(ctx, `
+		SELECT
+			id::text,
+			service_subject,
+			practice_id::text,
+			location_id::text,
+			source_call_id,
+			state,
+			payload,
+			projection_attempts
+		FROM ai_interaction_receipts
+		WHERE state = 'PENDING'
+			AND kind IN ('START', 'OUTCOME_CHECKPOINT', 'CLOSEOUT')
+			AND (next_attempt_at IS NULL OR next_attempt_at <= $1)
+		ORDER BY received_at, id
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
+	`, now).Scan(
+		&receipt.ID,
+		&receipt.ServiceSubject,
+		&receipt.PracticeID,
+		&receipt.LocationID,
+		&receipt.SourceCallID,
+		&receipt.State,
+		&raw,
+		&attempts,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return acceptedReceipt{}, nil, 0, false, nil
+	}
+	if err != nil {
+		return acceptedReceipt{}, nil, 0, false, fmt.Errorf("claim pending AI Interaction receipt: %w", err)
+	}
+	attempts++
+	if _, err := tx.Exec(ctx, `
+		UPDATE ai_interaction_receipts
+		SET projection_attempts = $2, last_attempt_at = $3, next_attempt_at = $4
+		WHERE id = $1
+	`, receipt.ID, attempts, now, now.Add(receiptRetryDelay(attempts))); err != nil {
+		return acceptedReceipt{}, nil, 0, false, fmt.Errorf("count AI Interaction receipt attempt: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return acceptedReceipt{}, nil, 0, false, fmt.Errorf("commit AI Interaction receipt claim: %w", err)
+	}
+	return receipt, raw, attempts, true, nil
+}
+
+func receiptRetryDelay(attempt int) time.Duration {
+	delay := firstReceiptRetryDelay
+	for current := 1; current < attempt && delay < maxReceiptRetryDelay; current++ {
+		delay *= 2
+	}
+	return min(delay, maxReceiptRetryDelay)
+}
+
+func receiptFailureCode(err error) string {
+	var databaseErr *pgconn.PgError
+	switch {
+	case errors.As(err, &databaseErr):
+		return "DATABASE_" + databaseErr.Code
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return "TIMEOUT"
+	default:
+		return "PROJECTION_FAILED"
+	}
+}
+
+func (m *Module) recordReceiptFailure(ctx context.Context, receiptID string, attempts int, cause error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), receiptFailureRecordTimeout)
+	defer cancel()
+	if _, err := m.database.Exec(ctx, `
+		UPDATE ai_interaction_receipts
+		SET
+			last_error_code = $3,
+			state = CASE WHEN $4 THEN 'QUARANTINED' ELSE state END,
+			projection_error_code = CASE WHEN $4 THEN $5 ELSE projection_error_code END
+		WHERE id = $1 AND state = 'PENDING' AND projection_attempts = $2
+	`, receiptID, attempts, receiptFailureCode(cause), attempts >= maxReceiptProjectionAttempts, receiptRetryExhausted); err != nil {
+		return fmt.Errorf("record AI Interaction receipt failure: %w", err)
+	}
+	return nil
 }
 
 func receiptPayload(command IngestCommand) ([]byte, [32]byte, error) {
-	payload, err := json.Marshal(storedReceiptPayload{
-		Kind:            command.Kind,
-		OfficeKey:       command.OfficeKey,
-		SourceCallID:    command.SourceCallID,
-		CallerPhone:     command.CallerPhone,
-		OfficePhone:     command.OfficePhone,
-		StartedAt:       command.StartedAt,
-		EndedAt:         command.EndedAt,
-		Status:          command.Status,
-		Summary:         command.Summary,
-		Transcript:      command.Transcript,
-		Appointment:     command.Appointment,
-		CloseoutPayload: command.CloseoutPayload,
-	})
+	payload, err := json.Marshal(newStoredReceiptPayload(command))
 	if err != nil {
 		return nil, [32]byte{}, err
 	}
@@ -250,8 +332,11 @@ func (m *Module) authorizeReceipt(
 			access.ServiceCapabilityIngestAIInteraction,
 		)
 	}
-	if err != nil {
+	if errors.Is(err, access.ErrDenied) {
 		return access.ServiceAuthorization{}, ErrDenied
+	}
+	if err != nil {
+		return access.ServiceAuthorization{}, fmt.Errorf("authorize AI Interaction receipt: %w", err)
 	}
 	return authorization, nil
 }
@@ -296,10 +381,9 @@ func (m *Module) projectReceiptWithRecovery(
 	}
 	var authorization access.Authorization
 	if operator != nil {
-		authorization, err = m.access.LockMutationAuthorization(ctx, tx, *operator,
-			receipt.PracticeID, receipt.LocationID)
-		if err != nil || !authorization.PlatformOperator {
-			return Interaction{}, "", access.ErrDenied
+		authorization, err = m.authorize(ctx, tx, *operator, receipt.PracticeID, receipt.LocationID, true, audienceOperator)
+		if err != nil {
+			return Interaction{}, "", err
 		}
 	}
 	if receipt.State == receiptQuarantined && (operator == nil || receipt.ProjectionErrorCode != "SOURCE_CONFLICT") {

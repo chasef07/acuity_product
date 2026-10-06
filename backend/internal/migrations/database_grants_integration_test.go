@@ -884,6 +884,8 @@ func expectedColumnPrivileges() map[string]bool {
 		"payload",
 		"received_at",
 		"projection_error_code",
+		"projection_attempts",
+		"next_attempt_at",
 	)
 	grant(
 		"acuity_portal",
@@ -943,6 +945,10 @@ func expectedColumnPrivileges() map[string]bool {
 		"interaction_id",
 		"projection_error_code",
 		"projected_at",
+		"projection_attempts",
+		"next_attempt_at",
+		"last_attempt_at",
+		"last_error_code",
 	)
 	grant(
 		"acuity_portal",

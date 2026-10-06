@@ -85,7 +85,7 @@ func TestSourceClockRecoveryPreservesEvidenceAndRequiresOperator(t *testing.T) {
 				}
 			} else if err == nil {
 				t.Fatal("unsafe source recovery succeeded")
-			} else if scenario == "ordinary_user" && !errors.Is(err, access.ErrDenied) {
+			} else if scenario == "ordinary_user" && !errors.Is(err, ErrDenied) {
 				t.Fatalf("unauthorized error=%v", err)
 			}
 			var after, afterFingerprint []byte

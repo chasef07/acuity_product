@@ -2,9 +2,9 @@ package interaction
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -63,8 +63,7 @@ type agentCallsCursor struct {
 func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCommand) (AgentCallsPage, error) {
 	normalizeAnalyticsCommand(&command.QueryAnalyticsCommand)
 	duration, validRange := analyticsRangeDuration(command.Range)
-	if m.database == nil || m.access == nil || !validRange || !validUUID(command.PracticeID) ||
-		(command.LocationID != "" && !validUUID(command.LocationID)) || command.Limit < 1 || command.Limit > 100 || len(command.Phone) > 32 {
+	if !validRange || command.Limit < 1 || command.Limit > 100 || len(command.Phone) > 32 {
 		return AgentCallsPage{}, ErrInvalidInput
 	}
 	phone := strings.Map(func(r rune) rune {
@@ -81,25 +80,16 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	var id any
 	if command.Cursor != "" {
 		var cursor agentCallsCursor
-		raw, err := base64.RawURLEncoding.DecodeString(command.Cursor)
-		if err != nil || json.Unmarshal(raw, &cursor) != nil || cursor.PracticeID != command.PracticeID || cursor.LocationID != command.LocationID || cursor.Range != command.Range || cursor.Phone != phone || cursor.FlaggedOnly != command.FlaggedOnly || !validUUID(cursor.ID) || cursor.Through.After(through) || cursor.Through.IsZero() || cursor.StartedAt.After(cursor.Through) || cursor.StartedAt.Before(cursor.Through.Add(-duration)) {
+		if !decodeCursor(command.QueryAnalyticsCommand, &cursor, &cursor.analyticsCursor, through) || cursor.Phone != phone || cursor.FlaggedOnly != command.FlaggedOnly {
 			return AgentCallsPage{}, ErrInvalidInput
 		}
 		through, startedAt, id = cursor.Through, cursor.StartedAt, cursor.ID
 	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	tx, locations, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceStaff)
 	if err != nil {
 		return AgentCallsPage{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	authorization, err := m.access.LockReadAuthorization(ctx, tx, command.Identity, command.PracticeID, command.LocationID)
-	if err != nil {
-		return AgentCallsPage{}, ErrDenied
-	}
-	locations := authorizedLocationIDs(authorization, command.LocationID)
-	if len(locations) == 0 {
-		return AgentCallsPage{}, ErrDenied
-	}
 	rows, err := tx.Query(ctx, `
   SELECT i.id::text, i.phone, i.started_at, i.ended_at, i.status,
    i.appointment_outcome, i.booking_result, i.cancellation_result,
@@ -134,11 +124,10 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	if len(page.Calls) > command.Limit {
 		page.Calls = page.Calls[:command.Limit]
 		last := page.Calls[len(page.Calls)-1]
-		raw, err := json.Marshal(agentCallsCursor{analyticsCursor: analyticsCursor{Through: through, Range: command.Range, PracticeID: command.PracticeID, LocationID: command.LocationID, StartedAt: last.StartedAt, ID: last.ID}, Phone: phone, FlaggedOnly: command.FlaggedOnly})
+		page.NextCursor, err = encodeCursor(agentCallsCursor{analyticsCursor: newAnalyticsCursor(command.QueryAnalyticsCommand, last.StartedAt, last.ID, through), Phone: phone, FlaggedOnly: command.FlaggedOnly})
 		if err != nil {
 			return AgentCallsPage{}, err
 		}
-		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AgentCallsPage{}, err
@@ -207,11 +196,15 @@ func agentCall(stored Interaction, receipts json.RawMessage, flagged bool) Agent
 }
 
 func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id string) (AgentCallDetail, error) {
-	tx, stored, err := m.authorizeAgentCall(ctx, identity, id)
+	tx, _, err := m.beginInteractionAccess(ctx, identity, id, false, audienceStaff)
 	if err != nil {
 		return AgentCallDetail{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	stored, err := readInteraction(ctx, tx, id)
+	if err != nil {
+		return AgentCallDetail{}, err
+	}
 	var issue AgentCallIssue
 	err = tx.QueryRow(ctx, `SELECT reason, created_at FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Reason, &issue.CreatedAt)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -251,19 +244,24 @@ func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identit
 	default:
 		return AgentCallIssue{}, ErrInvalidInput
 	}
-	tx, _, err := m.authorizeAgentCall(ctx, identity, id)
+	tx, authorization, err := m.beginInteractionAccess(ctx, identity, id, true, audienceStaff)
 	if err != nil {
 		return AgentCallIssue{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	_, err = tx.Exec(ctx, `INSERT INTO ai_interaction_issues (interaction_id, reported_by, reason, note) VALUES ($1, $2, $3, $3) ON CONFLICT (interaction_id) DO NOTHING`, id, identity.Subject, reason)
+	result, err := tx.Exec(ctx, `INSERT INTO ai_interaction_issues (interaction_id, reported_by, reason, note) VALUES ($1, $2, $3, $3) ON CONFLICT (interaction_id) DO NOTHING`, id, identity.Subject, reason)
 	if err != nil {
-		return AgentCallIssue{}, err
+		return AgentCallIssue{}, fmt.Errorf("record AI call issue: %w", err)
+	}
+	if result.RowsAffected() > 0 {
+		if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{Action: "ai_interaction.issue_reported", ResourceType: "ai_interaction", ResourceID: id, ResourceVersion: 1, OccurredAt: m.now()}); err != nil {
+			return AgentCallIssue{}, err
+		}
 	}
 	var issue AgentCallIssue
 	var reporter string
 	if err := tx.QueryRow(ctx, `SELECT reason, created_at, reported_by FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Reason, &issue.CreatedAt, &reporter); err != nil {
-		return AgentCallIssue{}, err
+		return AgentCallIssue{}, fmt.Errorf("read AI call issue: %w", err)
 	}
 	if issue.Reason != reason || reporter != identity.Subject {
 		return AgentCallIssue{}, ErrConflict
@@ -272,29 +270,4 @@ func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identit
 		return AgentCallIssue{}, err
 	}
 	return issue, nil
-}
-
-func (m *Module) authorizeAgentCall(ctx context.Context, identity access.Identity, id string) (pgx.Tx, Interaction, error) {
-	if m.database == nil || m.access == nil || !validUUID(id) {
-		return nil, Interaction{}, ErrInvalidInput
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, Interaction{}, err
-	}
-	stored, err := scanInteraction(tx.QueryRow(ctx, interactionSelect+` WHERE interaction.id = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = ErrDenied
-	}
-	if err == nil {
-		_, authErr := m.access.LockReadAuthorization(ctx, tx, identity, stored.PracticeID, stored.LocationID)
-		if authErr != nil {
-			err = ErrDenied
-		}
-	}
-	if err != nil {
-		_ = tx.Rollback(ctx)
-		return nil, Interaction{}, err
-	}
-	return tx, stored, nil
 }

@@ -157,4 +157,15 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	if err != nil || len(diagnostics.PendingIssues) != 1 || diagnostics.PendingIssues[0].InteractionID != old {
 		t.Fatalf("reviewed issue still pending: %+v %v", diagnostics.PendingIssues, err)
 	}
+	operatorFlagged := insert(allowed, "operator-flagged", now.Add(-3*time.Minute))
+	if _, err = module.FlagAgentCallIssue(ctx, operator, operatorFlagged, AgentCallIssueOther); err != nil {
+		t.Fatal(err)
+	}
+	var reported []string
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(array_agg(details->>'resourceId' ORDER BY details->>'resourceId'), '{}') FROM access_audit_events WHERE action='ai_interaction.issue_reported'`).Scan(&reported); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(reported, ",") != operatorFlagged {
+		t.Fatalf("operator report must be audited once and staff reports never: %v", reported)
+	}
 }

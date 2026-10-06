@@ -82,26 +82,14 @@ func pendingCallIssues(ctx context.Context, tx pgx.Tx, practiceID string, locati
 }
 
 func (m *Module) ReviewCallIssue(ctx context.Context, identity access.Identity, interactionID string, outcome CallIssueOutcome) (OperatorCallIssue, error) {
-	if m.database == nil || m.access == nil || !validUUID(interactionID) || (outcome != CallIssueConfirmed && outcome != CallIssueNotAnIssue) {
+	if outcome != CallIssueConfirmed && outcome != CallIssueNotAnIssue {
 		return OperatorCallIssue{}, ErrInvalidInput
 	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	tx, authorization, err := m.beginInteractionAccess(ctx, identity, interactionID, true, audienceOperator)
 	if err != nil {
 		return OperatorCallIssue{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var practiceID, locationID string
-	err = tx.QueryRow(ctx, `SELECT practice_id::text, location_id::text FROM ai_interactions WHERE id=$1`, interactionID).Scan(&practiceID, &locationID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return OperatorCallIssue{}, ErrDenied
-	}
-	if err != nil {
-		return OperatorCallIssue{}, err
-	}
-	authorization, err := m.access.LockMutationAuthorization(ctx, tx, identity, practiceID, locationID)
-	if err != nil || !authorization.PlatformOperator {
-		return OperatorCallIssue{}, ErrDenied
-	}
 	now := m.now()
 	result, err := tx.Exec(ctx, `UPDATE ai_interaction_issues SET review_outcome=$2, reviewed_by=$3, reviewed_at=$4 WHERE interaction_id=$1 AND review_outcome IS DISTINCT FROM $2`, interactionID, outcome, identity.Subject, now)
 	if err != nil {

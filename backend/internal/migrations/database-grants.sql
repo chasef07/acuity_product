@@ -349,7 +349,9 @@ GRANT SELECT (
     interaction_id,
     payload,
     received_at,
-    projection_error_code
+    projection_error_code,
+    projection_attempts,
+    next_attempt_at
 )
 ON TABLE public.ai_interaction_receipts
 TO acuity_worker;
@@ -410,7 +412,11 @@ GRANT UPDATE (
     state,
     interaction_id,
     projection_error_code,
-    projected_at
+    projected_at,
+    projection_attempts,
+    next_attempt_at,
+    last_attempt_at,
+    last_error_code
 )
 ON TABLE public.ai_interaction_receipts
 TO acuity_worker;

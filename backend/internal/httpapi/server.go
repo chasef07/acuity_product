@@ -3515,8 +3515,12 @@ func operatorAIInteractionAnalyticsResponse(
 		})
 	}
 	for _, execution := range detail.ToolExecutions {
+		middlewareRequests, err := operatorMiddlewareRequests(execution.MiddlewareRequests)
+		if err != nil {
+			return api.OperatorAIInteractionAnalytics{}, err
+		}
 		response.ToolExecutions = append(response.ToolExecutions, api.OperatorAIToolExecution{
-			MiddlewareRequests: operatorMiddlewareRequests(execution.MiddlewareRequests),
+			MiddlewareRequests: middlewareRequests,
 			DurationMs:         execution.DurationMs,
 			CallId:             execution.CallID,
 			Name:               execution.Name,
