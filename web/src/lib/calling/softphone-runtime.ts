@@ -315,6 +315,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   let refreshDueAt = 0
   let lastRefreshStartedAt = Number.NEGATIVE_INFINITY
   let callingHintPending = false
+  let callingPracticeIDs: string[] | undefined
   let heartbeatTimer: number | undefined
   let refreshInFlight: Promise<void> | undefined
   let refreshQueued = false
@@ -928,6 +929,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         return
       }
       const state = result.state
+      callingPracticeIDs = state.callingPracticeIds
       const authoritativeLease = leaseForSession(
         state.softphone,
         options.sessionID,
@@ -1222,7 +1224,11 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       )
     }
     if (incomingMedia.size > 0) return mediaConfirmationRetryMilliseconds
-    return refreshDelay(snapshot, visibility.isHidden(), callingHints.live())
+    return refreshDelay(
+      snapshot,
+      visibility.isHidden(),
+      callingHints.covers(callingPracticeIDs),
+    )
   }
 
   function callingHintDelay() {
@@ -1232,13 +1238,15 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     )
   }
 
+  function callingHintsCanAdvance(delay: number) {
+    return !temporaryFailures && delay > fastRefreshMilliseconds
+  }
+
   function scheduleRefresh() {
     if (stopped) return
     const delay = currentRefreshDelay()
     armRefresh(
-      callingHintPending &&
-        !temporaryFailures &&
-        delay > fastRefreshMilliseconds
+      callingHintPending && callingHintsCanAdvance(delay)
         ? Math.min(delay, callingHintDelay())
         : delay,
     )
@@ -1265,12 +1273,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       advanceRefresh(currentRefreshDelay())
       return
     }
-    if (
-      temporaryFailures ||
-      currentRefreshDelay() <= fastRefreshMilliseconds
-    ) {
-      return
-    }
+    if (!callingHintsCanAdvance(currentRefreshDelay())) return
     callingHintPending = true
     advanceRefresh(callingHintDelay())
   }
@@ -2233,6 +2236,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         unsubscribeCallingHints?.()
         unsubscribeCallingHints = undefined
         callingHintPending = false
+        callingPracticeIDs = undefined
         lastRefreshStartedAt = Number.NEGATIVE_INFINITY
         await releaseLocalMedia()
         publish({
@@ -2984,31 +2988,33 @@ function pendingInboundCall(offer: RuntimeOffer): RuntimePendingCall {
 function refreshDelay(
   snapshot: SoftphoneRuntimeSnapshot,
   hidden: boolean,
-  callingHintsLive: boolean,
+  callingHintsCover: boolean,
 ) {
   const activeDelay = activeRefreshDelay(snapshot)
   if (activeDelay === undefined) {
-    if (callingHintsLive) return hintedIdleRefreshMilliseconds
+    if (callingHintsCover) return hintedIdleRefreshMilliseconds
     return hidden ? hiddenRefreshMilliseconds : idleRefreshMilliseconds
   }
   return hidden ? hiddenRefreshMilliseconds : activeDelay
 }
 
 function activeRefreshDelay(snapshot: SoftphoneRuntimeSnapshot) {
-  if (snapshot.offers.length > 0) return 250
+  if (snapshot.offers.length > 0) return fastRefreshMilliseconds
   if (
     snapshot.pendingCall ||
     snapshot.pending.retry ||
     snapshot.pending.disposition
   ) {
-    return 250
+    return fastRefreshMilliseconds
   }
-  if (snapshot.endingCallID || snapshot.activeCall?.endRequested) return 250
+  if (snapshot.endingCallID || snapshot.activeCall?.endRequested) {
+    return fastRefreshMilliseconds
+  }
   switch (snapshot.activeCall?.state) {
     case "PREPARING":
     case "RINGING":
     case "CONNECTING":
-      return 250
+      return fastRefreshMilliseconds
     case "CONNECTED":
       return 1_000
     default:

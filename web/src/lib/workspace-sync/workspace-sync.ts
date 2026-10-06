@@ -32,6 +32,12 @@ type WorkspaceSyncOptions = {
   sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>
   timing?: Partial<WorkspaceSyncTiming>
   callingHints?: CallingHintSink
+  timer?: WorkspaceSyncTimer
+}
+
+type WorkspaceSyncTimer = {
+  setTimeout(callback: () => void, milliseconds: number): unknown
+  clearTimeout(id: unknown): void
 }
 
 type WorkspaceSyncTiming = {
@@ -40,6 +46,7 @@ type WorkspaceSyncTiming = {
   degradedGraceMilliseconds: number
   pollMinimumMilliseconds: number
   pollMaximumMilliseconds: number
+  streamSilenceMilliseconds: number
 }
 
 type DeferredCatchUp = "none" | "hint" | "force"
@@ -50,6 +57,12 @@ const defaultTiming: WorkspaceSyncTiming = {
   degradedGraceMilliseconds: 3_000,
   pollMinimumMilliseconds: 15_000,
   pollMaximumMilliseconds: 30_000,
+  streamSilenceMilliseconds: 32_000,
+}
+
+const defaultTimer: WorkspaceSyncTimer = {
+  setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
+  clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
 }
 
 export type WorkspaceSync = {
@@ -68,13 +81,14 @@ export function createWorkspaceSync(
   const random = options.random ?? Math.random
   const sleep = options.sleep ?? wait
   const callingHints = options.callingHints ?? browserCallingHints
+  const timer = options.timer ?? defaultTimer
   let controller: AbortController | undefined
   let scopeKey = ""
   let handleRefresh = () => {}
   let handleVisibility = () => {}
 
   function stop() {
-    callingHints.setLive(false)
+    callingHints.setCoverage(undefined)
     scopeKey = ""
     handleRefresh = () => {}
     controller?.abort()
@@ -327,6 +341,7 @@ export function createWorkspaceSync(
 
     while (!signal.aborted) {
       streamReady = false
+      let silence: ReturnType<typeof watchSilence> | undefined
       try {
         const streamToken = await options.getToken()
         if (signal.aborted) return
@@ -354,7 +369,12 @@ export function createWorkspaceSync(
         }
 
         let ready = false
-        for await (const event of readEvents(response.body, signal)) {
+        silence = watchSilence(signal, timer, timing.streamSilenceMilliseconds)
+        for await (const event of readEvents(
+          response.body,
+          silence.signal,
+          silence.touch,
+        )) {
           if (event.type === "calling") {
             if (event.practiceID === scope.practiceID) callingHints.publish()
             continue
@@ -370,27 +390,33 @@ export function createWorkspaceSync(
             continue
           }
           if (event.type !== "ready" || ready) continue
-          callingHints.setLive(event.callingHints)
+          const coverage = event.callingHints ? scope.practiceID : undefined
           highestHint = Math.max(highestHint, event.version)
           if (options.isHidden?.()) {
             deferCatchUp(true)
             ready = true
             streamReady = true
+            callingHints.setCoverage(coverage)
             continue
           }
+          silence.pause()
           await reconcile(event.version, true)
           if (signal.aborted) return
+          silence.touch()
+          callingHints.setCoverage(coverage)
           ready = true
           streamReady = true
           markHealthy()
           hasConnected = true
           options.onStateChange("connected")
         }
+        silence.stop()
         if (signal.aborted) return
         throw new Error("realtime stream ended")
       } catch (error) {
+        silence?.stop()
         streamReady = false
-        callingHints.setLive(false)
+        callingHints.setCoverage(undefined)
         if (signal.aborted) return
         if (error instanceof WorkspaceSyncUnauthorizedError) {
           options.onUnauthorized?.()
@@ -431,9 +457,39 @@ function wait(milliseconds: number, signal: AbortSignal) {
   })
 }
 
+function watchSilence(
+  parent: AbortSignal,
+  timer: WorkspaceSyncTimer,
+  milliseconds: number,
+) {
+  const controller = new AbortController()
+  let id: unknown
+  const pause = () => {
+    if (id !== undefined) timer.clearTimeout(id)
+    id = undefined
+  }
+  const stop = () => {
+    pause()
+    parent.removeEventListener("abort", abort)
+  }
+  const abort = () => {
+    stop()
+    controller.abort()
+  }
+  const touch = () => {
+    if (controller.signal.aborted) return
+    pause()
+    id = timer.setTimeout(abort, milliseconds)
+  }
+  parent.addEventListener("abort", abort, { once: true })
+  touch()
+  return { signal: controller.signal, touch, pause, stop }
+}
+
 async function* readEvents(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
+  onActivity: () => void,
 ) {
   const reader = stream.getReader()
   const cancel = () => void reader.cancel()
@@ -444,6 +500,7 @@ async function* readEvents(
     while (!signal.aborted) {
       const { value, done } = await reader.read()
       if (done) return
+      onActivity()
       buffer += decoder.decode(value, { stream: true })
       const blocks = buffer.split(/\r?\n\r?\n/)
       buffer = blocks.pop() ?? ""

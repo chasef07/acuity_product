@@ -718,7 +718,7 @@ test("calling events relay to the softphone without reconciling the workspace", 
 
   await eventually(() => assert.equal(streams.length, 1))
   streams[0]!.enqueue(callingReadyEvent(4))
-  await eventually(() => assert.equal(callingHints.live(), true))
+  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
   streams[0]!.enqueue(callingEvent("practice-1"))
   streams[0]!.enqueue(callingEvent("practice-2"))
   streams[0]!.enqueue(
@@ -732,17 +732,17 @@ test("calling events relay to the softphone without reconciling the workspace", 
 
   streams[0]!.close()
   await eventually(() => assert.equal(streams.length, 2))
-  assert.equal(callingHints.live(), false)
+  assert.equal(callingHints.covers(["practice-1"]), false)
   assert.deepEqual(signals, ["connected", "hint", "hint", "disconnected"])
 
   streams[1]!.enqueue(readyEvent(5))
   streams[1]!.enqueue(callingEvent("practice-1"))
   await eventually(() => assert.equal(signals.length, 5))
-  assert.equal(callingHints.live(), false)
+  assert.equal(callingHints.covers(["practice-1"]), false)
   assert.equal(signals.at(-1), "hint")
 
   sync.stop()
-  assert.equal(callingHints.live(), false)
+  assert.equal(callingHints.covers(["practice-1"]), false)
 })
 
 test("stopping the stream withdraws live calling hints", async () => {
@@ -766,12 +766,124 @@ test("stopping the stream withdraws live calling hints", async () => {
   sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
   await eventually(() => assert.ok(stream))
   stream!.enqueue(callingReadyEvent(4))
-  await eventually(() => assert.equal(callingHints.live(), true))
+  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
 
   sync.stop()
 
-  assert.equal(callingHints.live(), false)
+  assert.equal(callingHints.covers(["practice-1"]), false)
 })
+
+test("calling hint coverage waits for the ready reconciliation to succeed", async () => {
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  const callingHints = createCallingHintChannel()
+  const pending = deferred<{ version: number; apply: () => void }>()
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: () => pending.promise,
+    onStateChange: () => {},
+    callingHints,
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+  await eventually(() => assert.ok(stream))
+  stream!.enqueue(callingReadyEvent(4))
+  await new Promise((resolve) => setTimeout(resolve, 10))
+
+  assert.equal(callingHints.covers(["practice-1"]), false)
+
+  pending.resolve({ version: 4, apply: () => {} })
+  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
+  assert.equal(callingHints.covers(["practice-1", "practice-2"]), false)
+  sync.stop()
+})
+
+test("a silent stream is abandoned after the heartbeat window and reconnects", async () => {
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  const canceled: number[] = []
+  const callingHints = createCallingHintChannel()
+  const timer = new ManualTimer()
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () => {
+      const index = streams.length
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller)
+          },
+          cancel() {
+            canceled.push(index)
+          },
+        }),
+      )
+    },
+    getToken: async () => "token",
+    reconcile: async () => ({ version: 4, apply: () => {} }),
+    onStateChange: () => {},
+    callingHints,
+    timer,
+    timing: { streamSilenceMilliseconds: 30_000 },
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+  await eventually(() => assert.equal(streams.length, 1))
+  streams[0]!.enqueue(callingReadyEvent(4))
+  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
+
+  await timer.advance(20_000)
+  streams[0]!.enqueue(new TextEncoder().encode(": heartbeat\n\n"))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await timer.advance(20_000)
+  assert.equal(callingHints.covers(["practice-1"]), true)
+  assert.deepEqual(canceled, [])
+
+  await timer.advance(10_000)
+
+  await eventually(() => assert.equal(streams.length, 2))
+  assert.deepEqual(canceled, [0])
+  assert.equal(callingHints.covers(["practice-1"]), false)
+  streams[1]!.enqueue(callingReadyEvent(5))
+  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
+  sync.stop()
+  assert.equal(timer.pending, 0)
+})
+
+class ManualTimer {
+  now = 0
+  private nextID = 1
+  private timers = new Map<number, { at: number; callback: () => void }>()
+
+  setTimeout = (callback: () => void, milliseconds: number) => {
+    const id = this.nextID++
+    this.timers.set(id, { at: this.now + milliseconds, callback })
+    return id
+  }
+
+  clearTimeout = (id: unknown) => {
+    this.timers.delete(id as number)
+  }
+
+  get pending() {
+    return this.timers.size
+  }
+
+  async advance(milliseconds: number) {
+    this.now += milliseconds
+    for (const [id, timer] of [...this.timers]) {
+      if (timer.at > this.now) continue
+      this.timers.delete(id)
+      timer.callback()
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+}
 
 function callingReadyEvent(version: number) {
   return new TextEncoder().encode(

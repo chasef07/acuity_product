@@ -147,7 +147,6 @@ func (hub *Hub) Run(ctx context.Context) {
 				hint.Version < 1 {
 				continue
 			}
-			hint.CallingHints = false
 			hub.publish(hint)
 		}
 		hub.ready.Store(false)

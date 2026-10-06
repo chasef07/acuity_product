@@ -262,6 +262,11 @@ export type CallingState = {
     bridged?: CallingStateCall;
     voicemail?: CallingStateCall;
     disposition?: CallingStateCall;
+    /**
+     * Practices whose Calling work this state covers. A client may rely on `calling` stream events instead of fast polling only when they cover every listed Practice.
+     *
+     */
+    callingPracticeIds?: Array<string>;
 };
 
 export type RingingCallLeg = {

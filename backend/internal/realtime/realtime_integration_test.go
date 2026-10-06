@@ -914,6 +914,138 @@ func TestRealtimePlannedRotationIsJitteredAcrossConcurrentClients(t *testing.T) 
 	}
 }
 
+func TestRealtimeCallingHintsStayScopedToTheStreamedPractice(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	email := "multi-practice@realtime.test"
+	practice := func(key string, grant bool) access.PracticeProvision {
+		provision := access.PracticeProvision{
+			Key:       key,
+			Name:      "Realtime " + key,
+			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture 1"}},
+		}
+		if grant {
+			provision.AccessGrants = []access.AccessGrantProvision{{
+				Key:           key + "-member",
+				Email:         email,
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+			}}
+		}
+		return provision
+	}
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "realtime-multi-practice",
+		Practices: []access.PracticeProvision{
+			practice("realtime-viewed", true),
+			practice("realtime-other", true),
+			practice("realtime-foreign", false),
+		},
+	}); err != nil {
+		t.Fatalf("provision multi-practice fixture: %v", err)
+	}
+	member := access.Identity{
+		Subject:       "realtime-multi-practice-member",
+		Email:         email,
+		EmailVerified: true,
+	}
+	discovery, err := accessModule.DiscoverActor(context.Background(), member)
+	if err != nil || len(discovery.Practices) != 2 {
+		t.Fatalf("multi-practice discovery = %#v, %v", discovery, err)
+	}
+	viewed := discovery.Practices[0]
+	other := discovery.Practices[1]
+	var foreignID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM access_practices WHERE id <> ALL($1::uuid[])
+	`, []string{viewed.ID, other.ID}).Scan(&foreignID); err != nil {
+		t.Fatalf("read foreign Practice: %v", err)
+	}
+
+	hubContext, stopHub := context.WithCancel(context.Background())
+	t.Cleanup(stopHub)
+	hub, err := realtime.New(realtime.Config{
+		DatabaseURL:        testDatabaseURL(t),
+		AccessTimeout:      500 * time.Millisecond,
+		HeartbeatInterval:  time.Second,
+		StreamLifetime:     3 * time.Second,
+		RevalidateInterval: time.Second,
+		ReconnectMin:       10 * time.Millisecond,
+		ReconnectMax:       50 * time.Millisecond,
+	}, accessModule)
+	if err != nil {
+		t.Fatalf("new multi-practice realtime adapter: %v", err)
+	}
+	go hub.Run(hubContext)
+	waitForHubReady(t, hub)
+
+	reader, writer := io.Pipe()
+	streamContext, stopStream := context.WithCancel(context.Background())
+	defer stopStream()
+	request := httptest.NewRequest(http.MethodGet, "/v1/events", nil).
+		WithContext(streamContext)
+	streamDone := make(chan error, 1)
+	go func() {
+		err := hub.Stream(
+			pipeSSEWriter{header: http.Header{}, writer: writer},
+			request,
+			member,
+			viewed.ID,
+			viewed.Locations[0].ID,
+		)
+		_ = writer.Close()
+		streamDone <- err
+	}()
+	events := bufio.NewReader(reader)
+	if ready := readSSEEvent(t, events); ready.Event != "ready" || !ready.Data.CallingHints {
+		t.Fatalf("multi-practice ready event = %#v", ready)
+	}
+
+	notify := func(practiceID string) {
+		t.Helper()
+		if _, err := pool.Exec(context.Background(), `
+			SELECT pg_notify('acuity_calling_hints', json_build_object('practiceId', $1::text)::text)
+		`, practiceID); err != nil {
+			t.Fatalf("notify Calling hint: %v", err)
+		}
+	}
+	notify(foreignID)
+	notify(other.ID)
+	notify(viewed.ID)
+	viewedHint := readSSEEventOfKind(t, events, "calling")
+	if viewedHint.Data.PracticeID != viewed.ID {
+		t.Fatalf("viewed Practice Calling event = %#v, want %s", viewedHint, viewed.ID)
+	}
+
+	stopStream()
+	go func() { _, _ = io.Copy(io.Discard, reader) }()
+	select {
+	case err := <-streamDone:
+		if err != nil {
+			t.Fatalf("multi-practice stream: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("multi-practice stream did not stop")
+	}
+}
+
+type pipeSSEWriter struct {
+	header http.Header
+	writer *io.PipeWriter
+}
+
+func (writer pipeSSEWriter) Header() http.Header { return writer.header }
+
+func (writer pipeSSEWriter) WriteHeader(int) {}
+
+func (writer pipeSSEWriter) Write(body []byte) (int, error) {
+	return writer.writer.Write(body)
+}
+
+func (writer pipeSSEWriter) Flush() {}
+
 func provisionRealtimeMember(
 	t *testing.T,
 	pool *pgxpool.Pool,

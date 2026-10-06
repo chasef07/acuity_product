@@ -27,6 +27,9 @@ func TestCallingChangesPublishPracticeScopedCallingHints(t *testing.T) {
 		t.Fatalf("ringing offers = %#v, want a visible offer", state.Ringing)
 	}
 	practiceID := state.Ringing[0].PracticeID
+	if len(state.PracticeIDs) != 1 || state.PracticeIDs[0] != practiceID {
+		t.Fatalf("Calling state Practices = %#v, want only %s", state.PracticeIDs, practiceID)
+	}
 	offered := drainHints(t, listener)
 	offeredCalling := callingHintsFor(t, offered, practiceID)
 	if offeredCalling == 0 || offeredCalling <= workspaceHints(offered) {

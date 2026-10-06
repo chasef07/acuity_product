@@ -2524,6 +2524,15 @@ components:
           $ref: "#/components/schemas/CallingStateCall"
         disposition:
           $ref: "#/components/schemas/CallingStateCall"
+        callingPracticeIds:
+          type: array
+          description: >
+            Practices whose Calling work this state covers. A client may rely
+            on `calling` stream events instead of fast polling only when they
+            cover every listed Practice.
+          items:
+            type: string
+            format: uuid
     RingingCallLeg:
       type: object
       additionalProperties: false

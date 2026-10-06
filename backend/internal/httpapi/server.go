@@ -2563,6 +2563,17 @@ func callingStateResponse(state humancalling.CallingState) (api.CallingState, er
 		Ringing:        make([]api.RingingCallLeg, 0, len(state.Ringing)),
 		StaffTransfers: make([]api.StaffTransfer, 0, len(state.Transfers)),
 	}
+	if state.PracticeIDs != nil {
+		practiceIDs := make([]openapi_types.UUID, 0, len(state.PracticeIDs))
+		for _, value := range state.PracticeIDs {
+			practiceID, err := uuid.Parse(value)
+			if err != nil {
+				return api.CallingState{}, err
+			}
+			practiceIDs = append(practiceIDs, practiceID)
+		}
+		response.CallingPracticeIds = &practiceIDs
+	}
 	for _, leg := range state.Ringing {
 		callID, err := uuid.Parse(leg.CallID)
 		if err != nil {

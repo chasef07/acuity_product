@@ -37,3 +37,15 @@ func publishCallingHint(ctx context.Context, tx pgx.Tx, practiceID string) error
 	}
 	return nil
 }
+
+func publishCallLegCallingHint(ctx context.Context, tx pgx.Tx, callLegID string) error {
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_notify($1, json_build_object('practiceId', call.practice_id::text)::text)
+		FROM human_calling_call_legs leg
+		JOIN human_calling_calls call ON call.id = leg.call_id
+		WHERE leg.id = $2
+	`, callingHintChannel, callLegID); err != nil {
+		return fmt.Errorf("publish CallLeg calling hint: %w", err)
+	}
+	return nil
+}

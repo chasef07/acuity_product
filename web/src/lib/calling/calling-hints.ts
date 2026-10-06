@@ -1,27 +1,33 @@
 export type CallingHintSignal = "hint" | "connected" | "disconnected"
 
 export type CallingHintSource = {
-  live(): boolean
+  covers(practiceIDs: readonly string[] | undefined): boolean
   subscribe(listener: (signal: CallingHintSignal) => void): () => void
 }
 
 export type CallingHintSink = {
   publish(): void
-  setLive(live: boolean): void
+  setCoverage(practiceID: string | undefined): void
 }
 
 export type CallingHintChannel = CallingHintSource & CallingHintSink
 
 export function createCallingHintChannel(): CallingHintChannel {
   const listeners = new Set<(signal: CallingHintSignal) => void>()
-  let live = false
+  let coverage: string | undefined
 
   function emit(signal: CallingHintSignal) {
     for (const listener of [...listeners]) listener(signal)
   }
 
   return {
-    live: () => live,
+    covers(practiceIDs) {
+      return (
+        coverage !== undefined &&
+        practiceIDs !== undefined &&
+        practiceIDs.every((practiceID) => practiceID === coverage)
+      )
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => {
@@ -31,10 +37,12 @@ export function createCallingHintChannel(): CallingHintChannel {
     publish() {
       emit("hint")
     },
-    setLive(next) {
-      if (next === live) return
-      live = next
-      emit(next ? "connected" : "disconnected")
+    setCoverage(practiceID) {
+      if (practiceID === coverage) return
+      const previous = coverage
+      coverage = practiceID
+      if (previous !== undefined) emit("disconnected")
+      if (practiceID !== undefined) emit("connected")
     },
   }
 }

@@ -4616,7 +4616,7 @@ test("a fresh outbound source discards persisted recovery after transfer ownersh
 
 test("live calling hints slow idle polling to thirty seconds and fall back when they drop", async () => {
   const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
-  fixture.hints.setLive(true)
+  fixture.hints.setCoverage("practice-1")
 
   await fixture.runtime.start()
   const startupReads = fixture.reads.length
@@ -4625,7 +4625,7 @@ test("live calling hints slow idle polling to thirty seconds and fall back when 
   assert.deepEqual(fixture.reads.slice(startupReads), [30_000, 60_000])
 
   await fixture.clock.settle(5_000)
-  fixture.hints.setLive(false)
+  fixture.hints.setCoverage(undefined)
   await fixture.clock.settle(4_000)
   assert.deepEqual(fixture.reads.slice(startupReads), [30_000, 60_000, 69_000])
   await fixture.clock.settle(8_000)
@@ -4634,6 +4634,23 @@ test("live calling hints slow idle polling to thirty seconds and fall back when 
     [30_000, 60_000, 69_000, 73_000, 77_000],
   )
   await fixture.runtime.stop()
+})
+
+test("idle polling stays at four seconds when Calling spans Practices the stream does not cover", async () => {
+  for (const callingPracticeIds of [["practice-1", "practice-2"], undefined]) {
+    const fixture = callingHintFixture(
+      callingState({ softphone: lease({ owner: true }) }),
+    )
+    fixture.backend.state = { ...fixture.backend.state, callingPracticeIds }
+    fixture.hints.setCoverage("practice-1")
+
+    await fixture.runtime.start()
+    const startupReads = fixture.reads.length
+    await fixture.clock.settle(8_000)
+
+    assert.deepEqual(fixture.reads.slice(startupReads), [4_000, 8_000])
+    await fixture.runtime.stop()
+  }
 })
 
 test("idle polling stays at four seconds until the stream confirms calling hints", async () => {
@@ -4649,7 +4666,7 @@ test("idle polling stays at four seconds until the stream confirms calling hints
 
 test("a calling hint refreshes idle state immediately", async () => {
   const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
-  fixture.hints.setLive(true)
+  fixture.hints.setCoverage("practice-1")
   await fixture.runtime.start()
   const startupReads = fixture.reads.length
   await fixture.clock.settle(10_000)
@@ -4668,7 +4685,7 @@ test("a calling hint refreshes idle state immediately", async () => {
 
 test("calling hints during an in-flight refresh coalesce into one follow-up read", async () => {
   const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
-  fixture.hints.setLive(true)
+  fixture.hints.setCoverage("practice-1")
   await fixture.runtime.start()
   const startupReads = fixture.reads.length
   await fixture.clock.settle(1_000)
@@ -4694,7 +4711,7 @@ test("calling hints during an in-flight refresh coalesce into one follow-up read
 
 test("idle calling hint bursts refresh at most once per spacing window", async () => {
   const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
-  fixture.hints.setLive(true)
+  fixture.hints.setCoverage("practice-1")
   await fixture.runtime.start()
   const startupReads = fixture.reads.length
   await fixture.clock.settle(10_000)
@@ -4720,7 +4737,7 @@ test("ringing offers keep fast polling and calling hints add no extra reads", as
         ringing: [offer({})],
       }),
     )
-    fixture.hints.setLive(true)
+    fixture.hints.setCoverage("practice-1")
     await fixture.runtime.start()
     assert.equal(fixture.runtime.getSnapshot().offers.length, 1)
     const startupReads = fixture.reads.length
@@ -4748,7 +4765,7 @@ test("a connected Call keeps one-second polling and a hint refreshes it early", 
     }),
   )
   fixture.backend.calls.set("call-1", call({ id: "call-1", version: 4 }))
-  fixture.hints.setLive(true)
+  fixture.hints.setCoverage("practice-1")
   await fixture.runtime.start()
   assert.equal(fixture.runtime.getSnapshot().activeCall?.state, "CONNECTED")
   const startupReads = fixture.reads.length
@@ -4773,7 +4790,7 @@ test("hidden idle tabs still refresh on calling hints", async () => {
     callingState({ softphone: lease({ owner: true }) }),
     { isHidden: () => true, subscribe: () => () => {} },
   )
-  fixture.hints.setLive(true)
+  fixture.hints.setCoverage("practice-1")
   await fixture.runtime.start()
   const startupReads = fixture.reads.length
 
@@ -4794,7 +4811,7 @@ function callingHintFixture(
   const clock = new ManualClock()
   const backend = new DeterministicBackend()
   backend.lease = state.softphone
-  backend.state = state
+  backend.state = { callingPracticeIds: ["practice-1"], ...state }
   const hints = createCallingHintChannel()
   const fixture: {
     clock: ManualClock
