@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -97,7 +98,7 @@ func (m *Module) applyReclassificationEntry(ctx context.Context, identity access
 		return result, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	task, err := loadTask(ctx, tx, entry.TaskID)
+	task, err := loadTask(ctx, tx, entry.TaskID, false)
 	if err != nil {
 		return result, err
 	}
@@ -114,7 +115,7 @@ func (m *Module) applyReclassificationEntry(ctx context.Context, identity access
 	if err != nil || !auth.PlatformOperator {
 		return result, ErrDenied
 	}
-	task, err = lockTask(ctx, tx, task.ID)
+	task, err = loadTask(ctx, tx, task.ID, true)
 	if err != nil {
 		return result, err
 	}
@@ -123,7 +124,7 @@ func (m *Module) applyReclassificationEntry(ctx context.Context, identity access
 		result.Status = "already_applied"
 		return result, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
 	if task.State != TaskOpen || task.Version != entry.ExpectedVersion || task.Category != entry.OldCategory {
@@ -148,7 +149,7 @@ func (m *Module) applyReclassificationEntry(ctx context.Context, identity access
 	if err != nil {
 		return result, err
 	}
-	if err := appendActivityDetails(ctx, tx, task, "CATEGORY_CHANGED", humanActorSnapshot(auth.Actor), map[string]any{"runId": plan.RunID, "oldCategory": entry.OldCategory, "newCategory": entry.NewCategory, "reason": entry.Reason}); err != nil {
+	if err := appendActivity(ctx, tx, task, "CATEGORY_CHANGED", humanActorSnapshot(auth.Actor), task.UpdatedAt, map[string]any{"runId": plan.RunID, "oldCategory": entry.OldCategory, "newCategory": entry.NewCategory, "reason": entry.Reason}); err != nil {
 		return result, err
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO work_reclassification_changes VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, plan.RunID, task.ID, nullIfEmpty(string(entry.OldCategory)), entry.NewCategory, entry.ExpectedVersion, task.Version, auth.Actor.Subject, task.UpdatedAt)

@@ -540,7 +540,6 @@ export type TaskPage = {
 
 export type TaskFolderCounts = {
     tasks: number;
-    missedCalls: number;
     texts?: number;
     callRecovery?: number;
     appointmentReviews?: number;
@@ -1353,7 +1352,6 @@ export type TaskQueryRequest = {
     search?: string;
     state?: 'OPEN' | 'COMPLETED';
     ordering?: 'priority' | 'recent' | 'time';
-    folder?: 'work' | 'missed_calls';
     /**
      * Include fresh counts across all Task folders in the requested scope and search.
      */

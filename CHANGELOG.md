@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.1](https://github.com/chasef07/acuity_product/compare/v1.28.0...v1.28.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **workspace:** reconnect live updates quietly and only surface prolonged outages ([#410](https://github.com/chasef07/acuity_product/issues/410)) ([3f57771](https://github.com/chasef07/acuity_product/commit/3f577716f9e9af6edb86abe5a5211061c340918b))
+
 ## [1.28.0](https://github.com/chasef07/acuity_product/compare/v1.27.0...v1.28.0) (2026-10-06)
 
 

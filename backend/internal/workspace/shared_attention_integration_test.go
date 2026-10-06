@@ -34,7 +34,7 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	}
 	if _, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "shared-review-test", Practices: []access.PracticeProvision{{
 		Key: "shared-review", Name: "Synthetic Shared Review", AccessGrants: grants,
-		Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed", AbitaOfficeKeys: []string{"allowed"}}, {Key: "denied", Name: "Denied", AbitaOfficeKeys: []string{"denied"}}},
+		Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed", AbitaOfficeKeys: []string{"allowed", "spring-hill"}}, {Key: "denied", Name: "Denied", AbitaOfficeKeys: []string{"denied"}}},
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -135,9 +135,6 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	followUp, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, Responsibility: "all", Kind: "follow_up"})
 	if err != nil || len(followUp.Items) != 2 || followUp.Counts.Tasks != 2 || followUp.Counts.Categories.Appointments != 0 {
 		t.Fatalf("follow-up folder includes communication reviews: %#v, %v", followUp, err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO access_abita_office_locations(practice_id,office_key,location_id) VALUES($1,'spring-hill',$2)`, auth.Practice.ID, locations["allowed"]); err != nil {
-		t.Fatal(err)
 	}
 	springHill, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, Kind: "appointments"})
 	if err != nil || len(springHill.Items) != 1 || springHill.Items[0].LocationID != locations["allowed"] {

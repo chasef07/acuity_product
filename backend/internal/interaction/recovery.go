@@ -2,7 +2,7 @@ package interaction
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -10,34 +10,39 @@ import (
 )
 
 func (m *Module) RecoverSourceClock(ctx context.Context, operator access.Identity, receiptID string) (Interaction, error) {
-	if m.database == nil || m.access == nil || receiptID == "" {
+	if err := m.available(); err != nil {
+		return Interaction{}, err
+	}
+	if !validUUID(receiptID) {
 		return Interaction{}, ErrInvalidInput
 	}
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Interaction{}, fmt.Errorf("begin source clock recovery read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var receipt acceptedReceipt
 	var raw []byte
-	if err := m.database.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT id::text, service_subject, practice_id::text, location_id::text,
 			source_call_id, state, payload
 		FROM ai_interaction_receipts WHERE id = $1
 	`, receiptID).Scan(&receipt.ID, &receipt.ServiceSubject, &receipt.PracticeID,
-		&receipt.LocationID, &receipt.SourceCallID, &receipt.State, &raw); err != nil {
+		&receipt.LocationID, &receipt.SourceCallID, &receipt.State, &raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Interaction{}, ErrDenied
+	}
+	if err != nil {
 		return Interaction{}, fmt.Errorf("read source clock recovery receipt: %w", err)
 	}
-	var payload storedReceiptPayload
-	if json.Unmarshal(raw, &payload) != nil {
-		return Interaction{}, ErrInvalidInput
+	if _, err := m.authorize(ctx, tx, operator, receipt.PracticeID, receipt.LocationID, true, audienceOperator); err != nil {
+		return Interaction{}, err
 	}
-	command := IngestCommand{
-		Service: access.ServiceIdentity{Subject: receipt.ServiceSubject},
-		Kind:    payload.Kind, OfficeKey: payload.OfficeKey, SourceCallID: payload.SourceCallID,
-		CallerPhone: payload.CallerPhone, OfficePhone: payload.OfficePhone,
-		StartedAt: payload.StartedAt, EndedAt: payload.EndedAt, Status: payload.Status,
-		Summary: payload.Summary, Transcript: payload.Transcript,
-		Appointment: payload.Appointment, CloseoutPayload: payload.CloseoutPayload,
+	if err := tx.Rollback(ctx); err != nil {
+		return Interaction{}, fmt.Errorf("finish source clock recovery read: %w", err)
 	}
-	normalizeCommand(&command)
-	stage := messageLifecycleStage(command.Kind)
-	if stage == 0 || !validCommand(command) || command.SourceCallID != receipt.SourceCallID {
+	command, stage, valid := receiptCommand(receipt, raw)
+	if !valid {
 		return Interaction{}, ErrInvalidInput
 	}
 	current, _, err := m.projectReceiptWithRecovery(ctx, receipt, command, stage, m.now().UTC(), &operator)
@@ -45,24 +50,31 @@ func (m *Module) RecoverSourceClock(ctx context.Context, operator access.Identit
 }
 
 func (m *Module) RetireLegacySummary(ctx context.Context, operator access.Identity, receiptID string) error {
-	if m.database == nil || m.access == nil || receiptID == "" {
+	if err := m.available(); err != nil {
+		return err
+	}
+	if !validUUID(receiptID) {
 		return ErrInvalidInput
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("begin legacy receipt retirement: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var practiceID, locationID, sourceCallID, state string
-	if err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT practice_id::text, location_id::text, source_call_id, state
 		FROM ai_interaction_receipts WHERE id = $1 AND kind = 'SUMMARY' FOR UPDATE
-	`, receiptID).Scan(&practiceID, &locationID, &sourceCallID, &state); err != nil {
+	`, receiptID).Scan(&practiceID, &locationID, &sourceCallID, &state)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
-	authorization, err := m.access.LockMutationAuthorization(ctx, tx, operator, practiceID, locationID)
-	if err != nil || !authorization.PlatformOperator {
-		return access.ErrDenied
+	if err != nil {
+		return fmt.Errorf("lock legacy receipt: %w", err)
+	}
+	authorization, err := m.authorize(ctx, tx, operator, practiceID, locationID, true, audienceOperator)
+	if err != nil {
+		return err
 	}
 	if state == string(receiptRetired) {
 		return tx.Commit(ctx)
@@ -71,7 +83,7 @@ func (m *Module) RetireLegacySummary(ctx context.Context, operator access.Identi
 		return ErrConflict
 	}
 	var interactionID string
-	if err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT interaction.id::text FROM ai_interactions interaction
 		WHERE interaction.practice_id = $1 AND interaction.location_id = $2
 			AND interaction.source_call_id = $3 AND interaction.status <> 'IN_PROGRESS'
@@ -82,14 +94,18 @@ func (m *Module) RetireLegacySummary(ctx context.Context, operator access.Identi
 					AND closeout.kind = 'CLOSEOUT' AND closeout.state = 'PROJECTED'
 			)
 		FOR UPDATE OF interaction
-	`, practiceID, locationID, sourceCallID).Scan(&interactionID); err != nil {
+	`, practiceID, locationID, sourceCallID).Scan(&interactionID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
+	}
+	if err != nil {
+		return fmt.Errorf("lock terminal AI Interaction: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE ai_interaction_receipts SET state = 'RETIRED', interaction_id = $2
 		WHERE id = $1 AND state = 'QUARANTINED'
 	`, receiptID, interactionID); err != nil {
-		return err
+		return fmt.Errorf("retire legacy receipt: %w", err)
 	}
 	if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{
 		Action: "ai_interaction.legacy_receipt_retired", ResourceType: "ai_interaction_receipt",

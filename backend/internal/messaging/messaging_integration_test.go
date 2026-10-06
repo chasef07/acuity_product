@@ -1324,6 +1324,62 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			err,
 		)
 	}
+	secondAttempt, secondAttemptStatus, err := module.SendAgain(
+		context.Background(),
+		messaging.SendAgainCommand{
+			Identity:       identity,
+			MessageID:      queued.ID,
+			IdempotencyKey: "message-failed-second-new-attempt",
+		},
+	)
+	if err != nil ||
+		secondAttemptStatus != messaging.MessageDuplicate ||
+		secondAttempt.ID != newAttempt.ID {
+		t.Fatalf("second new attempt = %#v, %q, %v", secondAttempt, secondAttemptStatus, err)
+	}
+	lockedAttempt, lockedAttemptStatus, err := module.Send(
+		context.Background(),
+		messaging.SendCommand{
+			Identity:         identity,
+			PracticeID:       queued.Thread.PracticeID,
+			LocationID:       queued.Thread.LocationID,
+			ThreadID:         queued.Thread.ID,
+			Destination:      queued.Destination,
+			Body:             queued.Body,
+			TaskID:           queued.TaskID,
+			RetryOfMessageID: queued.ID,
+			IdempotencyKey:   "message-failed-locked-new-attempt",
+		},
+	)
+	if err != nil ||
+		lockedAttemptStatus != messaging.MessageDuplicate ||
+		lockedAttempt.ID != newAttempt.ID {
+		t.Fatalf("locked new attempt = %#v, %q, %v", lockedAttempt, lockedAttemptStatus, err)
+	}
+	replayedAttempt, replayedAttemptStatus, err := module.SendAgain(
+		context.Background(),
+		messaging.SendAgainCommand{
+			Identity:       identity,
+			MessageID:      queued.ID,
+			IdempotencyKey: "message-failed-new-attempt",
+		},
+	)
+	if err != nil ||
+		replayedAttemptStatus != messaging.MessageDuplicate ||
+		replayedAttempt.ID != newAttempt.ID {
+		t.Fatalf(
+			"replayed new attempt = %#v, %q, %v",
+			replayedAttempt,
+			replayedAttemptStatus,
+			err,
+		)
+	}
+	var attemptsOfFailedMessage int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM messaging_messages WHERE retry_of_message_id = $1
+	`, queued.ID).Scan(&attemptsOfFailedMessage); err != nil || attemptsOfFailedMessage != 1 {
+		t.Fatalf("new attempts of failed Message = %d, %v; want 1", attemptsOfFailedMessage, err)
+	}
 
 	if err := pool.QueryRow(context.Background(), `SELECT version FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW'`).Scan(&reviewVersion); err != nil || reviewVersion != 1 {
 		t.Fatalf("STOP/START changed review work: %d %v", reviewVersion, err)

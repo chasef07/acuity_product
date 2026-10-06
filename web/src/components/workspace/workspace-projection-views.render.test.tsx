@@ -637,7 +637,6 @@ function projectedWorkspace(task: Task): WorkspaceProjectionState {
       error: "",
       counts: {
         tasks: 1,
-        missedCalls: 0,
         categories: {
           billing: 0,
           appointments: 0,

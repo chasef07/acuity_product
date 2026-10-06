@@ -115,21 +115,21 @@ func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
 		t.Fatal(err)
 	}
 	reads := workspace.New(pool, a)
-	for _, folder := range []work.TaskFolder{"", work.TaskFolderWork, work.TaskFolderMissedCalls} {
-		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Folder: folder})
+	for _, kind := range []string{"", "follow_up", "calls"} {
+		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Kind: kind})
 		if err != nil {
 			t.Fatal(err)
 		}
 		want := 1
-		if folder == "" {
+		if kind == "" {
 			want = 2
 		}
 		if len(page.Items) != want {
-			t.Errorf("folder %q: got %d groups, want %d", folder, len(page.Items), want)
+			t.Errorf("kind %q: got %d groups, want %d", kind, len(page.Items), want)
 		}
 		for _, row := range page.Items {
 			if len(row.GroupMembers) != 1 || row.GroupMembers[0].ID != row.ID {
-				t.Errorf("folder %q mixed ordinary and recovery members", folder)
+				t.Errorf("kind %q mixed ordinary and recovery members", kind)
 			}
 		}
 	}

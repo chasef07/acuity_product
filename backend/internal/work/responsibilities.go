@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"strings"
@@ -62,7 +63,7 @@ func (m *Module) ProvisionResponsibilities(ctx context.Context, input Responsibi
  SELECT m.email, m.location_scope='ALL' OR EXISTS(SELECT 1 FROM access_membership_locations ml WHERE ml.membership_id=m.id AND ml.location_id=$3)
  FROM access_memberships m WHERE m.practice_id=$1 AND m.email=$2 AND m.revoked_at IS NULL
  ) accounts GROUP BY email`, practiceID, member.Email, locationID).Scan(&accountEmail, &covered)
-			if err == pgx.ErrNoRows {
+			if errors.Is(err, pgx.ErrNoRows) {
 				report.Unmatched = append(report.Unmatched, location.LocationKey+":"+member.Email)
 				continue
 			}

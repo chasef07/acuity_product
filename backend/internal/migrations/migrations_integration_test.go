@@ -217,7 +217,6 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	}
 
 	for _, relation := range []string{
-		"ai_interaction_attention",
 		"ai_interaction_receipts",
 		"ai_interactions",
 		"access_calling_scopes",
@@ -252,8 +251,10 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"access_invitation_locations",
 		"access_invitations",
 		"access_support_sessions",
+		"ai_interaction_attention",
 		"human_calling_connection_attempts",
 		"human_calling_recordings",
+		"messaging_thread_unreads",
 	} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, relation).Scan(&exists); err != nil {

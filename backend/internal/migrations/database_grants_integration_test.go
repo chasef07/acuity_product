@@ -637,7 +637,6 @@ func expectedTablePrivileges() map[string]bool {
 		"access_operational_users",
 		"access_platform_operators",
 		"access_practices",
-		"ai_interaction_attention",
 		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_calls",
@@ -657,7 +656,6 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_attachments",
 		"messaging_location_configurations",
 		"messaging_messages",
-		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_acknowledgements",
 		"work_task_activities",
@@ -671,7 +669,6 @@ func expectedTablePrivileges() map[string]bool {
 		"access_locations",
 		"access_membership_locations",
 		"access_memberships",
-		"ai_interaction_attention",
 		"ai_interactions",
 		"ai_interaction_receipts",
 		"human_calling_call_legs",
@@ -707,8 +704,6 @@ func expectedTablePrivileges() map[string]bool {
 		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
-	grant("acuity_portal", "DELETE", "ai_interaction_attention", "messaging_thread_unreads")
-
 	grant("acuity_provider", "SELECT", "messaging_attachments")
 
 	grant("acuity_realtime", "SELECT",
@@ -728,7 +723,6 @@ func expectedTablePrivileges() map[string]bool {
 		"access_operational_users",
 		"access_platform_operators",
 		"access_practices",
-		"ai_interaction_attention",
 		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_call_recordings",
@@ -748,7 +742,6 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_messages",
 		"messaging_provider_commands",
 		"messaging_provider_receipts",
-		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_acknowledgements",
 		"work_task_activities",
@@ -758,7 +751,6 @@ func expectedTablePrivileges() map[string]bool {
 		"work_tasks",
 	)
 	grant("acuity_worker", "INSERT",
-		"ai_interaction_attention",
 		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_call_recordings",
@@ -771,7 +763,6 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_attachments",
 		"messaging_messages",
 		"messaging_provider_commands",
-		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_acknowledgements",
 		"work_task_activities",
@@ -794,7 +785,6 @@ func expectedTablePrivileges() map[string]bool {
 	grant(
 		"acuity_worker",
 		"DELETE",
-		"ai_interaction_attention",
 		"messaging_attachments",
 		"work_recovery_reconciliation_queue",
 	)
@@ -857,12 +847,6 @@ func expectedColumnPrivileges() map[string]bool {
 	)
 	grant(
 		"acuity_portal",
-		"public.ai_interaction_attention",
-		"UPDATE",
-		"reviewed_at",
-	)
-	grant(
-		"acuity_portal",
 		"public.ai_interaction_issues",
 		"UPDATE",
 		"review_outcome",
@@ -900,6 +884,8 @@ func expectedColumnPrivileges() map[string]bool {
 		"payload",
 		"received_at",
 		"projection_error_code",
+		"projection_attempts",
+		"next_attempt_at",
 	)
 	grant(
 		"acuity_portal",
@@ -917,7 +903,6 @@ func expectedColumnPrivileges() map[string]bool {
 		"new_appointment_id",
 		"booking_result",
 		"cancellation_result",
-		"summary_payload",
 		"closeout_payload",
 		"lifecycle_stage",
 		"updated_at",
@@ -938,7 +923,6 @@ func expectedColumnPrivileges() map[string]bool {
 		"new_appointment_id",
 		"booking_result",
 		"cancellation_result",
-		"summary_payload",
 		"closeout_payload",
 		"lifecycle_stage",
 		"updated_at",
@@ -961,6 +945,10 @@ func expectedColumnPrivileges() map[string]bool {
 		"interaction_id",
 		"projection_error_code",
 		"projected_at",
+		"projection_attempts",
+		"next_attempt_at",
+		"last_attempt_at",
+		"last_error_code",
 	)
 	grant(
 		"acuity_portal",
@@ -1134,13 +1122,6 @@ func expectedColumnPrivileges() map[string]bool {
 		"object_key",
 		"copy_started_at",
 		"updated_at",
-	)
-	grant(
-		"acuity_worker",
-		"public.messaging_thread_unreads",
-		"UPDATE",
-		"unread_since",
-		"latest_message_id",
 	)
 	grant(
 		"acuity_worker",

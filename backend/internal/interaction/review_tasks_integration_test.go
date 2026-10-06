@@ -23,6 +23,9 @@ func TestAppointmentReceiptCommitsReviewWithSourceFacts(t *testing.T) {
 	if err := pool.QueryRow(ctx, `INSERT INTO access_locations(practice_id,provisioning_key,name) VALUES($1,'main','Main') RETURNING id::text`, practice).Scan(&location); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO access_abita_office_locations(practice_id,office_key,location_id) VALUES($1,'spring-hill',$2)`, practice, location); err != nil {
+		t.Fatal(err)
+	}
 	payload := storedReceiptPayload{Kind: MessageCloseout, SourceCallID: "synthetic-review-call", CallerPhone: "+15555550123", OfficePhone: "+15555550100", StartedAt: now.Add(-time.Hour), EndedAt: &now, Status: CallCompleted, Transcript: json.RawMessage(`{"items":[]}`), CloseoutPayload: json.RawMessage(`{}`), Appointment: &AppointmentEvidence{Action: AppointmentBooked, OccurredAt: now, NewAppointmentID: "synthetic-appointment", BookingResult: json.RawMessage(`{"status":"booked","appointmentId":"synthetic-appointment","providerName":"Synthetic Provider","appointmentDate":"2026-10-01"}`)}}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -64,7 +67,7 @@ func TestAppointmentReceiptCommitsReviewWithSourceFacts(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT t.title,t.source_message,i.appointment_outcome FROM work_tasks t JOIN ai_interactions i ON i.practice_id=t.practice_id AND i.source_call_id=t.source_call_id WHERE t.source_call_id=$1`, payload.SourceCallID).Scan(&title, &body, &outcome); err != nil {
 		t.Fatal(err)
 	}
-	if title != "Review appointment change" || outcome != "PARTIAL" || !strings.Contains(body, "unfinished appointment change") || !strings.Contains(body, "remaining follow-up") || strings.Contains(body, "Verify insurance and provider") {
+	if title != "Review unfinished appointment change" || outcome != "PARTIAL" || !strings.Contains(body, "unfinished appointment change") || !strings.Contains(body, "remaining follow-up") || strings.Contains(body, "Verify insurance and provider") {
 		t.Fatalf("partial outcome hidden: %s %s %q", title, outcome, body)
 	}
 	var versionBefore, versionAfter int64
@@ -90,5 +93,75 @@ func TestAppointmentReceiptCommitsReviewWithSourceFacts(t *testing.T) {
 	}
 	if versionAfter != versionBefore+1 {
 		t.Fatalf("failed call workspace version = %d, want %d", versionAfter, versionBefore+1)
+	}
+}
+
+func TestAppointmentReviewWordsOutcomeAndFollowsOneInteraction(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	var practice string
+	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('review-outcome','Synthetic') RETURNING id::text`).Scan(&practice); err != nil {
+		t.Fatal(err)
+	}
+	locations := map[string]string{}
+	for _, key := range []string{"spring-hill", "crystal-river"} {
+		var id string
+		if err := pool.QueryRow(ctx, `INSERT INTO access_locations(practice_id,provisioning_key,name) VALUES($1,$2,$2) RETURNING id::text`, practice, key).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO access_abita_office_locations(practice_id,office_key,location_id) VALUES($1,$2,$3)`, practice, key, id); err != nil {
+			t.Fatal(err)
+		}
+		locations[key] = id
+	}
+	module := New(pool, access.New(pool, nil), func() time.Time { return now })
+	project := func(location string, payload storedReceiptPayload) {
+		t.Helper()
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fingerprint := sha256.Sum256(raw)
+		if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_receipts(service_subject,practice_id,location_id,source_call_id,kind,payload_fingerprint,payload) VALUES('synthetic',$1,$2,$3,$4,$5,$6)`, practice, location, payload.SourceCallID, payload.Kind, fingerprint[:], raw); err != nil {
+			t.Fatal(err)
+		}
+		if processed, err := module.ProcessNextReceipt(ctx); err != nil || !processed {
+			t.Fatalf("project %s receipt: %v %v", payload.Kind, processed, err)
+		}
+	}
+	checkpoint := storedReceiptPayload{Kind: MessageOutcomeCheckpoint, SourceCallID: "synthetic-indeterminate", CallerPhone: "+15555550123", OfficePhone: "+15555550100", StartedAt: now.Add(-time.Hour), Status: CallInProgress, Appointment: &AppointmentEvidence{Action: AppointmentBooked, OccurredAt: now.Add(-30 * time.Minute), BookingResult: json.RawMessage(`{"status":"error","patientName":"Synthetic Caller","appointmentDate":"2026-10-01"}`)}}
+	project(locations["spring-hill"], checkpoint)
+	var id, title, body string
+	if err := pool.QueryRow(ctx, `SELECT id::text,title,source_message FROM work_tasks WHERE origin='APPOINTMENT_REVIEW' AND source_call_id=$1`, checkpoint.SourceCallID).Scan(&id, &title, &body); err != nil {
+		t.Fatal(err)
+	}
+	if title != "Check appointment booking" || !strings.Contains(body, "could not confirm the booking") || strings.Contains(body, "Verify insurance") {
+		t.Fatalf("failed booking presented as success: %q %q", title, body)
+	}
+	if !strings.Contains(body, "Name given by caller: Synthetic Caller") || strings.Contains(body, "Patient:") {
+		t.Fatalf("caller-provided name presented as identity: %q", body)
+	}
+	closeout := checkpoint
+	closeout.Kind = MessageCloseout
+	ended := now
+	closeout.EndedAt = &ended
+	closeout.Status = CallCompleted
+	closeout.Transcript = json.RawMessage(`{"items":[]}`)
+	closeout.CloseoutPayload = json.RawMessage(`{}`)
+	closeout.Appointment = &AppointmentEvidence{Action: AppointmentBooked, OccurredAt: now.Add(-10 * time.Minute), NewAppointmentID: "synthetic-appointment", BookingResult: json.RawMessage(`{"status":"booked","appointmentId":"synthetic-appointment","appointmentDate":"2026-10-01"}`)}
+	project(locations["spring-hill"], closeout)
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*),max(title),max(source_message) FROM work_tasks WHERE origin='APPOINTMENT_REVIEW' AND source_call_id=$1`, checkpoint.SourceCallID).Scan(&count, &title, &body); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || title != "Review booked appointment" || !strings.Contains(body, "Verify insurance and provider") {
+		t.Fatalf("checkpoint and closeout reviews = %d %q %q; want one current review", count, title, body)
+	}
+	other := closeout
+	other.SourceCallID = "synthetic-other-office"
+	project(locations["crystal-river"], other)
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM work_tasks WHERE source_call_id=$1`, other.SourceCallID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("appointment review outside Spring Hill = %d %v", count, err)
 	}
 }

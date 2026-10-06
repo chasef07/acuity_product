@@ -21,6 +21,11 @@ func TestTelnyxAdapterClassifiesDefiniteRejectionAndAmbiguousResponses(t *testin
 			responseBody:  `{"errors":[{"code":"40001"}]}`,
 			expectedError: messaging.ErrRejected,
 		},
+		"provider rate limit": {
+			status:        http.StatusTooManyRequests,
+			responseBody:  `{"errors":[{"code":"10011"}]}`,
+			expectedError: messaging.ErrTemporary,
+		},
 		"invalid accepted response": {
 			status:        http.StatusOK,
 			responseBody:  `{"data":{}}`,
@@ -107,5 +112,47 @@ func TestTelnyxAdapterReconcilesOnlyByProviderMessageIdentity(t *testing.T) {
 		if _, err := adapter.Reconcile(context.Background(), messageID); err != messaging.ErrInvalidInput {
 			t.Fatalf("unsafe provider Message ID %q error = %v, want %v", messageID, err, messaging.ErrInvalidInput)
 		}
+	}
+}
+
+func TestTelnyxAdapterReconcilesTerminalRecipientStatuses(t *testing.T) {
+	for status, want := range map[string]messaging.DeliveryState{
+		"expired":              messaging.DeliveryFailed,
+		"delivery_unconfirmed": messaging.DeliverySent,
+		"sending_failed":       messaging.DeliveryFailed,
+		"queued":               messaging.DeliverySent,
+		"unrecognized_status":  "",
+	} {
+		t.Run(status, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(
+				response http.ResponseWriter,
+				_ *http.Request,
+			) {
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = response.Write([]byte(
+					`{"data":{"id":"provider-message-1","direction":"outbound","to":[{"phone_number":"+17275550199","status":"` + status + `"}]}}`,
+				))
+			}))
+			defer server.Close()
+			adapter, err := messaging.NewTelnyxAdapter(messaging.TelnyxConfig{
+				APIKey:         "KEY_synthetic",
+				BaseURL:        server.URL,
+				WebhookBaseURL: "https://ingress.example/hooks",
+				HTTPClient:     server.Client(),
+			})
+			if err != nil {
+				t.Fatalf("create adapter: %v", err)
+			}
+			result, err := adapter.Reconcile(context.Background(), "provider-message-1")
+			if want == "" {
+				if !errors.Is(err, messaging.ErrAmbiguous) {
+					t.Fatalf("reconcile %s error = %v, want ambiguous", status, err)
+				}
+				return
+			}
+			if err != nil || result.State != want {
+				t.Fatalf("reconcile %s = %#v, %v; want %s", status, result, err, want)
+			}
+		})
 	}
 }

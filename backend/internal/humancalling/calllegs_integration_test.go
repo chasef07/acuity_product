@@ -1357,16 +1357,15 @@ func TestInterruptedBridgeCommandRecoveryNeverDuplicatesProviderEffect(t *testin
 		<-provider.blockStarted
 		cancel()
 		close(provider.blockRelease)
-		if err := <-effectResult; err == nil {
-			t.Fatal("interrupted accepted Bridge unexpectedly recorded a durable result")
+		if err := <-effectResult; err != nil {
+			t.Fatalf("accepted Bridge result after caller cancellation: %v", err)
 		}
-		if state := commandState(t, item); state != "SENDING" ||
-			provider.count(humancalling.CommandBridge) != 1 {
-			t.Fatalf("interrupted accepted Bridge = state:%s effects:%d",
+		if state := commandState(t, item); state != "SENT" ||
+			provider.count(humancalling.CommandBridge) != 1 ||
+			len(provider.requestsFor(humancalling.CommandBridge)) != 1 {
+			t.Fatalf("accepted Bridge after caller cancellation = state:%s effects:%d",
 				state, provider.count(humancalling.CommandBridge))
 		}
-		item.now = item.now.Add(31 * time.Second)
-		retryAcceptedBridge(t, item)
 	})
 
 	t.Run("before durable result commit", func(t *testing.T) {

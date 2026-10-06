@@ -1736,7 +1736,6 @@ function initialState(): WorkspaceProjectionState {
 function emptyTaskFolderCounts(): TaskFolderCounts {
   return {
     tasks: 0,
-    missedCalls: 0,
     categories: {
       billing: 0,
       appointments: 0,

@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const providerResultWriteTimeout = 5 * time.Second
+
 func (m *Module) processCommand(
 	ctx context.Context,
 	commandID string,
@@ -290,11 +292,16 @@ func (m *Module) executeCallLegCommand(
 		}
 		m.recordCommandStage(command.Action, observability.CommandStagePersist, outcome, persistCompletedAt.Sub(providerCompletedAt))
 	}()
-	if err := m.finishCallLegCommand(ctx, command, result, executeErr); err != nil {
+	persistCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		providerResultWriteTimeout,
+	)
+	defer cancel()
+	if err := m.finishCallLegCommand(persistCtx, command, result, executeErr); err != nil {
 		return ProviderResult{}, err
 	}
 	var state string
-	if err := m.database.QueryRow(ctx, `
+	if err := m.database.QueryRow(persistCtx, `
 		SELECT state FROM human_calling_provider_commands WHERE id = $1
 	`, command.ID).Scan(&state); err != nil {
 		return ProviderResult{}, fmt.Errorf("read durable provider command result: %w", err)

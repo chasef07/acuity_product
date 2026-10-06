@@ -52,7 +52,7 @@ var sqlBaseline = []struct {
 	{"backend/cmd/knowledge-import/source.go", read, "knowledge_corpora knowledge_passages", "import command diffs Git facts against the active revision"},
 	{"backend/internal/access/access.go", read, "human_calling_location_voice_numbers", "service authorization resolves a Location by voice number"},
 	{"backend/internal/humancalling/callleg_projection.go", read, "access_calling_scopes access_membership_locations access_memberships access_operational_scopes access_practices", "call projection resolves staff scope and practice policy (also FOR SHARE OF practice, appended with +=)"},
-	{"backend/internal/humancalling/calls.go", read, "access_locations access_memberships access_platform_operators", "call views join Location names and staff emails"},
+	{"backend/internal/humancalling/calls.go", read, "access_locations", "call views join Location names"},
 	{"backend/internal/humancalling/credentials.go", read, "access_operational_users", "credential reconciliation follows operational users"},
 	{"backend/internal/humancalling/outbound.go", lock, "access_locations access_practices", "outbound fallback provisioning resolves Practice and Location keys"},
 	{"backend/internal/humancalling/receipt_recovery.go", read, "access_locations", "recovery picks a Location to authorize the operator"},

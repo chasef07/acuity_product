@@ -32,14 +32,7 @@ func encodeCallLegClientState(
 	role string,
 	kind string,
 ) string {
-	value, _ := json.Marshal(callLegClientState{
-		Version:   2,
-		CallID:    callID,
-		CallLegID: callLegID,
-		Role:      role,
-		Kind:      kind,
-	})
-	return base64.StdEncoding.EncodeToString(value)
+	return encodeStaffTransferClientState(callID, callLegID, role, kind, "")
 }
 
 func encodeStaffTransferClientState(

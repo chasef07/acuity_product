@@ -29,7 +29,6 @@ GRANT SELECT ON TABLE
     public.access_operational_users,
     public.access_platform_operators,
     public.access_practices,
-    public.ai_interaction_attention,
     public.ai_interactions,
     public.human_calling_call_legs,
     public.human_calling_calls,
@@ -46,7 +45,6 @@ GRANT SELECT ON TABLE
     public.messaging_attachments,
     public.messaging_location_configurations,
     public.messaging_messages,
-    public.messaging_thread_unreads,
     public.messaging_threads,
 	public.work_task_activities,
     public.work_task_acknowledgements,
@@ -115,7 +113,6 @@ GRANT INSERT ON TABLE
     public.access_locations,
     public.access_membership_locations,
     public.access_memberships,
-    public.ai_interaction_attention,
     public.ai_interactions,
     public.ai_interaction_receipts,
     public.human_calling_call_legs,
@@ -170,14 +167,6 @@ ON TABLE public.messaging_location_configurations
 TO acuity_portal;
 
 GRANT UPDATE (
-    reviewed_at
-)
-ON TABLE public.ai_interaction_attention
-TO acuity_portal;
-
--- Keep summary_payload through this expand phase so an overlapping pre-change
--- portal revision remains rollback-safe. The current runtime never writes it.
-GRANT UPDATE (
     external_patient_id,
     ended_at,
     status,
@@ -190,7 +179,6 @@ GRANT UPDATE (
     new_appointment_id,
     booking_result,
     cancellation_result,
-    summary_payload,
     closeout_payload,
     lifecycle_stage,
     updated_at
@@ -225,11 +213,6 @@ GRANT UPDATE (
     updated_at
 )
 ON TABLE public.messaging_attachments
-TO acuity_portal;
-
-GRANT DELETE ON TABLE
-	public.ai_interaction_attention,
-	public.messaging_thread_unreads
 TO acuity_portal;
 
 GRANT SELECT (
@@ -327,7 +310,6 @@ GRANT SELECT ON TABLE
     public.access_operational_users,
     public.access_platform_operators,
     public.access_practices,
-	public.ai_interaction_attention,
 	public.ai_interactions,
 	public.human_calling_call_legs,
     public.human_calling_call_recordings,
@@ -347,7 +329,6 @@ GRANT SELECT ON TABLE
     public.messaging_messages,
     public.messaging_provider_commands,
     public.messaging_provider_receipts,
-    public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
     public.work_task_acknowledgements,
@@ -368,13 +349,14 @@ GRANT SELECT (
     interaction_id,
     payload,
     received_at,
-    projection_error_code
+    projection_error_code,
+    projection_attempts,
+    next_attempt_at
 )
 ON TABLE public.ai_interaction_receipts
 TO acuity_worker;
 
 GRANT INSERT ON TABLE
-	public.ai_interaction_attention,
 	public.ai_interactions,
 	public.human_calling_call_legs,
     public.human_calling_call_recordings,
@@ -387,7 +369,6 @@ GRANT INSERT ON TABLE
     public.messaging_attachments,
     public.messaging_messages,
     public.messaging_provider_commands,
-    public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
     public.work_task_acknowledgements,
@@ -407,8 +388,6 @@ GRANT UPDATE (
 ON TABLE public.work_task_acknowledgements
 TO acuity_worker;
 
--- Keep summary_payload through this expand phase so an overlapping pre-change
--- worker revision remains rollback-safe. The current runtime never writes it.
 GRANT UPDATE (
     external_patient_id,
     ended_at,
@@ -422,7 +401,6 @@ GRANT UPDATE (
     new_appointment_id,
     booking_result,
     cancellation_result,
-    summary_payload,
     closeout_payload,
     lifecycle_stage,
     updated_at
@@ -434,7 +412,11 @@ GRANT UPDATE (
     state,
     interaction_id,
     projection_error_code,
-    projected_at
+    projected_at,
+    projection_attempts,
+    next_attempt_at,
+    last_attempt_at,
+    last_error_code
 )
 ON TABLE public.ai_interaction_receipts
 TO acuity_worker;
@@ -480,9 +462,7 @@ GRANT UPDATE (enqueued_at)
 ON TABLE public.work_recovery_reconciliation_queue
 TO acuity_worker;
 
-GRANT DELETE ON TABLE
-	public.ai_interaction_attention,
-	public.work_recovery_reconciliation_queue
+GRANT DELETE ON TABLE public.work_recovery_reconciliation_queue
 TO acuity_worker;
 
 GRANT UPDATE (
@@ -567,10 +547,6 @@ GRANT UPDATE (
     updated_at
 )
 ON TABLE public.messaging_attachments
-TO acuity_worker;
-
-GRANT UPDATE (unread_since, latest_message_id)
-ON TABLE public.messaging_thread_unreads
 TO acuity_worker;
 
 GRANT UPDATE (

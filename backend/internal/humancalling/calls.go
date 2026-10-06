@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -439,17 +441,18 @@ func (m *Module) RecordDisposition(
 	var practiceID, locationID, taskID, phone, reason, terminal, existing string
 	var direction CallDirection
 	var entryPoint CallEntryPoint
+	var placedAt time.Time
 	if err := tx.QueryRow(ctx, `
 		SELECT call.practice_id::text, call.location_id::text, call.direction,
 			call.entry_point, COALESCE(call.task_id::text, call.surfaced_task_id::text, ''),
 			COALESCE(call.caller_phone, call.destination_phone, ''),
 			COALESCE(handoff.transfer_reason, ''), COALESCE(call.terminal_outcome, ''),
-			COALESCE(call.disposition_outcome, '')
+			COALESCE(call.disposition_outcome, ''), call.created_at
 		FROM human_calling_calls call
 		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 		WHERE call.id = $1 FOR UPDATE OF call
 	`, callID).Scan(&practiceID, &locationID, &direction, &entryPoint, &taskID,
-		&phone, &reason, &terminal, &existing); err != nil {
+		&phone, &reason, &terminal, &existing, &placedAt); err != nil {
 		return DispositionResult{}, ErrDenied
 	}
 	authorization, err := m.access.LockMembershipAuthorization(
@@ -491,8 +494,11 @@ func (m *Module) RecordDisposition(
 	}
 	if disposition == DispositionCompleteTask || disposition == DispositionKeepOpen ||
 		(disposition == DispositionResolved && taskID != "") {
-		updated, err := m.work.ApplyCallTaskDisposition(ctx, tx, taskID,
-			disposition != DispositionKeepOpen, authorization.Actor, m.now())
+		updated, err := m.work.ApplyCallTaskDisposition(ctx, tx, authorization, taskID,
+			disposition != DispositionKeepOpen, placedAt)
+		if errors.Is(err, work.ErrConflict) {
+			return DispositionResult{}, ErrConflict
+		}
 		if err != nil {
 			return DispositionResult{}, err
 		}
@@ -536,18 +542,13 @@ func (m *Module) RecordDisposition(
 }
 
 func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
-	if m.work == nil {
-		return 0, ErrInvalidInput
-	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("begin disposition expiry: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
-		SELECT call.id::text, call.practice_id::text,
-			COALESCE(call.task_id::text, call.surfaced_task_id::text, ''),
-			winner.staff_subject, COALESCE(membership.email, platform_operator.email, '')
+		SELECT call.id::text, call.practice_id::text, winner.staff_subject
 		FROM human_calling_calls call
 		JOIN LATERAL (
 			SELECT leg.staff_subject
@@ -557,11 +558,6 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 			ORDER BY leg.bridged_at, leg.id
 			LIMIT 1
 		) winner ON true
-		LEFT JOIN access_memberships membership
-			ON membership.practice_id = call.practice_id
-			AND membership.user_subject = winner.staff_subject
-		LEFT JOIN access_platform_operators platform_operator
-			ON platform_operator.user_subject = winner.staff_subject
 		WHERE call.terminal_outcome = 'ENDED'
 			AND call.disposition_outcome IS NULL
 			AND call.disposition_deadline <= $1
@@ -573,34 +569,19 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("claim expired dispositions: %w", err)
 	}
 	type expiredDisposition struct {
-		callID, practiceID, taskID, subject, email string
+		callID, practiceID, subject string
 	}
-	items := []expiredDisposition{}
-	for rows.Next() {
+	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (expiredDisposition, error) {
 		var item expiredDisposition
-		if err := rows.Scan(&item.callID, &item.practiceID, &item.taskID,
-			&item.subject, &item.email); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("scan expired disposition: %w", err)
-		}
-		items = append(items, item)
+		err := row.Scan(&item.callID, &item.practiceID, &item.subject)
+		return item, err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("read expired dispositions: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, fmt.Errorf("iterate expired dispositions: %w", err)
-	}
-	rows.Close()
+	practices := map[string]bool{}
 	for _, item := range items {
 		now := m.now()
-		if item.taskID != "" {
-			if item.subject == "" || item.email == "" {
-				return 0, fmt.Errorf("resolve automatic disposition actor: %w", ErrConflict)
-			}
-			if _, err := m.work.ApplyCallTaskDisposition(ctx, tx, item.taskID, true,
-				access.Actor{Subject: item.subject, Email: item.email}, now); err != nil {
-				return 0, fmt.Errorf("complete automatic disposition Task: %w", err)
-			}
-		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_calls
 			SET disposition_actor_subject = $2, disposition_at = $3,
@@ -615,7 +596,10 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 			"call.dispositioned", item.subject, "", "", "", "AUTO_RESOLVED", now); err != nil {
 			return 0, err
 		}
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, item.practiceID); err != nil {
+		practices[item.practiceID] = true
+	}
+	for _, practiceID := range slices.Sorted(maps.Keys(practices)) {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 			return 0, err
 		}
 	}

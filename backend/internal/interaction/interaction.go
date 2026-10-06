@@ -15,7 +15,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/work"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -72,6 +71,7 @@ var (
 	ErrDenied       = errors.New("AI Interaction access denied")
 	ErrInvalidInput = errors.New("invalid AI Interaction input")
 	ErrConflict     = errors.New("AI Interaction source conflict")
+	errUnavailable  = errors.New("AI Interaction dependencies are unavailable")
 	canonicalPhone  = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
 )
 
@@ -151,34 +151,15 @@ func (m *Module) Read(
 	identity access.Identity,
 	interactionID string,
 ) (Interaction, error) {
-	if m.database == nil || m.access == nil {
-		return Interaction{}, ErrInvalidInput
-	}
-	if _, err := uuid.Parse(strings.TrimSpace(interactionID)); err != nil {
-		return Interaction{}, ErrInvalidInput
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	interactionID = strings.TrimSpace(interactionID)
+	tx, _, err := m.beginInteractionAccess(ctx, identity, interactionID, false, audienceStaff)
 	if err != nil {
-		return Interaction{}, fmt.Errorf("begin AI Interaction read: %w", err)
+		return Interaction{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	stored, err := scanInteraction(tx.QueryRow(ctx, interactionSelect+`
-		WHERE interaction.id = $1
-	`, interactionID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Interaction{}, ErrDenied
-	}
+	stored, err := readInteraction(ctx, tx, interactionID)
 	if err != nil {
-		return Interaction{}, fmt.Errorf("read AI Interaction: %w", err)
-	}
-	if _, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		identity,
-		stored.PracticeID,
-		stored.LocationID,
-	); err != nil {
-		return Interaction{}, ErrDenied
+		return Interaction{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Interaction{}, fmt.Errorf("commit AI Interaction read: %w", err)
@@ -213,9 +194,12 @@ func (m *Module) Ingest(
 	ctx context.Context,
 	command IngestCommand,
 ) (Interaction, UpsertStatus, error) {
+	if err := m.available(); err != nil {
+		return Interaction{}, "", err
+	}
 	normalizeCommand(&command)
 	stage := messageLifecycleStage(command.Kind)
-	if m.database == nil || m.access == nil || stage == 0 || !validCommand(command) {
+	if stage == 0 || !validCommand(command) {
 		return Interaction{}, "", ErrInvalidInput
 	}
 

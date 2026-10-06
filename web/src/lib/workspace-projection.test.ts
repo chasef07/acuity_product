@@ -860,7 +860,6 @@ function taskPage(items: Task[]): TaskPage {
     nextCursor: "",
     counts: {
       tasks: items.length,
-      missedCalls: 0,
       categories: {
         billing: 0,
         appointments: 0,

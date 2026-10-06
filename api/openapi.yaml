@@ -3249,12 +3249,9 @@ components:
     TaskFolderCounts:
       type: object
       additionalProperties: false
-      required: [tasks, missedCalls, categories]
+      required: [tasks, categories]
       properties:
         tasks:
-          type: integer
-          minimum: 0
-        missedCalls:
           type: integer
           minimum: 0
         texts:
@@ -4611,9 +4608,6 @@ components:
         ordering:
           type: string
           enum: [priority, recent, time]
-        folder:
-          type: string
-          enum: [work, missed_calls]
         includeCounts:
           description: Include fresh counts across all Task folders in the requested scope and search.
           type: boolean
