@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.28.2](https://github.com/chasef07/acuity_product/compare/v1.28.1...v1.28.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* **access:** harden sign-up eligibility, signing-key outages and Location errors ([#416](https://github.com/chasef07/acuity_product/issues/416)) ([638a281](https://github.com/chasef07/acuity_product/commit/638a28111ce1c63f1028ead87bb2c989ee694e7a))
+* **interaction:** bound receipt retries and stop reporting outages as denials ([#415](https://github.com/chasef07/acuity_product/issues/415)) ([1c4e97d](https://github.com/chasef07/acuity_product/commit/1c4e97d38ec6c902e8b78287f1c361e1b8d5faa6))
+* **telnyx:** accept webhook retries and project every delivery status ([#414](https://github.com/chasef07/acuity_product/issues/414)) ([3ed7b44](https://github.com/chasef07/acuity_product/commit/3ed7b44b9c4c766a9e35e7fe2dc9c889a3921566))
+* **work:** keep Task completion tied to human decisions and current evidence ([#413](https://github.com/chasef07/acuity_product/issues/413)) ([42726ed](https://github.com/chasef07/acuity_product/commit/42726ed440b7c8deae3a761e353bfcd83c92c71f))
+* **workspace:** harden call context, projection windows and rail behavior ([#417](https://github.com/chasef07/acuity_product/issues/417)) ([a73477e](https://github.com/chasef07/acuity_product/commit/a73477ee1eddc4ec4e8c2bef5040b0bc1765ab56))
+* **workspace:** show who placed callbacks and acted on Tasks, and guard accidental reopen ([#419](https://github.com/chasef07/acuity_product/issues/419)) ([cfa66fe](https://github.com/chasef07/acuity_product/commit/cfa66feb9d31ccc9db1901d32a7c5a8c05852f42))
+
+
+### Performance Improvements
+
+* **db:** index hot Task, Texts and agent-call reads and drop dead schema ([#412](https://github.com/chasef07/acuity_product/issues/412)) ([b523a86](https://github.com/chasef07/acuity_product/commit/b523a8648e9b9debb3e5b91da4624cfc331276f1))
+
 ## [1.28.1](https://github.com/chasef07/acuity_product/compare/v1.28.0...v1.28.1) (2026-10-06)
 
 
