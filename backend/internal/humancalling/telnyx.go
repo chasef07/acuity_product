@@ -24,6 +24,15 @@ type TelnyxConfig struct {
 	HTTPClient *http.Client
 }
 
+var (
+	_ Provider                  = (*TelnyxAdapter)(nil)
+	_ CredentialStateProvider   = (*TelnyxAdapter)(nil)
+	_ CallStateProvider         = (*TelnyxAdapter)(nil)
+	_ RecordingStateProvider    = (*TelnyxAdapter)(nil)
+	_ RecordingDeletionProvider = (*TelnyxAdapter)(nil)
+	_ RecordingAudioProvider    = (*TelnyxAdapter)(nil)
+)
+
 type TelnyxAdapter struct {
 	config TelnyxConfig
 	client telnyx.Client

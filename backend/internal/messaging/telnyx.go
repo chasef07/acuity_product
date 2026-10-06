@@ -13,6 +13,8 @@ import (
 	"github.com/team-telnyx/telnyx-go/v4/option"
 )
 
+const telnyxRequestTimeout = 8 * time.Second
+
 type TelnyxConfig struct {
 	APIKey         string
 	BaseURL        string
@@ -47,7 +49,7 @@ func NewTelnyxAdapter(config TelnyxConfig) (*TelnyxAdapter, error) {
 	config.APIKey = strings.TrimSpace(config.APIKey)
 	config.WebhookBaseURL = strings.TrimRight(config.WebhookBaseURL, "/")
 	if config.HTTPClient == nil {
-		config.HTTPClient = &http.Client{Timeout: 10 * time.Second}
+		config.HTTPClient = &http.Client{Timeout: telnyxRequestTimeout}
 	}
 	client := telnyx.NewClient(
 		option.WithAPIKey(config.APIKey),
@@ -131,7 +133,14 @@ func (adapter *TelnyxAdapter) Reconcile(
 	}
 	to := response.Data.To.OfMessagingOutboundMessagePayloadToArray
 	if len(to) > 0 {
-		result.State = providerDeliveryState(to[0].Status)
+		state, known := providerDeliveryState(to[0].Status)
+		if !known {
+			return ProviderResult{}, fmt.Errorf(
+				"%w: unrecognized Telnyx delivery status",
+				ErrAmbiguous,
+			)
+		}
+		result.State = state
 	}
 	return result, nil
 }
@@ -146,6 +155,10 @@ func validTelnyxResourceID(value string) bool {
 func classifyTelnyxError(err error) error {
 	var apiError *telnyx.Error
 	if errors.As(err, &apiError) &&
+		apiError.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("%w: Telnyx rate limited the request", ErrTemporary)
+	}
+	if errors.As(err, &apiError) &&
 		apiError.StatusCode >= http.StatusBadRequest &&
 		apiError.StatusCode < http.StatusInternalServerError {
 		return fmt.Errorf("%w: Telnyx rejected the request", ErrRejected)
@@ -153,13 +166,16 @@ func classifyTelnyxError(err error) error {
 	return fmt.Errorf("%w: Telnyx request outcome is unknown", ErrAmbiguous)
 }
 
-func providerDeliveryState(status string) DeliveryState {
+func providerDeliveryState(status string) (DeliveryState, bool) {
 	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "accepted", "queued", "sending", "sent", "delivery_unconfirmed":
+		return DeliverySent, true
 	case "delivered":
-		return DeliveryDelivered
-	case "sending_failed", "delivery_failed":
-		return DeliveryFailed
+		return DeliveryDelivered, true
+	case "failed", "sending_failed", "delivery_failed", "undelivered",
+		"expired", "cancelled":
+		return DeliveryFailed, true
 	default:
-		return DeliverySent
+		return "", false
 	}
 }

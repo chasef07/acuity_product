@@ -1324,6 +1324,40 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			err,
 		)
 	}
+	if _, _, err := module.SendAgain(
+		context.Background(),
+		messaging.SendAgainCommand{
+			Identity:       identity,
+			MessageID:      queued.ID,
+			IdempotencyKey: "message-failed-second-new-attempt",
+		},
+	); !errors.Is(err, messaging.ErrConflict) {
+		t.Fatalf("second new attempt of one failed Message error = %v, want conflict", err)
+	}
+	replayedAttempt, replayedAttemptStatus, err := module.SendAgain(
+		context.Background(),
+		messaging.SendAgainCommand{
+			Identity:       identity,
+			MessageID:      queued.ID,
+			IdempotencyKey: "message-failed-new-attempt",
+		},
+	)
+	if err != nil ||
+		replayedAttemptStatus != messaging.MessageDuplicate ||
+		replayedAttempt.ID != newAttempt.ID {
+		t.Fatalf(
+			"replayed new attempt = %#v, %q, %v",
+			replayedAttempt,
+			replayedAttemptStatus,
+			err,
+		)
+	}
+	var attemptsOfFailedMessage int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM messaging_messages WHERE retry_of_message_id = $1
+	`, queued.ID).Scan(&attemptsOfFailedMessage); err != nil || attemptsOfFailedMessage != 1 {
+		t.Fatalf("new attempts of failed Message = %d, %v; want 1", attemptsOfFailedMessage, err)
+	}
 
 	if err := pool.QueryRow(context.Background(), `SELECT version FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW'`).Scan(&reviewVersion); err != nil || reviewVersion != 1 {
 		t.Fatalf("STOP/START changed review work: %d %v", reviewVersion, err)

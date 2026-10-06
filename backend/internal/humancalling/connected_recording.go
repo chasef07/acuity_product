@@ -207,10 +207,6 @@ func connectedRecordingSavedCandidateState(fact ProviderFact) (callLegClientStat
 func (m *Module) ProcessNextRecordingReconciliation(
 	ctx context.Context,
 ) (bool, error) {
-	provider, ok := m.provider.(RecordingStateProvider)
-	if !ok {
-		return false, nil
-	}
 	now := m.now()
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -264,6 +260,10 @@ func (m *Module) ProcessNextRecordingReconciliation(
 	}
 	if err != nil {
 		return false, fmt.Errorf("claim stale recording: %w", err)
+	}
+	provider, ok := m.provider.(RecordingStateProvider)
+	if !ok {
+		return false, fmt.Errorf("%w: recording reconciliation", ErrProviderCapabilityMissing)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_call_recordings
@@ -441,10 +441,6 @@ func (m *Module) exhaustRecordingReconciliation(
 func (m *Module) ProcessNextRecordingRetention(
 	ctx context.Context,
 ) (bool, error) {
-	provider, ok := m.provider.(RecordingDeletionProvider)
-	if !ok {
-		return false, nil
-	}
 	now := m.now()
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -477,6 +473,10 @@ func (m *Module) ProcessNextRecordingRetention(
 	}
 	if err != nil {
 		return false, fmt.Errorf("claim expired recording: %w", err)
+	}
+	provider, ok := m.provider.(RecordingDeletionProvider)
+	if !ok {
+		return false, fmt.Errorf("%w: recording deletion", ErrProviderCapabilityMissing)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_call_recordings

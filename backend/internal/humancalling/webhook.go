@@ -123,7 +123,7 @@ func (m *Module) ReceiveWebhook(
 		); err != nil {
 			return WebhookReceipt{}, fmt.Errorf("load duplicate provider receipt: %w", err)
 		}
-		if !bytes.Equal(existingRaw, raw) ||
+		if !sameWebhookEventData(existingRaw, raw) ||
 			result.EventType != event.Data.EventType {
 			return WebhookReceipt{}, ErrInvalidWebhook
 		}
@@ -176,6 +176,27 @@ func unwrapTelnyxWebhook(
 		}
 	}
 	return nil, ErrInvalidWebhook
+}
+
+func sameWebhookEventData(left []byte, right []byte) bool {
+	var leftEnvelope, rightEnvelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(left, &leftEnvelope) != nil ||
+		json.Unmarshal(right, &rightEnvelope) != nil {
+		return false
+	}
+	var leftData, rightData any
+	if json.Unmarshal(leftEnvelope.Data, &leftData) != nil ||
+		json.Unmarshal(rightEnvelope.Data, &rightData) != nil ||
+		leftData == nil || rightData == nil {
+		return false
+	}
+	leftCanonical, leftErr := json.Marshal(leftData)
+	rightCanonical, rightErr := json.Marshal(rightData)
+	return leftErr == nil &&
+		rightErr == nil &&
+		bytes.Equal(leftCanonical, rightCanonical)
 }
 
 func validTelnyxEvent(

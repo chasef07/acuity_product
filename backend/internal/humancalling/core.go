@@ -110,6 +110,7 @@ var (
 	ErrProviderRecordingFailed   = errors.New("provider recording failed")
 	ErrProviderTargetAbsent      = errors.New("provider target is absent")
 	ErrInvalidWebhook            = errors.New("invalid provider webhook")
+	ErrProviderCapabilityMissing = errors.New("provider capability is unavailable")
 )
 
 type providerRecordingFailure struct {
