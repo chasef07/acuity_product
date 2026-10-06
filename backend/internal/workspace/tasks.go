@@ -492,11 +492,6 @@ func queryTaskFolderCounts(
 		)
 		SELECT
 			count(*) FILTER (WHERE listed),
-			(SELECT count(*)`+taskMatchSource+`
-				WHERE task.practice_id = $1
-					AND task.location_id = ANY($2::uuid[])
-					AND task.state = 'OPEN'
-					AND `+work.TaskIsCallRecoverySQL+taskSearchFilter+`),
 			count(*) FILTER (WHERE listed AND category = 'billing'),
 			count(*) FILTER (WHERE listed AND category = 'appointments'),
 			count(*) FILTER (WHERE listed AND category = 'documentation'),
@@ -513,7 +508,6 @@ func queryTaskFolderCounts(
 		FROM scoped
 	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.Kind).Scan(
 		&counts.Tasks,
-		&counts.MissedCalls,
 		&counts.Categories.Billing,
 		&counts.Categories.Appointments,
 		&counts.Categories.Documentation,

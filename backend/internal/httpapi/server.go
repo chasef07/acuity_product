@@ -3169,7 +3169,6 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 	if page.Counts != nil {
 		response.Counts = &api.TaskFolderCounts{
 			Tasks:              page.Counts.Tasks,
-			MissedCalls:        page.Counts.MissedCalls,
 			Texts:              &page.Counts.Texts,
 			CallRecovery:       &page.Counts.CallRecovery,
 			AppointmentReviews: &page.Counts.AppointmentReviews,

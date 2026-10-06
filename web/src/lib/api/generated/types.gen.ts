@@ -545,7 +545,6 @@ export type TaskPage = {
 
 export type TaskFolderCounts = {
     tasks: number;
-    missedCalls: number;
     texts?: number;
     callRecovery?: number;
     appointmentReviews?: number;
