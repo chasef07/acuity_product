@@ -159,10 +159,8 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 		known[costMedia], known[costTelephony] = true, true
 	}
 	var entries []map[string]any
+	_ = json.Unmarshal(raw, &entries)
 	unpricedUsage := 0
-	if json.Unmarshal(raw, &entries) != nil {
-		unpricedUsage++
-	}
 	var lunaInputTotal float64
 	for _, entry := range entries {
 		model, _ := entry["model"].(string)

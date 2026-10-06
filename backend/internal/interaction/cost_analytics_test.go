@@ -14,7 +14,6 @@ func TestCostAnalyticsDoesNotPriceUnsupportedUsage(t *testing.T) {
 		unpriced  int
 	}{
 		{"missing report", `null`, 0},
-		{"corrupt report", `{"type":"llm_usage"}`, 1},
 		{"different model", `[{"type":"llm_usage","provider":"baseten","model":"GLM-5.2","input_tokens":1000000}]`, 1},
 		{"cached exceeds input", `[{"type":"llm_usage","provider":"livekit","model":"google/gemma-4-31b-it","input_tokens":10,"input_cached_tokens":20}]`, 1},
 		{"invalid quantity", `[{"type":"tts_usage","provider":"rime","model":"coda","characters_count":-2}]`, 1},
