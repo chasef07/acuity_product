@@ -714,7 +714,7 @@ func (server *Server) ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Reques
 }
 
 func (server *Server) AcquireSoftphone(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -733,7 +733,7 @@ func (server *Server) AcquireSoftphone(w http.ResponseWriter, r *http.Request) {
 }
 
 func (server *Server) SetCallingReadiness(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -760,7 +760,7 @@ func (server *Server) SetCallingReadiness(w http.ResponseWriter, r *http.Request
 }
 
 func (server *Server) IssueCallingMediaToken(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -782,7 +782,7 @@ func (server *Server) IssueCallingMediaToken(w http.ResponseWriter, r *http.Requ
 }
 
 func (server *Server) GetCallingState(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -816,7 +816,7 @@ func (server *Server) GetCallingCall(
 	r *http.Request,
 	callID openapi_types.UUID,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -841,7 +841,7 @@ func (server *Server) ListStaffTransferCandidates(
 	callID openapi_types.UUID,
 	params api.ListStaffTransferCandidatesParams,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -871,7 +871,7 @@ func (server *Server) RequestStaffTransfer(
 	r *http.Request,
 	callID openapi_types.UUID,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -929,7 +929,7 @@ func (server *Server) respondStaffTransfer(
 	transferID openapi_types.UUID,
 	action staffTransferResponseAction,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -971,7 +971,7 @@ func (server *Server) GetEngagementTimeline(
 	phone string,
 	params api.GetEngagementTimelineParams,
 ) {
-	identity, ok := server.messagingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1009,7 +1009,7 @@ func (server *Server) StartOutboundCall(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1048,7 +1048,7 @@ func (server *Server) ConfirmCallingMediaReady(
 	r *http.Request,
 	callID openapi_types.UUID,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1084,7 +1084,7 @@ func (server *Server) GetTaskOutboundEligibility(
 	r *http.Request,
 	taskID openapi_types.UUID,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1110,7 +1110,7 @@ func (server *Server) RetryOutboundCall(
 	r *http.Request,
 	callID openapi_types.UUID,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1146,7 +1146,7 @@ func (server *Server) IssueCallingVoicemailPlayback(
 	r *http.Request,
 	callID openapi_types.UUID,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1172,7 +1172,7 @@ func (server *Server) IssueCallingRecordingPlayback(
 	r *http.Request,
 	callID openapi_types.UUID,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1302,7 +1302,7 @@ func (server *Server) RequestCallingHangup(
 	r *http.Request,
 	callID openapi_types.UUID,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1335,7 +1335,7 @@ func (server *Server) RecordCallingDisposition(
 	r *http.Request,
 	callID openapi_types.UUID,
 ) {
-	identity, ok := server.callingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1374,7 +1374,7 @@ func (server *Server) RecordCallingDisposition(
 }
 
 func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.taskIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1424,7 +1424,7 @@ func (server *Server) ReadTask(
 	r *http.Request,
 	taskID openapi_types.UUID,
 ) {
-	identity, ok := server.taskIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1448,7 +1448,7 @@ func (server *Server) RenameTask(
 	r *http.Request,
 	taskID openapi_types.UUID,
 ) {
-	identity, ok := server.taskIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1481,7 +1481,7 @@ func (server *Server) CompleteTask(
 	r *http.Request,
 	taskID openapi_types.UUID,
 ) {
-	identity, ok := server.taskIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1513,7 +1513,7 @@ func (server *Server) ChangeTaskCategory(
 	r *http.Request,
 	taskID openapi_types.UUID,
 ) {
-	identity, ok := server.taskIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1546,7 +1546,7 @@ func (server *Server) CompleteTaskGroup(
 	r *http.Request,
 	taskID openapi_types.UUID,
 ) {
-	identity, ok := server.taskIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1582,7 +1582,7 @@ func (server *Server) ReopenTask(
 	r *http.Request,
 	taskID openapi_types.UUID,
 ) {
-	identity, ok := server.taskIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1610,7 +1610,7 @@ func (server *Server) ReopenTask(
 }
 
 func (server *Server) SendMessage(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.messagingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1654,7 +1654,7 @@ func (server *Server) UploadMessageAttachment(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
-	identity, ok := server.messagingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1697,7 +1697,7 @@ func (server *Server) GetMessageAttachment(
 	r *http.Request,
 	attachmentID openapi_types.UUID,
 ) {
-	identity, ok := server.messagingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1720,7 +1720,7 @@ func (server *Server) RetryInboundMessageAttachment(
 	r *http.Request,
 	attachmentID openapi_types.UUID,
 ) {
-	identity, ok := server.messagingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1754,7 +1754,7 @@ func (server *Server) SendMessageAgain(
 	r *http.Request,
 	messageID openapi_types.UUID,
 ) {
-	identity, ok := server.messagingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1797,7 +1797,7 @@ func (server *Server) CreateMessageFollowUpTask(
 	r *http.Request,
 	messageID openapi_types.UUID,
 ) {
-	identity, ok := server.messagingIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -1977,27 +1977,7 @@ func (server *Server) portalOnly(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func (server *Server) callingIdentity(
-	w http.ResponseWriter,
-	r *http.Request,
-) (access.Identity, bool) {
-	if !server.portalOnly(w, r) {
-		return access.Identity{}, false
-	}
-	return server.authenticate(w, r)
-}
-
-func (server *Server) taskIdentity(
-	w http.ResponseWriter,
-	r *http.Request,
-) (access.Identity, bool) {
-	if !server.portalOnly(w, r) {
-		return access.Identity{}, false
-	}
-	return server.authenticate(w, r)
-}
-
-func (server *Server) messagingIdentity(
+func (server *Server) portalIdentity(
 	w http.ResponseWriter,
 	r *http.Request,
 ) (access.Identity, bool) {

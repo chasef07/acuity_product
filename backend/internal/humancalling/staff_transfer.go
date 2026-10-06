@@ -346,7 +346,7 @@ func (m *Module) idempotentStaffTransfer(
 		existingSession != command.SessionID {
 		return StaffTransfer{}, false, ErrConflict
 	}
-	if _, err := m.access.LockMembershipAuthorization(
+	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, command.Identity, existing.PracticeID, existing.LocationID,
 	); err != nil {
 		return StaffTransfer{}, false, ErrDenied
@@ -427,7 +427,7 @@ func (m *Module) respondStaffTransfer(
 	`, actorSubject, command.SessionID, m.now()).Scan(&ownsSession); err != nil || !ownsSession {
 		return StaffTransfer{}, ErrConflict
 	}
-	if _, err := m.access.LockMembershipAuthorization(
+	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, command.Identity, transfer.PracticeID, transfer.LocationID,
 	); err != nil {
 		return StaffTransfer{}, ErrDenied
@@ -524,7 +524,7 @@ func (m *Module) lockTransferSource(
 	if ownerSession != sessionID {
 		return "", "", 0, ErrConflict
 	}
-	if _, err := m.access.LockMembershipAuthorization(
+	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	); err != nil {
 		return "", "", 0, ErrDenied

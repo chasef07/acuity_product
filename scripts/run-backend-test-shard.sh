@@ -21,7 +21,6 @@ case "${1:-}" in
   support)
     packages=(
       ./backend/cmd/acuity
-      ./backend/cmd/backlog-recovery
       ./backend/cmd/knowledge-import
       ./backend/cmd/receipt-audit
       ./backend/cmd/task-maintenance

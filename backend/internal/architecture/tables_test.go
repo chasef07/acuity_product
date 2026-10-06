@@ -45,8 +45,6 @@ var sqlBaseline = []struct {
 	tables string
 	reason string
 }{
-	{"backend/cmd/backlog-recovery/main.go", lock, "work_task_acknowledgements", "one-off recovery command retires stuck acknowledgements directly"},
-	{"backend/cmd/backlog-recovery/main.go", read, "access_audit_events access_platform_operators ai_interaction_receipts human_calling_call_legs human_calling_calls human_calling_provider_commands human_calling_provider_receipts schema_migrations work_tasks", "one-off recovery command selects and verifies backlog rows directly"},
 	{"backend/cmd/knowledge-import/main.go", read, "knowledge_corpora", "import command confirms the published revision"},
 	{"backend/cmd/knowledge-import/publication.go", read, "access_abita_office_locations access_platform_operators knowledge_corpora knowledge_passages knowledge_revisions", "import command resolves the operator and current office corpora"},
 	{"backend/cmd/knowledge-import/source.go", read, "knowledge_corpora knowledge_passages", "import command diffs Git facts against the active revision"},

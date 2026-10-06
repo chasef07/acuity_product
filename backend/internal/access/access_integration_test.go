@@ -1087,12 +1087,12 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 	if !errors.As(err, &lockError) || lockError.Code != "55P03" {
 		t.Fatalf("operator lock did not protect Practice identity: %v", err)
 	}
-	if _, err := module.LockMembershipAuthorization(
+	if _, err := module.LockMutationAuthorization(
 		context.Background(), tx, operator, demo.ID, demo.Locations[0].ID,
 	); err != nil {
 		t.Fatalf("authorize demo Staff operation: %v", err)
 	}
-	if _, err := module.LockMembershipAuthorization(
+	if _, err := module.LockMutationAuthorization(
 		context.Background(), tx, operator, customer.ID, customer.Locations[0].ID,
 	); err != nil {
 		t.Fatalf("authorize customer operation: %v", err)
@@ -1283,7 +1283,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 		call func(pgx.Tx, string) (access.Authorization, error)
 	}{
 		{name: "membership", call: func(tx pgx.Tx, locationID string) (access.Authorization, error) {
-			return module.LockMembershipAuthorization(ctx, tx, identity, practice.ID, locationID)
+			return module.LockMutationAuthorization(ctx, tx, identity, practice.ID, locationID)
 		}},
 		{name: "mutation", call: func(tx pgx.Tx, locationID string) (access.Authorization, error) {
 			return module.LockMutationAuthorization(ctx, tx, identity, practice.ID, locationID)
