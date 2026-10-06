@@ -10,7 +10,7 @@ import {
   reopenTask as reopenTaskRequest,
 } from "../api/generated/sdk.gen"
 import type { StaffTaskCategory, Task } from "../api/generated/types.gen"
-import { appendUniqueByID, mergeFirstPage, newerFirst } from "../workspace-ordering"
+import { appendUniqueByID } from "../workspace-ordering"
 import { type PortalFailure, portalRequest } from "./portal-request"
 
 type TaskVersion = Pick<Task, "id" | "version">
@@ -79,8 +79,6 @@ export function changeTaskCategory(task: TaskVersion, category: StaffTaskCategor
 
 export type ReviewFolderKind = "texts" | "calls" | "appointments"
 
-const recentOrder = newerFirst<Task>((task) => task.updatedAt)
-
 export type ReviewFolderPage = {
   items: Task[]
   nextCursor: string
@@ -108,7 +106,7 @@ export function useReviewFolder({
     nextCursor: "",
     loading: true,
   })
-  const firstPageLength = useRef(0)
+  const depth = useRef(0)
   const request = useRef<AbortController | null>(null)
   const load = useCallback(
     async (cursor = "") => {
@@ -124,52 +122,41 @@ export function useReviewFolder({
             : { items: [], nextCursor: "", loading: false, failure },
         )
       try {
-        const outcome = await portalRequest(
-          (transport) =>
-            queryTasks({
-              ...transport,
-              body: {
-                practiceId: practiceID,
-                ...(locationID ? { locationId: locationID } : {}),
-                ...(search ? { search } : {}),
-                kind,
-                state: "OPEN",
-                ordering: "recent",
-                responsibility: "all",
-                grouped: false,
-                includeCounts: false,
-                limit: 50,
-                ...(cursor ? { cursor } : {}),
-              },
-            }),
-          signal,
-        )
-        if (!outcome.ok) {
-          fail(outcome.failure)
-          return
-        }
-        const { items, nextCursor } = outcome.data
-        if (cursor) {
-          setPage((current) => ({
-            items: appendUniqueByID(current.items, items),
-            nextCursor,
-            loading: false,
-          }))
-          return
-        }
-        const covered = firstPageLength.current
-        firstPageLength.current = items.length
-        setPage((current) => ({
-          items: mergeFirstPage({
-            loaded: current.items,
-            covered,
-            page: items,
-            complete: !nextCursor,
-            sortsAfter: recentOrder,
-          }),
-          nextCursor: current.items.length > covered && nextCursor ? current.nextCursor : nextCursor,
-          loading: false,
-        }))
+        const items: Task[] = []
+        let nextCursor = cursor
+        do {
+          const outcome = await portalRequest(
+            (transport) =>
+              queryTasks({
+                ...transport,
+                body: {
+                  practiceId: practiceID,
+                  ...(locationID ? { locationId: locationID } : {}),
+                  ...(search ? { search } : {}),
+                  kind,
+                  state: "OPEN",
+                  ordering: "recent",
+                  responsibility: "all",
+                  grouped: false,
+                  includeCounts: false,
+                  limit: 50,
+                  ...(nextCursor ? { cursor: nextCursor } : {}),
+                },
+              }),
+            signal,
+          )
+          if (!outcome.ok) {
+            fail(outcome.failure)
+            return
+          }
+          items.push(...outcome.data.items)
+          nextCursor = outcome.data.nextCursor
+        } while (!cursor && nextCursor && items.length < depth.current)
+        setPage((current) => {
+          const combined = cursor ? appendUniqueByID(current.items, items) : items
+          depth.current = combined.length
+          return { items: combined, nextCursor, loading: false }
+        })
       } catch {
         if (!signal.aborted) fail({ kind: "unavailable", retryable: true })
       }

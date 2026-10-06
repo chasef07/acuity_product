@@ -47,26 +47,35 @@ export function newerFirst<T extends { id: string }>(
 
 export function mergeFirstPage<T extends MergeableRow>({
   loaded,
+  loadedCursor,
   covered,
   page,
-  complete,
+  pageCursor,
+  moved = [],
   sortsAfter,
 }: {
   loaded: readonly T[]
+  loadedCursor: string
   covered: number
   page: readonly T[]
-  complete: boolean
+  pageCursor: string
+  moved?: readonly MergeableRow[]
   sortsAfter: (row: T, boundary: T) => boolean
 }) {
   const boundary = page.at(-1)
-  if (complete || !boundary || loaded.length <= covered) return [...page]
-  const fresh = new Set(page.flatMap(rowIDs))
-  return [
-    ...page,
-    ...loaded.filter((row, index) =>
-      !rowIDs(row).some((id) => fresh.has(id)) &&
-      (index >= covered || sortsAfter(row, boundary))),
-  ]
+  if (!pageCursor || !boundary || loaded.length <= covered) {
+    return { items: [...page], nextCursor: pageCursor }
+  }
+  const fresh = new Set([...page, ...moved].flatMap(rowIDs))
+  return {
+    items: [
+      ...page,
+      ...loaded.filter((row, index) =>
+        !rowIDs(row).some((id) => fresh.has(id)) &&
+        (index >= covered || sortsAfter(row, boundary))),
+    ],
+    nextCursor: loadedCursor,
+  }
 }
 
 function rowIDs(row: MergeableRow) {

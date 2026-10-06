@@ -19,50 +19,60 @@ function row(id: string, minute: number, groupMembers?: string[]): Row {
 
 const recent = newerFirst<Row>((item) => item.updatedAt)
 
-test("a fresh first page replaces its range and keeps deeper loaded rows once", () => {
-  const loaded = [row("a", 50), row("b", 40), row("c", 30), row("d", 20), row("e", 10)]
-  const merged = mergeFirstPage({
-    loaded,
-    covered: 2,
-    page: [row("new", 59), row("c", 55)],
-    complete: false,
-    sortsAfter: recent,
-  })
-  assert.deepEqual(merged.map((item) => item.id), ["new", "c", "a", "b", "d", "e"])
-})
-
-test("rows that left the first page range are dropped and grouped members are not duplicated", () => {
-  const loaded = [row("gone", 50), row("old-lead", 45), row("deep", 10)]
-  const merged = mergeFirstPage({
-    loaded,
-    covered: 2,
-    page: [row("new-lead", 58, ["new-lead", "old-lead"]), row("kept", 40)],
-    complete: false,
-    sortsAfter: recent,
-  })
-  assert.deepEqual(merged.map((item) => item.id), ["new-lead", "kept", "deep"])
-})
-
-test("with nothing loaded beyond the first page the fresh page is the whole window", () => {
-  const merged = mergeFirstPage({
-    loaded: [row("a", 50), row("pushed", 40)],
-    covered: 2,
-    page: [row("new", 59), row("a", 50)],
-    complete: false,
-    sortsAfter: recent,
-  })
-  assert.deepEqual(merged.map((item) => item.id), ["new", "a"])
-})
-
-test("a complete first page is the whole window", () => {
-  const merged = mergeFirstPage({
-    loaded: [row("a", 50), row("deep", 10)],
-    covered: 1,
-    page: [row("a", 50)],
-    complete: true,
-    sortsAfter: recent,
-  })
-  assert.deepEqual(merged.map((item) => item.id), ["a"])
+test("a fresh first page merges into loaded rows", () => {
+  const cases = [
+    {
+      name: "replaces its range and keeps deeper rows once",
+      loaded: [row("a", 50), row("b", 40), row("c", 30), row("d", 20), row("e", 10)],
+      covered: 2,
+      page: [row("new", 59), row("c", 55)],
+      pageCursor: "page",
+      want: ["new", "c", "a", "b", "d", "e"],
+      cursor: "loaded",
+    },
+    {
+      name: "drops rows that left its range and members of a new group",
+      loaded: [row("gone", 50), row("old-lead", 45), row("deep", 10)],
+      covered: 2,
+      page: [row("new-lead", 58, ["new-lead", "old-lead"]), row("kept", 40)],
+      pageCursor: "page",
+      want: ["new-lead", "kept", "deep"],
+      cursor: "loaded",
+    },
+    {
+      name: "drops deeper rows that moved to the other window",
+      loaded: [row("a", 50), row("done", 20), row("group", 10, ["group", "done-member"])],
+      covered: 1,
+      page: [row("a", 50)],
+      pageCursor: "page",
+      moved: [row("done", 5), row("done-member", 5)],
+      want: ["a"],
+      cursor: "loaded",
+    },
+    {
+      name: "is the whole window when nothing deeper is loaded",
+      loaded: [row("a", 50), row("pushed", 40)],
+      covered: 2,
+      page: [row("new", 59), row("a", 50)],
+      pageCursor: "page",
+      want: ["new", "a"],
+      cursor: "page",
+    },
+    {
+      name: "is the whole window when complete",
+      loaded: [row("a", 50), row("deep", 10)],
+      covered: 1,
+      page: [row("a", 50)],
+      pageCursor: "",
+      want: ["a"],
+      cursor: "",
+    },
+  ]
+  for (const item of cases) {
+    const merged = mergeFirstPage({ ...item, loadedCursor: "loaded", sortsAfter: recent })
+    assert.deepEqual(merged.items.map((entry) => entry.id), item.want, item.name)
+    assert.equal(merged.nextCursor, item.cursor, item.name)
+  }
 })
 
 test("queues order timestamps with mixed fractional precision", () => {

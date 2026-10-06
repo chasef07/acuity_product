@@ -411,7 +411,7 @@ test("confirmed completion moves a Task to shared completed history and preserve
   assert.deepEqual(state.selection.task, completedTask)
   assert.equal(state.selection.contextPanelOpen, true)
   assert.equal(state.completion.pendingTaskID, "")
-  assert.equal(realtime.refreshes, 0)
+  assert.equal(realtime.refreshes, 1)
   projection.stop()
 })
 test("temporary token failure keeps Task completion retryable without expiring the session", async () => {
@@ -825,8 +825,15 @@ function deterministicRealtime() {
         setScope(nextScope) {
           scope = nextScope
         },
-        refresh() {
+        async refresh() {
           refreshes += 1
+          if (!scope) return
+          try {
+            const reconciliation = await nextCallbacks.reconcile({ scope, token: "token", signal: new AbortController().signal, minimumVersion: 0 })
+            reconciliation.apply()
+          } catch (error) {
+            if (error instanceof WorkspaceProjectionAccessError) nextCallbacks.onUnauthorized()
+          }
         },
         visibilityChanged() {},
         stop() {},
@@ -1092,7 +1099,7 @@ for (const type of ["task-committed", "task-created"] as const) {
     assert.equal(committedCounts.tasks, type === "task-created" ? 2 : 1)
     pending.apply()
     assert.deepEqual(projection.getSnapshot().tasks.counts, committedCounts)
-    assert.equal(realtime.refreshes, 0)
+    assert.equal(realtime.refreshes, 1)
     projection.stop()
   })
 }
@@ -1716,14 +1723,16 @@ function liveWorkspace({ openRows, hidden = () => false, environment }: {
       task(`open-${String(index).padStart(3, "0")}`, { updatedAt: new Date(origin - index * 60_000).toISOString() })),
     completed: [] as Task[],
     workspaceGate: undefined as Promise<void> | undefined,
+    pageGate: undefined as Promise<void> | undefined,
   }
   const requests: string[] = []
   const page = (rows: Task[], request: LiveRequest) => {
-    const start = Number(request.cursor || 0)
+    const start = request.cursor ? rows.findIndex((row) => row.id === request.cursor) + 1 : 0
     const limit = request.limit ?? 50
+    const items = rows.slice(start, start + limit)
     return success({
-      items: rows.slice(start, start + limit),
-      nextCursor: start + limit < rows.length ? String(start + limit) : "",
+      items,
+      nextCursor: start + limit < rows.length ? items.at(-1)!.id : "",
       ...(request.includeCounts !== false ? { counts: taskPage(rows).counts } : {}),
     })
   }
@@ -1738,6 +1747,7 @@ function liveWorkspace({ openRows, hidden = () => false, environment }: {
     },
     tasks: async (_token, request) => {
       requests.push(`tasks:${request.state}:${request.cursor ?? ""}`)
+      if (request.cursor) await server.pageGate
       return page(request.state === "OPEN" ? server.open : server.completed, request)
     },
     task: async (_token, taskID) => {
@@ -1800,14 +1810,45 @@ function liveWorkspace({ openRows, hidden = () => false, environment }: {
   }
 }
 
-test("one hint with 300 loaded open Tasks refreshes only the first pages and keeps deeper rows", async () => {
-  const live = liveWorkspace({ openRows: 320 })
+function manualClock() {
+  const clock = { now: 0, timers: new Map<number, () => void>(), next: 0 }
+  return {
+    clock,
+    environment: {
+      clock: {
+        now: () => clock.now,
+        setTimeout: (callback: () => void) => {
+          clock.timers.set(++clock.next, callback)
+          return clock.next
+        },
+        clearTimeout: (id: number) => {
+          clock.timers.delete(id)
+        },
+      },
+    },
+    fireAll() {
+      const pending = [...clock.timers.values()]
+      clock.timers.clear()
+      for (const fire of pending) fire()
+    },
+  }
+}
+
+async function liveWorkspaceWith300OpenRows() {
+  const manual = manualClock()
+  const live = liveWorkspace({ openRows: 320, environment: manual.environment })
   await live.connect()
   await live.loadOpenRows(300)
-  const selectedID = live.projection.getSnapshot().selection.task?.id
   live.requests.length = 0
+  return { live, manual }
+}
+
+test("one hint with 300 loaded open Tasks refreshes only the first pages and keeps deeper rows", async () => {
+  const { live, manual } = await liveWorkspaceWith300OpenRows()
+  const selectedID = live.projection.getSnapshot().selection.task?.id
   live.server.open = [task("new-top", { updatedAt: "2026-08-30T13:00:00Z" }), ...live.server.open]
   live.server.version = 2
+  manual.clock.now += 1_000
   live.send("hint", 2)
   await waitUntil(() => live.projection.getSnapshot().workspace?.version === 2)
   await live.settle()
@@ -1817,48 +1858,38 @@ test("one hint with 300 loaded open Tasks refreshes only the first pages and kee
   assert.equal(new Set(ids).size, 301)
   assert.equal(ids[0], "new-top")
   assert.equal(ids.at(-1), "open-299")
+
+  live.requests.length = 0
+  manual.clock.now += 60_000
+  manual.fireAll()
+  await waitUntil(() => live.reconciles() === 1)
+  await live.settle()
+  assert.equal(live.requests.filter((request) => request.startsWith("tasks:OPEN")).length, 7)
+  assert.equal(live.projection.getSnapshot().tasks.items.length, 321)
   live.projection.stop()
 })
 
-test("a deep refresh reloads the loaded depth at most once per minute", async () => {
-  let clock = 0
-  const timers = new Map<number, () => void>()
-  let nextTimer = 0
-  const live = liveWorkspace({
-    openRows: 320,
-    environment: {
-      clock: {
-        now: () => clock,
-        setTimeout: (callback) => {
-          timers.set(++nextTimer, callback)
-          return nextTimer
-        },
-        clearTimeout: (id) => {
-          timers.delete(id)
-        },
-      },
-    },
-  })
+test("a load-more overtaken by a refresh is discarded instead of skipping a pushed-down Task", async () => {
+  const live = liveWorkspace({ openRows: 60 })
   await live.connect()
-  await live.loadOpenRows(300)
-  live.requests.length = 0
-  for (const version of [2, 3]) {
-    clock += 1_000
-    live.server.version = version
-    live.send("hint", version)
-    await waitUntil(() => live.projection.getSnapshot().workspace?.version === version)
-  }
-  await live.settle()
-  assert.equal(live.requests.filter((request) => request.startsWith("tasks:OPEN")).length, 2)
-  live.requests.length = 0
-  clock += 60_000
-  const pending = [...timers.values()]
-  timers.clear()
-  for (const fire of pending) fire()
-  await waitUntil(() => live.reconciles() === 1)
-  await live.settle()
-  assert.equal(live.requests.filter((request) => request.startsWith("tasks:OPEN")).length, 6)
-  assert.equal(live.projection.getSnapshot().tasks.items.length, 300)
+  let release!: () => void
+  live.server.pageGate = new Promise<void>((resolve) => { release = resolve })
+  const load = live.projection.dispatch({ type: "load-more", window: "tasks" })
+  await waitUntil(() => live.requests.includes("tasks:OPEN:open-049"))
+  live.server.pageGate = undefined
+  live.server.open = [task("new-top", { updatedAt: "2026-08-30T13:00:00Z" }), ...live.server.open]
+  live.server.version = 2
+  live.send("hint", 2)
+  await waitUntil(() => live.projection.getSnapshot().workspace?.version === 2)
+  release()
+  await load
+  assert.equal(live.projection.getSnapshot().tasks.loading, false)
+  assert.equal(live.projection.getSnapshot().tasks.items.length, 50)
+  await live.projection.dispatch({ type: "load-more", window: "tasks" })
+  const ids = live.projection.getSnapshot().tasks.items.map((item) => item.id)
+  assert.equal(ids.length, 61)
+  assert.equal(new Set(ids).size, 61)
+  assert.ok(ids.includes("open-049"))
   live.projection.stop()
 })
 
@@ -1907,12 +1938,17 @@ test("a burst of hints during an in-flight reconcile runs at most one follow-up"
 })
 
 test("completing a Task refreshes once and skips the server hint for the same version", async () => {
-  const live = liveWorkspace({ openRows: 3 })
+  const manual = manualClock()
+  const live = liveWorkspace({ openRows: 3, environment: manual.environment })
   await live.connect()
   const first = live.projection.getSnapshot().tasks.items[0]
   await live.projection.dispatch({ type: "select-task", task: first })
+  manual.fireAll()
   live.requests.length = 0
   await live.projection.dispatch({ type: "complete-task", task: first })
+  const revision = live.projection.getSnapshot().detailRevision
+  manual.fireAll()
+  assert.equal(live.projection.getSnapshot().detailRevision, revision + 1)
   assert.deepEqual(live.requests.toSorted(), ["complete", `task:${first.id}`, "tasks:COMPLETED:", "tasks:OPEN:", "workspace"])
   assert.equal(live.projection.getSnapshot().workspace?.version, 2)
   assert.deepEqual(live.projection.getSnapshot().completedTasks.items.map((item) => item.id), [first.id])

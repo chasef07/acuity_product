@@ -115,7 +115,7 @@ export function createWorkspaceRealtimeAdapter(): WorkspaceRealtimeAdapter {
           if (scope) activeSync().setScope(scope)
           else sync?.setScope()
         },
-        refresh: () => sync?.refresh(),
+        refresh: () => sync?.refresh() ?? Promise.resolve(),
         visibilityChanged: () => sync?.visibilityChanged(),
         stop: () => sync?.stop(),
       }
