@@ -99,6 +99,7 @@ import {
   useEngagementTimeline,
 } from "@/lib/clients/engagement"
 import { completeTask, reopenTask } from "@/lib/clients/tasks"
+import { formatElapsedSeconds } from "@/lib/format"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import type { EngagementSummary } from "@/lib/workspace-projection"
@@ -189,6 +190,11 @@ export function EngagementWorkspaceView({
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   )
+  useEffect(() => {
+    if (copyState === "idle") return
+    const timer = window.setTimeout(() => setCopyState("idle"), 2_000)
+    return () => window.clearTimeout(timer)
+  }, [copyState])
   const {
     callingOccupied,
     callingEnabled,
@@ -772,6 +778,11 @@ function MessageEntry({
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   )
+  useEffect(() => {
+    if (copyState === "idle") return
+    const timer = window.setTimeout(() => setCopyState("idle"), 2_000)
+    return () => window.clearTimeout(timer)
+  }, [copyState])
   const [selected, setSelected] = useState(false)
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
@@ -1540,7 +1551,7 @@ function taskActivityDetail(
 }
 
 function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
-  const duration = call.durationSeconds > 0 ? formatDuration(call.durationSeconds) : ""
+  const duration = call.durationSeconds > 0 ? formatElapsedSeconds(call.durationSeconds) : ""
   if (call.outcome === "VOICEMAIL") {
     return {
       label: "Voicemail",
@@ -1570,11 +1581,6 @@ function formatTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value))
-}
-
-function formatDuration(seconds: number) {
-  if (seconds < 60) return `${seconds}s`
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
 function sentenceCase(value: string) {

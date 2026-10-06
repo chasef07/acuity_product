@@ -11,6 +11,7 @@ import {
   aiCallTimelinePresentation,
   appointmentOutcomeTitle,
 } from "@/lib/ai-interactions"
+import { formatElapsedSeconds, formatMediumDateTime } from "@/lib/format"
 import { formatUSPhone } from "@/lib/phone"
 
 export function AIInteractionContext({
@@ -91,7 +92,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
         <dl className="mt-3 flex flex-col gap-3 text-sm">
           <DetailValue
             label="Started"
-            value={formatDateTime(detail.startedAt)}
+            value={formatMediumDateTime(detail.startedAt)}
           />
           <DetailValue
             label="Call length"
@@ -256,10 +257,7 @@ function formatDuration(startedAt: string, endedAt?: string) {
     Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000),
   )
   if (!Number.isFinite(seconds)) return "—"
-  const minutes = Math.floor(seconds / 60)
-  const remainder = seconds % 60
-  if (minutes === 0) return `${remainder}s`
-  return `${minutes}m ${remainder}s`
+  return formatElapsedSeconds(seconds)
 }
 
 function ReceiptEvidence({
@@ -290,9 +288,3 @@ function EvidenceValue({ label, value }: { label: string; value: string }) {
   )
 }
 
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value))
-}

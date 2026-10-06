@@ -1,6 +1,13 @@
 "use client"
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react"
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import {
   ArrowRightIcon,
   BookOpenIcon,
@@ -65,7 +72,6 @@ import { cn } from "@/lib/utils"
 import { taskGroups } from "@/lib/task-groups"
 import type {
   ManageAgentPage,
-  WorkspaceConnectionState,
   WorkspaceProjectionIntent,
   WorkspaceProjectionState,
   WorkspaceRailSection,
@@ -74,8 +80,6 @@ import {
   taskCountForCategory,
   type TaskCategoryFilter,
 } from "@/lib/workspace-triage"
-
-export type ConnectionState = WorkspaceConnectionState
 
 const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
   { value: "transcripts", label: "Transcripts", icon: MessageSquareTextIcon },
@@ -163,7 +167,7 @@ export function WorkspaceRail({
   const tasks = projection.tasks.items
   const taskCounts = projection.tasks.counts
   const selectedTaskID = projection.selection.task?.id ?? ""
-  const search = projection.search.input
+  const projectedSearch = projection.search.input
   const engagementError = projection.search.error
   const loading = projection.tasks.loading
   const taskError = projection.tasks.error
@@ -181,6 +185,16 @@ export function WorkspaceRail({
     : undefined
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
+  const scrollPersistTimer = useRef<number | undefined>(undefined)
+  const [search, setSearch] = useState(projectedSearch)
+  const [syncedSearch, setSyncedSearch] = useState(projectedSearch)
+  if (projectedSearch !== syncedSearch) {
+    setSyncedSearch(projectedSearch)
+    setSearch(projectedSearch)
+  }
+  const publishSearch = useEffectEvent((value: string) => {
+    if (value !== projectedSearch) onIntent({ type: "set-search", value })
+  })
   const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
   const folders = workspaceFolders(projection)
   const completed = projection.completedTasks
@@ -202,6 +216,13 @@ export function WorkspaceRail({
   }, [])
 
   useEffect(() => {
+    const timer = window.setTimeout(() => publishSearch(search), searchDraftDelayMilliseconds)
+    return () => window.clearTimeout(timer)
+  }, [search])
+
+  useEffect(() => () => window.clearTimeout(scrollPersistTimer.current), [])
+
+  useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       scrollContainer.current?.scrollTo({ top: projection.rail.scrollTop })
     })
@@ -213,10 +234,12 @@ export function WorkspaceRail({
   }
 
   function rememberScroll() {
-    onIntent({
-      type: "remember-rail-scroll",
-      scrollTop: scrollContainer.current?.scrollTop ?? 0,
-    })
+    const scrollTop = scrollContainer.current?.scrollTop ?? 0
+    window.clearTimeout(scrollPersistTimer.current)
+    scrollPersistTimer.current = window.setTimeout(() => {
+      scrollPersistTimer.current = undefined
+      onIntent({ type: "remember-rail-scroll", scrollTop })
+    }, scrollPersistDelayMilliseconds)
   }
 
   function selectTaskCategory(value: TaskCategoryFilter) {
@@ -266,6 +289,7 @@ export function WorkspaceRail({
             <form className="min-w-0 flex-1"
               onSubmit={(event) => {
                 event.preventDefault()
+                onIntent({ type: "set-search", value: search })
                 onIntent({ type: "submit-search" })
               }}
             >
@@ -281,9 +305,12 @@ export function WorkspaceRail({
                   enterKeyHint="go"
                   placeholder="Search"
                   value={search}
-                  onChange={(event) =>
-                    onIntent({ type: "set-search", value: event.target.value })
-                  }
+                  onChange={(event) => {
+                    setSearch(event.target.value)
+                    if (engagementError) {
+                      onIntent({ type: "set-search", value: event.target.value })
+                    }
+                  }}
                 />
                 <InputGroupAddon align="inline-end" className="md:hidden">
                   <InputGroupButton
@@ -317,7 +344,7 @@ export function WorkspaceRail({
           className="gap-2 overflow-y-auto px-2 py-2"
           onScroll={rememberScroll}
         >
-          <div aria-label="Workspace folders" className="space-y-2">
+          <div role="group" aria-label="Workspace folders" className="space-y-2">
             {folders.map((folder) => (
               <AttentionGroup
                 key={folder.section}
@@ -356,14 +383,16 @@ export function WorkspaceRail({
                     {loading && tasks.length === 0 && (
                       <RailLoading label="Loading tasks" />
                     )}
-                    {!loading && selectedTaskCount === 0 && (
+                    {!loading && !taskError && selectedTaskCount === 0 && (
                       <RailEmpty>No open Tasks in this view.</RailEmpty>
                     )}
                     {taskError && (
-                      <WorkspaceWindowFailure
-                        message={taskError}
-                        onRetry={() => onIntent({ type: "retry" })}
-                      />
+                      <SidebarMenuItem>
+                        <WorkspaceWindowFailure
+                          message={taskError}
+                          onRetry={() => onIntent({ type: "retry" })}
+                        />
+                      </SidebarMenuItem>
                     )}
                     <RailShowMore
                       cursor={nextCursor}
@@ -410,14 +439,16 @@ export function WorkspaceRail({
               {completed.loading && completed.items.length === 0 && (
                 <RailLoading label="Loading completed Tasks" />
               )}
-              {!completed.loading && completed.items.length === 0 && (
+              {!completed.loading && !completed.error && completed.items.length === 0 && (
                 <RailEmpty>No completed Tasks match these filters.</RailEmpty>
               )}
               {completed.error && (
-                <WorkspaceWindowFailure
-                  message={completed.error}
-                  onRetry={() => onIntent({ type: "retry" })}
-                />
+                <SidebarMenuItem>
+                  <WorkspaceWindowFailure
+                    message={completed.error}
+                    onRetry={() => onIntent({ type: "retry" })}
+                  />
+                </SidebarMenuItem>
               )}
               <RailShowMore
                 cursor={completed.nextCursor}
@@ -682,7 +713,7 @@ function TaskCategoryChip({
   if (category === "all") return null
   const label = taskCategoryLabel(category)
   return (
-    <div className="px-1 pb-1">
+    <SidebarMenuItem className="px-1 pb-1">
       <span className="inline-flex h-6 items-center gap-1 rounded-full bg-sidebar-accent pr-1 pl-2.5 text-xs text-sidebar-foreground">
         {label}
         <button
@@ -694,7 +725,7 @@ function TaskCategoryChip({
           <XIcon aria-hidden="true" className="size-3" />
         </button>
       </span>
-    </div>
+    </SidebarMenuItem>
   )
 }
 
@@ -729,6 +760,8 @@ function TaskRow({
     : task.title
   const groupCount = task.groupMembers?.length ?? 0
   const grouped = groupCount > 1
+  const urgent = task.urgency === "high_priority"
+  const urgencyID = useId()
   return (
     <SidebarMenuItem
       data-testid={grouped ? "task-group-row" : "task-row"}
@@ -746,17 +779,17 @@ function TaskRow({
           aria-label={
             grouped ? `${rowTitle}, ${groupCount} requests` : rowTitle
           }
+          aria-describedby={urgent ? urgencyID : undefined}
           isActive={active}
           className="h-8 rounded-md px-2 pr-9 text-sidebar-foreground"
           onClick={onSelect}
         >
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex min-w-0 items-center gap-1.5 text-sm leading-5">
-              {task.urgency === "high_priority" && (
-                <span
-                  className="size-1.5 shrink-0 rounded-full bg-destructive"
-                  aria-label="Urgent"
-                />
+              {urgent && (
+                <span className="size-1.5 shrink-0 rounded-full bg-destructive">
+                  <span id={urgencyID} className="sr-only">Urgent</span>
+                </span>
               )}
               <span className="truncate">{rowTitle}</span>
               {grouped && (
@@ -971,6 +1004,8 @@ function taskRelativeAt(task: Task) {
 }
 
 const prolongedOutageMilliseconds = 60_000
+const searchDraftDelayMilliseconds = 250
+const scrollPersistDelayMilliseconds = 150
 
 function ProlongedOutageNotice() {
   const [visible, setVisible] = useState(false)

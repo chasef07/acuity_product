@@ -202,7 +202,7 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
         <div className={styles.chartSection}>
           <div className={styles.chartHeading}>
             <h2>{metric === "completed" ? "Tasks completed per day" : "Time to task completion"}</h2>
-            <div className="flex gap-1" aria-label="Task chart metric">
+            <div role="group" className="flex gap-1" aria-label="Task chart metric">
               <Button size="sm" variant={metric === "completed" ? "secondary" : "ghost"} aria-pressed={metric === "completed"} onClick={() => setMetric("completed")}>Tasks completed</Button>
               <Button size="sm" variant={metric === "duration" ? "secondary" : "ghost"} aria-pressed={metric === "duration"} onClick={() => setMetric("duration")}>Completion time</Button>
             </div>

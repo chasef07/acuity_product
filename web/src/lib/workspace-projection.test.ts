@@ -153,6 +153,159 @@ test("pagination appends uniquely and refresh retains active and completed windo
   projection.stop()
 })
 
+test("a load-more superseded by a failed reconcile releases loading so the next page can load", async () => {
+  const realtime = deterministicRealtime()
+  const delayedPage = deferred<WorkspaceAuthorityResult<TaskPage>>()
+  let delayNextPage = true
+  let workspaceAvailable = true
+  const authority: WorkspaceAuthorityAdapter = {
+    ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([]) }),
+    workspace: async () => workspaceAvailable ? success(workspaceSnapshot(7)) : unavailable(),
+    tasks: async (_token, request) => {
+      if (request.state === "COMPLETED") return success(taskPage([]))
+      if (!request.cursor) return success({ ...taskPage([task("open-1")]), nextCursor: "open-more" })
+      if (delayNextPage) {
+        delayNextPage = false
+        return delayedPage.promise
+      }
+      return success(taskPage([task("open-2")]))
+    },
+  }
+  const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
+  await projection.start()
+  await realtime.reconcile(0)
+
+  const firstLoad = projection.dispatch({ type: "load-more", window: "tasks" })
+  assert.equal(projection.getSnapshot().tasks.loading, true)
+  await waitUntil(() => !delayNextPage)
+  workspaceAvailable = false
+  await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
+  delayedPage.resolve(success(taskPage([task("superseded-page")])))
+  await firstLoad
+
+  assert.equal(projection.getSnapshot().tasks.loading, false)
+  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1"])
+  await projection.dispatch({ type: "load-more", window: "tasks" })
+  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1", "open-2"])
+  assert.equal(projection.getSnapshot().tasks.loading, false)
+  projection.stop()
+})
+
+test("a reconcile during load-more keeps the page the operator asked for", async () => {
+  const realtime = deterministicRealtime()
+  const delayedPage = deferred<WorkspaceAuthorityResult<TaskPage>>()
+  let delayNextPage = true
+  const authority: WorkspaceAuthorityAdapter = {
+    ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([]) }),
+    tasks: async (_token, request) => {
+      if (request.state === "COMPLETED") return success(taskPage([]))
+      if (!request.cursor) return success({ ...taskPage([task("open-1")]), nextCursor: "open-more" })
+      if (delayNextPage) {
+        delayNextPage = false
+        return delayedPage.promise
+      }
+      return success(taskPage([task("open-2")]))
+    },
+  }
+  const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
+  await projection.start()
+  await realtime.reconcile(0)
+
+  const load = projection.dispatch({ type: "load-more", window: "tasks" })
+  await waitUntil(() => !delayNextPage)
+  await realtime.reconcile(0)
+  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1", "open-2"])
+  assert.equal(projection.getSnapshot().tasks.loading, false)
+  delayedPage.resolve(success(taskPage([task("superseded-page")])))
+  await load
+
+  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1", "open-2"])
+  assert.equal(projection.getSnapshot().tasks.loading, false)
+  await realtime.reconcile(0)
+  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1", "open-2"])
+  projection.stop()
+})
+
+test("a superseded Task refresh releases loading when the reconcile that replaced it fails", async () => {
+  const realtime = deterministicRealtime()
+  const delayedRefresh = deferred<WorkspaceAuthorityResult<TaskPage>>()
+  let delayOpenTasks = false
+  let workspaceAvailable = true
+  const authority: WorkspaceAuthorityAdapter = {
+    ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([]) }),
+    workspace: async () => workspaceAvailable ? success(workspaceSnapshot(7)) : unavailable(),
+    tasks: async (_token, request) => {
+      if (request.state === "COMPLETED") return success(taskPage([]))
+      if (delayOpenTasks) {
+        delayOpenTasks = false
+        return delayedRefresh.promise
+      }
+      return success(taskPage([task("open-1")]))
+    },
+  }
+  const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
+  await projection.start()
+  await realtime.reconcile(0)
+
+  delayOpenTasks = true
+  const refresh = projection.dispatch({ type: "refresh-text-attention" })
+  assert.equal(projection.getSnapshot().tasks.loading, true)
+  await waitUntil(() => !delayOpenTasks)
+  workspaceAvailable = false
+  await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
+  delayedRefresh.resolve(success(taskPage([task("superseded-refresh")])))
+  await refresh
+
+  assert.equal(projection.getSnapshot().tasks.loading, false)
+  assert.equal(projection.getSnapshot().completedTasks.loading, false)
+  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1"])
+  projection.stop()
+})
+
+test("changing scope, failing closed, and stopping abort in-flight authority requests", async () => {
+  const realtime = deterministicRealtime()
+  const signals: AbortSignal[] = []
+  let workspaceResult: WorkspaceAuthorityResult<WorkspaceSnapshot> = success(workspaceSnapshot(7))
+  const authority: WorkspaceAuthorityAdapter = {
+    ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([task("open-1")]) }),
+    workspace: async () => workspaceResult,
+    call: (_token, _callID, signal) => {
+      signals.push(signal)
+      return new Promise((resolve) => signal.addEventListener("abort", () => resolve(unavailable())))
+    },
+  }
+  const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
+  await projection.start()
+  await realtime.reconcile(0)
+
+  const scopedCall = projection.dispatch({ type: "open-call-context", callID: "call-1" })
+  await waitUntil(() => signals.length === 1)
+  assert.equal(signals[0]!.aborted, false)
+  await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
+  assert.equal(signals[0]!.aborted, true)
+  await scopedCall
+
+  await realtime.reconcile(0)
+  const closedCall = projection.dispatch({ type: "open-call-context", callID: "call-2" })
+  await waitUntil(() => signals.length === 2)
+  assert.equal(signals[1]!.aborted, false)
+  workspaceResult = unauthorizedResult()
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().loadState, "unauthorized")
+  assert.equal(signals[1]!.aborted, true)
+  await closedCall
+
+  const restarted = createWorkspaceProjection({ authority: { ...authority, workspace: async () => success(workspaceSnapshot(7)) }, realtime: realtime.adapter, preferences: memoryPreferences() })
+  await restarted.start()
+  await realtime.reconcile(0)
+  const stoppedCall = restarted.dispatch({ type: "open-call-context", callID: "call-3" })
+  await waitUntil(() => signals.length === 3)
+  restarted.stop()
+  assert.equal(signals[2]!.aborted, true)
+  await stoppedCall
+  projection.stop()
+})
+
 test("authoritative detail refresh updates rail and selection together then clears missing context", async () => {
   const realtime = deterministicRealtime()
   let taskItems = [task("task-1")]

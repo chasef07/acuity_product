@@ -306,6 +306,12 @@ export function createWorkspaceProjection({
     taskCounts: 0,
     completedTasks: 0,
   }
+  const loadingQueries = { tasks: 0, completedTasks: 0 }
+  const pendingLoads: Record<"tasks" | "completedTasks", { query: number; depth: number } | undefined> = {
+    tasks: undefined,
+    completedTasks: undefined,
+  }
+  let scopeRequests = new AbortController()
   let accessController: AbortController | undefined
   const listeners = new Set<() => void>()
 
@@ -337,9 +343,18 @@ export function createWorkspaceProjection({
     publish(update(state))
   }
 
+  function obsoleteScope() {
+    scopeGeneration += 1
+    scopeRequests.abort()
+    scopeRequests = new AbortController()
+    pendingLoads.tasks = undefined
+    pendingLoads.completedTasks = undefined
+  }
+
   function failClosed(
     loadState: "unauthenticated" | "unauthorized" | "unavailable",
   ) {
+    obsoleteScope()
     patch((current) => ({
       ...initialState(),
       loadState,
@@ -369,7 +384,7 @@ export function createWorkspaceProjection({
       token: string,
       signal: AbortSignal,
     ) => Promise<WorkspaceAuthorityResult<T>>,
-    signal = new AbortController().signal,
+    signal = scopeRequests.signal,
   ): Promise<WorkspaceAuthorityResult<T>> {
     const authentication = await authority.authenticate()
     switch (authentication.status) {
@@ -416,8 +431,8 @@ export function createWorkspaceProjection({
     ] =
       await Promise.all([
         authority.workspace(token, scope, signal),
-        loadTaskWindow(token, taskRequest, current.tasks.items.length, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), current.completedTasks.items.length, signal),
+        loadTaskWindow(token, taskRequest, windowDepth("tasks", current.tasks.items.length), signal),
+        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), windowDepth("completedTasks", current.completedTasks.items.length), signal),
         selectedTaskID
           ? authority.task(token, selectedTaskID, signal)
           : Promise.resolve(undefined),
@@ -678,7 +693,7 @@ export function createWorkspaceProjection({
       failClosed("unauthorized")
       return
     }
-    scopeGeneration += 1
+    obsoleteScope()
     const rail = restoreRailPreferences(
       preferences,
       result.data.actor.subject,
@@ -1010,7 +1025,7 @@ export function createWorkspaceProjection({
     const activeScopeChanged =
       nextScope.practiceID !== state.scope.practiceID ||
       nextScope.locationID !== state.scope.locationID
-    scopeGeneration += 1
+    obsoleteScope()
     obsoleteAllQueries()
     preferences.write(practiceStorageKey, nextScope.practiceID)
     preferences.write(locationStorageKey, nextScope.locationID)
@@ -1060,6 +1075,8 @@ export function createWorkspaceProjection({
     const currentWindow = state[window]
     if (currentWindow.loading || !currentWindow.nextCursor) return
     const queryGeneration = ++queryGenerations[window]
+    loadingQueries[window] = queryGeneration
+    pendingLoads[window] = { query: queryGeneration, depth: currentWindow.items.length + 1 }
     patch((current) => ({
       ...current,
       [window]: { ...current[window], loading: true, error: "" },
@@ -1077,11 +1094,12 @@ export function createWorkspaceProjection({
         signal,
       ),
     )
-    if (
-      generation !== scopeGeneration ||
-      queryGeneration !== queryGenerations[window] ||
-      stopped
-    ) return
+    if (generation !== scopeGeneration || stopped) return
+    if (pendingLoads[window]?.query === queryGeneration) pendingLoads[window] = undefined
+    if (queryGeneration !== queryGenerations[window]) {
+      releaseSupersededLoading(window, queryGeneration)
+      return
+    }
     if (failIfAccessLost(result)) return
     if (result.kind !== "success") {
       setWindowFailure(window)
@@ -1396,8 +1414,10 @@ export function createWorkspaceProjection({
     const completedGeneration = ++queryGenerations.completedTasks
     const scope = state.scope
     const rail = state.rail
-    const taskDepth = reset ? 0 : state.tasks.items.length
-    const completedDepth = reset ? 0 : state.completedTasks.items.length
+    const taskDepth = reset ? 0 : windowDepth("tasks", state.tasks.items.length)
+    const completedDepth = reset ? 0 : windowDepth("completedTasks", state.completedTasks.items.length)
+    loadingQueries.tasks = taskGeneration
+    loadingQueries.completedTasks = completedGeneration
     patch((current) => ({
       ...current,
       tasks: {
@@ -1431,6 +1451,8 @@ export function createWorkspaceProjection({
       }
     })
     if (generation !== scopeGeneration || stopped) return
+    releaseSupersededLoading("tasks", taskGeneration)
+    releaseSupersededLoading("completedTasks", completedGeneration)
     if (failIfAccessLost(result)) return
     const tasks = requireTaskCounts(result.kind === "success"
       ? result.data.tasks
@@ -1469,6 +1491,25 @@ export function createWorkspaceProjection({
                 loading: false,
                 error: completedWindowError,
               },
+    }))
+  }
+
+  function windowDepth(window: "tasks" | "completedTasks", loadedCount: number) {
+    return Math.max(loadedCount, pendingLoads[window]?.depth ?? 0)
+  }
+
+  function releaseSupersededLoading(
+    window: "tasks" | "completedTasks",
+    queryGeneration: number,
+  ) {
+    if (
+      queryGeneration === queryGenerations[window] ||
+      loadingQueries[window] !== queryGeneration ||
+      !state[window].loading
+    ) return
+    patch((current) => ({
+      ...current,
+      [window]: { ...current[window], loading: false },
     }))
   }
 
@@ -1514,6 +1555,7 @@ export function createWorkspaceProjection({
 
   function stop() {
     stopped = true
+    scopeRequests.abort()
     accessController?.abort()
     accessController = undefined
     realtimeController.stop()

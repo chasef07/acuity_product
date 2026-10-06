@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useContext,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   useSyncExternalStore,
@@ -190,6 +191,16 @@ export function CallingDock({
     snapshot.offers[0]
   const scopedPracticeID = scopedCall?.practiceId
   const scopedLocationID = scopedCall?.locationId
+  const connectedCallID =
+    snapshot.activeCall?.state === "CONNECTED" ? snapshot.activeCall.id : ""
+  const reportCallScope = useEffectEvent(
+    (call: Pick<CallingCall, "practiceId" | "locationId">) => onCallScope(call),
+  )
+  const reportCallConnected = useEffectEvent(() => {
+    if (snapshot.activeCall?.state === "CONNECTED") {
+      onCallConnected(snapshot.activeCall)
+    }
+  })
 
   useEffect(() => {
     if (!keepRuntimeRunning) {
@@ -204,18 +215,16 @@ export function CallingDock({
 
   useEffect(() => {
     if (scopedPracticeID && scopedLocationID) {
-      onCallScope({
+      reportCallScope({
         practiceId: scopedPracticeID,
         locationId: scopedLocationID,
       })
     }
-  }, [onCallScope, scopedLocationID, scopedPracticeID])
+  }, [scopedLocationID, scopedPracticeID])
 
   useEffect(() => {
-    if (snapshot.activeCall?.state === "CONNECTED") {
-      onCallConnected(snapshot.activeCall)
-    }
-  }, [onCallConnected, snapshot.activeCall])
+    if (connectedCallID) reportCallConnected()
+  }, [connectedCallID])
 
   useEffect(() => {
     if (

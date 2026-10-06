@@ -72,10 +72,19 @@ export function CallingCard({
   const [keypadCallID, setKeypadCallID] = useState("")
   const [transferCallID, setTransferCallID] = useState("")
   const [now, setNow] = useState(() => Date.now())
+  const card =
+    snapshot.activeCall ?? snapshot.pendingCall ?? snapshot.pendingDisposition
+  const ticking = card ? card.state === "CONNECTED" : snapshot.offers.length > 0
   useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 250)
-    return () => window.clearInterval(interval)
-  }, [])
+    if (!ticking) return
+    const tick = () => setNow(Date.now())
+    const timeout = window.setTimeout(tick, 0)
+    const interval = window.setInterval(tick, 250)
+    return () => {
+      window.clearTimeout(timeout)
+      window.clearInterval(interval)
+    }
+  }, [ticking])
   const view = projectCallingCard(snapshot, now)
   if (!view) return null
   const keypadOpen = view.kind === "call" && keypadCallID === view.callId
@@ -273,8 +282,11 @@ function TransferPanel({
 }) {
   const [recipient, setRecipient] = useState("")
   const [note, setNote] = useState("")
-  const selectedRecipient =
-    recipient || transfer.candidates[0]?.subject || ""
+  const selectedRecipient = transfer.candidates.some(
+    (candidate) => candidate.subject === recipient,
+  )
+    ? recipient
+    : (transfer.candidates[0]?.subject ?? "")
 
   if (transfer.active) {
     return (
@@ -621,7 +633,7 @@ function ControlSlot({
 function Keypad({ disabled, onDTMF }: { disabled: boolean; onDTMF: (digit: string) => void }) {
   return (
     <CardContent>
-      <div aria-label="Keypad" className="grid grid-cols-3 gap-1 border-t pt-3">
+      <div role="group" aria-label="Keypad" className="grid grid-cols-3 gap-1 border-t pt-3">
         {["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"].map(
           (digit) => (
             <Button
