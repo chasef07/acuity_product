@@ -55,6 +55,7 @@ import {
   parseWorkspaceLocation,
   workspaceLocationSearch,
 } from "@/lib/workspace-location"
+import type { NumberHistory } from "@/lib/workspace-history"
 import {
   createWorkspaceProjection,
   type WorkspaceProjectionIntent,
@@ -140,6 +141,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
     taskID: string
   }>()
   const [taskCallError, setTaskCallError] = useState("")
+  const [numberHistory, setNumberHistory] = useState<NumberHistory>()
 
   useEffect(() => {
     if (session.isPending) return
@@ -435,6 +437,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         interactionID,
                       })
                     }
+                    onHistoryChange={setNumberHistory}
                   />
                 </div>
                 <aside
@@ -492,6 +495,11 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         view={contextView}
                         canMutate
                         historyHint={state.detailRevision}
+                        numberHistory={
+                          numberHistory && numberHistory.phone === selectedTask?.phone
+                            ? numberHistory.items
+                            : undefined
+                        }
                         taskCallError={taskCallError}
                         onTaskUpdated={(task, advance) =>
                           void projection.dispatch({ type: "task-committed", task, advance: advance && !activeCall })

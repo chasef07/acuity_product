@@ -175,6 +175,11 @@ func TestCompletedCallbackAttemptClosesOnlyOlderRecovery(t *testing.T) {
 					if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM work_task_activities WHERE task_id=$1 AND kind='TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'`, task.ID).Scan(&activities); err != nil || activities != 1 {
 						t.Fatalf("callback attempt activity=%d err=%v", activities, err)
 					}
+					var callerSubject, callbackCallID, actorKind string
+					if err := fixture.pool.QueryRow(ctx, `SELECT details->>'callerSubject', details->>'callId', actor_kind FROM work_task_activities WHERE task_id=$1 AND kind='TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'`, task.ID).Scan(&callerSubject, &callbackCallID, &actorKind); err != nil ||
+						callerSubject != fixture.identity.Subject || callbackCallID != call.ID || actorKind != "SERVICE" {
+						t.Fatalf("callback attempt must credit its caller without hiding automation: caller=%q call=%q actor=%q err=%v", callerSubject, callbackCallID, actorKind, err)
+					}
 				}
 
 			})

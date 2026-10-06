@@ -17,8 +17,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
+import { useSettledState } from "@/hooks/use-settled-state"
 import type {
   CallingCall,
+  ConversationTimelineItem,
   Task,
 } from "@/lib/api/generated/types.gen"
 import {
@@ -31,7 +33,12 @@ import {
 import { completeTask, readTask, renameTask, reopenTask } from "@/lib/clients/tasks"
 import { formatShortDateTime } from "@/lib/format"
 import { formatUSPhone } from "@/lib/phone"
+import { cn } from "@/lib/utils"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
+import {
+  callbackCompletionLabel,
+  openTaskCallbackNotice,
+} from "@/lib/workspace-history"
 
 import { TaskGroupContext } from "./task-group-context"
 import { TaskMetadata } from "./task-metadata"
@@ -45,6 +52,7 @@ type TaskCallContextProps = {
   view: "none" | "task" | "call"
   canMutate: boolean
   historyHint: number
+  numberHistory?: ConversationTimelineItem[]
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
   onReturnToCall: () => void
@@ -59,6 +67,7 @@ export function TaskCallContext({
   view,
   canMutate,
   historyHint,
+  numberHistory,
   taskCallError,
   onTaskUpdated,
   onReturnToCall,
@@ -94,6 +103,7 @@ export function TaskCallContext({
         activeCall={activeCall}
         canMutate={canMutate}
         historyHint={historyHint}
+        numberHistory={numberHistory}
         taskCallError={taskCallError}
         onTaskUpdated={onTaskUpdated}
         onReturnToCall={onReturnToCall}
@@ -109,6 +119,7 @@ function TaskWorkspace({
   activeCall,
   canMutate,
   historyHint,
+  numberHistory = [],
   taskCallError,
   onTaskUpdated,
   onReturnToCall,
@@ -118,6 +129,7 @@ function TaskWorkspace({
   activeCall: CallingCall | undefined
   canMutate: boolean
   historyHint: number
+  numberHistory?: ConversationTimelineItem[]
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
   onReturnToCall: () => void
@@ -148,6 +160,7 @@ function TaskWorkspace({
   }
 
   const [reviewedVersion, setReviewedVersion] = useState(task.version)
+  const stateSettled = useSettledState(task.state)
   const reviewRequired = task.origin === "APPOINTMENT_REVIEW" || task.origin === "INBOUND_MESSAGE_REVIEW"
   const needsReview = reviewRequired && task.state === "OPEN" && reviewedVersion !== task.version
   function acceptUpdate(updated: Task, advance = false) {
@@ -190,6 +203,7 @@ function TaskWorkspace({
 
   async function transition(action: "complete" | "reopen") {
     if (pending || (action === "complete" && needsReview)) return
+    if (action === "reopen" && !stateSettled) return
     setPending(true)
     setError("")
     const outcome = await (action === "complete" ? completeTask : reopenTask)(task)
@@ -209,6 +223,9 @@ function TaskWorkspace({
   const recovery =
     task.origin === "VOICEMAIL_RECOVERY" ||
     task.origin === "MISSED_CALL_RECOVERY"
+  const completion = callbackCompletionLabel(numberHistory, task) ??
+    `Completed by ${task.completedBy?.email ?? "the team"}`
+  const callbackNotice = openTaskCallbackNotice(numberHistory, task, formatShortDateTime)
 
   return (
     <section
@@ -277,7 +294,7 @@ function TaskWorkspace({
           {task.sourceMessage}
         </p>
       )}
-      {task.state === "COMPLETED" && <p role="status" className="mt-3 text-sm text-muted-foreground">Completed by {task.completedBy?.email ?? "the team"}{task.completedAt ? ` · ${formatShortDateTime(task.completedAt)}` : ""}. <span className="block mt-1 text-xs">Completed for everyone with access.</span></p>}
+      {task.state === "COMPLETED" && <p role="status" className="mt-3 text-sm text-muted-foreground">{completion}{task.completedAt ? ` · ${formatShortDateTime(task.completedAt)}` : ""}. <span className="block mt-1 text-xs">Completed for everyone with access.</span></p>}
       {needsReview && <div role="status" className="mt-3 rounded-md border p-3 text-sm">
         This Task changed. Review the latest activity before completing it.
         <Button size="sm" variant="outline" className="mt-2" onClick={() => setReviewedVersion(task.version)}>Review latest</Button>
@@ -286,6 +303,11 @@ function TaskWorkspace({
         <div className="mt-4 flex flex-col gap-2">
           {task.state === "OPEN" ? (
             <>
+              {callbackNotice && (
+                <p role="status" className={cn("text-xs leading-5 text-muted-foreground", recovery && "order-2")}>
+                  {callbackNotice}
+                </p>
+              )}
               <Button
                 variant={recovery ? "ghost" : "default"}
                 className={recovery ? "order-2" : undefined}
@@ -304,9 +326,11 @@ function TaskWorkspace({
             <>
             {onNextTask && <Button onClick={onNextTask}>Next task</Button>}
             <Button
-              variant="outline"
+              variant="ghost"
+              size="sm"
+              className="mt-2 self-start text-muted-foreground"
               onClick={() => void transition("reopen")}
-              disabled={pending}
+              disabled={pending || !stateSettled}
             >
               {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
             </Button>

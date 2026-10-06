@@ -193,7 +193,7 @@ test("an AI call without appointment actions stays call-first", async ({
   const taskContext = page.getByRole("complementary", { name: "Task context" })
   await taskContext.getByRole("button", { name: "Complete & next", exact: true }).click()
   await expect(callRow).toContainText("Confirm office paperwork — Completed")
-  await expect(page.getByText(/Task completed ·/)).toBeVisible()
+  await expect(page.getByText(/Task completed by \S+@\S+ ·/)).toBeVisible()
 })
 
 test("rail hover details and the message composer preserve compact context", async ({

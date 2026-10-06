@@ -14,6 +14,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -261,6 +262,20 @@ const callProjectionSQL = `
 		call.location_id::text,
 		location.name,
 		COALESCE(membership.email, platform_operator.email, ''),
+		CASE WHEN call.direction = 'OUTBOUND' THEN COALESCE(
+			(
+				SELECT placed_membership.email
+				FROM access_memberships placed_membership
+				WHERE placed_membership.practice_id = call.practice_id
+					AND placed_membership.user_subject = call.initiating_subject
+			),
+			(
+				SELECT placed_operator.email
+				FROM access_platform_operators placed_operator
+				WHERE placed_operator.user_subject = call.initiating_subject
+			),
+			''
+		) ELSE '' END,
 		COALESCE(handoff.transfer_reason, ''),
 		COALESCE(handoff.source_call_id, ''),
 		CASE
@@ -339,6 +354,7 @@ func queryTimelineCalls(
 			&call.LocationID,
 			&call.LocationName,
 			&call.AnsweredByEmail,
+			&call.PlacedByEmail,
 			&call.TransferReason,
 			&call.SourceCallID,
 			&call.Outcome,
@@ -461,8 +477,10 @@ func queryPhoneTaskActivities(
 		var activityID, kind string
 		var details map[string]any
 		var occurredAt time.Time
+		var actor work.ActorSnapshot
 		task, err := scanTaskProjection(
 			rows, &activityID, &kind, &occurredAt, &details,
+			&actor.Kind, &actor.Subject, &actor.Email,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan phone Task Activity: %w", err)
@@ -470,6 +488,7 @@ func queryPhoneTaskActivities(
 		items = append(items, TimelineItem{
 			Type: "TASK", ID: activityID, OccurredAt: occurredAt,
 			TaskActivity: kind, Task: task, TaskActivityDetails: details,
+			TaskActivityActor: &actor,
 		})
 	}
 	if err := rows.Err(); err != nil {

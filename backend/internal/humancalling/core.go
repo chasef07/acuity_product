@@ -342,6 +342,7 @@ type CallHistoryItem struct {
 	LocationID      string
 	LocationName    string
 	AnsweredByEmail string
+	PlacedByEmail   string
 	TransferReason  string
 	SourceCallID    string
 	Outcome         CallState

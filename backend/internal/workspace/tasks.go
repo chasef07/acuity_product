@@ -339,7 +339,28 @@ const phoneTaskActivityQuery = `
 	SELECT
 		activity.id::text,
 		activity.kind,
-		activity.occurred_at, activity.details,` + taskColumns + `,
+		activity.occurred_at,
+		CASE WHEN activity.kind = 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'
+			THEN activity.details || jsonb_strip_nulls(jsonb_build_object(
+				'callerEmail', COALESCE(
+					(
+						SELECT caller_membership.email
+						FROM access_memberships caller_membership
+						WHERE caller_membership.practice_id = task.practice_id
+							AND caller_membership.user_subject = activity.details ->> 'callerSubject'
+					),
+					(
+						SELECT caller_operator.email
+						FROM access_platform_operators caller_operator
+						WHERE caller_operator.user_subject = activity.details ->> 'callerSubject'
+					)
+				)
+			))
+			ELSE activity.details
+		END,
+		activity.actor_kind,
+		activity.actor_subject,
+		COALESCE(activity.actor_email, ''),` + taskColumns + `,
 		COALESCE(task.message_thread_id::text, ''),
 		0
 	FROM work_tasks task

@@ -1471,9 +1471,13 @@ export type ConversationTimelineItem = {
     type: 'MESSAGE' | 'CALL' | 'AI_INTERACTION' | 'TASK' | 'CALL_HISTORY';
     id: string;
     occurredAt: string;
+    /**
+     * Activity-specific evidence. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
+     */
     taskActivityDetails?: {
         [key: string]: unknown;
     };
+    taskActivityActor?: TaskActor;
     taskActivity?: 'TASK_CREATED' | 'SOURCE_UPDATED' | 'TITLE_CHANGED' | 'CATEGORY_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
     message?: Message;
     task?: Task;
@@ -1499,7 +1503,14 @@ export type CallHistoryItem = {
     durationSeconds: number;
     locationId: string;
     locationName: string;
+    /**
+     * Staff member whose CallLeg was bridged to this call; empty when no staff member connected.
+     */
     answeredByEmail: string;
+    /**
+     * Staff member who placed this outbound call, whether or not it was answered. Absent for inbound calls and when the User cannot be resolved.
+     */
+    placedByEmail?: string;
     transferReason: string;
     sourceCallId?: string;
     outcome: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';

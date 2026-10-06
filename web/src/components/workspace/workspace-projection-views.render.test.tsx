@@ -8,6 +8,7 @@ import { JSDOM } from "jsdom"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
+import { TaskCallContext } from "./task-call-context.tsx"
 import { WorkspaceRail } from "./workspace-rail.tsx"
 import { clearAccessToken } from "../../lib/auth-client.ts"
 import type {
@@ -16,6 +17,7 @@ import type {
   Message,
   Task,
 } from "../../lib/api/generated/types.gen.ts"
+import type { NumberHistory } from "../../lib/workspace-history.ts"
 import type {
   WorkspaceProjectionIntent,
   WorkspaceProjectionState,
@@ -299,6 +301,133 @@ test("linked call history stays brief and opens its existing detail panels", asy
   assert.deepEqual(conversation.opened, ["ai:ai", "call:call", `task:${task.id}`])
 
 })
+
+test("the thread names the callback caller and marks which Task each entry describes", async (t) => {
+  const conversation = conversationHarness(t)
+  const { selected, review, history } = callbackFixture()
+  conversation.items = history
+  const histories: NumberHistory[] = []
+  await conversation.render(0, { selectedTaskID: selected.id, onHistoryChange: (value) => histories.push(value) })
+  const timeline = conversation.host.querySelector('[aria-label="Conversation activity"]')!
+  const text = timeline.textContent ?? ""
+  assert.match(text, /Outbound call by caller@example\.test/)
+  assert.match(text, /No answer/)
+  assert.match(text, /Missed call review completed after caller@example\.test's callback attempt/)
+  assert.match(text, /This Task created by AI/)
+  assert.doesNotMatch(text, /Task completed after callback attempt/)
+  assert.ok(timeline.querySelector(`button[aria-label="View task: ${selected.title}"]`))
+  assert.ok(timeline.querySelector(`button[aria-label="View task: ${review.title}"]`))
+  assert.equal(histories.at(-1)?.phone, selected.phone)
+  assert.equal(histories.at(-1)?.items.length, history.length)
+})
+
+test("the Task panel credits the callback caller and flags an open Task only with loaded evidence", () => {
+  const { selected, review, history } = callbackFixture()
+  const panel = (task: Task, numberHistory?: ConversationTimelineItem[]) => renderToStaticMarkup(
+    <TaskCallContext
+      task={task}
+      activeCall={undefined}
+      view="task"
+      canMutate
+      historyHint={0}
+      numberHistory={numberHistory}
+      taskCallError=""
+      onTaskUpdated={() => {}}
+      onReturnToCall={() => {}}
+    />,
+  )
+  const open = panel(selected, history)
+  assert.match(open, /caller@example\.test called this number at .+ \(no answer\)\. This Task is still open\./)
+  assert.ok(open.indexOf("This Task is still open.") < open.indexOf("Complete &amp; next"))
+  assert.doesNotMatch(panel(selected), /still open/)
+  assert.doesNotMatch(panel(selected, history.filter((item) => item.type !== "CALL_HISTORY")), /still open/)
+  assert.match(panel(review, history), /Missed call review completed after caller@example\.test&#x27;s callback attempt/)
+  assert.doesNotMatch(panel(review, history), /Completed by the team/)
+  assert.match(panel(review), /Completed by the team/)
+})
+
+test("completing a Task keeps Next task in place and holds Reopen until the change settles", async () => {
+  const dom = installDOM()
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  const open: Task = { ...projectedTask(), origin: "ABITA_AI" }
+  const next: Task = { ...projectedTask(), id: "task-next", title: "Synthetic next Task" }
+  const selected: string[] = []
+  const render = (task: Task) => act(async () => root.render(
+    <TaskCallContext
+      task={task}
+      taskRows={[task, next]}
+      onSelectTask={(row) => selected.push(row.id)}
+      activeCall={undefined}
+      view="task"
+      canMutate
+      historyHint={0}
+      taskCallError=""
+      onTaskUpdated={() => {}}
+      onReturnToCall={() => {}}
+    />,
+  ))
+  const actions = () => [...host.querySelectorAll<HTMLButtonElement>("section[aria-label='Focused Task'] div.flex-col > button")]
+  const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === name)
+  try {
+    await render(open)
+    assert.equal(actions()[0]?.textContent?.trim(), "Complete & next")
+    await render({ ...open, state: "COMPLETED", version: 2, completedAt: "2026-08-30T12:05:00Z", completedBy: { kind: "HUMAN", subject: "user-1", email: "staff@example.test" } })
+    assert.equal(actions()[0]?.textContent?.trim(), "Next task", "the primary position keeps a forward action")
+    assert.equal(button("Reopen")?.disabled, true, "a Reopen click landing during the flip is ignored")
+    await act(async () => button("Reopen")!.click())
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_100)) })
+    assert.equal(button("Reopen")?.disabled, false)
+    await act(async () => button("Next task")!.click())
+    assert.deepEqual(selected, [next.id])
+  } finally {
+    await act(async () => root.unmount())
+    dom.window.close()
+  }
+})
+
+test("a text conversation keeps Reopen away from Mark done and holds it until the change settles", async (t) => {
+  const conversation = conversationHarness(t)
+  const task = { ...projectedTask(), origin: "INBOUND_MESSAGE_REVIEW" as const }
+  conversation.textTask = task
+  await conversation.render(0, { onNextTask: () => {} })
+  const header = () => [...conversation.host.querySelectorAll<HTMLButtonElement>("header button")].map((button) => button.textContent?.trim())
+  assert.equal(header().at(-1), "Mark done")
+  conversation.textTask = { ...task, state: "COMPLETED", version: 2 }
+  await conversation.render(1, { onNextTask: () => {} })
+  assert.equal(header().at(-1), "Next task", "Mark done's position becomes a forward action")
+  const reopen = () => [...conversation.host.querySelectorAll<HTMLButtonElement>("header button")].find((button) => button.textContent?.trim() === "Reopen")!
+  assert.equal(reopen().disabled, true)
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_100)) })
+  assert.equal(reopen().disabled, false)
+})
+
+function callbackFixture() {
+  const selected: Task = {
+    ...projectedTask(), id: "task-ai", origin: "ABITA_AI", title: "Synthetic refill question",
+    createdBy: { kind: "SERVICE", subject: "abita-ai" }, createdAt: "2026-09-08T13:00:00Z",
+  }
+  const review: Task = {
+    ...projectedTask(), id: "task-review", origin: "MISSED_CALL_RECOVERY", recoveryOutcome: "MISSED_CALL",
+    title: "Return missed call", state: "COMPLETED", createdAt: "2026-09-08T12:50:00Z",
+    completedAt: "2026-09-08T13:56:00Z", completedBy: { kind: "SERVICE", subject: "work-recovery-resolution" },
+  }
+  const history: ConversationTimelineItem[] = [
+    { id: "created", type: "TASK", occurredAt: selected.createdAt, taskActivity: "TASK_CREATED", task: selected },
+    { id: "callback-history", type: "CALL_HISTORY", occurredAt: "2026-09-08T13:55:00Z", entries: [
+      { id: "callback", type: "CALL", occurredAt: "2026-09-08T13:55:00Z", call: {
+        id: "callback", type: "CALL", direction: "OUTBOUND", startedAt: "2026-09-08T13:55:00Z",
+        durationSeconds: 0, locationId: review.locationId, locationName: review.locationName,
+        answeredByEmail: "", placedByEmail: "caller@example.test", transferReason: "", outcome: "UNANSWERED",
+      } },
+    ] },
+    { id: "completion", type: "TASK", occurredAt: "2026-09-08T13:56:00Z", task: review,
+      taskActivity: "TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT",
+      taskActivityDetails: { callId: "callback", callerSubject: "caller", callerEmail: "caller@example.test" } },
+  ]
+  return { selected, review, history }
+}
 
 test("image download finishing after navigation does not allocate an object URL", async (t) => {
   const view = attachmentHarness(t)

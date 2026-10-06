@@ -234,11 +234,12 @@ type EnsureRecoveryTaskCommand struct {
 }
 
 type ResolveRecoveryTasksCommand struct {
-	PracticeID string
-	Phone      string
-	OccurredAt time.Time
-	Kind       RecoveryResolutionKind
-	SourceID   string
+	PracticeID   string
+	Phone        string
+	OccurredAt   time.Time
+	Kind         RecoveryResolutionKind
+	SourceID     string
+	ActorSubject string
 }
 
 type RenameTaskCommand struct {
@@ -702,15 +703,19 @@ func (m *Module) ResolveRecoveryTasks(
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.Phone = strings.TrimSpace(command.Phone)
 	command.SourceID = strings.TrimSpace(command.SourceID)
+	command.ActorSubject = strings.TrimSpace(command.ActorSubject)
+	callbackAttempt := command.Kind == RecoveryResolutionCallbackAttempt
 	if tx == nil ||
 		m.access == nil ||
 		command.PracticeID == "" ||
 		!canonicalPhone.MatchString(command.Phone) ||
 		command.OccurredAt.IsZero() ||
 		(command.Kind != RecoveryResolutionInboundCall &&
-			command.Kind != RecoveryResolutionCallbackAttempt &&
+			!callbackAttempt &&
 			command.Kind != RecoveryResolutionBooking) ||
-		!textLengthBetween(command.SourceID, 1, 255) {
+		!textLengthBetween(command.SourceID, 1, 255) ||
+		callbackAttempt != (command.ActorSubject != "") ||
+		!textLengthBetween(command.ActorSubject, 0, 255) {
 		return 0, ErrInvalidInput
 	}
 	if err := lockRecoveryPhone(
@@ -728,19 +733,21 @@ func (m *Module) ResolveRecoveryTasks(
 			resolved_at,
 			kind,
 			source_id,
+			actor_subject,
 			updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7)
 		ON CONFLICT (practice_id, phone) DO UPDATE
 		SET
 			resolved_at = EXCLUDED.resolved_at,
 			kind = EXCLUDED.kind,
 			source_id = EXCLUDED.source_id,
+			actor_subject = EXCLUDED.actor_subject,
 			updated_at = EXCLUDED.updated_at
 		WHERE EXCLUDED.resolved_at >
 			work_recovery_resolution_checkpoints.resolved_at
 	`, command.PracticeID, command.Phone, command.OccurredAt, command.Kind,
-		command.SourceID, m.now()); err != nil {
+		command.SourceID, command.ActorSubject, m.now()); err != nil {
 		return 0, fmt.Errorf("record recovery resolution: %w", err)
 	}
 	completed, err := m.completeRecoveryTasksFromCheckpoint(
@@ -779,11 +786,15 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 	if err := tx.QueryRow(ctx, `
 		WITH checkpoint AS (
 			SELECT resolved_at, kind,
-				CASE WHEN kind = 'CALLBACK_ATTEMPT' THEN updated_at ELSE resolved_at END AS completed_at
+				CASE WHEN kind = 'CALLBACK_ATTEMPT' THEN updated_at ELSE resolved_at END AS completed_at,
+				CASE WHEN kind = 'CALLBACK_ATTEMPT' THEN jsonb_strip_nulls(jsonb_build_object(
+					'callId', source_id,
+					'callerSubject', actor_subject
+				)) ELSE '{}'::jsonb END AS details
 			FROM work_recovery_resolution_checkpoints
 			WHERE practice_id = $1 AND phone = $2
 		), eligible AS (
-			SELECT task.id, checkpoint.completed_at, checkpoint.kind
+			SELECT task.id, checkpoint.completed_at, checkpoint.kind, checkpoint.details
 			FROM work_tasks task
 			CROSS JOIN checkpoint
 			WHERE task.practice_id = $1
@@ -817,7 +828,8 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 				updated_at = GREATEST(task.updated_at, eligible.completed_at)
 			FROM eligible
 			WHERE task.id = eligible.id
-			RETURNING task.id, task.version, task.completed_at, eligible.kind
+			RETURNING task.id, task.version, task.completed_at, eligible.kind,
+				eligible.details
 		), activities AS (
 			INSERT INTO work_task_activities (
 				task_id,
@@ -826,7 +838,8 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 				actor_kind,
 				actor_subject,
 				actor_email,
-				occurred_at
+				occurred_at,
+				details
 			)
 			SELECT
 				updated.id,
@@ -839,7 +852,8 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 				'SERVICE',
 				'work-recovery-resolution',
 				NULL,
-				updated.completed_at
+				updated.completed_at,
+				updated.details
 			FROM updated
 			RETURNING task_id
 		)
