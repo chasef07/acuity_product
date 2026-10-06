@@ -139,7 +139,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 	}
 	for _, responsibility := range []string{"all", "mine"} {
 		t.Run(responsibility+" category menu counts", func(t *testing.T) {
-			command := workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, Responsibility: responsibility, Folder: work.TaskFolderWork, Grouped: true}
+			command := workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, Responsibility: responsibility, Kind: "follow_up", Grouped: true}
 			baseline, err := reads.QueryTasks(ctx, command)
 			if err != nil {
 				t.Fatal(err)

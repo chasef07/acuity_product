@@ -1411,10 +1411,6 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	if body.State != nil {
 		state = work.TaskState(*body.State)
 	}
-	folder := work.TaskFolder("")
-	if body.Folder != nil {
-		folder = work.TaskFolder(*body.Folder)
-	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	page, err := server.workspace.QueryTasks(ctx, workspace.QueryTasksCommand{
@@ -1429,7 +1425,6 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 		Search:         stringValue(body.Search),
 		State:          state,
 		Ordering:       ordering,
-		Folder:         folder,
 		Cursor:         stringValue(body.Cursor),
 		Limit:          intValue(body.Limit),
 	})
