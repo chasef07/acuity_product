@@ -470,7 +470,8 @@ func (m *Module) failRoutingCall(
 func (m *Module) completeCallbackAttempt(ctx context.Context, tx pgx.Tx, callID, destinationLegID string) error {
 	var command work.ResolveRecoveryTasksCommand
 	err := tx.QueryRow(ctx, `
-        SELECT call.practice_id::text, call.destination_phone, destination.created_at
+        SELECT call.practice_id::text, call.destination_phone, destination.created_at,
+          call.initiating_subject
         FROM human_calling_calls call
         JOIN human_calling_call_legs destination ON destination.call_id=call.id
         WHERE call.id=$1 AND destination.id=$2 AND call.direction='OUTBOUND'
@@ -478,7 +479,9 @@ func (m *Module) completeCallbackAttempt(ctx context.Context, tx pgx.Tx, callID,
           AND destination.role='DESTINATION' AND destination.state='ENDED'
           AND destination.provider_call_control_id IS NOT NULL
           AND destination.provider_call_leg_id IS NOT NULL
-    `, callID, destinationLegID).Scan(&command.PracticeID, &command.Phone, &command.OccurredAt)
+    `, callID, destinationLegID).Scan(
+		&command.PracticeID, &command.Phone, &command.OccurredAt, &command.ActorSubject,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

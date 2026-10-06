@@ -82,6 +82,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useCallingNavigation } from "@/components/workspace/calling-dock"
+import { useSettledState } from "@/hooks/use-settled-state"
 import type {
   ConversationTimelineItem,
   Message,
@@ -106,8 +107,11 @@ import type { EngagementSummary } from "@/lib/workspace-projection"
 import {
   callHistoryPresentation,
   conversationDateLabel,
+  linkedTaskLabel,
+  type NumberHistory,
   presentTimeline,
   sameConversationDate,
+  taskActivityDetail,
 } from "@/lib/workspace-history"
 
 const maximumMessageLength = 1_600
@@ -143,6 +147,7 @@ type EngagementWorkspaceProps = {
   onTaskOpen: (task: Task) => void
   onCallOpen: (callID: string) => void
   onAIInteractionOpen: (interactionID: string) => void
+  onHistoryChange?: (history: NumberHistory) => void
 }
 
 type EngagementWorkspaceCalling = Pick<
@@ -176,6 +181,7 @@ export function EngagementWorkspaceView({
   onTaskOpen,
   onCallOpen,
   onAIInteractionOpen,
+  onHistoryChange,
   calling,
 }: EngagementWorkspaceProps & { calling: EngagementWorkspaceCalling }) {
   const [reviewedTextTask, setReviewedTextTask] = useState<Task>()
@@ -326,6 +332,7 @@ export function EngagementWorkspaceView({
         onTaskOpen={onTaskOpen}
         onCallOpen={onCallOpen}
         onAIInteractionOpen={onAIInteractionOpen}
+        onHistoryChange={onHistoryChange}
       />
     </section>
   )
@@ -347,6 +354,7 @@ function MessageConversation({
   onTaskOpen,
   onCallOpen,
   onAIInteractionOpen,
+  onHistoryChange,
 }: {
   reviewTask?: Task
   onTaskReviewed: (task: Task | undefined) => void
@@ -363,6 +371,7 @@ function MessageConversation({
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
   onAIInteractionOpen?: (interactionID: string) => void
+  onHistoryChange?: (history: NumberHistory) => void
 }) {
   const {
     items,
@@ -382,6 +391,10 @@ function MessageConversation({
   const atLatest = useRef(true)
   const currentReviewTask = useRef(reviewTask)
   useEffect(() => { currentReviewTask.current = reviewTask }, [reviewTask])
+  const historyPhone = timelineSource.phone
+  useEffect(() => {
+    onHistoryChange?.({ phone: historyPhone, items })
+  }, [historyPhone, items, onHistoryChange])
 
   const loadLatest = useCallback(
     async (scroll = false) => {
@@ -643,9 +656,7 @@ function TimelineEntry({
           ...presentation.details.filter((detail) =>
             detail !== title && detail !== "No appointment action recorded",
           ),
-          ...presentation.tasks.map((task) =>
-            `${task.title} — ${task.state === "OPEN" ? "Open" : "Completed"}`,
-          ),
+          ...presentation.tasks.map((task) => linkedTaskLabel(task, selectedTaskID)),
           formatTime(item.occurredAt),
         ]}
         actionLabel={primary?.aiInteraction ? "View AI call" : primary?.call?.outcome === "VOICEMAIL" ? "View voicemail" : "View call"}
@@ -740,7 +751,7 @@ function TimelineEntry({
         selected={task.id === selectedTaskID}
         title={task.title}
         metadata={[
-          taskActivityDetail(item.taskActivity, task),
+          taskActivityDetail(item, selectedTaskID),
           item.taskActivity === "CATEGORY_CHANGED" ? `${String(item.taskActivityDetails?.oldCategory ?? "Uncategorized")} → ${String(item.taskActivityDetails?.newCategory ?? "Uncategorized")}` : "",
           task.locationId !== contextLocationID ? task.locationName : "",
           formatTime(item.occurredAt),
@@ -1504,40 +1515,15 @@ function MessageComposer({
   )
 }
 
-function taskActivityDetail(
-  activity: ConversationTimelineItem["taskActivity"],
-  task: Task,
-) {
-  switch (activity) {
-    case "TASK_CREATED":
-      return task.origin === "ABITA_AI" ? "Task created by AI" : "Task created"
-    case "SOURCE_UPDATED":
-      return "New message needs review"
-    case "CATEGORY_CHANGED":
-      return "Task group changed"
-    case "TITLE_CHANGED":
-      return "Task title changed"
-    case "TASK_COMPLETED":
-      return "Task completed"
-    case "TASK_REOPENED":
-      return "Task reopened"
-    case "INTERACTION_ATTACHED":
-      return "New activity added"
-    case "TASK_AUTO_COMPLETED_INBOUND_CALL":
-      return "Task completed after connected call"
-    case "TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT":
-      return "Task completed after callback attempt"
-    case "TASK_AUTO_COMPLETED_BOOKING":
-      return "Task completed after booking"
-    case "TASK_AUTO_COMPLETED_DUPLICATE":
-      return "Duplicate Task resolved"
-    default:
-      return task.state === "OPEN" ? "Task open" : "Task completed"
-  }
-}
-
 function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
   const duration = call.durationSeconds > 0 ? formatElapsedSeconds(call.durationSeconds) : ""
+  if (call.direction === "OUTBOUND") {
+    const unanswered = call.outcome === "MISSED" || call.outcome === "UNANSWERED"
+    return {
+      label: call.placedByEmail ? `Outbound call by ${call.placedByEmail}` : "Outbound call",
+      detail: [unanswered ? "No answer" : sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
+    }
+  }
   if (call.outcome === "VOICEMAIL") {
     return {
       label: "Voicemail",
@@ -1546,18 +1532,12 @@ function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
   }
   if (call.outcome === "MISSED" || call.outcome === "UNANSWERED") {
     return {
-      label: call.direction === "INBOUND" ? "Missed call" : "Unanswered call",
+      label: "Missed call",
       detail: duration,
     }
   }
-  if (call.direction === "INBOUND") {
-    return {
-      label: "Inbound call",
-      detail: [sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
-    }
-  }
   return {
-    label: "Outbound call",
+    label: "Inbound call",
     detail: [sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
   }
 }
@@ -1593,8 +1573,10 @@ function TextConversationAction({ task, reviewedTask, onUpdated, onNext }: { tas
   const needsReview = task.state === "OPEN" && (reviewedTask?.id !== task.id || reviewedTask.version !== task.version)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const stateSettled = useSettledState(task.state)
   async function transition() {
     if (pending || needsReview) return
+    if (task.state === "COMPLETED" && !stateSettled) return
     setPending(true)
     setError("")
     const outcome = await (task.state === "OPEN" ? completeTask : reopenTask)(task)
@@ -1610,8 +1592,9 @@ function TextConversationAction({ task, reviewedTask, onUpdated, onNext }: { tas
   }
   return <div className="flex items-center gap-2">
     {error && <span role="alert" className="max-w-52 text-xs text-destructive">{error}</span>}
+    {task.state === "COMPLETED" && <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" disabled={pending || !stateSettled} onClick={() => void transition()}>{pending ? "Saving…" : "Reopen"}</Button>}
     {task.state === "COMPLETED" && <span className="text-xs text-muted-foreground">Completed</span>}
     {task.state === "COMPLETED" && onNext && <Button size="sm" onClick={onNext}>Next task</Button>}
-    <Button size="sm" variant="ghost" disabled={pending || needsReview} title={needsReview ? "Load the latest messages before marking done." : undefined} onClick={() => void transition()}>{pending ? "Saving…" : task.state === "OPEN" ? "Mark done" : "Reopen"}</Button>
+    {task.state === "OPEN" && <Button size="sm" variant="ghost" disabled={pending || needsReview} title={needsReview ? "Load the latest messages before marking done." : undefined} onClick={() => void transition()}>{pending ? "Saving…" : "Mark done"}</Button>}
   </div>
 }

@@ -43,6 +43,7 @@ type TimelineItem struct {
 	ID                  string
 	OccurredAt          time.Time
 	TaskActivityDetails map[string]any
+	TaskActivityActor   *work.ActorSnapshot
 	TaskActivity        string
 	Message             messaging.Message
 	Call                humancalling.CallHistoryItem

@@ -3093,6 +3093,17 @@ func conversationTimelineResponse(
 			if item.TaskActivityDetails != nil {
 				converted.TaskActivityDetails = &item.TaskActivityDetails
 			}
+			if item.TaskActivityActor != nil {
+				actor := api.TaskActor{
+					Kind:    api.TaskActorKind(item.TaskActivityActor.Kind),
+					Subject: item.TaskActivityActor.Subject,
+				}
+				if item.TaskActivityActor.Email != "" {
+					email := openapi_types.Email(item.TaskActivityActor.Email)
+					actor.Email = &email
+				}
+				converted.TaskActivityActor = &actor
+			}
 		}
 		switch item.Type {
 		case "CALL_HISTORY":
@@ -3205,6 +3216,9 @@ func callHistoryItemResponse(
 	}
 	if item.SourceCallID != "" {
 		response.SourceCallId = &item.SourceCallID
+	}
+	if item.PlacedByEmail != "" {
+		response.PlacedByEmail = &item.PlacedByEmail
 	}
 	return response, nil
 }

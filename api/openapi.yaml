@@ -4929,8 +4929,12 @@ components:
           type: string
           format: date-time
         taskActivityDetails:
+          description: Activity-specific evidence. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
           type: object
           additionalProperties: true
+        taskActivityActor:
+          description: Who recorded this Task Activity. SERVICE actors are automation and have no email.
+          $ref: "#/components/schemas/TaskActor"
         taskActivity:
           type: string
           enum:
@@ -5009,6 +5013,10 @@ components:
         locationName:
           type: string
         answeredByEmail:
+          description: Staff member whose CallLeg was bridged to this call; empty when no staff member connected.
+          type: string
+        placedByEmail:
+          description: Staff member who placed this outbound call, whether or not it was answered. Absent for inbound calls and when the User cannot be resolved.
           type: string
         transferReason:
           type: string
