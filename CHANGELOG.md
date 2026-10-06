@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/chasef07/acuity_product/compare/v1.27.0...v1.28.0) (2026-10-06)
+
+
+### Features
+
+* **workspace:** add Knowledge base and Insurance list to Manage agent ([#408](https://github.com/chasef07/acuity_product/issues/408)) ([f042670](https://github.com/chasef07/acuity_product/commit/f042670dd182f8b64f486c9061f6de1c9359deda))
+
 ## [1.27.0](https://github.com/chasef07/acuity_product/compare/v1.26.0...v1.27.0) (2026-10-05)
 
 
