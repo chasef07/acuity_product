@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	ErrInvalidInput = errors.New("invalid insurance input")
-	ErrUnavailable  = errors.New("insurance rules are unavailable")
+	ErrInvalidInput  = errors.New("invalid insurance input")
+	ErrUnavailable   = errors.New("insurance rules are unavailable")
+	ErrUnknownOffice = errors.New("insurance rules do not know this office")
 )
 
 type Coverage string
@@ -78,7 +79,7 @@ func (m *Module) Plans(ctx context.Context, query Query) (PlansPage, error) {
 		return PlansPage{}, err
 	}
 	plans, err := m.rules.Plans(ctx, office, query.Coverage)
-	if errors.Is(err, access.ErrNoOfficeRoute) {
+	if errors.Is(err, ErrUnknownOffice) {
 		return PlansPage{}, err
 	}
 	if err != nil {

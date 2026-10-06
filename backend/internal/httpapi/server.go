@@ -260,27 +260,6 @@ func (server *Server) DiscoverAccess(w http.ResponseWriter, r *http.Request) {
 	server.writeJSON(w, http.StatusOK, response)
 }
 
-func (server *Server) InspectSignUpEligibility(w http.ResponseWriter, r *http.Request) {
-	if !server.portalOnly(w, r) {
-		return
-	}
-	var body api.SignUpEligibilityRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	eligibility, err := server.access.InspectSignUpEligibility(ctx, string(body.Email))
-	if err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, api.SignUpEligibility{
-		Kind:  api.SignUpEligibilityKind(eligibility.Kind),
-		Email: openapi_types.Email(eligibility.Email),
-	})
-}
-
 func (server *Server) GetWorkspace(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -789,7 +768,7 @@ func (server *Server) IssueCallingMediaToken(w http.ResponseWriter, r *http.Requ
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	token, err := server.calling.IssueMediaJWT(ctx, identity, body.SessionId)
 	if err != nil {
@@ -2022,7 +2001,7 @@ func (server *Server) messagingIdentity(
 	w http.ResponseWriter,
 	r *http.Request,
 ) (access.Identity, bool) {
-	if !server.portalOnly(w, r) || server.messaging == nil {
+	if !server.portalOnly(w, r) {
 		return access.Identity{}, false
 	}
 	return server.authenticate(w, r)
@@ -2036,6 +2015,10 @@ func (server *Server) authenticate(w http.ResponseWriter, r *http.Request) (acce
 	}
 	token := strings.TrimPrefix(header, "Bearer ")
 	identity, err := server.authenticator.Authenticate(r.Context(), token)
+	if errors.Is(err, authn.ErrKeysUnavailable) {
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Sign-in verification is temporarily unavailable.", true)
+		return access.Identity{}, false
+	}
 	if err != nil {
 		server.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "A valid credential is required.", false)
 		return access.Identity{}, false
@@ -2138,6 +2121,8 @@ func (server *Server) writeAccessError(w http.ResponseWriter, r *http.Request, e
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, access.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, access.ErrLocationConflict):
+		server.writeError(w, r, http.StatusConflict, "LOCATION_CONFLICT", "This Location key already belongs to a Location with a different name.", false)
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 	}

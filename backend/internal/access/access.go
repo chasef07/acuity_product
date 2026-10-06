@@ -33,6 +33,7 @@ var (
 	ErrAccessGrantClaimed = errors.New("Access Grant already claimed")
 	ErrInvalidInput       = errors.New("invalid access input")
 	ErrNoOfficeRoute      = errors.New("Location has no single Abita Office Route")
+	ErrLocationConflict   = errors.New("Location key belongs to a differently named Location")
 )
 
 var abitaOfficeKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
@@ -208,18 +209,6 @@ type LocationMutation struct {
 	Location        Location   `json:"location"`
 	PracticeVersion int64      `json:"practiceVersion"`
 	Audit           AuditEvent `json:"audit"`
-}
-
-type SignUpEligibilityKind string
-
-const (
-	SignUpEligibilityAccessGrant      SignUpEligibilityKind = "ACCESS_GRANT"
-	SignUpEligibilityPlatformOperator SignUpEligibilityKind = "PLATFORM_OPERATOR"
-)
-
-type SignUpEligibility struct {
-	Kind  SignUpEligibilityKind `json:"kind"`
-	Email string                `json:"email"`
 }
 
 type Module struct {
@@ -528,12 +517,12 @@ func accessGrantMatchesProvisioning(
 func (m *Module) InspectSignUpEligibility(
 	ctx context.Context,
 	emailInput string,
-) (SignUpEligibility, error) {
+) error {
 	email := normalizeEmail(emailInput)
 	if email == "" {
-		return SignUpEligibility{}, ErrDenied
+		return ErrDenied
 	}
-	var grantExists bool
+	var eligible bool
 	if err := m.database.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
@@ -541,30 +530,18 @@ func (m *Module) InspectSignUpEligibility(
 			WHERE email = $1
 				AND revoked_at IS NULL
 				AND claimed_at IS NULL
-		)
-	`, email).Scan(&grantExists); err != nil {
-		return SignUpEligibility{}, fmt.Errorf("inspect Access Grant eligibility: %w", err)
-	}
-	if grantExists {
-		return SignUpEligibility{Kind: SignUpEligibilityAccessGrant, Email: email}, nil
-	}
-	var operatorExists bool
-	if err := m.database.QueryRow(ctx, `
-		SELECT EXISTS (
+		) OR EXISTS (
 			SELECT 1
 			FROM access_platform_operators
 			WHERE email = $1
 		)
-	`, email).Scan(&operatorExists); err != nil {
-		return SignUpEligibility{}, fmt.Errorf("inspect Platform Operator eligibility: %w", err)
+	`, email).Scan(&eligible); err != nil {
+		return fmt.Errorf("inspect sign-up eligibility: %w", err)
 	}
-	if !operatorExists {
-		return SignUpEligibility{}, ErrDenied
+	if !eligible {
+		return ErrDenied
 	}
-	return SignUpEligibility{
-		Kind:  SignUpEligibilityPlatformOperator,
-		Email: email,
-	}, nil
+	return nil
 }
 
 func (m *Module) ResolveActor(
@@ -573,38 +550,13 @@ func (m *Module) ResolveActor(
 	practiceID string,
 	locationID string,
 ) (Authorization, error) {
-	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" || strings.TrimSpace(practiceID) == "" {
-		return Authorization{}, ErrDenied
-	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Authorization{}, fmt.Errorf("begin actor resolution: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
+	authorized, err := resolveAuthorization(ctx, tx, identity, practiceID, locationID, false, false)
 	if err != nil {
-		return Authorization{}, err
-	}
-	if isOperator {
-		authorized, err := loadOperatorAuthorization(ctx, tx, identity, practiceID)
-		if err != nil {
-			return Authorization{}, err
-		}
-		if err := selectRequestedLocation(&authorized, locationID); err != nil {
-			return Authorization{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Authorization{}, fmt.Errorf("commit operator resolution: %w", err)
-		}
-		return authorized, nil
-	}
-
-	authorized, err := loadMembershipAuthorization(ctx, tx, identity, practiceID, false)
-	if err != nil {
-		return Authorization{}, err
-	}
-	if err := selectRequestedLocation(&authorized, locationID); err != nil {
 		return Authorization{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -620,7 +572,7 @@ func (m *Module) LockMembershipAuthorization(
 	practiceID string,
 	locationID string,
 ) (Authorization, error) {
-	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, true)
+	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, true, true)
 }
 
 func (m *Module) LockMutationAuthorization(
@@ -630,7 +582,7 @@ func (m *Module) LockMutationAuthorization(
 	practiceID string,
 	locationID string,
 ) (Authorization, error) {
-	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, true)
+	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, true, true)
 }
 
 func (m *Module) LockReadAuthorization(
@@ -640,7 +592,7 @@ func (m *Module) LockReadAuthorization(
 	practiceID string,
 	locationID string,
 ) (Authorization, error) {
-	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, false)
+	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, false, true)
 }
 
 func (m *Module) ReadLocationAbitaOfficeKey(
@@ -683,13 +635,14 @@ func (m *Module) ReadLocationAbitaOfficeKey(
 	return keys[0], nil
 }
 
-func (m *Module) lockAuthorization(
+func resolveAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,
 	identity Identity,
 	practiceID string,
 	locationID string,
 	requireLocation bool,
+	lockMembership bool,
 ) (Authorization, error) {
 	if tx == nil ||
 		!identity.EmailVerified ||
@@ -702,23 +655,12 @@ func (m *Module) lockAuthorization(
 	if err != nil {
 		return Authorization{}, err
 	}
+	var authorization Authorization
 	if isOperator {
-		authorization, err := loadOperatorAuthorization(
-			ctx,
-			tx,
-			identity,
-			practiceID,
-		)
-		if err != nil {
-			return Authorization{}, err
-		}
-		if err := selectRequestedLocation(&authorization, locationID); err != nil {
-			return Authorization{}, err
-		}
-		return authorization, nil
+		authorization, err = loadOperatorAuthorization(ctx, tx, identity, practiceID)
+	} else {
+		authorization, err = loadMembershipAuthorization(ctx, tx, identity, practiceID, lockMembership)
 	}
-
-	authorization, err := loadMembershipAuthorization(ctx, tx, identity, practiceID, true)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -1375,10 +1317,12 @@ func (m *Module) AddLocation(
 	ctx context.Context,
 	command AddLocationCommand,
 ) (LocationMutation, error) {
-	if !command.Identity.EmailVerified || command.Identity.Subject == "" ||
-		command.PracticeID == "" || strings.TrimSpace(command.Key) == "" ||
-		strings.TrimSpace(command.Name) == "" {
+	if !command.Identity.EmailVerified || command.Identity.Subject == "" || command.PracticeID == "" {
 		return LocationMutation{}, ErrDenied
+	}
+	key, name := strings.TrimSpace(command.Key), strings.TrimSpace(command.Name)
+	if key == "" || name == "" {
+		return LocationMutation{}, ErrInvalidInput
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -1396,13 +1340,16 @@ func (m *Module) AddLocation(
 		INSERT INTO access_locations (practice_id, provisioning_key, name)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (practice_id, provisioning_key)
-		DO UPDATE SET name = EXCLUDED.name
+		DO UPDATE SET name = access_locations.name
 		RETURNING id::text, name
-	`, command.PracticeID, command.Key, strings.TrimSpace(command.Name)).Scan(
+	`, command.PracticeID, key, name).Scan(
 		&result.Location.ID,
 		&result.Location.Name,
 	); err != nil {
 		return LocationMutation{}, fmt.Errorf("add Location: %w", err)
+	}
+	if result.Location.Name != name {
+		return LocationMutation{}, ErrLocationConflict
 	}
 	result.Audit = AuditEvent{
 		ActorSubject: command.Identity.Subject,

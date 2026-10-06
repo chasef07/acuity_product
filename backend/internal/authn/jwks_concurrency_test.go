@@ -164,7 +164,7 @@ func TestJWKSCanceledRefreshInitiatorDoesNotCancelOtherCredentials(t *testing.T)
 	}
 }
 
-func TestJWKSExpiredKeysFailClosedDuringOutageAndRecover(t *testing.T) {
+func TestJWKSOutageServesCachedKeysForABoundedStaleWindow(t *testing.T) {
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -182,24 +182,51 @@ func TestJWKSExpiredKeysFailClosedDuringOutageAndRecover(t *testing.T) {
 	defer server.Close()
 	now := time.Now()
 	adapter := probeAuthenticator(t, server, func() time.Time { return now })
-	valid := probeToken(t, "known", private)
+	valid := signedJWT(t, "known", private, map[string]any{
+		"iss": "https://auth.acuity.test", "aud": "https://api.acuity.test", "sub": "synthetic-user",
+		"email": "staff@example.test", "email_verified": true, "exp": now.Add(4 * time.Hour).Unix(),
+	})
 	if _, err := adapter.Authenticate(context.Background(), valid); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Minute)
 	unavailable.Store(true)
 	for range 5 {
-		if _, err := adapter.Authenticate(context.Background(), valid); !errors.Is(err, authn.ErrInvalidCredential) {
-			t.Fatalf("expired signing key during outage error = %v", err)
+		if _, err := adapter.Authenticate(context.Background(), valid); err != nil {
+			t.Fatalf("cached signing key during outage error = %v", err)
 		}
 	}
 	if got := requests.Load(); got != 2 {
 		t.Fatalf("signing-key fetches during outage = %d, want 2", got)
 	}
+	if _, err := adapter.Authenticate(context.Background(), probeToken(t, "unknown", private)); !errors.Is(err, authn.ErrKeysUnavailable) || errors.Is(err, authn.ErrInvalidCredential) {
+		t.Fatalf("unknown signing key during outage error = %v, want keys unavailable", err)
+	}
+	now = now.Add(2 * time.Hour)
+	if _, err := adapter.Authenticate(context.Background(), valid); !errors.Is(err, authn.ErrKeysUnavailable) || errors.Is(err, authn.ErrInvalidCredential) {
+		t.Fatalf("signing key beyond stale window error = %v, want keys unavailable", err)
+	}
 	now = now.Add(6 * time.Second)
 	unavailable.Store(false)
 	if _, err := adapter.Authenticate(context.Background(), valid); err != nil {
 		t.Fatalf("credential after provider recovery: %v", err)
+	}
+}
+
+func TestJWKSUnavailableBeforeFirstFetchIsNotAnInvalidCredential(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+	adapter := probeAuthenticator(t, server, time.Now)
+	for range 2 {
+		if _, err := adapter.Authenticate(context.Background(), probeToken(t, "known", private)); !errors.Is(err, authn.ErrKeysUnavailable) || errors.Is(err, authn.ErrInvalidCredential) {
+			t.Fatalf("first fetch outage error = %v, want keys unavailable", err)
+		}
 	}
 }
 

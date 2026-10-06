@@ -37,3 +37,16 @@ test("Better Auth user creation fails closed when Access denies the email", asyn
     false
   )
 })
+
+test("Better Auth user creation fails closed when eligibility is rate limited or unavailable", async () => {
+  for (const response of [
+    new Response(null, { status: 429 }),
+    new Response(null, { status: 503 }),
+  ]) {
+    const gate = createUserEligibilityGate({
+      portalAPIURL: "https://portal.example",
+      request: async () => response,
+    })
+    assert.equal(await gate({ email: "staff@example.test" }), false)
+  }
+})

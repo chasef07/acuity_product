@@ -10,8 +10,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/chasef07/acuity_product/backend/internal/access"
 )
 
 const middlewareTimeout = 5 * time.Second
@@ -67,7 +65,7 @@ func (c *MiddlewareClient) Plans(ctx context.Context, office string, coverage Co
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusBadRequest {
-		return nil, fmt.Errorf("%w: middleware plans returned HTTP %d", access.ErrNoOfficeRoute, response.StatusCode)
+		return nil, fmt.Errorf("%w: middleware plans returned HTTP %d", ErrUnknownOffice, response.StatusCode)
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return nil, fmt.Errorf("middleware plans returned HTTP %d", response.StatusCode)
