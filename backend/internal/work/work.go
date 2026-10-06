@@ -320,7 +320,7 @@ func (m *Module) EnsureCallFollowUp(
 		strings.TrimSpace(command.PracticeID) == "" ||
 		strings.TrimSpace(command.LocationID) == "" ||
 		!canonicalPhone.MatchString(command.Phone) ||
-		len(title) > 500 ||
+		!textLengthBetween(title, 1, 500) ||
 		strings.TrimSpace(command.Creator.Subject) == "" ||
 		command.Creator.Email == "" {
 		return Task{}, ErrInvalidInput
@@ -441,7 +441,7 @@ func (m *Module) EnsureMessageFollowUp(
 	} else if err != nil {
 		return Task{}, "", fmt.Errorf("create Message follow-up Task: %w", err)
 	}
-	task, err := loadTask(ctx, tx, taskID)
+	task, err := loadTask(ctx, tx, taskID, false)
 	if err != nil {
 		return Task{}, "", err
 	}
@@ -461,6 +461,7 @@ func (m *Module) EnsureMessageFollowUp(
 		"TASK_CREATED",
 		task.CreatedBy,
 		createdAt,
+		nil,
 	); err != nil {
 		return Task{}, "", err
 	}
@@ -638,7 +639,7 @@ func (m *Module) EnsureRecoveryTask(
 		}
 		taskChanged = updated.RowsAffected() != 0
 	}
-	task, err := loadTask(ctx, tx, taskID)
+	task, err := loadTask(ctx, tx, taskID, false)
 	if err != nil {
 		return Task{}, err
 	}
@@ -661,6 +662,7 @@ func (m *Module) EnsureRecoveryTask(
 			activityKind,
 			task.CreatedBy,
 			command.OccurredAt,
+			nil,
 		); err != nil {
 			return Task{}, err
 		}
@@ -675,7 +677,7 @@ func (m *Module) EnsureRecoveryTask(
 		return Task{}, err
 	}
 	if automaticallyCompleted > 0 {
-		task, err = loadTask(ctx, tx, taskID)
+		task, err = loadTask(ctx, tx, taskID, false)
 		if err != nil {
 			return Task{}, err
 		}
@@ -961,7 +963,7 @@ func (m *Module) LockOpenMessageTask(
 		!canonicalPhone.MatchString(phone) {
 		return Task{}, ErrInvalidInput
 	}
-	task, err := lockTask(ctx, tx, taskID)
+	task, err := loadTask(ctx, tx, taskID, true)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1032,7 +1034,7 @@ func (m *Module) LockTaskAcknowledgementTask(
 	if tx == nil || claim.ID == "" || claim.TaskID == "" {
 		return Task{}, ErrInvalidInput
 	}
-	task, err := lockTask(ctx, tx, claim.TaskID)
+	task, err := loadTask(ctx, tx, claim.TaskID, true)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1141,7 +1143,7 @@ func (m *Module) LockOpenOutboundTask(
 	if tx == nil || strings.TrimSpace(taskID) == "" {
 		return Task{}, ErrInvalidInput
 	}
-	task, err := lockTask(ctx, tx, taskID)
+	task, err := loadTask(ctx, tx, taskID, true)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1154,62 +1156,37 @@ func (m *Module) LockOpenOutboundTask(
 func (m *Module) ApplyCallTaskDisposition(
 	ctx context.Context,
 	tx pgx.Tx,
+	authorization access.Authorization,
 	taskID string,
 	complete bool,
-	actor access.Actor,
-	occurredAt time.Time,
+	callPlacedAt time.Time,
 ) (Task, error) {
-	if tx == nil || strings.TrimSpace(taskID) == "" {
+	if tx == nil || m.access == nil || strings.TrimSpace(taskID) == "" || callPlacedAt.IsZero() {
 		return Task{}, ErrInvalidInput
 	}
-	task, err := lockTask(ctx, tx, taskID)
+	task, err := loadTask(ctx, tx, taskID, true)
 	if err != nil {
 		return Task{}, err
 	}
 	if !complete || task.State == TaskCompleted {
 		return task, nil
 	}
-	if task.State != TaskOpen {
-		return Task{}, ErrConflict
+	var newerEvidence bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM work_task_activities
+			WHERE task_id = $1
+				AND kind IN ('INTERACTION_ATTACHED', 'SOURCE_UPDATED', 'TASK_REOPENED')
+				AND occurred_at > $2
+		)
+	`, task.ID, callPlacedAt).Scan(&newerEvidence); err != nil {
+		return Task{}, fmt.Errorf("read Task evidence after Call: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE work_tasks
-		SET
-			state = 'COMPLETED',
-			completed_by_kind = 'HUMAN',
-			completed_by_subject = $2,
-			completed_by_email = $3,
-			completed_at = $4,
-			version = version + 1,
-			updated_at = $4
-		WHERE id = $1
-	`, task.ID, actor.Subject, actor.Email, occurredAt); err != nil {
-		return Task{}, fmt.Errorf("complete Call Task: %w", err)
+	if newerEvidence {
+		return task, ErrConflict
 	}
-	task.State = TaskCompleted
-	task.Version++
-	task.UpdatedAt = occurredAt
-	task.CompletedAt = &occurredAt
-	completedBy := humanActorSnapshot(actor)
-	task.CompletedBy = &completedBy
-	if err := appendActivity(
-		ctx,
-		tx,
-		task,
-		"TASK_COMPLETED",
-		completedBy,
-		occurredAt,
-	); err != nil {
-		return Task{}, err
-	}
-	if _, err := m.access.RecordWorkspaceChange(
-		ctx,
-		tx,
-		task.PracticeID,
-	); err != nil {
-		return Task{}, err
-	}
-	return task, nil
+	return m.completeLockedTask(ctx, tx, authorization, task)
 }
 
 func (m *Module) CreateAITask(
@@ -1326,7 +1303,7 @@ func (m *Module) CreateAITask(
 			if err != nil {
 				return Task{}, "", fmt.Errorf("load duplicate AI Task: %w", err)
 			}
-			task, err := loadTask(ctx, tx, taskID)
+			task, err := loadTask(ctx, tx, taskID, false)
 			if err != nil {
 				return Task{}, "", err
 			}
@@ -1341,7 +1318,7 @@ func (m *Module) CreateAITask(
 		if !bytes.Equal(existingFingerprint, fingerprint[:]) {
 			return Task{}, "", ErrConflict
 		}
-		task, err := loadTask(ctx, tx, taskID)
+		task, err := loadTask(ctx, tx, taskID, false)
 		if err != nil {
 			return Task{}, "", err
 		}
@@ -1353,11 +1330,11 @@ func (m *Module) CreateAITask(
 	if err != nil {
 		return Task{}, "", fmt.Errorf("create AI Task: %w", err)
 	}
-	task, err := loadTask(ctx, tx, taskID)
+	task, err := loadTask(ctx, tx, taskID, false)
 	if err != nil {
 		return Task{}, "", err
 	}
-	if err := appendActivity(ctx, tx, task, "TASK_CREATED", task.CreatedBy, createdAt); err != nil {
+	if err := appendActivity(ctx, tx, task, "TASK_CREATED", task.CreatedBy, createdAt, nil); err != nil {
 		return Task{}, "", err
 	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
@@ -1377,8 +1354,7 @@ func (m *Module) RenameTask(
 	if m.access == nil ||
 		strings.TrimSpace(command.TaskID) == "" ||
 		command.ExpectedVersion <= 0 ||
-		title == "" ||
-		len(title) > 500 {
+		!textLengthBetween(title, 1, 500) {
 		return Task{}, ErrInvalidInput
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -1386,7 +1362,7 @@ func (m *Module) RenameTask(
 		return Task{}, fmt.Errorf("begin Task rename: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	task, err := loadTask(ctx, tx, command.TaskID)
+	task, err := loadTask(ctx, tx, command.TaskID, false)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1400,7 +1376,7 @@ func (m *Module) RenameTask(
 		return Task{}, err
 	}
 	actor := authorization.Actor
-	task, err = lockTask(ctx, tx, command.TaskID)
+	task, err = loadTask(ctx, tx, command.TaskID, true)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1428,6 +1404,7 @@ func (m *Module) RenameTask(
 		"TITLE_CHANGED",
 		humanActorSnapshot(actor),
 		changedAt,
+		nil,
 	); err != nil {
 		return Task{}, err
 	}
@@ -1464,7 +1441,7 @@ func (m *Module) CompleteTask(
 		return Task{}, fmt.Errorf("begin Task completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	task, err := loadTask(ctx, tx, command.TaskID)
+	task, err := loadTask(ctx, tx, command.TaskID, false)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1477,7 +1454,7 @@ func (m *Module) CompleteTask(
 	if err != nil {
 		return Task{}, err
 	}
-	task, err = lockTask(ctx, tx, command.TaskID)
+	task, err = loadTask(ctx, tx, command.TaskID, true)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1511,7 +1488,7 @@ func (m *Module) ReopenTask(
 		return Task{}, fmt.Errorf("begin Task reopen: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	task, err := loadTask(ctx, tx, command.TaskID)
+	task, err := loadTask(ctx, tx, command.TaskID, false)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1525,7 +1502,7 @@ func (m *Module) ReopenTask(
 		return Task{}, err
 	}
 	actor := authorization.Actor
-	task, err = lockTask(ctx, tx, command.TaskID)
+	task, err = loadTask(ctx, tx, command.TaskID, true)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1566,6 +1543,7 @@ func (m *Module) ReopenTask(
 		"TASK_REOPENED",
 		humanActorSnapshot(actor),
 		reopenedAt,
+		nil,
 	); err != nil {
 		return Task{}, err
 	}
@@ -1601,7 +1579,7 @@ func (m *Module) ReadTask(
 		return Task{}, fmt.Errorf("begin Task read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	task, err := loadTask(ctx, tx, taskID)
+	task, err := loadTask(ctx, tx, taskID, false)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1705,7 +1683,15 @@ func appendActivity(
 	kind string,
 	actor ActorSnapshot,
 	occurredAt time.Time,
+	details map[string]any,
 ) error {
+	if details == nil {
+		details = map[string]any{}
+	}
+	encoded, err := json.Marshal(details)
+	if err != nil {
+		return fmt.Errorf("encode Task Activity details: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO work_task_activities (
 			task_id,
@@ -1714,11 +1700,12 @@ func appendActivity(
 			actor_kind,
 			actor_subject,
 			actor_email,
-			occurred_at
+			occurred_at,
+			details
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, task.ID, task.Version, kind, actor.Kind, actor.Subject,
-		nullIfEmpty(strings.ToLower(strings.TrimSpace(actor.Email))), occurredAt,
+		nullIfEmpty(strings.ToLower(strings.TrimSpace(actor.Email))), occurredAt, encoded,
 	); err != nil {
 		return fmt.Errorf("append Task Activity: %w", err)
 	}
@@ -1878,8 +1865,9 @@ func loadTask(
 	ctx context.Context,
 	tx pgx.Tx,
 	taskID string,
+	lock bool,
 ) (Task, error) {
-	task, err := scanTask(tx.QueryRow(ctx, `
+	query := `
 		SELECT
 			task.id::text,
 			task.practice_id::text,
@@ -1911,65 +1899,17 @@ func loadTask(
 		JOIN access_locations location
 			ON location.practice_id = task.practice_id
 			AND location.id = task.location_id
-		WHERE task.id = $1
-	`, taskID))
+		WHERE task.id = $1`
+	if lock {
+		query += `
+		FOR UPDATE OF task`
+	}
+	task, err := scanTask(tx.QueryRow(ctx, query, taskID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
 	if err != nil {
 		return Task{}, fmt.Errorf("read Task: %w", err)
-	}
-	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
-		return Task{}, err
-	}
-	return task, nil
-}
-
-func lockTask(
-	ctx context.Context,
-	tx pgx.Tx,
-	taskID string,
-) (Task, error) {
-	task, err := scanTask(tx.QueryRow(ctx, `
-		SELECT
-			task.id::text,
-			task.practice_id::text,
-			task.location_id::text,
-			location.name,
-			task.call_id::text,
-			task.phone,
-			task.title,
-			task.state,
-			task.origin,
-			task.urgency,
-			task.category,
-			task.caller_name,
-			task.source_call_id,
-			task.source_message,
-			task.source_message_id::text,
-			task.message_thread_id::text,
-			task.recovery_outcome,
-			task.created_by_kind,
-			task.created_by_subject,
-			task.created_by_email,
-			task.created_at,
-			task.completed_by_subject,
-			task.completed_by_email,
-			task.completed_at,
-			task.version,
-			task.updated_at
-		FROM work_tasks task
-		JOIN access_locations location
-			ON location.practice_id = task.practice_id
-			AND location.id = task.location_id
-		WHERE task.id = $1
-		FOR UPDATE OF task
-	`, taskID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Task{}, ErrDenied
-	}
-	if err != nil {
-		return Task{}, fmt.Errorf("lock Task: %w", err)
 	}
 	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
 		return Task{}, err
@@ -2273,6 +2213,7 @@ func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorizatio
 		"TASK_COMPLETED",
 		humanActorSnapshot(actor),
 		completedAt,
+		nil,
 	); err != nil {
 		return Task{}, err
 	}

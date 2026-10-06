@@ -189,16 +189,39 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func appointmentReviewTitle(value Interaction) string {
+	if title := map[AppointmentOutcome]string{
+		OutcomeBooking:      "Review booked appointment",
+		OutcomeCancellation: "Review cancelled appointment",
+		OutcomeReschedule:   "Review appointment change",
+		OutcomePartial:      "Review unfinished appointment change",
+	}[value.AppointmentOutcome]; title != "" {
+		return title
+	}
+	return map[AppointmentAction]string{
+		AppointmentBooked:      "Check appointment booking",
+		AppointmentCancelled:   "Check appointment cancellation",
+		AppointmentRescheduled: "Check appointment change",
+	}[value.AppointmentAction]
+}
+
 func appointmentReviewMessage(value Interaction) string {
-	instruction := "Verify insurance and provider for this appointment."
-	if value.AppointmentOutcome == OutcomePartial {
-		instruction = "Review the unfinished appointment change and complete the remaining follow-up. Check which booking or cancellation actions succeeded before making further changes."
-	} else if value.AppointmentAction == AppointmentCancelled {
-		instruction = "Confirm the cancellation is reflected in the appointment system."
+	instruction := map[AppointmentOutcome]string{
+		OutcomeBooking:      "Verify insurance and provider for this appointment.",
+		OutcomeCancellation: "Confirm the cancellation is reflected in the appointment system.",
+		OutcomeReschedule:   "Verify insurance and provider for the rescheduled appointment.",
+		OutcomePartial:      "Review the unfinished appointment change and complete the remaining follow-up. Check which booking or cancellation actions succeeded before making further changes.",
+	}[value.AppointmentOutcome]
+	if instruction == "" {
+		instruction = map[AppointmentAction]string{
+			AppointmentBooked:      "The agent could not confirm the booking. Check the appointment system before following up with the caller.",
+			AppointmentCancelled:   "The agent could not confirm the cancellation. Check the appointment system before following up with the caller.",
+			AppointmentRescheduled: "The agent could not confirm the appointment change. Check the appointment system before following up with the caller.",
+		}[value.AppointmentAction]
 	}
 	facts := ProjectAppointmentDetails(value).Appointment
 	lines := []string{instruction}
-	for _, field := range [][2]string{{"Patient", facts.PatientName}, {"Date", facts.AppointmentDate}, {"Time", facts.AppointmentTime}, {"Start", facts.StartDatetime}, {"Provider", facts.ProviderName}, {"Location", facts.LocationName}, {"Type", facts.AppointmentTypeName}, {"Appointment ID", facts.AppointmentID}} {
+	for _, field := range [][2]string{{"Name given by caller", facts.PatientName}, {"Date", facts.AppointmentDate}, {"Time", facts.AppointmentTime}, {"Start", facts.StartDatetime}, {"Provider", facts.ProviderName}, {"Location", facts.LocationName}, {"Type", facts.AppointmentTypeName}, {"Appointment ID", facts.AppointmentID}} {
 		if field[1] != "" {
 			lines = append(lines, field[0]+": "+field[1])
 		}

@@ -36,7 +36,7 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 	if _, err = tx.Exec(ctx, `SELECT id FROM work_tasks WHERE id=$1 FOR UPDATE`, taskID); err != nil {
 		return err
 	}
-	task, err := loadTask(ctx, tx, taskID)
+	task, err := loadTask(ctx, tx, taskID, false)
 	if err != nil {
 		return err
 	}
@@ -80,11 +80,11 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 	if err != nil {
 		return err
 	}
-	task, err = loadTask(ctx, tx, taskID)
+	task, err = loadTask(ctx, tx, taskID, false)
 	if err != nil {
 		return err
 	}
-	if err = appendActivityDetails(ctx, tx, task, kind, actor, map[string]any{"messageId": messageID, "deliveryState": delivery}); err != nil {
+	if err = appendActivity(ctx, tx, task, kind, actor, task.UpdatedAt, map[string]any{"messageId": messageID, "deliveryState": delivery}); err != nil {
 		return err
 	}
 	_, err = m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID)

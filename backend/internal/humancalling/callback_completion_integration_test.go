@@ -36,7 +36,10 @@ func TestCompletedCallbackAttemptClosesOnlyOlderRecovery(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := workModule.EnsureAppointmentReview(ctx, tx, sourceID, task.PracticeID, task.LocationID, task.Phone, "synthetic-appointment", "BOOKED", "Verify synthetic appointment.", now); err != nil {
+				if _, err := tx.Exec(ctx, `INSERT INTO access_abita_office_locations(practice_id,office_key,location_id) VALUES($1,'spring-hill',$2)`, task.PracticeID, task.LocationID); err != nil {
+					t.Fatal(err)
+				}
+				if err := workModule.EnsureAppointmentReview(ctx, tx, sourceID, task.PracticeID, task.LocationID, task.Phone, "synthetic-appointment", "Review booked appointment", "Verify synthetic appointment.", now); err != nil {
 					t.Fatal(err)
 				}
 				if err = tx.Commit(ctx); err != nil {

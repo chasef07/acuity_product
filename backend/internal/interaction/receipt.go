@@ -378,7 +378,7 @@ func (m *Module) projectReceiptWithRecovery(
 		return Interaction{}, "", err
 	}
 	if current.AppointmentOccurredAt != nil && current.AppointmentAction != "" {
-		if err := m.work.EnsureAppointmentReview(ctx, tx, current.ID, current.PracticeID, current.LocationID, current.Phone, current.SourceCallID, string(current.AppointmentAction), appointmentReviewMessage(current), *current.AppointmentOccurredAt); err != nil {
+		if err := m.work.EnsureAppointmentReview(ctx, tx, current.ID, current.PracticeID, current.LocationID, current.Phone, current.SourceCallID, appointmentReviewTitle(current), appointmentReviewMessage(current), *current.AppointmentOccurredAt); err != nil {
 			return Interaction{}, "", err
 		}
 	}
