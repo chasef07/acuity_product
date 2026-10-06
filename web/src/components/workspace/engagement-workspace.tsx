@@ -187,14 +187,7 @@ export function EngagementWorkspaceView({
         ? chosenRoute
         : ""
   const [callError, setCallError] = useState("")
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
-    "idle",
-  )
-  useEffect(() => {
-    if (copyState === "idle") return
-    const timer = window.setTimeout(() => setCopyState("idle"), 2_000)
-    return () => window.clearTimeout(timer)
-  }, [copyState])
+  const [copyState, setCopyState] = useCopyState()
   const {
     callingOccupied,
     callingEnabled,
@@ -775,14 +768,7 @@ function MessageEntry({
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
-    "idle",
-  )
-  useEffect(() => {
-    if (copyState === "idle") return
-    const timer = window.setTimeout(() => setCopyState("idle"), 2_000)
-    return () => window.clearTimeout(timer)
-  }, [copyState])
+  const [copyState, setCopyState] = useCopyState()
   const [selected, setSelected] = useState(false)
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
@@ -1581,6 +1567,16 @@ function formatTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value))
+}
+
+function useCopyState() {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle")
+  useEffect(() => {
+    if (copyState === "idle") return
+    const timer = window.setTimeout(() => setCopyState("idle"), 2_000)
+    return () => window.clearTimeout(timer)
+  }, [copyState])
+  return [copyState, setCopyState] as const
 }
 
 function sentenceCase(value: string) {

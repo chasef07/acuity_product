@@ -237,7 +237,6 @@ export function WorkspaceRail({
     const scrollTop = scrollContainer.current?.scrollTop ?? 0
     window.clearTimeout(scrollPersistTimer.current)
     scrollPersistTimer.current = window.setTimeout(() => {
-      scrollPersistTimer.current = undefined
       onIntent({ type: "remember-rail-scroll", scrollTop })
     }, scrollPersistDelayMilliseconds)
   }

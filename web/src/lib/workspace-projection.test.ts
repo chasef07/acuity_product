@@ -154,113 +154,79 @@ test("pagination appends uniquely and refresh retains active and completed windo
 })
 
 test("a load-more superseded by a failed reconcile releases loading so the next page can load", async () => {
-  const realtime = deterministicRealtime()
-  const delayedPage = deferred<WorkspaceAuthorityResult<TaskPage>>()
-  let delayNextPage = true
-  let workspaceAvailable = true
-  const authority: WorkspaceAuthorityAdapter = {
-    ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([]) }),
-    workspace: async () => workspaceAvailable ? success(workspaceSnapshot(7)) : unavailable(),
-    tasks: async (_token, request) => {
-      if (request.state === "COMPLETED") return success(taskPage([]))
-      if (!request.cursor) return success({ ...taskPage([task("open-1")]), nextCursor: "open-more" })
-      if (delayNextPage) {
-        delayNextPage = false
-        return delayedPage.promise
-      }
-      return success(taskPage([task("open-2")]))
-    },
-  }
-  const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
-  await projection.start()
-  await realtime.reconcile(0)
-
-  const firstLoad = projection.dispatch({ type: "load-more", window: "tasks" })
+  const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
+  control.delayNext = true
+  const load = projection.dispatch({ type: "load-more", window: "tasks" })
   assert.equal(projection.getSnapshot().tasks.loading, true)
-  await waitUntil(() => !delayNextPage)
-  workspaceAvailable = false
+  await waitUntil(() => !control.delayNext)
+  control.workspaceAvailable = false
   await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
-  delayedPage.resolve(success(taskPage([task("superseded-page")])))
-  await firstLoad
+  delayed.resolve(success(taskPage([task("superseded-page")])))
+  await load
 
   assert.equal(projection.getSnapshot().tasks.loading, false)
-  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1"])
+  assert.deepEqual(openIDs(), ["open-1"])
   await projection.dispatch({ type: "load-more", window: "tasks" })
-  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1", "open-2"])
-  assert.equal(projection.getSnapshot().tasks.loading, false)
+  assert.deepEqual(openIDs(), ["open-1", "open-2"])
   projection.stop()
 })
 
 test("a reconcile during load-more keeps the page the operator asked for", async () => {
-  const realtime = deterministicRealtime()
-  const delayedPage = deferred<WorkspaceAuthorityResult<TaskPage>>()
-  let delayNextPage = true
-  const authority: WorkspaceAuthorityAdapter = {
-    ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([]) }),
-    tasks: async (_token, request) => {
-      if (request.state === "COMPLETED") return success(taskPage([]))
-      if (!request.cursor) return success({ ...taskPage([task("open-1")]), nextCursor: "open-more" })
-      if (delayNextPage) {
-        delayNextPage = false
-        return delayedPage.promise
-      }
-      return success(taskPage([task("open-2")]))
-    },
-  }
-  const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
-  await projection.start()
-  await realtime.reconcile(0)
-
+  const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
+  control.delayNext = true
   const load = projection.dispatch({ type: "load-more", window: "tasks" })
-  await waitUntil(() => !delayNextPage)
+  await waitUntil(() => !control.delayNext)
   await realtime.reconcile(0)
-  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1", "open-2"])
-  assert.equal(projection.getSnapshot().tasks.loading, false)
-  delayedPage.resolve(success(taskPage([task("superseded-page")])))
+  assert.deepEqual(openIDs(), ["open-1", "open-2"])
+  delayed.resolve(success(taskPage([task("superseded-page")])))
   await load
 
-  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1", "open-2"])
+  assert.deepEqual(openIDs(), ["open-1", "open-2"])
   assert.equal(projection.getSnapshot().tasks.loading, false)
   await realtime.reconcile(0)
-  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1", "open-2"])
+  assert.deepEqual(openIDs(), ["open-1", "open-2"])
   projection.stop()
 })
 
 test("a superseded Task refresh releases loading when the reconcile that replaced it fails", async () => {
+  const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
+  control.delayNext = true
+  const refresh = projection.dispatch({ type: "refresh-text-attention" })
+  assert.equal(projection.getSnapshot().tasks.loading, true)
+  await waitUntil(() => !control.delayNext)
+  control.workspaceAvailable = false
+  await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
+  delayed.resolve(success(taskPage([task("superseded-refresh")])))
+  await refresh
+
+  assert.equal(projection.getSnapshot().tasks.loading, false)
+  assert.equal(projection.getSnapshot().completedTasks.loading, false)
+  assert.deepEqual(openIDs(), ["open-1"])
+  projection.stop()
+})
+
+async function startWithDelayableTasks() {
   const realtime = deterministicRealtime()
-  const delayedRefresh = deferred<WorkspaceAuthorityResult<TaskPage>>()
-  let delayOpenTasks = false
-  let workspaceAvailable = true
+  const delayed = deferred<WorkspaceAuthorityResult<TaskPage>>()
+  const control = { delayNext: false, workspaceAvailable: true }
   const authority: WorkspaceAuthorityAdapter = {
     ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([]) }),
-    workspace: async () => workspaceAvailable ? success(workspaceSnapshot(7)) : unavailable(),
+    workspace: async () => control.workspaceAvailable ? success(workspaceSnapshot(7)) : unavailable(),
     tasks: async (_token, request) => {
       if (request.state === "COMPLETED") return success(taskPage([]))
-      if (delayOpenTasks) {
-        delayOpenTasks = false
-        return delayedRefresh.promise
+      if (control.delayNext) {
+        control.delayNext = false
+        return delayed.promise
       }
-      return success(taskPage([task("open-1")]))
+      return success(request.cursor ? taskPage([task("open-2")]) : { ...taskPage([task("open-1")]), nextCursor: "open-more" })
     },
   }
   const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
   await projection.start()
   await realtime.reconcile(0)
-
-  delayOpenTasks = true
-  const refresh = projection.dispatch({ type: "refresh-text-attention" })
-  assert.equal(projection.getSnapshot().tasks.loading, true)
-  await waitUntil(() => !delayOpenTasks)
-  workspaceAvailable = false
-  await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
-  delayedRefresh.resolve(success(taskPage([task("superseded-refresh")])))
-  await refresh
-
-  assert.equal(projection.getSnapshot().tasks.loading, false)
-  assert.equal(projection.getSnapshot().completedTasks.loading, false)
-  assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1"])
-  projection.stop()
-})
+  const openIDs = () => projection.getSnapshot().tasks.items.map((item) => item.id)
+  return { projection, realtime, control, delayed, openIDs }
+}
 
 test("changing scope, failing closed, and stopping abort in-flight authority requests", async () => {
   const realtime = deterministicRealtime()

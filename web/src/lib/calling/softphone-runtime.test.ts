@@ -1384,13 +1384,11 @@ test("temporary heartbeat failures back off before retrying readiness", async ()
   assert.equal(runtime.getSnapshot().failure?.kind, "temporary-request")
   const failureGaps = gapsFrom(writesAt)
   const expectedGaps = [500, 1_000, 2_000, 4_000, 8_000, 8_000]
-  assert.equal(failureGaps.length, expectedGaps.length)
-  for (const [index, gap] of failureGaps.entries()) {
-    assert.ok(
-      gap >= expectedGaps[index]! && gap < expectedGaps[index]! + 100,
-      `retry ${index} waited ${gap}ms`,
-    )
-  }
+  assert.ok(
+    failureGaps.length === expectedGaps.length &&
+      failureGaps.every((gap, index) => gap >= expectedGaps[index]! && gap < expectedGaps[index]! + 100),
+    `retry gaps ${failureGaps.join(", ")}`,
+  )
 
   failing = false
   const recoveredFrom = writesAt.length

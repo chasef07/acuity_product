@@ -160,6 +160,8 @@ export type WorkspaceAuthorityAdapter = {
   ) => Promise<WorkspaceAuthorityResult<Task>>
 }
 
+type TaskWindow = "tasks" | "completedTasks"
+
 type Reconciliation = {
   version: number
   apply: () => void
@@ -223,7 +225,7 @@ export type WorkspaceProjectionIntent =
     }
   | {
       type: "load-more"
-      window: "tasks" | "completedTasks"
+      window: TaskWindow
     }
   | { type: "set-search"; value: string }
   | { type: "submit-search" }
@@ -306,11 +308,7 @@ export function createWorkspaceProjection({
     taskCounts: 0,
     completedTasks: 0,
   }
-  const loadingQueries = { tasks: 0, completedTasks: 0 }
-  const pendingLoads: Record<"tasks" | "completedTasks", { query: number; depth: number } | undefined> = {
-    tasks: undefined,
-    completedTasks: undefined,
-  }
+  const windowLoads: Partial<Record<TaskWindow, { query: number; depth: number }>> = {}
   let scopeRequests = new AbortController()
   let accessController: AbortController | undefined
   const listeners = new Set<() => void>()
@@ -347,8 +345,8 @@ export function createWorkspaceProjection({
     scopeGeneration += 1
     scopeRequests.abort()
     scopeRequests = new AbortController()
-    pendingLoads.tasks = undefined
-    pendingLoads.completedTasks = undefined
+    delete windowLoads.tasks
+    delete windowLoads.completedTasks
   }
 
   function failClosed(
@@ -1064,19 +1062,13 @@ export function createWorkspaceProjection({
     if (!activeScopeChanged) realtimeController.refresh()
   }
 
-  async function loadMore(
-    window: Extract<
-      WorkspaceProjectionIntent,
-      { type: "load-more" }
-    >["window"],
-  ) {
+  async function loadMore(window: TaskWindow) {
     if (state.loadState !== "ready") return
     const generation = scopeGeneration
     const currentWindow = state[window]
     if (currentWindow.loading || !currentWindow.nextCursor) return
     const queryGeneration = ++queryGenerations[window]
-    loadingQueries[window] = queryGeneration
-    pendingLoads[window] = { query: queryGeneration, depth: currentWindow.items.length + 1 }
+    windowLoads[window] = { query: queryGeneration, depth: currentWindow.items.length + 1 }
     patch((current) => ({
       ...current,
       [window]: { ...current[window], loading: true, error: "" },
@@ -1095,11 +1087,8 @@ export function createWorkspaceProjection({
       ),
     )
     if (generation !== scopeGeneration || stopped) return
-    if (pendingLoads[window]?.query === queryGeneration) pendingLoads[window] = undefined
-    if (queryGeneration !== queryGenerations[window]) {
-      releaseSupersededLoading(window, queryGeneration)
-      return
-    }
+    settleWindowLoad(window, queryGeneration)
+    if (queryGeneration !== queryGenerations[window]) return
     if (failIfAccessLost(result)) return
     if (result.kind !== "success") {
       setWindowFailure(window)
@@ -1416,8 +1405,8 @@ export function createWorkspaceProjection({
     const rail = state.rail
     const taskDepth = reset ? 0 : windowDepth("tasks", state.tasks.items.length)
     const completedDepth = reset ? 0 : windowDepth("completedTasks", state.completedTasks.items.length)
-    loadingQueries.tasks = taskGeneration
-    loadingQueries.completedTasks = completedGeneration
+    windowLoads.tasks = { query: taskGeneration, depth: taskDepth }
+    windowLoads.completedTasks = { query: completedGeneration, depth: completedDepth }
     patch((current) => ({
       ...current,
       tasks: {
@@ -1451,8 +1440,8 @@ export function createWorkspaceProjection({
       }
     })
     if (generation !== scopeGeneration || stopped) return
-    releaseSupersededLoading("tasks", taskGeneration)
-    releaseSupersededLoading("completedTasks", completedGeneration)
+    settleWindowLoad("tasks", taskGeneration)
+    settleWindowLoad("completedTasks", completedGeneration)
     if (failIfAccessLost(result)) return
     const tasks = requireTaskCounts(result.kind === "success"
       ? result.data.tasks
@@ -1494,19 +1483,14 @@ export function createWorkspaceProjection({
     }))
   }
 
-  function windowDepth(window: "tasks" | "completedTasks", loadedCount: number) {
-    return Math.max(loadedCount, pendingLoads[window]?.depth ?? 0)
+  function windowDepth(window: TaskWindow, loadedCount: number) {
+    return Math.max(loadedCount, windowLoads[window]?.depth ?? 0)
   }
 
-  function releaseSupersededLoading(
-    window: "tasks" | "completedTasks",
-    queryGeneration: number,
-  ) {
-    if (
-      queryGeneration === queryGenerations[window] ||
-      loadingQueries[window] !== queryGeneration ||
-      !state[window].loading
-    ) return
+  function settleWindowLoad(window: TaskWindow, query: number) {
+    if (windowLoads[window]?.query !== query) return
+    delete windowLoads[window]
+    if (query === queryGenerations[window] || !state[window].loading) return
     patch((current) => ({
       ...current,
       [window]: { ...current[window], loading: false },
@@ -1519,9 +1503,7 @@ export function createWorkspaceProjection({
     queryGenerations.completedTasks += 1
   }
 
-  function setWindowFailure(
-    window: "tasks" | "completedTasks",
-  ) {
+  function setWindowFailure(window: TaskWindow) {
     const error = window === "tasks" ? taskWindowError : completedWindowError
     patch((current) => ({
       ...current,

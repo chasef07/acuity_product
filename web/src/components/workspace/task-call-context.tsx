@@ -143,7 +143,6 @@ function TaskWorkspace({
 
   function closeTitleEditor() {
     restoreRenameFocus.current = true
-    setDraft(task.title)
     setError("")
     setEditing(false)
   }
@@ -173,8 +172,7 @@ function TaskWorkspace({
     setPending(false)
     if (outcome.ok) {
       acceptUpdate(outcome.data)
-      restoreRenameFocus.current = true
-      setEditing(false)
+      closeTitleEditor()
       return
     }
     if (outcome.failure.kind === "signedOut") return

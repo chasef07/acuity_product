@@ -193,9 +193,7 @@ export function CallingDock({
   const scopedLocationID = scopedCall?.locationId
   const connectedCallID =
     snapshot.activeCall?.state === "CONNECTED" ? snapshot.activeCall.id : ""
-  const reportCallScope = useEffectEvent(
-    (call: Pick<CallingCall, "practiceId" | "locationId">) => onCallScope(call),
-  )
+  const reportCallScope = useEffectEvent(onCallScope)
   const reportCallConnected = useEffectEvent(() => {
     if (snapshot.activeCall?.state === "CONNECTED") {
       onCallConnected(snapshot.activeCall)
