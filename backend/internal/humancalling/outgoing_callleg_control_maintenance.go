@@ -350,10 +350,6 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 	if cleaned {
 		return true, nil
 	}
-	provider, ok := m.provider.(CallStateProvider)
-	if !ok {
-		return false, nil
-	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin stale CallLeg reconciliation: %w", err)
@@ -434,6 +430,10 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 	}
 	if connectionID == "" && commandAction == CommandTransferStaff {
 		connectionID = m.config.CallControlID
+	}
+	provider, ok := m.provider.(CallStateProvider)
+	if !ok {
+		return false, fmt.Errorf("%w: CallLeg observation", ErrProviderCapabilityMissing)
 	}
 	observationContext := ctx
 	if deadline, ok := ctx.Deadline(); ok {

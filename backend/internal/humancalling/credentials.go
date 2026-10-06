@@ -168,13 +168,6 @@ func (m *Module) ProcessNextCredentialReconciliation(
 	if err != nil {
 		return false, fmt.Errorf("recover interrupted credential commands: %w", err)
 	}
-	provider, canObserve := m.provider.(CredentialStateProvider)
-	if !canObserve {
-		if err := tx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("commit interrupted credential recovery: %w", err)
-		}
-		return recovered, nil
-	}
 	var command ProviderCommand
 	var subject string
 	var createdAt time.Time
@@ -215,6 +208,16 @@ func (m *Module) ProcessNextCredentialReconciliation(
 			return true, fmt.Errorf("commit exhausted credential quarantine: %w", err)
 		}
 		return true, nil
+	}
+	provider, canObserve := m.provider.(CredentialStateProvider)
+	if !canObserve {
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit interrupted credential recovery: %w", err)
+		}
+		if recovered {
+			return true, nil
+		}
+		return false, fmt.Errorf("%w: credential observation", ErrProviderCapabilityMissing)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands

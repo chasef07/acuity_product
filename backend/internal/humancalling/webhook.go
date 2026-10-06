@@ -1,13 +1,13 @@
 package humancalling
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -123,7 +123,7 @@ func (m *Module) ReceiveWebhook(
 		); err != nil {
 			return WebhookReceipt{}, fmt.Errorf("load duplicate provider receipt: %w", err)
 		}
-		if !bytes.Equal(existingRaw, raw) ||
+		if !sameWebhookEventData(existingRaw, raw) ||
 			result.EventType != event.Data.EventType {
 			return WebhookReceipt{}, ErrInvalidWebhook
 		}
@@ -176,6 +176,16 @@ func unwrapTelnyxWebhook(
 		}
 	}
 	return nil, ErrInvalidWebhook
+}
+
+func sameWebhookEventData(left []byte, right []byte) bool {
+	var leftEnvelope, rightEnvelope struct {
+		Data any `json:"data"`
+	}
+	return json.Unmarshal(left, &leftEnvelope) == nil &&
+		json.Unmarshal(right, &rightEnvelope) == nil &&
+		leftEnvelope.Data != nil &&
+		reflect.DeepEqual(leftEnvelope.Data, rightEnvelope.Data)
 }
 
 func validTelnyxEvent(

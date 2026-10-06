@@ -59,6 +59,10 @@ const automaticTaskAcknowledgementActor = "task-acknowledgement"
 const automaticTaskAcknowledgementConfigurationRetryDelay = time.Minute
 const automaticTaskAcknowledgementMaxAge = 5 * time.Minute
 
+const providerTemporaryRetryDelay = 15 * time.Second
+const providerTemporaryRetryWindow = 5 * time.Minute
+const providerResultWriteTimeout = 5 * time.Second
+
 var (
 	ErrDenied                 = errors.New("messaging access denied")
 	ErrInvalidInput           = errors.New("invalid messaging input")
@@ -66,6 +70,7 @@ var (
 	ErrBlocked                = errors.New("messaging destination is opted out")
 	ErrAmbiguous              = errors.New("messaging provider effect is ambiguous")
 	ErrRejected               = errors.New("messaging provider rejected the command")
+	ErrTemporary              = errors.New("messaging provider is temporarily unavailable")
 	errUnmatchedProviderEvent = errors.New("unmatched messaging provider event")
 )
 
@@ -426,6 +431,16 @@ func (m *Module) Send(
 			(originalDelivery != DeliveryUnknown ||
 				!command.DuplicateRiskAcknowledged) {
 			return Message{}, "", ErrConflict
+		}
+		existing, err := loadNewAttempt(ctx, tx, originalThreadID, command.RetryOfMessageID)
+		if err == nil {
+			if err := tx.Commit(ctx); err != nil {
+				return Message{}, "", fmt.Errorf("commit existing Message new attempt: %w", err)
+			}
+			return existing, MessageDuplicate, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return Message{}, "", err
 		}
 	}
 	var sender, profileID string
@@ -1068,12 +1083,7 @@ func (m *Module) SendAgain(
 	if err != nil {
 		return Message{}, "", err
 	}
-	replayed, found, err := m.loadSendAgainReplay(
-		ctx,
-		command,
-		original.Thread.PracticeID,
-		original.ID,
-	)
+	replayed, found, err := m.loadSendAgainReplay(ctx, command, original)
 	if err != nil {
 		return Message{}, "", err
 	}
@@ -1188,32 +1198,19 @@ func (m *Module) readMessageForRetry(
 func (m *Module) loadSendAgainReplay(
 	ctx context.Context,
 	command SendAgainCommand,
-	practiceID string,
-	originalMessageID string,
+	original Message,
 ) (Message, bool, error) {
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Message{}, false, fmt.Errorf("begin Message new-attempt replay: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	replayed, _, err := loadMessageByIdempotency(
-		ctx,
-		tx,
-		practiceID,
-		command.Identity.Subject,
-		command.IdempotencyKey,
-	)
+	replayed, err := loadNewAttempt(ctx, tx, original.Thread.ID, original.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.Commit(ctx); err != nil {
-			return Message{}, false, fmt.Errorf("commit empty Message new-attempt replay: %w", err)
-		}
 		return Message{}, false, nil
 	}
 	if err != nil {
 		return Message{}, false, err
-	}
-	if replayed.RetryOfMessageID != originalMessageID {
-		return Message{}, false, ErrConflict
 	}
 	if _, err := m.access.LockMutationAuthorization(
 		ctx,
@@ -1240,7 +1237,8 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var command ProviderCommand
-	var practiceID, locationID string
+	var practiceID string
+	var commandCreatedAt time.Time
 	var attachmentID string
 	var acknowledgementCreatedAt *time.Time
 	var blocked, active bool
@@ -1249,7 +1247,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 			provider_command.id::text,
 			message.id::text,
 			message.practice_id::text,
-			message.location_id::text,
+			provider_command.created_at,
 			message.sender,
 			message.destination,
 			COALESCE(message.body, ''),
@@ -1284,7 +1282,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		&command.ID,
 		&command.MessageID,
 		&practiceID,
-		&locationID,
+		&commandCreatedAt,
 		&command.Sender,
 		&command.Destination,
 		&command.Body,
@@ -1358,27 +1356,41 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	}
 
 	result, providerErr := m.provider.Send(ctx, command)
-	finishTx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return true, fmt.Errorf("begin Message provider result: %w", err)
-	}
-	defer func() { _ = finishTx.Rollback(ctx) }()
+	resultCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		providerResultWriteTimeout,
+	)
+	defer cancel()
 	commandState := "SENT"
 	deliveryState := DeliverySent
 	errorCode := ""
 	providerMessageID := strings.TrimSpace(result.MessageID)
+	finishedAt := m.now()
 	if providerErr != nil || providerMessageID == "" {
 		commandState = "UNKNOWN"
 		deliveryState = DeliveryUnknown
 		errorCode = "PROVIDER_OUTCOME_UNKNOWN"
-		if errors.Is(providerErr, ErrRejected) {
+		switch {
+		case errors.Is(providerErr, ErrRejected):
 			commandState = "FAILED"
 			deliveryState = DeliveryFailed
 			errorCode = "PROVIDER_REJECTED"
+		case errors.Is(providerErr, ErrTemporary):
+			providerMessageID = ""
+			errorCode = "PROVIDER_TEMPORARILY_UNAVAILABLE"
+			if finishedAt.Before(commandCreatedAt.Add(providerTemporaryRetryWindow)) {
+				return true, m.deferTemporaryCommand(resultCtx, command.ID, finishedAt)
+			}
+			commandState = "FAILED"
+			deliveryState = DeliveryFailed
 		}
 	}
-	finishedAt := m.now()
-	if _, err := finishTx.Exec(ctx, `
+	finishTx, err := m.database.BeginTx(resultCtx, pgx.TxOptions{})
+	if err != nil {
+		return true, fmt.Errorf("begin Message provider result: %w", err)
+	}
+	defer func() { _ = finishTx.Rollback(resultCtx) }()
+	if _, err := finishTx.Exec(resultCtx, `
 		UPDATE messaging_provider_commands
 		SET
 			state = $2,
@@ -1395,7 +1407,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	`, command.ID, commandState, providerMessageID, errorCode, finishedAt); err != nil {
 		return true, fmt.Errorf("record Message provider command result: %w", err)
 	}
-	if _, err := finishTx.Exec(ctx, `
+	if _, err := finishTx.Exec(resultCtx, `
 		UPDATE messaging_messages
 		SET
 			delivery_state = $2,
@@ -1408,22 +1420,41 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("project Message provider result: %w", err)
 	}
 	if m.work != nil {
-		if err := m.work.ApplyTextReply(ctx, finishTx, command.MessageID); err != nil {
+		if err := m.work.ApplyTextReply(resultCtx, finishTx, command.MessageID); err != nil {
 			return true, err
 		}
 	}
 	if _, err := m.access.RecordWorkspaceChange(
-		ctx,
+		resultCtx,
 		finishTx,
 		practiceID,
 	); err != nil {
 		return true, err
 	}
-	if err := finishTx.Commit(ctx); err != nil {
+	if err := finishTx.Commit(resultCtx); err != nil {
 		return true, fmt.Errorf("commit Message provider result: %w", err)
 	}
-	_ = locationID
 	return true, nil
+}
+
+func (m *Module) deferTemporaryCommand(
+	ctx context.Context,
+	commandID string,
+	now time.Time,
+) error {
+	if _, err := m.database.Exec(ctx, `
+		UPDATE messaging_provider_commands
+		SET
+			state = 'PENDING',
+			last_error_code = 'PROVIDER_TEMPORARILY_UNAVAILABLE',
+			write_started_at = NULL,
+			next_attempt_at = $3,
+			updated_at = $2
+		WHERE id = $1 AND state = 'WRITING'
+	`, commandID, now, now.Add(providerTemporaryRetryDelay)); err != nil {
+		return fmt.Errorf("defer temporarily unavailable Message command: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
@@ -1586,7 +1617,7 @@ func (m *Module) ReconcileNextCommand(ctx context.Context) (bool, error) {
 	}
 	next, changed, contradictory := advanceDelivery(current, result.State)
 	commandState := "SENT"
-	if result.State == DeliveryFailed {
+	if next == DeliveryFailed {
 		commandState = "FAILED"
 	}
 	if contradictory {
@@ -2550,13 +2581,8 @@ func deliveryEvidence(
 	eventType string,
 	status string,
 ) (DeliveryState, bool) {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "sent", "accepted", "queued":
-		return DeliverySent, true
-	case "delivered":
-		return DeliveryDelivered, true
-	case "failed", "sending_failed", "delivery_failed", "undelivered":
-		return DeliveryFailed, true
+	if state, known := providerDeliveryState(status); known {
+		return state, true
 	}
 	if eventType == "message.sent" {
 		return DeliverySent, true
@@ -2580,7 +2606,8 @@ func advanceDelivery(
 		}
 		return current, false, false
 	case DeliveryDelivered, DeliveryFailed:
-		return current, false, evidence != current
+		return current, false,
+			evidence == DeliveryDelivered || evidence == DeliveryFailed
 	default:
 		return current, false, false
 	}
@@ -2604,6 +2631,96 @@ func isStart(body string) bool {
 	}
 }
 
+const messageColumns = `
+	message.id::text,
+	thread.id::text,
+	thread.practice_id::text,
+	thread.location_id::text,
+	location.name,
+	thread.office_phone,
+	thread.external_phone,
+	COALESCE(thread.display_name, ''),
+	COALESCE(thread.name_source, ''),
+	thread.outbound_blocked,
+	thread.created_at,
+	thread.updated_at,
+	message.direction,
+	COALESCE(message.body, ''),
+	message.sender,
+	message.destination,
+	message.delivery_state,
+	COALESCE(message.safe_failure_code, ''),
+	COALESCE(message.provider_message_id, ''),
+	COALESCE(message.task_id::text, ''),
+	COALESCE(message.retry_of_message_id::text, ''),
+	COALESCE(message.created_by_kind, ''),
+	COALESCE(message.created_by_subject, ''),
+	COALESCE(attachment.id::text, ''),
+	COALESCE(attachment.direction, ''),
+	COALESCE(attachment.state, ''),
+	COALESCE(attachment.file_name, ''),
+	COALESCE(attachment.content_type, ''),
+	COALESCE(attachment.byte_size, 0),
+	COALESCE(attachment.created_at, message.created_at),
+	COALESCE(attachment.updated_at, message.updated_at),
+	message.created_at,
+	message.updated_at,
+	message.version`
+
+func scanMessage(row pgx.Row, extra ...any) (Message, error) {
+	var result Message
+	var attachment Attachment
+	var createdByKind access.ActorKind
+	var createdBySubject string
+	destinations := append([]any{
+		&result.ID,
+		&result.Thread.ID,
+		&result.Thread.PracticeID,
+		&result.Thread.LocationID,
+		&result.Thread.LocationName,
+		&result.Thread.OfficePhone,
+		&result.Thread.ExternalPhone,
+		&result.Thread.DisplayName,
+		&result.Thread.NameSource,
+		&result.Thread.OutboundBlocked,
+		&result.Thread.CreatedAt,
+		&result.Thread.UpdatedAt,
+		&result.Direction,
+		&result.Body,
+		&result.Sender,
+		&result.Destination,
+		&result.Delivery,
+		&result.SafeFailureCode,
+		&result.ProviderMessageID,
+		&result.TaskID,
+		&result.RetryOfMessageID,
+		&createdByKind,
+		&createdBySubject,
+		&attachment.ID,
+		&attachment.Direction,
+		&attachment.State,
+		&attachment.FileName,
+		&attachment.ContentType,
+		&attachment.ByteSize,
+		&attachment.CreatedAt,
+		&attachment.UpdatedAt,
+		&result.CreatedAt,
+		&result.UpdatedAt,
+		&result.Version,
+	}, extra...)
+	if err := row.Scan(destinations...); err != nil {
+		return Message{}, err
+	}
+	if attachment.ID != "" {
+		attachment.MessageID = result.ID
+		result.Attachment = &attachment
+	}
+	if createdByKind != "" {
+		result.CreatedBy = &ActorSnapshot{Kind: createdByKind, Subject: createdBySubject}
+	}
+	return result, nil
+}
+
 func loadMessageByIdempotency(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -2611,44 +2728,9 @@ func loadMessageByIdempotency(
 	actorSubject string,
 	key string,
 ) (Message, []byte, error) {
-	var result Message
 	var fingerprint []byte
-	row := tx.QueryRow(ctx, `
-		SELECT
-			message.id::text,
-			thread.id::text,
-			thread.practice_id::text,
-			thread.location_id::text,
-			location.name,
-			thread.office_phone,
-			thread.external_phone,
-			COALESCE(thread.display_name, ''),
-			COALESCE(thread.name_source, ''),
-			thread.outbound_blocked,
-			thread.created_at,
-			thread.updated_at,
-			message.direction,
-			COALESCE(message.body, ''),
-			message.sender,
-			message.destination,
-			message.delivery_state,
-			COALESCE(message.safe_failure_code, ''),
-			COALESCE(message.provider_message_id, ''),
-			COALESCE(message.task_id::text, ''),
-			COALESCE(message.retry_of_message_id::text, ''),
-			COALESCE(message.created_by_kind, ''),
-			COALESCE(message.created_by_subject, ''),
-			COALESCE(attachment.id::text, ''),
-			COALESCE(attachment.direction, ''),
-			COALESCE(attachment.state, ''),
-			COALESCE(attachment.file_name, ''),
-			COALESCE(attachment.content_type, ''),
-			COALESCE(attachment.byte_size, 0),
-			COALESCE(attachment.created_at, message.created_at),
-			COALESCE(attachment.updated_at, message.updated_at),
-			message.created_at,
-			message.updated_at,
-			message.version,
+	result, err := scanMessage(tx.QueryRow(ctx, `
+		SELECT `+messageColumns+`,
 			command.input_fingerprint
 		FROM messaging_provider_commands command
 		JOIN messaging_messages message ON message.id = command.message_id
@@ -2661,54 +2743,7 @@ func loadMessageByIdempotency(
 		WHERE command.practice_id = $1
 			AND command.actor_subject = $2
 			AND command.idempotency_key = $3
-	`, practiceID, actorSubject, key)
-	var attachment Attachment
-	var createdByKind access.ActorKind
-	var createdBySubject string
-	err := row.Scan(
-		&result.ID,
-		&result.Thread.ID,
-		&result.Thread.PracticeID,
-		&result.Thread.LocationID,
-		&result.Thread.LocationName,
-		&result.Thread.OfficePhone,
-		&result.Thread.ExternalPhone,
-		&result.Thread.DisplayName,
-		&result.Thread.NameSource,
-		&result.Thread.OutboundBlocked,
-		&result.Thread.CreatedAt,
-		&result.Thread.UpdatedAt,
-		&result.Direction,
-		&result.Body,
-		&result.Sender,
-		&result.Destination,
-		&result.Delivery,
-		&result.SafeFailureCode,
-		&result.ProviderMessageID,
-		&result.TaskID,
-		&result.RetryOfMessageID,
-		&createdByKind,
-		&createdBySubject,
-		&attachment.ID,
-		&attachment.Direction,
-		&attachment.State,
-		&attachment.FileName,
-		&attachment.ContentType,
-		&attachment.ByteSize,
-		&attachment.CreatedAt,
-		&attachment.UpdatedAt,
-		&result.CreatedAt,
-		&result.UpdatedAt,
-		&result.Version,
-		&fingerprint,
-	)
-	if err == nil && attachment.ID != "" {
-		attachment.MessageID = result.ID
-		result.Attachment = &attachment
-	}
-	if err == nil && createdByKind != "" {
-		result.CreatedBy = &ActorSnapshot{Kind: createdByKind, Subject: createdBySubject}
-	}
+	`, practiceID, actorSubject, key), &fingerprint)
 	return result, fingerprint, err
 }
 
@@ -2717,43 +2752,8 @@ func loadMessage(
 	tx pgx.Tx,
 	messageID string,
 ) (Message, error) {
-	var result Message
-	row := tx.QueryRow(ctx, `
-		SELECT
-			message.id::text,
-			thread.id::text,
-			thread.practice_id::text,
-			thread.location_id::text,
-			location.name,
-			thread.office_phone,
-			thread.external_phone,
-			COALESCE(thread.display_name, ''),
-			COALESCE(thread.name_source, ''),
-			thread.outbound_blocked,
-			thread.created_at,
-			thread.updated_at,
-			message.direction,
-			COALESCE(message.body, ''),
-			message.sender,
-			message.destination,
-			message.delivery_state,
-			COALESCE(message.safe_failure_code, ''),
-			COALESCE(message.provider_message_id, ''),
-			COALESCE(message.task_id::text, ''),
-			COALESCE(message.retry_of_message_id::text, ''),
-			COALESCE(message.created_by_kind, ''),
-			COALESCE(message.created_by_subject, ''),
-			COALESCE(attachment.id::text, ''),
-			COALESCE(attachment.direction, ''),
-			COALESCE(attachment.state, ''),
-			COALESCE(attachment.file_name, ''),
-			COALESCE(attachment.content_type, ''),
-			COALESCE(attachment.byte_size, 0),
-			COALESCE(attachment.created_at, message.created_at),
-			COALESCE(attachment.updated_at, message.updated_at),
-			message.created_at,
-			message.updated_at,
-			message.version
+	result, err := scanMessage(tx.QueryRow(ctx, `
+		SELECT `+messageColumns+`
 		FROM messaging_messages message
 		LEFT JOIN messaging_attachments attachment
 			ON attachment.message_id = message.id
@@ -2763,57 +2763,30 @@ func loadMessage(
 			AND location.id = thread.location_id
 		WHERE message.id = $1
 		FOR SHARE OF message, thread
-	`, messageID)
-	var attachment Attachment
-	var createdByKind access.ActorKind
-	var createdBySubject string
-	err := row.Scan(
-		&result.ID,
-		&result.Thread.ID,
-		&result.Thread.PracticeID,
-		&result.Thread.LocationID,
-		&result.Thread.LocationName,
-		&result.Thread.OfficePhone,
-		&result.Thread.ExternalPhone,
-		&result.Thread.DisplayName,
-		&result.Thread.NameSource,
-		&result.Thread.OutboundBlocked,
-		&result.Thread.CreatedAt,
-		&result.Thread.UpdatedAt,
-		&result.Direction,
-		&result.Body,
-		&result.Sender,
-		&result.Destination,
-		&result.Delivery,
-		&result.SafeFailureCode,
-		&result.ProviderMessageID,
-		&result.TaskID,
-		&result.RetryOfMessageID,
-		&createdByKind,
-		&createdBySubject,
-		&attachment.ID,
-		&attachment.Direction,
-		&attachment.State,
-		&attachment.FileName,
-		&attachment.ContentType,
-		&attachment.ByteSize,
-		&attachment.CreatedAt,
-		&attachment.UpdatedAt,
-		&result.CreatedAt,
-		&result.UpdatedAt,
-		&result.Version,
-	)
+	`, messageID))
 	if err != nil {
 		return Message{}, fmt.Errorf("load Message: %w", err)
 	}
-	if attachment.ID != "" {
-		attachment.MessageID = result.ID
-		result.Attachment = &attachment
-	}
-	if createdByKind != "" {
-		result.CreatedBy = &ActorSnapshot{Kind: createdByKind, Subject: createdBySubject}
-	}
 	return result, nil
+}
+
+func loadNewAttempt(
+	ctx context.Context,
+	tx pgx.Tx,
+	threadID string,
+	originalMessageID string,
+) (Message, error) {
+	var attemptID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM messaging_messages
+		WHERE thread_id = $1 AND retry_of_message_id = $2
+		ORDER BY created_at, id
+		LIMIT 1
+	`, threadID, originalMessageID).Scan(&attemptID); err != nil {
+		return Message{}, err
+	}
+	return loadMessage(ctx, tx, attemptID)
 }
 
 func loadThread(
