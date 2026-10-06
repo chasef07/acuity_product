@@ -728,7 +728,7 @@ func (m *Module) openPlayback(
 	); err != nil {
 		return PlaybackContent{}, ErrDenied
 	}
-	if _, err := m.access.LockMutationAuthorization(authorizationContext, tx,
+	if _, err := m.access.LockReadAuthorization(authorizationContext, tx,
 		identity, practiceID, locationID); err != nil {
 		return PlaybackContent{}, ErrDenied
 	}

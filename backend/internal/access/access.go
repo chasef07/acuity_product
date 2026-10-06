@@ -555,7 +555,7 @@ func (m *Module) ResolveActor(
 		return Authorization{}, fmt.Errorf("begin actor resolution: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	authorized, err := resolveAuthorization(ctx, tx, identity, practiceID, locationID, false)
+	authorized, err := resolveAuthorization(ctx, tx, identity, practiceID, locationID, false, false)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -572,7 +572,7 @@ func (m *Module) LockMutationAuthorization(
 	practiceID string,
 	locationID string,
 ) (Authorization, error) {
-	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, true)
+	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, true, true)
 }
 
 func (m *Module) LockReadAuthorization(
@@ -582,7 +582,7 @@ func (m *Module) LockReadAuthorization(
 	practiceID string,
 	locationID string,
 ) (Authorization, error) {
-	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, false)
+	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, false, true)
 }
 
 func (m *Module) ReadLocationAbitaOfficeKey(
@@ -631,13 +631,14 @@ func resolveAuthorization(
 	identity Identity,
 	practiceID string,
 	locationID string,
-	mutation bool,
+	requireLocation bool,
+	lockMembership bool,
 ) (Authorization, error) {
 	if tx == nil ||
 		!identity.EmailVerified ||
 		strings.TrimSpace(identity.Subject) == "" ||
 		strings.TrimSpace(practiceID) == "" ||
-		(mutation && strings.TrimSpace(locationID) == "") {
+		(requireLocation && strings.TrimSpace(locationID) == "") {
 		return Authorization{}, ErrDenied
 	}
 	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
@@ -648,7 +649,7 @@ func resolveAuthorization(
 	if isOperator {
 		authorization, err = loadOperatorAuthorization(ctx, tx, identity, practiceID)
 	} else {
-		authorization, err = loadMembershipAuthorization(ctx, tx, identity, practiceID, mutation)
+		authorization, err = loadMembershipAuthorization(ctx, tx, identity, practiceID, lockMembership)
 	}
 	if err != nil {
 		return Authorization{}, err
