@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1465,5 +1466,135 @@ func TestDiscoverActorKeepsOperatorPracticeAndLocationSnapshotConsistent(t *test
 	}
 	if len(refreshed.Practices) != 2 {
 		t.Fatalf("refreshed operator Practices = %d, want 2", len(refreshed.Practices))
+	}
+}
+
+func TestReadAuthorizationLeavesMembershipUnlockedAndHonorsRevocation(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	module := access.New(pool, nil)
+	operator := access.Identity{
+		Subject: "read-lock-operator-subject", Email: "read-lock-operator@acuity.test", EmailVerified: true,
+	}
+	if _, err := module.Provision(ctx, access.Provisioning{
+		Environment: "test", RequestedBy: "read-authorization-lock-regression",
+		PlatformOperators: []string{operator.Email},
+		Practices: []access.PracticeProvision{{
+			Key: "read-lock", Name: "Read Lock Practice",
+			Locations: []access.LocationProvision{
+				{Key: "first", Name: "First"},
+				{Key: "second", Name: "Second"},
+			},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key: "staff", Email: "read-lock-staff@acuity.test", Role: access.RoleStaff,
+				LocationScope:        access.LocationScopeSelected,
+				SelectedLocationKeys: []string{"first"},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision read authorization fixture: %v", err)
+	}
+	if _, err := module.DiscoverActor(ctx, operator); err != nil {
+		t.Fatalf("bind read authorization operator: %v", err)
+	}
+	member := access.Identity{
+		Subject: "read-lock-staff-subject", Email: "read-lock-staff@acuity.test", EmailVerified: true,
+	}
+	discovery, err := module.DiscoverActor(ctx, member)
+	if err != nil {
+		t.Fatalf("activate read authorization Membership: %v", err)
+	}
+	practiceID := discovery.Practices[0].ID
+	locationID := discovery.Practices[0].Locations[0].ID
+
+	resolved, err := module.ResolveActor(ctx, member, practiceID, "")
+	if err != nil {
+		t.Fatalf("resolve read authorization actor: %v", err)
+	}
+	recorder := &statementRecorder{Pool: pool}
+	recordedModule := access.New(recorder, nil)
+	readTx, err := recorder.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin read authorization: %v", err)
+	}
+	defer func() { _ = readTx.Rollback(ctx) }()
+	read, err := recordedModule.LockReadAuthorization(ctx, readTx, member, practiceID, "")
+	if err != nil {
+		t.Fatalf("read authorization: %v", err)
+	}
+	if !reflect.DeepEqual(read, resolved) {
+		t.Fatalf("read authorization = %#v, want %#v", read, resolved)
+	}
+	if read.Membership.ID == "" || len(read.Locations) != 1 || read.Locations[0].ID != locationID ||
+		read.ActiveLocation != nil {
+		t.Fatalf("read authorization scope = %#v", read)
+	}
+	scoped, err := recordedModule.LockReadAuthorization(ctx, readTx, member, practiceID, locationID)
+	if err != nil || scoped.ActiveLocation == nil || scoped.ActiveLocation.ID != locationID {
+		t.Fatalf("Location read authorization = %#v err=%v", scoped, err)
+	}
+	if recorder.count() == 0 {
+		t.Fatal("read authorization recorded no statements")
+	}
+	if got := recorder.countContaining("FOR SHARE") + recorder.countContaining("FOR UPDATE") +
+		recorder.countContaining("FOR KEY SHARE"); got != 0 {
+		t.Fatalf("read authorization row locks = %d, want 0", got)
+	}
+
+	mutationTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin mutation authorization: %v", err)
+	}
+	mutation, err := module.LockMutationAuthorization(ctx, mutationTx, member, practiceID, locationID)
+	if err != nil {
+		_ = mutationTx.Rollback(ctx)
+		t.Fatalf("mutation authorization: %v", err)
+	}
+	if mutation.Membership != read.Membership || mutation.ActiveLocation == nil ||
+		mutation.ActiveLocation.ID != locationID {
+		_ = mutationTx.Rollback(ctx)
+		t.Fatalf("mutation authorization = %#v", mutation)
+	}
+	blockedContext, cancelBlocked := context.WithTimeout(ctx, 300*time.Millisecond)
+	err = module.RevokeMembership(blockedContext, access.RevokeMembershipCommand{
+		Identity: operator, PracticeID: practiceID, MembershipID: read.Membership.ID,
+	})
+	cancelBlocked()
+	_ = mutationTx.Rollback(ctx)
+	if err == nil {
+		t.Fatal("revocation completed while a mutation authorization held the Membership")
+	}
+
+	revokeContext, cancelRevoke := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelRevoke()
+	if err := module.RevokeMembership(revokeContext, access.RevokeMembershipCommand{
+		Identity: operator, PracticeID: practiceID, MembershipID: read.Membership.ID,
+	}); err != nil {
+		t.Fatalf("revoke Membership while a read authorization is open: %v", err)
+	}
+	if _, err := module.LockReadAuthorization(ctx, readTx, member, practiceID, ""); !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("read authorization after revocation in open transaction error = %v", err)
+	}
+	if err := readTx.Commit(ctx); err != nil {
+		t.Fatalf("commit read authorization: %v", err)
+	}
+
+	for name, identity := range map[string]access.Identity{
+		"revoked": member,
+		"unknown": {Subject: "read-lock-unknown-subject", Email: "read-lock-unknown@acuity.test", EmailVerified: true},
+	} {
+		t.Run(name+" member is denied", func(t *testing.T) {
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			if _, err := module.LockReadAuthorization(ctx, tx, identity, practiceID, ""); !errors.Is(err, access.ErrDenied) {
+				t.Fatalf("whole-Practice read authorization error = %v", err)
+			}
+			if _, err := module.LockReadAuthorization(ctx, tx, identity, practiceID, locationID); !errors.Is(err, access.ErrDenied) {
+				t.Fatalf("Location read authorization error = %v", err)
+			}
+		})
 	}
 }

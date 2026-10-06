@@ -94,7 +94,7 @@ type Server struct {
 	workspace       *workspace.Module
 	serviceAuth     ServiceAuthenticator
 	observer        observability.Observer
-	analyticsActive atomic.Bool
+	analyticsActive atomic.Int32
 }
 
 type serverDependencies struct {
