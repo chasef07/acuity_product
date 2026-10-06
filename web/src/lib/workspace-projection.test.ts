@@ -1436,8 +1436,10 @@ test("back and forward restore the Task or page view in the URL", async () => {
 test("Manage agent pages are kept in the URL and restored by refresh and back", async () => {
   const realtime = deterministicRealtime()
   const navigation = memoryNavigation({ view: "manage-agent", page: "knowledge" })
+  const discovery = accessDiscovery()
+  discovery.practices[0].membership!.role = "ADMIN"
   const projection = createWorkspaceProjection({
-    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([task("first-task")]) }),
+    authority: deterministicAuthority({ discovery, snapshot: workspaceSnapshot(1), tasks: taskPage([task("first-task")]) }),
     realtime: realtime.adapter,
     preferences: memoryPreferences(),
     navigation,
@@ -1454,6 +1456,10 @@ test("Manage agent pages are kept in the URL and restored by refresh and back", 
   ])
   navigation.go({ view: "manage-agent", page: "insurance" })
   await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().selection.agentPage, "insurance")
+  navigation.go({ view: "analytics" })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().selection.view, "analytics")
   assert.equal(projection.getSnapshot().selection.agentPage, "insurance")
   navigation.go({ view: "manage-agent" })
   await projection.dispatch({ type: "navigation-changed" })

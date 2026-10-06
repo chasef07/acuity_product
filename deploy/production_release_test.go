@@ -626,6 +626,8 @@ func TestProductionDeployRequiresExactReleaseVerification(t *testing.T) {
 		"_IMAGE_TAG=${RELEASE_SHA}",
 		"USABLE_DATABASE_CONNECTIONS: ${{ vars.USABLE_DATABASE_CONNECTIONS }}",
 		"_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS}",
+		"_MIDDLEWARE_BASE_URL=${MIDDLEWARE_BASE_URL}",
+		"_MIDDLEWARE_API_SECRET_SECRET=${MIDDLEWARE_API_SECRET_SECRET}",
 		"url: https://acuity-web-cbuqwpsdsq-ue.a.run.app",
 	} {
 		if !strings.Contains(releaseContent, required) {
@@ -708,6 +710,15 @@ func commandIndex(commands []string, prefix string) int {
 		}
 	}
 	return -1
+}
+
+func runRelease(t *testing.T, extra ...string) (string, []byte, error) {
+	t.Helper()
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	command := exec.Command("bash", filepath.Join(releaseDeployDirectory(t), "deploy-production-release.sh"))
+	command.Env = append(append([]string{"PATH=" + path, "GCLOUD_CAPTURE=" + gcloudCapture, "CURL_CAPTURE=" + curlCapture}, releaseEnvironment()...), extra...)
+	output, err := command.CombinedOutput()
+	return gcloudCapture, output, err
 }
 
 func installReleaseFakes(t *testing.T) (string, string, string) {

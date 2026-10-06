@@ -2,14 +2,11 @@ package knowledge
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/google/uuid"
 )
-
-var ErrNoOffice = errors.New("Location has no single Abita Office Route")
 
 type RevisionSummary struct {
 	ID        string    `json:"id"`
@@ -26,12 +23,9 @@ func (m *Module) ReadLocation(ctx context.Context, identity access.Identity, pra
 	if uuid.Validate(practiceID) != nil || uuid.Validate(locationID) != nil {
 		return LocationKnowledge{}, ErrInvalidInput
 	}
-	keys, err := m.access.ReadLocationAbitaOfficeKeys(ctx, identity, practiceID, locationID)
+	officeKey, err := m.access.ReadLocationAbitaOfficeKey(ctx, identity, practiceID, locationID)
 	if err != nil {
 		return LocationKnowledge{}, err
-	}
-	if len(keys) != 1 {
-		return LocationKnowledge{}, ErrNoOffice
 	}
 	rows, err := m.db.Query(ctx, `
 		SELECT r.id::text, r.created_at, p.section_id, p.title, p.text
@@ -40,7 +34,7 @@ func (m *Module) ReadLocation(ctx context.Context, identity access.Identity, pra
 		JOIN knowledge_passages p ON p.revision_id = r.id
 		WHERE c.practice_id = $1 AND c.office_key = $2
 		ORDER BY p.position NULLS LAST, p.section_id
-	`, practiceID, keys[0])
+	`, practiceID, officeKey)
 	if err != nil {
 		return LocationKnowledge{}, err
 	}

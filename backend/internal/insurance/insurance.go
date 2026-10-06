@@ -12,7 +12,6 @@ import (
 
 var (
 	ErrInvalidInput = errors.New("invalid insurance input")
-	ErrNoOffice     = errors.New("Location has no single Abita Office Route")
 	ErrUnavailable  = errors.New("insurance rules are unavailable")
 )
 
@@ -47,12 +46,8 @@ type PlansPage struct {
 	Plans      []Plan   `json:"plans"`
 }
 
-type Rules interface {
-	Plans(ctx context.Context, office string, coverage Coverage) ([]Plan, error)
-}
-
 type Routes interface {
-	ReadLocationAbitaOfficeKeys(ctx context.Context, identity access.Identity, practiceID, locationID string) ([]string, error)
+	ReadLocationAbitaOfficeKey(ctx context.Context, identity access.Identity, practiceID, locationID string) (string, error)
 }
 
 type Query struct {
@@ -64,10 +59,10 @@ type Query struct {
 
 type Module struct {
 	routes Routes
-	rules  Rules
+	rules  *MiddlewareClient
 }
 
-func New(routes Routes, rules Rules) (*Module, error) {
+func New(routes Routes, rules *MiddlewareClient) (*Module, error) {
 	if routes == nil || rules == nil {
 		return nil, ErrInvalidInput
 	}
@@ -75,12 +70,15 @@ func New(routes Routes, rules Rules) (*Module, error) {
 }
 
 func (m *Module) Plans(ctx context.Context, query Query) (PlansPage, error) {
-	office, err := m.office(ctx, query)
+	if query.Coverage != Medical && query.Coverage != RoutineVision || uuid.Validate(query.PracticeID) != nil || uuid.Validate(query.LocationID) != nil {
+		return PlansPage{}, ErrInvalidInput
+	}
+	office, err := m.routes.ReadLocationAbitaOfficeKey(ctx, query.Identity, query.PracticeID, query.LocationID)
 	if err != nil {
 		return PlansPage{}, err
 	}
 	plans, err := m.rules.Plans(ctx, office, query.Coverage)
-	if errors.Is(err, ErrNoOffice) {
+	if errors.Is(err, access.ErrNoOfficeRoute) {
 		return PlansPage{}, err
 	}
 	if err != nil {
@@ -98,20 +96,6 @@ func (m *Module) Plans(ctx context.Context, query Query) (PlansPage, error) {
 		page.Plans = append(page.Plans, plan)
 	}
 	return page, nil
-}
-
-func (m *Module) office(ctx context.Context, query Query) (string, error) {
-	if query.Coverage != Medical && query.Coverage != RoutineVision || uuid.Validate(query.PracticeID) != nil || uuid.Validate(query.LocationID) != nil {
-		return "", ErrInvalidInput
-	}
-	keys, err := m.routes.ReadLocationAbitaOfficeKeys(ctx, query.Identity, query.PracticeID, query.LocationID)
-	if err != nil {
-		return "", err
-	}
-	if len(keys) != 1 {
-		return "", ErrNoOffice
-	}
-	return keys[0], nil
 }
 
 func knownPlan(plan Plan) bool {

@@ -334,14 +334,22 @@ the next release apply them:
 - `MIDDLEWARE_API_SECRET_SECRET`: the Secret Manager secret name,
   `acuity-product-middleware-api-secret`.
 
-The release validates both before any Cloud Run change and fails if only one is
-set. It adds `MIDDLEWARE_BASE_URL` with `--update-env-vars` and binds
+The release validates both before any Google Cloud call and fails if only one
+is set. It adds `MIDDLEWARE_BASE_URL` with `--update-env-vars` and binds
 `MIDDLEWARE_API_SECRET=<secret>:latest` with `--update-secrets` on the new
 `acuity-portal-api` revision, keeping every existing variable and secret. With
 neither variable set, the release commands are unchanged.
 
-Removing the GitHub variables does not remove live configuration. To turn the
-Insurance list off again, remove both values in one update:
+A green release proves only that the revision started with the configuration,
+not that the middleware answered. Open the Insurance list in Manage agent and
+confirm it shows plans before relying on it. A wrong `MIDDLEWARE_BASE_URL`
+shows "Insurance rules aren't available right now", the same as no
+configuration.
+
+To turn the Insurance list off again, first delete both GitHub variables so the
+next release does not re-add them. Releases pin traffic to a named revision, so
+removing the values creates a revision that serves nothing until traffic moves
+to it:
 
 ```sh
 gcloud run services update acuity-portal-api \
@@ -350,11 +358,35 @@ gcloud run services update acuity-portal-api \
   --remove-env-vars MIDDLEWARE_BASE_URL \
   --remove-secrets MIDDLEWARE_API_SECRET \
   --quiet
+revision="$(
+  gcloud run services describe acuity-portal-api \
+    --project acuity-health-prod \
+    --region us-east1 \
+    --format 'value(status.latestReadyRevisionName)'
+)"
+gcloud run services update-traffic acuity-portal-api \
+  --project acuity-health-prod \
+  --region us-east1 \
+  --to-revisions "${revision}=100" \
+  --quiet
 ```
 
-A green release proves only that the revision started with the configuration,
-not that the middleware answered. Open the Insurance list in Manage agent and
-confirm it shows plans before relying on it.
+Confirm the service sends 100% of traffic to `$revision` and that revision has
+no `MIDDLEWARE_` variable:
+
+```sh
+gcloud run services describe acuity-portal-api \
+  --project acuity-health-prod \
+  --region us-east1 \
+  --format 'value(status.traffic[].revisionName,status.traffic[].percent)'
+gcloud run revisions describe "$revision" \
+  --project acuity-health-prod \
+  --region us-east1 \
+  --format 'value(spec.containers[0].env[].name)' |
+  grep -c MIDDLEWARE_
+```
+
+The first command prints only `$revision` and `100`; the second prints `0`.
 
 ## Clean-stack bootstrap
 

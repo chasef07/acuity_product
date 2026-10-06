@@ -79,7 +79,7 @@ func (server *Server) QueryLocationKnowledge(w http.ResponseWriter, r *http.Requ
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, access.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
-	case errors.Is(err, knowledge.ErrNoOffice):
+	case errors.Is(err, access.ErrNoOfficeRoute):
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Knowledge isn't available for this Location.", false)
 	default:
 		if r.Context().Err() == nil {

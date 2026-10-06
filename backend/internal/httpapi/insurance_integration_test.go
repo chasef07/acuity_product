@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -77,7 +78,7 @@ func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) 
 		offices = append(offices, r.URL.Query().Get("office"))
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"plans":[{"planId":"synthetic-hmo-medical","label":"Synthetic HMO","outcome":"accepted"}]}`))
+		_, _ = fmt.Fprintf(w, `{"officeId":%q,"coverage":%q,"plans":[{"planId":"synthetic-hmo-medical","label":"Synthetic HMO","outcome":"accepted"}]}`, r.URL.Query().Get("office"), r.URL.Query().Get("coverage"))
 	}))
 	defer middleware.Close()
 	rules, err := insurance.NewMiddlewareClient(middleware.URL, "synthetic-middleware-secret", nil)

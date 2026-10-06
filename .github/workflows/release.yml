@@ -80,6 +80,9 @@ jobs:
           MIDDLEWARE_BASE_URL: ${{ vars.MIDDLEWARE_BASE_URL }}
           MIDDLEWARE_API_SECRET_SECRET: ${{ vars.MIDDLEWARE_API_SECRET_SECRET }}
         run: |
+          case "${MIDDLEWARE_BASE_URL}${MIDDLEWARE_API_SECRET_SECRET}" in
+            *,*) echo "::error::MIDDLEWARE_BASE_URL and MIDDLEWARE_API_SECRET_SECRET must not contain commas"; exit 1 ;;
+          esac
           gcloud builds submit \
             --project="${{ vars.GCP_PROJECT_ID }}" \
             --region="${{ vars.GCP_REGION }}" \

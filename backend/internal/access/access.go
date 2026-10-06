@@ -32,6 +32,7 @@ var (
 	ErrDenied             = errors.New("access denied")
 	ErrAccessGrantClaimed = errors.New("Access Grant already claimed")
 	ErrInvalidInput       = errors.New("invalid access input")
+	ErrNoOfficeRoute      = errors.New("Location has no single Abita Office Route")
 )
 
 var abitaOfficeKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
@@ -642,22 +643,22 @@ func (m *Module) LockReadAuthorization(
 	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, false)
 }
 
-func (m *Module) ReadLocationAbitaOfficeKeys(
+func (m *Module) ReadLocationAbitaOfficeKey(
 	ctx context.Context,
 	identity Identity,
 	practiceID string,
 	locationID string,
-) ([]string, error) {
+) (string, error) {
 	if m.database == nil || strings.TrimSpace(locationID) == "" {
-		return nil, ErrDenied
+		return "", ErrDenied
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("begin Abita Office Route read: %w", err)
+		return "", fmt.Errorf("begin Abita Office Route read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := m.LockReadAuthorization(ctx, tx, identity, practiceID, locationID); err != nil {
-		return nil, err
+		return "", err
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT office_key
@@ -667,16 +668,19 @@ func (m *Module) ReadLocationAbitaOfficeKeys(
 		ORDER BY office_key
 	`, practiceID, locationID)
 	if err != nil {
-		return nil, fmt.Errorf("read Abita Office Routes: %w", err)
+		return "", fmt.Errorf("read Abita Office Routes: %w", err)
 	}
 	keys, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		return nil, fmt.Errorf("scan Abita Office Routes: %w", err)
+		return "", fmt.Errorf("scan Abita Office Routes: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit Abita Office Route read: %w", err)
+		return "", fmt.Errorf("commit Abita Office Route read: %w", err)
 	}
-	return keys, nil
+	if len(keys) != 1 {
+		return "", ErrNoOfficeRoute
+	}
+	return keys[0], nil
 }
 
 func (m *Module) lockAuthorization(

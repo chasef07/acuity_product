@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -22,12 +23,12 @@ const (
 )
 
 type fakeRoutes struct {
-	keys []string
-	err  error
+	key string
+	err error
 }
 
-func (routes fakeRoutes) ReadLocationAbitaOfficeKeys(context.Context, access.Identity, string, string) ([]string, error) {
-	return routes.keys, routes.err
+func (routes fakeRoutes) ReadLocationAbitaOfficeKey(context.Context, access.Identity, string, string) (string, error) {
+	return routes.key, routes.err
 }
 
 type middlewareCall struct {
@@ -41,6 +42,9 @@ func fakeMiddleware(t *testing.T, status int, response string) (*httptest.Server
 		calls = append(calls, middlewareCall{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, authorization: r.Header.Get("Authorization")})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
+		if strings.HasPrefix(response, "[") {
+			response = fmt.Sprintf(`{"officeId":%q,"coverage":%q,"plans":%s}`, r.URL.Query().Get("office"), r.URL.Query().Get("coverage"), response)
+		}
 		_, _ = w.Write([]byte(response))
 	}))
 	t.Cleanup(server.Close)
@@ -69,7 +73,7 @@ func TestPlansMapsTheMiddlewareListForTheLocationOffice(t *testing.T) {
 		{"planId":"synthetic-hmo-medical","label":"Synthetic HMO","names":["Synthetic Health HMO"],"carrierCode":"SYN01","carrierId":"car00001","carrierName":"SYNTHETIC CARRIER","outcome":"needs_staff_task","allowedProviders":["Dr. Example"],"requirements":["pcp_referral","staff_verify"],"callerNotice":"Bring your referral.","note":"Referral from PCP","acceptedAt":[]},
 		{"planId":"synthetic-medicaid-medical","label":"Synthetic Medicaid","outcome":"not_accepted","acceptedAt":["Sweetwater"]}
 	]}`)
-	module := newModule(t, fakeRoutes{keys: []string{"hollywood"}}, server.URL, nil)
+	module := newModule(t, fakeRoutes{key: "hollywood"}, server.URL, nil)
 
 	page, err := module.Plans(context.Background(), query(insurance.Medical))
 	if err != nil {
@@ -92,10 +96,10 @@ func TestPlansMapsTheMiddlewareListForTheLocationOffice(t *testing.T) {
 	}
 }
 
-func TestOfficeKeysTranslateOnlySweetwaterOptical(t *testing.T) {
-	for key, office := range map[string]string{"sweetwater-optical": "sweetwater", "sweetwater": "sweetwater", "north-miami-beach-optical": "north-miami-beach-optical", "spring-hill": "spring-hill"} {
-		server, calls := fakeMiddleware(t, http.StatusOK, `{"plans":[]}`)
-		module := newModule(t, fakeRoutes{keys: []string{key}}, server.URL, nil)
+func TestOfficeKeysTranslateToMiddlewareOffices(t *testing.T) {
+	for key, office := range map[string]string{"sweetwater-optical": "sweetwater", "sweetwater": "sweetwater", "hollywood": "hollywood", "north-miami-beach-optical": "north_miami_beach_optical", "spring-hill": "spring_hill"} {
+		server, calls := fakeMiddleware(t, http.StatusOK, `[]`)
+		module := newModule(t, fakeRoutes{key: key}, server.URL, nil)
 		if _, err := module.Plans(context.Background(), query(insurance.RoutineVision)); err != nil {
 			t.Fatalf("%s plans: %v", key, err)
 		}
@@ -106,8 +110,8 @@ func TestOfficeKeysTranslateOnlySweetwaterOptical(t *testing.T) {
 }
 
 func TestEmptyPlanListIsAnEmptyPage(t *testing.T) {
-	server, _ := fakeMiddleware(t, http.StatusOK, `{"officeId":"spring-hill","coverage":"routine_vision","plans":[]}`)
-	page, err := newModule(t, fakeRoutes{keys: []string{"spring-hill"}}, server.URL, nil).Plans(context.Background(), query(insurance.RoutineVision))
+	server, _ := fakeMiddleware(t, http.StatusOK, `[]`)
+	page, err := newModule(t, fakeRoutes{key: "spring-hill"}, server.URL, nil).Plans(context.Background(), query(insurance.RoutineVision))
 	if err != nil || page.Plans == nil || len(page.Plans) != 0 {
 		t.Fatalf("empty page = %#v, %v", page, err)
 	}
@@ -119,28 +123,29 @@ func TestMiddlewareFailuresAreUnavailable(t *testing.T) {
 		response string
 	}{
 		"server error":        {http.StatusInternalServerError, `{}`},
-		"bad gateway":         {http.StatusBadGateway, `{}`},
+		"missing route":       {http.StatusNotFound, `{}`},
 		"wrong secret":        {http.StatusUnauthorized, `{}`},
 		"invalid json":        {http.StatusOK, `not json`},
-		"missing plans":       {http.StatusOK, `{"officeId":"hollywood"}`},
-		"question outcome":    {http.StatusOK, `{"plans":[{"planId":"p","label":"P","outcome":"needs_clarification"}]}`},
-		"unknown requirement": {http.StatusOK, `{"plans":[{"planId":"p","label":"P","outcome":"accepted","requirements":["eligibility_call"]}]}`},
+		"missing plans":       {http.StatusOK, `{"officeId":"hollywood","coverage":"medical"}`},
+		"other office":        {http.StatusOK, `{"officeId":"sweetwater","coverage":"medical","plans":[]}`},
+		"other coverage":      {http.StatusOK, `{"officeId":"hollywood","coverage":"routine_vision","plans":[]}`},
+		"missing label":       {http.StatusOK, `[{"planId":"p","outcome":"accepted"}]`},
+		"question outcome":    {http.StatusOK, `[{"planId":"p","label":"P","outcome":"needs_clarification"}]`},
+		"unknown requirement": {http.StatusOK, `[{"planId":"p","label":"P","outcome":"accepted","requirements":["eligibility_call"]}]`},
 	} {
 		server, _ := fakeMiddleware(t, scenario.status, scenario.response)
-		module := newModule(t, fakeRoutes{keys: []string{"hollywood"}}, server.URL, nil)
-		if _, err := module.Plans(context.Background(), query(insurance.Medical)); !errors.Is(err, insurance.ErrUnavailable) || errors.Is(err, insurance.ErrNoOffice) {
+		module := newModule(t, fakeRoutes{key: "hollywood"}, server.URL, nil)
+		if _, err := module.Plans(context.Background(), query(insurance.Medical)); !errors.Is(err, insurance.ErrUnavailable) || errors.Is(err, access.ErrNoOfficeRoute) {
 			t.Errorf("%s plans error = %v, want unavailable", name, err)
 		}
 	}
 }
 
 func TestMiddlewareRejectionMeansTheOfficeIsUnavailable(t *testing.T) {
-	for name, status := range map[string]int{"unknown office": http.StatusBadRequest, "not found": http.StatusNotFound} {
-		server, _ := fakeMiddleware(t, status, `Unknown office`)
-		module := newModule(t, fakeRoutes{keys: []string{"dev"}}, server.URL, nil)
-		if _, err := module.Plans(context.Background(), query(insurance.Medical)); !errors.Is(err, insurance.ErrNoOffice) || errors.Is(err, insurance.ErrUnavailable) {
-			t.Errorf("%s plans error = %v, want no office", name, err)
-		}
+	server, _ := fakeMiddleware(t, http.StatusBadRequest, `Unknown office`)
+	module := newModule(t, fakeRoutes{key: "dev"}, server.URL, nil)
+	if _, err := module.Plans(context.Background(), query(insurance.Medical)); !errors.Is(err, access.ErrNoOfficeRoute) || errors.Is(err, insurance.ErrUnavailable) {
+		t.Fatalf("plans error = %v, want no office", err)
 	}
 }
 
@@ -154,33 +159,26 @@ func TestMiddlewareTransportFailuresNameACoarseCause(t *testing.T) {
 	defer slow.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	_, err := newModule(t, fakeRoutes{keys: []string{"hollywood"}}, slow.URL, nil).Plans(ctx, query(insurance.Medical))
+	_, err := newModule(t, fakeRoutes{key: "hollywood"}, slow.URL, nil).Plans(ctx, query(insurance.Medical))
 	if !errors.Is(err, insurance.ErrUnavailable) || !strings.HasSuffix(err.Error(), "middleware plans request timed out") {
 		t.Fatalf("timed out plans error = %v", err)
 	}
 
 	closed := httptest.NewServer(http.NotFoundHandler())
 	closed.Close()
-	_, err = newModule(t, fakeRoutes{keys: []string{"hollywood"}}, closed.URL, nil).Plans(context.Background(), query(insurance.Medical))
+	_, err = newModule(t, fakeRoutes{key: "hollywood"}, closed.URL, nil).Plans(context.Background(), query(insurance.Medical))
 	if !errors.Is(err, insurance.ErrUnavailable) || !strings.HasSuffix(err.Error(), "middleware plans connection failed") ||
 		strings.Contains(err.Error(), closed.URL) || strings.Contains(err.Error(), secret) {
 		t.Fatalf("connection failure error = %v", err)
 	}
 }
 
-func TestLocationMustHaveExactlyOneOfficeAndBeAuthorized(t *testing.T) {
-	server, calls := fakeMiddleware(t, http.StatusOK, `{"plans":[]}`)
-	for name, scenario := range map[string]struct {
-		routes fakeRoutes
-		want   error
-	}{
-		"no route":       {fakeRoutes{keys: []string{}}, insurance.ErrNoOffice},
-		"several routes": {fakeRoutes{keys: []string{"hollywood", "sweetwater"}}, insurance.ErrNoOffice},
-		"denied":         {fakeRoutes{err: access.ErrDenied}, access.ErrDenied},
-	} {
-		module := newModule(t, scenario.routes, server.URL, nil)
-		if _, err := module.Plans(context.Background(), query(insurance.Medical)); !errors.Is(err, scenario.want) {
-			t.Errorf("%s plans error = %v, want %v", name, err, scenario.want)
+func TestLocationMustHaveOneOfficeAndBeAuthorized(t *testing.T) {
+	server, calls := fakeMiddleware(t, http.StatusOK, `[]`)
+	for _, want := range []error{access.ErrNoOfficeRoute, access.ErrDenied} {
+		module := newModule(t, fakeRoutes{err: want}, server.URL, nil)
+		if _, err := module.Plans(context.Background(), query(insurance.Medical)); !errors.Is(err, want) {
+			t.Errorf("plans error = %v, want %v", err, want)
 		}
 	}
 	if len(*calls) != 0 {
@@ -193,7 +191,9 @@ func TestInvalidQueriesAreRejectedBeforeAnyLookup(t *testing.T) {
 	badCoverage := query("dental")
 	badLocation := query(insurance.Medical)
 	badLocation.LocationID = "not-a-uuid"
-	for name, scenario := range map[string]insurance.Query{"coverage": badCoverage, "location": badLocation} {
+	badPractice := query(insurance.Medical)
+	badPractice.PracticeID = "not-a-uuid"
+	for name, scenario := range map[string]insurance.Query{"coverage": badCoverage, "location": badLocation, "practice": badPractice} {
 		if _, err := module.Plans(context.Background(), scenario); !errors.Is(err, insurance.ErrInvalidInput) {
 			t.Errorf("%s error = %v, want invalid input", name, err)
 		}
@@ -201,7 +201,7 @@ func TestInvalidQueriesAreRejectedBeforeAnyLookup(t *testing.T) {
 }
 
 func TestMiddlewareClientRequiresBaseURLAndSecret(t *testing.T) {
-	for _, scenario := range [][2]string{{"", secret}, {"middleware.example", secret}, {"https://middleware.example", ""}} {
+	for _, scenario := range [][2]string{{"", secret}, {"middleware.example", secret}, {"https://middleware.example", ""}, {"https://middleware.example", "   "}} {
 		if _, err := insurance.NewMiddlewareClient(scenario[0], scenario[1], nil); err == nil {
 			t.Errorf("client accepted base URL %q with secret set=%t", scenario[0], scenario[1] != "")
 		}

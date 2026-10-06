@@ -540,6 +540,15 @@ printf '\n' >>"$GCLOUD_CAPTURE"
 	return directory + ":" + os.Getenv("PATH"), capture
 }
 
+func runCloudRunCommands(t *testing.T, extra ...string) (string, []byte, error) {
+	t.Helper()
+	path, capture := installFakeGcloud(t)
+	command := exec.Command("sh", filepath.Join(productionDeployDirectory(t), "cloud-run-commands.example.sh"))
+	command.Env = append(append([]string{"PATH=" + path, "GCLOUD_CAPTURE=" + capture}, productionRuntimeEnvironment()...), extra...)
+	output, err := command.CombinedOutput()
+	return capture, output, err
+}
+
 func capturedGcloudCommands(t *testing.T, path string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(path)

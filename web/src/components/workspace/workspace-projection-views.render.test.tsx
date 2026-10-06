@@ -123,8 +123,9 @@ test("the sidebar shows Manage agent pages in place of Tasks only while Manage a
       </SidebarProvider>,
     ))
   await render({ ...projection, selection: { ...projection.selection, view: "manage-agent", agentPage: "insurance" } })
-  const nav = host.querySelector("[role='navigation'][aria-label='Manage agent']")
+  const nav = host.querySelector("nav")
   assert.ok(nav)
+  assert.equal(document.getElementById(nav.getAttribute("aria-labelledby") ?? "")?.textContent, "Manage agent")
   assert.deepEqual(Array.from(nav.querySelectorAll("button"), (button) => button.textContent), ["Transcripts", "Knowledge base", "Insurance list"])
   assert.equal(nav.querySelector("[aria-current='page']")?.textContent, "Insurance list")
   assert.match(host.textContent ?? "", /Acuity Health.*Workspace selector/)
@@ -137,7 +138,7 @@ test("the sidebar shows Manage agent pages in place of Tasks only while Manage a
   assert.deepEqual(intents, [{ type: "select-manage-agent", page: "knowledge" }])
 
   await render(projection)
-  assert.equal(host.querySelector("[aria-label='Manage agent']"), null)
+  assert.equal(host.querySelector("nav"), null)
   assert.ok(host.querySelector("input[aria-label='Search tasks, names, or phone']"))
   assert.ok(host.querySelector("[aria-label='Workspace folders']"))
   assert.match(host.textContent ?? "", /Recently completed/)

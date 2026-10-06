@@ -71,22 +71,11 @@ if [ -n "$MIDDLEWARE_BASE_URL" ] || [ -n "$MIDDLEWARE_API_SECRET_SECRET" ]; then
     echo "MIDDLEWARE_BASE_URL and MIDDLEWARE_API_SECRET_SECRET must be set together or not at all" >&2
     exit 1
   fi
-  case "$MIDDLEWARE_BASE_URL" in
-    *[!A-Za-z0-9._~:/-]*) middleware_url_valid=false ;;
-    https://[A-Za-z0-9]*) middleware_url_valid=true ;;
-    *) middleware_url_valid=false ;;
-  esac
-  if [ "$middleware_url_valid" != true ]; then
+  if ! MIDDLEWARE_BASE_URL="$MIDDLEWARE_BASE_URL" awk 'BEGIN { exit ENVIRON["MIDDLEWARE_BASE_URL"] !~ /^https:\/\/[A-Za-z0-9.-]+(:[0-9]+)?(\/[A-Za-z0-9._~\/-]*)?$/ }'; then
     echo "MIDDLEWARE_BASE_URL must be an https:// base URL without credentials, query, or commas" >&2
     exit 1
   fi
-  case "$MIDDLEWARE_API_SECRET_SECRET" in
-    *[!A-Za-z0-9_-]*)
-      echo "MIDDLEWARE_API_SECRET_SECRET must be a Secret Manager secret name" >&2
-      exit 1
-      ;;
-  esac
-  if [ "${#MIDDLEWARE_API_SECRET_SECRET}" -gt 255 ]; then
+  if ! MIDDLEWARE_API_SECRET_SECRET="$MIDDLEWARE_API_SECRET_SECRET" awk 'BEGIN { exit ENVIRON["MIDDLEWARE_API_SECRET_SECRET"] !~ /^[A-Za-z0-9_-]+$/ || length(ENVIRON["MIDDLEWARE_API_SECRET_SECRET"]) > 255 }'; then
     echo "MIDDLEWARE_API_SECRET_SECRET must be a Secret Manager secret name" >&2
     exit 1
   fi

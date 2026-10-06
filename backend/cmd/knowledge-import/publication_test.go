@@ -77,10 +77,10 @@ func TestAutomaticPublication(t *testing.T) {
 		}
 		return order
 	}
-	if err := module.RecordSectionOrder(ctx, command, revision.ID); err != nil || positions() != "hours=0,parking=1" {
-		t.Fatalf("recorded positions were rewritten: %s, %v", positions(), err)
+	if positions() != "hours=0,parking=1" {
+		t.Fatalf("imported positions = %s", positions())
 	}
-	if _, err := pool.Exec(ctx, `UPDATE knowledge_passages SET position = NULL WHERE revision_id = $1`, revision.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE knowledge_passages SET position = NULL WHERE revision_id = $1 AND section_id = 'hours'`, revision.ID); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, type ReactNode } from "react"
+import { useEffect, useId, useRef, type ReactNode } from "react"
 import {
   ArrowRightIcon,
   BookOpenIcon,
@@ -444,9 +444,10 @@ function ManageAgentNavigation({
   onPage: (page: ManageAgentPage) => void
 }) {
   const { isMobile, setOpenMobile } = useSidebar()
+  const labelID = useId()
   return (
-    <SidebarGroup className="p-0" role="navigation" aria-label="Manage agent">
-      <p className="flex h-8 items-center px-2.5 text-xs font-medium text-muted-foreground">
+    <nav aria-labelledby={labelID} className="flex w-full min-w-0 flex-col">
+      <p id={labelID} className="flex h-8 items-center px-2.5 text-xs font-medium text-muted-foreground">
         Manage agent
       </p>
       <SidebarGroupContent>
@@ -469,7 +470,7 @@ function ManageAgentNavigation({
           ))}
         </SidebarMenu>
       </SidebarGroupContent>
-    </SidebarGroup>
+    </nav>
   )
 }
 

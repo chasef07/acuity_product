@@ -6,10 +6,10 @@ import { JSDOM } from "jsdom"
 
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { InsuranceList } from "./insurance-list.tsx"
-import { KnowledgeBase } from "./knowledge-base.tsx"
 import { ManageAgent } from "./manage-agent.tsx"
 import { clearAccessToken } from "../../lib/auth-client.ts"
 import type {
+  InsuranceCoverage,
   InsurancePlanRule,
   InsurancePlansQuery,
   Location,
@@ -79,10 +79,12 @@ test("a plan row expands in place and a group collapses", async (t) => {
   await waitFor(() => page.groups().length === 3)
   const row = page.button(/^Example Choice PPO/)
   assert.equal(row.getAttribute("aria-expanded"), "false")
-  assert.doesNotMatch(page.text(), /Synthetic sheet note/)
+  assert.equal(page.panel(row).open, false)
+  assert.match(page.panel(row).text, /Synthetic sheet note/)
   await act(async () => row.click())
   assert.equal(row.getAttribute("aria-expanded"), "true")
-  const details = Array.from(page.host.querySelectorAll("dl div"), (item) => item.textContent)
+  assert.equal(page.panel(row).open, true)
+  const details = Array.from(row.closest("li")!.querySelectorAll("dl div"), (item) => item.textContent)
   assert.deepEqual(details, [
     "Callers also sayExample Choice, Choice PPO",
     "AMD carriercar10001 · EXAMPLE CHOICE HEALTH",
@@ -96,11 +98,39 @@ test("a plan row expands in place and a group collapses", async (t) => {
   await page.unmount()
 })
 
+test("changing Location or coverage sends exactly one new request with the new values", async (t) => {
+  const page = harness(t)
+  const render = (locationID: string, coverage: InsuranceCoverage) =>
+    page.render(
+      <InsuranceList
+        practiceID="practice-1"
+        locations={locations}
+        locationID={locationID}
+        onLocation={() => {}}
+        coverage={coverage}
+        onCoverage={() => {}}
+      />,
+    )
+  await render(locations[0].id, "medical")
+  await waitFor(() => page.groups().length === 3)
+  await render(locations[1].id, "medical")
+  await waitFor(() => page.plansRequests.length === 2 && page.groups().length === 3)
+  await render(locations[1].id, "routine_vision")
+  await waitFor(() => page.plansRequests.length === 3 && page.groups().length === 3)
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 30)))
+  assert.deepEqual(page.plansRequests, [
+    { practiceId: "practice-1", locationId: locations[0].id, coverage: "medical" },
+    { practiceId: "practice-1", locationId: locations[1].id, coverage: "medical" },
+    { practiceId: "practice-1", locationId: locations[1].id, coverage: "routine_vision" },
+  ])
+  await page.unmount()
+})
+
 test("a Location without the coverage, a 503 and no access each read once", async (t) => {
   const page = harness(t)
   page.plansFor = () => []
   await page.render(insuranceList())
-  await waitFor(() => /doesn't offer medical visits/.test(page.text()))
+  await waitFor(() => /No medical plans are on this Location's insurance list\./.test(page.text()))
 
   page.plansStatus = 503
   page.plansError = { code: "UNAVAILABLE", message: "Insurance rules aren't available for this Location.", correlationId: "synthetic", retryable: false }
@@ -134,33 +164,34 @@ test("knowledge shows its import date and collapsed sections that keep line brea
       { id: "parking", title: "Parking", text: "Synthetic garage on site." },
     ],
   }
-  await page.render(<KnowledgeBase practiceID="practice-1" locationScopeID="" locations={locations} />)
+  await page.render(knowledgeBase())
   await waitFor(() => /Office hours/.test(page.text()))
   assert.deepEqual(page.knowledgeRequests, [{ practiceId: "practice-1", locationId: locations[0].id }])
   assert.equal(page.host.querySelector("time")?.getAttribute("dateTime"), "2026-09-30T15:00:00Z")
   assert.match(page.text(), /Updated /)
-  assert.doesNotMatch(page.text(), /Monday to Friday/)
   const hours = page.button(/^Office hours$/)
   assert.equal(hours.getAttribute("aria-expanded"), "false")
+  assert.equal(page.panel(hours).open, false)
   await act(async () => hours.click())
   assert.equal(hours.getAttribute("aria-expanded"), "true")
-  const text = Array.from(page.host.querySelectorAll("li p")).find((item) => item.textContent?.includes("Monday"))
+  assert.equal(page.panel(hours).open, true)
+  const text = hours.nextElementSibling?.querySelector("p")
   assert.equal(text?.textContent, "Monday to Friday\n8am to 5pm")
   assert.match(text?.className ?? "", /whitespace-pre-wrap/)
-  assert.doesNotMatch(page.text(), /Synthetic garage/)
+  assert.equal(page.panel(page.button(/^Parking$/)).open, false)
   await page.unmount()
 })
 
 test("knowledge without an import and unavailable knowledge say so", async (t) => {
   const page = harness(t)
   page.knowledge = { locationId: locations[0].id, sections: [] }
-  await page.render(<KnowledgeBase practiceID="practice-1" locationScopeID="" locations={locations} />)
+  await page.render(knowledgeBase())
   await waitFor(() => /No knowledge has been imported for this Location yet\./.test(page.text()))
   assert.doesNotMatch(page.text(), /Updated/)
 
   page.knowledgeStatus = 503
   page.knowledgeError = { code: "UNAVAILABLE", message: "Knowledge isn't available for this Location.", correlationId: "synthetic", retryable: false }
-  await page.render(<KnowledgeBase key="second" practiceID="practice-1" locationScopeID={locations[1].id} locations={locations} />)
+  await page.render(knowledgeBase(locations[1].id), "second")
   await waitFor(() => page.alert() !== "")
   assert.equal(page.alert(), "Knowledge isn't available for this Location.")
   assert.equal(page.knowledgeRequests.at(-1)?.locationId, locations[1].id)
@@ -168,7 +199,11 @@ test("knowledge without an import and unavailable knowledge say so", async (t) =
 })
 
 function insuranceList(locationScopeID = "") {
-  return <InsuranceList practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} />
+  return <ManageAgent practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" />
+}
+
+function knowledgeBase(locationScopeID = "") {
+  return <ManageAgent practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" />
 }
 
 function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {
@@ -219,6 +254,11 @@ function harness(t: TestContext) {
       act(async () => root.render(<SidebarProvider key={key}>{element}</SidebarProvider>)),
     unmount: () => act(async () => root.unmount()),
     text: () => host.textContent ?? "",
+    panel: (trigger: Element) => {
+      const panel = trigger.nextElementSibling
+      assert.equal(panel?.getAttribute("data-slot"), "collapsible-content")
+      return { open: !panel.hasAttribute("hidden"), text: panel.textContent ?? "" }
+    },
     alert: () => host.querySelector("[role='alert']")?.textContent ?? "",
     button: (name: RegExp) => {
       const button = Array.from(host.querySelectorAll("button")).find((item) => name.test(item.textContent ?? ""))
@@ -231,7 +271,7 @@ function harness(t: TestContext) {
       await act(async () => button.click())
     },
     groups: () =>
-      Array.from(host.querySelectorAll("section[aria-label='Insurance list'] section"), (group) => {
+      Array.from(host.querySelectorAll("[role='group'][aria-labelledby]"), (group) => {
         const trigger = group.querySelector("button")!
         return {
           title: trigger.textContent ?? "",

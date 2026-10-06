@@ -226,21 +226,16 @@ func TestKnowledgeConfigurationOnlyReachesPortalAPI(t *testing.T) {
 		t.Fatal("Cloud Build deploy step is missing")
 	}
 	deployStep, _, _ = strings.Cut(deployStep, "\nsubstitutions:")
-	path, gcloudCapture, curlCapture := installReleaseFakes(t)
-	command := exec.Command("bash", filepath.Join(releaseDeployDirectory(t), "deploy-production-release.sh"))
-	command.Env = append([]string{
-		"PATH=" + path,
-		"GCLOUD_CAPTURE=" + gcloudCapture,
-		"CURL_CAPTURE=" + curlCapture,
-	}, releaseEnvironment()...)
+	var environment []string
 	for _, line := range strings.Split(deployStep, "\n") {
 		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "- KNOWLEDGE_"); ok {
-			command.Env = append(command.Env, os.Expand("KNOWLEDGE_"+value, func(key string) string {
+			environment = append(environment, os.Expand("KNOWLEDGE_"+value, func(key string) string {
 				return map[string]string{"PROJECT_ID": "acuity-test", "_REGION": "us-east1"}[key]
 			}))
 		}
 	}
-	if output, err := command.CombinedOutput(); err != nil {
+	gcloudCapture, output, err := runRelease(t, environment...)
+	if err != nil {
 		t.Fatalf("release: %v\n%s", err, output)
 	}
 	commands := capturedGcloudCommands(t, gcloudCapture)
@@ -255,13 +250,12 @@ func TestKnowledgeConfigurationOnlyReachesPortalAPI(t *testing.T) {
 func TestKnowledgeReleaseLeavesConfigurationUnchangedUnlessExplicit(t *testing.T) {
 	for _, explicitDisable := range []bool{false, true} {
 		t.Run(map[bool]string{false: "preserve", true: "disable"}[explicitDisable], func(t *testing.T) {
-			path, gcloudCapture, curlCapture := installReleaseFakes(t)
-			command := exec.Command("bash", filepath.Join(releaseDeployDirectory(t), "deploy-production-release.sh"))
-			command.Env = append([]string{"PATH=" + path, "GCLOUD_CAPTURE=" + gcloudCapture, "CURL_CAPTURE=" + curlCapture}, releaseEnvironment()...)
+			var extra []string
 			if explicitDisable {
-				command.Env = append(command.Env, "KNOWLEDGE_GOOGLE_PROJECT=")
+				extra = append(extra, "KNOWLEDGE_GOOGLE_PROJECT=")
 			}
-			if output, err := command.CombinedOutput(); err != nil {
+			gcloudCapture, output, err := runRelease(t, extra...)
+			if err != nil {
 				t.Fatalf("release: %v\n%s", err, output)
 			}
 			commands := capturedGcloudCommands(t, gcloudCapture)

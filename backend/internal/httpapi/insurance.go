@@ -34,23 +34,16 @@ func (server *Server) QueryInsurancePlans(w http.ResponseWriter, r *http.Request
 	switch {
 	case err == nil:
 		server.writeJSON(w, http.StatusOK, page)
-		return
 	case errors.Is(err, insurance.ErrInvalidInput):
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-		return
 	case errors.Is(err, access.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
-		return
-	}
-	if r.Context().Err() == nil {
-		slog.Warn("insurance_plans_failed", "error", err.Error(), "elapsed_ms", time.Since(started).Milliseconds())
-	}
-	switch {
-	case errors.Is(err, insurance.ErrNoOffice):
+	case errors.Is(err, access.ErrNoOfficeRoute):
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Insurance rules aren't available for this Location.", false)
-	case errors.Is(err, insurance.ErrUnavailable):
-		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Insurance rules aren't available right now.", true)
 	default:
-		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+		if r.Context().Err() == nil {
+			slog.Warn("insurance_plans_failed", "error", err.Error(), "elapsed_ms", time.Since(started).Milliseconds())
+		}
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Insurance rules aren't available right now.", true)
 	}
 }

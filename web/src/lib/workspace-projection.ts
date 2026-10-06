@@ -695,8 +695,8 @@ export function createWorkspaceProjection({
     })
     if (restoredTask?.practiceId === scope.practiceID) {
       showTask(restoredTask)
-    } else if (requested.view !== "task" && requested.view !== "none") {
-      selectPageView(requested.view, requested.page ?? "transcripts")
+    } else {
+      selectLocation(requested)
     }
     realtimeController.setScope({
       practiceID: scope.practiceID,
@@ -731,7 +731,7 @@ export function createWorkspaceProjection({
     navigationSearch = workspaceLocationSearch(location)
     replaceNavigation = true
     if (result?.kind === "success") showTask(result.data)
-    else if (location.view !== "task" && location.view !== "none") selectPageView(location.view, location.page ?? "transcripts")
+    else selectLocation(location)
     syncNavigation(state)
   }
 
@@ -747,6 +747,11 @@ export function createWorkspaceProjection({
     const group = state.tasks.items.find((item) =>
       item.id === task.id && (item.groupMembers?.length ?? 0) > 1)
     selectEngagement(taskEngagement(task), group ?? task)
+  }
+
+  function selectLocation(location: WorkspaceLocation) {
+    if (location.view === "task" || location.view === "none") return
+    selectPageView(location.view, location.view === "manage-agent" ? (location.page ?? "transcripts") : undefined)
   }
 
   function selectPageView(view: WorkspacePageView, agentPage?: ManageAgentPage) {

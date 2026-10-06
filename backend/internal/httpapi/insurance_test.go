@@ -26,10 +26,10 @@ func (insuranceAuthenticator) Authenticate(_ context.Context, token string) (acc
 	return access.Identity{Subject: "staff", Email: "staff@abita.test", EmailVerified: true}, nil
 }
 
-type insuranceRoutes []string
+type insuranceRoutes string
 
-func (routes insuranceRoutes) ReadLocationAbitaOfficeKeys(context.Context, access.Identity, string, string) ([]string, error) {
-	return routes, nil
+func (route insuranceRoutes) ReadLocationAbitaOfficeKey(context.Context, access.Identity, string, string) (string, error) {
+	return string(route), nil
 }
 
 func insuranceHandler(t *testing.T, module *insurance.Module) http.Handler {
@@ -82,21 +82,21 @@ func TestInsurancePlansAreUnavailableWithoutMiddlewareConfiguration(t *testing.T
 }
 
 func TestInsurancePlansReturnMiddlewareRulesOrUnavailable(t *testing.T) {
-	plans := postInsurance(insuranceHandler(t, insuranceModule(t, insuranceRoutes{"hollywood"}, http.StatusOK, `{"plans":[{"planId":"synthetic-hmo-medical","label":"Synthetic HMO","outcome":"accepted","requirements":["prior_authorization"]}]}`)), "/v1/insurance/plans/query", "staff-token", plansBody)
+	plans := postInsurance(insuranceHandler(t, insuranceModule(t, "hollywood", http.StatusOK, `{"officeId":"hollywood","coverage":"medical","plans":[{"planId":"synthetic-hmo-medical","label":"Synthetic HMO","outcome":"accepted","requirements":["prior_authorization"]}]}`)), "/v1/insurance/plans/query", "staff-token", plansBody)
 	var page api.InsurancePlansPage
 	if plans.Code != http.StatusOK || json.Unmarshal(plans.Body.Bytes(), &page) != nil || page.LocationId.String() != "00000000-0000-0000-0000-000000000011" ||
 		page.Coverage != api.Medical || len(page.Plans) != 1 || page.Plans[0].Requirements[0] != api.PriorAuthorization || page.Plans[0].Names == nil || page.Plans[0].AcceptedAt == nil {
 		t.Fatalf("plans status = %d, body = %s", plans.Code, plans.Body.String())
 	}
 
-	failing := insuranceHandler(t, insuranceModule(t, insuranceRoutes{"hollywood"}, http.StatusBadGateway, `{}`))
+	failing := insuranceHandler(t, insuranceModule(t, "hollywood", http.StatusBadGateway, `{}`))
 	var envelope api.ErrorEnvelope
 	if response := postInsurance(failing, "/v1/insurance/plans/query", "staff-token", plansBody); response.Code != http.StatusServiceUnavailable ||
 		json.Unmarshal(response.Body.Bytes(), &envelope) != nil || envelope.Error.Message != "Insurance rules aren't available right now." || !envelope.Error.Retryable {
 		t.Fatalf("middleware failure status = %d, body = %s", response.Code, response.Body.String())
 	}
 
-	rejected := insuranceHandler(t, insuranceModule(t, insuranceRoutes{"dev"}, http.StatusBadRequest, `Unknown office`))
+	rejected := insuranceHandler(t, insuranceModule(t, "dev", http.StatusBadRequest, `Unknown office`))
 	if response := postInsurance(rejected, "/v1/insurance/plans/query", "staff-token", plansBody); response.Code != http.StatusServiceUnavailable ||
 		json.Unmarshal(response.Body.Bytes(), &envelope) != nil || envelope.Error.Message != "Insurance rules aren't available for this Location." || envelope.Error.Retryable {
 		t.Fatalf("rejected office status = %d, body = %s", response.Code, response.Body.String())
@@ -112,7 +112,7 @@ func TestCancelledInsuranceRequestsAreNotLoggedAsOutages(t *testing.T) {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	defer slog.SetDefault(previous)
-	handler := insuranceHandler(t, insuranceModule(t, insuranceRoutes{"hollywood"}, http.StatusBadGateway, `{}`))
+	handler := insuranceHandler(t, insuranceModule(t, "hollywood", http.StatusBadGateway, `{}`))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

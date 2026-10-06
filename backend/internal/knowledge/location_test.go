@@ -105,8 +105,8 @@ func TestReadLocationReturnsTheCurrentRevisionForAnAuthorizedLocation(t *testing
 		"outside scope":    {staff, practiceID, locations["Beta"], access.ErrDenied},
 		"other Practice":   {admin, uuid.NewString(), locations["Alpha"], access.ErrDenied},
 		"unknown Location": {admin, practiceID, uuid.NewString(), access.ErrDenied},
-		"no route":         {admin, practiceID, locations["Unrouted"], ErrNoOffice},
-		"several routes":   {admin, practiceID, locations["Combined"], ErrNoOffice},
+		"no route":         {admin, practiceID, locations["Unrouted"], access.ErrNoOfficeRoute},
+		"several routes":   {admin, practiceID, locations["Combined"], access.ErrNoOfficeRoute},
 		"invalid Location": {admin, practiceID, "not-a-uuid", ErrInvalidInput},
 	} {
 		if result, err := m.ReadLocation(ctx, scenario.identity, scenario.practiceID, scenario.locationID); !errors.Is(err, scenario.want) {
