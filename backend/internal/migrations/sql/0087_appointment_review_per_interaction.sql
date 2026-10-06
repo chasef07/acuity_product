@@ -1,6 +1,4 @@
-CREATE INDEX work_tasks_appointment_review_source_idx
-    ON work_tasks (practice_id, source_call_id)
-    WHERE origin = 'APPOINTMENT_REVIEW';
+SET LOCAL lock_timeout = '1s';
 
 CREATE OR REPLACE FUNCTION work_preserve_task_source()
 RETURNS trigger
