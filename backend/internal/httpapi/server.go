@@ -95,7 +95,6 @@ type Server struct {
 	serviceAuth     ServiceAuthenticator
 	observer        observability.Observer
 	analyticsActive atomic.Bool
-	signUpLimiter   signUpEligibilityLimiter
 }
 
 type serverDependencies struct {

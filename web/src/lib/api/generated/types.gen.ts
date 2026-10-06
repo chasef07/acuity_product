@@ -1586,10 +1586,6 @@ export type InspectSignUpEligibilityErrors = {
      */
     403: ErrorEnvelope;
     /**
-     * Too many eligibility checks from this client. Retry later.
-     */
-    429: ErrorEnvelope;
-    /**
      * A required dependency is temporarily unavailable.
      */
     503: ErrorEnvelope;

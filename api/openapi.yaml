@@ -52,16 +52,6 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Denied"
-        "429":
-          description: Too many eligibility checks from this client. Retry later.
-          headers:
-            Retry-After:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
         "503":
           $ref: "#/components/responses/Unavailable"
   /v1/access:
