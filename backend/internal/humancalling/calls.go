@@ -246,7 +246,7 @@ func (m *Module) RequestHangup(
 	); err != nil {
 		return Call{}, ErrDenied
 	}
-	if _, err := m.access.LockMembershipAuthorization(
+	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	); err != nil {
 		return Call{}, ErrDenied
@@ -455,7 +455,7 @@ func (m *Module) RecordDisposition(
 		&phone, &reason, &terminal, &existing, &placedAt); err != nil {
 		return DispositionResult{}, ErrDenied
 	}
-	authorization, err := m.access.LockMembershipAuthorization(
+	authorization, err := m.access.LockMutationAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	)
 	if err != nil {

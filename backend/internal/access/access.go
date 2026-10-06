@@ -565,16 +565,6 @@ func (m *Module) ResolveActor(
 	return authorized, nil
 }
 
-func (m *Module) LockMembershipAuthorization(
-	ctx context.Context,
-	tx pgx.Tx,
-	identity Identity,
-	practiceID string,
-	locationID string,
-) (Authorization, error) {
-	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, true, true)
-}
-
 func (m *Module) LockMutationAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,

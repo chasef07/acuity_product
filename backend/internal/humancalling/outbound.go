@@ -299,7 +299,7 @@ func (m *Module) StartOutboundCall(
 	if !supportedUSDestination(destination) {
 		return Call{}, ErrInvalidInput
 	}
-	if _, err := m.access.LockMembershipAuthorization(
+	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, command.Identity, practiceID, locationID,
 	); err != nil {
 		return Call{}, ErrDenied
@@ -532,7 +532,7 @@ func (m *Module) ConfirmOutboundMedia(
 		&callerID, &terminal); err != nil || terminal != "" {
 		return Call{}, ErrConflict
 	}
-	if _, err := m.access.LockMembershipAuthorization(ctx, tx, command.Identity,
+	if _, err := m.access.LockMutationAuthorization(ctx, tx, command.Identity,
 		practiceID, locationID); err != nil {
 		return Call{}, ErrDenied
 	}
