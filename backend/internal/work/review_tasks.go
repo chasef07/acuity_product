@@ -2,7 +2,9 @@ package work
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -31,19 +33,18 @@ func (m *Module) EnsureAppointmentReview(ctx context.Context, tx pgx.Tx, interac
 	err = tx.QueryRow(ctx, `SELECT id::text,state,title,COALESCE(source_message,'') FROM work_tasks
  WHERE practice_id=$1 AND source_call_id=$2 AND origin='APPOINTMENT_REVIEW'
  ORDER BY (state='OPEN') DESC,created_at DESC,id DESC LIMIT 1 FOR UPDATE`, practiceID, sourceCallID).Scan(&id, &state, &currentTitle, &currentMessage)
-	if err == nil && currentMessage == message {
+	switch {
+	case err == nil && currentMessage == message:
 		return nil
-	}
-	if err == nil && TaskState(state) == TaskOpen {
+	case err == nil && TaskState(state) == TaskOpen:
 		if _, err := tx.Exec(ctx, `UPDATE work_tasks SET title=$2,source_message=$3,version=version+1,updated_at=GREATEST(updated_at,$4) WHERE id=$1`, id, title, message, occurredAt); err != nil {
 			return err
 		}
 		return m.recordReviewActivity(ctx, tx, id, practiceID, "SOURCE_UPDATED", "appointment-review", occurredAt, map[string]any{"previousTitle": currentTitle, "previousMessage": currentMessage})
-	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
 		return err
 	}
-	key := interactionID + ":" + occurredAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+	key := fmt.Sprintf("%s:%s:%x", interactionID, occurredAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), sha256.Sum256([]byte(message)))
 	err = tx.QueryRow(ctx, `INSERT INTO work_tasks(practice_id,location_id,phone,title,state,origin,urgency,created_by_kind,created_by_subject,created_at,updated_at,source_call_id,category,source_review_key,source_message)
  VALUES($1,$2,$3,$4,'OPEN','APPOINTMENT_REVIEW','normal','SERVICE','appointment-review',$5,$5,$6,'appointments',$7,$8)
  ON CONFLICT(source_review_key) WHERE source_review_key IS NOT NULL DO NOTHING RETURNING id::text`, practiceID, locationID, phone, title, occurredAt, sourceCallID, key, message).Scan(&id)

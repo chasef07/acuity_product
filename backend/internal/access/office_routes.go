@@ -3,24 +3,11 @@ package access
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
 
-func (m *Module) LocationHasAbitaOfficeRoute(
-	ctx context.Context,
-	tx pgx.Tx,
-	practiceID string,
-	locationID string,
-	officeKey string,
-) (bool, error) {
-	if tx == nil ||
-		strings.TrimSpace(practiceID) == "" ||
-		strings.TrimSpace(locationID) == "" ||
-		strings.TrimSpace(officeKey) == "" {
-		return false, ErrInvalidInput
-	}
+func (m *Module) LocationHasAbitaOfficeRoute(ctx context.Context, tx pgx.Tx, practiceID, locationID, officeKey string) (bool, error) {
 	var routed bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (

@@ -10,6 +10,8 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSharedReviewTasksPreserveEvidenceAndRejectStaleCompletion(t *testing.T) {
@@ -96,42 +98,7 @@ func TestAppointmentReviewIsOneSpringHillTaskPerInteraction(t *testing.T) {
 	auth, identity := provisionStaff(t, a, now)
 	m := work.New(pool, a, func() time.Time { return now })
 	practice, springHill, otherOffice := auth.Practice.ID, auth.Locations[0].ID, auth.Locations[1].ID
-	interactionID := uuid.NewString()
-	ensure := func(locationID, sourceCallID, title, message string, at time.Time) {
-		t.Helper()
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer tx.Rollback(ctx)
-		if err := m.EnsureAppointmentReview(ctx, tx, interactionID, practice, locationID, "+15555550123", sourceCallID, title, message, at); err != nil {
-			t.Fatal(err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
-	type review struct {
-		id, title, message, state string
-		version                   int64
-	}
-	reviews := func() []review {
-		t.Helper()
-		rows, err := pool.Query(ctx, `SELECT id::text,title,source_message,state,version FROM work_tasks WHERE origin='APPOINTMENT_REVIEW' ORDER BY created_at,id`)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer rows.Close()
-		var result []review
-		for rows.Next() {
-			var item review
-			if err := rows.Scan(&item.id, &item.title, &item.message, &item.state, &item.version); err != nil {
-				t.Fatal(err)
-			}
-			result = append(result, item)
-		}
-		return result
-	}
+	ensure, reviews := appointmentReviewHarness(t, pool, m, practice)
 
 	ensure(otherOffice, "synthetic-other-office", "Review booked appointment", "Verify insurance and provider for this appointment.", now)
 	if got := reviews(); len(got) != 0 {
@@ -171,5 +138,70 @@ func TestAppointmentReviewIsOneSpringHillTaskPerInteraction(t *testing.T) {
 	ensure(springHill, "synthetic-spring-hill", "Review appointment change", "Verify insurance and provider for the rescheduled appointment.", now.Add(time.Minute))
 	if got := reviews(); len(got) != 2 || got[0].state != "COMPLETED" || got[1].state != "OPEN" || got[1].title != "Review appointment change" {
 		t.Fatalf("new appointment evidence after completion = %#v", got)
+	}
+}
+
+type appointmentReview struct {
+	id, title, message, state string
+	version                   int64
+}
+
+func appointmentReviewHarness(t *testing.T, pool *pgxpool.Pool, m *work.Module, practice string) (func(string, string, string, string, time.Time), func() []appointmentReview) {
+	ctx := context.Background()
+	interactionID := uuid.NewString()
+	ensure := func(locationID, sourceCallID, title, message string, at time.Time) {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		if err := m.EnsureAppointmentReview(ctx, tx, interactionID, practice, locationID, "+15555550123", sourceCallID, title, message, at); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reviews := func() []appointmentReview {
+		t.Helper()
+		rows, _ := pool.Query(ctx, `SELECT id::text,title,source_message,state,version FROM work_tasks WHERE origin='APPOINTMENT_REVIEW' ORDER BY created_at,state,id`)
+		result, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (appointmentReview, error) {
+			var item appointmentReview
+			return item, row.Scan(&item.id, &item.title, &item.message, &item.state, &item.version)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	return ensure, reviews
+}
+
+func TestCompletedCheckpointReviewCannotHideSameTimeCloseoutEvidence(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	a := access.New(pool, func() time.Time { return now })
+	auth, identity := provisionStaff(t, a, now)
+	m := work.New(pool, a, func() time.Time { return now })
+	ensure, reviews := appointmentReviewHarness(t, pool, m, auth.Practice.ID)
+	location, occurredAt := auth.Locations[0].ID, now.Add(-time.Minute)
+
+	ensure(location, "synthetic-same-time", "Check appointment booking", "The agent could not confirm the booking.", occurredAt)
+	checkpoint := reviews()
+	if len(checkpoint) != 1 {
+		t.Fatalf("checkpoint review = %#v", checkpoint)
+	}
+	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: checkpoint[0].id, ExpectedVersion: checkpoint[0].version}); err != nil {
+		t.Fatal(err)
+	}
+
+	ensure(location, "synthetic-same-time", "Review booked appointment", "Verify insurance and provider for this appointment.", occurredAt)
+	ensure(location, "synthetic-same-time", "Review booked appointment", "Verify insurance and provider for this appointment.", occurredAt)
+	got := reviews()
+	if len(got) != 2 || got[0].id != checkpoint[0].id || got[0].state != "COMPLETED" || got[0].message != checkpoint[0].message ||
+		got[1].state != "OPEN" || got[1].title != "Review booked appointment" {
+		t.Fatalf("same-time closeout evidence after completed checkpoint review = %#v", got)
 	}
 }
