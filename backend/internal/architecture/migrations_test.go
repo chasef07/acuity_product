@@ -31,13 +31,14 @@ func migrationSafetyViolations(name, source string) []string {
 	sql := sqlLineComment.ReplaceAllString(source, "")
 	var violations []string
 	setsSession := sessionLockTimeout.MatchString(sql)
-	boundsLocks := setsSession || configLockTimeout.MatchString(sql) ||
-		(!nonTransactional && localLockTimeout.MatchString(sql))
-	if !boundsLocks {
+	if !setsSession && (nonTransactional || !localLockTimeout.MatchString(sql)) {
 		violations = append(violations, name+": set lock_timeout (SET LOCAL in a transaction, SET and RESET in an -- acuity:no-transaction migration)")
 	}
-	if nonTransactional && setsSession && !resetLockTimeout.MatchString(sql) {
+	if setsSession && !resetLockTimeout.MatchString(sql) {
 		violations = append(violations, name+": RESET lock_timeout so the session setting does not leak into later migrations")
+	}
+	if configLockTimeout.MatchString(sql) {
+		violations = append(violations, name+": set lock_timeout with SET LOCAL or SET and RESET, not set_config")
 	}
 	for _, match := range indexDefinition.FindAllStringSubmatch(sql, -1) {
 		if match[1] == "" {
@@ -90,6 +91,10 @@ func TestMigrationSafetyViolations(t *testing.T) {
 		{"-- acuity:no-transaction\nSET lock_timeout = '15s';\n-- acuity:next-statement\nCREATE INDEX CONCURRENTLY i ON t (c);\n", 1},
 		{"-- acuity:no-transaction\nSET lock_timeout = '15s';\n-- acuity:next-statement\nDROP INDEX i;\n-- acuity:next-statement\nRESET lock_timeout;\n", 1},
 		{"-- acuity:no-transaction\nSET lock_timeout = '15s';\n-- acuity:next-statement\nCREATE UNIQUE INDEX CONCURRENTLY i ON t (c);\n-- acuity:next-statement\nDROP INDEX CONCURRENTLY IF EXISTS j;\n-- acuity:next-statement\nRESET lock_timeout;\n", 0},
+		{"SET lock_timeout = '1s';\nALTER TABLE t ADD COLUMN c int;\n", 1},
+		{"SELECT set_config('lock_timeout', '1s', true);\nALTER TABLE t ADD COLUMN c int;\n", 2},
+		{"-- acuity:no-transaction\nSELECT set_config('lock_timeout', '15s', false);\n-- acuity:next-statement\nCREATE INDEX CONCURRENTLY i ON t (c);\n", 2},
+		{"SET LOCAL lock_timeout = '1s';\nSELECT set_config('lock_timeout', '0', false);\nALTER TABLE t ADD COLUMN c int;\n", 1},
 		{"-- acuity:retired\n", 0},
 	} {
 		if got := migrationSafetyViolations("fixture.sql", test.source); len(got) != test.want {

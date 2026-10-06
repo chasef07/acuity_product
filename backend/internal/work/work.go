@@ -89,13 +89,6 @@ const (
 	TaskOrderingRecent   TaskOrdering = "recent"
 )
 
-type TaskFolder string
-
-const (
-	TaskFolderWork        TaskFolder = "work"
-	TaskFolderMissedCalls TaskFolder = "missed_calls"
-)
-
 const (
 	callRecoveryOrigins        = `'MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'`
 	communicationReviewOrigins = `'APPOINTMENT_REVIEW','INBOUND_MESSAGE_REVIEW',` + callRecoveryOrigins
@@ -278,7 +271,6 @@ type TaskFolderCounts struct {
 	Texts              int
 	CallRecovery       int
 	Tasks              int
-	MissedCalls        int
 	Categories         TaskCategoryCounts
 }
 

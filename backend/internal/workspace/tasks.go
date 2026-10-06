@@ -100,10 +100,7 @@ func (m *Module) QueryTasks(
 	rows.Close()
 	var counts *work.TaskFolderCounts
 	if command.IncludeCounts == nil || *command.IncludeCounts {
-		value, err := queryTaskFolderCounts(
-			ctx, tx, command.PracticeID, locationIDs,
-			command.Search, normalizedDigits(command.Search), command.State, command,
-		)
+		value, err := queryTaskFolderCounts(ctx, tx, command, locationIDs)
 		if err != nil {
 			return work.TaskPage{}, err
 		}
@@ -469,12 +466,8 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 func queryTaskFolderCounts(
 	ctx context.Context,
 	tx pgx.Tx,
-	practiceID string,
-	locationIDs []string,
-	search string,
-	phoneDigits string,
-	state work.TaskState,
 	command QueryTasksCommand,
+	locationIDs []string,
 ) (work.TaskFolderCounts, error) {
 	var counts work.TaskFolderCounts
 	err := tx.QueryRow(ctx, `
@@ -506,7 +499,7 @@ func queryTaskFolderCounts(
 			count(*) FILTER (WHERE call_recovery),
 			count(*) FILTER (WHERE spring_hill_review)
 		FROM scoped
-	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.Kind).Scan(
+	`, command.PracticeID, locationIDs, command.Search, normalizedDigits(command.Search), command.State, command.Responsibility, strings.ToLower(command.Identity.Email), command.Kind).Scan(
 		&counts.Tasks,
 		&counts.Categories.Billing,
 		&counts.Categories.Appointments,
