@@ -88,8 +88,11 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 		server.URL+"/v1/access/sign-up-eligibility",
 		"", eligibleBody,
 	)
-	if eligible.StatusCode != http.StatusOK {
+	if eligible.StatusCode != http.StatusNoContent {
 		t.Fatalf("eligible Google sign-up status = %d, body = %s", eligible.StatusCode, readBody(t, eligible))
+	}
+	if body := readBody(t, eligible); body != "" {
+		t.Fatalf("eligible Google sign-up disclosed %q", body)
 	}
 	_ = eligible.Body.Close()
 	unknownBody, _ := json.Marshal(api.SignUpEligibilityRequest{

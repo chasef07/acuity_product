@@ -100,11 +100,6 @@ export type SignUpEligibilityRequest = {
     email: string;
 };
 
-export type SignUpEligibility = {
-    kind: 'ACCESS_GRANT' | 'PLATFORM_OPERATOR';
-    email: string;
-};
-
 export type Actor = {
     subject: string;
     email: string;
@@ -1583,9 +1578,17 @@ export type InspectSignUpEligibilityData = {
 
 export type InspectSignUpEligibilityErrors = {
     /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
      * Current identity lacks the requested authority.
      */
     403: ErrorEnvelope;
+    /**
+     * Too many eligibility checks from this client. Retry later.
+     */
+    429: ErrorEnvelope;
     /**
      * A required dependency is temporarily unavailable.
      */
@@ -1598,7 +1601,7 @@ export type InspectSignUpEligibilityResponses = {
     /**
      * The verified-email sign-up is eligible.
      */
-    200: SignUpEligibility;
+    204: void;
 };
 
 export type InspectSignUpEligibilityResponse = InspectSignUpEligibilityResponses[keyof InspectSignUpEligibilityResponses];
@@ -1694,6 +1697,10 @@ export type AddLocationErrors = {
      * Current identity lacks the requested authority.
      */
     403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
     /**
      * A required dependency is temporarily unavailable.
      */

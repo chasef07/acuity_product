@@ -38,7 +38,7 @@ func (server *Server) QueryInsurancePlans(w http.ResponseWriter, r *http.Request
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, access.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
-	case errors.Is(err, access.ErrNoOfficeRoute):
+	case errors.Is(err, access.ErrNoOfficeRoute), errors.Is(err, insurance.ErrUnknownOffice):
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Insurance rules aren't available for this Location.", false)
 	default:
 		if r.Context().Err() == nil {

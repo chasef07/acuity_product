@@ -164,12 +164,8 @@ func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testi
 	}
 	current = current.AddDate(10, 0, 0)
 
-	preview, err := module.InspectSignUpEligibility(context.Background(), "STAFF@ABITA.TEST")
-	if err != nil {
+	if err := module.InspectSignUpEligibility(context.Background(), "STAFF@ABITA.TEST"); err != nil {
 		t.Fatalf("inspect provisioned email: %v", err)
-	}
-	if preview.Kind != access.SignUpEligibilityAccessGrant || preview.Email != "staff@abita.test" {
-		t.Fatalf("provisioned email preview = %#v", preview)
 	}
 
 	identity := access.Identity{
@@ -272,7 +268,7 @@ func TestAccessGrantRevocationDeniesSignUpAndIsAudited(t *testing.T) {
 	if err := module.RevokeAccessGrant(context.Background(), command); err != nil {
 		t.Fatalf("repeat Access Grant revocation: %v", err)
 	}
-	if _, err := module.InspectSignUpEligibility(context.Background(), "pending@abita.test"); !errors.Is(err, access.ErrDenied) {
+	if err := module.InspectSignUpEligibility(context.Background(), "pending@abita.test"); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("revoked Access Grant eligibility error = %v", err)
 	}
 	var auditCount int
@@ -663,6 +659,37 @@ func TestPlatformOperatorMutatesAcrossPracticesAndKeepsRealActor(t *testing.T) {
 	if mutation.Audit.ActorSubject != operator.Subject || mutation.Audit.Action != "location.added" {
 		t.Fatalf("mutation audit = %#v", mutation.Audit)
 	}
+	replayed, err := module.AddLocation(context.Background(), access.AddLocationCommand{
+		Identity:   operator,
+		PracticeID: practiceA.ID,
+		Key:        " fixture-a-2 ",
+		Name:       "Fixture A 2",
+	})
+	if err != nil || replayed.Location.ID != mutation.Location.ID || replayed.Location.Name != "Fixture A 2" {
+		t.Fatalf("replayed Location = %#v, err = %v", replayed.Location, err)
+	}
+	if _, err := module.AddLocation(context.Background(), access.AddLocationCommand{
+		Identity:   operator,
+		PracticeID: practiceA.ID,
+		Key:        "fixture-a-2",
+		Name:       "Renamed Fixture",
+	}); !errors.Is(err, access.ErrLocationConflict) {
+		t.Fatalf("conflicting Location name error = %v", err)
+	}
+	var storedName string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT name FROM access_locations WHERE id = $1
+	`, mutation.Location.ID).Scan(&storedName); err != nil || storedName != "Fixture A 2" {
+		t.Fatalf("stored Location name = %q, err = %v", storedName, err)
+	}
+	for _, invalid := range []access.AddLocationCommand{
+		{Identity: operator, PracticeID: practiceA.ID, Key: " ", Name: "Blank Key"},
+		{Identity: operator, PracticeID: practiceA.ID, Key: "blank-name", Name: " "},
+	} {
+		if _, err := module.AddLocation(context.Background(), invalid); !errors.Is(err, access.ErrInvalidInput) {
+			t.Fatalf("invalid Location %#v error = %v", invalid, err)
+		}
+	}
 
 	_, err = module.AddLocation(context.Background(), access.AddLocationCommand{
 		Identity:   operator,
@@ -726,12 +753,8 @@ func TestAccessGrantDiscoveryAndRequestedLocationStayInsideAccess(t *testing.T) 
 		t.Fatalf("provision Access Grant discovery: %v", err)
 	}
 
-	operatorEligibility, err := module.InspectSignUpEligibility(context.Background(), "FOUNDER@ACUITY.TEST")
-	if err != nil {
+	if err := module.InspectSignUpEligibility(context.Background(), "FOUNDER@ACUITY.TEST"); err != nil {
 		t.Fatalf("inspect Platform Operator eligibility: %v", err)
-	}
-	if operatorEligibility.Kind != access.SignUpEligibilityPlatformOperator {
-		t.Fatalf("operator eligibility = %#v", operatorEligibility)
 	}
 
 	identity := access.Identity{
@@ -1007,9 +1030,8 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("provision operator access: %v", err)
 	}
-	eligibility, err := module.InspectSignUpEligibility(context.Background(), operator.Email)
-	if err != nil || eligibility.Kind != access.SignUpEligibilityPlatformOperator {
-		t.Fatalf("operator sign-up eligibility = %#v, err = %v", eligibility, err)
+	if err := module.InspectSignUpEligibility(context.Background(), operator.Email); err != nil {
+		t.Fatalf("operator sign-up eligibility: %v", err)
 	}
 
 	discovery, err := module.DiscoverActor(context.Background(), operator)

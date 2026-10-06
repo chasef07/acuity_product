@@ -135,7 +135,7 @@ func TestMiddlewareFailuresAreUnavailable(t *testing.T) {
 	} {
 		server, _ := fakeMiddleware(t, scenario.status, scenario.response)
 		module := newModule(t, fakeRoutes{key: "hollywood"}, server.URL, nil)
-		if _, err := module.Plans(context.Background(), query(insurance.Medical)); !errors.Is(err, insurance.ErrUnavailable) || errors.Is(err, access.ErrNoOfficeRoute) {
+		if _, err := module.Plans(context.Background(), query(insurance.Medical)); !errors.Is(err, insurance.ErrUnavailable) || errors.Is(err, insurance.ErrUnknownOffice) {
 			t.Errorf("%s plans error = %v, want unavailable", name, err)
 		}
 	}
@@ -144,8 +144,9 @@ func TestMiddlewareFailuresAreUnavailable(t *testing.T) {
 func TestMiddlewareRejectionMeansTheOfficeIsUnavailable(t *testing.T) {
 	server, _ := fakeMiddleware(t, http.StatusBadRequest, `Unknown office`)
 	module := newModule(t, fakeRoutes{key: "dev"}, server.URL, nil)
-	if _, err := module.Plans(context.Background(), query(insurance.Medical)); !errors.Is(err, access.ErrNoOfficeRoute) || errors.Is(err, insurance.ErrUnavailable) {
-		t.Fatalf("plans error = %v, want no office", err)
+	_, err := module.Plans(context.Background(), query(insurance.Medical))
+	if !errors.Is(err, insurance.ErrUnknownOffice) || errors.Is(err, insurance.ErrUnavailable) || errors.Is(err, access.ErrNoOfficeRoute) {
+		t.Fatalf("plans error = %v, want unknown office", err)
 	}
 }
 

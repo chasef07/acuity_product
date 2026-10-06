@@ -37,7 +37,7 @@ paths:
   /v1/access/sign-up-eligibility:
     post:
       operationId: inspectSignUpEligibility
-      summary: Validate an Access Grant or provisioned Platform Operator email.
+      summary: Answer only whether a verified email may create a sign-in.
       security: []
       requestBody:
         required: true
@@ -46,14 +46,22 @@ paths:
             schema:
               $ref: "#/components/schemas/SignUpEligibilityRequest"
       responses:
-        "200":
+        "204":
           description: The verified-email sign-up is eligible.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "429":
+          description: Too many eligibility checks from this client. Retry later.
+          headers:
+            Retry-After:
+              schema:
+                type: string
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SignUpEligibility"
-        "403":
-          $ref: "#/components/responses/Denied"
+                $ref: "#/components/schemas/ErrorEnvelope"
         "503":
           $ref: "#/components/responses/Unavailable"
   /v1/access:
@@ -133,6 +141,8 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
   /v1/events:
@@ -2156,17 +2166,6 @@ components:
           type: string
           format: email
           maxLength: 320
-    SignUpEligibility:
-      type: object
-      additionalProperties: false
-      required: [kind, email]
-      properties:
-        kind:
-          type: string
-          enum: [ACCESS_GRANT, PLATFORM_OPERATOR]
-        email:
-          type: string
-          format: email
     Actor:
       type: object
       additionalProperties: false
