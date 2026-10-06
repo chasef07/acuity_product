@@ -85,6 +85,19 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		config.Service.AbitaEyeGroup.PracticeID != "00000000-0000-0000-0000-000000000002" {
 		t.Fatalf("service config = %#v", config.Service)
 	}
+	if config.Middleware != (MiddlewareConfig{}) {
+		t.Fatalf("unset middleware config = %#v", config.Middleware)
+	}
+	withMiddleware := clone(base)
+	withMiddleware["MIDDLEWARE_BASE_URL"] = "https://middleware.example"
+	if _, err := LoadConfig(func(name string) string { return withMiddleware[name] }); err == nil {
+		t.Fatal("middleware base URL loaded without its API secret")
+	}
+	withMiddleware["MIDDLEWARE_API_SECRET"] = "synthetic-middleware-secret"
+	if loaded, err := LoadConfig(func(name string) string { return withMiddleware[name] }); err != nil ||
+		loaded.Middleware != (MiddlewareConfig{BaseURL: "https://middleware.example", APISecret: "synthetic-middleware-secret"}) {
+		t.Fatalf("middleware config = %#v, %v", loaded.Middleware, err)
+	}
 	for _, role := range []Role{
 		RolePortalAPI,
 		RoleProviderIngress,

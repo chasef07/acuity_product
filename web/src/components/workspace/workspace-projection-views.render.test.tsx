@@ -104,6 +104,48 @@ test("Task rail toggles the selected context while preserving the conversation",
   dom.window.close()
 })
 
+test("the sidebar shows Manage agent pages in place of Tasks only while Manage agent is open", async () => {
+  const projection = projectedWorkspace(projectedTask())
+  const dom = installDOM()
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  const intents: WorkspaceProjectionIntent[] = []
+  const render = (state: WorkspaceProjectionState) =>
+    act(async () => root.render(
+      <SidebarProvider>
+        <WorkspaceRail
+          projection={state}
+          locationControl={<button type="button">Workspace selector</button>}
+          callingStatus={<p>Calling status</p>}
+          onIntent={(intent) => intents.push(intent)}
+        />
+      </SidebarProvider>,
+    ))
+  await render({ ...projection, selection: { ...projection.selection, view: "manage-agent", agentPage: "insurance" } })
+  const nav = host.querySelector("nav")
+  assert.ok(nav)
+  assert.equal(document.getElementById(nav.getAttribute("aria-labelledby") ?? "")?.textContent, "Manage agent")
+  assert.deepEqual(Array.from(nav.querySelectorAll("button"), (button) => button.textContent), ["Transcripts", "Knowledge base", "Insurance list"])
+  assert.equal(nav.querySelector("[aria-current='page']")?.textContent, "Insurance list")
+  assert.match(host.textContent ?? "", /Acuity Health.*Workspace selector/)
+  assert.match(host.textContent ?? "", /Calling status/)
+  assert.equal(host.querySelector("input[aria-label='Search tasks, names, or phone']"), null)
+  assert.equal(host.querySelector("[aria-label='Workspace folders']"), null)
+  assert.doesNotMatch(host.textContent ?? "", /Recently completed|Projected follow-up/)
+  const knowledge = Array.from(nav.querySelectorAll("button")).find((button) => button.textContent === "Knowledge base")!
+  await act(async () => knowledge.click())
+  assert.deepEqual(intents, [{ type: "select-manage-agent", page: "knowledge" }])
+
+  await render(projection)
+  assert.equal(host.querySelector("nav"), null)
+  assert.ok(host.querySelector("input[aria-label='Search tasks, names, or phone']"))
+  assert.ok(host.querySelector("[aria-label='Workspace folders']"))
+  assert.match(host.textContent ?? "", /Recently completed/)
+  await act(async () => root.unmount())
+  dom.window.close()
+})
+
 test("opening AI appointment evidence never clears shared work", async () => {
   const dom = installDOM()
   const host = document.createElement("div")
@@ -621,6 +663,7 @@ function projectedWorkspace(task: Task): WorkspaceProjectionState {
       aiInteractionLoading: false,
       aiInteractionError: "",
       view: "engagement",
+      agentPage: "transcripts",
       contextView: "task",
       contextPanelOpen: true,
     },

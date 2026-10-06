@@ -25,6 +25,8 @@ that connects them.
   and flag a call with a durable note. Acuity Platform Operators review these in
   Manage my agent using the Flagged calls filter within the selected Practice.
   Flags preserve the original report; they do not create patient Tasks or send notifications.
+  Manage my agent also shows, read-only, the knowledge and insurance list Abita uses
+  at each authorized Location.
 - **AI evidence:** preserve AI Interactions, transcripts, and receipt-backed
   appointment outcomes without treating an automated claim as proof of success.
 
@@ -106,6 +108,7 @@ Business rules live in their owning module under `backend/internal/`.
 | Messaging | [`messaging/`](backend/internal/messaging) | Conversations, send intent, delivery evidence, and attachments |
 | AIInteraction | [`interaction/`](backend/internal/interaction) | AI call lifecycle, transcripts, appointment evidence, and analytics |
 | Knowledge | [`knowledge/`](backend/internal/knowledge) | Office corpus revisions, controlled imports, and semantic passage search |
+| Insurance | [`insurance/`](backend/internal/insurance) | Read-only staff view of the middleware's insurance rules for a Location's Abita Office Route; stores nothing |
 
 The [`workspace/`](backend/internal/workspace) query layer combines authorized
 cross-domain views; it does not own domain writes. HTTP, authentication,
@@ -126,6 +129,8 @@ Reviewed office facts live in [`knowledge/offices/`](knowledge/offices/). The
 [Knowledge workflow](knowledge/README.md) validates edits and publishes complete
 office revisions from Git. Search combines semantic and text matching, preserving
 complete facts and restrictions while limiting the evidence returned to the Agent.
+Staff read a Location's current revision, in import order and without embeddings,
+through its single Abita Office Route.
 
 The browser/backend contract is [`api/openapi.yaml`](api/openapi.yaml).
 Go bindings and the TypeScript client are generated from it, not edited by hand.
@@ -215,6 +220,10 @@ single persistent-stack launcher; use the role configuration in
 [`backend/internal/app/config.go`](backend/internal/app/config.go) for the
 required environment variables. The Go process reads exported environment
 variables, not `.env` files.
+
+`portal-api` reads insurance rules from the AdvancedMD middleware when
+`MIDDLEWARE_BASE_URL` and `MIDDLEWARE_API_SECRET` are both set; set neither to
+leave the insurance plans endpoint returning 503 Unavailable.
 
 Configure the frontend using [web/README.md](web/README.md), then start it with:
 

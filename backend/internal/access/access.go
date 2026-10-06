@@ -32,6 +32,7 @@ var (
 	ErrDenied             = errors.New("access denied")
 	ErrAccessGrantClaimed = errors.New("Access Grant already claimed")
 	ErrInvalidInput       = errors.New("invalid access input")
+	ErrNoOfficeRoute      = errors.New("Location has no single Abita Office Route")
 )
 
 var abitaOfficeKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
@@ -640,6 +641,46 @@ func (m *Module) LockReadAuthorization(
 	locationID string,
 ) (Authorization, error) {
 	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, false)
+}
+
+func (m *Module) ReadLocationAbitaOfficeKey(
+	ctx context.Context,
+	identity Identity,
+	practiceID string,
+	locationID string,
+) (string, error) {
+	if m.database == nil || strings.TrimSpace(locationID) == "" {
+		return "", ErrDenied
+	}
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", fmt.Errorf("begin Abita Office Route read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := m.LockReadAuthorization(ctx, tx, identity, practiceID, locationID); err != nil {
+		return "", err
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT office_key
+		FROM access_abita_office_locations
+		WHERE practice_id = $1
+			AND location_id = $2
+		ORDER BY office_key
+	`, practiceID, locationID)
+	if err != nil {
+		return "", fmt.Errorf("read Abita Office Routes: %w", err)
+	}
+	keys, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return "", fmt.Errorf("scan Abita Office Routes: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit Abita Office Route read: %w", err)
+	}
+	if len(keys) != 1 {
+		return "", ErrNoOfficeRoute
+	}
+	return keys[0], nil
 }
 
 func (m *Module) lockAuthorization(

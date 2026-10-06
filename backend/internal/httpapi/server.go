@@ -21,6 +21,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/insurance"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/knowledge"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
@@ -60,6 +61,7 @@ type Config struct {
 
 type PortalDependencies struct {
 	Knowledge            *knowledge.Module
+	Insurance            *insurance.Module
 	Access               *access.Module
 	Authenticator        IdentityAuthenticator
 	Calling              *humancalling.Module
@@ -78,6 +80,7 @@ type RealtimeDependencies struct {
 
 type Server struct {
 	knowledge       *knowledge.Module
+	insurance       *insurance.Module
 	role            string
 	config          Config
 	pool            *pgxpool.Pool
@@ -96,6 +99,7 @@ type Server struct {
 
 type serverDependencies struct {
 	knowledge     *knowledge.Module
+	insurance     *insurance.Module
 	access        *access.Module
 	authenticator IdentityAuthenticator
 	events        EventStreamer
@@ -124,6 +128,7 @@ func NewPortal(
 	}
 	return newServer("portal-api", config, pool, serverDependencies{
 		knowledge:     dependencies.Knowledge,
+		insurance:     dependencies.Insurance,
 		access:        dependencies.Access,
 		authenticator: dependencies.Authenticator,
 		calling:       dependencies.Calling,
@@ -185,6 +190,7 @@ func newServer(
 
 	server := &Server{
 		knowledge:     dependencies.knowledge,
+		insurance:     dependencies.insurance,
 		role:          role,
 		config:        config,
 		pool:          pool,

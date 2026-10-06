@@ -170,6 +170,23 @@ if ((10#$USABLE_DATABASE_CONNECTIONS < 10#$required_database_connections)); then
   exit 1
 fi
 
+MIDDLEWARE_BASE_URL="${MIDDLEWARE_BASE_URL:-}"
+MIDDLEWARE_API_SECRET_SECRET="${MIDDLEWARE_API_SECRET_SECRET:-}"
+if [[ -n "$MIDDLEWARE_BASE_URL" || -n "$MIDDLEWARE_API_SECRET_SECRET" ]]; then
+  if [[ -z "$MIDDLEWARE_BASE_URL" || -z "$MIDDLEWARE_API_SECRET_SECRET" ]]; then
+    echo "MIDDLEWARE_BASE_URL and MIDDLEWARE_API_SECRET_SECRET must be set together or not at all." >&2
+    exit 1
+  fi
+  if [[ ! "$MIDDLEWARE_BASE_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]]; then
+    echo "MIDDLEWARE_BASE_URL must be an https:// base URL without credentials, query, or commas." >&2
+    exit 1
+  fi
+  if [[ ! "$MIDDLEWARE_API_SECRET_SECRET" =~ ^[A-Za-z0-9_-]{1,255}$ ]]; then
+    echo "MIDDLEWARE_API_SECRET_SECRET must be a Secret Manager secret name." >&2
+    exit 1
+  fi
+fi
+
 backend_tag="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$BACKEND_IMAGE:$IMAGE_TAG"
 web_tag="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$WEB_IMAGE:$IMAGE_TAG"
 backend_digest="$(
@@ -218,6 +235,7 @@ fi
 
 service_runtime() {
   runtime_environment="DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500"
+  runtime_secrets=""
   runtime_timeout=0
   case "$1" in
     acuity-portal-api)
@@ -226,6 +244,10 @@ service_runtime() {
       runtime_environment+=",HUMAN_CALLING_RING_WINDOW_SECONDS=20"
       if [[ "${KNOWLEDGE_GOOGLE_PROJECT+x}" == x ]]; then
         runtime_environment+=",KNOWLEDGE_GOOGLE_PROJECT=${KNOWLEDGE_GOOGLE_PROJECT},KNOWLEDGE_GOOGLE_LOCATION=${KNOWLEDGE_GOOGLE_LOCATION}"
+      fi
+      if [[ -n "$MIDDLEWARE_BASE_URL" ]]; then
+        runtime_environment+=",MIDDLEWARE_BASE_URL=${MIDDLEWARE_BASE_URL}"
+        runtime_secrets="MIDDLEWARE_API_SECRET=${MIDDLEWARE_API_SECRET_SECRET}:latest"
       fi
       if [[ "$destructive_cutover" == true ]]; then
         runtime_environment+=",HUMAN_CALLING_HANDOFF_ADMISSION=closed"
@@ -502,6 +524,9 @@ stage_backend_services() {
       --min "$minimum" \
       --max "$maximum" \
       --update-env-vars "$runtime_environment"
+    if [[ -n "$runtime_secrets" ]]; then
+      set -- "$@" --update-secrets "$runtime_secrets"
+    fi
     if ((runtime_timeout > 0)); then
       set -- "$@" --timeout "$runtime_timeout"
     fi

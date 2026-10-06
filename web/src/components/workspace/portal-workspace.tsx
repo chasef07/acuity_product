@@ -371,6 +371,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                 practiceID={state.scope.practiceID}
                 locationScopeID={state.scope.locationScopeID}
                 locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
+                page={state.selection.agentPage}
               />
             ) : view === "operator-analytics" && discovery.platformOperator ? (
               <OperatorAnalytics

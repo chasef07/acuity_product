@@ -51,3 +51,40 @@ func (server *Server) SearchOfficeKnowledge(w http.ResponseWriter, r *http.Reque
 func (server *Server) writeKnowledgeUnavailable(w http.ResponseWriter) {
 	server.writeJSON(w, http.StatusServiceUnavailable, knowledge.SearchResult{Outcome: "temporary_failure", Passages: []knowledge.Passage{}})
 }
+
+func (server *Server) QueryLocationKnowledge(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.LocationKnowledgeQuery
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	if server.knowledge == nil {
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Knowledge isn't available right now.", false)
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	result, err := server.knowledge.ReadLocation(ctx, identity, body.PracticeId.String(), body.LocationId.String())
+	switch {
+	case err == nil:
+		server.writeJSON(w, http.StatusOK, result)
+	case errors.Is(err, knowledge.ErrInvalidInput):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, access.ErrDenied):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, access.ErrNoOfficeRoute):
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Knowledge isn't available for this Location.", false)
+	default:
+		if r.Context().Err() == nil {
+			slog.Warn("location_knowledge_read_failed", "error", err.Error(), "elapsed_ms", time.Since(started).Milliseconds())
+		}
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Knowledge isn't available right now.", true)
+	}
+}

@@ -62,12 +62,12 @@ export function WorkspaceNavRail({
   const openCount = workspaceFolders(projection).reduce((total, folder) => total + folder.count, 0)
   const practiceName = discovery.practices.find((practice) => practice.id === projection.scope.practiceID)?.name
 
-  function selectWork() {
-    if (workActive) {
+  function selectWithSidebar(active: boolean, intent: WorkspaceProjectionIntent) {
+    if (active) {
       toggleSidebar()
       return
     }
-    onIntent({ type: "select-work" })
+    onIntent(intent)
     if (isMobile) setOpenMobile(true)
     else setOpen(true)
   }
@@ -82,14 +82,15 @@ export function WorkspaceNavRail({
         hint={`${openCount} open`}
         active={workActive}
         expanded={workActive && panelOpen}
-        onClick={selectWork}
+        onClick={() => selectWithSidebar(workActive, { type: "select-work" })}
       >
         <HouseIcon />
       </RailButton>
       <RailButton
         label="Manage agent"
         active={view === "manage-agent"}
-        onClick={() => onIntent({ type: "select-manage-agent" })}
+        expanded={view === "manage-agent" && panelOpen}
+        onClick={() => selectWithSidebar(view === "manage-agent", { type: "select-manage-agent" })}
       >
         <SparklesIcon />
       </RailButton>

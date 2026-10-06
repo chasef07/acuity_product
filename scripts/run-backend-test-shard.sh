@@ -30,6 +30,7 @@ case "${1:-}" in
       ./backend/internal/architecture
       ./backend/internal/authn
       ./backend/internal/contactcontext
+      ./backend/internal/insurance
       ./backend/internal/interaction
       ./backend/internal/knowledge
       ./backend/internal/messaging

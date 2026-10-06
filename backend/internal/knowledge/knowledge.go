@@ -120,7 +120,7 @@ func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision
 		return Revision{}, err
 	}
 	for i, s := range cmd.Sections {
-		if _, err = tx.Exec(ctx, `INSERT INTO knowledge_passages(revision_id,section_id,title,text,embedding) VALUES($1,$2,$3,$4,$5::vector)`, cmd.ID, s.ID, s.Title, s.Text, vectors[i]); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO knowledge_passages(revision_id,section_id,title,text,embedding,position) VALUES($1,$2,$3,$4,$5::vector,$6)`, cmd.ID, s.ID, s.Title, s.Text, vectors[i], i); err != nil {
 			return Revision{}, err
 		}
 	}
@@ -136,6 +136,38 @@ func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision
 	}
 	return rev, nil
 }
+func (m *Module) RecordSectionOrder(ctx context.Context, cmd ImportCommand, revisionID string) error {
+	if uuid.Validate(cmd.PracticeID) != nil || uuid.Validate(revisionID) != nil {
+		return ErrInvalidInput
+	}
+	if err := validateSections(cmd.Sections); err != nil {
+		return err
+	}
+	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var current *string
+	if err := tx.QueryRow(ctx, `SELECT revision_id::text FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2 FOR UPDATE`, cmd.PracticeID, cmd.OfficeKey).Scan(&current); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrConflict
+		}
+		return err
+	}
+	if current == nil || *current != revisionID {
+		return ErrConflict
+	}
+	ids := make([]string, len(cmd.Sections))
+	for i, section := range cmd.Sections {
+		ids[i] = section.ID
+	}
+	if _, err := tx.Exec(ctx, `UPDATE knowledge_passages p SET position=o.ordinal-1 FROM unnest($2::text[]) WITH ORDINALITY AS o(section_id,ordinal) WHERE p.revision_id=$1 AND p.section_id=o.section_id`, revisionID, ids); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (m *Module) inspectImport(ctx context.Context, tx pgx.Tx, cmd ImportCommand, hash string) (Revision, bool, error) {
 	var current *string
 	var exists bool
@@ -175,7 +207,7 @@ func (m *Module) inspectImport(ctx context.Context, tx pgx.Tx, cmd ImportCommand
 
 func (m *Module) embed(ctx context.Context, texts []string, task TaskType) ([]string, error) {
 	if m.embedder == nil {
-		return nil, ErrUnavailable
+		return nil, errProviderNotConfigured
 	}
 	providerCtx, cancel := context.WithTimeout(ctx, m.config.ProviderTimeout)
 	defer cancel()

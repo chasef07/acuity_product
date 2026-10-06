@@ -38,6 +38,7 @@ export type WorkspaceConnectionState =
 
 export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics" | "manage-agent"
 export type WorkspaceContextView = "task" | "call" | "ai-call"
+export type ManageAgentPage = "transcripts" | "knowledge" | "insurance"
 export type WorkspaceRailSection = "tasks" | "calls" | "appointments" | "texts" | "completed"
 
 export type WorkspaceRailState = {
@@ -92,6 +93,7 @@ export type WorkspaceProjectionState = {
     aiInteractionError: string
     historicalCall?: CallingCall
     view: WorkspaceView
+    agentPage: ManageAgentPage
     contextView: WorkspaceContextView
     contextPanelOpen: boolean
   }
@@ -230,7 +232,7 @@ export type WorkspaceProjectionIntent =
   | { type: "select-task"; task: Task; rememberForCall?: boolean }
   | { type: "select-analytics" }
   | { type: "select-operator-analytics" }
-  | { type: "select-manage-agent" }
+  | { type: "select-manage-agent"; page?: ManageAgentPage }
   | { type: "select-work" }
   | { type: "open-ai-context"; interactionID: string }
   | { type: "open-task-context"; task: Task }
@@ -693,8 +695,8 @@ export function createWorkspaceProjection({
     })
     if (restoredTask?.practiceId === scope.practiceID) {
       showTask(restoredTask)
-    } else if (requested.view !== "task" && requested.view !== "none") {
-      selectPageView(requested.view)
+    } else {
+      selectLocation(requested)
     }
     realtimeController.setScope({
       practiceID: scope.practiceID,
@@ -729,7 +731,7 @@ export function createWorkspaceProjection({
     navigationSearch = workspaceLocationSearch(location)
     replaceNavigation = true
     if (result?.kind === "success") showTask(result.data)
-    else if (location.view !== "task" && location.view !== "none") selectPageView(location.view)
+    else selectLocation(location)
     syncNavigation(state)
   }
 
@@ -747,14 +749,24 @@ export function createWorkspaceProjection({
     selectEngagement(taskEngagement(task), group ?? task)
   }
 
-  function selectPageView(view: WorkspacePageView) {
+  function selectLocation(location: WorkspaceLocation) {
+    if (location.view === "task" || location.view === "none") return
+    selectPageView(location.view, location.view === "manage-agent" ? (location.page ?? "transcripts") : undefined)
+  }
+
+  function selectPageView(view: WorkspacePageView, agentPage?: ManageAgentPage) {
     const discovery = state.discovery
     if (!discovery?.practices.some((practice) => practice.id === state.scope.practiceID)) return
     if (view === "analytics" && !canViewPracticeAnalytics(discovery, state.scope.practiceID)) return
     if (view === "operator-analytics" && !discovery.platformOperator) return
     patch((current) => ({
       ...current,
-      selection: { ...current.selection, view, contextPanelOpen: false },
+      selection: {
+        ...current.selection,
+        view,
+        agentPage: agentPage ?? current.selection.agentPage,
+        contextPanelOpen: false,
+      },
     }))
   }
 
@@ -796,7 +808,7 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "select-manage-agent") {
-      selectPageView("manage-agent")
+      selectPageView("manage-agent", intent.page)
       return
     }
     if (intent.type === "select-analytics") {
@@ -1020,7 +1032,7 @@ export function createWorkspaceProjection({
       : current.selection.view === "manage-agent" ? "manage-agent" : "none"
     publish({
       ...empty,
-      selection: { ...empty.selection, view: analyticsView },
+      selection: { ...empty.selection, view: analyticsView, agentPage: current.selection.agentPage },
       loadState: activeScopeChanged ? "loading" : current.loadState,
       connection: current.connection,
       discovery,
@@ -1711,6 +1723,7 @@ function initialState(): WorkspaceProjectionState {
       aiInteractionLoading: false,
       aiInteractionError: "",
       view: "none",
+      agentPage: "transcripts",
       contextView: "task",
       contextPanelOpen: false,
     },
