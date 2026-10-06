@@ -2,7 +2,6 @@ package interaction
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -41,39 +40,20 @@ func availableManualTags(ctx context.Context, tx pgx.Tx, practiceID string) ([]s
 }
 
 func (m *Module) OperatorManualTags(ctx context.Context, identity access.Identity, interactionID string, change *ManualTagChange) (ManualTags, error) {
-	if m.database == nil || m.access == nil || !validUUID(interactionID) {
-		return ManualTags{}, ErrInvalidInput
-	}
 	var name string
-	var err error
 	if change != nil {
+		var err error
 		name, err = normalizeManualTag(change.Name)
 		if err != nil {
 			return ManualTags{}, err
 		}
 	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	tx, authorization, err := m.beginInteractionAccess(ctx, identity, interactionID, change != nil, audienceOperator)
 	if err != nil {
 		return ManualTags{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var practiceID, locationID string
-	err = tx.QueryRow(ctx, `SELECT practice_id::text, location_id::text FROM ai_interactions WHERE id=$1`, interactionID).Scan(&practiceID, &locationID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ManualTags{}, ErrDenied
-	}
-	if err != nil {
-		return ManualTags{}, err
-	}
-	var authorization access.Authorization
-	if change == nil {
-		authorization, err = m.access.LockReadAuthorization(ctx, tx, identity, practiceID, locationID)
-	} else {
-		authorization, err = m.access.LockMutationAuthorization(ctx, tx, identity, practiceID, locationID)
-	}
-	if err != nil || !authorization.PlatformOperator {
-		return ManualTags{}, ErrDenied
-	}
+	practiceID := authorization.Practice.ID
 	if change != nil {
 		var changed bool
 		if change.Applied {

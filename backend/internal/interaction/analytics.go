@@ -179,45 +179,25 @@ func (m *Module) QueryAnalytics(
 ) (AnalyticsPage, error) {
 	normalizeAnalyticsCommand(&command)
 	duration, ok := analyticsRangeDuration(command.Range)
-	if m.database == nil || m.access == nil || !ok ||
-		!validUUID(command.PracticeID) ||
-		(command.LocationID != "" && !validUUID(command.LocationID)) ||
-		command.Limit < 1 || command.Limit > 100 {
+	if !ok || command.Limit < 1 || command.Limit > 100 {
 		return AnalyticsPage{}, ErrInvalidInput
 	}
-	cursor, err := decodeAnalyticsCursor(command)
-	if err != nil {
-		return AnalyticsPage{}, ErrInvalidInput
-	}
-
 	to := m.now().UTC().Truncate(time.Microsecond)
-	if cursor != nil {
-		if cursor.Through.After(to) {
+	var cursor *analyticsCursor
+	if command.Cursor != "" {
+		cursor = &analyticsCursor{}
+		if !decodeCursor(command, cursor, cursor, to) {
 			return AnalyticsPage{}, ErrInvalidInput
 		}
 		to = cursor.Through
 	}
 	from := to.Add(-duration)
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	scope, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceOperator)
 	if err != nil {
-		return AnalyticsPage{}, fmt.Errorf("begin operator AI analytics query: %w", err)
+		return AnalyticsPage{}, err
 	}
+	tx, locationIDs := scope.tx, scope.locationIDs
 	defer func() { _ = tx.Rollback(ctx) }()
-	authorization, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		command.LocationID,
-	)
-	if err != nil || !authorization.PlatformOperator {
-		return AnalyticsPage{}, ErrDenied
-	}
-
-	locationIDs := authorizedLocationIDs(authorization, command.LocationID)
-	if len(locationIDs) == 0 {
-		return AnalyticsPage{}, ErrDenied
-	}
 	var summary *AnalyticsSummary
 	var pendingIssues []OperatorCallIssue
 	if cursor == nil {
@@ -231,7 +211,7 @@ func (m *Module) QueryAnalytics(
 			return AnalyticsPage{}, fmt.Errorf("query pending call issues: %w", err)
 		}
 	}
-	calls, hasMore, err := queryAnalyticsCalls(
+	calls, next, err := queryAnalyticsCalls(
 		ctx,
 		tx,
 		command,
@@ -252,8 +232,8 @@ func (m *Module) QueryAnalytics(
 	}
 
 	page := AnalyticsPage{Summary: summary, Calls: calls, AvailableTags: availableTags, PendingIssues: pendingIssues}
-	if hasMore && len(page.Calls) > 0 {
-		page.NextCursor, err = encodeAnalyticsCursor(command, page.Calls[len(page.Calls)-1], to)
+	if next != nil {
+		page.NextCursor, err = encodeCursor(newAnalyticsCursor(command, next.StartedAt, next.ID, to))
 		if err != nil {
 			return AnalyticsPage{}, fmt.Errorf("encode operator AI analytics cursor: %w", err)
 		}
@@ -310,6 +290,9 @@ func queryAnalyticsSummary(
 	summary.quality = newQualityAccumulator(summary.Daily)
 	summary.versions = versions
 	for rows.Next() {
+		if summary.TotalCalls == analyticsRowLimit {
+			return AnalyticsSummary{}, errors.New("operator AI analytics exceeds bounded reporting window")
+		}
 		var projection analyticsProjection
 		var evaluation, footprint, usage json.RawMessage
 		values := make([]string, len(versionDimensions))
@@ -436,16 +419,16 @@ func queryAnalyticsCalls(
 	from time.Time,
 	to time.Time,
 	cursor *analyticsCursor,
-) ([]AnalyticsCall, bool, error) {
+) ([]AnalyticsCall, *analyticsPosition, error) {
 	var cursorStartedAt any
 	var cursorID any
 	if cursor != nil {
 		cursorStartedAt = cursor.StartedAt
 		cursorID = cursor.ID
 	}
-	var queryLimit any = command.Limit + 1
+	scanLimit := command.Limit + 1
 	if command.NeedsReviewOnly {
-		queryLimit = nil
+		scanLimit = analyticsReviewScanLimit
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT
@@ -477,12 +460,14 @@ func queryAnalyticsCalls(
 			)
 		ORDER BY interaction.started_at DESC, interaction.id DESC
 		LIMIT $7
-	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, queryLimit, command.ManualTag)
+	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, scanLimit, command.ManualTag)
 	if err != nil {
-		return nil, false, fmt.Errorf("query operator AI analytics page: %w", err)
+		return nil, nil, fmt.Errorf("query operator AI analytics page: %w", err)
 	}
 	defer rows.Close()
 	projections := make([]analyticsProjection, 0, command.Limit+1)
+	scanned := 0
+	var last analyticsPosition
 	for rows.Next() {
 		var projection analyticsProjection
 		var evaluation json.RawMessage
@@ -501,8 +486,10 @@ func queryAnalyticsCalls(
 			&evaluation,
 			&projection.call.ManualTags,
 		); err != nil {
-			return nil, false, fmt.Errorf("scan operator AI analytics page: %w", err)
+			return nil, nil, fmt.Errorf("scan operator AI analytics page: %w", err)
 		}
+		scanned++
+		last = analyticsPosition{StartedAt: projection.call.StartedAt, ID: projection.call.ID}
 		projection.call.ReviewReasons = EvaluationReviewReasons(evaluation)
 		if command.NeedsReviewOnly && len(projection.call.ReviewReasons) == 0 {
 			continue
@@ -514,17 +501,21 @@ func queryAnalyticsCalls(
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("iterate operator AI analytics page: %w", err)
+		return nil, nil, fmt.Errorf("iterate operator AI analytics page: %w", err)
 	}
-	hasMore := len(projections) > command.Limit
-	if hasMore {
+	var next *analyticsPosition
+	if len(projections) > command.Limit {
 		projections = projections[:command.Limit]
+		final := projections[len(projections)-1].call
+		next = &analyticsPosition{StartedAt: final.StartedAt, ID: final.ID}
+	} else if scanned == scanLimit {
+		next = &last
 	}
 	calls := make([]AnalyticsCall, 0, len(projections))
 	for _, projection := range projections {
 		calls = append(calls, projection.call)
 	}
-	return calls, hasMore, nil
+	return calls, next, nil
 }
 
 func (m *Module) ReadOperatorAnalytics(
@@ -532,32 +523,15 @@ func (m *Module) ReadOperatorAnalytics(
 	identity access.Identity,
 	interactionID string,
 ) (OperatorAnalyticsDetail, error) {
-	if m.database == nil || m.access == nil || !validUUID(strings.TrimSpace(interactionID)) {
-		return OperatorAnalyticsDetail{}, ErrInvalidInput
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	interactionID = strings.TrimSpace(interactionID)
+	tx, _, err := m.beginInteractionAccess(ctx, identity, interactionID, false, audienceOperator)
 	if err != nil {
-		return OperatorAnalyticsDetail{}, fmt.Errorf("begin operator AI analytics detail: %w", err)
+		return OperatorAnalyticsDetail{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	stored, err := scanInteraction(tx.QueryRow(ctx, interactionSelect+`
-		WHERE interaction.id = $1
-	`, interactionID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return OperatorAnalyticsDetail{}, ErrDenied
-	}
+	stored, err := readInteraction(ctx, tx, interactionID)
 	if err != nil {
-		return OperatorAnalyticsDetail{}, fmt.Errorf("read operator AI analytics detail: %w", err)
-	}
-	authorization, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		identity,
-		stored.PracticeID,
-		stored.LocationID,
-	)
-	if err != nil || !authorization.PlatformOperator {
-		return OperatorAnalyticsDetail{}, ErrDenied
+		return OperatorAnalyticsDetail{}, err
 	}
 	issue, err := readCallIssue(ctx, tx, interactionID)
 	if err != nil {
@@ -666,42 +640,43 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 	projection.call.Transferred = projection.call.Status == CallEscalated
 }
 
-func encodeAnalyticsCursor(command QueryAnalyticsCommand, call AnalyticsCall, through time.Time) (string, error) {
-	encoded, err := json.Marshal(analyticsCursor{
+type analyticsPosition struct {
+	StartedAt time.Time
+	ID        string
+}
+
+func newAnalyticsCursor(command QueryAnalyticsCommand, startedAt time.Time, id string, through time.Time) analyticsCursor {
+	return analyticsCursor{
 		Through:         through,
 		NeedsReviewOnly: command.NeedsReviewOnly,
 		ManualTag:       command.ManualTag,
 		Range:           command.Range,
 		PracticeID:      command.PracticeID,
 		LocationID:      command.LocationID,
-		StartedAt:       call.StartedAt,
-		ID:              call.ID,
-	})
+		StartedAt:       startedAt,
+		ID:              id,
+	}
+}
+
+func encodeCursor(value any) (string, error) {
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
-func decodeAnalyticsCursor(command QueryAnalyticsCommand) (*analyticsCursor, error) {
-	if command.Cursor == "" {
-		return nil, nil
-	}
+func decodeCursor(command QueryAnalyticsCommand, target any, cursor *analyticsCursor, now time.Time) bool {
 	decoded, err := base64.RawURLEncoding.DecodeString(command.Cursor)
-	if err != nil {
-		return nil, err
+	if err != nil || json.Unmarshal(decoded, target) != nil {
+		return false
 	}
-	var cursor analyticsCursor
-	if err := json.Unmarshal(decoded, &cursor); err != nil {
-		return nil, err
-	}
-	if cursor.NeedsReviewOnly != command.NeedsReviewOnly || cursor.ManualTag != command.ManualTag || cursor.Range != command.Range || cursor.PracticeID != command.PracticeID ||
-		cursor.LocationID != command.LocationID || cursor.StartedAt.IsZero() || cursor.Through.IsZero() ||
-		cursor.StartedAt.After(cursor.Through) ||
-		!validUUID(cursor.ID) {
-		return nil, ErrInvalidInput
-	}
-	return &cursor, nil
+	duration, _ := analyticsRangeDuration(command.Range)
+	return cursor.NeedsReviewOnly == command.NeedsReviewOnly && cursor.ManualTag == command.ManualTag &&
+		cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
+		!cursor.StartedAt.IsZero() && !cursor.Through.IsZero() && !cursor.Through.After(now) &&
+		!cursor.StartedAt.After(cursor.Through) && !cursor.StartedAt.Before(cursor.Through.Add(-duration)) &&
+		validUUID(cursor.ID)
 }
 
 type latencyValueSet struct {

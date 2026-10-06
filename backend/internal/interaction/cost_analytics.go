@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
-	"github.com/jackc/pgx/v5"
 )
 
 type QueryCostAnalyticsCommand struct {
@@ -86,36 +85,18 @@ func costItems() []CostItem {
 
 func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyticsCommand) (CostAnalytics, error) {
 	duration, validRange := analyticsRangeDuration(command.Range)
-	zone, zoneErr := time.LoadLocation(command.TimeZone)
-	if m.database == nil || m.access == nil || !validRange || !validUUID(command.PracticeID) ||
-		(command.LocationID != "" && !validUUID(command.LocationID)) ||
-		command.TimeZone == "" || command.TimeZone == "Local" || zoneErr != nil {
+	zone, validZone := reportingZone(command.TimeZone)
+	if !validRange || !validZone {
 		return CostAnalytics{}, ErrInvalidInput
 	}
 	to := m.now().UTC()
 	from := to.Add(-duration)
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	scope, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceOperator)
 	if err != nil {
-		return CostAnalytics{}, fmt.Errorf("begin AI costs: %w", err)
+		return CostAnalytics{}, err
 	}
+	tx, locations := scope.tx, scope.locationIDs
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout = '1500ms'; SET LOCAL lock_timeout = '100ms'; SET LOCAL max_parallel_workers_per_gather = 0; SET LOCAL work_mem = '4MB'`); err != nil {
-		return CostAnalytics{}, err
-	}
-	authorization, err := m.access.LockReadAuthorization(ctx, tx, command.Identity, command.PracticeID, command.LocationID)
-	if errors.Is(err, access.ErrDenied) {
-		return CostAnalytics{}, ErrDenied
-	}
-	if err != nil {
-		return CostAnalytics{}, err
-	}
-	if !authorization.PlatformOperator {
-		return CostAnalytics{}, ErrDenied
-	}
-	locations := authorizedLocationIDs(authorization, command.LocationID)
-	if len(locations) == 0 {
-		return CostAnalytics{}, ErrDenied
-	}
 	rows, err := tx.Query(ctx, `
 		SELECT started_at, ended_at, cost_usage_evidence
 		FROM ai_interactions
@@ -123,8 +104,8 @@ func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyt
 			AND started_at >= $3 AND started_at < $4
 			AND ended_at IS NOT NULL AND status <> 'IN_PROGRESS'
 		ORDER BY started_at, id
-		LIMIT 50001
-	`, command.PracticeID, locations, from, to)
+		LIMIT $5
+	`, command.PracticeID, locations, from, to, analyticsRowLimit+1)
 	if err != nil {
 		return CostAnalytics{}, fmt.Errorf("query AI costs: %w", err)
 	}
@@ -146,7 +127,7 @@ func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyt
 	if err := rows.Err(); err != nil {
 		return CostAnalytics{}, fmt.Errorf("iterate AI costs: %w", err)
 	}
-	if rowCount > 50000 {
+	if rowCount > analyticsRowLimit {
 		return CostAnalytics{}, fmt.Errorf("AI costs exceed bounded reporting window")
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -178,8 +159,10 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 		known[costMedia], known[costTelephony] = true, true
 	}
 	var entries []map[string]any
-	_ = json.Unmarshal(raw, &entries)
 	unpricedUsage := 0
+	if json.Unmarshal(raw, &entries) != nil {
+		unpricedUsage++
+	}
 	var lunaInputTotal float64
 	for _, entry := range entries {
 		model, _ := entry["model"].(string)
