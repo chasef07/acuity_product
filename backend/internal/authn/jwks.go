@@ -177,7 +177,7 @@ func (adapter *JWKSAuthenticator) key(
 	now := adapter.now()
 	age := now.Sub(adapter.fetchedAt)
 	cached, known := adapter.keys[keyID]
-	fresh := len(adapter.keys) > 0 && age < adapter.cacheTTL
+	fresh := age < adapter.cacheTTL
 	usable := known && age < adapter.cacheTTL+jwksStaleWindow
 	if known && fresh {
 		adapter.mu.Unlock()

@@ -25,7 +25,7 @@ type signUpEligibilityLimiter struct {
 func (limiter *signUpEligibilityLimiter) allow(client string, now time.Time) (bool, time.Duration) {
 	limiter.mu.Lock()
 	defer limiter.mu.Unlock()
-	if limiter.counts == nil || now.Sub(limiter.windowStart) >= signUpEligibilityWindow {
+	if now.Sub(limiter.windowStart) >= signUpEligibilityWindow {
 		limiter.windowStart = now
 		limiter.counts = map[string]int{}
 	}
