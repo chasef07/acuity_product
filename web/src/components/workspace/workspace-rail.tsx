@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useId, useRef, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import {
   ArrowRightIcon,
   BookOpenIcon,
@@ -302,7 +302,7 @@ export function WorkspaceRail({
               )}
             </form>
           </div>}
-          {connection === "degraded" && <p role="status" className="px-1 text-xs text-destructive">Live updates delayed. Reconnecting…</p>}
+          {connection === "degraded" && <ProlongedOutageNotice />}
         </SidebarHeader>
         {manageAgent ? (
           <SidebarContent className="overflow-y-auto px-2 py-2">
@@ -968,4 +968,20 @@ function taskRelativeAt(task: Task) {
   return task.state === "OPEN"
     ? task.createdAt
     : (task.completedAt ?? task.updatedAt)
+}
+
+const prolongedOutageMilliseconds = 60_000
+
+function ProlongedOutageNotice() {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const timeout = setTimeout(() => setVisible(true), prolongedOutageMilliseconds)
+    return () => clearTimeout(timeout)
+  }, [])
+  if (!visible) return null
+  return (
+    <p role="status" className="px-1 text-xs text-muted-foreground">
+      Live updates paused. Still checking for changes.
+    </p>
+  )
 }

@@ -288,9 +288,11 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     )
 
     process.kill(realtimePID, "SIGKILL")
-    await expect(page.getByText("Live updates delayed. Reconnecting…", { exact: true })).toBeVisible()
     await expect(
-      secondCustomerPage.getByText("Live updates delayed. Reconnecting…", { exact: true }),
+      page.locator('[data-testid="mounted-workspace"][data-connection="degraded"]'),
+    ).toBeVisible()
+    await expect(
+      secondCustomerPage.locator('[data-testid="mounted-workspace"][data-connection="degraded"]'),
     ).toBeVisible()
 
     const realtimeEndpoint = new URL(realtimeURL)
