@@ -7,9 +7,15 @@ SELECT EXISTS (
 );
 
 -- acuity:next-statement
+SET lock_timeout = '15s';
+
+-- acuity:next-statement
 DROP INDEX CONCURRENTLY IF EXISTS messaging_messages_retry_of_message_idx;
 
 -- acuity:next-statement
 CREATE UNIQUE INDEX CONCURRENTLY messaging_messages_retry_of_message_idx
     ON messaging_messages (retry_of_message_id)
     WHERE retry_of_message_id IS NOT NULL;
+
+-- acuity:next-statement
+RESET lock_timeout;
