@@ -1537,7 +1537,7 @@ func TestReadAuthorizationLeavesMembershipUnlockedAndHonorsRevocation(t *testing
 		t.Fatal("read authorization recorded no statements")
 	}
 	if got := recorder.countContaining("FOR SHARE") + recorder.countContaining("FOR UPDATE") +
-		recorder.countContaining("FOR KEY SHARE"); got != 0 {
+		recorder.countContaining("FOR KEY SHARE") + recorder.countContaining("FOR NO KEY UPDATE"); got != 0 {
 		t.Fatalf("read authorization row locks = %d, want 0", got)
 	}
 
@@ -1561,8 +1561,8 @@ func TestReadAuthorizationLeavesMembershipUnlockedAndHonorsRevocation(t *testing
 	})
 	cancelBlocked()
 	_ = mutationTx.Rollback(ctx)
-	if err == nil {
-		t.Fatal("revocation completed while a mutation authorization held the Membership")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("revocation while a mutation authorization held the Membership = %v, want deadline exceeded", err)
 	}
 
 	revokeContext, cancelRevoke := context.WithTimeout(ctx, 2*time.Second)
