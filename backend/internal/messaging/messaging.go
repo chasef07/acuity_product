@@ -24,7 +24,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/team-telnyx/telnyx-go/v4"
 	"github.com/team-telnyx/telnyx-go/v4/option"
 )
@@ -63,8 +62,6 @@ const automaticTaskAcknowledgementMaxAge = 5 * time.Minute
 const providerTemporaryRetryDelay = 15 * time.Second
 const providerTemporaryRetryWindow = 5 * time.Minute
 const providerResultWriteTimeout = 5 * time.Second
-
-const retryOfMessageConstraint = "messaging_messages_retry_of_message_idx"
 
 var (
 	ErrDenied                 = errors.New("messaging access denied")
@@ -435,6 +432,16 @@ func (m *Module) Send(
 				!command.DuplicateRiskAcknowledged) {
 			return Message{}, "", ErrConflict
 		}
+		existing, err := loadNewAttempt(ctx, tx, originalThreadID, command.RetryOfMessageID)
+		if err == nil {
+			if err := tx.Commit(ctx); err != nil {
+				return Message{}, "", fmt.Errorf("commit existing Message new attempt: %w", err)
+			}
+			return existing, MessageDuplicate, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return Message{}, "", err
+		}
 	}
 	var sender, profileID string
 	if err := tx.QueryRow(ctx, `
@@ -622,9 +629,6 @@ func (m *Module) Send(
 		CreatorSubject:   command.Identity.Subject,
 		CreatedAt:        now,
 	})
-	if isUniqueViolation(err, retryOfMessageConstraint) {
-		return Message{}, "", ErrConflict
-	}
 	if err != nil {
 		return Message{}, "", fmt.Errorf("commit outbound Message: %w", err)
 	}
@@ -1079,12 +1083,7 @@ func (m *Module) SendAgain(
 	if err != nil {
 		return Message{}, "", err
 	}
-	replayed, found, err := m.loadSendAgainReplay(
-		ctx,
-		command,
-		original.Thread.PracticeID,
-		original.ID,
-	)
+	replayed, found, err := m.loadSendAgainReplay(ctx, command, original)
 	if err != nil {
 		return Message{}, "", err
 	}
@@ -1199,32 +1198,19 @@ func (m *Module) readMessageForRetry(
 func (m *Module) loadSendAgainReplay(
 	ctx context.Context,
 	command SendAgainCommand,
-	practiceID string,
-	originalMessageID string,
+	original Message,
 ) (Message, bool, error) {
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Message{}, false, fmt.Errorf("begin Message new-attempt replay: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	replayed, _, err := loadMessageByIdempotency(
-		ctx,
-		tx,
-		practiceID,
-		command.Identity.Subject,
-		command.IdempotencyKey,
-	)
+	replayed, err := loadNewAttempt(ctx, tx, original.Thread.ID, original.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.Commit(ctx); err != nil {
-			return Message{}, false, fmt.Errorf("commit empty Message new-attempt replay: %w", err)
-		}
 		return Message{}, false, nil
 	}
 	if err != nil {
 		return Message{}, false, err
-	}
-	if replayed.RetryOfMessageID != originalMessageID {
-		return Message{}, false, ErrConflict
 	}
 	if _, err := m.access.LockMutationAuthorization(
 		ctx,
@@ -2784,11 +2770,23 @@ func loadMessage(
 	return result, nil
 }
 
-func isUniqueViolation(err error, constraint string) bool {
-	var postgresError *pgconn.PgError
-	return errors.As(err, &postgresError) &&
-		postgresError.Code == "23505" &&
-		postgresError.ConstraintName == constraint
+func loadNewAttempt(
+	ctx context.Context,
+	tx pgx.Tx,
+	threadID string,
+	originalMessageID string,
+) (Message, error) {
+	var attemptID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM messaging_messages
+		WHERE thread_id = $1 AND retry_of_message_id = $2
+		ORDER BY created_at, id
+		LIMIT 1
+	`, threadID, originalMessageID).Scan(&attemptID); err != nil {
+		return Message{}, err
+	}
+	return loadMessage(ctx, tx, attemptID)
 }
 
 func loadThread(

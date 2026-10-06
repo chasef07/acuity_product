@@ -1,13 +1,13 @@
 package humancalling
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -180,23 +180,12 @@ func unwrapTelnyxWebhook(
 
 func sameWebhookEventData(left []byte, right []byte) bool {
 	var leftEnvelope, rightEnvelope struct {
-		Data json.RawMessage `json:"data"`
+		Data any `json:"data"`
 	}
-	if json.Unmarshal(left, &leftEnvelope) != nil ||
-		json.Unmarshal(right, &rightEnvelope) != nil {
-		return false
-	}
-	var leftData, rightData any
-	if json.Unmarshal(leftEnvelope.Data, &leftData) != nil ||
-		json.Unmarshal(rightEnvelope.Data, &rightData) != nil ||
-		leftData == nil || rightData == nil {
-		return false
-	}
-	leftCanonical, leftErr := json.Marshal(leftData)
-	rightCanonical, rightErr := json.Marshal(rightData)
-	return leftErr == nil &&
-		rightErr == nil &&
-		bytes.Equal(leftCanonical, rightCanonical)
+	return json.Unmarshal(left, &leftEnvelope) == nil &&
+		json.Unmarshal(right, &rightEnvelope) == nil &&
+		leftEnvelope.Data != nil &&
+		reflect.DeepEqual(leftEnvelope.Data, rightEnvelope.Data)
 }
 
 func validTelnyxEvent(

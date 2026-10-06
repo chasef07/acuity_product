@@ -96,46 +96,27 @@ func readAcknowledgementEvidence(
 	return evidence
 }
 
-func TestFinalizedDeliveryStatusesProjectWithoutClaimingDelivery(t *testing.T) {
-	for _, test := range []struct {
-		status   string
-		delivery string
-	}{
-		{status: "expired", delivery: "FAILED"},
-		{status: "delivery_unconfirmed", delivery: "SENT"},
-		{status: "delivery_failed", delivery: "FAILED"},
-		{status: "delivered", delivery: "DELIVERED"},
+func TestFinalizedDeliveryStatusesProjectAndIgnoreLateSent(t *testing.T) {
+	for status, delivery := range map[string]string{
+		"expired":              "FAILED",
+		"delivery_unconfirmed": "SENT",
+		"delivery_failed":      "FAILED",
+		"delivered":            "DELIVERED",
 	} {
-		t.Run(test.status, func(t *testing.T) {
+		t.Run(status, func(t *testing.T) {
 			fixture := newAutomaticAcknowledgementTestFixture(t, true)
 			command := sendAutomaticAcknowledgement(t, fixture)
-			eventID := "finalized-" + test.status
-			projectDeliveryEvent(t, fixture, command.CallbackToken, eventID, "message.finalized", test.status)
-			evidence := readAcknowledgementEvidence(t, fixture, eventID)
-			if evidence.delivery != test.delivery ||
-				evidence.commandState != "SENT" ||
-				evidence.receiptState != "APPLIED" ||
-				evidence.receiptFailure != "" {
-				t.Fatalf("finalized %s evidence = %#v, want delivery %s", test.status, evidence, test.delivery)
-			}
-		})
-	}
-}
-
-func TestLateSentEvidenceAfterFinalDeliveryIsNotContradictory(t *testing.T) {
-	for _, final := range []string{"delivered", "expired"} {
-		t.Run(final, func(t *testing.T) {
-			fixture := newAutomaticAcknowledgementTestFixture(t, true)
-			command := sendAutomaticAcknowledgement(t, fixture)
-			projectDeliveryEvent(t, fixture, command.CallbackToken, "final-"+final, "message.finalized", final)
-			before := readAcknowledgementEvidence(t, fixture, "final-"+final)
-			projectDeliveryEvent(t, fixture, command.CallbackToken, "late-sent-"+final, "message.sent", "sent")
-			after := readAcknowledgementEvidence(t, fixture, "late-sent-"+final)
-			if after.delivery != before.delivery ||
-				after.commandState != "SENT" ||
-				after.commandError != "" ||
-				after.receiptState != "APPLIED" {
-				t.Fatalf("late message.sent after %s = %#v, before %#v", final, after, before)
+			projectDeliveryEvent(t, fixture, command.CallbackToken, "final-"+status, "message.finalized", status)
+			projectDeliveryEvent(t, fixture, command.CallbackToken, "late-sent-"+status, "message.sent", "sent")
+			for _, eventID := range []string{"final-" + status, "late-sent-" + status} {
+				evidence := readAcknowledgementEvidence(t, fixture, eventID)
+				if evidence.delivery != delivery ||
+					evidence.commandState != "SENT" ||
+					evidence.commandError != "" ||
+					evidence.receiptState != "APPLIED" ||
+					evidence.receiptFailure != "" {
+					t.Fatalf("%s evidence = %#v, want delivery %s", eventID, evidence, delivery)
+				}
 			}
 		})
 	}

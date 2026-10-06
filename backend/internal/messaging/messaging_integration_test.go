@@ -1324,15 +1324,37 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			err,
 		)
 	}
-	if _, _, err := module.SendAgain(
+	secondAttempt, secondAttemptStatus, err := module.SendAgain(
 		context.Background(),
 		messaging.SendAgainCommand{
 			Identity:       identity,
 			MessageID:      queued.ID,
 			IdempotencyKey: "message-failed-second-new-attempt",
 		},
-	); !errors.Is(err, messaging.ErrConflict) {
-		t.Fatalf("second new attempt of one failed Message error = %v, want conflict", err)
+	)
+	if err != nil ||
+		secondAttemptStatus != messaging.MessageDuplicate ||
+		secondAttempt.ID != newAttempt.ID {
+		t.Fatalf("second new attempt = %#v, %q, %v", secondAttempt, secondAttemptStatus, err)
+	}
+	lockedAttempt, lockedAttemptStatus, err := module.Send(
+		context.Background(),
+		messaging.SendCommand{
+			Identity:         identity,
+			PracticeID:       queued.Thread.PracticeID,
+			LocationID:       queued.Thread.LocationID,
+			ThreadID:         queued.Thread.ID,
+			Destination:      queued.Destination,
+			Body:             queued.Body,
+			TaskID:           queued.TaskID,
+			RetryOfMessageID: queued.ID,
+			IdempotencyKey:   "message-failed-locked-new-attempt",
+		},
+	)
+	if err != nil ||
+		lockedAttemptStatus != messaging.MessageDuplicate ||
+		lockedAttempt.ID != newAttempt.ID {
+		t.Fatalf("locked new attempt = %#v, %q, %v", lockedAttempt, lockedAttemptStatus, err)
 	}
 	replayedAttempt, replayedAttemptStatus, err := module.SendAgain(
 		context.Background(),

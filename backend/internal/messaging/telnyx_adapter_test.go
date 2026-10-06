@@ -121,6 +121,7 @@ func TestTelnyxAdapterReconcilesTerminalRecipientStatuses(t *testing.T) {
 		"delivery_unconfirmed": messaging.DeliverySent,
 		"sending_failed":       messaging.DeliveryFailed,
 		"queued":               messaging.DeliverySent,
+		"unrecognized_status":  "",
 	} {
 		t.Run(status, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(
@@ -143,34 +144,15 @@ func TestTelnyxAdapterReconcilesTerminalRecipientStatuses(t *testing.T) {
 				t.Fatalf("create adapter: %v", err)
 			}
 			result, err := adapter.Reconcile(context.Background(), "provider-message-1")
+			if want == "" {
+				if !errors.Is(err, messaging.ErrAmbiguous) {
+					t.Fatalf("reconcile %s error = %v, want ambiguous", status, err)
+				}
+				return
+			}
 			if err != nil || result.State != want {
 				t.Fatalf("reconcile %s = %#v, %v; want %s", status, result, err, want)
 			}
 		})
-	}
-}
-
-func TestTelnyxAdapterTreatsUnrecognizedReconciledStatusAsInconclusive(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(
-		response http.ResponseWriter,
-		_ *http.Request,
-	) {
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(
-			`{"data":{"id":"provider-message-1","direction":"outbound","to":[{"phone_number":"+17275550199","status":"unrecognized_status"}]}}`,
-		))
-	}))
-	defer server.Close()
-	adapter, err := messaging.NewTelnyxAdapter(messaging.TelnyxConfig{
-		APIKey:         "KEY_synthetic",
-		BaseURL:        server.URL,
-		WebhookBaseURL: "https://ingress.example/hooks",
-		HTTPClient:     server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("create adapter: %v", err)
-	}
-	if _, err := adapter.Reconcile(context.Background(), "provider-message-1"); !errors.Is(err, messaging.ErrAmbiguous) {
-		t.Fatalf("unrecognized status error = %v, want ambiguous", err)
 	}
 }
