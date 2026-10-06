@@ -45,9 +45,6 @@ enforces Memberships and Location Scope. Practice Admins and Acuity-wide
 Platform Operators are distinct roles. Contact Context and phone-number history
 help staff act; neither is verified patient identity or a medical record.
 
-See [VISION.md](VISION.md) for the product principles and
-[CONTEXT.md](CONTEXT.md) for the shared vocabulary.
-
 ## Architecture
 
 The system has three foundations: a **Next.js frontend**, a **Go modular
@@ -327,8 +324,7 @@ deploy/              Runtime contracts, release automation, and operational cont
 .github/             CI, release workflows, and pull request template
 ```
 
-Before changing behavior, read [VISION.md](VISION.md) and the relevant
-issue with all its comments. GitHub Issues own committed product work.
-Follow [AGENTS.md](AGENTS.md), plus
+Before changing behavior, read the relevant issue with all its comments.
+GitHub Issues own committed product work. Follow
 [web/AGENTS.md](web/AGENTS.md) for frontend changes. Use synthetic, PHI-free data
 in tests and evidence, and state what remains unverified when handing off work.
