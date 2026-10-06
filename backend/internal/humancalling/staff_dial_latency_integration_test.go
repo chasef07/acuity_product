@@ -88,18 +88,11 @@ func TestInboundStaffDialFanoutProgressesWithTwoDatabaseConnections(t *testing.T
  `, time.Now(), time.Now().Unix(), receiptBody); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(context.Background(), `
- INSERT INTO work_recovery_reconciliation_queue (practice_id, phone, enqueued_at)
- SELECT practice_id, '+15555550999', $1 FROM human_calling_calls LIMIT 1
- `, time.Now()); err != nil {
-		t.Fatal(err)
-	}
 	mixedDeadline := time.Now().Add(5 * time.Second)
 	for {
 		var projected bool
 		if err := database.QueryRow(context.Background(), `SELECT
- EXISTS (SELECT 1 FROM human_calling_provider_receipts WHERE event_id = 'full-inbound-latency-receipt' AND state = 'UNKNOWN')
- AND NOT EXISTS (SELECT 1 FROM work_recovery_reconciliation_queue WHERE phone = '+15555550999')`).Scan(&projected); err != nil {
+ EXISTS (SELECT 1 FROM human_calling_provider_receipts WHERE event_id = 'full-inbound-latency-receipt' AND state = 'UNKNOWN')`).Scan(&projected); err != nil {
 			t.Fatal(err)
 		}
 		if projected {

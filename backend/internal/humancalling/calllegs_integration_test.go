@@ -2893,19 +2893,6 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 	if got := workerPool.Stat().MaxConns(); got != 2 {
 		t.Fatalf("worker pool maximum connections = %d, want 2", got)
 	}
-	var practiceID string
-	if err := workerPool.QueryRow(context.Background(), `
-		SELECT practice_id::text FROM human_calling_calls ORDER BY created_at LIMIT 1
-	`).Scan(&practiceID); err != nil {
-		t.Fatalf("read concurrent Staff Dial Practice: %v", err)
-	}
-	if _, err := workerPool.Exec(context.Background(), `
-		INSERT INTO work_recovery_reconciliation_queue (
-			practice_id, phone, enqueued_at
-		) VALUES ($1, '+15555550999', $2)
-	`, practiceID, now); err != nil {
-		t.Fatalf("seed recovery reconciliation during concurrent Staff Dials: %v", err)
-	}
 	receiptBody := []byte(`{"data":{"record_type":"event","event_type":"call.synthetic_unknown","id":"concurrent-staff-dial-receipt","occurred_at":"2026-08-19T18:30:00Z","payload":{}}}`)
 	if _, err := workerPool.Exec(context.Background(), `
 		INSERT INTO human_calling_provider_receipts (
@@ -2921,22 +2908,17 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 	mixedLaneDeadline := time.Now().Add(time.Second)
 	for {
 		var receiptState string
-		var recoveryDepth int
 		err := workerPool.QueryRow(context.Background(), `
-			SELECT
-				COALESCE((
-					SELECT state FROM human_calling_provider_receipts
-					WHERE event_id = 'concurrent-staff-dial-receipt'
-				), ''),
-				(SELECT count(*) FROM work_recovery_reconciliation_queue
-					WHERE practice_id = $1 AND phone = '+15555550999')
-		`, practiceID).Scan(&receiptState, &recoveryDepth)
-		if err == nil && receiptState == "UNKNOWN" && recoveryDepth == 0 {
+			SELECT COALESCE((
+				SELECT state FROM human_calling_provider_receipts
+				WHERE event_id = 'concurrent-staff-dial-receipt'
+			), '')
+		`).Scan(&receiptState)
+		if err == nil && receiptState == "UNKNOWN" {
 			break
 		}
 		if time.Now().After(mixedLaneDeadline) {
-			t.Fatalf("receipt/recovery lanes did not progress during Staff Dials: receipt=%q recovery_depth=%d err=%v",
-				receiptState, recoveryDepth, err)
+			t.Fatalf("receipt lane did not progress during Staff Dials: receipt=%q err=%v", receiptState, err)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
