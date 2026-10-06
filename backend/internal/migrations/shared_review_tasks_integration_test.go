@@ -32,7 +32,7 @@ func TestSharedReviewMigrationPreservesPendingHistoryAndReplay(t *testing.T) {
  `); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Apply(ctx, pool); err != nil {
+	if err := migrations.ApplyThrough(ctx, pool, "0082_knowledge_passage_position.sql"); err != nil {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 1, 1, 1, 2, 3, 123450000, time.UTC)
@@ -48,7 +48,7 @@ func TestSharedReviewMigrationPreservesPendingHistoryAndReplay(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Apply(ctx, pool); err != nil {
+	if err := migrations.ApplyThrough(ctx, pool, "0082_knowledge_passage_position.sql"); err != nil {
 		t.Fatal(err)
 	}
 	var tasks, activities, unreads, attention, acknowledgements int

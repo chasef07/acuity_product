@@ -67,7 +67,6 @@ type QueryTasksCommand struct {
 	Search         string
 	State          work.TaskState
 	Ordering       work.TaskOrdering
-	Folder         work.TaskFolder
 	Cursor         string
 	Limit          int
 }

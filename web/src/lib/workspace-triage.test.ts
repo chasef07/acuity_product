@@ -8,7 +8,6 @@ import {
 test("Task category totals do not depend on the loaded page", () => {
   const counts = {
     tasks: 11,
-    missedCalls: 39,
     categories: {
       billing: 3,
       appointments: 2,

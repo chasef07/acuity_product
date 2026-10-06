@@ -35,10 +35,6 @@ func (m *Module) QueryTasks(
 		(command.Kind != "" && command.Kind != "texts" && command.Kind != "calls" && command.Kind != "appointments" && command.Kind != "follow_up") ||
 		(command.Responsibility != "" && command.Responsibility != "mine" && command.Responsibility != "all") ||
 		(command.State != work.TaskOpen && command.State != work.TaskCompleted) ||
-		(command.Folder != "" &&
-			command.Folder != work.TaskFolderWork &&
-			command.Folder != work.TaskFolderMissedCalls) ||
-		(command.Folder != "" && command.State != work.TaskOpen) ||
 		(command.Ordering != work.TaskOrderingTime &&
 			command.Ordering != work.TaskOrderingPriority &&
 			command.Ordering != work.TaskOrderingRecent) {
@@ -55,7 +51,6 @@ func (m *Module) QueryTasks(
 		command.Cursor,
 		command.Ordering,
 		command.State,
-		command.Folder,
 		command.Kind,
 	)
 	if err != nil {
@@ -84,7 +79,6 @@ func (m *Module) QueryTasks(
 		cursor.ID,
 		cursor.Urgency.Rank(),
 		limit+1,
-		command.Folder,
 		command.Responsibility, strings.ToLower(command.Identity.Email), command.Category, command.Kind,
 	)
 	if err != nil {
@@ -106,10 +100,7 @@ func (m *Module) QueryTasks(
 	rows.Close()
 	var counts *work.TaskFolderCounts
 	if command.IncludeCounts == nil || *command.IncludeCounts {
-		value, err := queryTaskFolderCounts(
-			ctx, tx, command.PracticeID, locationIDs,
-			command.Search, normalizedDigits(command.Search), command.State, command,
-		)
+		value, err := queryTaskFolderCounts(ctx, tx, command, locationIDs)
 		if err != nil {
 			return work.TaskPage{}, err
 		}
@@ -121,7 +112,6 @@ func (m *Module) QueryTasks(
 		nextCursor, err = encodeTaskCursor(
 			items[len(items)-1],
 			command.Ordering,
-			command.Folder,
 			command.Kind,
 		)
 		if err != nil {
@@ -261,14 +251,13 @@ const taskIsSpringHillReview = `(` + work.TaskIsAppointmentReviewSQL + ` AND EXI
  AND route.office_key='spring-hill'
 ))`
 
-const taskQueryFilter = `
-	WHERE task.practice_id = $1
-		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter + `
- AND ($13::text = '' OR task.category=$13)
- AND ($14::text <> 'texts' OR ` + taskHasRecentTextAttention + `)
- AND ($14::text = '' OR ($14='texts' AND ` + work.TaskIsTextReviewSQL + `) OR ($14='calls' AND ` + work.TaskIsCallRecoverySQL + `)
- OR ($14='appointments' AND ` + taskIsSpringHillReview + `)
- OR ($14='follow_up' AND ` + work.TaskIsFollowUpSQL + `))
+const taskMatchSource = `
+	FROM work_tasks task
+	JOIN access_locations location
+		ON location.practice_id = task.practice_id
+		AND location.id = task.location_id`
+
+const taskSearchFilter = `
 		AND (
 			$3 = ''
 				OR strpos(lower(task.title), lower($3)) > 0
@@ -276,67 +265,66 @@ const taskQueryFilter = `
 				OR strpos(lower(location.name), lower($3)) > 0
 				OR strpos(lower(COALESCE(task.category, '')), lower($3)) > 0
 				OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
-		)
-		AND (
-			$10::text = ''
-			OR ($10::text = 'work' AND NOT ` + work.TaskIsCallRecoverySQL + `)
-			OR ($10::text = 'missed_calls' AND ` + work.TaskIsCallRecoverySQL + `)
 		)`
 
+var taskQueryFilter = `
+	WHERE task.practice_id = $1
+		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter("$10", "$11") + `
+ AND ($12::text = '' OR task.category=$12)
+ AND ($13::text <> 'texts' OR ` + taskHasRecentTextAttention + `)
+ AND ($13::text = '' OR ($13='texts' AND ` + work.TaskIsTextReviewSQL + `) OR ($13='calls' AND ` + work.TaskIsCallRecoverySQL + `)
+ OR ($13='appointments' AND ` + taskIsSpringHillReview + `)
+ OR ($13='follow_up' AND ` + work.TaskIsFollowUpSQL + `))` + taskSearchFilter
+
 func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool) string {
-	query := taskQueryColumns + " FROM work_tasks task" + taskProjectionJoins + taskQueryFilter
+	window, order := taskPageWindow(state, ordering)
+	candidates := taskMatchSource + taskQueryFilter
 	if grouped && state == work.TaskOpen {
-		order := "created_at,id"
-		if ordering == work.TaskOrderingRecent {
-			order = "updated_at DESC,id DESC"
-		} else if ordering == work.TaskOrderingPriority {
-			order = work.TaskUrgencyRankSQL + ",created_at,id"
-		}
-		query = `WITH matching AS (
- SELECT task.* FROM work_tasks task
- JOIN access_locations location ON location.practice_id=task.practice_id AND location.id=task.location_id` + taskQueryFilter + ` AND task.state='OPEN'
- ), ranked AS (
- SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category,origin ORDER BY ` + order + `) AS member_rank FROM matching task
- ), group_candidates AS (SELECT * FROM ranked WHERE member_rank=1) ` + taskQueryColumns + " FROM group_candidates task" + taskProjectionJoins + " WHERE true"
+		candidates = `
+	FROM (
+		SELECT task.*, row_number() OVER (
+			PARTITION BY task.practice_id, task.location_id, task.phone, task.category, task.origin
+			ORDER BY ` + order + `
+		) AS member_rank` + taskMatchSource + taskQueryFilter + `
+			AND task.state = 'OPEN'
+	) task
+	WHERE task.member_rank = 1`
 	}
+	return `WITH page AS (
+	SELECT task.id` + candidates + `
+		AND ` + window + `
+	ORDER BY ` + order + `
+	LIMIT $9
+)` + taskQueryColumns + `
+	FROM page
+	JOIN work_tasks task ON task.id = page.id` + taskProjectionJoins + `
+	ORDER BY ` + order
+}
+
+func taskPageWindow(state work.TaskState, ordering work.TaskOrdering) (string, string) {
 	switch {
 	case state == work.TaskOpen && ordering == work.TaskOrderingPriority:
-		return query + `
-			AND task.state = 'OPEN'
-			AND (
-				NOT $5
-				OR ` + work.TaskUrgencyRankSQL + ` > $8
-				OR (
-					` + work.TaskUrgencyRankSQL + ` = $8
-					AND (task.created_at, task.id::text) > ($6, $7)
-				)
+		return `task.state = 'OPEN'
+		AND (
+			NOT $5
+			OR ` + work.TaskUrgencyRankSQL + ` > $8
+			OR (
+				` + work.TaskUrgencyRankSQL + ` = $8
+				AND (task.created_at, task.id::text) > ($6, $7)
 			)
-		ORDER BY
-			` + work.TaskUrgencyRankSQL + `,
-			task.created_at,
-			task.id
-		LIMIT $9`
+		)`, work.TaskUrgencyRankSQL + `, task.created_at, task.id`
 	case state == work.TaskOpen && ordering == work.TaskOrderingTime:
-		return query + `
-			AND task.state = 'OPEN'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.created_at, task.id::text) > ($6, $7))
-		ORDER BY task.created_at, task.id
-		LIMIT $9`
+		return `task.state = 'OPEN'
+		AND $8::int >= 0
+		AND (NOT $5 OR (task.created_at, task.id::text) > ($6, $7))`, `task.created_at, task.id`
 	case state == work.TaskOpen:
-		return query + `
-			AND task.state = 'OPEN'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
-		ORDER BY task.updated_at DESC, task.id DESC
-		LIMIT $9`
+		return `task.state = 'OPEN'
+		AND $8::int >= 0
+		AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))`, `task.updated_at DESC, task.id DESC`
 	default:
-		return query + `
-			AND task.state = 'COMPLETED'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.completed_at, task.id::text) < ($6, $7))
-		ORDER BY task.completed_at DESC, task.id DESC
-		LIMIT $9`
+		return `task.state = 'COMPLETED'
+		AND $8::int >= 0
+		AND (NOT $5 OR (task.completed_at, task.id::text) < ($6, $7))`, `task.completed_at DESC, task.id DESC`
 	}
 }
 
@@ -478,76 +466,41 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 func queryTaskFolderCounts(
 	ctx context.Context,
 	tx pgx.Tx,
-	practiceID string,
-	locationIDs []string,
-	search string,
-	phoneDigits string,
-	state work.TaskState,
 	command QueryTasksCommand,
+	locationIDs []string,
 ) (work.TaskFolderCounts, error) {
 	var counts work.TaskFolderCounts
 	err := tx.QueryRow(ctx, `
 		WITH scoped AS (
 			SELECT
 				task.category,
-                `+work.TaskIsCallRecoverySQL+` AS call_recovery,
-                `+work.TaskIsTextReviewSQL+` AS text_review,
-                `+taskHasRecentTextAttention+` AS recent_text_attention,
-                `+taskIsSpringHillReview+` AS spring_hill_review,
-                `+work.TaskIsFollowUpSQL+` AS follow_up
-			FROM work_tasks task
-			JOIN access_locations location
-				ON location.practice_id = task.practice_id
-				AND location.id = task.location_id
+				($8::text <> 'follow_up' OR `+work.TaskIsFollowUpSQL+`) AS listed,
+				`+work.TaskIsCallRecoverySQL+` AS call_recovery,
+				`+work.TaskIsTextReviewSQL+` AS text_review,
+				`+taskHasRecentTextAttention+` AS recent_text_attention,
+				`+taskIsSpringHillReview+` AS spring_hill_review`+taskMatchSource+`
 			WHERE task.practice_id = $1
-				AND task.location_id = ANY($2::uuid[])
-				AND (
-					$3 = ''
-						OR strpos(lower(task.title), lower($3)) > 0
-						OR strpos(lower(COALESCE(task.caller_name, '')), lower($3)) > 0
-						OR strpos(lower(location.name), lower($3)) > 0
-						OR strpos(lower(COALESCE(task.category, '')), lower($3)) > 0
-						OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
-				)
-				AND task.state = $5`+taskCountFilter()+`
-		), foldered AS (
-			SELECT
-				category,
-				CASE
-					WHEN $9::text='follow_up' AND NOT follow_up THEN 'review'
-                    WHEN call_recovery AND $8::text <> ''
-						THEN 'missed_calls'
-					ELSE 'tasks'
-				END AS folder
-			FROM scoped
+				AND task.location_id = ANY($2::uuid[])`+taskSearchFilter+`
+				AND task.state = $5`+taskResponsibilityFilter("$6", "$7")+`
 		)
 		SELECT
-			count(*) FILTER (WHERE folder = 'tasks'),
-			(SELECT count(*) FROM work_tasks task JOIN access_locations recovery_location ON recovery_location.id=task.location_id
- WHERE task.practice_id=$1 AND task.location_id=ANY($2::uuid[]) AND task.state='OPEN'
- AND `+work.TaskIsCallRecoverySQL+`
- AND ($3='' OR strpos(lower(task.title),lower($3))>0
- OR strpos(lower(COALESCE(task.caller_name,'')),lower($3))>0
- OR strpos(lower(recovery_location.name),lower($3))>0
- OR strpos(lower(COALESCE(task.category,'')),lower($3))>0
- OR ($4<>'' AND task.phone_digits LIKE '%'||$4||'%'))),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'billing'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'appointments'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'documentation'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'optical'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'medication'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'referrals'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'other'),
- count(*) FILTER (WHERE folder='tasks' AND category='insurance'),
- count(*) FILTER (WHERE folder='tasks' AND category='pre_op'),
- count(*) FILTER (WHERE folder='tasks' AND category='post_op'),
- (SELECT count(*) FROM scoped WHERE text_review AND recent_text_attention),
- (SELECT count(*) FROM scoped WHERE call_recovery),
- (SELECT count(*) FROM scoped WHERE spring_hill_review)
-		FROM foldered
-	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.Folder, command.Kind).Scan(
+			count(*) FILTER (WHERE listed),
+			count(*) FILTER (WHERE listed AND category = 'billing'),
+			count(*) FILTER (WHERE listed AND category = 'appointments'),
+			count(*) FILTER (WHERE listed AND category = 'documentation'),
+			count(*) FILTER (WHERE listed AND category = 'optical'),
+			count(*) FILTER (WHERE listed AND category = 'medication'),
+			count(*) FILTER (WHERE listed AND category = 'referrals'),
+			count(*) FILTER (WHERE listed AND category = 'other'),
+			count(*) FILTER (WHERE listed AND category = 'insurance'),
+			count(*) FILTER (WHERE listed AND category = 'pre_op'),
+			count(*) FILTER (WHERE listed AND category = 'post_op'),
+			count(*) FILTER (WHERE text_review AND recent_text_attention),
+			count(*) FILTER (WHERE call_recovery),
+			count(*) FILTER (WHERE spring_hill_review)
+		FROM scoped
+	`, command.PracticeID, locationIDs, command.Search, normalizedDigits(command.Search), command.State, command.Responsibility, strings.ToLower(command.Identity.Email), command.Kind).Scan(
 		&counts.Tasks,
-		&counts.MissedCalls,
 		&counts.Categories.Billing,
 		&counts.Categories.Appointments,
 		&counts.Categories.Documentation,
@@ -569,7 +522,6 @@ type taskCursor struct {
 	Present   bool              `json:"-"`
 	Ordering  work.TaskOrdering `json:"ordering"`
 	State     work.TaskState    `json:"state"`
-	Folder    work.TaskFolder   `json:"folder,omitempty"`
 	Urgency   work.TaskUrgency  `json:"urgency"`
 	OrderedAt time.Time         `json:"orderedAt"`
 	ID        string            `json:"id"`
@@ -578,7 +530,6 @@ type taskCursor struct {
 func encodeTaskCursor(
 	task work.Task,
 	ordering work.TaskOrdering,
-	folder work.TaskFolder,
 	kind string,
 ) (string, error) {
 	orderedAt := task.CreatedAt
@@ -593,7 +544,6 @@ func encodeTaskCursor(
 	encoded, err := json.Marshal(taskCursor{
 		Ordering:  ordering,
 		State:     task.State,
-		Folder:    folder,
 		Kind:      kind,
 		Urgency:   task.Urgency,
 		OrderedAt: orderedAt,
@@ -609,7 +559,6 @@ func decodeTaskCursor(
 	raw string,
 	ordering work.TaskOrdering,
 	state work.TaskState,
-	folder work.TaskFolder,
 	kind string,
 ) (taskCursor, error) {
 	raw = strings.TrimSpace(raw)
@@ -625,7 +574,7 @@ func decodeTaskCursor(
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cursor); err != nil || cursor.OrderedAt.IsZero() ||
 		uuid.Validate(cursor.ID) != nil || cursor.Ordering != ordering ||
-		cursor.State != state || cursor.Folder != folder || cursor.Kind != kind ||
+		cursor.State != state || cursor.Kind != kind ||
 		(cursor.Urgency != work.TaskUrgencyHighPriority &&
 			cursor.Urgency != work.TaskUrgencyNormal &&
 			cursor.Urgency != work.TaskUrgencyNonUrgent) {
@@ -645,14 +594,12 @@ func normalizedDigits(value string) string {
 	return digits.String()
 }
 
-const taskResponsibilityFilter = `
- AND ($11::text <> 'mine' OR task.category IS NULL
+func taskResponsibilityFilter(responsibility string, email string) string {
+	return `
+ AND (` + responsibility + `::text <> 'mine' OR task.category IS NULL
  OR ` + work.TaskIsCommunicationReviewSQL + `
  OR NOT EXISTS (SELECT 1 FROM work_responsibility_locations configured WHERE configured.practice_id=task.practice_id AND configured.location_id=task.location_id)
  OR EXISTS (SELECT 1 FROM work_responsibilities responsibility
  WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
- AND responsibility.category=task.category AND responsibility.account_email=$12))`
-
-func taskCountFilter() string {
-	return strings.NewReplacer("$11", "$6", "$12", "$7").Replace(taskResponsibilityFilter)
+ AND responsibility.category=task.category AND responsibility.account_email=` + email + `))`
 }
