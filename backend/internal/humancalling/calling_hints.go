@@ -1,0 +1,39 @@
+package humancalling
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const callingHintChannel = "acuity_calling_hints"
+
+func (m *Module) recordCallingChange(
+	ctx context.Context,
+	tx pgx.Tx,
+	practiceID string,
+) (int64, error) {
+	version, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID)
+	if err != nil {
+		return 0, err
+	}
+	if err := publishCallingHint(ctx, tx, practiceID); err != nil {
+		return 0, err
+	}
+	return version, nil
+}
+
+func publishCallingHint(ctx context.Context, tx pgx.Tx, practiceID string) error {
+	practiceID = strings.TrimSpace(practiceID)
+	if tx == nil || practiceID == "" {
+		return ErrInvalidInput
+	}
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_notify($1, json_build_object('practiceId', $2::text)::text)
+	`, callingHintChannel, practiceID); err != nil {
+		return fmt.Errorf("publish calling hint: %w", err)
+	}
+	return nil
+}

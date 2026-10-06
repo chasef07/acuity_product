@@ -257,7 +257,7 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -494,7 +494,7 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -781,7 +781,7 @@ func (m *Module) applyStaffInitiated(
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -919,7 +919,7 @@ func (m *Module) recordRingWindowFact(
 			return err
 		}
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -1119,7 +1119,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			return err
 		}
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1319,7 +1319,7 @@ func (m *Module) applyCallerBridge(ctx context.Context, fact ProviderFact) error
 	`, state.CallID, m.now()); err != nil {
 		return err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

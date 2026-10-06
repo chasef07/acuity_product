@@ -1,3 +1,8 @@
+import {
+  browserCallingHints,
+  type CallingHintSink,
+} from "../calling/calling-hints.ts"
+
 export type WorkspaceSyncScope = {
   practiceID: string
   locationID: string
@@ -26,6 +31,7 @@ type WorkspaceSyncOptions = {
   random?: () => number
   sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>
   timing?: Partial<WorkspaceSyncTiming>
+  callingHints?: CallingHintSink
 }
 
 type WorkspaceSyncTiming = {
@@ -61,12 +67,14 @@ export function createWorkspaceSync(
   const timing = { ...defaultTiming, ...options.timing }
   const random = options.random ?? Math.random
   const sleep = options.sleep ?? wait
+  const callingHints = options.callingHints ?? browserCallingHints
   let controller: AbortController | undefined
   let scopeKey = ""
   let handleRefresh = () => {}
   let handleVisibility = () => {}
 
   function stop() {
+    callingHints.setLive(false)
     scopeKey = ""
     handleRefresh = () => {}
     controller?.abort()
@@ -347,6 +355,10 @@ export function createWorkspaceSync(
 
         let ready = false
         for await (const event of readEvents(response.body, signal)) {
+          if (event.type === "calling") {
+            if (event.practiceID === scope.practiceID) callingHints.publish()
+            continue
+          }
           if (
             event.practiceID !== scope.practiceID ||
             event.version < 1
@@ -358,6 +370,7 @@ export function createWorkspaceSync(
             continue
           }
           if (event.type !== "ready" || ready) continue
+          callingHints.setLive(event.callingHints)
           highestHint = Math.max(highestHint, event.version)
           if (options.isHidden?.()) {
             deferCatchUp(true)
@@ -377,6 +390,7 @@ export function createWorkspaceSync(
         throw new Error("realtime stream ended")
       } catch (error) {
         streamReady = false
+        callingHints.setLive(false)
         if (signal.aborted) return
         if (error instanceof WorkspaceSyncUnauthorizedError) {
           options.onUnauthorized?.()
@@ -448,6 +462,16 @@ async function* readEvents(
           const payload = JSON.parse(data) as {
             practiceId?: unknown
             version?: unknown
+            callingHints?: unknown
+          }
+          if (type === "calling" && typeof payload.practiceId === "string") {
+            yield {
+              type,
+              practiceID: payload.practiceId,
+              version: 0,
+              callingHints: false,
+            }
+            continue
           }
           if (
             typeof payload.practiceId === "string" &&
@@ -457,6 +481,7 @@ async function* readEvents(
               type,
               practiceID: payload.practiceId,
               version: payload.version as number,
+              callingHints: payload.callingHints === true,
             }
           }
         } catch {

@@ -1752,7 +1752,7 @@ export type GetEventsError = GetEventsErrors[keyof GetEventsErrors];
 
 export type GetEventsResponses = {
     /**
-     * Bounded text/event-stream. Initial connection and every reconnect require an authoritative workspace refetch.
+     * Bounded text/event-stream. Initial connection and every reconnect require an authoritative workspace refetch. `ready` and `hint` events carry `practiceId` and the workspace `version`; `ready` sets `callingHints: true` when the stream also sends `calling` events. A `calling` event carries only `practiceId` and means Calling state for that Practice may have changed; clients refetch Calling state and must ignore event types they do not recognize.
      *
      */
     200: string;

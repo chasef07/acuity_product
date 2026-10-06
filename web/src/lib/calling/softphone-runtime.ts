@@ -10,6 +10,11 @@ import type {
   StaffTransferCandidate,
   StartOutboundCallRequest,
 } from "../api/generated/types.gen.ts"
+import {
+  browserCallingHints,
+  type CallingHintSignal,
+  type CallingHintSource,
+} from "./calling-hints.ts"
 import type {
   CallingMediaAdapter,
   IncomingMediaLeg,
@@ -242,6 +247,7 @@ type RuntimeOptions = {
   attention?: SoftphoneAttention
   clock?: SoftphoneClock
   visibility?: SoftphoneVisibility
+  callingHints?: CallingHintSource
 }
 
 const defaultClock: SoftphoneClock = {
@@ -256,6 +262,11 @@ const backendRequestTimeoutMilliseconds = 5_000
 const mediaOperationTimeoutMilliseconds = 10_000
 const mediaConfirmationRetryMilliseconds = 250
 const mediaCorrelationWindowMilliseconds = 5_000
+const idleRefreshMilliseconds = 4_000
+const hiddenRefreshMilliseconds = 8_000
+const hintedIdleRefreshMilliseconds = 30_000
+const callingHintSpacingMilliseconds = 500
+const fastRefreshMilliseconds = 250
 const heartbeatMinimumMilliseconds = 3_500
 const heartbeatMaximumMilliseconds = 4_000
 const mediaEffectTimeoutMessage =
@@ -287,6 +298,7 @@ export class SoftphoneAdapterError extends Error {
 export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntime {
   const clock = options.clock ?? defaultClock
   const visibility = options.visibility ?? browserVisibility
+  const callingHints = options.callingHints ?? browserCallingHints
   const heartbeatDelayMilliseconds = heartbeatDelay(options.sessionID)
   const listeners = new Set<() => void>()
   const incomingMedia = new Map<string, IncomingMediaLeg>()
@@ -300,6 +312,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   let stopRingtone: (() => void) | undefined
   let microphone: { stop(): void } | undefined
   let refreshTimer: number | undefined
+  let refreshDueAt = 0
+  let lastRefreshStartedAt = Number.NEGATIVE_INFINITY
+  let callingHintPending = false
   let heartbeatTimer: number | undefined
   let refreshInFlight: Promise<void> | undefined
   let refreshQueued = false
@@ -318,6 +333,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   let accessFailureClosing = false
   let accessBlocked = false
   let unsubscribeVisibility: (() => void) | undefined
+  let unsubscribeCallingHints: (() => void) | undefined
   let microphoneGeneration = 0
   let mediaConnectInFlight: Promise<void> | undefined
   let mediaConnectController: AbortController | undefined
@@ -890,6 +906,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
 
   async function refreshOnce() {
     const generation = lifecycleGeneration
+    callingHintPending = false
+    lastRefreshStartedAt = clock.now
     expireOffers()
     try {
       const result = await backendRequest((signal) =>
@@ -1196,21 +1214,65 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     return inFlight
   }
 
+  function currentRefreshDelay() {
+    if (temporaryFailures) {
+      return temporaryRetryDelay(
+        temporaryFailures,
+        visibility.isHidden() ? 12_000 : 8_000,
+      )
+    }
+    if (incomingMedia.size > 0) return mediaConfirmationRetryMilliseconds
+    return refreshDelay(snapshot, visibility.isHidden(), callingHints.live())
+  }
+
+  function callingHintDelay() {
+    return Math.max(
+      0,
+      lastRefreshStartedAt + callingHintSpacingMilliseconds - clock.now,
+    )
+  }
+
   function scheduleRefresh() {
     if (stopped) return
+    const delay = currentRefreshDelay()
+    armRefresh(
+      callingHintPending &&
+        !temporaryFailures &&
+        delay > fastRefreshMilliseconds
+        ? Math.min(delay, callingHintDelay())
+        : delay,
+    )
+  }
+
+  function armRefresh(delay: number) {
     if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
-    const delay = temporaryFailures
-      ? temporaryRetryDelay(
-          temporaryFailures,
-          visibility.isHidden() ? 12_000 : 8_000,
-        )
-      : incomingMedia.size > 0
-        ? mediaConfirmationRetryMilliseconds
-        : refreshDelay(snapshot, visibility.isHidden())
+    refreshDueAt = clock.now + delay
     refreshTimer = clock.setTimeout(() => {
       refreshTimer = undefined
       void requestRefresh(false).finally(scheduleRefresh)
     }, delay)
+  }
+
+  function advanceRefresh(delay: number) {
+    if (stopped || refreshTimer === undefined) return
+    if (refreshDueAt <= clock.now + delay) return
+    armRefresh(delay)
+  }
+
+  function handleCallingHint(signal: CallingHintSignal) {
+    if (stopped) return
+    if (signal === "disconnected") {
+      advanceRefresh(currentRefreshDelay())
+      return
+    }
+    if (
+      temporaryFailures ||
+      currentRefreshDelay() <= fastRefreshMilliseconds
+    ) {
+      return
+    }
+    callingHintPending = true
+    advanceRefresh(callingHintDelay())
   }
 
   function scheduleHeartbeat(delay = heartbeatDelayMilliseconds) {
@@ -2108,6 +2170,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           void signalRefresh()
         }
       })
+      unsubscribeCallingHints = callingHints.subscribe(handleCallingHint)
       try {
         const lease = leaseForSession(
           await backendRequest((signal) =>
@@ -2167,6 +2230,10 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         for (const request of backendRequests) request.abort()
         unsubscribeVisibility?.()
         unsubscribeVisibility = undefined
+        unsubscribeCallingHints?.()
+        unsubscribeCallingHints = undefined
+        callingHintPending = false
+        lastRefreshStartedAt = Number.NEGATIVE_INFINITY
         await releaseLocalMedia()
         publish({
           phase: "stopped",
@@ -2914,8 +2981,20 @@ function pendingInboundCall(offer: RuntimeOffer): RuntimePendingCall {
   }
 }
 
-function refreshDelay(snapshot: SoftphoneRuntimeSnapshot, hidden: boolean) {
-  if (hidden) return 8_000
+function refreshDelay(
+  snapshot: SoftphoneRuntimeSnapshot,
+  hidden: boolean,
+  callingHintsLive: boolean,
+) {
+  const activeDelay = activeRefreshDelay(snapshot)
+  if (activeDelay === undefined) {
+    if (callingHintsLive) return hintedIdleRefreshMilliseconds
+    return hidden ? hiddenRefreshMilliseconds : idleRefreshMilliseconds
+  }
+  return hidden ? hiddenRefreshMilliseconds : activeDelay
+}
+
+function activeRefreshDelay(snapshot: SoftphoneRuntimeSnapshot) {
   if (snapshot.offers.length > 0) return 250
   if (
     snapshot.pendingCall ||
@@ -2933,7 +3012,7 @@ function refreshDelay(snapshot: SoftphoneRuntimeSnapshot, hidden: boolean) {
     case "CONNECTED":
       return 1_000
     default:
-      return 4_000
+      return undefined
   }
 }
 

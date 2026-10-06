@@ -127,7 +127,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	}
 	reader := bufio.NewReader(response.Body)
 	ready := readSSEEvent(t, reader)
-	if ready.Event != "ready" || ready.Data.PracticeID != practice.ID {
+	if ready.Event != "ready" || ready.Data.PracticeID != practice.ID || !ready.Data.CallingHints {
 		t.Fatalf("ready event = %#v", ready)
 	}
 
@@ -160,6 +160,20 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	memberReader := bufio.NewReader(memberResponse.Body)
 	if event := readSSEEvent(t, memberReader); event.Event != "ready" {
 		t.Fatalf("member ready event = %#v", event)
+	}
+	callingRequest, err := http.NewRequestWithContext(streamContext, http.MethodGet, streamURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callingRequest.Header.Set("Authorization", "Bearer member-token")
+	callingResponse, err := server.Client().Do(callingRequest)
+	if err != nil {
+		t.Fatalf("open Calling SSE stream: %v", err)
+	}
+	defer callingResponse.Body.Close()
+	callingReader := bufio.NewReader(callingResponse.Body)
+	if event := readSSEEvent(t, callingReader); event.Event != "ready" || !event.Data.CallingHints {
+		t.Fatalf("Calling stream ready event = %#v", event)
 	}
 	calling := humancalling.New(
 		pool,
@@ -205,6 +219,12 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		callHint.Data.PracticeID != practice.ID ||
 		callHint.Data.Version <= mutation.PracticeVersion {
 		t.Fatalf("HumanCalling hint event = %#v", callHint)
+	}
+	callingHint := readSSEEventOfKind(t, callingReader, "calling")
+	if callingHint.Data.PracticeID != practice.ID ||
+		callingHint.Data.Version != 0 ||
+		callingHint.Data.CallingHints {
+		t.Fatalf("HumanCalling calling event = %#v", callingHint)
 	}
 	var callID string
 	if err := pool.QueryRow(context.Background(), `
@@ -767,7 +787,7 @@ func TestRealtimeListenerDeathClosesStreamsAndRecoveryAcceptsFreshStreams(t *tes
 		FROM pg_stat_activity
 		WHERE datname = current_database()
 			AND pid <> pg_backend_pid()
-			AND query = 'LISTEN acuity_workspace_hints'
+			AND query IN ('LISTEN acuity_workspace_hints', 'LISTEN acuity_calling_hints')
 	`).Scan(&terminated); err != nil {
 		t.Fatalf("terminate realtime listener: %v", err)
 	}
@@ -997,8 +1017,9 @@ func (adapter staticAuthenticator) Authenticate(_ context.Context, token string)
 type sseEvent struct {
 	Event string
 	Data  struct {
-		PracticeID string `json:"practiceId"`
-		Version    int64  `json:"version"`
+		PracticeID   string `json:"practiceId"`
+		Version      int64  `json:"version"`
+		CallingHints bool   `json:"callingHints"`
 	}
 }
 
@@ -1078,6 +1099,26 @@ func (writer *gatedSSEWriter) maxHintVersion() int64 {
 }
 
 func readSSEEvent(t *testing.T, reader *bufio.Reader) sseEvent {
+	t.Helper()
+	for {
+		event := readAnySSEEvent(t, reader)
+		if event.Event != "calling" {
+			return event
+		}
+	}
+}
+
+func readSSEEventOfKind(t *testing.T, reader *bufio.Reader, kind string) sseEvent {
+	t.Helper()
+	for {
+		event := readAnySSEEvent(t, reader)
+		if event.Event == kind {
+			return event
+		}
+	}
+}
+
+func readAnySSEEvent(t *testing.T, reader *bufio.Reader) sseEvent {
 	t.Helper()
 	event := sseEvent{}
 	for {

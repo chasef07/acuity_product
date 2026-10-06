@@ -299,7 +299,7 @@ func (m *Module) RequestStaffTransfer(
 		opaqueReference(transferID), "", now); err != nil {
 		return StaffTransfer{}, err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return StaffTransfer{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

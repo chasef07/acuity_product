@@ -595,6 +595,20 @@ func (m *Module) finishCallLegCommand(
 			return fmt.Errorf("converge absent Hangup target: %w", err)
 		}
 	}
+	if command.CallLegID != "" && state != "PENDING" {
+		var practiceID string
+		if err := tx.QueryRow(ctx, `
+			SELECT call.practice_id::text
+			FROM human_calling_call_legs leg
+			JOIN human_calling_calls call ON call.id = leg.call_id
+			WHERE leg.id = $1
+		`, command.CallLegID).Scan(&practiceID); err != nil {
+			return fmt.Errorf("read provider command Call practice: %w", err)
+		}
+		if err := publishCallingHint(ctx, tx, practiceID); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
