@@ -111,7 +111,7 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.EnsureAppointmentReview(ctx, tx, uuid.NewString(), auth.Practice.ID, auth.Locations[0].ID, "+15555550123", "synthetic-separate-obligation", "BOOKED", "Verify this synthetic appointment.", now); err != nil {
+	if err = m.EnsureAppointmentReview(ctx, tx, uuid.NewString(), auth.Practice.ID, auth.Locations[0].ID, "+15555550123", "synthetic-separate-obligation", "Review booked appointment", "Verify this synthetic appointment.", now); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(ctx); err != nil {

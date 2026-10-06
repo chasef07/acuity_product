@@ -36,7 +36,7 @@ func (m *Module) CompleteTaskGroup(ctx context.Context, command CompleteTaskGrou
 		return Task{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	anchor, err := loadTask(ctx, tx, command.TaskID)
+	anchor, err := loadTask(ctx, tx, command.TaskID, false)
 	if err != nil {
 		return Task{}, err
 	}
@@ -51,7 +51,7 @@ func (m *Module) CompleteTaskGroup(ctx context.Context, command CompleteTaskGrou
 	sort.Strings(ids)
 	tasks := make([]Task, 0, len(ids))
 	for _, id := range ids {
-		task, err := lockTask(ctx, tx, id)
+		task, err := loadTask(ctx, tx, id, true)
 		if err != nil {
 			return Task{}, err
 		}
