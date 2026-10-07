@@ -13,6 +13,11 @@ export const evaluationLabels: Record<string, string> = {
   in_scope: "Request in scope",
   expressed_sentiment: "Expressed caller sentiment",
   reports_unresolved: "Caller reports unresolved issue",
+  booking_requested: "B1 · Booking requested",
+  time_offered: "B5 · Specific time offered",
+  need_understood: "H1 · Understood every request",
+  right_help: "H2 · Right help or next step",
+  clear_and_responsive: "H4 · Clear and responsive",
 }
 export const evaluationScales: Record<string, string[]> = {
   request_specificity: ["Contradictory or shifting", "Vague", "Mostly clear", "Fully specified"],
@@ -33,12 +38,18 @@ const scorecardChecks = [
   "appointment_datetime_correct",
   "office_rules_grounded",
 ]
+const unflaggedQuestions = ["booking_requested", "time_offered", "need_understood", "right_help", "clear_and_responsive"]
+const notApplicableReasons: Record<string, string> = {
+  no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
+  no_availability_result: "No availability search returned a result.",
+}
 
 function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
   const version = evaluation.evaluatorVersion
-  const checks = [
+  const current = version === "typesafe-scorecard-v6"
+  const checks = current ? [...unflaggedQuestions, ...scorecardChecks, "expressed_sentiment"] : [
     ...(version !== "typesafe-scorecard-v5" ? ["request_understood"] : []),
     ...scorecardChecks,
     ...(version !== "typesafe-scorecard-v4" && version !== "typesafe-scorecard-v5" ? ["results_reported_truthfully"] : []),
@@ -50,16 +61,16 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
       {checks.map((name) => {
         const answer = record(record(record(results[name]).answers)[name])
         const failed = Object.hasOwn(errors, name)
-        const notApplicable = !failed && name === "appointment_datetime_correct" &&
-          record(results[name]).status === "not_applicable" &&
-          record(results[name]).reason === "no_appointment_action_result"
+        const reason = record(results[name]).reason
+        const notApplicable = !failed && record(results[name]).status === "not_applicable" &&
+          typeof reason === "string" && Object.hasOwn(notApplicableReasons, reason)
         const error = record(errors[name])
         const sentiment = name === "expressed_sentiment"
         const value = sentiment ? answer.score : answer.noul
         const maximum = sentiment ? 4 : 1
         const valid = !failed && answer.type === (sentiment ? "score" : "noul") &&
           typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum
-        const needsReview = valid && !notApplicable && !sentiment && value <= 0.4 &&
+        const needsReview = valid && !notApplicable && !sentiment && value <= 0.4 && !unflaggedQuestions.includes(name) &&
           (evaluation.status === "complete" || evaluation.status === "incomplete")
         const probabilities = record(answer.probabilities)
         return <div key={name} className="py-3 text-xs">
@@ -73,7 +84,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
             Judge failed{typeof error.cause === "string" ? `: ${title(error.cause)}` : ""}
             {typeof error.httpStatus === "number" ? ` · HTTP ${error.httpStatus}` : ""}
             {typeof error.attempts === "number" ? ` · Attempts: ${error.attempts}` : ""}
-          </dd> : notApplicable ? <dd className="mt-1 text-muted-foreground">No booking, rescheduling, or cancellation tool returned a result.</dd> : !valid ? <dd className="mt-1 text-muted-foreground">No valid score was recorded.</dd> : sentiment ? <>
+          </dd> : notApplicable ? <dd className="mt-1 text-muted-foreground">{notApplicableReasons[String(reason)]}</dd> : !valid ? <dd className="mt-1 text-muted-foreground">No valid score was recorded.</dd> : sentiment ? <>
             <dd className="mt-1 text-muted-foreground">{evaluationScales.expressed_sentiment.map((label, index) => `${index}: ${label}`).join(" · ")}</dd>
             <dd className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
               {Object.entries(probabilities).map(([label, probability]) => <span key={label}>{evaluationScales.expressed_sentiment[Number(label)] ?? label}: {percent(probability)}</span>)}
@@ -82,14 +93,14 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
         </div>
       })}
     </dl>
-    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. Checks at 0.4 or lower are highlighted for review. Sentiment and inapplicable checks do not trigger review alerts.</p>
+    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. Checks at 0.4 or lower are highlighted for review. Sentiment, inapplicable checks, and scorecard v6 questions still being measured against human review do not trigger review alerts.</p>
   </>
 }
 
 export function CallEvaluation({ evaluation }: { evaluation?: Record<string, unknown> }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
-  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3" || evaluation?.evaluatorVersion === "typesafe-scorecard-v4" || evaluation?.evaluatorVersion === "typesafe-scorecard-v5"
+  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3" || evaluation?.evaluatorVersion === "typesafe-scorecard-v4" || evaluation?.evaluatorVersion === "typesafe-scorecard-v5" || evaluation?.evaluatorVersion === "typesafe-scorecard-v6"
   return (
     <section aria-label="AI evaluation" className="border-b px-5 py-4 sm:px-6">
       <div className="flex flex-wrap items-center gap-2">

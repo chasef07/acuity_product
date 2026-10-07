@@ -193,7 +193,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	for _, row := range accuracy.Rows {
 		rows[row.Question] = row
 	}
-	if accuracy.ReviewedCalls != 2 || rows["right_help"].Sample != 3 || rows["right_help"].FalseAlarms != 1 || rows["time_offered"].Unscored != 1 {
+	if accuracy.ReviewedCalls != 2 || rows["right_help"].Sample != 3 || rows["right_help"].FalseAlarms != 1 || accuracy.Unjudged != 1 {
 		t.Fatalf("accuracy excludes test calls and counts false alarms: %+v", accuracy)
 	}
 	if len(accuracy.ReviewerDisagreements) != 1 || accuracy.ReviewerDisagreements[0].Question != "clear_and_responsive" {
@@ -209,7 +209,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if week.WeekStart != "2026-10-05" || week.LocationName != "Main" || week.Calls != 32 || week.BookingCalls != 1 || week.Missed != 1 || week.Conversion == nil || *week.Conversion != 0 {
 		t.Fatalf("weekly booking conversion: %+v", week)
 	}
-	if len(report.UnverifiedInsurance) != 1 || report.UnverifiedInsurance[0].Plan != "Synthetic Gold Plan" || report.UnverifiedInsurance[0].Result != "blocked" {
+	if len(report.UnverifiedInsurance) != 1 || report.UnverifiedInsurance[0].Plan != "Synthetic Gold Plan" || report.UnverifiedInsurance[0].Result != "The office needs to verify this plan's coverage before scheduling." {
 		t.Fatalf("unverified insurance plans: %+v", report.UnverifiedInsurance)
 	}
 }

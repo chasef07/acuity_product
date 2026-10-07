@@ -98,7 +98,6 @@ export function useAiCallAnalytics({
   locationID,
   range,
   manualTag,
-  needsReviewOnly,
   revision,
   enabled,
 }: {
@@ -106,12 +105,11 @@ export function useAiCallAnalytics({
   locationID: string
   range: OperatorAiAnalyticsRange
   manualTag: string
-  needsReviewOnly: boolean
   revision: number
   enabled: boolean
 }): AiCallLedger {
   const pages = useCallPages<OperatorAiAnalyticsPage>(
-    `${practiceID}:${locationID}:${range}:${manualTag}:${needsReviewOnly}:${revision}`,
+    `${practiceID}:${locationID}:${range}:${manualTag}:${revision}`,
     Boolean(practiceID) && enabled,
     (transport, cursor) =>
       queryOperatorAiAnalytics({
@@ -121,7 +119,6 @@ export function useAiCallAnalytics({
           locationId: locationID || undefined,
           range,
           manualTag: manualTag || undefined,
-          needsReviewOnly,
           cursor,
           limit: 50,
         },

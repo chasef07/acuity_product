@@ -4151,7 +4151,7 @@ components:
     OperatorJudgeAccuracyRow:
       type: object
       additionalProperties: false
-      required: [question, judgeVersion, sample, agreed, humanNo, failuresCaught, falseAlarms, unscored]
+      required: [question, judgeVersion, sample, agreed, humanNo, failuresCaught, falseAlarms]
       properties:
         question: {type: string}
         judgeVersion: {type: string}
@@ -4160,7 +4160,6 @@ components:
         humanNo: {type: integer}
         failuresCaught: {type: integer}
         falseAlarms: {type: integer}
-        unscored: {type: integer}
     OperatorJudgeDisagreement:
       type: object
       additionalProperties: false
@@ -4199,9 +4198,12 @@ components:
     OperatorJudgeAccuracy:
       type: object
       additionalProperties: false
-      required: [reviewedCalls, rows, judgeDisagreements, reviewerDisagreements]
+      required: [reviewedCalls, unjudged, rows, judgeDisagreements, reviewerDisagreements]
       properties:
         reviewedCalls: {type: integer}
+        unjudged:
+          type: integer
+          description: Golden-set answers with no judge answer to compare, such as B5 when no availability was returned.
         rows:
           type: array
           items: {$ref: "#/components/schemas/OperatorJudgeAccuracyRow"}

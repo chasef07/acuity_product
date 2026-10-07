@@ -222,3 +222,25 @@ test("v5 omits the request-understood judge and keeps active review alerts and h
     assert.match(historical, /Caller request understood<\/dt><dd[^>]*>0.85 \/ 1/)
   }
 })
+
+test("scorecard v6 shows the new questions without flagging them until review agrees", () => {
+  const noul = (value: number, name: string) => ({ answers: { [name]: { type: "noul", noul: value } } })
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+    evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v6", model: "typesafe-ai/jev", evaluatedAt: "2026-10-07T12:00:00Z", status: "complete",
+    results: {
+      booking_requested: noul(0.9, "booking_requested"),
+      clear_and_responsive: noul(0.1, "clear_and_responsive"),
+      office_rules_grounded: noul(0.9, "office_rules_grounded"),
+      time_offered: { status: "not_applicable", reason: "no_availability_result" },
+      appointment_datetime_correct: { status: "not_applicable", reason: "no_appointment_action_result" },
+    },
+  }} />)
+  assert.match(html, /H4 · Clear and responsive/)
+  assert.match(html, /No availability search returned a result/)
+  assert.doesNotMatch(html, />Needs review</)
+  const flagged = renderToStaticMarkup(<CallEvaluation evaluation={{
+    evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v6", model: "typesafe-ai/jev", evaluatedAt: "2026-10-07T12:00:00Z", status: "complete",
+    results: { office_rules_grounded: noul(0.2, "office_rules_grounded") },
+  }} />)
+  assert.match(flagged, />Needs review</)
+})

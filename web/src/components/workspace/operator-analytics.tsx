@@ -65,6 +65,8 @@ import {
 } from "@/components/ui/table"
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { PendingCallIssues } from "@/components/workspace/call-issue-review"
+import { CallReviewWorkspace } from "@/components/workspace/call-review"
+import { ScorecardOverview } from "@/components/workspace/scorecard-overview"
 import type {
   OperatorAiCallIssue,
   OperatorAiCallTags,
@@ -82,11 +84,12 @@ import { formatShortDateTime } from "@/lib/format"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
 type AnalyticsNextPageState = AiCallLedger["nextPage"]
-type AnalyticsTab = "overview" | "cost" | "quality" | "tools" | "calls" | "review"
+type AnalyticsTab = "overview" | "cost" | "quality" | "tools" | "calls" | "review" | "scorecard"
 
 const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
   { value: "calls", label: "Calls" },
-  { value: "review", label: "Needs review" },
+  { value: "review", label: "Review" },
+  { value: "scorecard", label: "Scorecard" },
   { value: "overview", label: "Overview" },
   { value: "cost", label: "Cost" },
   { value: "quality", label: "Quality" },
@@ -128,23 +131,23 @@ export function OperatorAnalytics({
   const [tab, setTab] = useState<AnalyticsTab>("calls")
   const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
   const costView = tab === "cost"
-  const needsReviewOnly = tab === "review"
+  const reviewView = tab === "review"
+  const scorecardView = tab === "scorecard"
   const [tagFilter, setTagFilter] = useState({ practiceID, value: "" })
   const manualTag = tagFilter.practiceID === practiceID ? tagFilter.value : ""
   const setManualTag = (value: string) => setTagFilter({ practiceID, value })
-  const activeTag = tab === "calls" || needsReviewOnly ? manualTag : ""
+  const activeTag = tab === "calls" ? manualTag : ""
   const [requestVersion, setRequestVersion] = useState(0)
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
-  const requestKey = `${practiceID}:${locationID}:${range}:${activeTag}:${needsReviewOnly}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${activeTag}:${requestVersion}`
   const currentRequest = useAiCallAnalytics({
     practiceID,
     locationID,
     range,
     manualTag: activeTag,
-    needsReviewOnly,
     revision: requestVersion,
-    enabled: !costView,
+    enabled: !costView && !reviewView && !scorecardView,
   })
   const nextPageState = currentRequest.nextPage
 
@@ -200,8 +203,8 @@ export function OperatorAnalytics({
       <AnalyticsFrame
         section="AI diagnostics"
         title={analyticsTabs.find((item) => item.value === tab)!.label}
-        periodLabel={ranges.find((item) => item.value === range)!.label}
-        controls={
+        periodLabel={reviewView ? "Daily call review and golden set" : scorecardView ? "Weekly by office" : ranges.find((item) => item.value === range)!.label}
+        controls={reviewView ? null : (
           <>
             <Select
               value={office}
@@ -221,7 +224,7 @@ export function OperatorAnalytics({
                 ))}
               </SelectContent>
             </Select>
-            <ToggleGroup
+            {!scorecardView && <ToggleGroup
               variant="segmented"
               spacing={1}
               value={[range]}
@@ -241,12 +244,12 @@ export function OperatorAnalytics({
                   {item.short}
                 </ToggleGroupItem>
               ))}
-            </ToggleGroup>
+            </ToggleGroup>}
           </>
-        }
+        )}
         tabs={<div className="w-full space-y-3">
           <AnalyticsTabs tab={tab} onChange={setTab} />
-          {(tab === "calls" || needsReviewOnly) && ((currentRequest.data?.availableTags?.length ?? 0) > 0 || manualTag) && (
+          {tab === "calls" && ((currentRequest.data?.availableTags?.length ?? 0) > 0 || manualTag) && (
             <div role="group" aria-label="Filter calls by tag" className="flex flex-wrap items-center gap-1.5">
               <span className="mr-1 text-xs text-muted-foreground">Tags</span>
               <Button size="xs" variant={manualTag ? "outline" : "secondary"} aria-pressed={!manualTag} onClick={() => setManualTag("")}>All calls</Button>
@@ -257,7 +260,11 @@ export function OperatorAnalytics({
           )}
         </div>}
       >
-        {costView ? (
+        {reviewView ? (
+          <CallReviewWorkspace key={practiceID} practiceID={practiceID} onOpenCall={(id) => selectCall(id)} />
+        ) : scorecardView ? (
+          <ScorecardOverview practiceID={practiceID} locationID={locationID} />
+        ) : costView ? (
           <CostOverview
             practiceID={practiceID}
             locationID={locationID}
@@ -354,24 +361,23 @@ function AnalyticsReady({
       {tab === "overview" && <AnalyticsOverview summary={data.summary} versionView={versionView} />}
       {tab === "quality" && <DiagnosticsQuality summary={data.summary} versionView={versionView} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
-      {(tab === "calls" || tab === "review") && data.calls.length === 0 ? (
+      {tab === "calls" && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <InboxIcon aria-hidden="true" />
             </EmptyMedia>
-            <EmptyTitle>{tab === "review" ? "No flagged calls in this range" : "No AI calls in this range"}</EmptyTitle>
+            <EmptyTitle>No AI calls in this range</EmptyTitle>
             <EmptyDescription>
               Change the time range or workspace office to review another slice
               of call evidence.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
-      ) : tab === "calls" || tab === "review" ? (
+      ) : tab === "calls" ? (
         <CallLedger
           calls={data.calls}
-          totalCalls={tab === "review" ? undefined : data.summary.totalCalls}
-          needsReviewOnly={tab === "review"}
+          totalCalls={data.summary.totalCalls}
           range={range}
           hasNextPage={Boolean(data.nextCursor)}
           nextPageState={nextPageState}
@@ -510,7 +516,6 @@ function OperationalHealth({ summary }: { summary: OperatorAiAnalyticsSummary })
 }
 
 function CallLedger({
-  needsReviewOnly,
   calls,
   totalCalls,
   range,
@@ -520,7 +525,6 @@ function CallLedger({
   onSelect,
 }: {
   calls: OperatorAiCallAnalytics[]
-  needsReviewOnly: boolean
   totalCalls?: number
   range: OperatorAiAnalyticsRange
   hasNextPage: boolean
@@ -536,7 +540,7 @@ function CallLedger({
             Call ledger
           </p>
           <h2 id="call-ledger-title" className="mt-0.5 text-sm font-semibold">
-            {needsReviewOnly ? "Calls needing review" : "AI calls"}
+            AI calls
           </h2>
         </div>
         <p className="text-xs text-muted-foreground">

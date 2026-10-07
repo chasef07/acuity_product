@@ -26,7 +26,6 @@ const (
 )
 
 var reviewFailureQuestions = map[string]bool{
-	"time_offered":                 true,
 	"need_understood":              true,
 	"right_help":                   true,
 	"clear_and_responsive":         true,
@@ -106,7 +105,6 @@ type JudgeAccuracyRow struct {
 	HumanNo        int    `json:"humanNo"`
 	FailuresCaught int    `json:"failuresCaught"`
 	FalseAlarms    int    `json:"falseAlarms"`
-	Unscored       int    `json:"unscored"`
 }
 
 type JudgeDisagreement struct {
@@ -138,6 +136,7 @@ type ReviewerDisagreement struct {
 
 type JudgeAccuracy struct {
 	ReviewedCalls         int                    `json:"reviewedCalls"`
+	Unjudged              int                    `json:"unjudged"`
 	Rows                  []JudgeAccuracyRow     `json:"rows"`
 	JudgeDisagreements    []JudgeDisagreement    `json:"judgeDisagreements"`
 	ReviewerDisagreements []ReviewerDisagreement `json:"reviewerDisagreements"`
@@ -165,7 +164,7 @@ func reviewFlagged(answers map[string]bool, evaluation json.RawMessage) bool {
 		return true
 	}
 	for question, answer := range answers {
-		if !answer && reviewFailureQuestions[question] && (question != "time_offered" || answers["booking_requested"]) {
+		if !answer && reviewFailureQuestions[question] {
 			return true
 		}
 	}
@@ -587,15 +586,15 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			callOrder = append(callOrder, key)
 		}
 		byCallQuestion[key].Answers = append(byCallQuestion[key].Answers, ReviewerAnswer{ReviewerEmail: item.ReviewerEmail, Answer: item.Human, Note: item.Note})
+		if judgeAnswer == nil {
+			result.Unjudged++
+			continue
+		}
 		group := groupKey{item.Question, item.JudgeVersion}
 		if groups[group] == nil {
 			groups[group] = &JudgeAccuracyRow{Question: item.Question, JudgeVersion: item.JudgeVersion}
 		}
 		row := groups[group]
-		if judgeAnswer == nil {
-			row.Unscored++
-			continue
-		}
 		item.Judge = *judgeAnswer
 		row.Sample++
 		if !item.Human {

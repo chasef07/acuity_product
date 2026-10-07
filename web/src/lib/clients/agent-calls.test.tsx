@@ -93,7 +93,6 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
     locationID: "location-1",
     range: "24h",
     manualTag: "",
-    needsReviewOnly: false,
     revision: 0,
     enabled: true,
   } as const
@@ -117,7 +116,6 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
     practiceId: "practice-1",
     locationId: "location-1",
     range: "24h",
-    needsReviewOnly: false,
     limit: 50,
   })
 

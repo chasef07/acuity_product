@@ -133,10 +133,13 @@ func (m *Module) QueryScorecardReport(ctx context.Context, command ScorecardRepo
 			if plan == "" {
 				plan = "Plan not stated"
 			}
-			result, _, _ := strings.Cut(insurance.Result, ":")
+			result := strings.TrimSpace(insurance.Result)
+			if _, message, found := strings.Cut(result, ":"); found {
+				result = strings.TrimSpace(message)
+			}
 			pk := planKey{week, locationID, strings.ToLower(plan), strings.ToLower(result)}
 			if plans[pk] == nil {
-				plans[pk] = &UnverifiedInsurancePlan{WeekStart: week, LocationID: locationID, LocationName: locationName, Plan: plan, Result: strings.TrimSpace(result)}
+				plans[pk] = &UnverifiedInsurancePlan{WeekStart: week, LocationID: locationID, LocationName: locationName, Plan: plan, Result: result}
 			}
 			plans[pk].Calls++
 			if startedAt.After(plans[pk].LastSeenAt) {

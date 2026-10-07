@@ -498,19 +498,22 @@ function AppointmentFacts({ facts }: { facts: AiAppointmentFacts }) {
   )
 }
 
-function TimelineItem({
+export function TimelineItem({
   item,
   result,
   selected,
   showTiming,
   middlewareRequests,
+  callStartedAt,
 }: {
   middlewareRequests?: MiddlewareRequestDiagnostic[]
   item: OperatorAiTimelineItem
   result?: OperatorAiTimelineItem
   selected: boolean
   showTiming: boolean
+  callStartedAt?: string
 }) {
+  const time = callStartedAt ? formatOffset(item.occurredAt, callStartedAt) : formatTime(item.occurredAt)
   if (item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE") {
     const agent = item.kind === "AGENT_MESSAGE"
     return (
@@ -537,7 +540,7 @@ function TimelineItem({
             </Bubble>
             {(showTiming || selected) && (
               <MessageFooter className="flex-wrap gap-x-3 gap-y-1">
-                <time>{formatTime(item.occurredAt)}</time>
+                <time>{time}</time>
                 {[
                   ["STT final", item.sttMs],
                   ["TTFT", item.ttftMs],
@@ -580,6 +583,11 @@ function TimelineItem({
               className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90"
               aria-hidden="true"
             />
+            {callStartedAt && (
+              <time className="font-mono text-[0.625rem] tabular-nums text-muted-foreground">
+                {time}
+              </time>
+            )}
             <span className="text-xs font-semibold">
               {formatToolLabel(item.name)}
             </span>
@@ -655,7 +663,7 @@ function ToolPayload({
   )
 }
 
-function timelineEntries(items: OperatorAiTimelineItem[]) {
+export function timelineEntries(items: OperatorAiTimelineItem[]) {
   const entries: Array<{
     item: OperatorAiTimelineItem
     result?: OperatorAiTimelineItem
@@ -781,6 +789,15 @@ function formatAppointmentDateTime(facts: AiAppointmentFacts) {
   return facts.appointmentTime
     ? `${dateLabel} · ${facts.appointmentTime}`
     : dateLabel
+}
+
+export function formatOffset(value: string, startedAt: string): string {
+  const seconds = Math.max(
+    0,
+    Math.floor((new Date(value).getTime() - new Date(startedAt).getTime()) / 1000),
+  )
+  if (!Number.isFinite(seconds)) return "—"
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
 }
 
 function formatTime(value: string): string {

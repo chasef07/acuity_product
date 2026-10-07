@@ -986,7 +986,6 @@ export type OperatorJudgeAccuracyRow = {
     humanNo: number;
     failuresCaught: number;
     falseAlarms: number;
-    unscored: number;
 };
 
 export type OperatorJudgeDisagreement = {
@@ -1018,6 +1017,10 @@ export type OperatorReviewerDisagreement = {
 
 export type OperatorJudgeAccuracy = {
     reviewedCalls: number;
+    /**
+     * Golden-set answers with no judge answer to compare, such as B5 when no availability was returned.
+     */
+    unjudged: number;
     rows: Array<OperatorJudgeAccuracyRow>;
     judgeDisagreements: Array<OperatorJudgeDisagreement>;
     reviewerDisagreements: Array<OperatorReviewerDisagreement>;
