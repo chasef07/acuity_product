@@ -461,6 +461,9 @@ func (m *Module) projectReceiptWithRecovery(
 	if err := save(ctx, tx, current, found); err != nil {
 		return Interaction{}, "", err
 	}
+	if err := recordScorecard(ctx, tx, current, projectedAt); err != nil {
+		return Interaction{}, "", err
+	}
 	if current.AppointmentOccurredAt != nil && current.AppointmentAction != "" {
 		if err := m.work.EnsureAppointmentReview(ctx, tx, current.ID, current.PracticeID, current.LocationID, current.Phone, current.SourceCallID, appointmentReviewTitle(current), appointmentReviewMessage(current), *current.AppointmentOccurredAt); err != nil {
 			return Interaction{}, "", err

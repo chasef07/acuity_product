@@ -35,7 +35,7 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 		Errors  map[string]json.RawMessage `json:"errors"`
 	}
 	if json.Unmarshal(raw, &scorecard) == nil &&
-		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3" || scorecard.Version == "typesafe-scorecard-v4" || scorecard.Version == "typesafe-scorecard-v5") &&
+		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3" || scorecard.Version == "typesafe-scorecard-v4" || scorecard.Version == "typesafe-scorecard-v5" || scorecard.Version == ScorecardJudgeVersion) &&
 		(scorecard.Status == "complete" || scorecard.Status == "incomplete") {
 		reading := evaluationReading{Version: scorecard.Version, Flags: []evaluationFlag{}}
 		answer := func(name, answerType string) *float64 {
@@ -69,10 +69,10 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 			{"results_reported_truthfully", "Results reported truthfully"},
 			{"conversation_responsive", "Conversation responsive"},
 		} {
-			if check.name == "request_understood" && scorecard.Version == "typesafe-scorecard-v5" {
+			if check.name == "request_understood" && (scorecard.Version == "typesafe-scorecard-v5" || scorecard.Version == ScorecardJudgeVersion) {
 				continue
 			}
-			if check.name == "results_reported_truthfully" && (scorecard.Version == "typesafe-scorecard-v4" || scorecard.Version == "typesafe-scorecard-v5") {
+			if check.name == "results_reported_truthfully" && (scorecard.Version == "typesafe-scorecard-v4" || scorecard.Version == "typesafe-scorecard-v5" || scorecard.Version == ScorecardJudgeVersion) {
 				continue
 			}
 			score := answer(check.name, "noul")

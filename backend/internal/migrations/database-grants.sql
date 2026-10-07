@@ -622,3 +622,10 @@ GRANT UPDATE (review_outcome, reviewed_by, reviewed_at) ON public.ai_interaction
 -- Manual call review labels are owned by the operator-facing portal.
 GRANT SELECT, INSERT ON ai_manual_tags TO acuity_portal;
 GRANT SELECT, INSERT, DELETE ON ai_interaction_manual_tags TO acuity_portal;
+
+-- Scorecard answers are rebuilt from saved call evidence whenever a call closes.
+GRANT SELECT, INSERT, DELETE ON ai_interaction_scorecard_answers TO acuity_portal, acuity_worker;
+-- Platform Operators keep the daily review queue and golden set in the portal.
+GRANT SELECT, INSERT ON ai_call_review_assignments TO acuity_portal;
+GRANT UPDATE (excluded, note, completed_at) ON ai_call_review_assignments TO acuity_portal;
+GRANT SELECT, INSERT, DELETE ON ai_call_reviews TO acuity_portal;

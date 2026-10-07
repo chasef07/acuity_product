@@ -1753,6 +1753,152 @@ paths:
                 format: binary
         "403":
           $ref: "#/components/responses/Denied"
+  /v1/operator/scorecard/questions:
+    get:
+      operationId: getOperatorScorecardQuestions
+      summary: Read the scorecard question definitions shown to reviewers.
+      responses:
+        "200":
+          description: Every scorecard question with its plain-English yes and no definitions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorScorecardQuestions"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/scorecard/query:
+    post:
+      operationId: queryOperatorScorecard
+      summary: Read weekly booking conversion and unverified insurance plans per office as a Platform Operator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorScorecardQueryRequest"
+      responses:
+        "200":
+          description: Weekly booking conversion per office from stored scorecard answers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorScorecardReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "429":
+          $ref: "#/components/responses/AnalyticsBusy"
+  /v1/operator/call-reviews/queue:
+    post:
+      operationId: openOperatorCallReviewQueue
+      summary: Open the caller's daily review queue, assigning calls on first open.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorCallReviewQueueRequest"
+      responses:
+        "200":
+          description: The reviewer's calls for the day, with a few calls shared with other reviewers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCallReviewQueue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/call-reviews/accuracy:
+    post:
+      operationId: queryOperatorJudgeAccuracy
+      summary: Compare judge answers with the golden set per question and judge version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorJudgeAccuracyRequest"
+      responses:
+        "200":
+          description: Agreement, failures caught, false alarms, and disagreements.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorJudgeAccuracy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "429":
+          $ref: "#/components/responses/AnalyticsBusy"
+  /v1/operator/call-reviews/{interactionId}:
+    parameters:
+      - name: interactionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getOperatorCallReview
+      summary: Read one call's review; judge answers are withheld until the reviewer submits.
+      responses:
+        "200":
+          description: Code-check facts, applicable questions, and the reviewer's own answers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCallReview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      operationId: submitOperatorCallReview
+      summary: Save the reviewer's answers to the golden set and reveal the judge's answers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorCallReviewSubmission"
+      responses:
+        "200":
+          description: The saved review with the judge's answers revealed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCallReview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operator/calls/{callId}/timeline:
     get:
       operationId: getOperatorCallingTimeline
@@ -3827,6 +3973,244 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BookingDay"
+    OperatorScorecardQuestion:
+      type: object
+      additionalProperties: false
+      required: [key, code, label, group, source, question, "yes", "no", appliesWhen]
+      properties:
+        key: {type: string}
+        code: {type: string}
+        label: {type: string}
+        group: {type: string}
+        source: {type: string, enum: [judge, code]}
+        question: {type: string}
+        "yes": {type: string}
+        "no": {type: string}
+        appliesWhen: {type: string}
+    OperatorScorecardQuestions:
+      type: object
+      additionalProperties: false
+      required: [judgeVersion, codeVersion, questions]
+      properties:
+        judgeVersion: {type: string}
+        codeVersion: {type: string}
+        questions:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorScorecardQuestion"}
+    OperatorScorecardQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, weeks, timeZone]
+      properties:
+        practiceId: {type: string, format: uuid}
+        locationId: {type: string, format: uuid}
+        weeks: {type: integer, minimum: 1, maximum: 12}
+        timeZone: {type: string, minLength: 1, maxLength: 100}
+    OperatorBookingConversionWeek:
+      type: object
+      additionalProperties: false
+      required: [weekStart, locationId, locationName, calls, judgedCalls, bookingCalls, converted, blocked, missed, attempted, conversion]
+      properties:
+        weekStart: {type: string, format: date}
+        locationId: {type: string, format: uuid}
+        locationName: {type: string}
+        calls: {type: integer}
+        judgedCalls: {type: integer}
+        bookingCalls: {type: integer}
+        converted: {type: integer}
+        blocked: {type: integer}
+        missed: {type: integer}
+        attempted: {type: integer}
+        conversion: {type: number, nullable: true}
+    OperatorUnverifiedInsurancePlan:
+      type: object
+      additionalProperties: false
+      required: [weekStart, locationId, locationName, plan, result, calls, lastSeenAt]
+      properties:
+        weekStart: {type: string, format: date}
+        locationId: {type: string, format: uuid}
+        locationName: {type: string}
+        plan: {type: string}
+        result: {type: string}
+        calls: {type: integer}
+        lastSeenAt: {type: string, format: date-time}
+    OperatorScorecardReport:
+      type: object
+      additionalProperties: false
+      required: [from, through, timeZone, weeks, unverifiedInsurance]
+      properties:
+        from: {type: string, format: date}
+        through: {type: string, format: date}
+        timeZone: {type: string}
+        weeks:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorBookingConversionWeek"}
+        unverifiedInsurance:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorUnverifiedInsurancePlan"}
+    OperatorCallReviewQueueRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, date, timeZone]
+      properties:
+        practiceId: {type: string, format: uuid}
+        date: {type: string, format: date}
+        timeZone: {type: string, minLength: 1, maxLength: 100}
+    OperatorCallReviewQueueCall:
+      type: object
+      additionalProperties: false
+      required: [interactionId, startedAt, locationName, durationSeconds, sample, overlap, excluded]
+      properties:
+        interactionId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        locationName: {type: string}
+        durationSeconds: {type: integer}
+        sample: {type: string, enum: [random, flagged]}
+        overlap: {type: boolean}
+        excluded: {type: boolean}
+        completedAt: {type: string, format: date-time}
+    OperatorCallReviewQueue:
+      type: object
+      additionalProperties: false
+      required: [date, reviewer, available, calls]
+      properties:
+        date: {type: string, format: date}
+        reviewer: {type: string}
+        available: {type: integer}
+        calls:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorCallReviewQueueCall"}
+    OperatorCallReviewFact:
+      type: object
+      additionalProperties: false
+      required: [question, answer]
+      properties:
+        question: {type: string}
+        answer: {type: boolean}
+        detail:
+          type: object
+          additionalProperties: true
+    OperatorCallReviewAnswer:
+      type: object
+      additionalProperties: false
+      required: [question, answer, note]
+      properties:
+        question: {type: string}
+        answer: {type: boolean}
+        note: {type: string, maxLength: 2000}
+    OperatorCallReviewJudgeAnswer:
+      type: object
+      additionalProperties: false
+      required: [question, answer, version]
+      properties:
+        question: {type: string}
+        answer: {type: boolean}
+        probability: {type: number}
+        version: {type: string}
+    OperatorCallReview:
+      type: object
+      additionalProperties: false
+      required: [interactionId, assigned, facts, questions, submitted, excluded, note, answers, judge]
+      properties:
+        interactionId: {type: string, format: uuid}
+        assigned: {type: boolean}
+        sample: {type: string}
+        facts:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorCallReviewFact"}
+        questions:
+          type: array
+          items: {type: string}
+        submitted: {type: boolean}
+        excluded: {type: boolean}
+        note: {type: string}
+        answers:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorCallReviewAnswer"}
+        judge:
+          type: array
+          description: Empty until the reviewer submits, so answers stay blind.
+          items: {$ref: "#/components/schemas/OperatorCallReviewJudgeAnswer"}
+    OperatorCallReviewSubmission:
+      type: object
+      additionalProperties: false
+      required: [answers, note, excluded]
+      properties:
+        answers:
+          type: array
+          maxItems: 20
+          items: {$ref: "#/components/schemas/OperatorCallReviewAnswer"}
+        note: {type: string, maxLength: 2000}
+        excluded: {type: boolean}
+    OperatorJudgeAccuracyRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId]
+      properties:
+        practiceId: {type: string, format: uuid}
+    OperatorJudgeAccuracyRow:
+      type: object
+      additionalProperties: false
+      required: [question, judgeVersion, sample, agreed, humanNo, failuresCaught, falseAlarms, unscored]
+      properties:
+        question: {type: string}
+        judgeVersion: {type: string}
+        sample: {type: integer}
+        agreed: {type: integer}
+        humanNo: {type: integer}
+        failuresCaught: {type: integer}
+        falseAlarms: {type: integer}
+        unscored: {type: integer}
+    OperatorJudgeDisagreement:
+      type: object
+      additionalProperties: false
+      required: [interactionId, startedAt, locationName, question, judgeVersion, reviewerEmail, human, judge, note]
+      properties:
+        interactionId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        locationName: {type: string}
+        question: {type: string}
+        judgeVersion: {type: string}
+        reviewerEmail: {type: string}
+        human: {type: boolean}
+        judge: {type: boolean}
+        judgeProbability: {type: number}
+        note: {type: string}
+    OperatorReviewerAnswer:
+      type: object
+      additionalProperties: false
+      required: [reviewerEmail, answer, note]
+      properties:
+        reviewerEmail: {type: string}
+        answer: {type: boolean}
+        note: {type: string}
+    OperatorReviewerDisagreement:
+      type: object
+      additionalProperties: false
+      required: [interactionId, startedAt, locationName, question, answers]
+      properties:
+        interactionId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        locationName: {type: string}
+        question: {type: string}
+        answers:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorReviewerAnswer"}
+    OperatorJudgeAccuracy:
+      type: object
+      additionalProperties: false
+      required: [reviewedCalls, rows, judgeDisagreements, reviewerDisagreements]
+      properties:
+        reviewedCalls: {type: integer}
+        rows:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorJudgeAccuracyRow"}
+        judgeDisagreements:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorJudgeDisagreement"}
+        reviewerDisagreements:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorReviewerDisagreement"}
     OperatorAICostQueryRequest:
       type: object
       additionalProperties: false
