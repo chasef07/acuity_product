@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.28.3](https://github.com/chasef07/acuity_product/compare/v1.28.2...v1.28.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* **migrations:** keep the recovery queue table until the old worker is gone ([#423](https://github.com/chasef07/acuity_product/issues/423)) ([78e6f8e](https://github.com/chasef07/acuity_product/commit/78e6f8e247438155b2c443fe136f308d9c23a39b))
+
+
+### Performance Improvements
+
+* **httpapi:** allow two concurrent analytics requests per instance ([#424](https://github.com/chasef07/acuity_product/issues/424)) ([7e525ff](https://github.com/chasef07/acuity_product/commit/7e525ffa1fde5c9a03d8cd21713c43d9478742cf))
+* **workspace:** serve Task search from trigram indexes ([#427](https://github.com/chasef07/acuity_product/issues/427)) ([ac77e38](https://github.com/chasef07/acuity_product/commit/ac77e38af354256de62fcd1356b5be7a5e2287c2))
+
 ## [1.28.2](https://github.com/chasef07/acuity_product/compare/v1.28.1...v1.28.2) (2026-10-06)
 
 
