@@ -313,7 +313,7 @@ export function createWorkspaceProjection({
     completedTasks: 0,
   }
   const windowResets = { tasks: 0, completedTasks: 0 }
-  const windowLoads: Partial<Record<TaskWindow, { depth: number }>> = {}
+  const loadMoreDepths = { tasks: 0, completedTasks: 0 }
   const firstPageLengths = { tasks: 0, completedTasks: 0 }
   let deepRefreshedAt = Number.NEGATIVE_INFINITY
   let deepRefreshTimer: number | undefined
@@ -362,7 +362,7 @@ export function createWorkspaceProjection({
   function resetWindow(window: TaskWindow) {
     windowResets[window] += 1
     firstPageLengths[window] = 0
-    delete windowLoads[window]
+    loadMoreDepths[window] = 0
   }
 
   function cancelDeepRefresh() {
@@ -387,10 +387,12 @@ export function createWorkspaceProjection({
     window: TaskWindow,
     current: WorkspaceQueryWindow<Task>,
     loaded: LoadedTaskWindow,
-    covered: number,
+    deep: boolean,
     moved: WorkspaceAuthorityResult<TaskPage>,
   ) {
+    const covered = firstPageLengths[window]
     firstPageLengths[window] = loaded.firstPageLength
+    if (deep) return { items: loaded.items, nextCursor: loaded.nextCursor }
     return mergeFirstPage({
       loaded: current.items,
       loadedCursor: current.nextCursor,
@@ -552,10 +554,10 @@ export function createWorkspaceProjection({
               ? selectedTaskResult.data
               : undefined
           const mergedTasks = taskWindowCurrent && taskResult.kind === "success"
-            ? mergeLoadedWindow("tasks", currentState.tasks, taskResult.data, deep ? currentState.tasks.items.length : firstPageLengths.tasks, completedResult)
+            ? mergeLoadedWindow("tasks", currentState.tasks, taskResult.data, deep, completedResult)
             : undefined
           const mergedCompleted = completedWindowCurrent && completedResult.kind === "success"
-            ? mergeLoadedWindow("completedTasks", currentState.completedTasks, completedResult.data, deep ? currentState.completedTasks.items.length : firstPageLengths.completedTasks, taskResult)
+            ? mergeLoadedWindow("completedTasks", currentState.completedTasks, completedResult.data, deep, taskResult)
             : undefined
           const tasks = mergedTasks
             ? mergedTasks.items.map((task) =>
@@ -659,10 +661,10 @@ export function createWorkspaceProjection({
                   items: tasks,
                   nextCursor: mergedTasks.nextCursor,
                   counts: currentState.tasks.counts,
-                  loading: Boolean(windowLoads.tasks),
+                  loading: loadMoreDepths.tasks > 0,
                   error: "",
                 }
-              : { ...taskWindow, loading: Boolean(windowLoads.tasks), error: taskWindowError }
+              : { ...taskWindow, loading: loadMoreDepths.tasks > 0, error: taskWindowError }
           }
           if (countGeneration === queryGenerations.taskCounts) {
             taskWindow = taskResult.kind === "success"
@@ -676,8 +678,8 @@ export function createWorkspaceProjection({
             tasks: taskWindow,
             completedTasks: completedWindowCurrent
               ? mergedCompleted
-                ? { ...mergedCompleted, loading: Boolean(windowLoads.completedTasks), error: "" }
-                : { ...currentState.completedTasks, loading: Boolean(windowLoads.completedTasks), error: completedWindowError }
+                ? { ...mergedCompleted, loading: loadMoreDepths.completedTasks > 0, error: "" }
+                : { ...currentState.completedTasks, loading: loadMoreDepths.completedTasks > 0, error: completedWindowError }
               : currentState.completedTasks,
             selection,
           }
@@ -1126,14 +1128,13 @@ export function createWorkspaceProjection({
     if (!activeScopeChanged) void realtimeController.refresh()
   }
 
-  async function loadMore(window: TaskWindow) {
+  async function loadMore(window: TaskWindow, retry = true): Promise<void> {
     if (state.loadState !== "ready") return
     const generation = scopeGeneration
     const reset = windowResets[window]
     const currentWindow = state[window]
     if (currentWindow.loading || !currentWindow.nextCursor) return
-    const load = { depth: currentWindow.items.length + 1 }
-    windowLoads[window] = load
+    loadMoreDepths[window] = currentWindow.items.length + 1
     patch((current) => ({
       ...current,
       [window]: { ...current[window], loading: true, error: "" },
@@ -1152,10 +1153,11 @@ export function createWorkspaceProjection({
       ),
     )
     if (generation !== scopeGeneration || stopped || reset !== windowResets[window]) return
-    if (windowLoads[window] === load) delete windowLoads[window]
+    loadMoreDepths[window] = 0
     if (failIfAccessLost(result)) return
     if (state[window].nextCursor !== currentWindow.nextCursor) {
       patch((current) => ({ ...current, [window]: { ...current[window], loading: false } }))
+      if (retry) await loadMore(window, false)
       return
     }
     if (result.kind !== "success") {
@@ -1503,36 +1505,36 @@ export function createWorkspaceProjection({
       ...current,
       tasks:
         taskGeneration !== queryGenerations.tasks
-          ? { ...current.tasks, loading: Boolean(windowLoads.tasks) }
+          ? { ...current.tasks, loading: loadMoreDepths.tasks > 0 }
           : tasks.kind === "success"
             ? {
-                ...mergeLoadedWindow("tasks", current.tasks, tasks.data, firstPageLengths.tasks, completedTasks),
+                ...mergeLoadedWindow("tasks", current.tasks, tasks.data, false, completedTasks),
                 counts: countGeneration === queryGenerations.taskCounts
                   ? tasks.data.counts
                   : current.tasks.counts,
-                loading: Boolean(windowLoads.tasks),
+                loading: loadMoreDepths.tasks > 0,
                 error: "",
               }
-            : { ...current.tasks, loading: Boolean(windowLoads.tasks), error: taskWindowError },
+            : { ...current.tasks, loading: loadMoreDepths.tasks > 0, error: taskWindowError },
       completedTasks:
         completedGeneration !== queryGenerations.completedTasks
-          ? { ...current.completedTasks, loading: Boolean(windowLoads.completedTasks) }
+          ? { ...current.completedTasks, loading: loadMoreDepths.completedTasks > 0 }
           : completedTasks.kind === "success"
             ? {
-                ...mergeLoadedWindow("completedTasks", current.completedTasks, completedTasks.data, firstPageLengths.completedTasks, tasks),
-                loading: Boolean(windowLoads.completedTasks),
+                ...mergeLoadedWindow("completedTasks", current.completedTasks, completedTasks.data, false, tasks),
+                loading: loadMoreDepths.completedTasks > 0,
                 error: "",
               }
             : {
                 ...current.completedTasks,
-                loading: Boolean(windowLoads.completedTasks),
+                loading: loadMoreDepths.completedTasks > 0,
                 error: completedWindowError,
               },
     }))
   }
 
   function windowDepth(window: TaskWindow, loadedCount: number) {
-    return Math.max(loadedCount, windowLoads[window]?.depth ?? 0)
+    return Math.max(loadedCount, loadMoreDepths[window])
   }
 
   function obsoleteAllQueries() {
@@ -1555,7 +1557,7 @@ export function createWorkspaceProjection({
     loadedCount: number,
     signal: AbortSignal,
   ): Promise<WorkspaceAuthorityResult<LoadedTaskWindow>> {
-    const target = refreshLoadedWindowTarget(loadedCount)
+    const target = Math.max(1, loadedCount)
     const items: Task[] = []
     let cursor = ""
     let counts: TaskFolderCounts | undefined
@@ -1813,10 +1815,6 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
       other: 0,
     },
   }
-}
-
-function refreshLoadedWindowTarget(loadedCount: number) {
-  return Math.max(1, loadedCount)
 }
 
 const deepRefreshMilliseconds = 60_000

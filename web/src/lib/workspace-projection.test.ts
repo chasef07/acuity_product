@@ -1869,7 +1869,7 @@ test("one hint with 300 loaded open Tasks refreshes only the first pages and kee
   live.projection.stop()
 })
 
-test("a load-more overtaken by a refresh is discarded instead of skipping a pushed-down Task", async () => {
+test("a load-more overtaken by a refresh retries from the new cursor instead of skipping a pushed-down Task", async () => {
   const live = liveWorkspace({ openRows: 60 })
   await live.connect()
   let release!: () => void
@@ -1884,8 +1884,7 @@ test("a load-more overtaken by a refresh is discarded instead of skipping a push
   release()
   await load
   assert.equal(live.projection.getSnapshot().tasks.loading, false)
-  assert.equal(live.projection.getSnapshot().tasks.items.length, 50)
-  await live.projection.dispatch({ type: "load-more", window: "tasks" })
+  assert.equal(live.requests.filter((request) => request.startsWith("tasks:OPEN:open-04")).length, 2)
   const ids = live.projection.getSnapshot().tasks.items.map((item) => item.id)
   assert.equal(ids.length, 61)
   assert.equal(new Set(ids).size, 61)

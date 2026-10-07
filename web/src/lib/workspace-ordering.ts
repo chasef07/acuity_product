@@ -70,9 +70,11 @@ export function mergeFirstPage<T extends MergeableRow>({
   return {
     items: [
       ...page,
-      ...loaded.filter((row, index) =>
-        !rowIDs(row).some((id) => fresh.has(id)) &&
-        (index >= covered || sortsAfter(row, boundary))),
+      ...loaded.flatMap((row, index) => {
+        if (fresh.has(row.id) || (index < covered && !sortsAfter(row, boundary))) return []
+        const members = row.groupMembers?.filter((member) => !fresh.has(member.id))
+        return members?.length === row.groupMembers?.length ? [row] : [{ ...row, groupMembers: members }]
+      }),
     ],
     nextCursor: loadedCursor,
   }

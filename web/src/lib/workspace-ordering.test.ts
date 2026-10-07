@@ -36,16 +36,26 @@ test("a fresh first page merges into loaded rows", () => {
       covered: 2,
       page: [row("new-lead", 58, ["new-lead", "old-lead"]), row("kept", 40)],
       pageCursor: "page",
-      want: ["new-lead", "kept", "deep"],
+      want: ["new-lead[new-lead,old-lead]", "kept", "deep"],
       cursor: "loaded",
     },
     {
-      name: "drops deeper rows that moved to the other window",
-      loaded: [row("a", 50), row("done", 20), row("group", 10, ["group", "done-member"])],
+      name: "drops deeper rows that moved to the other window and keeps a group's other members",
+      loaded: [row("a", 50), row("done", 20), row("group", 10, ["group", "done-member", "open-member"])],
       covered: 1,
       page: [row("a", 50)],
       pageCursor: "page",
       moved: [row("done", 5), row("done-member", 5)],
+      want: ["a", "group[group,open-member]"],
+      cursor: "loaded",
+    },
+    {
+      name: "drops a deeper group whose lead moved to the other window",
+      loaded: [row("a", 50), row("lead", 10, ["lead", "member"])],
+      covered: 1,
+      page: [row("a", 50)],
+      pageCursor: "page",
+      moved: [row("lead", 5)],
       want: ["a"],
       cursor: "loaded",
     },
@@ -70,7 +80,9 @@ test("a fresh first page merges into loaded rows", () => {
   ]
   for (const item of cases) {
     const merged = mergeFirstPage({ ...item, loadedCursor: "loaded", sortsAfter: recent })
-    assert.deepEqual(merged.items.map((entry) => entry.id), item.want, item.name)
+    const shown = merged.items.map((entry) =>
+      entry.groupMembers ? `${entry.id}[${entry.groupMembers.map((member) => member.id).join(",")}]` : entry.id)
+    assert.deepEqual(shown, item.want, item.name)
     assert.equal(merged.nextCursor, item.cursor, item.name)
   }
 })

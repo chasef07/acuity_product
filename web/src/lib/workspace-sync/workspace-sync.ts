@@ -285,7 +285,10 @@ export function createWorkspaceSync(
 
     async function reconcile(minimumVersion: number, force = false) {
       highestHint = Math.max(highestHint, minimumVersion)
-      if (!force && highestHint <= appliedVersion) return
+      if (!force && highestHint <= appliedVersion) {
+        queueDeferredCatchUp()
+        return
+      }
       if (reconciliation) {
         if (force) deferCatchUp(true)
         return reconciliation
