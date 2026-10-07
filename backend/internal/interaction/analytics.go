@@ -26,14 +26,13 @@ const (
 )
 
 type QueryAnalyticsCommand struct {
-	NeedsReviewOnly bool
-	ManualTag       string
-	Identity        access.Identity
-	PracticeID      string
-	LocationID      string
-	Range           AnalyticsRange
-	Cursor          string
-	Limit           int
+	ManualTag  string
+	Identity   access.Identity
+	PracticeID string
+	LocationID string
+	Range      AnalyticsRange
+	Cursor     string
+	Limit      int
 }
 
 type AnalyticsDay struct {
@@ -153,14 +152,13 @@ type OperatorAnalyticsDetail struct {
 }
 
 type analyticsCursor struct {
-	NeedsReviewOnly bool           `json:"needsReviewOnly,omitempty"`
-	ManualTag       string         `json:"manualTag,omitempty"`
-	Through         time.Time      `json:"through"`
-	Range           AnalyticsRange `json:"range"`
-	PracticeID      string         `json:"practiceId"`
-	LocationID      string         `json:"locationId,omitempty"`
-	StartedAt       time.Time      `json:"startedAt"`
-	ID              string         `json:"id"`
+	ManualTag  string         `json:"manualTag,omitempty"`
+	Through    time.Time      `json:"through"`
+	Range      AnalyticsRange `json:"range"`
+	PracticeID string         `json:"practiceId"`
+	LocationID string         `json:"locationId,omitempty"`
+	StartedAt  time.Time      `json:"startedAt"`
+	ID         string         `json:"id"`
 }
 
 type analyticsProjection struct {
@@ -426,9 +424,6 @@ func queryAnalyticsCalls(
 		cursorID = cursor.ID
 	}
 	scanLimit := command.Limit + 1
-	if command.NeedsReviewOnly {
-		scanLimit = analyticsReviewScanLimit
-	}
 	rows, err := tx.Query(ctx, `
 		SELECT
 			interaction.id::text,
@@ -490,9 +485,6 @@ func queryAnalyticsCalls(
 		scanned++
 		last = projection.call
 		projection.call.ReviewReasons = EvaluationReviewReasons(evaluation)
-		if command.NeedsReviewOnly && len(projection.call.ReviewReasons) == 0 {
-			continue
-		}
 		projectAnalyticsCall(&projection, to)
 		projections = append(projections, projection)
 		if len(projections) > command.Limit {
@@ -640,14 +632,13 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 
 func newAnalyticsCursor(command QueryAnalyticsCommand, startedAt time.Time, id string, through time.Time) analyticsCursor {
 	return analyticsCursor{
-		Through:         through,
-		NeedsReviewOnly: command.NeedsReviewOnly,
-		ManualTag:       command.ManualTag,
-		Range:           command.Range,
-		PracticeID:      command.PracticeID,
-		LocationID:      command.LocationID,
-		StartedAt:       startedAt,
-		ID:              id,
+		Through:    through,
+		ManualTag:  command.ManualTag,
+		Range:      command.Range,
+		PracticeID: command.PracticeID,
+		LocationID: command.LocationID,
+		StartedAt:  startedAt,
+		ID:         id,
 	}
 }
 
@@ -665,7 +656,7 @@ func decodeCursor(command QueryAnalyticsCommand, target any, cursor *analyticsCu
 		return false
 	}
 	duration, _ := analyticsRangeDuration(command.Range)
-	return cursor.NeedsReviewOnly == command.NeedsReviewOnly && cursor.ManualTag == command.ManualTag &&
+	return cursor.ManualTag == command.ManualTag &&
 		cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
 		!cursor.StartedAt.IsZero() && !cursor.Through.IsZero() && !cursor.Through.After(now) &&
 		!cursor.StartedAt.After(cursor.Through) && !cursor.StartedAt.Before(cursor.Through.Add(-duration)) &&

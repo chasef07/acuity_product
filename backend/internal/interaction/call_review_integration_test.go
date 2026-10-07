@@ -79,6 +79,9 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if _, err := module.OpenReviewQueue(ctx, ReviewQueueCommand{Identity: staff, PracticeID: practice, Date: command.Date, TimeZone: command.TimeZone}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("practice admins cannot open the operator review queue: %v", err)
 	}
+	if _, err := module.OpenReviewQueue(ctx, ReviewQueueCommand{Identity: first, PracticeID: practice, Date: "2026-10-07", TimeZone: command.TimeZone}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("today's queue is not reviewable until the day is over: %v", err)
+	}
 	queueA, err := module.OpenReviewQueue(ctx, command)
 	if err != nil || len(queueA.Calls) != reviewQueueSize || queueA.Available != 31 || queueA.Calls[0].LocationName != "Main" {
 		t.Fatalf("first queue: %d available=%d %v", len(queueA.Calls), queueA.Available, err)
@@ -158,6 +161,9 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	revealed, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Synthetic review"})
 	if err != nil || !revealed.Submitted || len(revealed.Answers) != 6 || len(revealed.Judge) != 5 {
 		t.Fatalf("submitted review reveals judge answers: %+v %v", revealed, err)
+	}
+	if _, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Changed after reveal"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("answers are locked once the judge is revealed: %v", err)
 	}
 	if _, err := module.SubmitCallReview(ctx, second, booked, CallReviewSubmission{Answers: answers}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("a reviewer submits only assigned calls: %v", err)

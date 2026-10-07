@@ -77,6 +77,16 @@ func TestCodeChecksReadToolResultsAndReceipts(t *testing.T) {
 		t.Fatal("a system failure is not a legitimate block")
 	}
 
+	retried := answersByQuestion(codeCheckAnswers(syntheticTranscript(t,
+		syntheticTool{"check_insurance", `{"plan":"Synthetic Basic"}`, "blocked: This plan is not accepted for this visit type at this office."},
+		syntheticTool{"check_insurance", `{"plan":"Synthetic Gold"}`, "success: Yes, we accept Synthetic Gold."},
+		syntheticTool{"list_available_appointments", `{}`, "no_results: No eligible openings in the searched window."},
+		syntheticTool{"list_available_appointments", `{"startDate":"2026-10-21"}`, "success: Found eligible openings."},
+	), map[string]any{}))
+	if retried["booking_blocked"].Answer {
+		t.Fatalf("a later successful check or search clears an earlier block: %+v", retried["booking_blocked"])
+	}
+
 	verified := answersByQuestion(codeCheckAnswers(syntheticTranscript(t,
 		syntheticTool{"check_insurance", `{"plan":"Synthetic"}`, "needs_input: Which of these is on your card: A or B?"},
 		syntheticTool{"check_insurance", `{"plan":"Synthetic A"}`, "success: Yes, we accept Synthetic A."},
@@ -118,8 +128,11 @@ func TestJudgeAnswersReadOnlyScorecardV6(t *testing.T) {
 		"errors":{"right_help":{"cause":"TimeoutError"}}
 	}`)
 	answers := answersByQuestion(judgeAnswers(evaluation))
-	if len(answers) != 2 || !answers["booking_requested"].Answer || answers["clear_and_responsive"].Answer {
+	if len(answers) != 3 || !answers["booking_requested"].Answer || answers["clear_and_responsive"].Answer {
 		t.Fatalf("v6 answers with 0.40 as no: %+v", answers)
+	}
+	if skipped := answers["time_offered"]; skipped.Answer || skipped.Probability != nil || skipped.Detail["reason"] != "no_availability_result" {
+		t.Fatalf("B5 skipped for lack of availability is a no without a probability: %+v", skipped)
 	}
 	if answers["booking_requested"].JudgeModel != "typesafe-ai/jev" || *answers["booking_requested"].Probability != 0.91 {
 		t.Fatalf("judge provenance: %+v", answers["booking_requested"])

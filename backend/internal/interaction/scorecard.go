@@ -205,20 +205,21 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 	}
 	receipts := domainOutcomeReceiptsByCallID(closeout)
 	writeCalled, writeSucceeded := false, false
-	var blocked map[string]any
+	lastOutput := map[string]string{}
 	for _, call := range calls {
+		lastOutput[call.Name] = call.Output
 		if schedulingWrites[call.Name] {
 			writeCalled = true
 			receipt := receipts[call.CallID]
-			outcome := firstRecordString(receipt, "outcome")
-			if (outcome == "booked" || outcome == "rescheduled" || outcome == "cancelled") && normalizedDomainStatus(firstRecordString(receipt, "status")) == "success" {
+			if appointmentDomainOutcome(firstRecordString(receipt, "outcome")) && normalizedDomainStatus(firstRecordString(receipt, "status")) == "success" {
 				writeSucceeded = true
 			}
 		}
-		for _, rule := range blockingResults {
-			if blocked == nil && call.Name == rule.tool && strings.HasPrefix(call.Output, rule.prefix) {
-				blocked = map[string]any{"reason": rule.reason, "tool": call.Name}
-			}
+	}
+	var blocked map[string]any
+	for _, rule := range blockingResults {
+		if output, called := lastOutput[rule.tool]; blocked == nil && called && strings.HasPrefix(output, rule.prefix) {
+			blocked = map[string]any{"reason": rule.reason, "tool": rule.tool}
 		}
 	}
 	answers := []scorecardAnswer{answer("scheduling_tool_called", writeCalled, nil)}
@@ -279,12 +280,22 @@ func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
 		}
 		var result struct {
 			Status  string `json:"status"`
+			Reason  string `json:"reason"`
 			Answers map[string]struct {
 				Type string   `json:"type"`
 				Noul *float64 `json:"noul"`
 			} `json:"answers"`
 		}
-		if json.Unmarshal(scorecard.Results[question.Key], &result) != nil || result.Status == "not_applicable" {
+		if json.Unmarshal(scorecard.Results[question.Key], &result) != nil {
+			continue
+		}
+		if result.Status == "not_applicable" {
+			if question.Key == "time_offered" && result.Reason == "no_availability_result" {
+				answers = append(answers, scorecardAnswer{
+					Question: question.Key, Source: "judge", Answer: false, Version: scorecard.Version,
+					JudgeModel: scorecard.Model, Detail: map[string]any{"reason": result.Reason},
+				})
+			}
 			continue
 		}
 		value := result.Answers[question.Key]
@@ -313,18 +324,19 @@ func scorecardAnswersFor(transcript, closeoutPayload json.RawMessage) []scorecar
 	return append(codeCheckAnswers(transcript, closeout), judgeAnswers(evaluation)...)
 }
 
-func recordScorecard(ctx context.Context, tx pgx.Tx, interaction Interaction, computedAt time.Time) error {
+func recordScorecard(ctx context.Context, tx pgx.Tx, interaction Interaction, computedAt time.Time) (int, error) {
 	if _, err := tx.Exec(ctx, `DELETE FROM ai_interaction_scorecard_answers WHERE interaction_id = $1`, interaction.ID); err != nil {
-		return fmt.Errorf("clear scorecard answers: %w", err)
+		return 0, fmt.Errorf("clear scorecard answers: %w", err)
 	}
 	if interaction.LifecycleStage != LifecycleClosed {
-		return nil
+		return 0, nil
 	}
 	agentVersion := nullIfEmpty(strings.TrimSpace(firstRecordString(recordValue(decodeRecord(interaction.CloseoutPayload)["versions"]), "agent")))
 	if agentVersion == nil {
 		agentVersion = nullIfEmpty(strings.TrimSpace(firstRecordString(decodeRecord(interaction.CloseoutPayload), "agentVersion")))
 	}
-	for _, answer := range scorecardAnswersFor(interaction.Transcript, interaction.CloseoutPayload) {
+	answers := scorecardAnswersFor(interaction.Transcript, interaction.CloseoutPayload)
+	for _, answer := range answers {
 		var detail any
 		if answer.Detail != nil {
 			detail = answer.Detail
@@ -336,10 +348,10 @@ func recordScorecard(ctx context.Context, tx pgx.Tx, interaction Interaction, co
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		`, interaction.ID, interaction.PracticeID, answer.Question, answer.Source, answer.Answer, answer.Probability,
 			answer.Version, nullIfEmpty(answer.JudgeModel), agentVersion, detail, computedAt); err != nil {
-			return fmt.Errorf("record scorecard answer: %w", err)
+			return 0, fmt.Errorf("record scorecard answer: %w", err)
 		}
 	}
-	return nil
+	return len(answers), nil
 }
 
 type bookingOutcome string
@@ -412,11 +424,12 @@ func (m *Module) BackfillScorecards(ctx context.Context, since time.Time, batch 
 			return result, fmt.Errorf("read scorecard backfill: %w", err)
 		}
 		for _, interaction := range interactions {
-			if err := recordScorecard(ctx, tx, interaction, m.now()); err != nil {
+			recorded, err := recordScorecard(ctx, tx, interaction, m.now())
+			if err != nil {
 				_ = tx.Rollback(ctx)
 				return result, err
 			}
-			result.Answers += len(scorecardAnswersFor(interaction.Transcript, interaction.CloseoutPayload))
+			result.Answers += recorded
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return result, fmt.Errorf("commit scorecard backfill: %w", err)

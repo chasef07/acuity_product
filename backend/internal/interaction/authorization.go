@@ -103,8 +103,7 @@ func readInteraction(ctx context.Context, tx pgx.Tx, interactionID string) (Inte
 }
 
 const (
-	analyticsRowLimit        = 50000
-	analyticsReviewScanLimit = 2000
+	analyticsRowLimit = 50000
 )
 
 func (m *Module) beginAnalyticsScope(

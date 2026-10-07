@@ -173,7 +173,7 @@ func reviewFlagged(answers map[string]bool, evaluation json.RawMessage) bool {
 
 func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand) (ReviewQueue, error) {
 	from, to, valid := reviewDay(command.Date, command.TimeZone)
-	if !valid || !validUUID(command.PracticeID) || command.Identity.Subject == "" {
+	if !valid || !validUUID(command.PracticeID) || command.Identity.Subject == "" || to.After(m.now()) {
 		return ReviewQueue{}, ErrInvalidInput
 	}
 	if err := m.available(); err != nil {
@@ -430,6 +430,13 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 		if !review.Assigned {
 			return CallReview{}, ErrInvalidInput
 		}
+		var answered bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ai_call_reviews WHERE interaction_id = $1 AND reviewer = $2)`, interactionID, identity.Subject).Scan(&answered); err != nil {
+			return CallReview{}, fmt.Errorf("read call review state: %w", err)
+		}
+		if review.Submitted || answered {
+			return CallReview{}, ErrConflict
+		}
 		applicable := map[string]bool{}
 		for _, question := range review.Questions {
 			applicable[question] = true
@@ -453,9 +460,6 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 			}
 		}
 		now := m.now()
-		if _, err := tx.Exec(ctx, `DELETE FROM ai_call_reviews WHERE interaction_id = $1 AND reviewer = $2`, interactionID, identity.Subject); err != nil {
-			return CallReview{}, fmt.Errorf("replace call review: %w", err)
-		}
 		if !submission.Excluded {
 			for _, answer := range answers {
 				snapshot, judged := judge[answer.Question]
@@ -478,8 +482,8 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE ai_call_review_assignments SET excluded = $4, note = $5, completed_at = $6
-			WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3
-		`, authorization.Practice.ID, identity.Subject, interactionID, submission.Excluded, submission.Note, now); err != nil {
+			WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3 AND review_date = $7::date
+		`, authorization.Practice.ID, identity.Subject, interactionID, submission.Excluded, submission.Note, now, reviewDate); err != nil {
 			return CallReview{}, fmt.Errorf("complete review assignment: %w", err)
 		}
 		if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{Action: "ai_call_review.submitted", ResourceType: "ai_interaction", ResourceID: interactionID, ResourceVersion: 1, OccurredAt: now}); err != nil {
@@ -706,8 +710,8 @@ func (m *Module) ImportGoldenSet(ctx context.Context, practiceID string, reviewe
 			return GoldenSetImport{}, fmt.Errorf("%w: golden set date %q", ErrInvalidInput, entry.Date)
 		}
 		sample := entry.Sample
-		if sample != "random" && sample != "flagged" && sample != "booking_pick" {
-			sample = "manual"
+		if sample != "random" && sample != "flagged" && sample != "booking_pick" && sample != "manual" {
+			return GoldenSetImport{}, fmt.Errorf("%w: golden set sample %q", ErrInvalidInput, entry.Sample)
 		}
 		var interactionID string
 		err := tx.QueryRow(ctx, `SELECT id::text FROM ai_interactions WHERE practice_id = $1 AND source_call_id = $2`, practiceID, entry.Call).Scan(&interactionID)

@@ -617,14 +617,13 @@ func (server *Server) QueryOperatorAIAnalytics(
 	page, err := server.interactions.QueryAnalytics(
 		ctx,
 		interaction.QueryAnalyticsCommand{
-			Identity:        identity,
-			ManualTag:       stringValue(body.ManualTag),
-			NeedsReviewOnly: body.NeedsReviewOnly != nil && *body.NeedsReviewOnly,
-			PracticeID:      body.PracticeId.String(),
-			LocationID:      uuidString(body.LocationId),
-			Range:           interaction.AnalyticsRange(body.Range),
-			Cursor:          stringValue(body.Cursor),
-			Limit:           intValue(body.Limit),
+			Identity:   identity,
+			ManualTag:  stringValue(body.ManualTag),
+			PracticeID: body.PracticeId.String(),
+			LocationID: uuidString(body.LocationId),
+			Range:      interaction.AnalyticsRange(body.Range),
+			Cursor:     stringValue(body.Cursor),
+			Limit:      intValue(body.Limit),
 		},
 	)
 	if err != nil {

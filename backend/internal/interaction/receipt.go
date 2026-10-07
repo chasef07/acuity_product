@@ -461,7 +461,7 @@ func (m *Module) projectReceiptWithRecovery(
 	if err := save(ctx, tx, current, found); err != nil {
 		return Interaction{}, "", err
 	}
-	if err := recordScorecard(ctx, tx, current, projectedAt); err != nil {
+	if _, err := recordScorecard(ctx, tx, current, projectedAt); err != nil {
 		return Interaction{}, "", err
 	}
 	if current.AppointmentOccurredAt != nil && current.AppointmentAction != "" {
