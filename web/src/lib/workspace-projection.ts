@@ -4,12 +4,14 @@ import type {
   CallingCall,
   CallingDispositionResult,
   Task,
+  TaskChangeQueryRequest,
+  TaskChanges,
   TaskFolderCounts,
   TaskPage,
   TaskQueryRequest,
   WorkspaceSnapshot,
 } from "./api/generated/types.gen.ts"
-import { appendUniqueByID, mergeFirstPage, newerFirst } from "./workspace-ordering.ts"
+import { appendUniqueByID, mergeFirstPage, newerFirst, patchChangedRows } from "./workspace-ordering.ts"
 import { canViewPracticeAnalytics } from "./booking-analytics.ts"
 import {
   selectedWorkspaceLocation,
@@ -138,6 +140,11 @@ export type WorkspaceAuthorityAdapter = {
     request: TaskQueryRequest,
     signal: AbortSignal,
   ) => Promise<WorkspaceAuthorityResult<TaskPage>>
+  taskChanges?: (
+    token: string,
+    request: TaskChangeQueryRequest,
+    signal: AbortSignal,
+  ) => Promise<WorkspaceAuthorityResult<TaskChanges>>
   aiInteraction: (
     token: string,
     interactionID: string,
@@ -317,6 +324,8 @@ export function createWorkspaceProjection({
   const firstPageLengths = { tasks: 0, completedTasks: 0 }
   let deepRefreshedAt = Number.NEGATIVE_INFINITY
   let deepRefreshTimer: number | undefined
+  let deepRowsStale = true
+  let taskVersion = 0
   let scopeRequests = new AbortController()
   let accessController: AbortController | undefined
   const listeners = new Set<() => void>()
@@ -356,6 +365,8 @@ export function createWorkspaceProjection({
     resetWindow("tasks")
     resetWindow("completedTasks")
     deepRefreshedAt = Number.NEGATIVE_INFINITY
+    deepRowsStale = true
+    taskVersion = 0
     cancelDeepRefresh()
   }
 
@@ -370,12 +381,17 @@ export function createWorkspaceProjection({
     deepRefreshTimer = undefined
   }
 
+  function deepRefreshInterval() {
+    return deepRowsStale ? deepRefreshMilliseconds : safetyRefreshMilliseconds
+  }
+
   function scheduleDeepRefresh() {
-    if (!environment || deepRefreshTimer !== undefined || !loadedBeyondFirstPage()) return
+    cancelDeepRefresh()
+    if (!environment || !loadedBeyondFirstPage()) return
     deepRefreshTimer = environment.clock.setTimeout(() => {
       deepRefreshTimer = undefined
       if (!stopped && loadedBeyondFirstPage()) void realtimeController.refresh()
-    }, Math.max(0, deepRefreshedAt + deepRefreshMilliseconds - now()))
+    }, Math.max(0, deepRefreshedAt + deepRefreshInterval() - now()))
   }
 
   function loadedBeyondFirstPage() {
@@ -393,6 +409,7 @@ export function createWorkspaceProjection({
     const covered = firstPageLengths[window]
     firstPageLengths[window] = loaded.firstPageLength
     if (deep) return { items: loaded.items, nextCursor: loaded.nextCursor }
+    deepRowsStale = true
     return mergeFirstPage({
       loaded: current.items,
       loadedCursor: current.nextCursor,
@@ -402,6 +419,23 @@ export function createWorkspaceProjection({
       moved: moved.kind === "success" ? moved.data.items : [],
       sortsAfter: window === "tasks" ? openTaskOrder : completedTaskOrder,
     })
+  }
+
+  function patchTaskWindow(
+    window: TaskWindow,
+    current: WorkspaceQueryWindow<Task>,
+    rows: Task[],
+    replaced: (task: Task) => boolean,
+  ) {
+    const patched = patchChangedRows({
+      loaded: current.items,
+      nextCursor: current.nextCursor,
+      replaced,
+      rows,
+      sortsAfter: window === "tasks" ? openTaskOrder : completedTaskOrder,
+    })
+    firstPageLengths[window] = Math.min(patched.items.length, firstPageLengths[window] + patched.inserted)
+    return patched
   }
 
   function failClosed(
@@ -472,28 +506,37 @@ export function createWorkspaceProjection({
     const taskGeneration = ++queryGenerations.tasks
     const completedGeneration = ++queryGenerations.completedTasks
     const current = state
-    const deep = now() - deepRefreshedAt >= deepRefreshMilliseconds
+    const deep = now() - deepRefreshedAt >= deepRefreshInterval()
     const taskRequest = taskQueryRequest(current.scope, current.search.applied, current.rail)
     const selectedTaskID = current.selection.task?.id
     const selectedAIInteractionID = current.selection.aiInteractionID
-    const [
-      snapshotResult,
-      taskPageResult,
-      completedResult,
-      selectedTaskResult,
-      selectedAIResult,
-    ] =
-      await Promise.all([
-        authority.workspace(token, scope, signal),
-        loadTaskWindow(token, taskRequest, deep ? windowDepth("tasks", current.tasks.items.length) : 0, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), deep ? windowDepth("completedTasks", current.completedTasks.items.length) : 0, signal),
-        selectedTaskID
-          ? authority.task(token, selectedTaskID, signal)
-          : Promise.resolve(undefined),
-        selectedAIInteractionID
-          ? authority.aiInteraction(token, selectedAIInteractionID, signal)
-          : Promise.resolve(undefined),
-      ])
+    const sinceVersion = deep ? 0 : taskVersion
+    const [snapshotResult, changesResult, selectedAIResult] = await Promise.all([
+      authority.workspace(token, scope, signal),
+      sinceVersion > 0 && authority.taskChanges
+        ? authority.taskChanges(token, taskChangeQueryRequest(taskRequest, sinceVersion), signal)
+        : Promise.resolve(undefined),
+      selectedAIInteractionID
+        ? authority.aiInteraction(token, selectedAIInteractionID, signal)
+        : Promise.resolve(undefined),
+    ])
+    const changes = changesResult?.kind === "success" && changesResult.data.complete &&
+      changesResult.data.counts && changesResult.data.version >= minimumVersion
+      ? { ...changesResult.data, counts: changesResult.data.counts }
+      : undefined
+    const changedIDs = new Set(changes?.tasks.map((task) => task.id))
+    const changedFamilies = new Set(changes?.tasks.map(taskFamily))
+    const [taskPageResult, completedResult, selectedTaskResult] = await Promise.all([
+      changes
+        ? undefined
+        : loadTaskWindow(token, taskRequest, deep ? windowDepth("tasks", current.tasks.items.length) : 0, signal),
+      changes
+        ? undefined
+        : loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), deep ? windowDepth("completedTasks", current.completedTasks.items.length) : 0, signal),
+      selectedTaskID && (!changes || changedIDs.has(selectedTaskID))
+        ? authority.task(token, selectedTaskID, signal)
+        : undefined,
+    ])
 
     if (
       stopped || signal.aborted || generation !== scopeGeneration ||
@@ -503,9 +546,10 @@ export function createWorkspaceProjection({
       return { version: minimumVersion, apply: () => {} }
     }
 
-    const taskResult = requireTaskCounts(taskPageResult)
+    const taskResult = taskPageResult && requireTaskCounts(taskPageResult)
     const authorityResults = [
       snapshotResult,
+      changesResult,
       taskResult,
       completedResult,
       selectedTaskResult,
@@ -530,6 +574,7 @@ export function createWorkspaceProjection({
     }
 
     const snapshot = snapshotResult.data
+    let windowsApplied = false
     return {
       version: snapshot.version,
       apply: () => {
@@ -553,12 +598,21 @@ export function createWorkspaceProjection({
               currentState.selection.task.version > selectedTaskResult.data.version)
               ? selectedTaskResult.data
               : undefined
-          const mergedTasks = taskWindowCurrent && taskResult.kind === "success"
-            ? mergeLoadedWindow("tasks", currentState.tasks, taskResult.data, deep, completedResult)
-            : undefined
-          const mergedCompleted = completedWindowCurrent && completedResult.kind === "success"
-            ? mergeLoadedWindow("completedTasks", currentState.completedTasks, completedResult.data, deep, taskResult)
-            : undefined
+          const mergedTasks = !taskWindowCurrent
+            ? undefined
+            : changes
+              ? patchTaskWindow("tasks", currentState.tasks, changes.openTasks, (task) => changedFamilies.has(taskFamily(task)))
+              : taskResult?.kind === "success"
+                ? mergeLoadedWindow("tasks", currentState.tasks, taskResult.data, deep, completedResult ?? unavailableResult)
+                : undefined
+          const mergedCompleted = !completedWindowCurrent
+            ? undefined
+            : changes
+              ? patchTaskWindow("completedTasks", currentState.completedTasks, changes.completedTasks, (task) => changedIDs.has(task.id))
+              : completedResult?.kind === "success"
+                ? mergeLoadedWindow("completedTasks", currentState.completedTasks, completedResult.data, deep, taskResult ?? unavailableResult)
+                : undefined
+          windowsApplied = Boolean(mergedTasks && mergedCompleted)
           const tasks = mergedTasks
             ? mergedTasks.items.map((task) =>
                 refreshedSelected?.state === "OPEN" && task.id === refreshedSelected.id && !task.groupMembers
@@ -667,8 +721,9 @@ export function createWorkspaceProjection({
               : { ...taskWindow, loading: loadMoreDepths.tasks > 0, error: taskWindowError }
           }
           if (countGeneration === queryGenerations.taskCounts) {
-            taskWindow = taskResult.kind === "success"
-              ? { ...taskWindow, counts: taskResult.data.counts }
+            const counts = changes?.counts ?? (taskResult?.kind === "success" ? taskResult.data.counts : undefined)
+            taskWindow = counts
+              ? { ...taskWindow, counts }
               : { ...taskWindow, error: taskWindowError }
           }
           return {
@@ -684,8 +739,11 @@ export function createWorkspaceProjection({
             selection,
           }
         })
-        if (deep) deepRefreshedAt = now()
-        else scheduleDeepRefresh()
+        if (windowsApplied) taskVersion = changes ? changes.version : Math.max(taskVersion, minimumVersion)
+        if (deep) {
+          deepRefreshedAt = now()
+          deepRowsStale = false
+        } else scheduleDeepRefresh()
         requestBudget?.signalDetailRefresh()
       },
     }
@@ -1721,6 +1779,22 @@ function taskQueryRequest(
   }
 }
 
+function taskChangeQueryRequest(request: TaskQueryRequest, sinceVersion: number): TaskChangeQueryRequest {
+  return {
+    practiceId: request.practiceId,
+    sinceVersion,
+    ...(request.locationId ? { locationId: request.locationId } : {}),
+    ...(request.responsibility ? { responsibility: request.responsibility } : {}),
+    ...(request.kind ? { kind: request.kind } : {}),
+    ...(request.category ? { category: request.category } : {}),
+    ...(request.search ? { search: request.search } : {}),
+  }
+}
+
+function taskFamily(task: Pick<Task, "locationId" | "phone">) {
+  return `${task.locationId}:${task.phone}`
+}
+
 function completedTaskQueryRequest(
   scope: WorkspaceScope,
   search: string,
@@ -1818,6 +1892,8 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
 }
 
 const deepRefreshMilliseconds = 60_000
+const safetyRefreshMilliseconds = 300_000
+const unavailableResult = { kind: "unavailable" } as const
 const openTaskOrder = newerFirst<Task>((task) => task.updatedAt)
 const completedTaskOrder = newerFirst<Task>((task) => task.completedAt ?? task.updatedAt)
 

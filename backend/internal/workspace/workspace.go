@@ -79,21 +79,32 @@ func (m *Module) authorizedLocationIDs(
 	practiceID string,
 	locationID string,
 ) ([]string, error) {
+	_, locationIDs, err := m.authorizedScope(ctx, tx, identity, practiceID, locationID)
+	return locationIDs, err
+}
+
+func (m *Module) authorizedScope(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity access.Identity,
+	practiceID string,
+	locationID string,
+) (access.Authorization, []string, error) {
 	authorization, err := m.access.LockReadAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	)
 	if err != nil {
-		return nil, ErrDenied
+		return access.Authorization{}, nil, ErrDenied
 	}
 	if locationID != "" {
-		return []string{locationID}, nil
+		return authorization, []string{locationID}, nil
 	}
 	locationIDs := make([]string, 0, len(authorization.Locations))
 	for _, location := range authorization.Locations {
 		locationIDs = append(locationIDs, location.ID)
 	}
 	if len(locationIDs) == 0 {
-		return nil, ErrDenied
+		return access.Authorization{}, nil, ErrDenied
 	}
-	return locationIDs, nil
+	return authorization, locationIDs, nil
 }

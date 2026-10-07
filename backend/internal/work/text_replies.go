@@ -87,6 +87,6 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 	if err = appendActivity(ctx, tx, task, kind, actor, task.UpdatedAt, map[string]any{"messageId": messageID, "deliveryState": delivery}); err != nil {
 		return err
 	}
-	_, err = m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID)
+	_, err = m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID, task.ID)
 	return err
 }

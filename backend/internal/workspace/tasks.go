@@ -69,7 +69,7 @@ func (m *Module) QueryTasks(
 		return work.TaskPage{}, err
 	}
 
-	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering, command.Grouped),
+	items, err := queryTaskProjections(ctx, tx, taskQuerySQL(command.State, command.Ordering, command.Grouped, ""),
 		command.PracticeID,
 		locationIDs,
 		command.Search,
@@ -82,22 +82,8 @@ func (m *Module) QueryTasks(
 		command.Responsibility, strings.ToLower(command.Identity.Email), command.Category, command.Kind,
 	)
 	if err != nil {
-		return work.TaskPage{}, fmt.Errorf("query Tasks: %w", err)
+		return work.TaskPage{}, err
 	}
-	items := make([]work.Task, 0, limit+1)
-	for rows.Next() {
-		task, err := scanTaskProjection(rows)
-		if err != nil {
-			rows.Close()
-			return work.TaskPage{}, fmt.Errorf("scan Task query: %w", err)
-		}
-		items = append(items, task)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return work.TaskPage{}, fmt.Errorf("iterate Tasks: %w", err)
-	}
-	rows.Close()
 	var counts *work.TaskFolderCounts
 	if command.IncludeCounts == nil || *command.IncludeCounts {
 		value, err := queryTaskFolderCounts(ctx, tx, command, locationIDs)
@@ -276,16 +262,36 @@ var taskQueryFilter = `
  OR ($13='appointments' AND ` + taskIsSpringHillReview + `)
  OR ($13='follow_up' AND ` + work.TaskIsFollowUpSQL + `))` + taskSearchFilter
 
-func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool) string {
+func queryTaskProjections(ctx context.Context, tx pgx.Tx, sql string, arguments ...any) ([]work.Task, error) {
+	rows, err := tx.Query(ctx, sql, arguments...)
+	if err != nil {
+		return nil, fmt.Errorf("query Tasks: %w", err)
+	}
+	defer rows.Close()
+	items := []work.Task{}
+	for rows.Next() {
+		task, err := scanTaskProjection(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan Task query: %w", err)
+		}
+		items = append(items, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Tasks: %w", err)
+	}
+	return items, nil
+}
+
+func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool, restriction string) string {
 	window, order := taskPageWindow(state, ordering)
-	candidates := taskMatchSource + taskQueryFilter
+	candidates := taskMatchSource + taskQueryFilter + restriction
 	if grouped && state == work.TaskOpen {
 		candidates = `
 	FROM (
 		SELECT task.*, row_number() OVER (
 			PARTITION BY task.practice_id, task.location_id, task.phone, task.category, task.origin
 			ORDER BY ` + order + `
-		) AS member_rank` + taskMatchSource + taskQueryFilter + `
+		) AS member_rank` + taskMatchSource + taskQueryFilter + restriction + `
 			AND task.state = 'OPEN'
 	) task
 	WHERE task.member_rank = 1`

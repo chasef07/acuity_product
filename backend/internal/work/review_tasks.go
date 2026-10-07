@@ -82,6 +82,6 @@ func (m *Module) recordReviewActivity(ctx context.Context, tx pgx.Tx, id, practi
 	if err := appendActivity(ctx, tx, task, kind, ActorSnapshot{Kind: "SERVICE", Subject: subject}, at, details); err != nil {
 		return err
 	}
-	_, err = m.access.RecordWorkspaceChange(ctx, tx, practiceID)
+	_, err = m.access.RecordWorkspaceChange(ctx, tx, practiceID, id)
 	return err
 }

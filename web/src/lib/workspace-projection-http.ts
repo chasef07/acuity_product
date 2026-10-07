@@ -5,6 +5,7 @@ import {
   getAiInteraction,
   getCallingCall,
   getWorkspace,
+  queryTaskChanges,
   queryTasks,
   readTask,
 } from "./api/generated/sdk.gen"
@@ -44,6 +45,14 @@ export function createWorkspaceAuthorityAdapter(): WorkspaceAuthorityAdapter {
     },
     async tasks(token, request, signal) {
       const result = await queryTasks({
+        client: portalClient(token),
+        body: request,
+        signal,
+      }).catch(() => undefined)
+      return authorityResult(result)
+    },
+    async taskChanges(token, request, signal) {
+      const result = await queryTaskChanges({
         client: portalClient(token),
         body: request,
         signal,

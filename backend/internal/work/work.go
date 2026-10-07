@@ -353,7 +353,7 @@ func (m *Module) EnsureCallFollowUp(
 	`, task.ID, task.CreatedBy.Subject, task.CreatedBy.Email, task.CreatedAt); err != nil {
 		return Task{}, fmt.Errorf("append Task creation Activity: %w", err)
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID, task.ID); err != nil {
 		return Task{}, err
 	}
 	return task, nil
@@ -470,6 +470,7 @@ func (m *Module) EnsureMessageFollowUp(
 		ctx,
 		tx,
 		task.PracticeID,
+		task.ID,
 	); err != nil {
 		return Task{}, "", err
 	}
@@ -1255,7 +1256,7 @@ func (m *Module) CreateAITask(
 	if err := appendActivity(ctx, tx, task, "TASK_CREATED", task.CreatedBy, createdAt, nil); err != nil {
 		return Task{}, "", err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID, task.ID); err != nil {
 		return Task{}, "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1336,7 +1337,7 @@ func (m *Module) RenameTask(
 	); err != nil {
 		return Task{}, err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID, task.ID); err != nil {
 		return Task{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1475,7 +1476,7 @@ func (m *Module) ReopenTask(
 	); err != nil {
 		return Task{}, err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID, task.ID); err != nil {
 		return Task{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -2145,7 +2146,7 @@ func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorizatio
 	); err != nil {
 		return Task{}, err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID, task.ID); err != nil {
 		return Task{}, err
 	}
 	return task, nil

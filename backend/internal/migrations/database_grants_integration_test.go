@@ -790,7 +790,7 @@ func expectedTablePrivileges() map[string]bool {
 	}
 	for _, role := range []string{"acuity_portal", "acuity_worker"} {
 		for _, privilege := range []string{"SELECT", "INSERT", "DELETE"} {
-			grant(role, privilege, "messaging_attachment_cleanup")
+			grant(role, privilege, "messaging_attachment_cleanup", "access_workspace_changes")
 		}
 	}
 	return result

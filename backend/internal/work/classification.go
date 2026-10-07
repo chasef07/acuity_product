@@ -55,7 +55,7 @@ func (m *Module) ChangeTaskCategory(ctx context.Context, command ChangeTaskCateg
 	if err := m.auditOperatorMutation(ctx, tx, auth, task, "task.category_changed", task.UpdatedAt); err != nil {
 		return Task{}, err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID, task.ID); err != nil {
 		return Task{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

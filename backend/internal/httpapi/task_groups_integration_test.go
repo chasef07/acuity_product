@@ -165,6 +165,10 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 		t.Fatal("shared-number Optical requests were not preserved")
 	}
 	target := (*optical.GroupMembers)[0]
+	var beforeMove int64
+	if err := pool.QueryRow(context.Background(), `SELECT workspace_version FROM access_practices WHERE id=$1`, practiceID).Scan(&beforeMove); err != nil {
+		t.Fatal(err)
+	}
 	move, _ := json.Marshal(map[string]any{"expectedVersion": target.Version, "category": "medication"})
 	response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/"+target.Id.String()+"/category", "staff-token", move)
 	if response.StatusCode != 200 {
@@ -177,6 +181,30 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 	response.Body.Close()
 	if moved.Category == nil || *moved.Category != "medication" {
 		t.Fatalf("moved Task category: %v", moved.Category)
+	}
+	feedBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "sinceVersion": beforeMove, "responsibility": "mine"})
+	feedResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/workspace/task-changes/query", "staff-token", feedBody)
+	if feedResponse.StatusCode != 200 {
+		t.Fatalf("Task changes: %d %s", feedResponse.StatusCode, readBody(t, feedResponse))
+	}
+	var changes api.TaskChanges
+	if err := json.NewDecoder(feedResponse.Body).Decode(&changes); err != nil {
+		t.Fatal(err)
+	}
+	feedResponse.Body.Close()
+	movedRows := map[string]int{}
+	movedIntoMedication := false
+	for _, row := range changes.OpenTasks {
+		if row.Phone == moved.Phone && row.Category != nil && row.GroupMembers != nil {
+			movedRows[string(*row.Category)] = len(*row.GroupMembers)
+			for _, member := range *row.GroupMembers {
+				movedIntoMedication = movedIntoMedication || (member.Id == moved.Id && *row.Category == "medication")
+			}
+		}
+	}
+	if !changes.Complete || changes.Version != beforeMove+1 || len(changes.Tasks) != 1 || changes.Tasks[0].Id != moved.Id ||
+		changes.Counts == nil || changes.Counts.Tasks != len(payloads) || !movedIntoMedication || movedRows["optical"] != len(*optical.GroupMembers)-1 {
+		t.Fatalf("Task changes after a category move = %+v, groups %v", changes, movedRows)
 	}
 	refreshed := query()
 	if refreshed.Counts.Tasks != len(payloads) {

@@ -596,6 +596,10 @@ ON TABLE public.messaging_attachment_cleanup
 TO acuity_portal, acuity_worker;
 GRANT UPDATE (object_key) ON TABLE public.messaging_attachments TO acuity_portal;
 
+-- Access records which Tasks each workspace version changed for the live Task feed.
+GRANT SELECT, INSERT, DELETE ON TABLE public.access_workspace_changes
+TO acuity_portal, acuity_worker;
+
 -- Knowledge search reads imported facts; only the operator CLI can replace them.
 GRANT SELECT ON TABLE public.knowledge_corpora, public.knowledge_revisions,
     public.knowledge_passages TO acuity_portal;

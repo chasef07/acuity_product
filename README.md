@@ -144,8 +144,11 @@ Go bindings and the TypeScript client are generated from it, not edited by hand.
    receipts and recover interrupted work with bounded retries and reconciliation.
 4. **Refresh from committed state.** SSE carries version hints, not authoritative
    product state. The browser refetches authorized views; calling also reconciles
-   through polling. Neither browser intent nor a successful provider request
-   proves that a call connected or a message was delivered.
+   through polling. Work writes record the Task IDs each workspace version changed,
+   so the Task rail reads only those Tasks; any version without that record, or
+   one beyond retention, reloads the rail. Neither browser intent nor a
+   successful provider request proves that a call connected or a message was
+   delivered.
 
 ## Local development
 

@@ -1419,6 +1419,56 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) QueryTaskChanges(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.portalIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.TaskChangeQueryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	changes, err := server.workspace.QueryTaskChanges(ctx, workspace.QueryTaskChangesCommand{
+		Identity:       identity,
+		PracticeID:     body.PracticeId.String(),
+		LocationID:     uuidString(body.LocationId),
+		SinceVersion:   body.SinceVersion,
+		Kind:           stringValue((*string)(body.Kind)),
+		Responsibility: stringValue((*string)(body.Responsibility)),
+		Category:       work.TaskCategory(stringValue((*string)(body.Category))),
+		Search:         stringValue(body.Search),
+	})
+	if err != nil {
+		server.writeWorkspaceError(w, r, err)
+		return
+	}
+	changed, err := taskPageResponse(work.TaskPage{Items: changes.Tasks, Counts: changes.Counts})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	open, err := taskPageResponse(work.TaskPage{Items: changes.OpenTasks})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	completed, err := taskPageResponse(work.TaskPage{Items: changes.CompletedTasks})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.TaskChanges{
+		Version:        changes.Version,
+		Complete:       changes.Complete,
+		Tasks:          changed.Items,
+		OpenTasks:      open.Items,
+		CompletedTasks: completed.Items,
+		Counts:         changed.Counts,
+	})
+}
+
 func (server *Server) ReadTask(
 	w http.ResponseWriter,
 	r *http.Request,

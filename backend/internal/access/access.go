@@ -1644,21 +1644,39 @@ func (m *Module) AuditOperatorMutation(
 	return nil
 }
 
+const WorkspaceChangeRetention = 1000
+
 func (m *Module) RecordWorkspaceChange(
 	ctx context.Context,
 	tx pgx.Tx,
 	practiceID string,
+	taskIDs ...string,
 ) (int64, error) {
 	if tx == nil || strings.TrimSpace(practiceID) == "" {
 		return 0, ErrDenied
 	}
+	var changedTasks any
+	if len(taskIDs) > 0 {
+		changedTasks = taskIDs
+	}
 	var version int64
 	if err := tx.QueryRow(ctx, `
-		UPDATE access_practices
-		SET workspace_version = workspace_version + 1
-		WHERE id = $1
-		RETURNING workspace_version
-	`, practiceID).Scan(&version); err != nil {
+		WITH bumped AS (
+			UPDATE access_practices
+			SET workspace_version = workspace_version + 1
+			WHERE id = $1
+			RETURNING id, workspace_version
+		), recorded AS (
+			INSERT INTO access_workspace_changes (practice_id, version, task_ids)
+			SELECT id, workspace_version, $2::uuid[] FROM bumped
+		), pruned AS (
+			DELETE FROM access_workspace_changes change
+			USING bumped
+			WHERE change.practice_id = bumped.id
+				AND change.version <= bumped.workspace_version - $3
+		)
+		SELECT workspace_version FROM bumped
+	`, practiceID, changedTasks, WorkspaceChangeRetention).Scan(&version); err != nil {
 		return 0, fmt.Errorf("increment workspace version: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

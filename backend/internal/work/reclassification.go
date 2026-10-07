@@ -159,7 +159,7 @@ func (m *Module) applyReclassificationEntry(ctx context.Context, identity access
 	if err := m.auditOperatorMutation(ctx, tx, auth, task, "task.reclassified", task.UpdatedAt); err != nil {
 		return result, err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID, task.ID); err != nil {
 		return result, err
 	}
 	if err := tx.Commit(ctx); err != nil {

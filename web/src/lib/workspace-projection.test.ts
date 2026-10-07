@@ -10,6 +10,7 @@ import type {
   Location,
   Practice,
   Task,
+  TaskChangeQueryRequest,
   TaskPage,
   WorkspaceSnapshot,
 } from "./api/generated/types.gen.ts"
@@ -1711,17 +1712,27 @@ function memoryNavigation(initial: WorkspaceLocation = { view: "none" }) {
 
 type LiveRequest = Parameters<WorkspaceAuthorityAdapter["tasks"]>[1]
 
-function liveWorkspace({ openRows, hidden = () => false, environment }: {
+function liveWorkspace({ openRows, hidden = () => false, environment, feed = false }: {
   openRows: number
   hidden?: () => boolean
   environment?: Parameters<typeof createWorkspaceProjection>[0]["environment"]
+  feed?: boolean
 }) {
   const origin = Date.UTC(2026, 7, 30, 12)
   const server = {
     version: 1,
     open: Array.from({ length: openRows }, (_, index) =>
-      task(`open-${String(index).padStart(3, "0")}`, { updatedAt: new Date(origin - index * 60_000).toISOString() })),
+      task(`open-${String(index).padStart(3, "0")}`, {
+        updatedAt: new Date(origin - index * 60_000).toISOString(),
+        ...(feed ? { phone: `+1555000${String(index).padStart(4, "0")}` } : {}),
+      })),
     completed: [] as Task[],
+    changes: [] as Array<{ version: number; ids: string[] | null }>,
+    feedAvailable: true,
+    commit(ids: string[] | null) {
+      server.version += 1
+      server.changes.push({ version: server.version, ids })
+    },
     workspaceGate: undefined as Promise<void> | undefined,
     pageGate: undefined as Promise<void> | undefined,
   }
@@ -1769,9 +1780,30 @@ function liveWorkspace({ openRows, hidden = () => false, environment }: {
       const done = task(target.id, { state: "COMPLETED", version: target.version + 1, completedAt: at, updatedAt: at })
       server.open = server.open.filter((item) => item.id !== target.id)
       server.completed = [done, ...server.completed]
-      server.version += 1
+      server.commit([target.id])
       return success(done)
     },
+    ...(feed ? {
+      taskChanges: async (_token: string, request: TaskChangeQueryRequest) => {
+        requests.push(`changes:${request.sinceVersion}`)
+        if (!server.feedAvailable) return unavailable()
+        const range = server.changes.filter((change) => change.version > request.sinceVersion)
+        const ids = new Set(range.flatMap((change) => change.ids ?? []))
+        const incomplete = range.length !== server.version - request.sinceVersion || range.some((change) => !change.ids)
+        const tasks = [...server.open, ...server.completed].filter((item) => ids.has(item.id))
+        const families = new Set(tasks.map((item) => `${item.locationId}:${item.phone}`))
+        return success(incomplete
+          ? { version: server.version, complete: false, tasks: [], openTasks: [], completedTasks: [] }
+          : {
+              version: server.version,
+              complete: true,
+              tasks,
+              openTasks: server.open.filter((item) => families.has(`${item.locationId}:${item.phone}`)),
+              completedTasks: server.completed.filter((item) => ids.has(item.id)),
+              counts: taskPage(server.open).counts,
+            })
+      },
+    } : {}),
   }
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined
   const realtime: WorkspaceRealtimeAdapter = {
@@ -1955,5 +1987,156 @@ test("completing a Task refreshes once and skips the server hint for the same ve
   await live.settle()
   assert.equal(live.reconciles(), 1)
   assert.equal(live.requests.length, 5)
+  live.projection.stop()
+})
+
+async function liveWorkspaceWithFeed(openRows = 320, loaded = 300) {
+  const manual = manualClock()
+  const live = liveWorkspace({ openRows, environment: manual.environment, feed: true })
+  await live.connect()
+  await live.loadOpenRows(loaded)
+  live.requests.length = 0
+  return { live, manual }
+}
+
+async function hintAndSettle(live: ReturnType<typeof liveWorkspace>) {
+  live.send("hint", live.server.version)
+  await waitUntil(() => live.projection.getSnapshot().workspace?.version === live.server.version)
+  await live.settle()
+}
+
+test("with the Task change feed one hint costs the snapshot and one change request and patches deep rows", async () => {
+  const { live, manual } = await liveWorkspaceWithFeed()
+  const deep = live.server.open[250]!
+  live.server.open[250] = { ...deep, title: "Renamed deep Task", version: deep.version + 1 }
+  live.server.commit([deep.id])
+  manual.clock.now += 1_000
+  await hintAndSettle(live)
+  assert.deepEqual(live.requests.toSorted(), ["changes:1", "workspace"])
+  let items = live.projection.getSnapshot().tasks.items
+  assert.equal(items.length, 300)
+  assert.equal(new Set(items.map((item) => item.id)).size, 300)
+  assert.equal(items[250]?.id, deep.id)
+  assert.equal(items[250]?.title, "Renamed deep Task")
+
+  live.requests.length = 0
+  const finished = live.server.open[10]!
+  const finishedAt = "2026-08-30T13:30:00Z"
+  const top = task("new-top", { updatedAt: "2026-08-30T13:00:00Z", phone: "+15559990000" })
+  live.server.open = [top, ...live.server.open.filter((item) => item.id !== finished.id)]
+  live.server.completed = [{ ...finished, state: "COMPLETED", completedAt: finishedAt, updatedAt: finishedAt, version: finished.version + 1 }]
+  live.server.commit([top.id, finished.id])
+  await hintAndSettle(live)
+  assert.deepEqual(live.requests.toSorted(), ["changes:2", "workspace"])
+  const snapshot = live.projection.getSnapshot()
+  items = snapshot.tasks.items
+  assert.equal(items[0]?.id, "new-top")
+  assert.ok(!items.some((item) => item.id === finished.id))
+  assert.equal(items.length, 300)
+  assert.deepEqual(snapshot.completedTasks.items.map((item) => item.id), [finished.id])
+  assert.equal(snapshot.tasks.counts.tasks, live.server.open.length)
+  live.projection.stop()
+})
+
+test("a feed change below the loaded window is left for load-more instead of being inserted", async () => {
+  const { live } = await liveWorkspaceWithFeed()
+  const unloaded = live.server.open[310]!
+  live.server.open[310] = { ...unloaded, title: "Unloaded rename", version: unloaded.version + 1 }
+  live.server.commit([unloaded.id])
+  await hintAndSettle(live)
+  const items = live.projection.getSnapshot().tasks.items
+  assert.equal(items.length, 300)
+  assert.ok(!items.some((item) => item.id === unloaded.id))
+  await live.projection.dispatch({ type: "load-more", window: "tasks" })
+  assert.equal(live.projection.getSnapshot().tasks.items.find((item) => item.id === unloaded.id)?.title, "Unloaded rename")
+  live.projection.stop()
+})
+
+test("a changed selected Task is re-read once and an unchanged one is not", async () => {
+  const { live } = await liveWorkspaceWithFeed(60, 50)
+  const selected = live.projection.getSnapshot().selection.task!
+  const other = live.server.open[5]!
+  live.server.open[5] = { ...other, title: "Other rename", version: other.version + 1 }
+  live.server.commit([other.id])
+  await hintAndSettle(live)
+  assert.deepEqual(live.requests.toSorted(), ["changes:1", "workspace"])
+  live.requests.length = 0
+  live.server.open[0] = { ...live.server.open[0]!, title: "Selected rename", version: selected.version + 1 }
+  live.server.commit([selected.id])
+  await hintAndSettle(live)
+  assert.deepEqual(live.requests.toSorted(), ["changes:2", `task:${selected.id}`, "workspace"])
+  assert.equal(live.projection.getSnapshot().selection.task?.title, "Selected rename")
+  live.projection.stop()
+})
+
+for (const fallback of ["undeclared", "unavailable"] as const) {
+  test(`an ${fallback} change feed falls back to the first-page reconcile`, async () => {
+    const { live } = await liveWorkspaceWithFeed(60, 50)
+    const selectedID = live.projection.getSnapshot().selection.task?.id
+    live.server.open = [task("new-top", { updatedAt: "2026-08-30T13:00:00Z", phone: "+15559990000" }), ...live.server.open]
+    if (fallback === "unavailable") live.server.feedAvailable = false
+    live.server.commit(fallback === "undeclared" ? null : ["new-top"])
+    await hintAndSettle(live)
+    assert.deepEqual(live.requests.toSorted(), ["changes:1", `task:${selectedID}`, "tasks:COMPLETED:", "tasks:OPEN:", "workspace"])
+    assert.equal(live.projection.getSnapshot().tasks.items[0]?.id, "new-top")
+    assert.equal(live.projection.getSnapshot().tasks.items.length, 50)
+    live.server.feedAvailable = true
+    live.requests.length = 0
+    live.server.commit([])
+    await hintAndSettle(live)
+    assert.deepEqual(live.requests.toSorted(), ["changes:2", "workspace"])
+    live.projection.stop()
+  })
+}
+
+test("the feed keeps deep rows current so the deep refresh waits five minutes unless a fallback made them stale", async () => {
+  const { live, manual } = await liveWorkspaceWithFeed()
+  live.server.commit([live.server.open[0]!.id])
+  await hintAndSettle(live)
+  live.requests.length = 0
+  manual.clock.now += 60_000
+  manual.fireAll()
+  await waitUntil(() => live.reconciles() === 1)
+  await live.settle()
+  assert.deepEqual(live.requests.toSorted(), ["changes:2", "workspace"])
+
+  live.requests.length = 0
+  manual.clock.now += 240_000
+  manual.fireAll()
+  await waitUntil(() => live.reconciles() === 1)
+  await live.settle()
+  assert.equal(live.requests.filter((request) => request.startsWith("tasks:OPEN")).length, 6)
+  assert.ok(!live.requests.some((request) => request.startsWith("changes:")))
+
+  live.requests.length = 0
+  live.server.commit(null)
+  await hintAndSettle(live)
+  live.requests.length = 0
+  manual.clock.now += 60_000
+  manual.fireAll()
+  await waitUntil(() => live.reconciles() === 1)
+  await live.settle()
+  assert.equal(live.requests.filter((request) => request.startsWith("tasks:OPEN")).length, 6)
+  live.projection.stop()
+})
+
+test("a hidden tab defers feed requests and catches up with one snapshot and one change request", async () => {
+  let hidden = false
+  const live = liveWorkspace({ openRows: 120, hidden: () => hidden, feed: true })
+  await live.connect()
+  await live.loadOpenRows(120)
+  live.requests.length = 0
+  hidden = true
+  for (let index = 0; index < 5; index += 1) {
+    live.server.commit([live.server.open[index * 20 + 1]!.id])
+    live.send("hint", live.server.version)
+  }
+  await live.settle()
+  assert.deepEqual(live.requests, [])
+  hidden = false
+  await live.projection.dispatch({ type: "visibility-changed" })
+  await waitUntil(() => live.projection.getSnapshot().workspace?.version === 6)
+  await live.settle()
+  assert.deepEqual(live.requests.toSorted(), ["changes:1", "workspace"])
   live.projection.stop()
 })

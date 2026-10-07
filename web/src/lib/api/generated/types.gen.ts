@@ -1360,6 +1360,31 @@ export type TaskQueryRequest = {
     limit?: number;
 };
 
+export type TaskChangeQueryRequest = {
+    practiceId: string;
+    locationId?: string;
+    sinceVersion: number;
+    responsibility?: 'mine' | 'all';
+    /**
+     * Folder kind for the open Tasks and counts; completed Tasks ignore it.
+     */
+    kind?: 'texts' | 'calls' | 'appointments' | 'follow_up';
+    category?: StaffTaskCategory;
+    search?: string;
+};
+
+export type TaskChanges = {
+    version: number;
+    complete: boolean;
+    /**
+     * Current projections of every changed Task the caller may see.
+     */
+    tasks: Array<Task>;
+    openTasks: Array<Task>;
+    completedTasks: Array<Task>;
+    counts?: TaskFolderCounts;
+};
+
 export type ChangeTaskCategoryRequest = {
     expectedVersion: number;
     category: StaffTaskCategory;
@@ -1679,6 +1704,43 @@ export type GetWorkspaceResponses = {
 };
 
 export type GetWorkspaceResponse = GetWorkspaceResponses[keyof GetWorkspaceResponses];
+
+export type QueryTaskChangesData = {
+    body: TaskChangeQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/workspace/task-changes/query';
+};
+
+export type QueryTaskChangesErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryTaskChangesError = QueryTaskChangesErrors[keyof QueryTaskChangesErrors];
+
+export type QueryTaskChangesResponses = {
+    /**
+     * Task changes up to the returned workspace version.
+     */
+    200: TaskChanges;
+};
+
+export type QueryTaskChangesResponse = QueryTaskChangesResponses[keyof QueryTaskChangesResponses];
 
 export type AddLocationData = {
     body: AddLocationRequest;

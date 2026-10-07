@@ -5,6 +5,7 @@ import {
   mergeFirstPage,
   newerFirst,
   newestFirst,
+  patchChangedRows,
 } from "./workspace-ordering.ts"
 
 type Row = { id: string; updatedAt: string; groupMembers?: Array<{ id: string }> }
@@ -98,4 +99,22 @@ test("queues order timestamps with mixed fractional precision", () => {
     newestFirst(rows, (row) => row.occurredAt).map((row) => row.id),
     ["latest-fraction", "later-fraction", "whole-second"],
   )
+})
+
+test("changed rows replace their loaded rows in server order and stop at the loaded boundary", () => {
+  const loaded = [row("a", 50), row("group", 40, ["group", "member"]), row("c", 30), row("d", 20)]
+  const patched = patchChangedRows({
+    loaded,
+    nextCursor: "d",
+    replaced: (item) => item.id === "group" || item.id === "c",
+    rows: [row("member", 55, ["member"]), row("group", 40, ["group"]), row("c", 10)],
+    sortsAfter: recent,
+  })
+  assert.deepEqual(patched.items.map((item) => item.id), ["member", "a", "group", "d"])
+  assert.deepEqual(patched.items[2]?.groupMembers, [{ id: "group" }])
+  assert.equal(patched.inserted, 2)
+  const complete = patchChangedRows({
+    loaded, nextCursor: "", replaced: (item) => item.id === "c", rows: [row("c", 10)], sortsAfter: recent,
+  })
+  assert.deepEqual(complete.items.map((item) => item.id), ["a", "group", "d", "c"])
 })

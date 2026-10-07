@@ -83,3 +83,28 @@ export function mergeFirstPage<T extends MergeableRow>({
 function rowIDs(row: MergeableRow) {
   return [row.id, ...(row.groupMembers ?? []).map((member) => member.id)]
 }
+
+export function patchChangedRows<T extends MergeableRow>({
+  loaded,
+  nextCursor,
+  replaced,
+  rows,
+  sortsAfter,
+}: {
+  loaded: readonly T[]
+  nextCursor: string
+  replaced: (row: T) => boolean
+  rows: readonly T[]
+  sortsAfter: (row: T, boundary: T) => boolean
+}) {
+  const boundary = loaded.at(-1)
+  const items = loaded.filter((row) => !replaced(row))
+  let inserted = 0
+  for (const row of rows) {
+    if (nextCursor && boundary && sortsAfter(row, boundary)) continue
+    const index = items.findIndex((item) => sortsAfter(item, row))
+    items.splice(index < 0 ? items.length : index, 0, row)
+    inserted += 1
+  }
+  return { items, nextCursor, inserted }
+}
