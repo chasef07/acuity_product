@@ -38,14 +38,18 @@ jobs:
           manifest-file: .release-please-manifest.json
 
   verify-release:
-    if: needs.release-please.outputs.release_created == 'true'
+    if: needs.release-please.outputs.release_created == 'true' && needs.release-please.outputs.release_sha != github.event.workflow_run.head_sha
     needs: [release-please]
     uses: ./.github/workflows/verify.yml
     with:
       release_sha: ${{ needs.release-please.outputs.release_sha }}
 
   deploy:
-    if: needs.release-please.outputs.release_created == 'true' && vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE == 'true'
+    if: >-
+      !cancelled() &&
+      needs.release-please.outputs.release_created == 'true' &&
+      vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE == 'true' &&
+      (needs.verify-release.result == 'success' || (needs.verify-release.result == 'skipped' && needs.release-please.outputs.release_sha == github.event.workflow_run.head_sha))
     needs: [release-please, verify-release]
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -90,3 +94,59 @@ jobs:
             --config=cloudbuild.release.yaml \
             --substitutions="_IMAGE_TAG=${RELEASE_SHA},_CALLLEG_SCHEMA_CUTOVER_COMPLETE=${CALLLEG_SCHEMA_CUTOVER_COMPLETE},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS},_MIDDLEWARE_BASE_URL=${MIDDLEWARE_BASE_URL},_MIDDLEWARE_API_SECRET_SECRET=${MIDDLEWARE_API_SECRET_SECRET}" \
             .
+
+  knowledge:
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    needs: [release-please, deploy]
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: knowledge-production
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.release_sha }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+      - name: Install Cloud SQL Auth Proxy
+        run: go install github.com/GoogleCloudPlatform/cloud-sql-proxy/v2@v2.25.4
+      - name: Publish and verify office knowledge
+        env:
+          KNOWLEDGE_COMMIT: ${{ needs.release-please.outputs.release_sha }}
+          KNOWLEDGE_OFFICE: all
+          KNOWLEDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/knowledge-publication
+          KNOWLEDGE_GOOGLE_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          KNOWLEDGE_GOOGLE_LOCATION: ${{ vars.GCP_REGION }}
+          KNOWLEDGE_SQL_INSTANCE: ${{ vars.KNOWLEDGE_SQL_INSTANCE }}
+          KNOWLEDGE_DATABASE_SECRET: ${{ vars.KNOWLEDGE_DATABASE_SECRET }}
+          KNOWLEDGE_OPERATOR_EMAIL: ${{ vars.KNOWLEDGE_OPERATOR_EMAIL }}
+          KNOWLEDGE_API_URL: ${{ vars.KNOWLEDGE_API_URL }}
+          KNOWLEDGE_SERVICE_TOKEN_SECRETS: ${{ vars.KNOWLEDGE_SERVICE_TOKEN_SECRETS }}
+        run: bash scripts/knowledge-publish.sh
+      - name: Record verified knowledge release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KNOWLEDGE_COMMIT: ${{ needs.release-please.outputs.release_sha }}
+          KNOWLEDGE_OFFICE: all
+          KNOWLEDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/knowledge-publication
+        run: python3 scripts/knowledge-release.py
+      - name: Preserve publication and retrieval evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-publication
+          path: ${{ runner.temp }}/knowledge-publication/
+          if-no-files-found: ignore
