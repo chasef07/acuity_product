@@ -173,3 +173,41 @@ func TestParseGoldenSetJudgeAnswer(t *testing.T) {
 		}
 	}
 }
+
+func TestStaffTaskIdentifiedCheck(t *testing.T) {
+	saved := func(draft, patient string) syntheticTool {
+		return syntheticTool{"save_staff_task", `{}`, "saved: Draft saved for submission when the call ends. Not yet sent.\nDraft ID: " + draft + "\nRequest: Synthetic request\nPatient: " + patient}
+	}
+	for name, test := range map[string]struct {
+		tools   []syntheticTool
+		applies bool
+		want    bool
+	}{
+		"no staff task":        {nil, false, false},
+		"identified patient":   {[]syntheticTool{saved("d1", "Synthetic Sample (unverified).")}, true, true},
+		"no patient":           {[]syntheticTool{saved("d1", "not identified.")}, true, false},
+		"updated to a patient": {[]syntheticTool{saved("d1", "not identified."), saved("d1", "Synthetic Sample (verified).")}, true, true},
+		"cancelled anonymous":  {[]syntheticTool{saved("d1", "not identified."), {"save_staff_task", `{"cancel":true}`, "cancelled: Request cancelled. It will not be submitted.\nDraft ID: d1"}}, false, false},
+		"one of two anonymous": {[]syntheticTool{saved("d1", "Synthetic Sample (verified)."), saved("d2", "not identified.")}, true, false},
+	} {
+		answer, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t, test.tools...), map[string]any{}))["staff_task_identified"]
+		if found != test.applies || answer.Answer != test.want {
+			t.Errorf("%s: found=%v answer=%v", name, found, answer.Answer)
+		}
+	}
+}
+
+func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
+	seen := map[string]bool{}
+	for _, question := range ScorecardQuestions {
+		if seen[question.Key] || seen[question.Code] || question.Question == "" || question.Yes == "" || question.No == "" {
+			t.Fatalf("catalog entry %+v is duplicated or incomplete", question)
+		}
+		seen[question.Key], seen[question.Code] = true, true
+	}
+	for _, key := range []string{"person_request_honored", "claims_backed", "staff_task_identified"} {
+		if !seen[key] {
+			t.Errorf("catalog is missing %s", key)
+		}
+	}
+}

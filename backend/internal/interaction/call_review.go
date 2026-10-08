@@ -32,6 +32,9 @@ var reviewFailureQuestions = map[string]bool{
 	"office_rules_grounded":        true,
 	"appointment_datetime_correct": true,
 	"no_results_retried":           true,
+	"person_request_honored":       true,
+	"claims_backed":                true,
+	"staff_task_identified":        true,
 }
 
 var ErrReviewLocked = errors.New("call review already submitted")

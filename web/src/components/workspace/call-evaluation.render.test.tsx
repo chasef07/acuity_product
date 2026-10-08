@@ -230,12 +230,16 @@ test("scorecard v6 shows the new questions without flagging them until review ag
     results: {
       booking_requested: noul(0.9, "booking_requested"),
       clear_and_responsive: noul(0.1, "clear_and_responsive"),
+      person_request_honored: noul(0.2, "person_request_honored"),
+      claims_backed: noul(0.3, "claims_backed"),
       office_rules_grounded: noul(0.9, "office_rules_grounded"),
       time_offered: { status: "not_applicable", reason: "no_availability_result" },
       appointment_datetime_correct: { status: "not_applicable", reason: "no_appointment_action_result" },
     },
   }} />)
   assert.match(html, /H4 · Clear and responsive/)
+  assert.match(html, /T1 · Person request honored/)
+  assert.match(html, /A3 · Record and action claims backed/)
   assert.match(html, /No availability search returned a result/)
   assert.doesNotMatch(html, />Needs review</)
   const flagged = renderToStaticMarkup(<CallEvaluation evaluation={{

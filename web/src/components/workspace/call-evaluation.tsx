@@ -18,6 +18,8 @@ export const evaluationLabels: Record<string, string> = {
   need_understood: "H1 · Understood every request",
   right_help: "H2 · Right help or next step",
   clear_and_responsive: "H4 · Clear and responsive",
+  person_request_honored: "T1 · Person request honored",
+  claims_backed: "A3 · Record and action claims backed",
 }
 export const evaluationScales: Record<string, string[]> = {
   request_specificity: ["Contradictory or shifting", "Vague", "Mostly clear", "Fully specified"],
@@ -38,7 +40,7 @@ const scorecardChecks = [
   "appointment_datetime_correct",
   "office_rules_grounded",
 ]
-const unflaggedQuestions = ["booking_requested", "time_offered", "need_understood", "right_help", "clear_and_responsive"]
+const unflaggedQuestions = ["booking_requested", "time_offered", "need_understood", "right_help", "clear_and_responsive", "person_request_honored", "claims_backed"]
 const notApplicableReasons: Record<string, string> = {
   no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
   no_availability_result: "No availability search returned a result.",

@@ -137,7 +137,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if err != nil || blind.Submitted || len(blind.Judge) != 0 || !blind.Assigned {
 		t.Fatalf("judge answers stay hidden before review: %+v %v", blind, err)
 	}
-	if fmt.Sprint(blind.Questions) != "[booking_requested time_offered need_understood right_help clear_and_responsive office_rules_grounded]" {
+	if fmt.Sprint(blind.Questions) != "[booking_requested time_offered need_understood right_help clear_and_responsive person_request_honored office_rules_grounded claims_backed]" {
 		t.Fatalf("A2 only applies after a scheduling write: %v", blind.Questions)
 	}
 	var insurance *ReviewFact
@@ -153,13 +153,13 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if _, err := module.SubmitCallReview(ctx, first, booked, incomplete); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("every applicable question needs an answer: %v", err)
 	}
-	gatedOut := CallReviewSubmission{Answers: []ReviewAnswer{{Question: "booking_requested", Answer: false}, {Question: "time_offered", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true}, {Question: "clear_and_responsive", Answer: true}, {Question: "office_rules_grounded", Answer: true}}}
+	gatedOut := CallReviewSubmission{Answers: []ReviewAnswer{{Question: "booking_requested", Answer: false}, {Question: "time_offered", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true}, {Question: "clear_and_responsive", Answer: true}, {Question: "person_request_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}, {Question: "claims_backed", Answer: true}}}
 	if _, err := module.SubmitCallReview(ctx, first, booked, gatedOut); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("B5 is not answerable when B1 is no: %v", err)
 	}
-	answers := []ReviewAnswer{{Question: "booking_requested", Answer: true}, {Question: "time_offered", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true, Note: "Staff verification was the right next step."}, {Question: "clear_and_responsive", Answer: true}, {Question: "office_rules_grounded", Answer: true}}
+	answers := []ReviewAnswer{{Question: "booking_requested", Answer: true}, {Question: "time_offered", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true, Note: "Staff verification was the right next step."}, {Question: "clear_and_responsive", Answer: true}, {Question: "person_request_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}, {Question: "claims_backed", Answer: true}}
 	revealed, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Synthetic review"})
-	if err != nil || !revealed.Submitted || len(revealed.Answers) != 6 || len(revealed.Judge) != 5 {
+	if err != nil || !revealed.Submitted || len(revealed.Answers) != 8 || len(revealed.Judge) != 5 {
 		t.Fatalf("submitted review reveals judge answers: %+v %v", revealed, err)
 	}
 	if _, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Changed after reveal"}); !errors.Is(err, ErrReviewLocked) {
@@ -173,7 +173,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		overlapCall = id
 	}
 	shortAnswers := func(clear bool) []ReviewAnswer {
-		return []ReviewAnswer{{Question: "booking_requested", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true}, {Question: "clear_and_responsive", Answer: clear}, {Question: "office_rules_grounded", Answer: true}}
+		return []ReviewAnswer{{Question: "booking_requested", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true}, {Question: "clear_and_responsive", Answer: clear}, {Question: "person_request_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}, {Question: "claims_backed", Answer: true}}
 	}
 	for identity, clear := range map[access.Identity]bool{first: true, second: false} {
 		if _, err := module.SubmitCallReview(ctx, identity, overlapCall, CallReviewSubmission{Answers: shortAnswers(clear)}); err != nil {
@@ -199,7 +199,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	for _, row := range accuracy.Rows {
 		rows[row.Question] = row
 	}
-	if accuracy.ReviewedCalls != 2 || rows["right_help"].Sample != 3 || rows["right_help"].FalseAlarms != 1 || accuracy.Unjudged != 1 {
+	if accuracy.ReviewedCalls != 2 || rows["right_help"].Sample != 3 || rows["right_help"].FalseAlarms != 1 || accuracy.Unjudged != 7 {
 		t.Fatalf("accuracy excludes test calls and counts false alarms: %+v", accuracy)
 	}
 	if len(accuracy.ReviewerDisagreements) != 1 || accuracy.ReviewerDisagreements[0].Question != "clear_and_responsive" {

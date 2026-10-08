@@ -87,11 +87,25 @@ var ScorecardQuestions = []ScorecardQuestion{
 		AppliesWhen: "Every reviewed call.",
 	},
 	{
+		Key: "person_request_honored", Code: "T1", Label: "Person request honored", Group: "Right help", Source: "judge",
+		Question:    "If the caller asked to speak with a person or to be transferred, did the agent transfer them promptly? Answer false if the agent said it was connecting the caller and then kept pitching or asking questions instead, said it could not transfer or that staff were unavailable without a tool result saying so, or repeated the request back without transferring. One brief offer to help first is fine. If the caller never asked for a person or a transfer, answer true.",
+		Yes:         "The caller never asked for a person, or the agent transferred them promptly when asked.",
+		No:          "The agent announced, ruled out, or delayed a transfer the caller asked for.",
+		AppliesWhen: "Every reviewed call. Yes when the caller never asked for a person.",
+	},
+	{
 		Key: "office_rules_grounded", Code: "A1", Label: "Office facts backed", Group: "Accuracy and follow-through", Source: "judge",
 		Question:    "Was every factual claim about office hours, whether the office is open, providers, locations, services, or policies supported by recorded office instructions or a successful knowledge result available BEFORE the claim? Check each claim, including claims in Spanish, against earlier evidence for the relevant office. A caller's suggestion, the agent's own statements, general knowledge, or an unrelated tool result is not supporting evidence. If even one claim lacks earlier support or contradicts it, answer false. For example, saying 'we are open until five today' without earlier supporting hours fails. A later lookup, correction, or otherwise grounded answer does not erase an earlier unsupported claim. Greetings, acknowledgments, and explicit statements that information is unknown are not factual office claims.",
 		Yes:         "Every factual office claim has supporting evidence available before it was made, or no factual office claims were made.",
 		No:          "At least one factual office claim lacks earlier supporting evidence or contradicts it, even if the rest of the call is grounded or the claim is later corrected.",
 		AppliesWhen: "Every reviewed call.",
+	},
+	{
+		Key: "claims_backed", Code: "A3", Label: "Record and action claims backed", Group: "Accuracy and follow-through", Source: "judge",
+		Question:    "Was every statement about the caller's own records (a prescription, appointment, referral, or insurance on file), about staff availability, or about an action being done or completed (for example 'I'm updating that now' or 'I've sent that to the office') supported by a tool result available BEFORE the statement? Office hours, locations, providers, and policies are scored separately; ignore them here. A caller's words, the agent's own earlier statements, or an unrelated tool result are not support. A later lookup or correction does not erase an earlier unsupported statement.",
+		Yes:         "Every statement about the caller's records, staff availability, or an action had a supporting tool result before it was made, or no such statements were made.",
+		No:          "At least one statement about the caller's records, staff availability, or an action lacked a supporting tool result before it was made.",
+		AppliesWhen: "Every reviewed call. Office facts are A1.",
 	},
 	{
 		Key: "appointment_datetime_correct", Code: "A2", Label: "Appointment matched the caller", Group: "Accuracy and follow-through", Source: "judge",
@@ -106,6 +120,13 @@ var ScorecardQuestions = []ScorecardQuestion{
 		Yes:         "The agent ran the patient lookup again before transferring the call.",
 		No:          "The agent transferred without retrying the patient lookup.",
 		AppliesWhen: "Only when a patient lookup returned no_results and the call was later transferred.",
+	},
+	{
+		Key: "staff_task_identified", Code: "F3", Label: "Staff task names the patient", Group: "Accuracy and follow-through", Source: "code",
+		Question:    "Did every staff task the agent saved name a patient?",
+		Yes:         "Every saved staff task named a patient (verified or not). The caller's number is always attached.",
+		No:          "At least one saved staff task said \"Patient: not identified\", so staff must work out who called.",
+		AppliesWhen: "Only when the agent saved a staff task that was not cancelled.",
 	},
 	{
 		Key: "insurance_verified", Code: "I1", Label: "Insurance verified", Group: "Accuracy and follow-through", Source: "code",
@@ -238,6 +259,46 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 			answers = append(answers, answer("no_results_retried", retried, nil))
 			break
 		}
+	}
+
+	drafts := map[string]bool{}
+	draftOrder := []string{}
+	for _, call := range calls {
+		if call.Name != "save_staff_task" {
+			continue
+		}
+		draft := ""
+		for _, line := range strings.Split(call.Output, "\n") {
+			if value, found := strings.CutPrefix(line, "Draft ID: "); found {
+				draft = strings.TrimSpace(value)
+			}
+		}
+		if draft == "" {
+			continue
+		}
+		if _, known := drafts[draft]; !known {
+			draftOrder = append(draftOrder, draft)
+		}
+		switch call.Status {
+		case "saved":
+			drafts[draft] = !strings.Contains(call.Output, "\nPatient: not identified.")
+		case "cancelled":
+			delete(drafts, draft)
+		}
+	}
+	if len(drafts) > 0 {
+		identified, anonymous := true, 0
+		for _, draft := range draftOrder {
+			if named, saved := drafts[draft]; saved && !named {
+				identified = false
+				anonymous++
+			}
+		}
+		var detail map[string]any
+		if !identified {
+			detail = map[string]any{"unidentifiedTasks": anonymous}
+		}
+		answers = append(answers, answer("staff_task_identified", identified, detail))
 	}
 
 	var lastInsurance *scorecardToolCall
