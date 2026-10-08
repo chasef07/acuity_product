@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.4](https://github.com/chasef07/acuity_product/compare/v1.28.3...v1.28.4) (2026-10-08)
+
+
+### Performance Improvements
+
+* **workspace:** one refresh path for your own Task changes ([#426](https://github.com/chasef07/acuity_product/issues/426)) ([8990e45](https://github.com/chasef07/acuity_product/commit/8990e453998387d373d1c8331a5e82484989b474))
+
 ## [1.28.3](https://github.com/chasef07/acuity_product/compare/v1.28.2...v1.28.3) (2026-10-07)
 
 
