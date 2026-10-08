@@ -2,10 +2,10 @@
 
 `offices/*.yaml` is the reviewed source for each office's reusable, non-patient
 knowledge. PostgreSQL/pgvector holds published immutable revisions and generated
-embeddings. Merging office content to `main` publishes changed offices
-automatically through the Knowledge workflow, with a visible receipt for every
-office. Knowledge publication and retrieval verification run independently of
-application releases; their failures do not change application release status.
+embeddings. Each product release that deploys publishes changed offices from the
+released commit, with a visible receipt for every office. The `knowledge` job in
+the Release workflow runs after the deploy; its failure is shown on the run but
+does not change application release status.
 
 ```yaml
 practiceId: 11111111-1111-4111-8111-111111111111
@@ -58,19 +58,16 @@ test; add an ID there before publishing a new topic.
    sources and rejects unknown fields, duplicate entry IDs, malformed routing,
    empty content, and entries exceeding the importer limits. Review the actual
    facts and preserve their conditions; structural validation is not fact-checking.
-2. Merge the reviewed PR into `main`. When the merge changes
-   `knowledge/offices/` or `knowledge/evals/`, the Knowledge workflow publishes
-   automatically. It checks each office against its active database revision,
-   publishes changed content, and skips unchanged offices without generating new
-   embeddings or revisions. No database revision input is needed.
-3. A merge that also changes `backend/`, `go.mod`, or `go.sum` is not published
-   automatically, because knowledge publication does not deploy code and the
-   deployed backend must support the source and retrieval checks. The run shows a
-   notice. After the release deploys, use **Actions → Knowledge → Run workflow** on
-   `main`. Leave `office` as `all` to process every office, or enter one office
-   filename without `.yaml`. Manual dispatch also republishes or reverifies at any
-   time.
-4. Merges that change neither office sources nor retrieval fixtures only validate.
+2. Merge the reviewed PR into `main` with a `fix(knowledge): …` or
+   `feat(knowledge): …` title so release-please includes it in the next release.
+3. Merge the release PR. After that Release run deploys to production, its
+   `knowledge` job publishes from exactly the released commit. This is the only
+   way knowledge reaches production. It checks each office against its active
+   database revision, publishes changed content, and skips unchanged offices
+   without generating new embeddings or revisions. A Release run that does not
+   deploy publishes nothing.
+4. To roll back, revert the content in a new PR and release it. To retry a failed
+   publication, re-run the failed `knowledge` job on that Release run.
 5. Review the per-office summary and publication receipts. The importer reads the
    current revision automatically, then uses the existing atomic comparison to
    reject a concurrent change. A rerun safely skips offices already up to date.
@@ -82,7 +79,7 @@ test; add an ID there before publishing a new topic.
    fixture has database verification only; this does not prove spoken behavior.
 
 After the complete publication and its configured retrieval checks succeed, the
-workflow records a GitHub release named `Knowledge <commit> (<selection>)`, tagged
+job records a GitHub release named `Knowledge <commit> (<selection>)`, tagged
 `knowledge-<full commit>-<selection>`. Notes list changed offices, database revision
 IDs, and the workflow evidence. Knowledge releases never replace the Product
 release as GitHub's Latest release. Unchanged content from an earlier commit
@@ -93,7 +90,7 @@ These records describe a publication event, not the current live revision foreve
 
 All entries in a file replace the complete office corpus. Removing an entry from
 Git removes it from the next published revision; prior revisions remain available
-as evidence. To roll back, revert the content in a new PR and publish the reverted content. No agent deployment is needed for content-only edits.
+as evidence. To roll back, revert the content in a new PR and release it.
 
 ## Operator commands
 
@@ -125,13 +122,13 @@ go run ./backend/cmd/knowledge-import \
 ```
 
 The CLI rejects a source that differs from its bytes at the declared Git commit.
-The workflow checks out that immutable commit automatically. The CLI resolves the supplied
+The Release workflow checks out that immutable commit automatically. The CLI resolves the supplied
 email to an existing bound Platform Operator; a source cannot forge attribution.
 Legacy reviewed JSON imports remain supported by `--file` for operational recovery.
 
 ## GitHub production configuration
 
-The workflow reuses the production environment and existing Workload Identity
+The `knowledge` job reuses the production environment and existing Workload Identity
 Federation variables: `GCP_WORKLOAD_IDENTITY_PROVIDER`,
 `GCP_DEPLOY_SERVICE_ACCOUNT`, `GCP_PROJECT_ID`, and `GCP_REGION`. Configure:
 
@@ -151,8 +148,8 @@ The publishing service account needs access to the database and configured servi
 permission, and Vertex AI embedding permission. It uses short-lived Google
 credentials; database credentials stay in process memory and are never committed
 or printed. The instance must be reachable by Cloud SQL Auth Proxy from the
-runner. Publication is serialized and only permitted from the current `main` commit,
-automatically after a content-only knowledge merge or through manual dispatch.
-PR runs never authenticate to production. The backend must already support the
-published source and its retrieval checks; content publication does not deploy
-backend code.
+runner. Publication runs one at a time, only after a Release run deploys, from that
+released commit. Re-running an older Release run's `knowledge` job publishes that
+older release's content. PR runs never
+authenticate to production. The backend that supports the content deploys in the
+same release.
