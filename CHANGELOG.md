@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.29.0](https://github.com/chasef07/acuity_product/compare/v1.28.4...v1.29.0) (2026-10-08)
+
+
+### Features
+
+* **web:** search the knowledge base by title and text ([#432](https://github.com/chasef07/acuity_product/issues/432)) ([1f08d9f](https://github.com/chasef07/acuity_product/commit/1f08d9f8c989211a22dd371d308c68711466553e))
+
+
+### Bug Fixes
+
+* **knowledge:** standardize Abita office entries and cover common caller questions ([#431](https://github.com/chasef07/acuity_product/issues/431)) ([3a64d4f](https://github.com/chasef07/acuity_product/commit/3a64d4fc8c5078930b6c6b09dd45c44060bd22db))
+
 ## [1.28.4](https://github.com/chasef07/acuity_product/compare/v1.28.3...v1.28.4) (2026-10-08)
 
 
