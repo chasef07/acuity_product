@@ -34,6 +34,8 @@ var reviewFailureQuestions = map[string]bool{
 	"no_results_retried":           true,
 }
 
+var ErrReviewLocked = errors.New("call review already submitted")
+
 type ReviewQueueCall struct {
 	InteractionID   string     `json:"interactionId"`
 	StartedAt       time.Time  `json:"startedAt"`
@@ -420,6 +422,7 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 		FROM ai_call_review_assignments
 		WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3
 		ORDER BY review_date DESC LIMIT 1
+		FOR UPDATE
 	`, authorization.Practice.ID, identity.Subject, interactionID).Scan(&review.Sample, &review.Excluded, &review.Note, &review.Submitted, &reviewDate)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return CallReview{}, fmt.Errorf("read review assignment: %w", err)
@@ -435,7 +438,7 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 			return CallReview{}, fmt.Errorf("read call review state: %w", err)
 		}
 		if review.Submitted || answered {
-			return CallReview{}, ErrConflict
+			return CallReview{}, ErrReviewLocked
 		}
 		applicable := map[string]bool{}
 		for _, question := range review.Questions {

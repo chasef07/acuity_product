@@ -162,7 +162,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if err != nil || !revealed.Submitted || len(revealed.Answers) != 6 || len(revealed.Judge) != 5 {
 		t.Fatalf("submitted review reveals judge answers: %+v %v", revealed, err)
 	}
-	if _, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Changed after reveal"}); !errors.Is(err, ErrConflict) {
+	if _, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Changed after reveal"}); !errors.Is(err, ErrReviewLocked) {
 		t.Fatalf("answers are locked once the judge is revealed: %v", err)
 	}
 	if _, err := module.SubmitCallReview(ctx, second, booked, CallReviewSubmission{Answers: answers}); !errors.Is(err, ErrInvalidInput) {

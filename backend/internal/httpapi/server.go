@@ -2209,6 +2209,8 @@ func (server *Server) writeInteractionError(
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, interaction.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, interaction.ErrReviewLocked):
+		server.writeError(w, r, http.StatusConflict, "REVIEW_LOCKED", "This review was already submitted, so its answers stay as first saved.", false)
 	case errors.Is(err, interaction.ErrConflict):
 		server.writeError(w, r, http.StatusConflict, "INTERACTION_CONFLICT", "The source call conflicts with the stored Interaction.", false)
 	default:
