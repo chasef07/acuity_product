@@ -30,15 +30,14 @@ func (tiedEmbeddings) Embed(_ context.Context, texts []string, _ knowledge.TaskT
 
 func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 	for _, fixture := range []struct {
-		office, caseID string
-		// semantic lists cases that need real embeddings; the deployed evaluator covers them.
-		semantic []string
+		office, caseID      string
+		needsRealEmbeddings []string
 	}{
 		{office: "north-miami-beach-optical"},
 		{office: "sweetwater"},
 		{office: "hollywood"},
 		{office: "crystal-river"},
-		{office: "spring-hill", semantic: []string{"unknown", "unknown-baseline", "spanish-address-hours", "six-year-old-exam"}},
+		{office: "spring-hill", needsRealEmbeddings: []string{"unknown", "unknown-baseline", "spanish-address-hours", "six-year-old-exam"}},
 		{office: "ophthalmology-demo", caseID: "hours"},
 	} {
 		office := fixture.office
@@ -94,7 +93,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 			}
 			matched := 0
 			for _, tc := range cases {
-				if fixture.caseID != "" && fixture.caseID != tc.ID || slices.Contains(fixture.semantic, tc.ID) {
+				if fixture.caseID != "" && fixture.caseID != tc.ID || slices.Contains(fixture.needsRealEmbeddings, tc.ID) {
 					continue
 				}
 				matched++
@@ -112,7 +111,6 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 							t.Fatal("email use restriction was lost")
 						}
 					}
-					// Same acceptance rules as scripts/knowledge-evaluate.py uses against the deployed API.
 					ok := got.Outcome == tc.ExpectedOutcome && characters <= tc.MaxResponseCharacters
 					for _, id := range tc.ExpectedSectionIDs {
 						ok = ok && slices.Contains(ids, id)

@@ -9,9 +9,6 @@ import (
 	"unicode/utf8"
 )
 
-// Abita Eye Group offices share one entry standard so every office answers the
-// same caller questions under the same IDs. Office-specific topics must be
-// listed in optionalAbitaEntries before they can be published.
 const abitaPracticeID = "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 
 var requiredAbitaEntries = []string{
