@@ -121,14 +121,14 @@
     "query": "Do you provide medical eye care?",
     "expectedOutcome": "found",
     "expectedSectionIds": [
-      "medical-services"
+      "scope-of-services"
     ],
     "excludedSectionIds": [
       "medical-drive-closure"
     ],
     "maxResponseCharacters": 800,
     "allowedSectionIds": [
-      "medical-services"
+      "scope-of-services"
     ]
   },
   {
@@ -164,19 +164,19 @@
     "query": "When is Sherry the optician available, and do I need an appointment for adjustments?",
     "expectedOutcome": "found",
     "expectedSectionIds": [
-      "optician-hours",
+      "optician",
       "optical-walk-ins"
     ],
     "excludedSectionIds": [],
     "maxResponseCharacters": 1400,
     "allowedSectionIds": [
-      "optician-hours",
+      "optician",
       "optical-walk-ins"
     ]
   },
   {
     "id": "unknown",
-    "query": "Can I park a spaceship on the moon?",
+    "query": "Can I fly a spaceship to the moon?",
     "expectedOutcome": "no_relevant_information",
     "expectedSectionIds": [],
     "excludedSectionIds": [],
@@ -239,7 +239,7 @@
   },
   {
     "id": "unknown-baseline",
-    "query": "Can I park my spaceship on the moon?",
+    "query": "Can I fly my spaceship to the moon?",
     "expectedOutcome": "no_relevant_information",
     "expectedSectionIds": [],
     "excludedSectionIds": [],
@@ -277,5 +277,175 @@
     ],
     "excludedSectionIds": [],
     "maxResponseCharacters": 3000
+  },
+  {
+    "id": "phone",
+    "query": "What is the office phone number?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "phone"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "phone"
+    ]
+  },
+  {
+    "id": "other-offices",
+    "query": "What other office locations do you have?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "other-offices"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "other-offices"
+    ]
+  },
+  {
+    "id": "billing",
+    "query": "What number do I call about my bill?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "billing"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "billing"
+    ]
+  },
+  {
+    "id": "spanish-doctor",
+    "query": "Do any of the doctors speak Spanish?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "provider-languages"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "provider-languages"
+    ]
+  },
+  {
+    "id": "carecredit",
+    "query": "Do you accept CareCredit?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "payments"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "payments"
+    ]
+  },
+  {
+    "id": "prescription-copy",
+    "query": "Can I get a copy of my glasses prescription?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "prescription-copies"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "prescription-copies"
+    ]
+  },
+  {
+    "id": "referral",
+    "query": "Do I need a referral?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "referral-requirements"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "referral-requirements"
+    ]
+  },
+  {
+    "id": "holiday",
+    "query": "Are you closed for any upcoming holidays?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "holiday-closures"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "holiday-closures"
+    ]
+  },
+  {
+    "id": "parking",
+    "query": "Is there parking at the office?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "directions"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "directions"
+    ]
+  },
+  {
+    "id": "broken-glasses",
+    "query": "Can you repair my broken glasses?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "repairs-and-warranty"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "repairs-and-warranty"
+    ]
+  },
+  {
+    "id": "glasses-turnaround",
+    "query": "How long until my glasses are ready?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "glasses-turnaround"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "glasses-turnaround"
+    ]
+  },
+  {
+    "id": "glaucoma-doctor",
+    "query": "Which doctor treats glaucoma?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "providers"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "providers"
+    ]
+  },
+  {
+    "id": "retina-doctor",
+    "query": "Do you have a retina specialist?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "retina-care"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 1400,
+    "allowedSectionIds": [
+      "retina-care",
+      "providers"
+    ]
   }
 ]
