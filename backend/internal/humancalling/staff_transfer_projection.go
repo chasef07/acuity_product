@@ -453,7 +453,7 @@ func (m *Module) failStaffTransferTx(
 	`, transfer.CallID, now); err != nil {
 		return err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, transfer.PracticeID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, transfer.PracticeID); err != nil {
 		return err
 	}
 	return nil
@@ -584,7 +584,7 @@ func (m *Module) advanceStaffTransferProjection(
 		"", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	_, err := m.recordCallingChange(ctx, tx, practiceID)
+	err := m.recordCallingChange(ctx, tx, practiceID)
 	return err
 }
 

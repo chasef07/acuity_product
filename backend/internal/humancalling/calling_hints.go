@@ -14,15 +14,11 @@ func (m *Module) recordCallingChange(
 	ctx context.Context,
 	tx pgx.Tx,
 	practiceID string,
-) (int64, error) {
-	version, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID)
-	if err != nil {
-		return 0, err
+) error {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return err
 	}
-	if err := publishCallingHint(ctx, tx, practiceID); err != nil {
-		return 0, err
-	}
-	return version, nil
+	return publishCallingHint(ctx, tx, practiceID)
 }
 
 func publishCallingHint(ctx context.Context, tx pgx.Tx, practiceID string) error {

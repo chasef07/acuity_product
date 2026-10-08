@@ -426,7 +426,7 @@ func (m *Module) StartOutboundCall(
 		command.Identity.Subject, "", commandID, "", "", now); err != nil {
 		return Call{}, err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return Call{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -768,7 +768,7 @@ func (m *Module) applyOutboundDestinationFact(
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -854,7 +854,7 @@ func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) err
 			return err
 		}
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -939,7 +939,7 @@ func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact
 	`, state.CallID, m.now()); err != nil {
 		return err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

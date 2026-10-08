@@ -326,7 +326,7 @@ func (m *Module) reconcileNeverStartedTerminalCallLeg(
 	`, callID, cleanedAt); err != nil {
 		return false, fmt.Errorf("advance terminal Call cleanup version: %w", err)
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -778,7 +778,7 @@ func (m *Module) quarantineStaleCallLeg(
 	); err != nil {
 		return err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -944,7 +944,7 @@ func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, erro
 		opaqueReference(staffLegID), "MEDIA_READINESS_FAILED", m.now()); err != nil {
 		return false, err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -128,7 +128,7 @@ func (m *Module) applyConnectedCallRecordingSaved(
 		opaqueReference(fact.RecordingID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -185,7 +185,7 @@ func (m *Module) applyConnectedCallRecordingError(
 		opaqueReference(fact.CallLegID), "RECORDING_FAILED", fact.OccurredAt); err != nil {
 		return err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -429,7 +429,7 @@ func (m *Module) exhaustRecordingReconciliation(
 	); err != nil {
 		return true, err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return true, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -544,7 +544,7 @@ func (m *Module) ProcessNextRecordingRetention(
 		opaqueReference(recordingID), "", now); err != nil {
 		return true, err
 	}
-	if _, err := m.recordCallingChange(ctx, completion, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, completion, practiceID); err != nil {
 		return true, err
 	}
 	if err := completion.Commit(ctx); err != nil {

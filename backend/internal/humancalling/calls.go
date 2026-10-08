@@ -531,7 +531,7 @@ func (m *Module) RecordDisposition(
 		identity.Subject, "", "", "", "", now); err != nil {
 		return DispositionResult{}, err
 	}
-	if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 		return DispositionResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -599,7 +599,7 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 		practices[item.practiceID] = true
 	}
 	for _, practiceID := range slices.Sorted(maps.Keys(practices)) {
-		if _, err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+		if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
 			return 0, err
 		}
 	}

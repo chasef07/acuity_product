@@ -423,8 +423,8 @@ export function createWorkspaceSync(
       } catch (error) {
         silence?.stop()
         streamReady = false
-        callingHints.setCoverage(undefined)
         if (signal.aborted) return
+        callingHints.setCoverage(undefined)
         if (error instanceof WorkspaceSyncUnauthorizedError) {
           options.onUnauthorized?.()
           return

@@ -4614,24 +4614,24 @@ test("a fresh outbound source discards persisted recovery after transfer ownersh
   assert.equal(persistedMedia, undefined)
 })
 
-test("live calling hints slow idle polling to thirty seconds and fall back when they drop", async () => {
+test("live calling hints slow idle polling to ten seconds and fall back when they drop", async () => {
   const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
   fixture.hints.setCoverage("practice-1")
 
   await fixture.runtime.start()
   const startupReads = fixture.reads.length
-  await fixture.clock.settle(60_000)
+  await fixture.clock.settle(20_000)
 
-  assert.deepEqual(fixture.reads.slice(startupReads), [30_000, 60_000])
+  assert.deepEqual(fixture.reads.slice(startupReads), [10_000, 20_000])
 
   await fixture.clock.settle(5_000)
   fixture.hints.setCoverage(undefined)
   await fixture.clock.settle(4_000)
-  assert.deepEqual(fixture.reads.slice(startupReads), [30_000, 60_000, 69_000])
+  assert.deepEqual(fixture.reads.slice(startupReads), [10_000, 20_000, 29_000])
   await fixture.clock.settle(8_000)
   assert.deepEqual(
     fixture.reads.slice(startupReads),
-    [30_000, 60_000, 69_000, 73_000, 77_000],
+    [10_000, 20_000, 29_000, 33_000, 37_000],
   )
   await fixture.runtime.stop()
 })
@@ -4669,17 +4669,17 @@ test("a calling hint refreshes idle state immediately", async () => {
   fixture.hints.setCoverage("practice-1")
   await fixture.runtime.start()
   const startupReads = fixture.reads.length
-  await fixture.clock.settle(10_000)
+  await fixture.clock.settle(5_000)
   assert.equal(fixture.reads.length, startupReads)
 
   fixture.hints.publish()
   await fixture.clock.settle(0)
 
-  assert.deepEqual(fixture.reads.slice(startupReads), [10_000])
-  await fixture.clock.settle(29_999)
-  assert.deepEqual(fixture.reads.slice(startupReads), [10_000])
+  assert.deepEqual(fixture.reads.slice(startupReads), [5_000])
+  await fixture.clock.settle(9_999)
+  assert.deepEqual(fixture.reads.slice(startupReads), [5_000])
   await fixture.clock.settle(1)
-  assert.deepEqual(fixture.reads.slice(startupReads), [10_000, 40_000])
+  assert.deepEqual(fixture.reads.slice(startupReads), [5_000, 15_000])
   await fixture.runtime.stop()
 })
 
@@ -4704,7 +4704,7 @@ test("calling hints during an in-flight refresh coalesce into one follow-up read
   await fixture.clock.settle(1_000)
 
   assert.deepEqual(fixture.reads.slice(startupReads), [1_000, 1_500])
-  await fixture.clock.settle(29_000)
+  await fixture.clock.settle(9_000)
   assert.deepEqual(fixture.reads.slice(startupReads), [1_000, 1_500])
   await fixture.runtime.stop()
 })
@@ -4799,8 +4799,8 @@ test("hidden idle tabs still refresh on calling hints", async () => {
   await fixture.clock.settle(0)
 
   assert.deepEqual(fixture.reads.slice(startupReads), [5_000])
-  await fixture.clock.settle(30_000)
-  assert.deepEqual(fixture.reads.slice(startupReads), [5_000, 35_000])
+  await fixture.clock.settle(10_000)
+  assert.deepEqual(fixture.reads.slice(startupReads), [5_000, 15_000])
   await fixture.runtime.stop()
 })
 
