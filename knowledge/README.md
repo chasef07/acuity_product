@@ -32,6 +32,26 @@ The Abita tool renders selected facts as plain text. Revision IDs and source IDs
 remain in the API/audit records, rather than the model's tool response. No extra
 AI call rewrites the facts.
 
+## Abita office standard
+
+The five Abita Eye Group offices use one entry standard, enforced by
+`backend/cmd/knowledge-import/standard_test.go`. Every office has the same
+required entry IDs (address, phone, fax, paperwork email, directions, other
+offices, hours, holiday closures, after-hours, providers, provider languages,
+services, appointment confirmation, new-patient visit, what to bring, referrals,
+billing, payments, self-pay pricing, medical records, prescription copies, and
+social follow-up). Office-specific topics use the optional IDs listed in that
+test; add an ID there before publishing a new topic.
+
+- When an office has no answer, the entry says so ("… is not supplied") so the
+  agent does not borrow another office's fact or guess.
+- Keep each entry under 800 characters and use plain sentences, not markdown.
+- Title entries with the words callers use. Title words that appear in the
+  question weigh most in ranking, so prefer "Broken glasses repair" over "Repairs".
+- `other-offices` lists the practice's other offices, followed by any
+  office-specific note.
+- Remove holiday closures once they pass.
+
 ## Editing and publishing
 
 1. Edit an office YAML file in a branch and open a PR. Knowledge CI validates all
