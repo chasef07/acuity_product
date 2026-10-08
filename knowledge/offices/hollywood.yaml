@@ -23,12 +23,11 @@ entries:
     text: |-
       Directions, parking, and landmark details are not supplied for the Hollywood office.
   - id: "other-offices"
-    title: "Other office locations in the practice"
+    title: "Other Abita Eye Group office locations"
     text: |-
-      Offices in this practice:
+      Other offices in this practice:
       Spring Hill: Abita Eye Group, 10495 SpringHill Drive, Springhill, FL 34608. Phone number not supplied.
       Crystal River: Eye Radiance, 1100 N Lyle Avenue, Crystal River, FL 34429. Phone number not supplied.
-      Hollywood: Abita Eye Group Hollywood, 4330 Sheridan St, Suite 102B, Hollywood, FL 33021. Phone: (954) 287-2010.
       Sweetwater: Abita Eye Group Sweetwater, 12750 NW 17th St, #201, Miami, FL 33182. Phone: (786) 465-4836.
       North Miami Beach Optical, also known as BrightView Optical: 633 NE 167th Street, North Miami Beach, FL 33162. Phone: (305) 509-5333.
       No other office locations are supplied.
@@ -89,7 +88,7 @@ entries:
     text: |-
       General referral requirements are not supplied. Retina surgical care needs referral to a retina surgeon. A primary care provider or insurance company can provide an appropriate referral when the patient does not have a retina surgeon.
   - id: "billing"
-    title: "Billing department phone number"
+    title: "Billing department phone number for bills and balances"
     text: |-
       Billing department phone: (786) 446-8333. The billing department handles account balances and billing concerns. Staff tasks and billing callbacks are not offered for billing questions. Self-pay price questions use this office's self-pay pricing.
   - id: "payments"

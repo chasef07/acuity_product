@@ -48,7 +48,7 @@ test; add an ID there before publishing a new topic.
 - Keep each entry under 800 characters and use plain sentences, not markdown.
 - Title entries with the words callers use. Title words that appear in the
   question weigh most in ranking, so prefer "Broken glasses repair" over "Repairs".
-- `other-offices` lists every office in the practice, followed by any
+- `other-offices` lists the practice's other offices, followed by any
   office-specific note.
 - Remove holiday closures once they pass.
 
