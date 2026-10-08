@@ -9,7 +9,7 @@ import type {
   TaskQueryRequest,
   WorkspaceSnapshot,
 } from "./api/generated/types.gen.ts"
-import { appendUniqueByID, mergeFirstPage, newerFirst } from "./workspace-ordering.ts"
+import { appendUniqueByID } from "./workspace-ordering.ts"
 import { canViewPracticeAnalytics } from "./booking-analytics.ts"
 import {
   selectedWorkspaceLocation,
@@ -162,8 +162,6 @@ export type WorkspaceAuthorityAdapter = {
 
 type TaskWindow = "tasks" | "completedTasks"
 
-type LoadedTaskWindow = TaskPage & { firstPageLength: number }
-
 type Reconciliation = {
   version: number
   apply: () => void
@@ -208,7 +206,6 @@ export type WorkspaceProjectionEnvironment = {
   clock: {
     setTimeout: (callback: () => void, milliseconds: number) => number
     clearTimeout: (id: number) => void
-    now?: () => number
   }
 }
 
@@ -306,17 +303,12 @@ export function createWorkspaceProjection({
           })),
       })
     : undefined
-  const now = environment?.clock.now ?? Date.now
   const queryGenerations = {
     tasks: 0,
     taskCounts: 0,
     completedTasks: 0,
   }
-  const windowResets = { tasks: 0, completedTasks: 0 }
-  const loadMoreDepths = { tasks: 0, completedTasks: 0 }
-  const firstPageLengths = { tasks: 0, completedTasks: 0 }
-  let deepRefreshedAt = Number.NEGATIVE_INFINITY
-  let deepRefreshTimer: number | undefined
+  const windowLoads: Partial<Record<TaskWindow, { query: number; depth: number }>> = {}
   let scopeRequests = new AbortController()
   let accessController: AbortController | undefined
   const listeners = new Set<() => void>()
@@ -353,55 +345,8 @@ export function createWorkspaceProjection({
     scopeGeneration += 1
     scopeRequests.abort()
     scopeRequests = new AbortController()
-    resetWindow("tasks")
-    resetWindow("completedTasks")
-    deepRefreshedAt = Number.NEGATIVE_INFINITY
-    cancelDeepRefresh()
-  }
-
-  function resetWindow(window: TaskWindow) {
-    windowResets[window] += 1
-    firstPageLengths[window] = 0
-    loadMoreDepths[window] = 0
-  }
-
-  function cancelDeepRefresh() {
-    if (deepRefreshTimer !== undefined) environment?.clock.clearTimeout(deepRefreshTimer)
-    deepRefreshTimer = undefined
-  }
-
-  function scheduleDeepRefresh() {
-    if (!environment || deepRefreshTimer !== undefined || !loadedBeyondFirstPage()) return
-    deepRefreshTimer = environment.clock.setTimeout(() => {
-      deepRefreshTimer = undefined
-      if (!stopped && loadedBeyondFirstPage()) void realtimeController.refresh()
-    }, Math.max(0, deepRefreshedAt + deepRefreshMilliseconds - now()))
-  }
-
-  function loadedBeyondFirstPage() {
-    return state.tasks.items.length > firstPageLengths.tasks ||
-      state.completedTasks.items.length > firstPageLengths.completedTasks
-  }
-
-  function mergeLoadedWindow(
-    window: TaskWindow,
-    current: WorkspaceQueryWindow<Task>,
-    loaded: LoadedTaskWindow,
-    deep: boolean,
-    moved: WorkspaceAuthorityResult<TaskPage>,
-  ) {
-    const covered = firstPageLengths[window]
-    firstPageLengths[window] = loaded.firstPageLength
-    if (deep) return { items: loaded.items, nextCursor: loaded.nextCursor }
-    return mergeFirstPage({
-      loaded: current.items,
-      loadedCursor: current.nextCursor,
-      covered,
-      page: loaded.items,
-      pageCursor: loaded.nextCursor,
-      moved: moved.kind === "success" ? moved.data.items : [],
-      sortsAfter: window === "tasks" ? openTaskOrder : completedTaskOrder,
-    })
+    delete windowLoads.tasks
+    delete windowLoads.completedTasks
   }
 
   function failClosed(
@@ -472,7 +417,6 @@ export function createWorkspaceProjection({
     const taskGeneration = ++queryGenerations.tasks
     const completedGeneration = ++queryGenerations.completedTasks
     const current = state
-    const deep = now() - deepRefreshedAt >= deepRefreshMilliseconds
     const taskRequest = taskQueryRequest(current.scope, current.search.applied, current.rail)
     const selectedTaskID = current.selection.task?.id
     const selectedAIInteractionID = current.selection.aiInteractionID
@@ -485,8 +429,8 @@ export function createWorkspaceProjection({
     ] =
       await Promise.all([
         authority.workspace(token, scope, signal),
-        loadTaskWindow(token, taskRequest, deep ? windowDepth("tasks", current.tasks.items.length) : 0, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), deep ? windowDepth("completedTasks", current.completedTasks.items.length) : 0, signal),
+        loadTaskWindow(token, taskRequest, windowDepth("tasks", current.tasks.items.length), signal),
+        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), windowDepth("completedTasks", current.completedTasks.items.length), signal),
         selectedTaskID
           ? authority.task(token, selectedTaskID, signal)
           : Promise.resolve(undefined),
@@ -553,14 +497,8 @@ export function createWorkspaceProjection({
               currentState.selection.task.version > selectedTaskResult.data.version)
               ? selectedTaskResult.data
               : undefined
-          const mergedTasks = taskWindowCurrent && taskResult.kind === "success"
-            ? mergeLoadedWindow("tasks", currentState.tasks, taskResult.data, deep, completedResult)
-            : undefined
-          const mergedCompleted = completedWindowCurrent && completedResult.kind === "success"
-            ? mergeLoadedWindow("completedTasks", currentState.completedTasks, completedResult.data, deep, taskResult)
-            : undefined
-          const tasks = mergedTasks
-            ? mergedTasks.items.map((task) =>
+          const tasks = taskWindowCurrent && taskResult.kind === "success"
+            ? taskResult.data.items.map((task) =>
                 refreshedSelected?.state === "OPEN" && task.id === refreshedSelected.id && !task.groupMembers
                   ? refreshedSelected : task)
             : currentState.tasks.items
@@ -656,15 +594,15 @@ export function createWorkspaceProjection({
           }
           let taskWindow = currentState.tasks
           if (taskWindowCurrent) {
-            taskWindow = mergedTasks
+            taskWindow = taskResult.kind === "success"
               ? {
                   items: tasks,
-                  nextCursor: mergedTasks.nextCursor,
+                  nextCursor: taskResult.data.nextCursor,
                   counts: currentState.tasks.counts,
-                  loading: loadMoreDepths.tasks > 0,
+                  loading: false,
                   error: "",
                 }
-              : { ...taskWindow, loading: loadMoreDepths.tasks > 0, error: taskWindowError }
+              : { ...taskWindow, loading: false, error: taskWindowError }
           }
           if (countGeneration === queryGenerations.taskCounts) {
             taskWindow = taskResult.kind === "success"
@@ -677,15 +615,13 @@ export function createWorkspaceProjection({
             workspace: snapshot,
             tasks: taskWindow,
             completedTasks: completedWindowCurrent
-              ? mergedCompleted
-                ? { ...mergedCompleted, loading: loadMoreDepths.completedTasks > 0, error: "" }
-                : { ...currentState.completedTasks, loading: loadMoreDepths.completedTasks > 0, error: completedWindowError }
+              ? completedResult.kind === "success"
+                ? { items: completedResult.data.items, nextCursor: completedResult.data.nextCursor, loading: false, error: "" }
+                : { ...currentState.completedTasks, loading: false, error: completedWindowError }
               : currentState.completedTasks,
             selection,
           }
         })
-        if (deep) deepRefreshedAt = now()
-        else scheduleDeepRefresh()
         requestBudget?.signalDetailRefresh()
       },
     }
@@ -1128,13 +1064,13 @@ export function createWorkspaceProjection({
     if (!activeScopeChanged) void realtimeController.refresh()
   }
 
-  async function loadMore(window: TaskWindow, retry = true): Promise<void> {
+  async function loadMore(window: TaskWindow) {
     if (state.loadState !== "ready") return
     const generation = scopeGeneration
-    const reset = windowResets[window]
     const currentWindow = state[window]
     if (currentWindow.loading || !currentWindow.nextCursor) return
-    loadMoreDepths[window] = currentWindow.items.length + 1
+    const queryGeneration = ++queryGenerations[window]
+    windowLoads[window] = { query: queryGeneration, depth: currentWindow.items.length + 1 }
     patch((current) => ({
       ...current,
       [window]: { ...current[window], loading: true, error: "" },
@@ -1152,23 +1088,31 @@ export function createWorkspaceProjection({
         signal,
       ),
     )
-    if (generation !== scopeGeneration || stopped || reset !== windowResets[window]) return
-    loadMoreDepths[window] = 0
+    if (generation !== scopeGeneration || stopped) return
+    settleWindowLoad(window, queryGeneration)
+    if (queryGeneration !== queryGenerations[window]) return
     if (failIfAccessLost(result)) return
-    if (state[window].nextCursor !== currentWindow.nextCursor) {
-      patch((current) => ({ ...current, [window]: { ...current[window], loading: false } }))
-      if (retry) await loadMore(window, false)
-      return
-    }
     if (result.kind !== "success") {
       setWindowFailure(window)
       return
     }
+    if (window === "tasks") {
+      patch((current) => ({
+        ...current,
+        tasks: {
+          items: appendUniqueByID(current.tasks.items, result.data.items),
+          nextCursor: result.data.nextCursor,
+          counts: current.tasks.counts,
+          loading: false,
+          error: "",
+        },
+      }))
+      return
+    }
     patch((current) => ({
       ...current,
-      [window]: {
-        ...current[window],
-        items: appendUniqueByID(current[window].items, result.data.items),
+      completedTasks: {
+        items: appendUniqueByID(current.completedTasks.items, result.data.items),
         nextCursor: result.data.nextCursor,
         loading: false,
         error: "",
@@ -1457,10 +1401,10 @@ export function createWorkspaceProjection({
     const completedGeneration = ++queryGenerations.completedTasks
     const scope = state.scope
     const rail = state.rail
-    if (reset) {
-      resetWindow("tasks")
-      resetWindow("completedTasks")
-    }
+    const taskDepth = reset ? 0 : windowDepth("tasks", state.tasks.items.length)
+    const completedDepth = reset ? 0 : windowDepth("completedTasks", state.completedTasks.items.length)
+    windowLoads.tasks = { query: taskGeneration, depth: taskDepth }
+    windowLoads.completedTasks = { query: completedGeneration, depth: completedDepth }
     patch((current) => ({
       ...current,
       tasks: {
@@ -1478,8 +1422,8 @@ export function createWorkspaceProjection({
     }))
     const result = await authenticatedRequest(async (token, signal) => {
       const [tasks, completedTasks] = await Promise.all([
-        loadTaskWindow(token, taskQueryRequest(scope, search, rail), 0, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail), 0, signal),
+        loadTaskWindow(token, taskQueryRequest(scope, search, rail), taskDepth, signal),
+        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail), completedDepth, signal),
       ])
       if (
         tasks.kind === "unauthenticated" || tasks.kind === "unauthorized"
@@ -1494,6 +1438,8 @@ export function createWorkspaceProjection({
       }
     })
     if (generation !== scopeGeneration || stopped) return
+    settleWindowLoad("tasks", taskGeneration)
+    settleWindowLoad("completedTasks", completedGeneration)
     if (failIfAccessLost(result)) return
     const tasks = requireTaskCounts(result.kind === "success"
       ? result.data.tasks
@@ -1505,36 +1451,48 @@ export function createWorkspaceProjection({
       ...current,
       tasks:
         taskGeneration !== queryGenerations.tasks
-          ? { ...current.tasks, loading: loadMoreDepths.tasks > 0 }
+          ? current.tasks
           : tasks.kind === "success"
             ? {
-                ...mergeLoadedWindow("tasks", current.tasks, tasks.data, false, completedTasks),
+                items: tasks.data.items,
+                nextCursor: tasks.data.nextCursor,
                 counts: countGeneration === queryGenerations.taskCounts
                   ? tasks.data.counts
                   : current.tasks.counts,
-                loading: loadMoreDepths.tasks > 0,
+                loading: false,
                 error: "",
               }
-            : { ...current.tasks, loading: loadMoreDepths.tasks > 0, error: taskWindowError },
+            : { ...current.tasks, loading: false, error: taskWindowError },
       completedTasks:
         completedGeneration !== queryGenerations.completedTasks
-          ? { ...current.completedTasks, loading: loadMoreDepths.completedTasks > 0 }
+          ? current.completedTasks
           : completedTasks.kind === "success"
             ? {
-                ...mergeLoadedWindow("completedTasks", current.completedTasks, completedTasks.data, false, tasks),
-                loading: loadMoreDepths.completedTasks > 0,
+                items: completedTasks.data.items,
+                nextCursor: completedTasks.data.nextCursor,
+                loading: false,
                 error: "",
               }
             : {
                 ...current.completedTasks,
-                loading: loadMoreDepths.completedTasks > 0,
+                loading: false,
                 error: completedWindowError,
               },
     }))
   }
 
   function windowDepth(window: TaskWindow, loadedCount: number) {
-    return Math.max(loadedCount, loadMoreDepths[window])
+    return Math.max(loadedCount, windowLoads[window]?.depth ?? 0)
+  }
+
+  function settleWindowLoad(window: TaskWindow, query: number) {
+    if (windowLoads[window]?.query !== query) return
+    delete windowLoads[window]
+    if (query === queryGenerations[window] || !state[window].loading) return
+    patch((current) => ({
+      ...current,
+      [window]: { ...current[window], loading: false },
+    }))
   }
 
   function obsoleteAllQueries() {
@@ -1556,12 +1514,11 @@ export function createWorkspaceProjection({
     request: TaskQueryRequest,
     loadedCount: number,
     signal: AbortSignal,
-  ): Promise<WorkspaceAuthorityResult<LoadedTaskWindow>> {
-    const target = Math.max(1, loadedCount)
+  ): Promise<WorkspaceAuthorityResult<TaskPage>> {
+    const target = refreshLoadedWindowTarget(loadedCount)
     const items: Task[] = []
     let cursor = ""
     let counts: TaskFolderCounts | undefined
-    let firstPageLength = 0
     do {
       const result = await authority.tasks(
         token,
@@ -1569,14 +1526,11 @@ export function createWorkspaceProjection({
         signal,
       )
       if (result.kind !== "success") return result
-      if (!cursor) {
-        counts = result.data.counts
-        firstPageLength = result.data.items.length
-      }
+      if (!cursor) counts = result.data.counts
       items.push(...appendUniqueByID(items, result.data.items).slice(items.length))
       cursor = result.data.nextCursor
     } while (cursor && items.length < target)
-    return { kind: "success", data: { items, nextCursor: cursor, counts, firstPageLength } }
+    return { kind: "success", data: { items, nextCursor: cursor, counts } }
   }
 
   function stop() {
@@ -1586,7 +1540,6 @@ export function createWorkspaceProjection({
     accessController = undefined
     realtimeController.stop()
     requestBudget?.stop()
-    cancelDeepRefresh()
     listeners.clear()
   }
 
@@ -1817,18 +1770,18 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
   }
 }
 
-const deepRefreshMilliseconds = 60_000
-const openTaskOrder = newerFirst<Task>((task) => task.updatedAt)
-const completedTaskOrder = newerFirst<Task>((task) => task.completedAt ?? task.updatedAt)
+function refreshLoadedWindowTarget(loadedCount: number) {
+  return Math.max(1, loadedCount)
+}
 
 const taskWindowError = "Tasks are temporarily unavailable."
 const selectedTaskDetailError = "Task details are temporarily unavailable."
 const completedWindowError = "Recently completed Tasks are temporarily unavailable."
 const aiInteractionDetailError = "This AI call could not be loaded."
 
-function requireTaskCounts<P extends TaskPage>(
-  result: WorkspaceAuthorityResult<P>,
-): WorkspaceAuthorityResult<P & { counts: TaskFolderCounts }> {
+function requireTaskCounts(
+  result: WorkspaceAuthorityResult<TaskPage>,
+): WorkspaceAuthorityResult<TaskPage & { counts: TaskFolderCounts }> {
   if (result.kind !== "success") return result
   if (!result.data.counts) return { kind: "unavailable" }
   return { kind: "success", data: { ...result.data, counts: result.data.counts } }
