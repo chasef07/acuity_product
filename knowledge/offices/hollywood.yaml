@@ -98,7 +98,7 @@ entries:
   - id: "self-pay-pricing"
     title: "Self-pay prices without insurance"
     text: |-
-      New patient medical visit with an optometrist: $150. Established patient medical visit with an optometrist: $75. New patient medical visit with an ophthalmologist: $250. Established patient medical visit with an ophthalmologist: $125. Routine vision exam with an optometrist: $100. Routine vision with contact lens fitting: $150*.
+      New patient medical visit with an optometrist: $150. Established patient medical visit with an optometrist: $75. New patient medical visit with an ophthalmologist: $250. Established patient medical visit with an ophthalmologist: $125. Routine vision exam with an optometrist: $100. Routine vision with contact lens fitting: $150.
   - id: "retinal-photo-fee"
     title: "Routine vision retinal photo charge"
     text: |-
