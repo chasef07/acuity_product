@@ -2,7 +2,7 @@ practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 officeKey: "sweetwater"
 entries:
   - id: "current-address"
-    title: "Sweetwater office location and address"
+    title: "Sweetwater office location and address (dirección)"
     text: |-
       Abita Eye Group Sweetwater is at 12750 NW 17th St, #201, Miami, FL 33182.
   - id: "phone"
@@ -33,7 +33,7 @@ entries:
       No other office locations are supplied.
       Hollywood is the other scheduling office for Sweetwater.
   - id: "hours"
-    title: "Sweetwater office opening hours and closing times"
+    title: "Sweetwater office opening hours and closing times (horario)"
     text: |-
       Monday–Thursday 8:30 AM–4:30 PM. Friday 8:30 AM–2:30 PM. Closed Saturday and Sunday.
   - id: "holiday-closures"

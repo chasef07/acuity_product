@@ -2,7 +2,7 @@ practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 officeKey: "crystal-river"
 entries:
   - id: "current-address"
-    title: "Crystal River office location and address"
+    title: "Crystal River office location and address (dirección)"
     text: |-
       The Crystal River office, Eye Radiance, is at 1100 N Lyle Avenue Crystal River, FL 34429.
   - id: "phone"
@@ -33,7 +33,7 @@ entries:
       No other office locations are supplied.
       Spring Hill also sees Dr. Bach, Dr. Noel, and Dr. Licht; Dr. Licht practices at both locations. Spring Hill is open Monday–Friday, 8:30 AM–4:30 PM.
   - id: "hours"
-    title: "Crystal River office opening hours and closing times"
+    title: "Crystal River office opening hours and closing times (horario)"
     text: |-
       Tuesday–Thursday 12:00 PM–5:00 PM. Closed Monday, Friday, Saturday, and Sunday.
   - id: "holiday-closures"

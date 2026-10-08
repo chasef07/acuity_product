@@ -2,7 +2,7 @@ practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 officeKey: "hollywood"
 entries:
   - id: "current-address"
-    title: "Hollywood office location and address"
+    title: "Hollywood office location and address (dirección)"
     text: |-
       Abita Eye Group Hollywood is at 4330 Sheridan St, Suite 102B, Hollywood, FL 33021.
   - id: "phone"
@@ -33,7 +33,7 @@ entries:
       No other office locations are supplied.
       Sweetwater is the other scheduling office for Hollywood.
   - id: "hours"
-    title: "Hollywood office opening hours and closing times"
+    title: "Hollywood office opening hours and closing times (horario)"
     text: |-
       Monday–Thursday 8:30 AM–4:30 PM, closed for lunch 12:30 PM–1:30 PM. Friday 8:30 AM–2:30 PM. Closed Saturday and Sunday.
   - id: "holiday-closures"

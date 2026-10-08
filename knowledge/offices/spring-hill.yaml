@@ -2,7 +2,7 @@ practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 officeKey: "spring-hill"
 entries:
   - id: "current-address"
-    title: "Current Spring Hill office street address and directions"
+    title: "Current Spring Hill office street address and directions (dirección)"
     text: |-
       Practice Name: Abita Eye Group
       Address: 10495 SpringHill Drive, Springhill, FL 34608
@@ -42,7 +42,7 @@ entries:
     text: |-
       The former Abita Eye location on Medical Drive (Medical Dr) is permanently closed. Appointments cannot be booked or moved to that location.
   - id: "hours"
-    title: "Office opening hours"
+    title: "Office opening hours (horario)"
     text: |-
       Monday–Friday 8:30 AM–4:30 PM. Closed Saturday and Sunday.
   - id: "holiday-closures"
@@ -149,7 +149,7 @@ entries:
     text: |-
       Non-prescription sunglasses are sold in office. They can be made prescription, but vision insurance generally does not cover non-prescription sunglasses.
   - id: "optician"
-    title: "Optician Sherry and optical hours"
+    title: "Optician Sherry and her schedule"
     text: |-
       Sherry is the licensed optician. She has 20+ years of experience and is in the office Tuesday–Friday, 9:30 AM–4:30 PM.
   - id: "optical-walk-ins"

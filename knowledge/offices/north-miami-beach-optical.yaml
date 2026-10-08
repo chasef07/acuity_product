@@ -2,7 +2,7 @@ practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 officeKey: "north-miami-beach-optical"
 entries:
   - id: "current-address"
-    title: "North Miami Beach Optical location and address"
+    title: "North Miami Beach Optical location and address (dirección)"
     text: |-
       North Miami Beach Optical is at 633 NE 167th Street, North Miami Beach, FL 33162.
   - id: "practice-name"
@@ -35,7 +35,7 @@ entries:
       Sweetwater: Abita Eye Group Sweetwater, 12750 NW 17th St, #201, Miami, FL 33182. Phone: (786) 465-4836.
       No other office locations are supplied.
   - id: "hours"
-    title: "North Miami Beach Optical store hours and closing times"
+    title: "North Miami Beach Optical store hours and closing times (horario)"
     text: |-
       Sunday–Thursday 9:00 AM–5:00 PM. Friday and Saturday hours are not supplied.
   - id: "holiday-closures"
