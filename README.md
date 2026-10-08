@@ -175,7 +175,9 @@ containing data you need.** Backend tests require a name ending in `_test`;
 browser tests require `_e2e`.
 
 These examples assume local PostgreSQL accepts your current OS user on
-`127.0.0.1`. Adjust the connection settings for your local installation. Create
+`127.0.0.1` and has the pgvector extension installed (for example,
+`brew install pgvector`); without it, migrations stop at `0066_office_knowledge`.
+Adjust the connection settings for your local installation. Create
 the databases once, then set the URLs in the shell where you run the tests.
 
 ```sh
