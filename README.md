@@ -233,6 +233,10 @@ Google sign-in needs valid OAuth configuration and a preauthorized Access
 Grant or Platform Operator binding. Test-session helpers are test-only. Never
 commit secrets or copy production credentials into synthetic fixtures.
 
+The workspace pauses realtime sync while its tab is hidden (`document.hidden`),
+so a background tab or hidden automated browser stays on "Loading Acuity
+workspace" and then reports it is disconnected. Bring the tab to the front.
+
 ## Verification
 
 Start with the check closest to your change. These are the main local commands
