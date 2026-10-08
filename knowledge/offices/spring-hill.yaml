@@ -59,7 +59,7 @@ entries:
       Dr. Licht (pronounced "Likt"), NPI 14-97147680: comprehensive ophthalmology, oculoplastic (eyelid) surgery, and glaucoma. Speech recognition often mishears Dr. Licht as "Lee", "Licked", "Lit", "Lisht", "Lich", "Lish", or "Liked".
       Dr. Noel, NPI 16-59998482: comprehensive ophthalmology, retina, uveitis, and glaucoma.
       Dr. Bach, NPI 16-59706588: pediatrics, adult strabismus, and double vision. Limited schedule: only at Spring Hill a couple times per month. Availability may be several weeks out.
-      Additional providers at the Spring Hill location include Dr. Otero, Dr. Farnan, and Dr. Amarawardana.
+      Optometrist at the Spring Hill location: Dr. Otero.
   - id: "provider-languages"
     title: "Spanish-speaking doctors and languages spoken"
     text: |-
@@ -107,7 +107,7 @@ entries:
   - id: "self-pay-pricing"
     title: "Self-pay prices without insurance"
     text: |-
-      New patient medical visit with an optometrist: $150. Established patient medical visit with an optometrist: $75. New patient medical visit with an ophthalmologist: $250. Established patient medical visit with an ophthalmologist: $125. Routine vision exam with an optometrist: $100. Routine vision with contact lens fitting: $150*.
+      New patient medical visit with an optometrist: $150. Established patient medical visit with an optometrist: $75. New patient medical visit with an ophthalmologist: $250. Established patient medical visit with an ophthalmologist: $125. Routine vision exam with an optometrist: $100. Routine vision with contact lens fitting: $150.
   - id: "retinal-photo-fee"
     title: "Routine vision retinal photo charge"
     text: |-
