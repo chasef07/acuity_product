@@ -38,14 +38,18 @@ jobs:
           manifest-file: .release-please-manifest.json
 
   verify-release:
-    if: needs.release-please.outputs.release_created == 'true'
+    if: needs.release-please.outputs.release_created == 'true' && needs.release-please.outputs.release_sha != github.event.workflow_run.head_sha
     needs: [release-please]
     uses: ./.github/workflows/verify.yml
     with:
       release_sha: ${{ needs.release-please.outputs.release_sha }}
 
   deploy:
-    if: needs.release-please.outputs.release_created == 'true' && vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE == 'true'
+    if: >-
+      !cancelled() &&
+      needs.release-please.outputs.release_created == 'true' &&
+      vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE == 'true' &&
+      (needs.verify-release.result == 'success' || (needs.verify-release.result == 'skipped' && needs.release-please.outputs.release_sha == github.event.workflow_run.head_sha))
     needs: [release-please, verify-release]
     runs-on: ubuntu-latest
     timeout-minutes: 45
