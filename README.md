@@ -143,8 +143,12 @@ Go bindings and the TypeScript client are generated from it, not edited by hand.
    success response only after its unique receipt is durable. Workers project
    receipts and recover interrupted work with bounded retries and reconciliation.
 4. **Refresh from committed state.** SSE carries version hints, not authoritative
-   product state. The browser refetches authorized views; calling also reconciles
-   through polling. Neither browser intent nor a successful provider request
+   product state. The browser refetches authorized views. Calling changes also
+   send a Practice-scoped `calling` hint; the softphone refetches Calling state
+   on each hint and keeps fast polling only while a call rings or is active,
+   with a slow idle fallback poll. It polls faster while the stream is down,
+   silent, or does not cover every Practice in the user's Calling state.
+   Neither browser intent nor a successful provider request
    proves that a call connected or a message was delivered.
 
 ## Local development

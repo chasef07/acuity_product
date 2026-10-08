@@ -20,6 +20,7 @@ type CallingState struct {
 	Voicemail   *CallingStateCall
 	Disposition *CallingStateCall
 	Transfers   []StaffTransfer
+	PracticeIDs []string
 	ETag        string
 }
 
@@ -113,6 +114,12 @@ func (m *Module) ReadCallingStateConditionally(
 	state, err := m.readCallingState(ctx, identity.Subject)
 	if err != nil {
 		return CallingState{}, false, err
+	}
+	state.PracticeIDs = []string{}
+	for _, practice := range discovery.Practices {
+		if practice.CallingEnabled {
+			state.PracticeIDs = append(state.PracticeIDs, practice.ID)
+		}
 	}
 	state.ETag = etag
 	return state, false, nil

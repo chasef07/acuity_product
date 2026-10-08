@@ -1,3 +1,8 @@
+import {
+  browserCallingHints,
+  type CallingHintSink,
+} from "../calling/calling-hints.ts"
+
 export type WorkspaceSyncScope = {
   practiceID: string
   locationID: string
@@ -26,6 +31,13 @@ type WorkspaceSyncOptions = {
   random?: () => number
   sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>
   timing?: Partial<WorkspaceSyncTiming>
+  callingHints?: CallingHintSink
+  timer?: WorkspaceSyncTimer
+}
+
+type WorkspaceSyncTimer = {
+  setTimeout(callback: () => void, milliseconds: number): unknown
+  clearTimeout(id: unknown): void
 }
 
 type WorkspaceSyncTiming = {
@@ -34,6 +46,7 @@ type WorkspaceSyncTiming = {
   degradedGraceMilliseconds: number
   pollMinimumMilliseconds: number
   pollMaximumMilliseconds: number
+  streamSilenceMilliseconds: number
 }
 
 type DeferredCatchUp = "none" | "hint" | "force"
@@ -44,6 +57,14 @@ const defaultTiming: WorkspaceSyncTiming = {
   degradedGraceMilliseconds: 3_000,
   pollMinimumMilliseconds: 15_000,
   pollMaximumMilliseconds: 30_000,
+  streamSilenceMilliseconds: 32_000,
+}
+
+const streamSilenceMarginMilliseconds = 2_000
+
+const defaultTimer: WorkspaceSyncTimer = {
+  setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
+  clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
 }
 
 export type WorkspaceSync = {
@@ -61,12 +82,15 @@ export function createWorkspaceSync(
   const timing = { ...defaultTiming, ...options.timing }
   const random = options.random ?? Math.random
   const sleep = options.sleep ?? wait
+  const callingHints = options.callingHints ?? browserCallingHints
+  const timer = options.timer ?? defaultTimer
   let controller: AbortController | undefined
   let scopeKey = ""
   let handleRefresh = () => Promise.resolve()
   let handleVisibility = () => {}
 
   function stop() {
+    callingHints.setCoverage(undefined)
     scopeKey = ""
     handleRefresh = () => Promise.resolve()
     controller?.abort()
@@ -330,6 +354,7 @@ export function createWorkspaceSync(
 
     while (!signal.aborted) {
       streamReady = false
+      let silence: ReturnType<typeof watchSilence> | undefined
       try {
         const streamToken = await options.getToken()
         if (signal.aborted) return
@@ -357,7 +382,16 @@ export function createWorkspaceSync(
         }
 
         let ready = false
-        for await (const event of readEvents(response.body, signal)) {
+        silence = watchSilence(signal, timer, timing.streamSilenceMilliseconds)
+        for await (const event of readEvents(
+          response.body,
+          silence.signal,
+          silence.touch,
+        )) {
+          if (event.type === "calling") {
+            if (event.practiceID === scope.practiceID) callingHints.publish()
+            continue
+          }
           if (
             event.practiceID !== scope.practiceID ||
             event.version < 1
@@ -369,26 +403,39 @@ export function createWorkspaceSync(
             continue
           }
           if (event.type !== "ready" || ready) continue
+          const coverage = event.callingHints ? scope.practiceID : undefined
+          if (event.heartbeatMilliseconds > 0) {
+            silence.setWindow(
+              event.heartbeatMilliseconds * 2 + streamSilenceMarginMilliseconds,
+            )
+          }
           highestHint = Math.max(highestHint, event.version)
           if (options.isHidden?.()) {
             deferCatchUp(true)
             ready = true
             streamReady = true
+            callingHints.setCoverage(coverage)
             continue
           }
+          silence.pause()
           await reconcile(event.version, true)
           if (signal.aborted) return
+          silence.touch()
+          callingHints.setCoverage(coverage)
           ready = true
           streamReady = true
           markHealthy()
           hasConnected = true
           options.onStateChange("connected")
         }
+        silence.stop()
         if (signal.aborted) return
         throw new Error("realtime stream ended")
       } catch (error) {
+        silence?.stop()
         streamReady = false
         if (signal.aborted) return
+        callingHints.setCoverage(undefined)
         if (error instanceof WorkspaceSyncUnauthorizedError) {
           options.onUnauthorized?.()
           return
@@ -428,9 +475,44 @@ function wait(milliseconds: number, signal: AbortSignal) {
   })
 }
 
+function watchSilence(
+  parent: AbortSignal,
+  timer: WorkspaceSyncTimer,
+  milliseconds: number,
+) {
+  const controller = new AbortController()
+  let id: unknown
+  let silenceMilliseconds = milliseconds
+  const pause = () => {
+    if (id !== undefined) timer.clearTimeout(id)
+    id = undefined
+  }
+  const stop = () => {
+    pause()
+    parent.removeEventListener("abort", abort)
+  }
+  const abort = () => {
+    stop()
+    controller.abort()
+  }
+  const touch = () => {
+    if (controller.signal.aborted) return
+    pause()
+    id = timer.setTimeout(abort, silenceMilliseconds)
+  }
+  const setWindow = (next: number) => {
+    silenceMilliseconds = next
+    if (id !== undefined) touch()
+  }
+  parent.addEventListener("abort", abort, { once: true })
+  touch()
+  return { signal: controller.signal, touch, pause, stop, setWindow }
+}
+
 async function* readEvents(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
+  onActivity: () => void,
 ) {
   const reader = stream.getReader()
   const cancel = () => void reader.cancel()
@@ -441,6 +523,7 @@ async function* readEvents(
     while (!signal.aborted) {
       const { value, done } = await reader.read()
       if (done) return
+      onActivity()
       buffer += decoder.decode(value, { stream: true })
       const blocks = buffer.split(/\r?\n\r?\n/)
       buffer = blocks.pop() ?? ""
@@ -459,6 +542,18 @@ async function* readEvents(
           const payload = JSON.parse(data) as {
             practiceId?: unknown
             version?: unknown
+            callingHints?: unknown
+            heartbeatMilliseconds?: unknown
+          }
+          if (type === "calling" && typeof payload.practiceId === "string") {
+            yield {
+              type,
+              practiceID: payload.practiceId,
+              version: 0,
+              callingHints: false,
+              heartbeatMilliseconds: 0,
+            }
+            continue
           }
           if (
             typeof payload.practiceId === "string" &&
@@ -468,6 +563,12 @@ async function* readEvents(
               type,
               practiceID: payload.practiceId,
               version: payload.version as number,
+              callingHints: payload.callingHints === true,
+              heartbeatMilliseconds:
+                Number.isSafeInteger(payload.heartbeatMilliseconds) &&
+                (payload.heartbeatMilliseconds as number) > 0
+                  ? (payload.heartbeatMilliseconds as number)
+                  : 0,
             }
           }
         } catch {

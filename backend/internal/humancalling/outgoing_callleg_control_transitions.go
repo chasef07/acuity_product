@@ -100,7 +100,7 @@ func (m *Module) finishEndedCallLeg(
 		); err != nil {
 			return err
 		}
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, ended.practiceID); err != nil {
+		if err := m.recordCallingChange(ctx, tx, ended.practiceID); err != nil {
 			return err
 		}
 		return nil
@@ -191,7 +191,7 @@ func (m *Module) finishEndedCallLeg(
 		sanitizeCode(fact.HangupCause), fact.OccurredAt); err != nil {
 		return err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, ended.practiceID); err != nil {
+	if err := m.recordCallingChange(ctx, tx, ended.practiceID); err != nil {
 		return err
 	}
 	return nil

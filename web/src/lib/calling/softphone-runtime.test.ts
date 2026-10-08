@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { createCallingHintChannel } from "./calling-hints.ts"
 import { projectCallingCard } from "./calling-card.ts"
 import type {
   CallingCall,
@@ -4613,6 +4614,246 @@ test("a fresh outbound source discards persisted recovery after transfer ownersh
   assert.equal(persistedMedia, undefined)
 })
 
+test("live calling hints slow idle polling to ten seconds and fall back when they drop", async () => {
+  const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
+  fixture.hints.setCoverage("practice-1")
+
+  await fixture.runtime.start()
+  const startupReads = fixture.reads.length
+  await fixture.clock.settle(20_000)
+
+  assert.deepEqual(fixture.reads.slice(startupReads), [10_000, 20_000])
+
+  await fixture.clock.settle(5_000)
+  fixture.hints.setCoverage(undefined)
+  await fixture.clock.settle(4_000)
+  assert.deepEqual(fixture.reads.slice(startupReads), [10_000, 20_000, 29_000])
+  await fixture.clock.settle(8_000)
+  assert.deepEqual(
+    fixture.reads.slice(startupReads),
+    [10_000, 20_000, 29_000, 33_000, 37_000],
+  )
+  await fixture.runtime.stop()
+})
+
+test("idle polling stays at four seconds when Calling spans Practices the stream does not cover", async () => {
+  for (const callingPracticeIds of [["practice-1", "practice-2"], undefined]) {
+    const fixture = callingHintFixture(
+      callingState({ softphone: lease({ owner: true }) }),
+    )
+    fixture.backend.state = { ...fixture.backend.state, callingPracticeIds }
+    fixture.hints.setCoverage("practice-1")
+
+    await fixture.runtime.start()
+    const startupReads = fixture.reads.length
+    await fixture.clock.settle(8_000)
+
+    assert.deepEqual(fixture.reads.slice(startupReads), [4_000, 8_000])
+    await fixture.runtime.stop()
+  }
+})
+
+test("idle polling stays at four seconds until the stream confirms calling hints", async () => {
+  const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
+
+  await fixture.runtime.start()
+  const startupReads = fixture.reads.length
+  await fixture.clock.settle(12_000)
+
+  assert.deepEqual(fixture.reads.slice(startupReads), [4_000, 8_000, 12_000])
+  await fixture.runtime.stop()
+})
+
+test("a calling hint refreshes idle state immediately", async () => {
+  const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
+  fixture.hints.setCoverage("practice-1")
+  await fixture.runtime.start()
+  const startupReads = fixture.reads.length
+  await fixture.clock.settle(5_000)
+  assert.equal(fixture.reads.length, startupReads)
+
+  fixture.hints.publish()
+  await fixture.clock.settle(0)
+
+  assert.deepEqual(fixture.reads.slice(startupReads), [5_000])
+  await fixture.clock.settle(9_999)
+  assert.deepEqual(fixture.reads.slice(startupReads), [5_000])
+  await fixture.clock.settle(1)
+  assert.deepEqual(fixture.reads.slice(startupReads), [5_000, 15_000])
+  await fixture.runtime.stop()
+})
+
+test("calling hints during an in-flight refresh coalesce into one follow-up read", async () => {
+  const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
+  fixture.hints.setCoverage("practice-1")
+  await fixture.runtime.start()
+  const startupReads = fixture.reads.length
+  await fixture.clock.settle(1_000)
+  const gate = deferredRead()
+  fixture.gate = gate.promise
+
+  fixture.hints.publish()
+  await fixture.clock.settle(0)
+  for (let index = 0; index < 10; index += 1) {
+    fixture.hints.publish()
+    await fixture.clock.settle(10)
+  }
+  fixture.gate = undefined
+  gate.resolve()
+  await drainMicrotasks()
+  await fixture.clock.settle(1_000)
+
+  assert.deepEqual(fixture.reads.slice(startupReads), [1_000, 1_500])
+  await fixture.clock.settle(9_000)
+  assert.deepEqual(fixture.reads.slice(startupReads), [1_000, 1_500])
+  await fixture.runtime.stop()
+})
+
+test("idle calling hint bursts refresh at most once per spacing window", async () => {
+  const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
+  fixture.hints.setCoverage("practice-1")
+  await fixture.runtime.start()
+  const startupReads = fixture.reads.length
+  await fixture.clock.settle(10_000)
+
+  for (let elapsed = 0; elapsed < 2_000; elapsed += 100) {
+    fixture.hints.publish()
+    await fixture.clock.settle(100)
+  }
+  await fixture.clock.settle(1_000)
+
+  assert.deepEqual(
+    fixture.reads.slice(startupReads),
+    [10_000, 10_500, 11_000, 11_500, 12_000],
+  )
+  await fixture.runtime.stop()
+})
+
+test("ringing offers keep fast polling and calling hints add no extra reads", async () => {
+  async function readsWhileRinging(withHints: boolean) {
+    const fixture = callingHintFixture(
+      callingState({
+        softphone: lease({ owner: true }),
+        ringing: [offer({})],
+      }),
+    )
+    fixture.hints.setCoverage("practice-1")
+    await fixture.runtime.start()
+    assert.equal(fixture.runtime.getSnapshot().offers.length, 1)
+    const startupReads = fixture.reads.length
+    for (let elapsed = 0; elapsed < 2_000; elapsed += 50) {
+      if (withHints) fixture.hints.publish()
+      await fixture.clock.settle(50)
+    }
+    const reads = fixture.reads.slice(startupReads)
+    await fixture.runtime.stop()
+    return reads
+  }
+
+  const quiet = await readsWhileRinging(false)
+  const hinted = await readsWhileRinging(true)
+
+  assert.deepEqual(quiet, [250, 500, 750, 1_000, 1_250, 1_500, 1_750, 2_000])
+  assert.deepEqual(hinted, quiet)
+})
+
+test("a connected Call keeps one-second polling and a hint refreshes it early", async () => {
+  const fixture = callingHintFixture(
+    callingState({
+      softphone: lease({ owner: true, activeCallId: "call-1" }),
+      bridged: stateCall("call-1", "leg-1", 4),
+    }),
+  )
+  fixture.backend.calls.set("call-1", call({ id: "call-1", version: 4 }))
+  fixture.hints.setCoverage("practice-1")
+  await fixture.runtime.start()
+  assert.equal(fixture.runtime.getSnapshot().activeCall?.state, "CONNECTED")
+  const startupReads = fixture.reads.length
+
+  await fixture.clock.settle(3_000)
+  assert.deepEqual(fixture.reads.slice(startupReads), [1_000, 2_000, 3_000])
+
+  await fixture.clock.settle(400)
+  fixture.hints.publish()
+  await fixture.clock.settle(0)
+  await fixture.clock.settle(1_100)
+
+  assert.deepEqual(
+    fixture.reads.slice(startupReads),
+    [1_000, 2_000, 3_000, 3_500, 4_500],
+  )
+  await fixture.runtime.stop()
+})
+
+test("hidden idle tabs still refresh on calling hints", async () => {
+  const fixture = callingHintFixture(
+    callingState({ softphone: lease({ owner: true }) }),
+    { isHidden: () => true, subscribe: () => () => {} },
+  )
+  fixture.hints.setCoverage("practice-1")
+  await fixture.runtime.start()
+  const startupReads = fixture.reads.length
+
+  await fixture.clock.settle(5_000)
+  fixture.hints.publish()
+  await fixture.clock.settle(0)
+
+  assert.deepEqual(fixture.reads.slice(startupReads), [5_000])
+  await fixture.clock.settle(10_000)
+  assert.deepEqual(fixture.reads.slice(startupReads), [5_000, 15_000])
+  await fixture.runtime.stop()
+})
+
+function callingHintFixture(
+  state: CallingState,
+  visibility: { isHidden(): boolean; subscribe(listener: () => void): () => void } = visible(),
+) {
+  const clock = new ManualClock()
+  const backend = new DeterministicBackend()
+  backend.lease = state.softphone
+  backend.state = { callingPracticeIds: ["practice-1"], ...state }
+  const hints = createCallingHintChannel()
+  const fixture: {
+    clock: ManualClock
+    backend: DeterministicBackend
+    hints: typeof hints
+    reads: number[]
+    gate?: Promise<void>
+    runtime: ReturnType<typeof createSoftphoneRuntime>
+  } = {
+    clock,
+    backend,
+    hints,
+    reads: [],
+    runtime: createSoftphoneRuntime({
+      sessionID: "session-1",
+      backend,
+      media: new DeterministicMedia(),
+      microphone: readyMicrophone(),
+      clock,
+      visibility,
+      callingHints: hints,
+    }),
+  }
+  backend.readStateHandler = async (input) => {
+    fixture.reads.push(clock.now)
+    if (fixture.gate) await fixture.gate
+    if (input.etag === backend.etag) {
+      return { status: "not-modified" as const, etag: backend.etag }
+    }
+    return { status: "modified" as const, state: backend.state, etag: backend.etag }
+  }
+  return fixture
+}
+
+function deferredRead() {
+  let resolve!: () => void
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 class DeterministicBackend implements SoftphoneBackend {
   lease = lease({ owner: false })
   state = callingState({ softphone: this.lease })
@@ -4837,6 +5078,23 @@ class ManualClock implements SoftphoneClock {
 
   clearTimeout(id: number) {
     this.timers.delete(id)
+  }
+
+  get nextTimerAt() {
+    return Math.min(
+      Number.POSITIVE_INFINITY,
+      ...[...this.timers.values()].map((timer) => timer.at),
+    )
+  }
+
+  async settle(milliseconds: number) {
+    const target = this.now + milliseconds
+    while (this.nextTimerAt <= target) {
+      await this.advance(this.nextTimerAt - this.now)
+      for (let drain = 0; drain < 20; drain += 1) await drainMicrotasks()
+    }
+    await this.advance(target - this.now)
+    for (let drain = 0; drain < 20; drain += 1) await drainMicrotasks()
   }
 
   get pendingTimers() {
