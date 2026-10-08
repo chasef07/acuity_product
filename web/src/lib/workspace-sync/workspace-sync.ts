@@ -48,7 +48,7 @@ const defaultTiming: WorkspaceSyncTiming = {
 
 export type WorkspaceSync = {
   setScope: (scope?: WorkspaceSyncScope) => void
-  refresh: () => void
+  refresh: () => Promise<void>
   visibilityChanged: () => void
   stop: () => void
 }
@@ -63,12 +63,12 @@ export function createWorkspaceSync(
   const sleep = options.sleep ?? wait
   let controller: AbortController | undefined
   let scopeKey = ""
-  let handleRefresh = () => {}
+  let handleRefresh = () => Promise.resolve()
   let handleVisibility = () => {}
 
   function stop() {
     scopeKey = ""
-    handleRefresh = () => {}
+    handleRefresh = () => Promise.resolve()
     controller?.abort()
     controller = undefined
     handleVisibility = () => {}
@@ -104,12 +104,18 @@ export function createWorkspaceSync(
     let hasConnected = false
     let streamReady = false
     let deferredCatchUp: DeferredCatchUp = "none"
+    const refreshWaiters: Array<() => void> = []
+    signal.addEventListener("abort", () => {
+      for (const resolve of refreshWaiters.splice(0)) resolve()
+    }, { once: true })
 
     handleRefresh = () => {
-      if (signal.aborted) return
+      if (signal.aborted) return Promise.resolve()
+      const settled = new Promise<void>((resolve) => refreshWaiters.push(resolve))
       resetHintRetry()
       deferCatchUp(true)
       queueDeferredCatchUp()
+      return settled
     }
 
     handleVisibility = () => {
@@ -279,12 +285,16 @@ export function createWorkspaceSync(
 
     async function reconcile(minimumVersion: number, force = false) {
       highestHint = Math.max(highestHint, minimumVersion)
-      if (!force && highestHint <= appliedVersion) return
+      if (!force && highestHint <= appliedVersion) {
+        queueDeferredCatchUp()
+        return
+      }
       if (reconciliation) {
         if (force) deferCatchUp(true)
         return reconciliation
       }
 
+      const settled = force ? refreshWaiters.splice(0) : []
       reconciliation = (async () => {
         const targetVersion = highestHint
         const token = await options.getToken()
@@ -308,6 +318,7 @@ export function createWorkspaceSync(
         succeeded = true
       } finally {
         reconciliation = undefined
+        for (const resolve of settled) resolve()
         if (!signal.aborted && !options.isHidden?.()) {
           if (deferredCatchUp !== "none") queueDeferredCatchUp()
           else if (succeeded && highestHint > appliedVersion) {

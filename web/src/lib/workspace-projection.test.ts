@@ -411,7 +411,7 @@ test("confirmed completion moves a Task to shared completed history and preserve
   assert.deepEqual(state.selection.task, completedTask)
   assert.equal(state.selection.contextPanelOpen, true)
   assert.equal(state.completion.pendingTaskID, "")
-  assert.equal(realtime.refreshes, 0)
+  assert.equal(realtime.refreshes, 1)
   projection.stop()
 })
 test("temporary token failure keeps Task completion retryable without expiring the session", async () => {
@@ -825,8 +825,15 @@ function deterministicRealtime() {
         setScope(nextScope) {
           scope = nextScope
         },
-        refresh() {
+        async refresh() {
           refreshes += 1
+          if (!scope) return
+          try {
+            const reconciliation = await nextCallbacks.reconcile({ scope, token: "token", signal: new AbortController().signal, minimumVersion: 0 })
+            reconciliation.apply()
+          } catch (error) {
+            if (error instanceof WorkspaceProjectionAccessError) nextCallbacks.onUnauthorized()
+          }
         },
         visibilityChanged() {},
         stop() {},
@@ -1092,7 +1099,7 @@ for (const type of ["task-committed", "task-created"] as const) {
     assert.equal(committedCounts.tasks, type === "task-created" ? 2 : 1)
     pending.apply()
     assert.deepEqual(projection.getSnapshot().tasks.counts, committedCounts)
-    assert.equal(realtime.refreshes, 0)
+    assert.equal(realtime.refreshes, 1)
     projection.stop()
   })
 }
@@ -1701,3 +1708,193 @@ function memoryNavigation(initial: WorkspaceLocation = { view: "none" }) {
     },
   }
 }
+
+type LiveRequest = Parameters<WorkspaceAuthorityAdapter["tasks"]>[1]
+
+function liveWorkspace({ openRows, hidden = () => false, environment }: {
+  openRows: number
+  hidden?: () => boolean
+  environment?: Parameters<typeof createWorkspaceProjection>[0]["environment"]
+}) {
+  const origin = Date.UTC(2026, 7, 30, 12)
+  const server = {
+    version: 1,
+    open: Array.from({ length: openRows }, (_, index) =>
+      task(`open-${String(index).padStart(3, "0")}`, { updatedAt: new Date(origin - index * 60_000).toISOString() })),
+    completed: [] as Task[],
+    workspaceGate: undefined as Promise<void> | undefined,
+    pageGate: undefined as Promise<void> | undefined,
+  }
+  const requests: string[] = []
+  const page = (rows: Task[], request: LiveRequest) => {
+    const start = request.cursor ? rows.findIndex((row) => row.id === request.cursor) + 1 : 0
+    const limit = request.limit ?? 50
+    const items = rows.slice(start, start + limit)
+    return success({
+      items,
+      nextCursor: start + limit < rows.length ? items.at(-1)!.id : "",
+      ...(request.includeCounts !== false ? { counts: taskPage(rows).counts } : {}),
+    })
+  }
+  const authority: WorkspaceAuthorityAdapter = {
+    authenticate: async () => ({ status: "authenticated", token: "token" }),
+    discover: async () => success(accessDiscovery()),
+    workspace: async () => {
+      requests.push("workspace")
+      const version = server.version
+      await server.workspaceGate
+      return success(workspaceSnapshot(version))
+    },
+    tasks: async (_token, request) => {
+      requests.push(`tasks:${request.state}:${request.cursor ?? ""}`)
+      if (request.cursor) await server.pageGate
+      return page(request.state === "OPEN" ? server.open : server.completed, request)
+    },
+    task: async (_token, taskID) => {
+      requests.push(`task:${taskID}`)
+      const found = [...server.open, ...server.completed].find((item) => item.id === taskID)
+      return found ? success(found) : missing()
+    },
+    aiInteraction: async () => {
+      requests.push("ai")
+      return missing()
+    },
+    call: async () => {
+      requests.push("call")
+      return missing()
+    },
+    completeTask: async (_token, target) => {
+      requests.push("complete")
+      const at = new Date(origin + 60_000).toISOString()
+      const done = task(target.id, { state: "COMPLETED", version: target.version + 1, completedAt: at, updatedAt: at })
+      server.open = server.open.filter((item) => item.id !== target.id)
+      server.completed = [done, ...server.completed]
+      server.version += 1
+      return success(done)
+    },
+  }
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  const realtime: WorkspaceRealtimeAdapter = {
+    connect(callbacks) {
+      const sync = createWorkspaceSync({
+        realtimeURL: "https://realtime.example",
+        fetch: async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller } })),
+        getToken: callbacks.getToken,
+        reconcile: callbacks.reconcile,
+        onStateChange: callbacks.onStateChange,
+        onUnauthorized: callbacks.onUnauthorized,
+        isHidden: hidden,
+      })
+      return { setScope: sync.setScope, refresh: sync.refresh, visibilityChanged: sync.visibilityChanged, stop: sync.stop }
+    },
+  }
+  const projection = createWorkspaceProjection({ authority, realtime, preferences: memoryPreferences(), environment })
+  const send = (type: "ready" | "hint", version: number) =>
+    stream!.enqueue(new TextEncoder().encode(`event: ${type}\ndata: {"practiceId":"practice-1","version":${version}}\n\n`))
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
+  return {
+    projection, server, requests, send, settle,
+    async connect() {
+      await projection.start()
+      await waitUntil(() => Boolean(stream))
+      send("ready", server.version)
+      await waitUntil(() => projection.getSnapshot().workspace?.version === server.version)
+      await settle()
+    },
+    async loadOpenRows(count: number) {
+      while (projection.getSnapshot().tasks.items.length < count) {
+        await projection.dispatch({ type: "load-more", window: "tasks" })
+      }
+    },
+    reconciles: () => requests.filter((request) => request === "workspace").length,
+  }
+}
+
+function manualClock() {
+  const clock = { timers: new Map<number, () => void>(), next: 0 }
+  return {
+    clock,
+    environment: {
+      clock: {
+        setTimeout: (callback: () => void) => {
+          clock.timers.set(++clock.next, callback)
+          return clock.next
+        },
+        clearTimeout: (id: number) => {
+          clock.timers.delete(id)
+        },
+      },
+    },
+    fireAll() {
+      const pending = [...clock.timers.values()]
+      clock.timers.clear()
+      for (const fire of pending) fire()
+    },
+  }
+}
+
+test("a hidden tab makes no requests on hints and one catch-up when visible", async () => {
+  let hidden = false
+  const live = liveWorkspace({ openRows: 120, hidden: () => hidden })
+  await live.connect()
+  await live.loadOpenRows(120)
+  live.requests.length = 0
+  hidden = true
+  for (let version = 2; version <= 6; version += 1) {
+    live.server.version = version
+    live.send("hint", version)
+  }
+  await live.settle()
+  assert.deepEqual(live.requests, [])
+  hidden = false
+  await live.projection.dispatch({ type: "visibility-changed" })
+  await waitUntil(() => live.projection.getSnapshot().workspace?.version === 6)
+  await live.settle()
+  assert.equal(live.reconciles(), 1)
+  assert.equal(live.requests.length, 6)
+  live.projection.stop()
+})
+
+test("a burst of hints during an in-flight reconcile runs at most one follow-up", async () => {
+  const live = liveWorkspace({ openRows: 60 })
+  await live.connect()
+  live.requests.length = 0
+  let release!: () => void
+  live.server.workspaceGate = new Promise<void>((resolve) => { release = resolve })
+  live.server.version = 2
+  live.send("hint", 2)
+  await waitUntil(() => live.reconciles() === 1)
+  live.server.workspaceGate = undefined
+  for (let version = 3; version <= 12; version += 1) {
+    live.server.version = version
+    live.send("hint", version)
+  }
+  await live.settle()
+  release()
+  await waitUntil(() => live.projection.getSnapshot().workspace?.version === 12)
+  await live.settle()
+  assert.equal(live.reconciles(), 2)
+  live.projection.stop()
+})
+
+test("completing a Task refreshes once and skips the server hint for the same version", async () => {
+  const manual = manualClock()
+  const live = liveWorkspace({ openRows: 3, environment: manual.environment })
+  await live.connect()
+  const first = live.projection.getSnapshot().tasks.items[0]
+  await live.projection.dispatch({ type: "select-task", task: first })
+  manual.fireAll()
+  live.requests.length = 0
+  await live.projection.dispatch({ type: "complete-task", task: first })
+  const revision = live.projection.getSnapshot().detailRevision
+  manual.fireAll()
+  assert.equal(live.projection.getSnapshot().detailRevision, revision + 1)
+  assert.deepEqual(live.requests.toSorted(), ["complete", `task:${first.id}`, "tasks:COMPLETED:", "tasks:OPEN:", "workspace"])
+  assert.equal(live.projection.getSnapshot().workspace?.version, 2)
+  assert.deepEqual(live.projection.getSnapshot().completedTasks.items.map((item) => item.id), [first.id])
+  live.send("hint", 2)
+  await live.settle()
+  assert.equal(live.reconciles(), 1)
+  assert.equal(live.requests.length, 5)
+  live.projection.stop()
+})
