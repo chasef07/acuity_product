@@ -3978,7 +3978,7 @@ components:
     OperatorScorecardQuestion:
       type: object
       additionalProperties: false
-      required: [key, code, label, prompt, group, source, question, "yes", "no", appliesWhen]
+      required: [key, code, label, prompt, source, question, "yes", "no"]
       properties:
         key: {type: string}
         code: {type: string}
@@ -3986,19 +3986,15 @@ components:
         prompt:
           type: string
           description: The question in one short line, as reviewers see it.
-        group: {type: string}
         source: {type: string, enum: [judge, code]}
         question: {type: string}
         "yes": {type: string}
         "no": {type: string}
-        appliesWhen: {type: string}
     OperatorScorecardQuestions:
       type: object
       additionalProperties: false
-      required: [judgeVersion, codeVersion, questions]
+      required: [questions]
       properties:
-        judgeVersion: {type: string}
-        codeVersion: {type: string}
         questions:
           type: array
           items: {$ref: "#/components/schemas/OperatorScorecardQuestion"}
@@ -4025,11 +4021,8 @@ components:
     OperatorCallReviewQueue:
       type: object
       additionalProperties: false
-      required: [date, reviewer, available, calls]
+      required: [calls]
       properties:
-        date: {type: string, format: date}
-        reviewer: {type: string}
-        available: {type: integer}
         calls:
           type: array
           items: {$ref: "#/components/schemas/OperatorCallReviewQueueCall"}
@@ -4067,7 +4060,6 @@ components:
       properties:
         interactionId: {type: string, format: uuid}
         assigned: {type: boolean}
-        sample: {type: string}
         facts:
           type: array
           items: {$ref: "#/components/schemas/OperatorCallReviewFact"}
@@ -4129,7 +4121,6 @@ components:
         reviewerEmail: {type: string}
         human: {type: boolean}
         judge: {type: boolean}
-        judgeProbability: {type: number}
         note: {type: string}
     OperatorReviewerAnswer:
       type: object
@@ -4154,16 +4145,13 @@ components:
     OperatorJudgeAccuracy:
       type: object
       additionalProperties: false
-      required: [reviewedCalls, goldenAnswers, goldenSet, unjudged, rows, judgeDisagreements, reviewerDisagreements]
+      required: [reviewedCalls, goldenAnswers, goldenSet, rows, judgeDisagreements, reviewerDisagreements]
       properties:
         reviewedCalls: {type: integer}
         goldenAnswers: {type: integer}
         goldenSet:
           type: array
           items: {$ref: "#/components/schemas/OperatorGoldenSetCall"}
-        unjudged:
-          type: integer
-          description: Golden-set answers with no judge answer to compare, such as B5 when no availability was returned.
         rows:
           type: array
           items: {$ref: "#/components/schemas/OperatorJudgeAccuracyRow"}
@@ -4184,15 +4172,12 @@ components:
     OperatorScorecardDay:
       type: object
       additionalProperties: false
-      required: [date, calls, problemCalls, problemRate, bookingCalls, converted, conversion]
+      required: [date, calls, problemCalls, problemRate]
       properties:
         date: {type: string, format: date}
         calls: {type: integer}
         problemCalls: {type: integer}
         problemRate: {type: number, nullable: true}
-        bookingCalls: {type: integer}
-        converted: {type: integer}
-        conversion: {type: number, nullable: true}
     OperatorScorecardResults:
       type: object
       additionalProperties: false

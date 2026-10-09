@@ -55,9 +55,9 @@ export function submitCallReview(interactionID: string, body: OperatorCallReview
   )
 }
 
-export function useJudgeAccuracy(practiceID: string, revision: number) {
+export function useJudgeAccuracy(practiceID: string) {
   return usePortalQuery(
-    practiceID ? `judge-accuracy:${practiceID}:${revision}` : null,
+    practiceID ? `judge-accuracy:${practiceID}` : null,
     (transport) =>
       queryOperatorJudgeAccuracy({ ...transport, body: { practiceId: practiceID } }),
   )

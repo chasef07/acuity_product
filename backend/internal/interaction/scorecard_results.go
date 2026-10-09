@@ -21,9 +21,6 @@ type ScorecardDay struct {
 	Calls        int      `json:"calls"`
 	ProblemCalls int      `json:"problemCalls"`
 	ProblemRate  *float64 `json:"problemRate"`
-	BookingCalls int      `json:"bookingCalls"`
-	Converted    int      `json:"converted"`
-	Conversion   *float64 `json:"conversion"`
 }
 
 type ScorecardResults struct {
@@ -38,15 +35,7 @@ type ScorecardResults struct {
 }
 
 func scorecardProblem(answers map[string]bool) bool {
-	if classifyBooking(answers) == bookingMissed {
-		return true
-	}
-	for question, answer := range answers {
-		if !answer && reviewFailureQuestions[question] {
-			return true
-		}
-	}
-	return false
+	return classifyBooking(answers) == bookingMissed || failedReviewQuestion(answers)
 }
 
 func rate(part, whole int) *float64 {
@@ -112,21 +101,17 @@ func (m *Module) QueryScorecardResults(ctx context.Context, command ScorecardRes
 			result.ProblemCalls++
 			day.ProblemCalls++
 		}
-		switch classifyBooking(answers) {
+		outcome := classifyBooking(answers)
+		if outcome != bookingNotRequested {
+			result.BookingCalls++
+		}
+		switch outcome {
 		case bookingConverted:
 			result.Converted++
-			day.Converted++
-			day.BookingCalls++
 		case bookingBlocked:
 			result.Blocked++
 		case bookingMissed:
 			result.Missed++
-			day.BookingCalls++
-		case bookingAttempted:
-			day.BookingCalls++
-		}
-		if classifyBooking(answers) != bookingNotRequested {
-			result.BookingCalls++
 		}
 	}
 	rows.Close()
@@ -140,7 +125,6 @@ func (m *Module) QueryScorecardResults(ctx context.Context, command ScorecardRes
 	for index := range result.Daily {
 		day := &result.Daily[index]
 		day.ProblemRate = rate(day.ProblemCalls, day.Calls)
-		day.Conversion = rate(day.Converted, day.BookingCalls)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ScorecardResults{}, fmt.Errorf("commit scorecard results: %w", err)

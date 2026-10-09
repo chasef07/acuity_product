@@ -83,8 +83,8 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		t.Fatalf("today's queue is not reviewable until the day is over: %v", err)
 	}
 	queueA, err := module.OpenReviewQueue(ctx, command)
-	if err != nil || len(queueA.Calls) != reviewQueueSize || queueA.Available != 31 || queueA.Calls[0].LocationName != "Main" {
-		t.Fatalf("first queue: %d available=%d %v", len(queueA.Calls), queueA.Available, err)
+	if err != nil || len(queueA.Calls) != reviewQueueSize || queueA.Calls[0].LocationName != "Main" {
+		t.Fatalf("first queue: %d %v", len(queueA.Calls), err)
 	}
 	again, err := module.OpenReviewQueue(ctx, command)
 	if err != nil || fmt.Sprint(again.Calls) != fmt.Sprint(queueA.Calls) {
@@ -189,7 +189,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	for _, row := range accuracy.Rows {
 		rows[row.Question] = row
 	}
-	if accuracy.ReviewedCalls != 2 || rows["right_help"].Sample != 3 || rows["right_help"].FalseAlarms != 1 || accuracy.Unjudged != 4 {
+	if accuracy.ReviewedCalls != 2 || rows["right_help"].Sample != 3 || rows["right_help"].FalseAlarms != 1 || accuracy.GoldenAnswers != 19 {
 		t.Fatalf("accuracy counts false alarms: %+v", accuracy)
 	}
 	if len(accuracy.ReviewerDisagreements) != 1 || accuracy.ReviewerDisagreements[0].Question != "clear_and_responsive" {

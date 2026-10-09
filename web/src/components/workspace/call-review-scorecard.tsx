@@ -178,7 +178,7 @@ function JudgeLine({
 }: {
   question: string
   human?: boolean
-  judged?: { answer: boolean; probability?: number; version: string }
+  judged?: { answer: boolean; probability?: number }
 }) {
   if (!judged) {
     return <span className="ml-auto text-[0.6875rem] text-muted-foreground">Judge: no answer</span>

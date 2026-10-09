@@ -18,116 +18,100 @@ const (
 )
 
 type ScorecardQuestion struct {
-	Key         string `json:"key"`
-	Code        string `json:"code"`
-	Label       string `json:"label"`
-	Prompt      string `json:"prompt"`
-	Group       string `json:"group"`
-	Source      string `json:"source"`
-	Question    string `json:"question"`
-	Yes         string `json:"yes"`
-	No          string `json:"no"`
-	AppliesWhen string `json:"appliesWhen"`
+	Key      string `json:"key"`
+	Code     string `json:"code"`
+	Label    string `json:"label"`
+	Prompt   string `json:"prompt"`
+	Source   string `json:"source"`
+	Question string `json:"question"`
+	Yes      string `json:"yes"`
+	No       string `json:"no"`
 }
 
 var ScorecardQuestions = []ScorecardQuestion{
 	{
-		Key: "booking_requested", Code: "B1", Label: "Booking requested", Prompt: "Did the caller ask to book, reschedule, or cancel?", Group: "Booking conversion", Source: "judge",
-		Question:    "Did the caller ask to book a new appointment, or to reschedule or cancel an existing appointment, at any point in the call? Count a request for an appointment for someone else (for example a child). Asking about an existing appointment's time or location, confirming it, or asking about prescriptions, orders, insurance, or billing is not a booking request by itself.",
-		Yes:         "The caller asked to book, reschedule, or cancel an appointment.",
-		No:          "The caller never asked to book, reschedule, or cancel an appointment.",
-		AppliesWhen: "Every reviewed call. A yes makes this a booking call.",
+		Key: "booking_requested", Code: "B1", Label: "Booking requested", Prompt: "Did the caller ask to book, reschedule, or cancel?", Source: "judge",
+		Question: "Did the caller ask to book a new appointment, or to reschedule or cancel an existing appointment, at any point in the call? Count a request for an appointment for someone else (for example a child). Asking about an existing appointment's time or location, confirming it, or asking about prescriptions, orders, insurance, or billing is not a booking request by itself.",
+		Yes:      "The caller asked to book, reschedule, or cancel an appointment.",
+		No:       "The caller never asked to book, reschedule, or cancel an appointment.",
 	},
 	{
-		Key: "scheduling_tool_called", Code: "B2", Label: "Scheduling tool called", Prompt: "Did the agent try to book, reschedule, or cancel?", Group: "Booking conversion", Source: "code",
-		Question:    "Did the agent call the matching scheduling tool?",
-		Yes:         "The agent called book_appointment, reschedule_appointment, or cancel_appointment.",
-		No:          "The agent never attempted a booking, reschedule, or cancellation.",
-		AppliesWhen: "Counted for booking calls (B1 yes).",
+		Key: "scheduling_tool_called", Code: "B2", Label: "Scheduling tool called", Prompt: "Did the agent try to book, reschedule, or cancel?", Source: "code",
+		Question: "Did the agent call the matching scheduling tool?",
+		Yes:      "The agent called book_appointment, reschedule_appointment, or cancel_appointment.",
+		No:       "The agent never attempted a booking, reschedule, or cancellation.",
 	},
 	{
-		Key: "scheduling_succeeded", Code: "B3", Label: "Scheduling succeeded", Prompt: "Did the booking, reschedule, or cancel go through?", Group: "Booking conversion", Source: "code",
-		Question:    "Did the scheduling tool return a success?",
-		Yes:         "A booking, reschedule, or cancellation receipt came back successful. The call is converted.",
-		No:          "No scheduling receipt came back successful.",
-		AppliesWhen: "Only when a scheduling tool was called (B2 yes).",
+		Key: "scheduling_succeeded", Code: "B3", Label: "Scheduling succeeded", Prompt: "Did the booking, reschedule, or cancel go through?", Source: "code",
+		Question: "Did the scheduling tool return a success?",
+		Yes:      "A booking, reschedule, or cancellation receipt came back successful. The call is converted.",
+		No:       "No scheduling receipt came back successful.",
 	},
 	{
-		Key: "booking_blocked", Code: "B4", Label: "Blocked by a tool result", Prompt: "Did a tool result block the booking?", Group: "Booking conversion", Source: "code",
-		Question:    "Did a tool result block it (no slots, insurance not accepted, policy)?",
-		Yes:         "Availability returned no openings or no eligible providers, or the insurance check said the plan is not accepted or needs a referral or prior authorization. Blocked calls are left out of conversion.",
-		No:          "No tool result blocked the booking. A system failure, such as availability that could not be verified, is not a block.",
-		AppliesWhen: "Counted for booking calls (B1 yes) that did not convert.",
+		Key: "booking_blocked", Code: "B4", Label: "Blocked by a tool result", Prompt: "Did a tool result block the booking?", Source: "code",
+		Question: "Did a tool result block it (no slots, insurance not accepted, policy)?",
+		Yes:      "Availability returned no openings or no eligible providers, or the insurance check said the plan is not accepted or needs a referral or prior authorization. Blocked calls are left out of conversion.",
+		No:       "No tool result blocked the booking. A system failure, such as availability that could not be verified, is not a block.",
 	},
 	{
-		Key: "time_offered", Code: "B5", Label: "Specific time offered", Prompt: "Did the agent offer a specific open time?", Group: "Booking conversion", Source: "judge",
-		Question:    "Did the agent offer the caller at least one specific appointment date and time taken from an availability tool result? A vague promise, a staff request to find a time, or a time the caller proposed that the agent did not confirm as available does not count.",
-		Yes:         "The agent offered at least one specific date and time from returned availability.",
-		No:          "The agent never offered a specific available date and time.",
-		AppliesWhen: "Only for booking calls (B1 yes). The judge only runs once availability was returned; otherwise the answer is no.",
+		Key: "time_offered", Code: "B5", Label: "Specific time offered", Prompt: "Did the agent offer a specific open time?", Source: "judge",
+		Question: "Did the agent offer the caller at least one specific appointment date and time taken from an availability tool result? A vague promise, a staff request to find a time, or a time the caller proposed that the agent did not confirm as available does not count.",
+		Yes:      "The agent offered at least one specific date and time from returned availability.",
+		No:       "The agent never offered a specific available date and time.",
 	},
 	{
-		Key: "need_understood", Code: "H1", Label: "Understood every request", Prompt: "Did the agent understand every request?", Group: "Right help", Source: "judge",
-		Question:    "Did the agent correctly identify every request the caller made, including corrections and additional requests? First list each caller request, then check whether the agent's questions, tool calls, and statements address the request the caller actually made. Judge only whether the agent understood what was asked, not whether its answer was correct; factual accuracy is scored separately. Mishearing that the agent later corrected still counts as understood if the correction happened before any action was taken on the wrong understanding.",
-		Yes:         "The agent correctly identified every caller request, even if an answer it gave was wrong.",
-		No:          "The agent misunderstood, ignored, or acted on the wrong version of at least one caller request.",
-		AppliesWhen: "Every reviewed call.",
+		Key: "need_understood", Code: "H1", Label: "Understood every request", Prompt: "Did the agent understand every request?", Source: "judge",
+		Question: "Did the agent correctly identify every request the caller made, including corrections and additional requests? First list each caller request, then check whether the agent's questions, tool calls, and statements address the request the caller actually made. Judge only whether the agent understood what was asked, not whether its answer was correct; factual accuracy is scored separately. Mishearing that the agent later corrected still counts as understood if the correction happened before any action was taken on the wrong understanding.",
+		Yes:      "The agent correctly identified every caller request, even if an answer it gave was wrong.",
+		No:       "The agent misunderstood, ignored, or acted on the wrong version of at least one caller request.",
 	},
 	{
-		Key: "right_help", Code: "H2", Label: "Right help or next step", Prompt: "Did every request end done, or with a clear next step?", Group: "Right help", Source: "judge",
-		Question:    "By the end of the call, did the caller get the right help for each request: either the request was completed (supported by a successful tool result), or the caller was given a correct, clearly explained next step, such as a saved staff request they were told about, or a transfer to staff when the agent could not handle the request? A transfer counts only if the agent could not reasonably handle the request itself. If the call ended before any request was resolved or handed off, answer false.",
-		Yes:         "Every request was completed or handed off with a correct, clearly explained next step.",
-		No:          "At least one request was left unresolved, handed off unnecessarily, or the next step was missing, wrong, or unclear.",
-		AppliesWhen: "Every reviewed call.",
+		Key: "right_help", Code: "H2", Label: "Right help or next step", Prompt: "Did every request end done, or with a clear next step?", Source: "judge",
+		Question: "By the end of the call, did the caller get the right help for each request: either the request was completed (supported by a successful tool result), or the caller was given a correct, clearly explained next step, such as a saved staff request they were told about, or a transfer to staff when the agent could not handle the request? A transfer counts only if the agent could not reasonably handle the request itself. If the call ended before any request was resolved or handed off, answer false.",
+		Yes:      "Every request was completed or handed off with a correct, clearly explained next step.",
+		No:       "At least one request was left unresolved, handed off unnecessarily, or the next step was missing, wrong, or unclear.",
 	},
 	{
-		Key: "clear_and_responsive", Code: "H4", Label: "Clear and responsive", Prompt: "Was the call clear and responsive?", Group: "Right help", Source: "judge",
-		Question:    "Was the conversation clear and responsive from the caller's point of view? Answer false if the agent asked avoidable repeated questions, collected information it could not use for the caller's request, gave confusing or contradictory statements, or if the caller had to check whether the agent was still there or repeat themselves because the agent did not respond. These are not failures: a caller who asks for a person or does not want to talk to an AI and is transferred promptly (a brief offer to help first is fine); a transfer or staff request because a tool result says the agent cannot complete the request, such as insurance that cannot be verified; a short call; ordinary clarification of a hard-to-hear name or number, asked once or twice; caller-requested pauses.",
-		Yes:         "The conversation was clear and responsive, including prompt transfers the caller asked for.",
-		No:          "The conversation had avoidable repetition, wasted questions, confusing statements, or unresponsiveness.",
-		AppliesWhen: "Every reviewed call.",
+		Key: "clear_and_responsive", Code: "H4", Label: "Clear and responsive", Prompt: "Was the call clear and responsive?", Source: "judge",
+		Question: "Was the conversation clear and responsive from the caller's point of view? Answer false if the agent asked avoidable repeated questions, collected information it could not use for the caller's request, gave confusing or contradictory statements, or if the caller had to check whether the agent was still there or repeat themselves because the agent did not respond. These are not failures: a caller who asks for a person or does not want to talk to an AI and is transferred promptly (a brief offer to help first is fine); a transfer or staff request because a tool result says the agent cannot complete the request, such as insurance that cannot be verified; a short call; ordinary clarification of a hard-to-hear name or number, asked once or twice; caller-requested pauses.",
+		Yes:      "The conversation was clear and responsive, including prompt transfers the caller asked for.",
+		No:       "The conversation had avoidable repetition, wasted questions, confusing statements, or unresponsiveness.",
 	},
 	{
-		Key: "person_request_honored", Code: "T1", Label: "Person request honored", Prompt: "If the caller asked for a person, were they transferred promptly?", Group: "Right help", Source: "judge",
-		Question:    "When the caller asked for a person, a representative, an agent, the front desk, or a transfer, did the agent transfer the call on that request? Answer false if, after the caller asked, the agent did any of these before transferring: said it was transferring, connecting, or checking who is available and then asked questions or offered help instead; said it could not transfer or that staff were busy or unavailable; collected details unrelated to the transfer; or let the caller ask again, including repeated words like 'agent' or 'representative' that went unanswered. Asking once what the call is about is fine only if the agent transfers right after the caller answers or asks again. If the caller accepts the agent's offer to help instead of a transfer, answer true. If the caller never asked for a person or a transfer, answer true.",
-		Yes:         "The caller never asked for a person, chose the agent's help instead, or was transferred on the request without the agent announcing, delaying, or ruling out the transfer.",
-		No:          "The agent announced a transfer and then pitched or asked questions, said it could not transfer or that staff were unavailable, or made the caller ask more than once.",
-		AppliesWhen: "Every reviewed call. Yes when the caller never asked for a person.",
+		Key: "person_request_honored", Code: "T1", Label: "Person request honored", Prompt: "If the caller asked for a person, were they transferred promptly?", Source: "judge",
+		Question: "When the caller asked for a person, a representative, an agent, the front desk, or a transfer, did the agent transfer the call on that request? Answer false if, after the caller asked, the agent did any of these before transferring: said it was transferring, connecting, or checking who is available and then asked questions or offered help instead; said it could not transfer or that staff were busy or unavailable; collected details unrelated to the transfer; or let the caller ask again, including repeated words like 'agent' or 'representative' that went unanswered. Asking once what the call is about is fine only if the agent transfers right after the caller answers or asks again. If the caller accepts the agent's offer to help instead of a transfer, answer true. If the caller never asked for a person or a transfer, answer true.",
+		Yes:      "The caller never asked for a person, chose the agent's help instead, or was transferred on the request without the agent announcing, delaying, or ruling out the transfer.",
+		No:       "The agent announced a transfer and then pitched or asked questions, said it could not transfer or that staff were unavailable, or made the caller ask more than once.",
 	},
 	{
-		Key: "office_rules_grounded", Code: "A1", Label: "Office facts backed", Prompt: "Were all office facts backed by a lookup?", Group: "Accuracy and follow-through", Source: "judge",
-		Question:    "Was every factual claim about office hours, whether the office is open, providers, locations, services, or policies supported by recorded office instructions or a successful knowledge result available BEFORE the claim? Check each claim, including claims in Spanish, against earlier evidence for the relevant office. A caller's suggestion, the agent's own statements, general knowledge, or an unrelated tool result is not supporting evidence. If even one claim lacks earlier support or contradicts it, answer false. For example, saying 'we are open until five today' without earlier supporting hours fails. A later lookup, correction, or otherwise grounded answer does not erase an earlier unsupported claim. Greetings, acknowledgments, and explicit statements that information is unknown are not factual office claims.",
-		Yes:         "Every factual office claim has supporting evidence available before it was made, or no factual office claims were made.",
-		No:          "At least one factual office claim lacks earlier supporting evidence or contradicts it, even if the rest of the call is grounded or the claim is later corrected.",
-		AppliesWhen: "Every reviewed call.",
+		Key: "office_rules_grounded", Code: "A1", Label: "Office facts backed", Prompt: "Were all office facts backed by a lookup?", Source: "judge",
+		Question: "Was every factual claim about office hours, whether the office is open, providers, locations, services, or policies supported by recorded office instructions or a successful knowledge result available BEFORE the claim? Check each claim, including claims in Spanish, against earlier evidence for the relevant office. A caller's suggestion, the agent's own statements, general knowledge, or an unrelated tool result is not supporting evidence. If even one claim lacks earlier support or contradicts it, answer false. For example, saying 'we are open until five today' without earlier supporting hours fails. A later lookup, correction, or otherwise grounded answer does not erase an earlier unsupported claim. Greetings, acknowledgments, and explicit statements that information is unknown are not factual office claims.",
+		Yes:      "Every factual office claim has supporting evidence available before it was made, or no factual office claims were made.",
+		No:       "At least one factual office claim lacks earlier supporting evidence or contradicts it, even if the rest of the call is grounded or the claim is later corrected.",
 	},
 	{
-		Key: "appointment_datetime_correct", Code: "A2", Label: "Appointment matched the caller", Prompt: "Did the appointment match what the caller agreed to?", Group: "Accuracy and follow-through", Source: "judge",
-		Question:    "For every booking, rescheduling, or cancellation action, did the tool result match the caller's final intended appointment date and time? Use the final agreed date/time, including explicitly accepted alternatives, in the office timezone. For rescheduling check both the original appointment and the new date/time; for cancellation check the targeted appointment. Compare actual tool results, not the assistant's claim. Missing results cannot establish a match.",
-		Yes:         "Every appointment action's tool result confirms the caller's intended date and time.",
-		No:          "Any action targets or produces the wrong date/time, or there is insufficient evidence of a matching appointment action.",
-		AppliesWhen: "Only when a scheduling tool ran (B2 yes).",
+		Key: "appointment_datetime_correct", Code: "A2", Label: "Appointment matched the caller", Prompt: "Did the appointment match what the caller agreed to?", Source: "judge",
+		Question: "For every booking, rescheduling, or cancellation action, did the tool result match the caller's final intended appointment date and time? Use the final agreed date/time, including explicitly accepted alternatives, in the office timezone. For rescheduling check both the original appointment and the new date/time; for cancellation check the targeted appointment. Compare actual tool results, not the assistant's claim. Missing results cannot establish a match.",
+		Yes:      "Every appointment action's tool result confirms the caller's intended date and time.",
+		No:       "Any action targets or produces the wrong date/time, or there is insufficient evidence of a matching appointment action.",
 	},
 	{
-		Key: "no_results_retried", Code: "F2", Label: "Retried after no match", Prompt: "After no patient match, did the agent retry before transferring?", Group: "Accuracy and follow-through", Source: "code",
-		Question:    "After a patient lookup returned no_results, did the agent clarify and retry before transferring?",
-		Yes:         "The agent ran the patient lookup again before transferring the call.",
-		No:          "The agent transferred without retrying the patient lookup.",
-		AppliesWhen: "Only when a patient lookup returned no_results and the call was later transferred.",
+		Key: "no_results_retried", Code: "F2", Label: "Retried after no match", Prompt: "After no patient match, did the agent retry before transferring?", Source: "code",
+		Question: "After a patient lookup returned no_results, did the agent clarify and retry before transferring?",
+		Yes:      "The agent ran the patient lookup again before transferring the call.",
+		No:       "The agent transferred without retrying the patient lookup.",
 	},
 	{
-		Key: "staff_task_identified", Code: "F3", Label: "Staff task names the patient", Prompt: "Did every staff task name the patient?", Group: "Accuracy and follow-through", Source: "code",
-		Question:    "Did every staff task the agent saved name a patient?",
-		Yes:         "Every saved staff task named a patient (verified or not). The caller's number is always attached.",
-		No:          "At least one saved staff task said \"Patient: not identified\", so staff must work out who called.",
-		AppliesWhen: "Only when the agent saved a staff task that was not cancelled.",
+		Key: "staff_task_identified", Code: "F3", Label: "Staff task names the patient", Prompt: "Did every staff task name the patient?", Source: "code",
+		Question: "Did every staff task the agent saved name a patient?",
+		Yes:      "Every saved staff task named a patient (verified or not). The caller's number is always attached.",
+		No:       "At least one saved staff task said \"Patient: not identified\", so staff must work out who called.",
 	},
 	{
-		Key: "insurance_verified", Code: "I1", Label: "Insurance verified", Prompt: "Was the caller's insurance verified?", Group: "Accuracy and follow-through", Source: "code",
-		Question:    "Was the caller's insurance verified?",
-		Yes:         "The last insurance check accepted the plan.",
-		No:          "The last insurance check ended blocked or still needed information. This is not an agent failure; a task or transfer is fine. The plan name is recorded so staff can update the insurance rules.",
-		AppliesWhen: "Only when the agent checked insurance.",
+		Key: "insurance_verified", Code: "I1", Label: "Insurance verified", Prompt: "Was the caller's insurance verified?", Source: "code",
+		Question: "Was the caller's insurance verified?",
+		Yes:      "The last insurance check accepted the plan.",
+		No:       "The last insurance check ended blocked or still needed information. This is not an agent failure; a task or transfer is fine. The plan name is recorded so staff can update the insurance rules.",
 	},
 }
 

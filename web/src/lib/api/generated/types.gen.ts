@@ -858,17 +858,13 @@ export type OperatorScorecardQuestion = {
      * The question in one short line, as reviewers see it.
      */
     prompt: string;
-    group: string;
     source: 'judge' | 'code';
     question: string;
     yes: string;
     no: string;
-    appliesWhen: string;
 };
 
 export type OperatorScorecardQuestions = {
-    judgeVersion: string;
-    codeVersion: string;
     questions: Array<OperatorScorecardQuestion>;
 };
 
@@ -889,9 +885,6 @@ export type OperatorCallReviewQueueCall = {
 };
 
 export type OperatorCallReviewQueue = {
-    date: string;
-    reviewer: string;
-    available: number;
     calls: Array<OperatorCallReviewQueueCall>;
 };
 
@@ -919,7 +912,6 @@ export type OperatorCallReviewJudgeAnswer = {
 export type OperatorCallReview = {
     interactionId: string;
     assigned: boolean;
-    sample?: string;
     facts: Array<OperatorCallReviewFact>;
     questions: Array<string>;
     submitted: boolean;
@@ -964,7 +956,6 @@ export type OperatorJudgeDisagreement = {
     reviewerEmail: string;
     human: boolean;
     judge: boolean;
-    judgeProbability?: number;
     note: string;
 };
 
@@ -986,10 +977,6 @@ export type OperatorJudgeAccuracy = {
     reviewedCalls: number;
     goldenAnswers: number;
     goldenSet: Array<OperatorGoldenSetCall>;
-    /**
-     * Golden-set answers with no judge answer to compare, such as B5 when no availability was returned.
-     */
-    unjudged: number;
     rows: Array<OperatorJudgeAccuracyRow>;
     judgeDisagreements: Array<OperatorJudgeDisagreement>;
     reviewerDisagreements: Array<OperatorReviewerDisagreement>;
@@ -1006,9 +993,6 @@ export type OperatorScorecardDay = {
     calls: number;
     problemCalls: number;
     problemRate: number | null;
-    bookingCalls: number;
-    converted: number;
-    conversion: number | null;
 };
 
 export type OperatorScorecardResults = {

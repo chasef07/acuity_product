@@ -20,11 +20,7 @@ func (server *Server) GetOperatorScorecardQuestions(w http.ResponseWriter, r *ht
 	if _, ok := server.operatorIdentity(w, r); !ok {
 		return
 	}
-	server.writeJSON(w, http.StatusOK, map[string]any{
-		"judgeVersion": interaction.ScorecardJudgeVersion,
-		"codeVersion":  interaction.ScorecardCodeVersion,
-		"questions":    interaction.ScorecardQuestions,
-	})
+	server.writeJSON(w, http.StatusOK, map[string]any{"questions": interaction.ScorecardQuestions})
 }
 
 func (server *Server) OpenOperatorCallReviewQueue(w http.ResponseWriter, r *http.Request) {

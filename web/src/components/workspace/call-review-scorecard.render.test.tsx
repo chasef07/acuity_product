@@ -7,7 +7,7 @@ import type { OperatorScorecardQuestion } from "../../lib/api/generated/types.ge
 const catalog = new Map<string, OperatorScorecardQuestion>(
   ["booking_requested", "time_offered", "need_understood"].map((key, index) => [
     key,
-    { key, code: ["B1", "B5", "H1"][index], label: key, prompt: `Short ${key}?`, group: "Synthetic", source: "judge" as const, question: `Synthetic ${key}?`, yes: "Yes.", no: "No.", appliesWhen: "Always." },
+    { key, code: ["B1", "B5", "H1"][index], label: key, prompt: `Short ${key}?`, source: "judge" as const, question: `Synthetic ${key}?`, yes: "Yes.", no: "No." },
   ]),
 )
 const review = {

@@ -49,10 +49,7 @@ type ReviewQueueCall struct {
 }
 
 type ReviewQueue struct {
-	Date      string            `json:"date"`
-	Reviewer  string            `json:"reviewer"`
-	Available int               `json:"available"`
-	Calls     []ReviewQueueCall `json:"calls"`
+	Calls []ReviewQueueCall `json:"calls"`
 }
 
 type ReviewQueueCommand struct {
@@ -84,7 +81,7 @@ type ReviewJudgeAnswer struct {
 type CallReview struct {
 	InteractionID string              `json:"interactionId"`
 	Assigned      bool                `json:"assigned"`
-	Sample        string              `json:"sample,omitempty"`
+	Sample        string              `json:"-"`
 	Facts         []ReviewFact        `json:"facts"`
 	Questions     []string            `json:"questions"`
 	Submitted     bool                `json:"submitted"`
@@ -111,16 +108,15 @@ type JudgeAccuracyRow struct {
 }
 
 type JudgeDisagreement struct {
-	InteractionID    string    `json:"interactionId"`
-	StartedAt        time.Time `json:"startedAt"`
-	LocationName     string    `json:"locationName"`
-	Question         string    `json:"question"`
-	JudgeVersion     string    `json:"judgeVersion"`
-	ReviewerEmail    string    `json:"reviewerEmail"`
-	Human            bool      `json:"human"`
-	Judge            bool      `json:"judge"`
-	JudgeProbability *float64  `json:"judgeProbability,omitempty"`
-	Note             string    `json:"note"`
+	InteractionID string    `json:"interactionId"`
+	StartedAt     time.Time `json:"startedAt"`
+	LocationName  string    `json:"locationName"`
+	Question      string    `json:"question"`
+	JudgeVersion  string    `json:"judgeVersion"`
+	ReviewerEmail string    `json:"reviewerEmail"`
+	Human         bool      `json:"human"`
+	Judge         bool      `json:"judge"`
+	Note          string    `json:"note"`
 }
 
 type ReviewerAnswer struct {
@@ -150,7 +146,6 @@ type JudgeAccuracy struct {
 	ReviewedCalls         int                    `json:"reviewedCalls"`
 	GoldenAnswers         int                    `json:"goldenAnswers"`
 	GoldenSet             []GoldenSetCall        `json:"goldenSet"`
-	Unjudged              int                    `json:"unjudged"`
 	Rows                  []JudgeAccuracyRow     `json:"rows"`
 	JudgeDisagreements    []JudgeDisagreement    `json:"judgeDisagreements"`
 	ReviewerDisagreements []ReviewerDisagreement `json:"reviewerDisagreements"`
@@ -173,13 +168,25 @@ func reviewRank(interactionID, date string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func reviewFlagged(answers map[string]bool, evaluation json.RawMessage) bool {
+func failedReviewQuestion(answers map[string]bool) bool {
 	for question, answer := range answers {
 		if !answer && reviewFailureQuestions[question] {
 			return true
 		}
 	}
-	return len(EvaluationReviewReasons(evaluation)) > 0
+	return false
+}
+
+func reviewFlagged(answers map[string]bool, evaluation json.RawMessage) bool {
+	return failedReviewQuestion(answers) || len(EvaluationReviewReasons(evaluation)) > 0
+}
+
+func questionOrder() map[string]int {
+	order := map[string]int{}
+	for index, question := range ScorecardQuestions {
+		order[question.Key] = index
+	}
+	return order
 }
 
 func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand) (ReviewQueue, error) {
@@ -320,7 +327,8 @@ func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand
 			}
 		}
 	}
-	queue := ReviewQueue{Date: command.Date, Reviewer: command.Identity.Email, Available: len(candidates), Calls: []ReviewQueueCall{}}
+	queue := ReviewQueue{Calls: []ReviewQueueCall{}}
+	names := locationNames(authorization)
 	listed, err := tx.Query(ctx, `
 		SELECT r.interaction_id::text, i.started_at, i.location_id::text,
 			GREATEST(0, EXTRACT(EPOCH FROM (i.ended_at - i.started_at)))::int,
@@ -339,7 +347,7 @@ func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand
 			listed.Close()
 			return ReviewQueue{}, fmt.Errorf("read review queue: %w", err)
 		}
-		call.LocationName = locationNames(authorization)[call.LocationName]
+		call.LocationName = names[call.LocationName]
 		queue.Calls = append(queue.Calls, call)
 	}
 	listed.Close()
@@ -540,10 +548,7 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 			}
 		}
 	}
-	order := map[string]int{}
-	for index, question := range ScorecardQuestions {
-		order[question.Key] = index
-	}
+	order := questionOrder()
 	sort.Slice(review.Answers, func(left, right int) bool {
 		return order[review.Answers[left].Question] < order[review.Answers[right].Question]
 	})
@@ -562,7 +567,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
 		SELECT r.interaction_id::text, i.started_at, i.location_id::text, r.question, r.reviewer_email, r.answer, r.note,
-			r.judge_answer, r.judge_probability, COALESCE(r.judge_version, '')
+			r.judge_answer, COALESCE(r.judge_version, '')
 		FROM ai_call_reviews r
 		JOIN ai_interactions i ON i.id = r.interaction_id
 		WHERE r.practice_id = $1 AND i.location_id = ANY($2::uuid[])
@@ -585,7 +590,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		count++
 		var item JudgeDisagreement
 		var judgeAnswer *bool
-		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &item.JudgeProbability, &item.JudgeVersion); err != nil {
+		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &item.JudgeVersion); err != nil {
 			rows.Close()
 			return JudgeAccuracy{}, fmt.Errorf("read judge accuracy: %w", err)
 		}
@@ -613,7 +618,6 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		}
 		byCallQuestion[key].Answers = append(byCallQuestion[key].Answers, ReviewerAnswer{ReviewerEmail: item.ReviewerEmail, Answer: item.Human, Note: item.Note})
 		if judgeAnswer == nil {
-			result.Unjudged++
 			continue
 		}
 		group := groupKey{item.Question, item.JudgeVersion}
@@ -659,10 +663,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			result.ReviewerDisagreements = append(result.ReviewerDisagreements, *group)
 		}
 	}
-	order := map[string]int{}
-	for index, question := range ScorecardQuestions {
-		order[question.Key] = index
-	}
+	order := questionOrder()
 	for _, row := range groups {
 		result.Rows = append(result.Rows, *row)
 	}
@@ -764,11 +765,6 @@ func (m *Module) ImportGoldenSet(ctx context.Context, practiceID string, reviewe
 				interaction_id, practice_id, question, reviewer, reviewer_email, answer, note,
 				review_date, sample, scorecard_version, judge_answer, judge_probability, judge_version, reviewed_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13, $14)
-			ON CONFLICT (interaction_id, question, reviewer) DO UPDATE SET
-				reviewer_email = EXCLUDED.reviewer_email, answer = EXCLUDED.answer, note = EXCLUDED.note,
-				review_date = EXCLUDED.review_date, sample = EXCLUDED.sample, scorecard_version = EXCLUDED.scorecard_version,
-				judge_answer = EXCLUDED.judge_answer, judge_probability = EXCLUDED.judge_probability,
-				judge_version = EXCLUDED.judge_version, reviewed_at = EXCLUDED.reviewed_at
 		`, interactionID, practiceID, entry.Judge, reviewer.Subject, reviewer.Email, entry.Human == "yes", strings.TrimSpace(entry.Note),
 			entry.Date, sample, entry.Version, judgeAnswer, judgeProbability, judgeVersion, importedAt); err != nil {
 			return GoldenSetImport{}, fmt.Errorf("import golden set entry: %w", err)

@@ -298,7 +298,6 @@ export function OperatorAnalytics({
                 key={requestKey}
                 data={currentRequest.data}
                 practiceID={practiceID}
-                locationID={locationID}
                 locations={locations}
                 versionSelection={versionSelection}
                 onVersionSelectionChange={setVersionSelection}
@@ -333,7 +332,6 @@ export function OperatorAnalytics({
 function AnalyticsReady({
   data,
   practiceID,
-  locationID,
   locations,
   versionSelection,
   onVersionSelectionChange,
@@ -345,7 +343,6 @@ function AnalyticsReady({
 }: {
   data: AiCallAnalytics
   practiceID: string
-  locationID: string
   locations: Location[]
   versionSelection: VersionSelection
   onVersionSelectionChange: (selection: VersionSelection) => void
@@ -365,7 +362,7 @@ function AnalyticsReady({
       {(tab === "overview" || tab === "quality") && (
         <VersionToolbar view={versionView} onChange={onVersionSelectionChange} />
       )}
-      {tab === "overview" && <AnalyticsOverview summary={data.summary} versionView={versionView} kpi={<BookingConversionKpi practiceID={practiceID} locationID={locationID} range={range} />} />}
+      {tab === "overview" && <AnalyticsOverview summary={data.summary} versionView={versionView} kpi={<BookingConversionKpi practiceID={practiceID} range={range} />} />}
       {tab === "quality" && <DiagnosticsQuality summary={data.summary} versionView={versionView} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
       {tab === "calls" && data.calls.length === 0 ? (

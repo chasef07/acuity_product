@@ -34,7 +34,7 @@ export function useQuestionCatalog() {
   return new Map(questions.map((question) => [question.key, question]))
 }
 
-export function ScorecardDefinitions({ questions }: { questions: OperatorScorecardQuestion[] }) {
+function ScorecardDefinitions({ questions }: { questions: OperatorScorecardQuestion[] }) {
   return (
     <ul className="divide-y rounded-lg border bg-card">
       {questions.filter((question) => question.source === "judge").map((question) => (
@@ -93,8 +93,8 @@ export function ScorecardDefinitionsButton() {
   )
 }
 
-export function BookingConversionKpi({ practiceID, locationID, range }: { practiceID: string; locationID: string; range: OperatorAiAnalyticsRange }) {
-  const results = useScorecardResults(practiceID, locationID, range)
+export function BookingConversionKpi({ practiceID, range }: { practiceID: string; range: OperatorAiAnalyticsRange }) {
+  const results = useScorecardResults(practiceID, "", range)
   const data = results.status === "ready" ? results.data : undefined
   return (
     <Card size="sm" className="min-w-0">

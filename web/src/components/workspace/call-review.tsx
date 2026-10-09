@@ -434,7 +434,7 @@ function JudgeAccuracyView({
   practiceID: string
   onOpenCall: (interactionID: string) => void
 }) {
-  const accuracy = useJudgeAccuracy(practiceID, 0)
+  const accuracy = useJudgeAccuracy(practiceID)
   const catalog = useQuestionCatalog()
   const [picked, setPicked] = useState("")
   const [goldenOpen, setGoldenOpen] = useState(false)
