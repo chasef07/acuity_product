@@ -99,7 +99,9 @@ function JuryScorecard({ evaluation, prompts }: { evaluation: Record<string, unk
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
   const jurors = Array.isArray(evaluation.jurors) ? evaluation.jurors.map(String) : []
-  const names = [...new Set([...Object.keys(results), ...Object.keys(errors)])].filter((name) => name !== "expressed_sentiment")
+  const order = Object.keys(prompts)
+  const rank = (name: string) => (order.includes(name) ? order.indexOf(name) : order.length)
+  const names = [...new Set([...Object.keys(results), ...Object.keys(errors)])].filter((name) => name !== "expressed_sentiment").sort((left, right) => rank(left) - rank(right))
   const sentiment = record(results.expressed_sentiment)
   const score = typeof sentiment.score === "number" && sentiment.score >= 0 && sentiment.score <= 4 ? sentiment.score : undefined
   return <>
