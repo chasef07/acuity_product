@@ -854,6 +854,10 @@ export type OperatorScorecardQuestion = {
     key: string;
     code: string;
     label: string;
+    /**
+     * The question in one short line, as reviewers see it.
+     */
+    prompt: string;
     group: string;
     source: 'judge' | 'code';
     question: string;
@@ -920,7 +924,6 @@ export type OperatorCallReviewQueueCall = {
     durationSeconds: number;
     sample: 'random' | 'flagged';
     overlap: boolean;
-    excluded: boolean;
     completedAt?: string;
 };
 
@@ -959,7 +962,6 @@ export type OperatorCallReview = {
     facts: Array<OperatorCallReviewFact>;
     questions: Array<string>;
     submitted: boolean;
-    excluded: boolean;
     note: string;
     answers: Array<OperatorCallReviewAnswer>;
     /**
@@ -971,7 +973,6 @@ export type OperatorCallReview = {
 export type OperatorCallReviewSubmission = {
     answers: Array<OperatorCallReviewAnswer>;
     note: string;
-    excluded: boolean;
 };
 
 export type OperatorJudgeAccuracyRequest = {

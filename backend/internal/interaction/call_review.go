@@ -33,7 +33,6 @@ var reviewFailureQuestions = map[string]bool{
 	"appointment_datetime_correct": true,
 	"no_results_retried":           true,
 	"person_request_honored":       true,
-	"claims_backed":                true,
 	"staff_task_identified":        true,
 }
 
@@ -46,7 +45,6 @@ type ReviewQueueCall struct {
 	DurationSeconds int        `json:"durationSeconds"`
 	Sample          string     `json:"sample"`
 	Overlap         bool       `json:"overlap"`
-	Excluded        bool       `json:"excluded"`
 	CompletedAt     *time.Time `json:"completedAt,omitempty"`
 }
 
@@ -90,16 +88,14 @@ type CallReview struct {
 	Facts         []ReviewFact        `json:"facts"`
 	Questions     []string            `json:"questions"`
 	Submitted     bool                `json:"submitted"`
-	Excluded      bool                `json:"excluded"`
 	Note          string              `json:"note"`
 	Answers       []ReviewAnswer      `json:"answers"`
 	Judge         []ReviewJudgeAnswer `json:"judge"`
 }
 
 type CallReviewSubmission struct {
-	Answers  []ReviewAnswer
-	Note     string
-	Excluded bool
+	Answers []ReviewAnswer
+	Note    string
 }
 
 type JudgeAccuracyRow struct {
@@ -318,7 +314,7 @@ func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand
 	listed, err := tx.Query(ctx, `
 		SELECT r.interaction_id::text, i.started_at, i.location_id::text,
 			GREATEST(0, EXTRACT(EPOCH FROM (i.ended_at - i.started_at)))::int,
-			r.sample, r.overlap, r.excluded, r.completed_at
+			r.sample, r.overlap, r.completed_at
 		FROM ai_call_review_assignments r
 		JOIN ai_interactions i ON i.id = r.interaction_id
 		WHERE r.practice_id = $1 AND r.review_date = $2::date AND r.reviewer = $3 AND i.location_id = ANY($4::uuid[])
@@ -329,7 +325,7 @@ func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand
 	}
 	for listed.Next() {
 		var call ReviewQueueCall
-		if err := listed.Scan(&call.InteractionID, &call.StartedAt, &call.LocationName, &call.DurationSeconds, &call.Sample, &call.Overlap, &call.Excluded, &call.CompletedAt); err != nil {
+		if err := listed.Scan(&call.InteractionID, &call.StartedAt, &call.LocationName, &call.DurationSeconds, &call.Sample, &call.Overlap, &call.CompletedAt); err != nil {
 			listed.Close()
 			return ReviewQueue{}, fmt.Errorf("read review queue: %w", err)
 		}
@@ -421,12 +417,12 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 
 	var reviewDate string
 	err = tx.QueryRow(ctx, `
-		SELECT sample, excluded, note, completed_at IS NOT NULL, review_date::text
+		SELECT sample, note, completed_at IS NOT NULL, review_date::text
 		FROM ai_call_review_assignments
 		WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3
 		ORDER BY review_date DESC LIMIT 1
 		FOR UPDATE
-	`, authorization.Practice.ID, identity.Subject, interactionID).Scan(&review.Sample, &review.Excluded, &review.Note, &review.Submitted, &reviewDate)
+	`, authorization.Practice.ID, identity.Subject, interactionID).Scan(&review.Sample, &review.Note, &review.Submitted, &reviewDate)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return CallReview{}, fmt.Errorf("read review assignment: %w", err)
 	}
@@ -457,45 +453,41 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 		if booking, answered := answers["booking_requested"]; answered && !booking.Answer && answers["time_offered"].Question != "" {
 			return CallReview{}, ErrInvalidInput
 		}
-		if !submission.Excluded {
-			for _, question := range review.Questions {
-				required := question != "time_offered" || answers["booking_requested"].Answer
-				if _, answered := answers[question]; required && !answered {
-					return CallReview{}, ErrInvalidInput
-				}
+		for _, question := range review.Questions {
+			required := question != "time_offered" || answers["booking_requested"].Answer
+			if _, answered := answers[question]; required && !answered {
+				return CallReview{}, ErrInvalidInput
 			}
 		}
 		now := m.now()
-		if !submission.Excluded {
-			for _, answer := range answers {
-				snapshot, judged := judge[answer.Question]
-				var judgeAnswer *bool
-				var judgeVersion any
-				if judged {
-					judgeAnswer = &snapshot.Answer
-					judgeVersion = snapshot.Version
-				}
-				if _, err := tx.Exec(ctx, `
-					INSERT INTO ai_call_reviews (
-						interaction_id, practice_id, question, reviewer, reviewer_email, answer, note,
-						review_date, sample, scorecard_version, judge_answer, judge_probability, judge_version, reviewed_at
-					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13, $14)
-				`, interactionID, authorization.Practice.ID, answer.Question, identity.Subject, identity.Email, answer.Answer, answer.Note,
-					reviewDate, review.Sample, ScorecardJudgeVersion, judgeAnswer, snapshot.Probability, judgeVersion, now); err != nil {
-					return CallReview{}, fmt.Errorf("save call review: %w", err)
-				}
+		for _, answer := range answers {
+			snapshot, judged := judge[answer.Question]
+			var judgeAnswer *bool
+			var judgeVersion any
+			if judged {
+				judgeAnswer = &snapshot.Answer
+				judgeVersion = snapshot.Version
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO ai_call_reviews (
+					interaction_id, practice_id, question, reviewer, reviewer_email, answer, note,
+					review_date, sample, scorecard_version, judge_answer, judge_probability, judge_version, reviewed_at
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13, $14)
+			`, interactionID, authorization.Practice.ID, answer.Question, identity.Subject, identity.Email, answer.Answer, answer.Note,
+				reviewDate, review.Sample, ScorecardJudgeVersion, judgeAnswer, snapshot.Probability, judgeVersion, now); err != nil {
+				return CallReview{}, fmt.Errorf("save call review: %w", err)
 			}
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE ai_call_review_assignments SET excluded = $4, note = $5, completed_at = $6
-			WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3 AND review_date = $7::date
-		`, authorization.Practice.ID, identity.Subject, interactionID, submission.Excluded, submission.Note, now, reviewDate); err != nil {
+			UPDATE ai_call_review_assignments SET note = $4, completed_at = $5
+			WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3 AND review_date = $6::date
+		`, authorization.Practice.ID, identity.Subject, interactionID, submission.Note, now, reviewDate); err != nil {
 			return CallReview{}, fmt.Errorf("complete review assignment: %w", err)
 		}
 		if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{Action: "ai_call_review.submitted", ResourceType: "ai_interaction", ResourceID: interactionID, ResourceVersion: 1, OccurredAt: now}); err != nil {
 			return CallReview{}, err
 		}
-		review.Submitted, review.Excluded, review.Note = true, submission.Excluded, submission.Note
+		review.Submitted, review.Note = true, submission.Note
 	}
 
 	saved, err := tx.Query(ctx, `
@@ -562,10 +554,6 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		FROM ai_call_reviews r
 		JOIN ai_interactions i ON i.id = r.interaction_id
 		WHERE r.practice_id = $1 AND i.location_id = ANY($2::uuid[])
-			AND NOT EXISTS (
-				SELECT 1 FROM ai_call_review_assignments a
-				WHERE a.practice_id = r.practice_id AND a.interaction_id = r.interaction_id AND a.excluded
-			)
 		ORDER BY i.started_at DESC, r.interaction_id, r.question, r.reviewer_email
 		LIMIT $3
 	`, practiceID, locations, analyticsRowLimit+1)

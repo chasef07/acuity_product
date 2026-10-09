@@ -222,7 +222,7 @@ function QueueRow({
   active: boolean
   onSelect: () => void
 }) {
-  const state = call.excluded ? "Excluded" : call.completedAt ? "Reviewed" : "To review"
+  const state = call.completedAt ? "Reviewed" : "To review"
   return (
     <button
       type="button"
@@ -234,7 +234,7 @@ function QueueRow({
       <span
         aria-hidden="true"
         className={`mt-1.5 size-2 shrink-0 rounded-full border ${
-          call.excluded ? "border-muted-foreground bg-muted-foreground" : call.completedAt ? "border-foreground bg-foreground" : "border-muted-foreground"
+          call.completedAt ? "border-foreground bg-foreground" : "border-muted-foreground"
         }`}
       />
       <span className="min-w-0 flex-1">
@@ -247,7 +247,6 @@ function QueueRow({
         <span className="mt-1 flex flex-wrap gap-1">
           {call.sample === "flagged" && <Badge variant="destructive">Flagged</Badge>}
           {call.overlap && <Badge variant="outline">Shared</Badge>}
-          {call.excluded && <Badge variant="secondary">Excluded</Badge>}
         </span>
       </span>
     </button>
@@ -415,6 +414,12 @@ function Transcript({ interactionID }: { interactionID: string }) {
   )
 }
 
+function versionLabel(version: string) {
+  if (version === "typesafe-scorecard-v6") return "Current (v6)"
+  if (version === "v1") return "Batch 1 (v1)"
+  return version || "Unknown"
+}
+
 function JudgeAccuracyView({
   practiceID,
   onOpenCall,
@@ -424,6 +429,7 @@ function JudgeAccuracyView({
 }) {
   const accuracy = useJudgeAccuracy(practiceID, 0)
   const catalog = useQuestionCatalog()
+  const [picked, setPicked] = useState("")
   if (accuracy.status === "loading") return <Skeleton className="h-72 rounded-xl" />
   if (accuracy.status === "failed") {
     return (
@@ -437,87 +443,101 @@ function JudgeAccuracyView({
     )
   }
   const data = accuracy.data
+  const versions = Array.from(new Set(data.rows.map((row) => row.judgeVersion))).sort((left, right) => (left === "typesafe-scorecard-v6" ? -1 : right === "typesafe-scorecard-v6" ? 1 : left.localeCompare(right)))
+  const version = versions.includes(picked) ? picked : versions[0] ?? ""
+  const rows = data.rows.filter((row) => row.judgeVersion === version)
+  const disagreements = data.judgeDisagreements.filter((item) => item.judgeVersion === version)
   const label = (key: string) => {
     const question = catalog.get(key)
     return question ? `${question.code} ${question.label}` : key
   }
-  const totals = data.rows.reduce((sum, row) => ({ sample: sum.sample + row.sample, agreed: sum.agreed + row.agreed }), { sample: 0, agreed: 0 })
+  const totals = rows.reduce((sum, row) => ({ sample: sum.sample + row.sample, agreed: sum.agreed + row.agreed }), { sample: 0, agreed: 0 })
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Reviewed calls" value={data.reviewedCalls.toLocaleString()} note="Excluding test calls" />
-        <Stat label="Golden-set answers" value={totals.sample.toLocaleString()} note="With a judge answer to compare" />
-        <Stat label="Agreement" value={totals.sample ? `${Math.round((100 * totals.agreed) / totals.sample)}%` : "—"} note={`${totals.agreed} of ${totals.sample}`} />
-        <Stat label="Reviewer disagreements" value={data.reviewerDisagreements.length.toLocaleString()} note="Questions to reword" />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          How often Jev gives the same answer you do. Below 90% on a question means its wording needs work.
+        </p>
+        {versions.length > 1 && (
+          <ToggleGroup
+            variant="segmented"
+            spacing={1}
+            value={[version]}
+            aria-label="Judge version"
+            onValueChange={(values) => values[0] && setPicked(values[0])}
+          >
+            {versions.map((item) => (
+              <ToggleGroupItem key={item} value={item}>{versionLabel(item)}</ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <Stat label="Jev agrees with you" value={totals.sample ? `${Math.round((100 * totals.agreed) / totals.sample)}%` : "—"} note={`${totals.agreed} of ${totals.sample} answers, ${versionLabel(version)}`} />
+        <Stat label="Calls reviewed" value={data.reviewedCalls.toLocaleString()} note="All versions" />
+        <Stat label="You and Chase disagreed" value={data.reviewerDisagreements.length.toLocaleString()} note="Questions to reword" />
       </div>
       <Card size="sm">
         <CardHeader>
-          <CardTitle className="text-sm">Per question and judge version</CardTitle>
+          <CardTitle className="text-sm">By question</CardTitle>
           <CardDescription>
-            Failures caught: the human said no and the judge said no. False alarm: the judge said no when the human said yes.
-            {data.unjudged > 0 && ` ${data.unjudged} golden-set ${data.unjudged === 1 ? "answer has" : "answers have"} no judge answer to compare and ${data.unjudged === 1 ? "is" : "are"} left out.`}
+            Caught: you said no and Jev said no. False alarm: Jev said no when you said yes.
           </CardDescription>
         </CardHeader>
         <CardContent className="overflow-x-auto px-0">
-          <Table className="min-w-[44rem]">
+          <Table className="min-w-[36rem]">
             <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="pl-4">Question</TableHead>
-                <TableHead>Judge version</TableHead>
-                <TableHead className="text-right">Agreement</TableHead>
+                <TableHead className="text-right">Jev agrees</TableHead>
                 <TableHead className="text-right">Failures caught</TableHead>
                 <TableHead className="text-right">False alarms</TableHead>
-                <TableHead className="pr-4 text-right">Sample</TableHead>
+                <TableHead className="pr-4 text-right">Answers</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.rows.length === 0 && (
+              {rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
                     No reviewed calls yet. Answers from the daily queue land here.
                   </TableCell>
                 </TableRow>
               )}
-              {data.rows.map((row) => (
-                <TableRow key={`${row.question}:${row.judgeVersion}`}>
-                  <TableCell className="pl-4 font-medium">{label(row.question)}</TableCell>
-                  <TableCell className="font-mono text-xs">{row.judgeVersion || "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {row.sample ? `${row.agreed}/${row.sample} · ${Math.round((100 * row.agreed) / row.sample)}%` : "—"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">{row.humanNo ? `${row.failuresCaught}/${row.humanNo}` : "–"}</TableCell>
-                  <TableCell className={`text-right tabular-nums ${row.falseAlarms ? "text-destructive" : ""}`}>{row.falseAlarms}</TableCell>
-                  <TableCell className="pr-4 text-right tabular-nums">{row.sample}</TableCell>
-                </TableRow>
-              ))}
+              {rows.map((row) => {
+                const percent = row.sample ? Math.round((100 * row.agreed) / row.sample) : undefined
+                return (
+                  <TableRow key={row.question}>
+                    <TableCell className="pl-4 font-medium">{label(row.question)}</TableCell>
+                    <TableCell className={`text-right tabular-nums ${percent !== undefined && percent < 90 ? "text-destructive" : ""}`}>
+                      {percent === undefined ? "—" : `${percent}%`}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{row.humanNo ? `${row.failuresCaught} of ${row.humanNo}` : "–"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{row.falseAlarms}</TableCell>
+                    <TableCell className="pr-4 text-right tabular-nums text-muted-foreground">{row.sample}</TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle className="text-sm">Human vs judge disagreements</CardTitle>
-          <CardDescription>Each one is either a missed failure or a false alarm. Open a call to see why.</CardDescription>
-        </CardHeader>
-        <CardContent className="overflow-x-auto px-0">
-          <Table className="min-w-[48rem]">
+      <details className="group rounded-xl border bg-card">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+          Calls where Jev disagreed with you ({disagreements.length})
+        </summary>
+        <div className="overflow-x-auto border-t">
+          <Table className="min-w-[44rem]">
             <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="pl-4">Call</TableHead>
                 <TableHead>Question</TableHead>
-                <TableHead>Human</TableHead>
-                <TableHead>Judge</TableHead>
-                <TableHead>Reviewer</TableHead>
+                <TableHead>You</TableHead>
+                <TableHead>Jev</TableHead>
                 <TableHead className="pr-4">Note</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.judgeDisagreements.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">No disagreements.</TableCell>
-                </TableRow>
-              )}
-              {data.judgeDisagreements.map((item) => (
+              {disagreements.map((item) => (
                 <TableRow key={`${item.interactionId}:${item.question}:${item.reviewerEmail}`} className="cursor-pointer hover:bg-muted" onClick={() => onOpenCall(item.interactionId)}>
                   <TableCell className="pl-4">
                     <button
@@ -530,54 +550,42 @@ function JudgeAccuracyView({
                     >
                       {formatShortDateTime(item.startedAt)}
                     </button>
-                    <span className="block text-[0.6875rem] text-muted-foreground">{item.locationName}</span>
+                    <span className="block text-[0.6875rem] text-muted-foreground">{item.locationName} · {item.reviewerEmail}</span>
                   </TableCell>
                   <TableCell className="text-xs">{label(item.question)}</TableCell>
                   <TableCell><AnswerBadge value={item.human} /></TableCell>
-                  <TableCell>
-                    <AnswerBadge value={item.judge} />
-                    {item.judgeProbability !== undefined && (
-                      <span className="ml-1 font-mono text-[0.6875rem] text-muted-foreground">{item.judgeProbability.toFixed(2)}</span>
-                    )}
-                    <span className="block font-mono text-[0.625rem] text-muted-foreground">{item.judgeVersion}</span>
-                  </TableCell>
-                  <TableCell className="text-xs">{item.reviewerEmail}</TableCell>
+                  <TableCell><AnswerBadge value={item.judge} /></TableCell>
                   <TableCell className="max-w-80 pr-4 text-xs whitespace-normal text-muted-foreground">{item.note || "—"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle className="text-sm">Reviewer disagreements</CardTitle>
-          <CardDescription>Two reviewers answered the same question differently: the question is unclear, so reword it.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {data.reviewerDisagreements.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No disagreements between reviewers yet. Shared calls in the daily queue feed this.</p>
-          ) : (
-            <ul className="divide-y">
-              {data.reviewerDisagreements.map((item) => (
-                <li key={`${item.interactionId}:${item.question}`} className="flex flex-wrap items-start justify-between gap-3 py-2.5">
-                  <button type="button" className="text-left text-xs" onClick={() => onOpenCall(item.interactionId)}>
-                    <span className="font-medium">{label(item.question)}</span>
-                    <span className="block text-muted-foreground">{formatShortDateTime(item.startedAt)} · {item.locationName}</span>
-                  </button>
-                  <span className="flex flex-wrap gap-2 text-xs">
-                    {item.answers.map((answer) => (
-                      <span key={answer.reviewerEmail} title={answer.note} className="flex items-center gap-1">
-                        {answer.reviewerEmail} <AnswerBadge value={answer.answer} />
-                      </span>
-                    ))}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+        </div>
+      </details>
+      {data.reviewerDisagreements.length > 0 && (
+        <details className="rounded-xl border bg-card">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+            Calls where you and Chase disagreed ({data.reviewerDisagreements.length})
+          </summary>
+          <ul className="divide-y border-t px-4">
+            {data.reviewerDisagreements.map((item) => (
+              <li key={`${item.interactionId}:${item.question}`} className="flex flex-wrap items-start justify-between gap-3 py-2.5">
+                <button type="button" className="text-left text-xs" onClick={() => onOpenCall(item.interactionId)}>
+                  <span className="font-medium">{label(item.question)}</span>
+                  <span className="block text-muted-foreground">{formatShortDateTime(item.startedAt)} · {item.locationName}</span>
+                </button>
+                <span className="flex flex-wrap gap-2 text-xs">
+                  {item.answers.map((answer) => (
+                    <span key={answer.reviewerEmail} title={answer.note} className="flex items-center gap-1">
+                      {answer.reviewerEmail} <AnswerBadge value={answer.answer} />
+                    </span>
+                  ))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   )
 }

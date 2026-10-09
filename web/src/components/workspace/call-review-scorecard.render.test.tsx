@@ -7,7 +7,7 @@ import type { OperatorScorecardQuestion } from "../../lib/api/generated/types.ge
 const catalog = new Map<string, OperatorScorecardQuestion>(
   ["booking_requested", "time_offered", "need_understood"].map((key, index) => [
     key,
-    { key, code: ["B1", "B5", "H1"][index], label: key, group: "Synthetic", source: "judge" as const, question: `Synthetic ${key}?`, yes: "Yes.", no: "No.", appliesWhen: "Always." },
+    { key, code: ["B1", "B5", "H1"][index], label: key, prompt: `Short ${key}?`, group: "Synthetic", source: "judge" as const, question: `Synthetic ${key}?`, yes: "Yes.", no: "No.", appliesWhen: "Always." },
   ]),
 )
 const review = {
@@ -17,7 +17,6 @@ const review = {
   facts: [],
   questions: ["booking_requested", "time_offered", "need_understood"],
   submitted: false,
-  excluded: false,
   note: "",
   answers: [],
   judge: [],
@@ -25,7 +24,7 @@ const review = {
 
 test("the scorecard stays blind until the reviewer saves, and B5 waits for B1", () => {
   const html = renderToStaticMarkup(<ScorecardPanel review={review} catalog={catalog} onSaved={() => {}} />)
-  assert.match(html, /Answer before the judge is revealed/)
+  assert.match(html, /0 of 2 answered/)
   assert.doesNotMatch(html, /Judge:/)
   assert.doesNotMatch(html, /B5/)
   assert.match(html, /Save and reveal judge/)
@@ -52,7 +51,7 @@ test("a saved review shows agreement and locks the answers", () => {
   />)
   assert.match(html, /Agrees/)
   assert.match(html, /Disagrees/)
-  assert.match(html, /skipped: no availability was returned/)
+  assert.match(html, /no availability returned/)
   assert.doesNotMatch(html, /Save and reveal judge/)
   assert.match(html, /disabled=""/)
 })

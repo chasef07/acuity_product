@@ -28,7 +28,6 @@ CREATE TABLE ai_call_review_assignments (
     sample text NOT NULL CHECK (sample IN ('random', 'flagged')),
     overlap boolean NOT NULL,
     position smallint NOT NULL,
-    excluded boolean NOT NULL DEFAULT false,
     note text NOT NULL DEFAULT '' CHECK (char_length(note) <= 2000),
     completed_at timestamptz,
     PRIMARY KEY (practice_id, review_date, reviewer, interaction_id),

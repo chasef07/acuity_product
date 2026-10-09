@@ -119,7 +119,7 @@ func (server *Server) SubmitOperatorCallReview(w http.ResponseWriter, r *http.Re
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	submission := interaction.CallReviewSubmission{Note: body.Note, Excluded: body.Excluded}
+	submission := interaction.CallReviewSubmission{Note: body.Note}
 	for _, answer := range body.Answers {
 		submission.Answers = append(submission.Answers, interaction.ReviewAnswer{Question: answer.Question, Answer: answer.Answer, Note: answer.Note})
 	}

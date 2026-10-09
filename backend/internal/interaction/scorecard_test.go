@@ -200,12 +200,12 @@ func TestStaffTaskIdentifiedCheck(t *testing.T) {
 func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 	seen := map[string]bool{}
 	for _, question := range ScorecardQuestions {
-		if seen[question.Key] || seen[question.Code] || question.Question == "" || question.Yes == "" || question.No == "" {
+		if seen[question.Key] || seen[question.Code] || question.Prompt == "" || question.Question == "" || question.Yes == "" || question.No == "" {
 			t.Fatalf("catalog entry %+v is duplicated or incomplete", question)
 		}
 		seen[question.Key], seen[question.Code] = true, true
 	}
-	for _, key := range []string{"person_request_honored", "claims_backed", "staff_task_identified"} {
+	for _, key := range []string{"person_request_honored", "staff_task_identified"} {
 		if !seen[key] {
 			t.Errorf("catalog is missing %s", key)
 		}

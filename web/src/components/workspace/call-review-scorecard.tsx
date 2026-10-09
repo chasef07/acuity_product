@@ -5,16 +5,8 @@ import { CheckIcon, EyeIcon, NotebookPenIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
-import { questionSummary } from "@/components/workspace/scorecard-overview"
 import type {
   OperatorCallReview,
   OperatorScorecardQuestion,
@@ -41,12 +33,11 @@ export function ScorecardPanel({
   )
   const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({})
   const [note, setNote] = useState(review.note)
-  const [excluded, setExcluded] = useState(review.excluded)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
   const applicable = shown.questions.filter((question) => question !== "time_offered" || answers.booking_requested === true)
-  const complete = excluded || applicable.every((question) => answers[question] !== undefined)
+  const complete = applicable.every((question) => answers[question] !== undefined)
   const judge = new Map(shown.judge.map((answer) => [answer.question, answer]))
   const revealed = shown.submitted
 
@@ -62,17 +53,14 @@ export function ScorecardPanel({
     setSaving(true)
     setError("")
     const outcome = await submitCallReview(shown.interactionId, {
-      excluded,
       note,
-      answers: excluded
-        ? []
-        : applicable.map((question) => ({ question, answer: answers[question], note: notes[question] ?? "" })),
+      answers: applicable.map((question) => ({ question, answer: answers[question], note: notes[question] ?? "" })),
     })
     setSaving(false)
     if (!outcome.ok) {
       setError(
         outcome.failure.kind === "rejected"
-          ? "Answer every question that applies, then save."
+          ? "Answer every question, then save."
           : outcome.failure.kind === "conflict"
             ? "This call was already reviewed. Answers stay as first saved so the golden set stays blind."
             : "The review could not be saved. Try again.",
@@ -91,80 +79,62 @@ export function ScorecardPanel({
 
   return (
     <>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-        <div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <div className="flex items-baseline justify-between gap-2">
           <h2 className="text-sm font-semibold">Scorecard</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {revealed ? "Saved. Judge answers are shown below each question." : "Answer before the judge is revealed."}
+          <p className="text-xs text-muted-foreground">
+            {revealed ? "Judge revealed" : `${applicable.filter((key) => answers[key] !== undefined).length} of ${applicable.length} answered`}
           </p>
         </div>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            className="size-3.5 accent-foreground"
-            checked={excluded}
-            disabled={revealed}
-            onChange={(event) => setExcluded(event.target.checked)}
-          />
-          Exclude: test or internal call
-        </label>
-        {!excluded &&
-          applicable.map((key) => {
+        <ol className="mt-1 divide-y">
+          {applicable.map((key) => {
             const question = catalog.get(key)
             const value = answers[key]
-            const judged = judge.get(key)
+            const noteOpen = openNotes[key] || Boolean(notes[key])
             return (
-              <Card key={key} size="sm" className="gap-2">
-                <CardHeader className="gap-0.5">
-                  <CardTitle className="text-[0.8125rem]">
-                    <span className="mr-1.5 font-mono text-xs font-normal text-muted-foreground">{question?.code}</span>
-                    {question?.label ?? key}
-                  </CardTitle>
-                  <CardDescription className="line-clamp-3 text-xs leading-5" title={question?.question}>{questionSummary(question)}</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <div role="group" aria-label={`${question?.code ?? key} answer`} className="grid grid-cols-2 gap-1.5">
-                    <Button size="sm" variant={value === true ? "default" : "outline"} aria-pressed={value === true} disabled={revealed && value !== true} onClick={() => answer(key, true)}>
+              <li key={key} className="space-y-2 py-3">
+                <p className="text-[0.8125rem] leading-5" title={question?.question}>
+                  <span className="mr-1.5 font-mono text-[0.6875rem] text-muted-foreground">{question?.code}</span>
+                  {question?.prompt ?? key}
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <div role="group" aria-label={`${question?.code ?? key} answer`} className="flex gap-1">
+                    <Button size="xs" className="h-7 w-14" variant={value === true ? "default" : "outline"} aria-pressed={value === true} disabled={revealed && value !== true} onClick={() => answer(key, true)}>
                       Yes
                     </Button>
-                    <Button size="sm" variant={value === false ? "destructive" : "outline"} aria-pressed={value === false} disabled={revealed && value !== false} onClick={() => answer(key, false)}>
+                    <Button size="xs" className="h-7 w-14" variant={value === false ? "destructive" : "outline"} aria-pressed={value === false} disabled={revealed && value !== false} onClick={() => answer(key, false)}>
                       No
                     </Button>
                   </div>
-                  {question && (
-                    <details className="text-[0.6875rem] leading-5 text-muted-foreground">
-                      <summary className="cursor-pointer select-none">What counts as yes or no</summary>
-                      <p className="mt-1">{question.question}</p>
-                      <p className="mt-1"><span className="font-medium text-foreground">Yes:</span> {question.yes}</p>
-                      <p><span className="font-medium text-foreground">No:</span> {question.no}</p>
-                    </details>
+                  {revealed ? (
+                    <JudgeLine question={key} human={value} judged={judge.get(key)} />
+                  ) : (
+                    !noteOpen && (
+                      <Button size="icon-xs" variant="ghost" className="ml-auto" aria-label={`Add a note to ${question?.code ?? key}`} title="Add note" onClick={() => setOpenNotes((current) => ({ ...current, [key]: true }))}>
+                        <NotebookPenIcon aria-hidden="true" />
+                      </Button>
+                    )
                   )}
-                  {openNotes[key] || notes[key] ? (
-                    <Textarea
-                      aria-label={`${question?.code ?? key} note`}
-                      placeholder="Why? Timestamps help."
-                      className="min-h-12 text-xs"
-                      value={notes[key] ?? ""}
-                      readOnly={revealed}
-                      onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))}
-                    />
-                  ) : revealed ? null : (
-                    <Button size="xs" variant="ghost" onClick={() => setOpenNotes((current) => ({ ...current, [key]: true }))}>
-                      <NotebookPenIcon aria-hidden="true" /> Add note
-                    </Button>
-                  )}
-                  {revealed && (
-                    <JudgeLine question={key} human={answers[key]} judged={judged} />
-                  )}
-                </CardContent>
-              </Card>
+                </div>
+                {noteOpen && (
+                  <Textarea
+                    aria-label={`${question?.code ?? key} note`}
+                    placeholder="Why? Timestamps help."
+                    className="min-h-10 text-xs"
+                    value={notes[key] ?? ""}
+                    readOnly={revealed}
+                    onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))}
+                  />
+                )}
+              </li>
             )
           })}
-        <div>
+        </ol>
+        <div className="border-t pt-3">
           <label htmlFor="review-note" className="text-xs font-medium">Call note</label>
           <Textarea
             id="review-note"
-            className="mt-1 text-xs"
+            className="mt-1 min-h-12 text-xs"
             placeholder="What went wrong, with timestamps."
             value={note}
             readOnly={revealed}
@@ -181,7 +151,7 @@ export function ScorecardPanel({
         ) : (
           <Button className="w-full" disabled={!complete || saving} onClick={() => void save()}>
             {saving ? <Spinner /> : <EyeIcon aria-hidden="true" />}
-            {excluded ? "Save as excluded" : "Save and reveal judge"}
+            Save and reveal judge
           </Button>
         )}
       </footer>
@@ -199,19 +169,16 @@ function JudgeLine({
   judged?: { answer: boolean; probability?: number; version: string }
 }) {
   if (!judged) {
-    return <p className="text-xs text-muted-foreground">Judge: no answer recorded for this call.</p>
+    return <span className="ml-auto text-[0.6875rem] text-muted-foreground">Judge: no answer</span>
   }
   const agrees = human === judged.answer
+  const detail = judged.probability !== undefined
+    ? judged.probability.toFixed(2)
+    : question === "time_offered" ? "no availability returned" : ""
   return (
-    <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-      Judge:
-      <span className="font-semibold text-foreground">{judged.answer ? "Yes" : "No"}</span>
-      {judged.probability !== undefined ? (
-        <span className="font-mono tabular-nums">({judged.probability.toFixed(2)})</span>
-      ) : question === "time_offered" ? (
-        <span>(skipped: no availability was returned)</span>
-      ) : null}
+    <span className="ml-auto flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground" title={detail}>
+      Judge {judged.answer ? "Yes" : "No"}
       <Badge variant={agrees ? "secondary" : "destructive"}>{agrees ? "Agrees" : "Disagrees"}</Badge>
-    </p>
+    </span>
   )
 }

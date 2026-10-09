@@ -3978,11 +3978,14 @@ components:
     OperatorScorecardQuestion:
       type: object
       additionalProperties: false
-      required: [key, code, label, group, source, question, "yes", "no", appliesWhen]
+      required: [key, code, label, prompt, group, source, question, "yes", "no", appliesWhen]
       properties:
         key: {type: string}
         code: {type: string}
         label: {type: string}
+        prompt:
+          type: string
+          description: The question in one short line, as reviewers see it.
         group: {type: string}
         source: {type: string, enum: [judge, code]}
         question: {type: string}
@@ -4061,7 +4064,7 @@ components:
     OperatorCallReviewQueueCall:
       type: object
       additionalProperties: false
-      required: [interactionId, startedAt, locationName, durationSeconds, sample, overlap, excluded]
+      required: [interactionId, startedAt, locationName, durationSeconds, sample, overlap]
       properties:
         interactionId: {type: string, format: uuid}
         startedAt: {type: string, format: date-time}
@@ -4069,7 +4072,6 @@ components:
         durationSeconds: {type: integer}
         sample: {type: string, enum: [random, flagged]}
         overlap: {type: boolean}
-        excluded: {type: boolean}
         completedAt: {type: string, format: date-time}
     OperatorCallReviewQueue:
       type: object
@@ -4112,7 +4114,7 @@ components:
     OperatorCallReview:
       type: object
       additionalProperties: false
-      required: [interactionId, assigned, facts, questions, submitted, excluded, note, answers, judge]
+      required: [interactionId, assigned, facts, questions, submitted, note, answers, judge]
       properties:
         interactionId: {type: string, format: uuid}
         assigned: {type: boolean}
@@ -4124,7 +4126,6 @@ components:
           type: array
           items: {type: string}
         submitted: {type: boolean}
-        excluded: {type: boolean}
         note: {type: string}
         answers:
           type: array
@@ -4136,14 +4137,13 @@ components:
     OperatorCallReviewSubmission:
       type: object
       additionalProperties: false
-      required: [answers, note, excluded]
+      required: [answers, note]
       properties:
         answers:
           type: array
           maxItems: 20
           items: {$ref: "#/components/schemas/OperatorCallReviewAnswer"}
         note: {type: string, maxLength: 2000}
-        excluded: {type: boolean}
     OperatorJudgeAccuracyRequest:
       type: object
       additionalProperties: false
