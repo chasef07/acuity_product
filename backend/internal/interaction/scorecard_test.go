@@ -156,6 +156,16 @@ func TestClassifyBooking(t *testing.T) {
 	}
 }
 
+func TestReviewFlaggedIgnoresBookingNos(t *testing.T) {
+	missed := map[string]bool{"booking_requested": true, "scheduling_tool_called": false, "time_offered": false, "need_understood": true}
+	if reviewFlagged(missed, nil) {
+		t.Fatal("a booking no alone must not flag a call for review")
+	}
+	if !reviewFlagged(map[string]bool{"booking_requested": true, "right_help": false}, nil) {
+		t.Fatal("a failure-question no must flag a call for review")
+	}
+}
+
 func TestParseGoldenSetJudgeAnswer(t *testing.T) {
 	for value, want := range map[string]string{"yes (0.82)": "true 0.82", "NO (0.05)": "false 0.05", "error": "<nil> <nil>", "no": "false <nil>"} {
 		answer, probability := parseJudgeAnswer(value)

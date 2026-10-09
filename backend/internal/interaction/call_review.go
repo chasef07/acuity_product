@@ -174,9 +174,6 @@ func reviewRank(interactionID, date string) string {
 }
 
 func reviewFlagged(answers map[string]bool, evaluation json.RawMessage) bool {
-	if classifyBooking(answers) == bookingMissed {
-		return true
-	}
 	for question, answer := range answers {
 		if !answer && reviewFailureQuestions[question] {
 			return true
