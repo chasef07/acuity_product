@@ -872,45 +872,6 @@ export type OperatorScorecardQuestions = {
     questions: Array<OperatorScorecardQuestion>;
 };
 
-export type OperatorScorecardQueryRequest = {
-    practiceId: string;
-    locationId?: string;
-    weeks: number;
-    timeZone: string;
-};
-
-export type OperatorBookingConversionWeek = {
-    weekStart: string;
-    locationId: string;
-    locationName: string;
-    calls: number;
-    judgedCalls: number;
-    bookingCalls: number;
-    converted: number;
-    blocked: number;
-    missed: number;
-    attempted: number;
-    conversion: number | null;
-};
-
-export type OperatorUnverifiedInsurancePlan = {
-    weekStart: string;
-    locationId: string;
-    locationName: string;
-    plan: string;
-    result: string;
-    calls: number;
-    lastSeenAt: string;
-};
-
-export type OperatorScorecardReport = {
-    from: string;
-    through: string;
-    timeZone: string;
-    weeks: Array<OperatorBookingConversionWeek>;
-    unverifiedInsurance: Array<OperatorUnverifiedInsurancePlan>;
-};
-
 export type OperatorCallReviewQueueRequest = {
     practiceId: string;
     date: string;
@@ -963,6 +924,7 @@ export type OperatorCallReview = {
     questions: Array<string>;
     submitted: boolean;
     note: string;
+    questionIdea: string;
     answers: Array<OperatorCallReviewAnswer>;
     /**
      * Empty until the reviewer submits, so answers stay blind.
@@ -973,6 +935,10 @@ export type OperatorCallReview = {
 export type OperatorCallReviewSubmission = {
     answers: Array<OperatorCallReviewAnswer>;
     note: string;
+    /**
+     * Something wrong on this call that no question asks about.
+     */
+    questionIdea?: string;
 };
 
 export type OperatorJudgeAccuracyRequest = {
@@ -1035,24 +1001,28 @@ export type OperatorScorecardResultsRequest = {
     range: OperatorAiAnalyticsRange;
 };
 
-export type OperatorScorecardResultRow = {
-    question: string;
-    answered: number;
-    no: number;
-};
-
-export type OperatorScorecardResultCall = {
-    interactionId: string;
-    startedAt: string;
-    locationName: string;
-    question: string;
+export type OperatorScorecardDay = {
+    date: string;
+    calls: number;
+    problemCalls: number;
+    problemRate: number | null;
+    bookingCalls: number;
+    converted: number;
+    conversion: number | null;
 };
 
 export type OperatorScorecardResults = {
     calls: number;
-    rows: Array<OperatorScorecardResultRow>;
-    noCalls: Array<OperatorScorecardResultCall>;
-    truncated: boolean;
+    /**
+     * Calls with a no on any failure question, or a missed booking.
+     */
+    problemCalls: number;
+    bookingCalls: number;
+    converted: number;
+    blocked: number;
+    missed: number;
+    conversion: number | null;
+    daily: Array<OperatorScorecardDay>;
 };
 
 export type OperatorGoldenSetCall = {
@@ -4095,47 +4065,6 @@ export type GetOperatorScorecardQuestionsResponses = {
 
 export type GetOperatorScorecardQuestionsResponse = GetOperatorScorecardQuestionsResponses[keyof GetOperatorScorecardQuestionsResponses];
 
-export type QueryOperatorScorecardData = {
-    body: OperatorScorecardQueryRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/operator/scorecard/query';
-};
-
-export type QueryOperatorScorecardErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * Another analytics request is running on this portal instance. Retry later.
-     */
-    429: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type QueryOperatorScorecardError = QueryOperatorScorecardErrors[keyof QueryOperatorScorecardErrors];
-
-export type QueryOperatorScorecardResponses = {
-    /**
-     * Weekly booking conversion per office from stored scorecard answers.
-     */
-    200: OperatorScorecardReport;
-};
-
-export type QueryOperatorScorecardResponse = QueryOperatorScorecardResponses[keyof QueryOperatorScorecardResponses];
-
 export type QueryOperatorScorecardResultsData = {
     body: OperatorScorecardResultsRequest;
     path?: never;
@@ -4170,7 +4099,7 @@ export type QueryOperatorScorecardResultsError = QueryOperatorScorecardResultsEr
 
 export type QueryOperatorScorecardResultsResponses = {
     /**
-     * Answered and no counts per question, plus up to 500 calls that got a no.
+     * Range totals and one point per UTC day.
      */
     200: OperatorScorecardResults;
 };

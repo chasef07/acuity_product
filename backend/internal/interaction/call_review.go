@@ -89,13 +89,15 @@ type CallReview struct {
 	Questions     []string            `json:"questions"`
 	Submitted     bool                `json:"submitted"`
 	Note          string              `json:"note"`
+	QuestionIdea  string              `json:"questionIdea"`
 	Answers       []ReviewAnswer      `json:"answers"`
 	Judge         []ReviewJudgeAnswer `json:"judge"`
 }
 
 type CallReviewSubmission struct {
-	Answers []ReviewAnswer
-	Note    string
+	Answers      []ReviewAnswer
+	Note         string
+	QuestionIdea string
 }
 
 type JudgeAccuracyRow struct {
@@ -370,7 +372,9 @@ func (m *Module) ReadCallReview(ctx context.Context, identity access.Identity, i
 
 func (m *Module) SubmitCallReview(ctx context.Context, identity access.Identity, interactionID string, submission CallReviewSubmission) (CallReview, error) {
 	submission.Note = strings.TrimSpace(submission.Note)
-	if utf8.RuneCountInString(submission.Note) > reviewNoteLimit || !utf8.ValidString(submission.Note) {
+	submission.QuestionIdea = strings.TrimSpace(submission.QuestionIdea)
+	if utf8.RuneCountInString(submission.Note) > reviewNoteLimit || !utf8.ValidString(submission.Note) ||
+		utf8.RuneCountInString(submission.QuestionIdea) > reviewNoteLimit || !utf8.ValidString(submission.QuestionIdea) {
 		return CallReview{}, ErrInvalidInput
 	}
 	for index := range submission.Answers {
@@ -428,12 +432,12 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 
 	var reviewDate string
 	err = tx.QueryRow(ctx, `
-		SELECT sample, note, completed_at IS NOT NULL, review_date::text
+		SELECT sample, note, question_idea, completed_at IS NOT NULL, review_date::text
 		FROM ai_call_review_assignments
 		WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3
 		ORDER BY review_date DESC LIMIT 1
 		FOR UPDATE
-	`, authorization.Practice.ID, identity.Subject, interactionID).Scan(&review.Sample, &review.Note, &review.Submitted, &reviewDate)
+	`, authorization.Practice.ID, identity.Subject, interactionID).Scan(&review.Sample, &review.Note, &review.QuestionIdea, &review.Submitted, &reviewDate)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return CallReview{}, fmt.Errorf("read review assignment: %w", err)
 	}
@@ -490,15 +494,15 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 			}
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE ai_call_review_assignments SET note = $4, completed_at = $5
-			WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3 AND review_date = $6::date
-		`, authorization.Practice.ID, identity.Subject, interactionID, submission.Note, now, reviewDate); err != nil {
+			UPDATE ai_call_review_assignments SET note = $4, question_idea = $5, completed_at = $6
+			WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3 AND review_date = $7::date
+		`, authorization.Practice.ID, identity.Subject, interactionID, submission.Note, submission.QuestionIdea, now, reviewDate); err != nil {
 			return CallReview{}, fmt.Errorf("complete review assignment: %w", err)
 		}
 		if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{Action: "ai_call_review.submitted", ResourceType: "ai_interaction", ResourceID: interactionID, ResourceVersion: 1, OccurredAt: now}); err != nil {
 			return CallReview{}, err
 		}
-		review.Submitted, review.Note = true, submission.Note
+		review.Submitted, review.Note, review.QuestionIdea = true, submission.Note, submission.QuestionIdea
 	}
 
 	saved, err := tx.Query(ctx, `

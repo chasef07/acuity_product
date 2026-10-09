@@ -27,31 +27,6 @@ func (server *Server) GetOperatorScorecardQuestions(w http.ResponseWriter, r *ht
 	})
 }
 
-func (server *Server) QueryOperatorScorecard(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.operatorIdentity(w, r)
-	if !ok {
-		return
-	}
-	var body api.OperatorScorecardQueryRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, finish, ok := server.beginAnalytics(w, r)
-	if !ok {
-		return
-	}
-	defer finish()
-	report, err := server.interactions.QueryScorecardReport(ctx, interaction.ScorecardReportCommand{
-		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: uuidString(body.LocationId),
-		Weeks: body.Weeks, TimeZone: body.TimeZone,
-	})
-	if err != nil {
-		server.writeInteractionError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, report)
-}
-
 func (server *Server) OpenOperatorCallReviewQueue(w http.ResponseWriter, r *http.Request) {
 	identity, ok := server.operatorIdentity(w, r)
 	if !ok {
@@ -119,7 +94,7 @@ func (server *Server) SubmitOperatorCallReview(w http.ResponseWriter, r *http.Re
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	submission := interaction.CallReviewSubmission{Note: body.Note}
+	submission := interaction.CallReviewSubmission{Note: body.Note, QuestionIdea: stringValue(body.QuestionIdea)}
 	for _, answer := range body.Answers {
 		submission.Answers = append(submission.Answers, interaction.ReviewAnswer{Question: answer.Question, Answer: answer.Answer, Note: answer.Note})
 	}

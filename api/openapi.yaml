@@ -1772,37 +1772,10 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/operator/scorecard/query:
-    post:
-      operationId: queryOperatorScorecard
-      summary: Read weekly booking conversion and unverified insurance plans per office as a Platform Operator.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/OperatorScorecardQueryRequest"
-      responses:
-        "200":
-          description: Weekly booking conversion per office from stored scorecard answers.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OperatorScorecardReport"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-        "429":
-          $ref: "#/components/responses/AnalyticsBusy"
   /v1/operator/scorecard/results:
     post:
       operationId: queryOperatorScorecardResults
-      summary: Count no answers per scorecard question over a range, with the calls behind them.
+      summary: Booking conversion and the daily share of calls with a problem over a range.
       requestBody:
         required: true
         content:
@@ -1811,7 +1784,7 @@ paths:
               $ref: "#/components/schemas/OperatorScorecardResultsRequest"
       responses:
         "200":
-          description: Answered and no counts per question, plus up to 500 calls that got a no.
+          description: Range totals and one point per UTC day.
           content:
             application/json:
               schema:
@@ -4029,57 +4002,6 @@ components:
         questions:
           type: array
           items: {$ref: "#/components/schemas/OperatorScorecardQuestion"}
-    OperatorScorecardQueryRequest:
-      type: object
-      additionalProperties: false
-      required: [practiceId, weeks, timeZone]
-      properties:
-        practiceId: {type: string, format: uuid}
-        locationId: {type: string, format: uuid}
-        weeks: {type: integer, minimum: 1, maximum: 12}
-        timeZone: {type: string, minLength: 1, maxLength: 100}
-    OperatorBookingConversionWeek:
-      type: object
-      additionalProperties: false
-      required: [weekStart, locationId, locationName, calls, judgedCalls, bookingCalls, converted, blocked, missed, attempted, conversion]
-      properties:
-        weekStart: {type: string, format: date}
-        locationId: {type: string, format: uuid}
-        locationName: {type: string}
-        calls: {type: integer}
-        judgedCalls: {type: integer}
-        bookingCalls: {type: integer}
-        converted: {type: integer}
-        blocked: {type: integer}
-        missed: {type: integer}
-        attempted: {type: integer}
-        conversion: {type: number, nullable: true}
-    OperatorUnverifiedInsurancePlan:
-      type: object
-      additionalProperties: false
-      required: [weekStart, locationId, locationName, plan, result, calls, lastSeenAt]
-      properties:
-        weekStart: {type: string, format: date}
-        locationId: {type: string, format: uuid}
-        locationName: {type: string}
-        plan: {type: string}
-        result: {type: string}
-        calls: {type: integer}
-        lastSeenAt: {type: string, format: date-time}
-    OperatorScorecardReport:
-      type: object
-      additionalProperties: false
-      required: [from, through, timeZone, weeks, unverifiedInsurance]
-      properties:
-        from: {type: string, format: date}
-        through: {type: string, format: date}
-        timeZone: {type: string}
-        weeks:
-          type: array
-          items: {$ref: "#/components/schemas/OperatorBookingConversionWeek"}
-        unverifiedInsurance:
-          type: array
-          items: {$ref: "#/components/schemas/OperatorUnverifiedInsurancePlan"}
     OperatorCallReviewQueueRequest:
       type: object
       additionalProperties: false
@@ -4141,7 +4063,7 @@ components:
     OperatorCallReview:
       type: object
       additionalProperties: false
-      required: [interactionId, assigned, facts, questions, submitted, note, answers, judge]
+      required: [interactionId, assigned, facts, questions, submitted, note, questionIdea, answers, judge]
       properties:
         interactionId: {type: string, format: uuid}
         assigned: {type: boolean}
@@ -4154,6 +4076,7 @@ components:
           items: {type: string}
         submitted: {type: boolean}
         note: {type: string}
+        questionIdea: {type: string}
         answers:
           type: array
           items: {$ref: "#/components/schemas/OperatorCallReviewAnswer"}
@@ -4171,6 +4094,10 @@ components:
           maxItems: 20
           items: {$ref: "#/components/schemas/OperatorCallReviewAnswer"}
         note: {type: string, maxLength: 2000}
+        questionIdea:
+          type: string
+          maxLength: 2000
+          description: Something wrong on this call that no question asks about.
     OperatorJudgeAccuracyRequest:
       type: object
       additionalProperties: false
@@ -4254,36 +4181,35 @@ components:
         practiceId: {type: string, format: uuid}
         locationId: {type: string, format: uuid}
         range: {$ref: "#/components/schemas/OperatorAIAnalyticsRange"}
-    OperatorScorecardResultRow:
+    OperatorScorecardDay:
       type: object
       additionalProperties: false
-      required: [question, answered, "no"]
+      required: [date, calls, problemCalls, problemRate, bookingCalls, converted, conversion]
       properties:
-        question: {type: string}
-        answered: {type: integer}
-        "no": {type: integer}
-    OperatorScorecardResultCall:
-      type: object
-      additionalProperties: false
-      required: [interactionId, startedAt, locationName, question]
-      properties:
-        interactionId: {type: string, format: uuid}
-        startedAt: {type: string, format: date-time}
-        locationName: {type: string}
-        question: {type: string}
+        date: {type: string, format: date}
+        calls: {type: integer}
+        problemCalls: {type: integer}
+        problemRate: {type: number, nullable: true}
+        bookingCalls: {type: integer}
+        converted: {type: integer}
+        conversion: {type: number, nullable: true}
     OperatorScorecardResults:
       type: object
       additionalProperties: false
-      required: [calls, rows, noCalls, truncated]
+      required: [calls, problemCalls, bookingCalls, converted, blocked, missed, conversion, daily]
       properties:
         calls: {type: integer}
-        rows:
+        problemCalls:
+          type: integer
+          description: Calls with a no on any failure question, or a missed booking.
+        bookingCalls: {type: integer}
+        converted: {type: integer}
+        blocked: {type: integer}
+        missed: {type: integer}
+        conversion: {type: number, nullable: true}
+        daily:
           type: array
-          items: {$ref: "#/components/schemas/OperatorScorecardResultRow"}
-        noCalls:
-          type: array
-          items: {$ref: "#/components/schemas/OperatorScorecardResultCall"}
-        truncated: {type: boolean}
+          items: {$ref: "#/components/schemas/OperatorScorecardDay"}
     OperatorGoldenSetCall:
       type: object
       additionalProperties: false

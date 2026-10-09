@@ -627,5 +627,5 @@ GRANT SELECT, INSERT, DELETE ON ai_interaction_manual_tags TO acuity_portal;
 GRANT SELECT, INSERT, DELETE ON ai_interaction_scorecard_answers TO acuity_portal, acuity_worker;
 -- Platform Operators keep the daily review queue and golden set in the portal.
 GRANT SELECT, INSERT ON ai_call_review_assignments TO acuity_portal;
-GRANT UPDATE (note, completed_at) ON ai_call_review_assignments TO acuity_portal;
+GRANT UPDATE (note, question_idea, completed_at) ON ai_call_review_assignments TO acuity_portal;
 GRANT SELECT, INSERT ON ai_call_reviews TO acuity_portal;

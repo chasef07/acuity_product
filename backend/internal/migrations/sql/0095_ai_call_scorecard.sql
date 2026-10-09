@@ -29,6 +29,7 @@ CREATE TABLE ai_call_review_assignments (
     overlap boolean NOT NULL,
     position smallint NOT NULL,
     note text NOT NULL DEFAULT '' CHECK (char_length(note) <= 2000),
+    question_idea text NOT NULL DEFAULT '' CHECK (char_length(question_idea) <= 2000),
     completed_at timestamptz,
     PRIMARY KEY (practice_id, review_date, reviewer, interaction_id),
     FOREIGN KEY (practice_id, interaction_id) REFERENCES ai_interactions(practice_id, id) ON DELETE CASCADE

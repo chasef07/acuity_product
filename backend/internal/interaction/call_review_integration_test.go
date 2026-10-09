@@ -158,8 +158,8 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		t.Fatalf("B5 is not answerable when B1 is no: %v", err)
 	}
 	answers := []ReviewAnswer{{Question: "booking_requested", Answer: true}, {Question: "time_offered", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true, Note: "Staff verification was the right next step."}, {Question: "clear_and_responsive", Answer: true}, {Question: "person_request_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}}
-	revealed, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Synthetic review"})
-	if err != nil || !revealed.Submitted || len(revealed.Answers) != 7 || len(revealed.Judge) != 5 {
+	revealed, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Synthetic review", QuestionIdea: "Did the agent mention the insurance card?"})
+	if err != nil || !revealed.Submitted || revealed.QuestionIdea != "Did the agent mention the insurance card?" || len(revealed.Answers) != 7 || len(revealed.Judge) != 5 {
 		t.Fatalf("submitted review reveals judge answers: %+v %v", revealed, err)
 	}
 	if _, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Changed after reveal"}); !errors.Is(err, ErrReviewLocked) {
@@ -202,34 +202,15 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 
 	now = time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC)
 	results, err := module.QueryScorecardResults(ctx, ScorecardResultsCommand{Identity: first, PracticeID: practice, Range: AnalyticsRange7Days})
-	if err != nil || results.Calls != 32 {
+	if err != nil || results.Calls != 32 || results.ProblemCalls != 7 || results.BookingCalls != 1 || results.Missed != 1 || results.Conversion == nil || *results.Conversion != 0 {
 		t.Fatalf("scorecard results: %+v %v", results, err)
 	}
-	noByQuestion := map[string]int{}
-	for _, row := range results.Rows {
-		noByQuestion[row.Question] = row.No
+	if len(results.Daily) != 8 {
+		t.Fatalf("one point per UTC day in range: %d", len(results.Daily))
 	}
-	clearNo := 0
-	for _, call := range results.NoCalls {
-		if call.Question == "clear_and_responsive" {
-			clearNo++
-			if call.LocationName != "Main" {
-				t.Fatalf("drill-in call carries its office: %+v", call)
-			}
+	for _, day := range results.Daily {
+		if (day.Date == "2026-10-06") != (day.Calls == 32) || (day.Calls == 0 && day.ProblemRate != nil) {
+			t.Fatalf("daily trend: %+v", results.Daily)
 		}
-	}
-	if noByQuestion["clear_and_responsive"] != 6 || clearNo != 6 || noByQuestion["right_help"] != 1 {
-		t.Fatalf("no counts per question: %v", noByQuestion)
-	}
-	report, err := module.QueryScorecardReport(ctx, ScorecardReportCommand{Identity: first, PracticeID: practice, Weeks: 2, TimeZone: "America/New_York"})
-	if err != nil || len(report.Weeks) != 1 {
-		t.Fatalf("report: %+v %v", report, err)
-	}
-	week := report.Weeks[0]
-	if week.WeekStart != "2026-10-05" || week.LocationName != "Main" || week.Calls != 32 || week.BookingCalls != 1 || week.Missed != 1 || week.Conversion == nil || *week.Conversion != 0 {
-		t.Fatalf("weekly booking conversion: %+v", week)
-	}
-	if len(report.UnverifiedInsurance) != 1 || report.UnverifiedInsurance[0].Plan != "Synthetic Gold Plan" || report.UnverifiedInsurance[0].Result != "The office needs to verify this plan's coverage before scheduling." {
-		t.Fatalf("unverified insurance plans: %+v", report.UnverifiedInsurance)
 	}
 }

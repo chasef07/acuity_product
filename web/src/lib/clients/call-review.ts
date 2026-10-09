@@ -5,7 +5,6 @@ import {
   getOperatorScorecardQuestions,
   openOperatorCallReviewQueue,
   queryOperatorJudgeAccuracy,
-  queryOperatorScorecard,
   queryOperatorScorecardResults,
   submitOperatorCallReview,
 } from "../api/generated/sdk.gen"
@@ -61,23 +60,6 @@ export function useJudgeAccuracy(practiceID: string, revision: number) {
     practiceID ? `judge-accuracy:${practiceID}:${revision}` : null,
     (transport) =>
       queryOperatorJudgeAccuracy({ ...transport, body: { practiceId: practiceID } }),
-  )
-}
-
-export function useScorecardReport(practiceID: string, locationID: string, weeks: number) {
-  const timeZone = useBrowserTimeZone()
-  return usePortalQuery(
-    practiceID ? `scorecard-report:${practiceID}:${locationID}:${weeks}:${timeZone}` : null,
-    (transport) =>
-      queryOperatorScorecard({
-        ...transport,
-        body: {
-          practiceId: practiceID,
-          locationId: locationID || undefined,
-          weeks,
-          timeZone,
-        },
-      }),
   )
 }
 

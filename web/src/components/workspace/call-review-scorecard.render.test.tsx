@@ -18,6 +18,7 @@ const review = {
   questions: ["booking_requested", "time_offered", "need_understood"],
   submitted: false,
   note: "",
+  questionIdea: "",
   answers: [],
   judge: [],
 }

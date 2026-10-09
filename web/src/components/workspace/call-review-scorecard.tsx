@@ -33,6 +33,7 @@ export function ScorecardPanel({
   )
   const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({})
   const [note, setNote] = useState(review.note)
+  const [questionIdea, setQuestionIdea] = useState(review.questionIdea)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
@@ -54,6 +55,7 @@ export function ScorecardPanel({
     setError("")
     const outcome = await submitCallReview(shown.interactionId, {
       note,
+      questionIdea,
       answers: applicable.map((question) => ({ question, answer: answers[question], note: notes[question] ?? "" })),
     })
     setSaving(false)
@@ -139,6 +141,16 @@ export function ScorecardPanel({
             value={note}
             readOnly={revealed}
             onChange={(event) => setNote(event.target.value)}
+          />
+          <label htmlFor="review-question-idea" className="mt-3 block text-xs font-medium">Missing question?</label>
+          <p className="text-[0.6875rem] text-muted-foreground">Something went wrong that no question asks about. The nightly judge review collects these.</p>
+          <Textarea
+            id="review-question-idea"
+            className="mt-1 min-h-10 text-xs"
+            placeholder="e.g. The agent quoted a price without looking it up."
+            value={questionIdea}
+            readOnly={revealed}
+            onChange={(event) => setQuestionIdea(event.target.value)}
           />
         </div>
       </div>

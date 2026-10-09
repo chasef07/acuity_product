@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { type ReactNode, useState } from "react"
 import {
   ArrowRightIcon,
   CalendarCheck2Icon,
@@ -66,7 +66,7 @@ import {
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { PendingCallIssues } from "@/components/workspace/call-issue-review"
 import { CallReviewWorkspace } from "@/components/workspace/call-review"
-import { ScorecardHighlights, ScorecardResultsCard } from "@/components/workspace/scorecard-overview"
+import { BookingConversionKpi, ImprovementTrend } from "@/components/workspace/scorecard-overview"
 import type {
   OperatorAiCallIssue,
   OperatorAiCallTags,
@@ -290,13 +290,15 @@ export function OperatorAnalytics({
             )}
             {tab === "quality" && (
               <div className="mb-4">
-                <ScorecardResultsCard practiceID={practiceID} locationID={locationID} range={range} onOpenCall={(id) => selectCall(id)} />
+                <ImprovementTrend practiceID={practiceID} locationID={locationID} range={range} />
               </div>
             )}
             {currentRequest.state === "ready" && currentRequest.data && (
               <AnalyticsReady
                 key={requestKey}
                 data={currentRequest.data}
+                practiceID={practiceID}
+                locationID={locationID}
                 locations={locations}
                 versionSelection={versionSelection}
                 onVersionSelectionChange={setVersionSelection}
@@ -306,11 +308,6 @@ export function OperatorAnalytics({
                 onLoadNextPage={loadNextPage}
                 onSelect={selectCall}
               />
-            )}
-            {tab === "overview" && (
-              <div className="mt-4">
-                <ScorecardHighlights practiceID={practiceID} locationID={locationID} />
-              </div>
             )}
           </>
         )}
@@ -335,6 +332,8 @@ export function OperatorAnalytics({
 
 function AnalyticsReady({
   data,
+  practiceID,
+  locationID,
   locations,
   versionSelection,
   onVersionSelectionChange,
@@ -345,6 +344,8 @@ function AnalyticsReady({
   onSelect,
 }: {
   data: AiCallAnalytics
+  practiceID: string
+  locationID: string
   locations: Location[]
   versionSelection: VersionSelection
   onVersionSelectionChange: (selection: VersionSelection) => void
@@ -364,7 +365,7 @@ function AnalyticsReady({
       {(tab === "overview" || tab === "quality") && (
         <VersionToolbar view={versionView} onChange={onVersionSelectionChange} />
       )}
-      {tab === "overview" && <AnalyticsOverview summary={data.summary} versionView={versionView} />}
+      {tab === "overview" && <AnalyticsOverview summary={data.summary} versionView={versionView} kpi={<BookingConversionKpi practiceID={practiceID} locationID={locationID} range={range} />} />}
       {tab === "quality" && <DiagnosticsQuality summary={data.summary} versionView={versionView} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
       {tab === "calls" && data.calls.length === 0 ? (
@@ -428,9 +429,11 @@ function AnalyticsTabs({
 function AnalyticsOverview({
   summary,
   versionView,
+  kpi,
 }: {
   summary: OperatorAiAnalyticsSummary
   versionView: VersionView
+  kpi: ReactNode
 }) {
   const outcomes = [
     {
@@ -466,7 +469,7 @@ function AnalyticsOverview({
   ]
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {outcomes.map((item) => (
           <Card key={item.label} size="sm" className="min-w-0">
             <CardHeader className="grid-cols-[1fr_auto]">
@@ -485,6 +488,7 @@ function AnalyticsOverview({
             </CardContent>
           </Card>
         ))}
+        {kpi}
       </div>
 
       <DiagnosticsCallTrends summary={summary} versionView={versionView} />
