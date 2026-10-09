@@ -53,3 +53,11 @@ CREATE TABLE ai_call_reviews (
     PRIMARY KEY (interaction_id, question, reviewer),
     FOREIGN KEY (practice_id, interaction_id) REFERENCES ai_interactions(practice_id, id) ON DELETE CASCADE
 );
+
+CREATE TABLE ai_call_review_pools (
+    practice_id uuid NOT NULL,
+    review_date date NOT NULL,
+    flagged_calls integer NOT NULL CHECK (flagged_calls >= 0),
+    random_calls integer NOT NULL CHECK (random_calls >= 0),
+    PRIMARY KEY (practice_id, review_date)
+);

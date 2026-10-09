@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 )
 
 type syntheticTool struct {
@@ -232,25 +233,62 @@ func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 	}
 }
 
-func TestJuryTrustNeedsVolumeAndLowBounds(t *testing.T) {
-	if low := wilsonLow(95, 100); low < 0.88 || low > 0.89 {
-		t.Fatalf("95 of 100 has a 95%% low bound near 0.887: %v", low)
+func TestTrustWeightsEachSampleByItsShareOfTheDaysCalls(t *testing.T) {
+	no, yes := false, true
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	calls := map[string]*trustCall{
+		"flagged-caught": {answers: map[string]bool{"kyle": false}, judge: &no, sample: "flagged", date: "2026-10-08", reviewedAt: now},
+		"flagged-alarm":  {answers: map[string]bool{"kyle": true}, judge: &no, sample: "flagged", date: "2026-10-08", reviewedAt: now},
+		"random-missed":  {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "random", date: "2026-10-08", reviewedAt: now},
+		"random-fine":    {answers: map[string]bool{"kyle": true}, judge: &yes, sample: "random", date: "2026-10-08", reviewedAt: now},
+		"imported":       {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "manual", date: "2026-10-01", reviewedAt: now},
 	}
-	if wilsonLow(0, 0) != 0 {
-		t.Fatal("no answers has no lower bound")
+	estimate := estimateTrust(calls, map[string]reviewPool{"2026-10-08": {flagged: 20, random: 180}}, now)
+	if estimate.Calls != 4 || estimate.Failures != 2 {
+		t.Fatalf("only queue samples with a recorded pool count: %+v", estimate)
 	}
-	for name, test := range map[string]struct {
-		row     JudgeAccuracyRow
-		trusted bool
-	}{
-		"strong and large":         {JudgeAccuracyRow{Sample: 300, Agreed: 290, HumanNo: 60, FailuresCaught: 57}, true},
-		"perfect but too few":      {JudgeAccuracyRow{Sample: 40, Agreed: 40, HumanNo: 10, FailuresCaught: 10}, false},
-		"agrees but misses misses": {JudgeAccuracyRow{Sample: 300, Agreed: 285, HumanNo: 40, FailuresCaught: 30}, false},
-	} {
-		test.row.score()
-		if test.row.Trusted != test.trusted {
-			t.Errorf("%s: trusted=%v %+v", name, test.row.Trusted, test.row)
+	if *estimate.Catch != 10.0/100.0 {
+		t.Fatalf("a miss among 180 unflagged calls outweighs a catch among 20 flagged: catch %v", *estimate.Catch)
+	}
+	if *estimate.Agreement != 100.0/200.0 || estimate.Status != trustStatusBelow {
+		t.Fatalf("weighted agreement and verdict: %+v", estimate)
+	}
+}
+
+func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
+	no, yes := false, true
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	calls := map[string]*trustCall{}
+	add := func(id string, human, judge bool, reviewers ...string) {
+		answers := map[string]bool{}
+		for _, reviewer := range reviewers {
+			answers[reviewer] = human
 		}
+		verdict := &yes
+		if !judge {
+			verdict = &no
+		}
+		calls[id] = &trustCall{answers: answers, judge: verdict, sample: "random", date: "2026-10-08", reviewedAt: now}
+	}
+	for index := 0; index < 5; index++ {
+		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
+	}
+	for index := 0; index < 30; index++ {
+		add(fmt.Sprintf("fine-%d", index), true, true, "kyle", "chase")
+	}
+	for index := 30; index < 60; index++ {
+		add(fmt.Sprintf("fine-%d", index), true, true, "kyle")
+	}
+	pools := map[string]reviewPool{"2026-10-08": {random: 65}}
+	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusCollected || *estimate.Catch != 1 {
+		t.Fatalf("5 of 5 caught is not yet proof of 80%%: %+v", estimate)
+	}
+	for index := 5; index < 20; index++ {
+		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
+	}
+	pools["2026-10-08"] = reviewPool{random: 80}
+	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusTrusted {
+		t.Fatalf("20 of 20 caught with reviewers in agreement is trusted: %+v", estimate)
 	}
 }
 

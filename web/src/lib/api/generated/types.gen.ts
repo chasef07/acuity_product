@@ -959,19 +959,26 @@ export type OperatorJudgeAccuracyRow = {
     humanNo: number;
     failuresCaught: number;
     falseAlarms: number;
-    /**
-     * Lower bound of the 95% Wilson interval for agreement with reviewers.
-     */
-    agreementLow: number;
-    /**
-     * Lower bound of the 95% Wilson interval for catching reviewer-marked failures.
-     */
-    catchLow: number;
     jurors: Array<OperatorJurorAccuracy>;
-    /**
-     * At least 100 answers and 20 reviewer failures, agreement low bound at least 90%, and catch low bound at least 80%.
-     */
-    trusted: boolean;
+    trust: OperatorJuryTrust;
+};
+
+/**
+ * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. Trusted needs catch low bound >= 80%, false-alarm high bound <= 20%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
+ */
+export type OperatorJuryTrust = {
+    calls: number;
+    failures: number;
+    catch: number | null;
+    catchLow: number | null;
+    falseAlarms: number | null;
+    falseAlarmHigh: number | null;
+    agreement: number | null;
+    agreementLow: number | null;
+    humanAgreement: number | null;
+    humanPairs: number;
+    status: 'trusted' | 'collecting' | 'below';
+    reason: string;
 };
 
 export type OperatorJurorAccuracy = {

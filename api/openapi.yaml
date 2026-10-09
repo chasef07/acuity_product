@@ -4066,7 +4066,7 @@ components:
     OperatorJudgeAccuracyRow:
       type: object
       additionalProperties: false
-      required: [question, judgeVersion, sample, agreed, humanNo, failuresCaught, falseAlarms, agreementLow, catchLow, jurors, trusted]
+      required: [question, judgeVersion, sample, agreed, humanNo, failuresCaught, falseAlarms, jurors, trust]
       properties:
         question: {type: string}
         judgeVersion: {type: string}
@@ -4075,18 +4075,33 @@ components:
         humanNo: {type: integer}
         failuresCaught: {type: integer}
         falseAlarms: {type: integer}
-        agreementLow:
-          type: number
-          description: Lower bound of the 95% Wilson interval for agreement with reviewers.
-        catchLow:
-          type: number
-          description: Lower bound of the 95% Wilson interval for catching reviewer-marked failures.
         jurors:
           type: array
           items: {$ref: "#/components/schemas/OperatorJurorAccuracy"}
-        trusted:
-          type: boolean
-          description: At least 100 answers and 20 reviewer failures, agreement low bound at least 90%, and catch low bound at least 80%.
+        trust:
+          $ref: "#/components/schemas/OperatorJuryTrust"
+    OperatorJuryTrust:
+      type: object
+      additionalProperties: false
+      description: >-
+        Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling
+        flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size.
+        Trusted needs catch low bound >= 80%, false-alarm high bound <= 20%, agreement low bound within
+        5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
+      required: [calls, failures, catch, catchLow, falseAlarms, falseAlarmHigh, agreement, agreementLow, humanAgreement, humanPairs, status, reason]
+      properties:
+        calls: {type: integer}
+        failures: {type: integer}
+        catch: {type: number, nullable: true}
+        catchLow: {type: number, nullable: true}
+        falseAlarms: {type: number, nullable: true}
+        falseAlarmHigh: {type: number, nullable: true}
+        agreement: {type: number, nullable: true}
+        agreementLow: {type: number, nullable: true}
+        humanAgreement: {type: number, nullable: true}
+        humanPairs: {type: integer}
+        status: {type: string, enum: [trusted, collecting, below]}
+        reason: {type: string}
     OperatorJurorAccuracy:
       type: object
       additionalProperties: false

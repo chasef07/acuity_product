@@ -629,3 +629,4 @@ GRANT SELECT, INSERT, DELETE ON ai_interaction_scorecard_answers TO acuity_porta
 GRANT SELECT, INSERT ON ai_call_review_assignments TO acuity_portal;
 GRANT UPDATE (note, question_idea, completed_at) ON ai_call_review_assignments TO acuity_portal;
 GRANT SELECT, INSERT ON ai_call_reviews TO acuity_portal;
+GRANT SELECT, INSERT ON ai_call_review_pools TO acuity_portal;

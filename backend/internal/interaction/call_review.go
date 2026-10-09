@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -106,41 +105,14 @@ type JudgeAccuracyRow struct {
 	HumanNo        int             `json:"humanNo"`
 	FailuresCaught int             `json:"failuresCaught"`
 	FalseAlarms    int             `json:"falseAlarms"`
-	AgreementLow   float64         `json:"agreementLow"`
-	CatchLow       float64         `json:"catchLow"`
 	Jurors         []JurorAccuracy `json:"jurors"`
-	Trusted        bool            `json:"trusted"`
+	Trust          TrustEstimate   `json:"trust"`
 }
 
 type JurorAccuracy struct {
 	Model    string `json:"model"`
 	Compared int    `json:"compared"`
 	Agreed   int    `json:"agreed"`
-}
-
-const (
-	trustMinimumAnswers = 100
-	trustMinimumHumanNo = 20
-	trustAgreementFloor = 0.90
-	trustCatchFloor     = 0.80
-	wilsonZ95           = 1.96
-)
-
-func wilsonLow(successes, total int) float64 {
-	if total == 0 {
-		return 0
-	}
-	n, p := float64(total), float64(successes)/float64(total)
-	center := p + wilsonZ95*wilsonZ95/(2*n)
-	margin := wilsonZ95 * math.Sqrt(p*(1-p)/n+wilsonZ95*wilsonZ95/(4*n*n))
-	return (center - margin) / (1 + wilsonZ95*wilsonZ95/n)
-}
-
-func (row *JudgeAccuracyRow) score() {
-	row.AgreementLow = wilsonLow(row.Agreed, row.Sample)
-	row.CatchLow = wilsonLow(row.FailuresCaught, row.HumanNo)
-	row.Trusted = row.Sample >= trustMinimumAnswers && row.HumanNo >= trustMinimumHumanNo &&
-		row.AgreementLow >= trustAgreementFloor && row.CatchLow >= trustCatchFloor
 }
 
 type JudgeDisagreement struct {
@@ -301,6 +273,16 @@ func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand
 		return ReviewQueue{}, fmt.Errorf("review candidates exceed bounded window")
 	}
 	sort.Slice(candidates, func(left, right int) bool { return candidates[left].rank < candidates[right].rank })
+	pool := map[bool]int{}
+	for _, item := range candidates {
+		pool[item.flagged]++
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ai_call_review_pools (practice_id, review_date, flagged_calls, random_calls)
+		VALUES ($1, $2::date, $3, $4) ON CONFLICT (practice_id, review_date) DO NOTHING
+	`, command.PracticeID, command.Date, pool[true], pool[false]); err != nil {
+		return ReviewQueue{}, fmt.Errorf("record review pool: %w", err)
+	}
 	assignedAlready := false
 	for _, item := range candidates {
 		assignedAlready = assignedAlready || item.mine
@@ -594,6 +576,24 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 	return review, nil
 }
 
+func (m *Module) reviewPools(ctx context.Context, tx pgx.Tx, practiceID string) (map[string]reviewPool, error) {
+	rows, err := tx.Query(ctx, `SELECT review_date::text, flagged_calls, random_calls FROM ai_call_review_pools WHERE practice_id = $1`, practiceID)
+	if err != nil {
+		return nil, fmt.Errorf("query review pools: %w", err)
+	}
+	defer rows.Close()
+	pools := map[string]reviewPool{}
+	for rows.Next() {
+		var date string
+		var pool reviewPool
+		if err := rows.Scan(&date, &pool.flagged, &pool.random); err != nil {
+			return nil, fmt.Errorf("read review pools: %w", err)
+		}
+		pools[date] = pool
+	}
+	return pools, rows.Err()
+}
+
 func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identity, practiceID string) (JudgeAccuracy, error) {
 	tx, authorization, locations, err := m.beginAnalyticsAuthorization(ctx, identity, practiceID, "", audienceOperator)
 	if err != nil {
@@ -603,7 +603,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
 		SELECT r.interaction_id::text, i.started_at, i.location_id::text, r.question, r.reviewer_email, r.answer, r.note,
-			r.judge_answer, COALESCE(r.judge_version, ''),
+			r.judge_answer, COALESCE(r.judge_version, ''), r.reviewer, r.sample, r.review_date::text, r.reviewed_at,
 			(SELECT a.detail->'votes' FROM ai_interaction_scorecard_answers a WHERE a.interaction_id = r.interaction_id AND a.question = r.question AND a.source = 'judge')
 		FROM ai_call_reviews r
 		JOIN ai_interactions i ON i.id = r.interaction_id
@@ -617,6 +617,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 	result := JudgeAccuracy{Rows: []JudgeAccuracyRow{}, JudgeDisagreements: []JudgeDisagreement{}, ReviewerDisagreements: []ReviewerDisagreement{}}
 	type groupKey struct{ question, version string }
 	groups := map[groupKey]*JudgeAccuracyRow{}
+	trustCalls := map[groupKey]map[string]*trustCall{}
 	calls := map[string]*GoldenSetCall{}
 	callList := []string{}
 	type callQuestion struct{ interaction, question string }
@@ -628,7 +629,9 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		var item JudgeDisagreement
 		var judgeAnswer *bool
 		var votes map[string]float64
-		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &item.JudgeVersion, &votes); err != nil {
+		var reviewer, sample, reviewDate string
+		var reviewedAt time.Time
+		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &item.JudgeVersion, &reviewer, &sample, &reviewDate, &reviewedAt, &votes); err != nil {
 			rows.Close()
 			return JudgeAccuracy{}, fmt.Errorf("read judge accuracy: %w", err)
 		}
@@ -663,6 +666,17 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			groups[group] = &JudgeAccuracyRow{Question: item.Question, JudgeVersion: item.JudgeVersion, Jurors: []JurorAccuracy{}}
 		}
 		row := groups[group]
+		if trustCalls[group] == nil {
+			trustCalls[group] = map[string]*trustCall{}
+		}
+		if trustCalls[group][item.InteractionID] == nil {
+			trustCalls[group][item.InteractionID] = &trustCall{answers: map[string]bool{}, judge: judgeAnswer, sample: sample, date: reviewDate}
+		}
+		tracked := trustCalls[group][item.InteractionID]
+		tracked.answers[reviewer] = item.Human
+		if reviewedAt.After(tracked.reviewedAt) {
+			tracked.reviewedAt = reviewedAt
+		}
 		for model, vote := range votes {
 			index := -1
 			for position, juror := range row.Jurors {
@@ -718,8 +732,12 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		}
 	}
 	order := questionOrder()
-	for _, row := range groups {
-		row.score()
+	pools, err := m.reviewPools(ctx, tx, practiceID)
+	if err != nil {
+		return JudgeAccuracy{}, err
+	}
+	for group, row := range groups {
+		row.Trust = estimateTrust(trustCalls[group], pools, m.now())
 		sort.Slice(row.Jurors, func(left, right int) bool { return row.Jurors[left].Model < row.Jurors[right].Model })
 		result.Rows = append(result.Rows, *row)
 	}

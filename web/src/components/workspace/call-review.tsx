@@ -464,7 +464,7 @@ function JudgeAccuracyView({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          How often the jury gives the same answer you do. A question is trusted once it has 100 answers and 20 failures you marked, agrees at least 90% and catches at least 80% of failures, counting the low end of the 95% range so a lucky streak does not pass.
+          Can we trust the jury on each question? Daily-queue reviews are weighted by how many calls of each kind happened that day, so the flagged half of the queue does not flatter the jury. A question is trusted when, at 95% confidence, it catches at least 80% of the failures you mark, at most 20% of its no answers are false alarms, it agrees with you nearly as often as you and Chase agree with each other, and the last 14 days hold up.
         </p>
         {versions.length > 1 && (
           <ToggleGroup
@@ -499,7 +499,7 @@ function JudgeAccuracyView({
         <CardHeader>
           <CardTitle className="text-sm">By question</CardTitle>
           <CardDescription>
-            Caught: you said no and the jury said no. False alarm: the jury said no when you said yes. Ranges are 95% low bounds.
+            Percentages are weighted estimates; the smaller figure is the 95% bound the bar is checked against.
           </CardDescription>
         </CardHeader>
         <CardContent className="overflow-x-auto px-0">
@@ -507,11 +507,11 @@ function JudgeAccuracyView({
             <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="pl-4">Question</TableHead>
-                <TableHead className="text-right">Jury agrees</TableHead>
-                <TableHead className="text-right">Failures caught</TableHead>
+                <TableHead className="text-right">Catches failures</TableHead>
                 <TableHead className="text-right">False alarms</TableHead>
+                <TableHead className="text-right">Agrees with you</TableHead>
                 <TableHead>Each juror</TableHead>
-                <TableHead className="text-right">Answers</TableHead>
+                <TableHead className="text-right">Reviewed</TableHead>
                 <TableHead className="pr-4">Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -524,25 +524,38 @@ function JudgeAccuracyView({
                 </TableRow>
               )}
               {rows.map((row) => {
-                const percent = row.sample ? Math.round((100 * row.agreed) / row.sample) : undefined
+                const trust = row.trust
+                const pct = (value: number | null | undefined) => (value == null ? "—" : `${Math.round(100 * value)}%`)
                 return (
                   <TableRow key={row.question}>
                     <TableCell className="pl-4 font-medium">{label(row.question)}</TableCell>
-                    <TableCell className={`text-right tabular-nums ${percent !== undefined && percent < 90 ? "text-destructive" : ""}`}>
-                      {percent === undefined ? "—" : `${percent}%`}
-                      <span className="block text-[0.6875rem] text-muted-foreground">≥ {Math.round(100 * row.agreementLow)}%</span>
+                    <TableCell className="text-right tabular-nums">
+                      {pct(trust.catch)}
+                      {trust.catchLow != null && <span className="block text-[0.6875rem] text-muted-foreground">≥ {pct(trust.catchLow)}</span>}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {row.humanNo ? `${row.failuresCaught} of ${row.humanNo}` : "–"}
-                      {row.humanNo > 0 && <span className="block text-[0.6875rem] text-muted-foreground">≥ {Math.round(100 * row.catchLow)}%</span>}
+                      {pct(trust.falseAlarms)}
+                      {trust.falseAlarmHigh != null && <span className="block text-[0.6875rem] text-muted-foreground">≤ {pct(trust.falseAlarmHigh)}</span>}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{row.falseAlarms}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {pct(trust.agreement)}
+                      <span className="block text-[0.6875rem] text-muted-foreground">
+                        {trust.agreementLow != null ? `≥ ${pct(trust.agreementLow)}` : ""}
+                        {trust.humanAgreement != null ? ` · you two ${pct(trust.humanAgreement)}` : ""}
+                      </span>
+                    </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {row.jurors.map((juror) => `${juror.model.split("/").pop()} ${juror.compared ? Math.round((100 * juror.agreed) / juror.compared) : 0}%`).join(" · ") || "—"}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{row.sample}</TableCell>
-                    <TableCell className="pr-4">
-                      <Badge variant={row.trusted ? "secondary" : "outline"}>{row.trusted ? "Trusted" : row.sample < 100 || row.humanNo < 20 ? "Collecting" : "Below bar"}</Badge>
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                      {trust.calls} calls
+                      <span className="block">{trust.failures} failures · {trust.humanPairs} shared</span>
+                    </TableCell>
+                    <TableCell className="max-w-56 pr-4">
+                      <Badge variant={trust.status === "trusted" ? "secondary" : trust.status === "below" ? "destructive" : "outline"}>
+                        {trust.status === "trusted" ? "Trusted" : trust.status === "below" ? "Below bar" : "Collecting"}
+                      </Badge>
+                      <span className="mt-1 block text-[0.6875rem] leading-4 text-muted-foreground">{trust.reason}</span>
                     </TableCell>
                   </TableRow>
                 )

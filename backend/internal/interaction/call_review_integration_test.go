@@ -86,6 +86,10 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if err != nil || len(queueA.Calls) != reviewQueueSize || queueA.Calls[0].LocationName != "Main" {
 		t.Fatalf("first queue: %d %v", len(queueA.Calls), err)
 	}
+	var poolFlagged, poolRandom int
+	if err := pool.QueryRow(ctx, `SELECT flagged_calls, random_calls FROM ai_call_review_pools WHERE practice_id=$1 AND review_date='2026-10-06'`, practice).Scan(&poolFlagged, &poolRandom); err != nil || poolFlagged != 7 || poolRandom != 24 {
+		t.Fatalf("the day's pool is recorded once for weighting: flagged=%d random=%d %v", poolFlagged, poolRandom, err)
+	}
 	again, err := module.OpenReviewQueue(ctx, command)
 	if err != nil || fmt.Sprint(again.Calls) != fmt.Sprint(queueA.Calls) {
 		t.Fatalf("reopening must keep the same queue: %v", err)
