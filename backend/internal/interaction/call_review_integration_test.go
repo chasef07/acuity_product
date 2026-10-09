@@ -35,9 +35,9 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	evaluation := func(noul map[string]float64) map[string]any {
 		results := map[string]any{}
 		for name, value := range noul {
-			results[name] = map[string]any{"answers": map[string]any{name: map[string]any{"type": "noul", "noul": value}}}
+			results[name] = map[string]any{"verdict": value > scorecardNoAtOrBelow, "probability": value, "votes": map[string]any{"typesafe-ai/jev": value}, "errors": map[string]any{}}
 		}
-		return map[string]any{"evaluatorVersion": ScorecardJudgeVersion, "model": "typesafe-ai/jev", "status": "complete", "results": results}
+		return map[string]any{"evaluator": "jury", "evaluatorVersion": ScorecardJudgeVersion, "jurors": []string{"typesafe-ai/jev"}, "status": "complete", "results": results}
 	}
 	insert := func(index int, seconds int, tools []syntheticTool, judged map[string]float64) string {
 		t.Helper()

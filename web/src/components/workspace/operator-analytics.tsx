@@ -69,7 +69,6 @@ import { CallReviewWorkspace } from "@/components/workspace/call-review"
 import { BookingConversionKpi, ImprovementTrend } from "@/components/workspace/scorecard-overview"
 import type {
   OperatorAiCallIssue,
-  OperatorAiCallTags,
   OperatorAiAnalyticsRange,
   OperatorAiAnalyticsSummary,
   OperatorAiCallAnalytics,
@@ -131,19 +130,14 @@ export function OperatorAnalytics({
   const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
   const costView = tab === "cost"
   const reviewView = tab === "review"
-  const [tagFilter, setTagFilter] = useState({ practiceID, value: "" })
-  const manualTag = tagFilter.practiceID === practiceID ? tagFilter.value : ""
-  const setManualTag = (value: string) => setTagFilter({ practiceID, value })
-  const activeTag = tab === "calls" ? manualTag : ""
   const [requestVersion, setRequestVersion] = useState(0)
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
-  const requestKey = `${practiceID}:${locationID}:${range}:${activeTag}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${requestVersion}`
   const currentRequest = useAiCallAnalytics({
     practiceID,
     locationID,
     range,
-    manualTag: activeTag,
     revision: requestVersion,
     enabled: !costView && !reviewView,
   })
@@ -169,14 +163,6 @@ export function OperatorAnalytics({
         setSelectedCall((current) => current.id === selectedCall.id ? { id: nextID } : current)
       }
     }
-  }
-
-  function updateCallTags(id: string, tags: OperatorAiCallTags) {
-    currentRequest.update((shown) => ({
-      ...shown,
-      availableTags: tags.available,
-      calls: shown.calls.map((call) => call.id === id ? { ...call, manualTags: tags.selected } : call),
-    }))
   }
 
   function updateCallIssue(issue: OperatorAiCallIssue) {
@@ -245,18 +231,7 @@ export function OperatorAnalytics({
             </ToggleGroup>
           </>
         )}
-        tabs={<div className="w-full space-y-3">
-          <AnalyticsTabs tab={tab} onChange={setTab} />
-          {tab === "calls" && ((currentRequest.data?.availableTags?.length ?? 0) > 0 || manualTag) && (
-            <div role="group" aria-label="Filter calls by tag" className="flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-xs text-muted-foreground">Tags</span>
-              <Button size="xs" variant={manualTag ? "outline" : "secondary"} aria-pressed={!manualTag} onClick={() => setManualTag("")}>All calls</Button>
-              {Array.from(new Set([...(currentRequest.data?.availableTags ?? []), ...(manualTag ? [manualTag] : [])])).map((tag) => (
-                <Button key={tag} size="xs" variant={manualTag === tag ? "secondary" : "outline"} aria-pressed={manualTag === tag} onClick={() => setManualTag(tag)}>{tag}</Button>
-              ))}
-            </div>
-          )}
-        </div>}
+        tabs={<AnalyticsTabs tab={tab} onChange={setTab} />}
       >
         {reviewView ? (
           <CallReviewWorkspace key={practiceID} practiceID={practiceID} onOpenCall={(id) => selectCall(id)} />
@@ -318,12 +293,8 @@ export function OperatorAnalytics({
         onNext={nextCall || canLoadNextCall ? selectNextCall : undefined}
         navigationLoading={nextPageState === "loading"}
         navigationError={canLoadNextCall && nextPageState === "unavailable"}
-        onTagsChange={updateCallTags}
         onIssueChange={updateCallIssue}
-        onClose={() => {
-          setSelectedCall({ id: "" })
-          if (manualTag) setRequestVersion((current) => current + 1)
-        }}
+        onClose={() => setSelectedCall({ id: "" })}
       />
     </section>
   )
@@ -566,7 +537,6 @@ function CallLedger({
                 <TableHead>Duration</TableHead>
                 <TableHead>Actions</TableHead>
                 <TableHead>Tool errors</TableHead>
-                <TableHead>Tags</TableHead>
                 <TableHead>Transfer</TableHead>
               </TableRow>
             </TableHeader>
@@ -605,11 +575,6 @@ function CallLedger({
                     <Badge variant={call.toolErrorCount > 0 ? "destructive" : "outline"}>
                       {call.toolErrorCount}
                     </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex max-w-56 flex-wrap gap-1">
-                      {call.manualTags?.map((tag) => <Badge key={tag} variant="secondary" className="max-w-full whitespace-normal break-words">{tag}</Badge>)}
-                    </div>
                   </TableCell>
                   <TableCell>
                     <TransferBadge transferred={call.transferred} />
@@ -651,7 +616,6 @@ function CallLedger({
             </dl>
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               <ActionBadges actions={call.toolActions} />
-              {call.manualTags?.map((tag) => <Badge key={tag} variant="secondary">{tag}</Badge>)}
               <TransferBadge transferred={call.transferred} />
               {!call.transcriptAvailable && (
                 <Badge variant="outline">Transcript missing</Badge>

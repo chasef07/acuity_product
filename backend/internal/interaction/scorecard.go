@@ -297,61 +297,87 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 	return answers
 }
 
+type juryEvaluation struct {
+	Version string                     `json:"evaluatorVersion"`
+	Jurors  []string                   `json:"jurors"`
+	Status  string                     `json:"status"`
+	Results map[string]json.RawMessage `json:"results"`
+	Errors  map[string]json.RawMessage `json:"errors"`
+}
+
+func readJury(evaluation json.RawMessage) (juryEvaluation, bool) {
+	var jury juryEvaluation
+	valid := json.Unmarshal(evaluation, &jury) == nil && jury.Version == ScorecardJudgeVersion &&
+		(jury.Status == "complete" || jury.Status == "incomplete") && len(jury.Jurors) > 0
+	return jury, valid
+}
+
+func validProbability(value *float64) bool {
+	return value != nil && !math.IsNaN(*value) && *value >= 0 && *value <= 1
+}
+
 func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
-	var scorecard struct {
-		Version string                     `json:"evaluatorVersion"`
-		Model   string                     `json:"model"`
-		Status  string                     `json:"status"`
-		Results map[string]json.RawMessage `json:"results"`
-		Errors  map[string]json.RawMessage `json:"errors"`
-	}
-	if json.Unmarshal(evaluation, &scorecard) != nil || scorecard.Version != ScorecardJudgeVersion ||
-		(scorecard.Status != "complete" && scorecard.Status != "incomplete") || scorecard.Model == "" {
+	jury, valid := readJury(evaluation)
+	if !valid {
 		return nil
 	}
+	model := strings.Join(jury.Jurors, ",")
 	answers := []scorecardAnswer{}
 	for _, question := range ScorecardQuestions {
 		if question.Source != "judge" {
 			continue
 		}
-		if _, failed := scorecard.Errors[question.Key]; failed {
+		if _, failed := jury.Errors[question.Key]; failed {
 			continue
 		}
 		var result struct {
-			Status  string `json:"status"`
-			Reason  string `json:"reason"`
-			Answers map[string]struct {
-				Type string   `json:"type"`
-				Noul *float64 `json:"noul"`
-			} `json:"answers"`
+			Status      string             `json:"status"`
+			Reason      string             `json:"reason"`
+			Verdict     *bool              `json:"verdict"`
+			Probability *float64           `json:"probability"`
+			Votes       map[string]float64 `json:"votes"`
 		}
-		if json.Unmarshal(scorecard.Results[question.Key], &result) != nil {
+		if json.Unmarshal(jury.Results[question.Key], &result) != nil {
 			continue
 		}
 		if result.Status == "not_applicable" {
 			if question.Key == "time_offered" && result.Reason == "no_availability_result" {
 				answers = append(answers, scorecardAnswer{
-					Question: question.Key, Source: "judge", Answer: false, Version: scorecard.Version,
-					JudgeModel: scorecard.Model, Detail: map[string]any{"reason": result.Reason},
+					Question: question.Key, Source: "judge", Answer: false, Version: jury.Version,
+					JudgeModel: model, Detail: map[string]any{"reason": result.Reason},
 				})
 			}
 			continue
 		}
-		value := result.Answers[question.Key]
-		if value.Type != "noul" || value.Noul == nil || math.IsNaN(*value.Noul) || *value.Noul < 0 || *value.Noul > 1 {
+		if result.Verdict == nil || !validProbability(result.Probability) {
 			continue
 		}
-		probability := *value.Noul
+		probability := *result.Probability
 		answers = append(answers, scorecardAnswer{
 			Question:    question.Key,
 			Source:      "judge",
-			Answer:      probability > scorecardNoAtOrBelow,
+			Answer:      *result.Verdict,
 			Probability: &probability,
-			Version:     scorecard.Version,
-			JudgeModel:  scorecard.Model,
+			Version:     jury.Version,
+			JudgeModel:  model,
+			Detail:      map[string]any{"votes": result.Votes},
 		})
 	}
 	return answers
+}
+
+func jurySentiment(evaluation json.RawMessage) *float64 {
+	jury, valid := readJury(evaluation)
+	if !valid {
+		return nil
+	}
+	var sentiment struct {
+		Score *float64 `json:"score"`
+	}
+	if json.Unmarshal(jury.Results["expressed_sentiment"], &sentiment) != nil || sentiment.Score == nil || *sentiment.Score < 0 || *sentiment.Score > 4 {
+		return nil
+	}
+	return sentiment.Score
 }
 
 func scorecardAnswersFor(transcript, closeoutPayload json.RawMessage) []scorecardAnswer {

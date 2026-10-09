@@ -3,12 +3,10 @@ import { useEffect, useEffectEvent, useState } from "react"
 import {
   flagAgentCallIssue as flagAgentCallIssueRequest,
   getAgentCall,
-  getOperatorAiCallTags,
   getOperatorAiInteractionAnalytics,
   queryAgentCalls,
   queryOperatorAiAnalytics,
   reviewOperatorAiCallIssue,
-  setOperatorAiCallTag,
 } from "../api/generated/sdk.gen"
 import type {
   AgentCallIssueReason,
@@ -97,19 +95,17 @@ export function useAiCallAnalytics({
   practiceID,
   locationID,
   range,
-  manualTag,
   revision,
   enabled,
 }: {
   practiceID: string
   locationID: string
   range: OperatorAiAnalyticsRange
-  manualTag: string
   revision: number
   enabled: boolean
 }): AiCallLedger {
   const pages = useCallPages<OperatorAiAnalyticsPage>(
-    `${practiceID}:${locationID}:${range}:${manualTag}:${revision}`,
+    `${practiceID}:${locationID}:${range}:${revision}`,
     Boolean(practiceID) && enabled,
     (transport, cursor) =>
       queryOperatorAiAnalytics({
@@ -118,7 +114,6 @@ export function useAiCallAnalytics({
           practiceId: practiceID,
           locationId: locationID || undefined,
           range,
-          manualTag: manualTag || undefined,
           cursor,
           limit: 50,
         },
@@ -172,22 +167,6 @@ export function reviewCallIssue(interactionID: string, outcome: OperatorAiCallIs
       ...transport,
       path: { interactionId: interactionID },
       body: { outcome },
-    }),
-  )
-}
-
-export function useCallTags(interactionID: string) {
-  return usePortalQuery(`call-tags:${interactionID}`, (transport) =>
-    getOperatorAiCallTags({ ...transport, path: { interactionId: interactionID } }),
-  )
-}
-
-export function setCallTag(interactionID: string, name: string, applied: boolean) {
-  return portalRequest((transport) =>
-    setOperatorAiCallTag({
-      ...transport,
-      path: { interactionId: interactionID },
-      body: { name, applied },
     }),
   )
 }

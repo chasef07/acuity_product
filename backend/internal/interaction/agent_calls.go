@@ -44,6 +44,14 @@ type AgentCallDetail struct {
 	LocationName string             `json:"locationName"`
 	Messages     []AgentCallMessage `json:"messages"`
 	Issue        *AgentCallIssue    `json:"issue,omitempty"`
+	Scorecard    []AgentCallVerdict `json:"scorecard"`
+	Sentiment    *float64           `json:"sentiment,omitempty"`
+}
+
+type AgentCallVerdict struct {
+	Code    string `json:"code"`
+	Prompt  string `json:"prompt"`
+	Verdict bool   `json:"verdict"`
 }
 type AgentCallsPage struct {
 	Calls      []AgentCall `json:"calls"`
@@ -216,9 +224,12 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 	}
 	var closeout struct {
 		DomainOutcomes json.RawMessage `json:"domainOutcomes"`
+		Evaluation     json.RawMessage `json:"evaluation"`
 	}
 	_ = json.Unmarshal(stored.CloseoutPayload, &closeout)
 	detail.Call = agentCall(stored, closeout.DomainOutcomes, detail.Issue != nil)
+	detail.Scorecard = agentCallScorecard(closeout.Evaluation)
+	detail.Sentiment = jurySentiment(closeout.Evaluation)
 	timeline, _ := normalizeTimeline(stored.Transcript, nil, stored.StartedAt)
 	for _, item := range timeline {
 		speaker := ""
@@ -236,6 +247,20 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 		return AgentCallDetail{}, err
 	}
 	return detail, nil
+}
+
+func agentCallScorecard(evaluation json.RawMessage) []AgentCallVerdict {
+	verdicts := map[string]bool{}
+	for _, answer := range judgeAnswers(evaluation) {
+		verdicts[answer.Question] = answer.Answer
+	}
+	scorecard := []AgentCallVerdict{}
+	for _, question := range ScorecardQuestions {
+		if verdict, found := verdicts[question.Key]; found {
+			scorecard = append(scorecard, AgentCallVerdict{Code: question.Code, Prompt: question.Prompt, Verdict: verdict})
+		}
+	}
+	return scorecard
 }
 
 func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identity, id string, reason AgentCallIssueReason) (AgentCallIssue, error) {

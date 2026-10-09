@@ -2,8 +2,7 @@
 
 import { CallEvaluation } from "./call-evaluation"
 import { CallIssueReview } from "./call-issue-review"
-import { CallManualTags } from "./call-manual-tags"
-import type { OperatorAiCallIssue, OperatorAiCallTags } from "@/lib/api/generated/types.gen"
+import type { OperatorAiCallIssue } from "@/lib/api/generated/types.gen"
 
 import type { MiddlewareRequestDiagnostic } from "@/lib/api/generated"
 import { MiddlewareRequestDetails } from "./middleware-request-details"
@@ -53,6 +52,7 @@ import type {
   OperatorAiTimelineItem,
 } from "@/lib/api/generated/types.gen"
 import { useAiCallEvidence } from "@/lib/clients/agent-calls"
+import { useScorecardQuestions } from "@/lib/clients/call-review"
 import { formatMediumDateTime } from "@/lib/format"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
@@ -63,7 +63,6 @@ export function OperatorAnalyticsDetailSheet({
   onNext,
   navigationLoading = false,
   navigationError = false,
-  onTagsChange,
   onIssueChange,
   onClose,
 }: {
@@ -73,7 +72,6 @@ export function OperatorAnalyticsDetailSheet({
   onNext?: () => void
   navigationLoading?: boolean
   navigationError?: boolean
-  onTagsChange: (id: string, tags: OperatorAiCallTags) => void
   onIssueChange: (issue: OperatorAiCallIssue) => void
   onClose: () => void
 }) {
@@ -149,7 +147,6 @@ export function OperatorAnalyticsDetailSheet({
             key={interactionID}
             detail={detail}
             focus={focus}
-            onTagsChange={onTagsChange}
             onIssueChange={onIssueChange}
           />
         )}
@@ -161,14 +158,14 @@ export function OperatorAnalyticsDetailSheet({
 function OperatorAnalyticsDetailView({
   detail,
   focus,
-  onTagsChange,
   onIssueChange,
 }: {
   detail: OperatorAiInteractionAnalytics
   focus?: DiagnosticFocus
-  onTagsChange: (id: string, tags: OperatorAiCallTags) => void
   onIssueChange: (issue: OperatorAiCallIssue) => void
 }) {
+  const questions = useScorecardQuestions()
+  const prompts = Object.fromEntries(questions.status === "ready" ? questions.data.questions.map((question) => [question.key, question.prompt]) : [])
   const [showTiming, setShowTiming] = useState(true)
   const messageCount = detail.timeline.filter(
     (item) => item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE",
@@ -222,8 +219,7 @@ function OperatorAnalyticsDetailView({
                 className="[content-visibility:visible]"
               >
                 <CallIssueReview key={`issue-${detail.id}`} interactionID={detail.id} initialIssue={detail.issue} onChange={onIssueChange} />
-                <CallEvaluation evaluation={detail.evaluation} />
-                <CallManualTags key={detail.id} interactionID={detail.id} onChange={onTagsChange} />
+                <CallEvaluation evaluation={detail.evaluation} prompts={prompts} />
                 <section
                   aria-label="Call conversation"
                   className="border-b px-5 py-5 sm:px-6"

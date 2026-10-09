@@ -26,7 +26,6 @@ const (
 )
 
 type QueryAnalyticsCommand struct {
-	ManualTag  string
 	Identity   access.Identity
 	PracticeID string
 	LocationID string
@@ -73,7 +72,6 @@ type AnalyticsSummary struct {
 
 type AnalyticsCall struct {
 	ReviewReasons       []string
-	ManualTags          []string
 	ID                  string
 	LocationID          string
 	LocationName        string
@@ -95,7 +93,6 @@ type AnalyticsCall struct {
 }
 
 type AnalyticsPage struct {
-	AvailableTags []string
 	PendingIssues []OperatorCallIssue
 	Summary       *AnalyticsSummary
 	Calls         []AnalyticsCall
@@ -152,7 +149,6 @@ type OperatorAnalyticsDetail struct {
 }
 
 type analyticsCursor struct {
-	ManualTag  string         `json:"manualTag,omitempty"`
 	Through    time.Time      `json:"through"`
 	Range      AnalyticsRange `json:"range"`
 	PracticeID string         `json:"practiceId"`
@@ -220,15 +216,11 @@ func (m *Module) QueryAnalytics(
 	if err != nil {
 		return AnalyticsPage{}, err
 	}
-	availableTags, err := availableManualTags(ctx, tx, command.PracticeID)
-	if err != nil {
-		return AnalyticsPage{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return AnalyticsPage{}, fmt.Errorf("commit operator AI analytics query: %w", err)
 	}
 
-	page := AnalyticsPage{Summary: summary, Calls: calls, AvailableTags: availableTags, PendingIssues: pendingIssues}
+	page := AnalyticsPage{Summary: summary, Calls: calls, PendingIssues: pendingIssues}
 	if next != nil {
 		page.NextCursor, err = encodeCursor(newAnalyticsCursor(command, next.StartedAt, next.ID, to))
 		if err != nil {
@@ -276,9 +268,8 @@ func queryAnalyticsSummary(
 			AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.started_at >= $3
 			AND interaction.started_at <= $4
- AND ($5 = '' OR EXISTS (SELECT 1 FROM ai_interaction_manual_tags tag WHERE tag.interaction_id=interaction.id AND tag.practice_id=$1 AND tag.tag_key=lower($5)))
 		ORDER BY interaction.started_at, interaction.id
-	`, command.PracticeID, locationIDs, from, to, command.ManualTag)
+	`, command.PracticeID, locationIDs, from, to)
 	if err != nil {
 		return AnalyticsSummary{}, fmt.Errorf("query operator AI analytics summary: %w", err)
 	}
@@ -437,8 +428,7 @@ func queryAnalyticsCalls(
 			interaction.analytics_evidence -> 'transcript',
 			interaction.analytics_evidence -> 'closeout',
 			interaction.transcript IS NOT NULL,
- interaction.closeout_payload -> 'evaluation',
- ARRAY(SELECT tag.name FROM ai_manual_tags tag JOIN ai_interaction_manual_tags applied ON applied.practice_id=tag.practice_id AND applied.tag_key=tag.key WHERE applied.interaction_id=interaction.id ORDER BY tag.key)
+			interaction.closeout_payload -> 'evaluation'
 		FROM ai_interactions interaction
 		JOIN access_locations location
 			ON location.practice_id = interaction.practice_id
@@ -447,14 +437,13 @@ func queryAnalyticsCalls(
 			AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.started_at >= $3
 			AND interaction.started_at <= $4
- AND ($8 = '' OR EXISTS (SELECT 1 FROM ai_interaction_manual_tags tag WHERE tag.interaction_id=interaction.id AND tag.practice_id=$1 AND tag.tag_key=lower($8)))
 			AND (
 				$5::timestamptz IS NULL OR
 				(interaction.started_at, interaction.id) < ($5, $6::uuid)
 			)
 		ORDER BY interaction.started_at DESC, interaction.id DESC
 		LIMIT $7
-	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, scanLimit, command.ManualTag)
+	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, scanLimit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query operator AI analytics page: %w", err)
 	}
@@ -478,7 +467,6 @@ func queryAnalyticsCalls(
 			&projection.closeoutPayload,
 			&projection.call.TranscriptAvailable,
 			&evaluation,
-			&projection.call.ManualTags,
 		); err != nil {
 			return nil, nil, fmt.Errorf("scan operator AI analytics page: %w", err)
 		}
@@ -556,7 +544,6 @@ func normalizeAnalyticsCommand(command *QueryAnalyticsCommand) {
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	command.Cursor = strings.TrimSpace(command.Cursor)
-	command.ManualTag = strings.Join(strings.Fields(command.ManualTag), " ")
 	if command.Limit == 0 {
 		command.Limit = 50
 	}
@@ -633,7 +620,6 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 func newAnalyticsCursor(command QueryAnalyticsCommand, startedAt time.Time, id string, through time.Time) analyticsCursor {
 	return analyticsCursor{
 		Through:    through,
-		ManualTag:  command.ManualTag,
 		Range:      command.Range,
 		PracticeID: command.PracticeID,
 		LocationID: command.LocationID,
@@ -656,8 +642,7 @@ func decodeCursor(command QueryAnalyticsCommand, target any, cursor *analyticsCu
 		return false
 	}
 	duration, _ := analyticsRangeDuration(command.Range)
-	return cursor.ManualTag == command.ManualTag &&
-		cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
+	return cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
 		!cursor.StartedAt.IsZero() && !cursor.Through.IsZero() && !cursor.Through.After(now) &&
 		!cursor.StartedAt.After(cursor.Through) && !cursor.StartedAt.Before(cursor.Through.Add(-duration)) &&
 		validUUID(cursor.ID)

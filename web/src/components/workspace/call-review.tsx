@@ -464,7 +464,7 @@ function JudgeAccuracyView({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          How often Jev gives the same answer you do. Below 90% on a question means its wording needs work.
+          How often the jury gives the same answer you do. A question is trusted once it has 100 answers and 20 failures you marked, agrees at least 90% and catches at least 80% of failures, counting the low end of the 95% range so a lucky streak does not pass.
         </p>
         {versions.length > 1 && (
           <ToggleGroup
@@ -481,7 +481,7 @@ function JudgeAccuracyView({
         )}
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <Stat label="Jev agrees with you" value={totals.sample ? `${Math.round((100 * totals.agreed) / totals.sample)}%` : "—"} note={`${totals.agreed} of ${totals.sample} answers, ${versionLabel(version)}`} />
+        <Stat label="Jury agrees with you" value={totals.sample ? `${Math.round((100 * totals.agreed) / totals.sample)}%` : "—"} note={`${totals.agreed} of ${totals.sample} answers, ${versionLabel(version)}`} />
         <button
           type="button"
           onClick={() => setGoldenOpen(true)}
@@ -499,24 +499,26 @@ function JudgeAccuracyView({
         <CardHeader>
           <CardTitle className="text-sm">By question</CardTitle>
           <CardDescription>
-            Caught: you said no and Jev said no. False alarm: Jev said no when you said yes.
+            Caught: you said no and the jury said no. False alarm: the jury said no when you said yes. Ranges are 95% low bounds.
           </CardDescription>
         </CardHeader>
         <CardContent className="overflow-x-auto px-0">
-          <Table className="min-w-[36rem]">
+          <Table className="min-w-[48rem]">
             <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="pl-4">Question</TableHead>
-                <TableHead className="text-right">Jev agrees</TableHead>
+                <TableHead className="text-right">Jury agrees</TableHead>
                 <TableHead className="text-right">Failures caught</TableHead>
                 <TableHead className="text-right">False alarms</TableHead>
-                <TableHead className="pr-4 text-right">Answers</TableHead>
+                <TableHead>Each juror</TableHead>
+                <TableHead className="text-right">Answers</TableHead>
+                <TableHead className="pr-4">Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
                     No reviewed calls yet. Answers from the daily queue land here.
                   </TableCell>
                 </TableRow>
@@ -528,10 +530,20 @@ function JudgeAccuracyView({
                     <TableCell className="pl-4 font-medium">{label(row.question)}</TableCell>
                     <TableCell className={`text-right tabular-nums ${percent !== undefined && percent < 90 ? "text-destructive" : ""}`}>
                       {percent === undefined ? "—" : `${percent}%`}
+                      <span className="block text-[0.6875rem] text-muted-foreground">≥ {Math.round(100 * row.agreementLow)}%</span>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{row.humanNo ? `${row.failuresCaught} of ${row.humanNo}` : "–"}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {row.humanNo ? `${row.failuresCaught} of ${row.humanNo}` : "–"}
+                      {row.humanNo > 0 && <span className="block text-[0.6875rem] text-muted-foreground">≥ {Math.round(100 * row.catchLow)}%</span>}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{row.falseAlarms}</TableCell>
-                    <TableCell className="pr-4 text-right tabular-nums text-muted-foreground">{row.sample}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {row.jurors.map((juror) => `${juror.model.split("/").pop()} ${juror.compared ? Math.round((100 * juror.agreed) / juror.compared) : 0}%`).join(" · ") || "—"}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{row.sample}</TableCell>
+                    <TableCell className="pr-4">
+                      <Badge variant={row.trusted ? "secondary" : "outline"}>{row.trusted ? "Trusted" : row.sample < 100 || row.humanNo < 20 ? "Collecting" : "Below bar"}</Badge>
+                    </TableCell>
                   </TableRow>
                 )
               })}

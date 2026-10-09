@@ -116,25 +116,35 @@ func TestNoResultsRetryCheck(t *testing.T) {
 	}
 }
 
-func TestJudgeAnswersReadOnlyScorecardV6(t *testing.T) {
+func TestJudgeAnswersReadTheJuryVerdict(t *testing.T) {
 	evaluation := json.RawMessage(`{
-		"evaluatorVersion":"typesafe-scorecard-v6","model":"typesafe-ai/jev","status":"incomplete",
+		"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev","liquid/d1"],"status":"incomplete",
 		"results":{
-			"booking_requested":{"answers":{"booking_requested":{"type":"noul","noul":0.91}}},
-			"clear_and_responsive":{"answers":{"clear_and_responsive":{"type":"noul","noul":0.40}}},
+			"booking_requested":{"verdict":true,"probability":0.91,"votes":{"typesafe-ai/jev":0.91,"liquid/d1":0.91},"errors":{}},
+			"clear_and_responsive":{"verdict":false,"probability":0.4,"votes":{"typesafe-ai/jev":0.7,"liquid/d1":0.1},"errors":{}},
 			"time_offered":{"status":"not_applicable","reason":"no_availability_result"},
-			"expressed_sentiment":{"answers":{"expressed_sentiment":{"type":"score","score":3}}}
+			"expressed_sentiment":{"score":3,"probabilities":{"3":1},"model":"typesafe-ai/jev"}
 		},
-		"errors":{"right_help":{"cause":"TimeoutError"}}
+		"errors":{"right_help":{"cause":"no_quorum","votes":{},"errors":{"typesafe-ai/jev":"TimeoutError"}}}
 	}`)
 	answers := answersByQuestion(judgeAnswers(evaluation))
 	if len(answers) != 3 || !answers["booking_requested"].Answer || answers["clear_and_responsive"].Answer {
-		t.Fatalf("v6 answers with 0.40 as no: %+v", answers)
+		t.Fatalf("the jury verdict is the answer: %+v", answers)
+	}
+	if votes, _ := answers["clear_and_responsive"].Detail["votes"].(map[string]float64); votes["liquid/d1"] != 0.1 {
+		t.Fatalf("each juror's vote is kept: %+v", answers["clear_and_responsive"].Detail)
+	}
+	if sentiment := jurySentiment(evaluation); sentiment == nil || *sentiment != 3 {
+		t.Fatalf("sentiment: %v", sentiment)
+	}
+	reading := readEvaluation(evaluation)
+	if !reading.Evaluated || len(reading.Flags) != 1 || reading.Flags[0].Check != "clear_and_responsive" || reading.Sentiment == nil {
+		t.Fatalf("a no verdict on a failure question flags the call, a booking no does not: %+v", reading)
 	}
 	if skipped := answers["time_offered"]; skipped.Answer || skipped.Probability != nil || skipped.Detail["reason"] != "no_availability_result" {
 		t.Fatalf("B5 skipped for lack of availability is a no without a probability: %+v", skipped)
 	}
-	if answers["booking_requested"].JudgeModel != "typesafe-ai/jev" || *answers["booking_requested"].Probability != 0.91 {
+	if answers["booking_requested"].JudgeModel != "typesafe-ai/jev,liquid/d1" || *answers["booking_requested"].Probability != 0.91 {
 		t.Fatalf("judge provenance: %+v", answers["booking_requested"])
 	}
 	if got := judgeAnswers(json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v5","model":"typesafe-ai/jev","status":"complete","results":{"office_rules_grounded":{"answers":{"office_rules_grounded":{"type":"noul","noul":0.9}}}}}`)); len(got) != 0 {
@@ -219,5 +229,39 @@ func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 		if !seen[key] {
 			t.Errorf("catalog is missing %s", key)
 		}
+	}
+}
+
+func TestJuryTrustNeedsVolumeAndLowBounds(t *testing.T) {
+	if low := wilsonLow(95, 100); low < 0.88 || low > 0.89 {
+		t.Fatalf("95 of 100 has a 95%% low bound near 0.887: %v", low)
+	}
+	if wilsonLow(0, 0) != 0 {
+		t.Fatal("no answers has no lower bound")
+	}
+	for name, test := range map[string]struct {
+		row     JudgeAccuracyRow
+		trusted bool
+	}{
+		"strong and large":         {JudgeAccuracyRow{Sample: 300, Agreed: 290, HumanNo: 60, FailuresCaught: 57}, true},
+		"perfect but too few":      {JudgeAccuracyRow{Sample: 40, Agreed: 40, HumanNo: 10, FailuresCaught: 10}, false},
+		"agrees but misses misses": {JudgeAccuracyRow{Sample: 300, Agreed: 285, HumanNo: 40, FailuresCaught: 30}, false},
+	} {
+		test.row.score()
+		if test.row.Trusted != test.trusted {
+			t.Errorf("%s: trusted=%v %+v", name, test.row.Trusted, test.row)
+		}
+	}
+}
+
+func TestStaffScorecardShowsVerdictsInCatalogOrder(t *testing.T) {
+	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev"],"status":"complete","results":{
+		"right_help":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
+		"booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}}}}`))
+	if len(scorecard) != 2 || scorecard[0].Code != "B1" || !scorecard[0].Verdict || scorecard[1].Code != "H2" || scorecard[1].Verdict || scorecard[1].Prompt == "" {
+		t.Fatalf("staff scorecard: %+v", scorecard)
+	}
+	if got := agentCallScorecard(nil); len(got) != 0 || got == nil {
+		t.Fatalf("no evaluation is an empty scorecard: %+v", got)
 	}
 }

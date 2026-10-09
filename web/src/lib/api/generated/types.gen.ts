@@ -673,6 +673,20 @@ export type AgentCallDetail = {
     locationName: string;
     messages: Array<AgentCallMessage>;
     issue?: AgentCallIssue;
+    /**
+     * The jury's verdict on each scorecard question it answered.
+     */
+    scorecard: Array<AgentCallVerdict>;
+    /**
+     * Caller sentiment from 0 (very negative) to 4 (very positive). Shown, not graded.
+     */
+    sentiment?: number;
+};
+
+export type AgentCallVerdict = {
+    code: string;
+    prompt: string;
+    verdict: boolean;
 };
 
 export type AiInteractionDetail = {
@@ -945,6 +959,25 @@ export type OperatorJudgeAccuracyRow = {
     humanNo: number;
     failuresCaught: number;
     falseAlarms: number;
+    /**
+     * Lower bound of the 95% Wilson interval for agreement with reviewers.
+     */
+    agreementLow: number;
+    /**
+     * Lower bound of the 95% Wilson interval for catching reviewer-marked failures.
+     */
+    catchLow: number;
+    jurors: Array<OperatorJurorAccuracy>;
+    /**
+     * At least 100 answers and 20 reviewer failures, agreement low bound at least 90%, and catch low bound at least 80%.
+     */
+    trusted: boolean;
+};
+
+export type OperatorJurorAccuracy = {
+    model: string;
+    compared: number;
+    agreed: number;
 };
 
 export type OperatorJudgeDisagreement = {
@@ -1114,15 +1147,9 @@ export type OperatorAiCallIssueReview = {
     reviewedAt: string;
 };
 
-export type OperatorAiCallTags = {
-    available: Array<string>;
-    selected: Array<string>;
-};
-
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
-    manualTag?: string;
     practiceId: string;
     locationId?: string;
     range: OperatorAiAnalyticsRange;
@@ -1349,7 +1376,6 @@ export type OperatorAiAnalyticsDiagnostics = {
 
 export type OperatorAiCallAnalytics = {
     reviewReasons?: Array<string>;
-    manualTags?: Array<string>;
     id: string;
     locationId: string;
     locationName: string;
@@ -1374,7 +1400,6 @@ export type OperatorAiCallAnalytics = {
  * The first page includes a fresh range summary. Cursor continuations return calls only within the initial reporting window; refresh without a cursor to obtain a new summary and window.
  */
 export type OperatorAiAnalyticsPage = {
-    availableTags?: Array<string>;
     /**
      * Staff-flagged calls awaiting Acuity review in the practice and office scope, regardless of range. First page only.
      */
@@ -3209,87 +3234,6 @@ export type GetOperatorAiInteractionAnalyticsResponses = {
 };
 
 export type GetOperatorAiInteractionAnalyticsResponse = GetOperatorAiInteractionAnalyticsResponses[keyof GetOperatorAiInteractionAnalyticsResponses];
-
-export type GetOperatorAiCallTagsData = {
-    body?: never;
-    path: {
-        interactionId: string;
-    };
-    query?: never;
-    url: '/v1/operator/ai-interactions/{interactionId}/manual-tags';
-};
-
-export type GetOperatorAiCallTagsErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type GetOperatorAiCallTagsError = GetOperatorAiCallTagsErrors[keyof GetOperatorAiCallTagsErrors];
-
-export type GetOperatorAiCallTagsResponses = {
-    /**
-     * Available practice tags and tags applied to this call.
-     */
-    200: OperatorAiCallTags;
-};
-
-export type GetOperatorAiCallTagsResponse = GetOperatorAiCallTagsResponses[keyof GetOperatorAiCallTagsResponses];
-
-export type SetOperatorAiCallTagData = {
-    body: {
-        name: string;
-        applied: boolean;
-    };
-    path: {
-        interactionId: string;
-    };
-    query?: never;
-    url: '/v1/operator/ai-interactions/{interactionId}/manual-tags';
-};
-
-export type SetOperatorAiCallTagErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type SetOperatorAiCallTagError = SetOperatorAiCallTagErrors[keyof SetOperatorAiCallTagErrors];
-
-export type SetOperatorAiCallTagResponses = {
-    /**
-     * Available practice tags and tags applied to this call.
-     */
-    200: OperatorAiCallTags;
-};
-
-export type SetOperatorAiCallTagResponse = SetOperatorAiCallTagResponses[keyof SetOperatorAiCallTagResponses];
 
 export type ReviewOperatorAiCallIssueData = {
     body: {

@@ -1140,57 +1140,6 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/operator/ai-interactions/{interactionId}/manual-tags:
-    parameters:
-      - name: interactionId
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-    get:
-      operationId: getOperatorAICallTags
-      summary: Read or update manual call tags as a Platform Operator.
-      responses:
-        "200":
-          description: Available practice tags and tags applied to this call.
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/OperatorAICallTags"}
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-    put:
-      operationId: setOperatorAICallTag
-      summary: Read or update manual call tags as a Platform Operator.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [name, applied]
-              properties:
-                name: {type: string, minLength: 1, maxLength: 60}
-                applied: {type: boolean}
-      responses:
-        "200":
-          description: Available practice tags and tags applied to this call.
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/OperatorAICallTags"}
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/operator/ai-interactions/{interactionId}/issue:
     parameters:
       - name: interactionId
@@ -3674,7 +3623,7 @@ components:
     AgentCallDetail:
       type: object
       additionalProperties: false
-      required: [call, locationName, messages]
+      required: [call, locationName, messages, scorecard]
       properties:
         call:
           $ref: "#/components/schemas/AgentCall"
@@ -3686,6 +3635,24 @@ components:
             $ref: "#/components/schemas/AgentCallMessage"
         issue:
           $ref: "#/components/schemas/AgentCallIssue"
+        scorecard:
+          type: array
+          description: The jury's verdict on each scorecard question it answered.
+          items:
+            $ref: "#/components/schemas/AgentCallVerdict"
+        sentiment:
+          type: number
+          minimum: 0
+          maximum: 4
+          description: Caller sentiment from 0 (very negative) to 4 (very positive). Shown, not graded.
+    AgentCallVerdict:
+      type: object
+      additionalProperties: false
+      required: [code, prompt, verdict]
+      properties:
+        code: {type: string}
+        prompt: {type: string}
+        verdict: {type: boolean}
     AIInteractionDetail:
       type: object
       additionalProperties: false
@@ -4099,7 +4066,7 @@ components:
     OperatorJudgeAccuracyRow:
       type: object
       additionalProperties: false
-      required: [question, judgeVersion, sample, agreed, humanNo, failuresCaught, falseAlarms]
+      required: [question, judgeVersion, sample, agreed, humanNo, failuresCaught, falseAlarms, agreementLow, catchLow, jurors, trusted]
       properties:
         question: {type: string}
         judgeVersion: {type: string}
@@ -4108,6 +4075,26 @@ components:
         humanNo: {type: integer}
         failuresCaught: {type: integer}
         falseAlarms: {type: integer}
+        agreementLow:
+          type: number
+          description: Lower bound of the 95% Wilson interval for agreement with reviewers.
+        catchLow:
+          type: number
+          description: Lower bound of the 95% Wilson interval for catching reviewer-marked failures.
+        jurors:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorJurorAccuracy"}
+        trusted:
+          type: boolean
+          description: At least 100 answers and 20 reviewer failures, agreement low bound at least 90%, and catch low bound at least 80%.
+    OperatorJurorAccuracy:
+      type: object
+      additionalProperties: false
+      required: [model, compared, agreed]
+      properties:
+        model: {type: string}
+        compared: {type: integer}
+        agreed: {type: integer}
     OperatorJudgeDisagreement:
       type: object
       additionalProperties: false
@@ -4322,12 +4309,6 @@ components:
         outcome: {$ref: "#/components/schemas/OperatorAICallIssueOutcome"}
         reviewedBy: {type: string}
         reviewedAt: {type: string, format: date-time}
-    OperatorAICallTags:
-      type: object
-      required: [available, selected]
-      properties:
-        available: {type: array, items: {type: string}}
-        selected: {type: array, items: {type: string}}
     OperatorAIAnalyticsRange:
       type: string
       enum: [24h, 7d, 30d]
@@ -4336,7 +4317,6 @@ components:
       additionalProperties: false
       required: [practiceId, range]
       properties:
-        manualTag: {type: string, maxLength: 60}
         practiceId:
           type: string
           format: uuid
@@ -4673,7 +4653,6 @@ components:
         - transcriptAvailable
       properties:
         reviewReasons: {type: array, items: {type: string}}
-        manualTags: {type: array, items: {type: string}}
         id:
           type: string
           format: uuid
@@ -4730,7 +4709,6 @@ components:
       additionalProperties: false
       required: [calls, nextCursor]
       properties:
-        availableTags: {type: array, items: {type: string}}
         pendingIssues:
           description: Staff-flagged calls awaiting Acuity review in the practice and office scope, regardless of range. First page only.
           type: array

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -98,13 +99,48 @@ type CallReviewSubmission struct {
 }
 
 type JudgeAccuracyRow struct {
-	Question       string `json:"question"`
-	JudgeVersion   string `json:"judgeVersion"`
-	Sample         int    `json:"sample"`
-	Agreed         int    `json:"agreed"`
-	HumanNo        int    `json:"humanNo"`
-	FailuresCaught int    `json:"failuresCaught"`
-	FalseAlarms    int    `json:"falseAlarms"`
+	Question       string          `json:"question"`
+	JudgeVersion   string          `json:"judgeVersion"`
+	Sample         int             `json:"sample"`
+	Agreed         int             `json:"agreed"`
+	HumanNo        int             `json:"humanNo"`
+	FailuresCaught int             `json:"failuresCaught"`
+	FalseAlarms    int             `json:"falseAlarms"`
+	AgreementLow   float64         `json:"agreementLow"`
+	CatchLow       float64         `json:"catchLow"`
+	Jurors         []JurorAccuracy `json:"jurors"`
+	Trusted        bool            `json:"trusted"`
+}
+
+type JurorAccuracy struct {
+	Model    string `json:"model"`
+	Compared int    `json:"compared"`
+	Agreed   int    `json:"agreed"`
+}
+
+const (
+	trustMinimumAnswers = 100
+	trustMinimumHumanNo = 20
+	trustAgreementFloor = 0.90
+	trustCatchFloor     = 0.80
+	wilsonZ95           = 1.96
+)
+
+func wilsonLow(successes, total int) float64 {
+	if total == 0 {
+		return 0
+	}
+	n, p := float64(total), float64(successes)/float64(total)
+	center := p + wilsonZ95*wilsonZ95/(2*n)
+	margin := wilsonZ95 * math.Sqrt(p*(1-p)/n+wilsonZ95*wilsonZ95/(4*n*n))
+	return (center - margin) / (1 + wilsonZ95*wilsonZ95/n)
+}
+
+func (row *JudgeAccuracyRow) score() {
+	row.AgreementLow = wilsonLow(row.Agreed, row.Sample)
+	row.CatchLow = wilsonLow(row.FailuresCaught, row.HumanNo)
+	row.Trusted = row.Sample >= trustMinimumAnswers && row.HumanNo >= trustMinimumHumanNo &&
+		row.AgreementLow >= trustAgreementFloor && row.CatchLow >= trustCatchFloor
 }
 
 type JudgeDisagreement struct {
@@ -567,7 +603,8 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
 		SELECT r.interaction_id::text, i.started_at, i.location_id::text, r.question, r.reviewer_email, r.answer, r.note,
-			r.judge_answer, COALESCE(r.judge_version, '')
+			r.judge_answer, COALESCE(r.judge_version, ''),
+			(SELECT a.detail->'votes' FROM ai_interaction_scorecard_answers a WHERE a.interaction_id = r.interaction_id AND a.question = r.question AND a.source = 'judge')
 		FROM ai_call_reviews r
 		JOIN ai_interactions i ON i.id = r.interaction_id
 		WHERE r.practice_id = $1 AND i.location_id = ANY($2::uuid[])
@@ -590,7 +627,8 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		count++
 		var item JudgeDisagreement
 		var judgeAnswer *bool
-		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &item.JudgeVersion); err != nil {
+		var votes map[string]float64
+		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &item.JudgeVersion, &votes); err != nil {
 			rows.Close()
 			return JudgeAccuracy{}, fmt.Errorf("read judge accuracy: %w", err)
 		}
@@ -622,9 +660,25 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		}
 		group := groupKey{item.Question, item.JudgeVersion}
 		if groups[group] == nil {
-			groups[group] = &JudgeAccuracyRow{Question: item.Question, JudgeVersion: item.JudgeVersion}
+			groups[group] = &JudgeAccuracyRow{Question: item.Question, JudgeVersion: item.JudgeVersion, Jurors: []JurorAccuracy{}}
 		}
 		row := groups[group]
+		for model, vote := range votes {
+			index := -1
+			for position, juror := range row.Jurors {
+				if juror.Model == model {
+					index = position
+				}
+			}
+			if index < 0 {
+				row.Jurors = append(row.Jurors, JurorAccuracy{Model: model})
+				index = len(row.Jurors) - 1
+			}
+			row.Jurors[index].Compared++
+			if (vote > scorecardNoAtOrBelow) == item.Human {
+				row.Jurors[index].Agreed++
+			}
+		}
 		item.Judge = *judgeAnswer
 		row.Sample++
 		if !item.Human {
@@ -665,6 +719,8 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 	}
 	order := questionOrder()
 	for _, row := range groups {
+		row.score()
+		sort.Slice(row.Jurors, func(left, right int) bool { return row.Jurors[left].Model < row.Jurors[right].Model })
 		result.Rows = append(result.Rows, *row)
 	}
 	sort.Slice(result.Rows, func(left, right int) bool {

@@ -22,6 +22,7 @@ import type {
   AgentCall,
   AgentCallIssue,
   AgentCallIssueReason,
+  AgentCallVerdict,
 } from "@/lib/api/generated/types.gen"
 import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
 import { formatUSPhone } from "@/lib/phone"
@@ -275,6 +276,7 @@ function CallContent({
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 scrollbar-thin"
         >
           <div className="flex flex-col gap-6">
+            <CallScorecard scorecard={detail.scorecard} sentiment={detail.sentiment} />
             {detail.issue ? (
               <Alert role="status">
                 <FlagIcon aria-hidden="true" />
@@ -405,5 +407,30 @@ function CallContent({
         </div>
       )}
     </>
+  )
+}
+
+const sentimentLabels = ["Very negative", "Negative", "Neutral or mixed", "Positive", "Very positive"]
+
+export function CallScorecard({ scorecard, sentiment }: { scorecard: AgentCallVerdict[]; sentiment?: number }) {
+  if (scorecard.length === 0 && sentiment === undefined) return null
+  return (
+    <section aria-label="Call scorecard" className="rounded-lg border">
+      <h3 className="border-b px-3 py-2 text-sm font-medium">Scorecard</h3>
+      <ul className="divide-y text-sm">
+        {scorecard.map((item) => (
+          <li key={item.code} className="flex items-start justify-between gap-3 px-3 py-2">
+            <span>{item.prompt}</span>
+            <span className={item.verdict ? "text-muted-foreground" : "font-medium"}>{item.verdict ? "Yes" : "No"}</span>
+          </li>
+        ))}
+        {sentiment !== undefined && (
+          <li className="flex items-start justify-between gap-3 px-3 py-2">
+            <span>Caller sentiment</span>
+            <span className="text-muted-foreground">{sentimentLabels[Math.round(sentiment)]}</span>
+          </li>
+        )}
+      </ul>
+    </section>
   )
 }

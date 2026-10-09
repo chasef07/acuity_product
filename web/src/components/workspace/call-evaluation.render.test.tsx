@@ -223,26 +223,22 @@ test("v5 omits the request-understood judge and keeps active review alerts and h
   }
 })
 
-test("scorecard v6 shows the new questions without flagging them until review agrees", () => {
-  const noul = (value: number, name: string) => ({ answers: { [name]: { type: "noul", noul: value } } })
-  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
-    evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v6", model: "typesafe-ai/jev", evaluatedAt: "2026-10-07T12:00:00Z", status: "complete",
+test("scorecard v6 shows the jury verdict, each juror's vote, quorum failures and sentiment", () => {
+  const html = renderToStaticMarkup(<CallEvaluation prompts={{ clear_and_responsive: "Was the call clear and responsive?" }} evaluation={{
+    evaluator: "jury", evaluatorVersion: "typesafe-scorecard-v6", jurors: ["typesafe-ai/jev", "liquid/d1"], evaluatedAt: "2026-10-07T12:00:00Z", status: "incomplete",
     results: {
-      booking_requested: noul(0.9, "booking_requested"),
-      clear_and_responsive: noul(0.1, "clear_and_responsive"),
-      person_request_honored: noul(0.2, "person_request_honored"),
-      office_rules_grounded: noul(0.9, "office_rules_grounded"),
+      booking_requested: { verdict: false, probability: 0.1, votes: { "typesafe-ai/jev": 0.1, "liquid/d1": 0.1 }, errors: {} },
+      clear_and_responsive: { verdict: false, probability: 0.2, votes: { "typesafe-ai/jev": 0.1, "liquid/d1": 0.3 }, errors: {} },
       time_offered: { status: "not_applicable", reason: "no_availability_result" },
-      appointment_datetime_correct: { status: "not_applicable", reason: "no_appointment_action_result" },
+      expressed_sentiment: { score: 1.2, probabilities: { "1": 0.8 }, model: "typesafe-ai/jev" },
     },
+    errors: { right_help: { cause: "no_quorum", votes: { "typesafe-ai/jev": 0.9 }, errors: { "liquid/d1": "TimeoutError" } } },
   }} />)
-  assert.match(html, /H4 · Clear and responsive/)
-  assert.match(html, /T1 · Person request honored/)
+  assert.match(html, /Jury: jev, d1/)
+  assert.match(html, /Was the call clear and responsive\?<\/dt><dd class="shrink-0 font-medium text-destructive">No/)
+  assert.match(html, /booking requested<\/dt><dd class="shrink-0 font-medium ">No/)
+  assert.match(html, /d1: failed \(TimeoutError\)/)
+  assert.match(html, /No quorum/)
   assert.match(html, /No availability search returned a result/)
-  assert.doesNotMatch(html, />Needs review</)
-  const flagged = renderToStaticMarkup(<CallEvaluation evaluation={{
-    evaluator: "jev", evaluatorVersion: "typesafe-scorecard-v6", model: "typesafe-ai/jev", evaluatedAt: "2026-10-07T12:00:00Z", status: "complete",
-    results: { office_rules_grounded: noul(0.2, "office_rules_grounded") },
-  }} />)
-  assert.match(flagged, />Needs review</)
+  assert.match(html, /Negative · 1.2 \/ 4/)
 })

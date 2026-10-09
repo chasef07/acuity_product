@@ -26,7 +26,7 @@ func TestCloseoutProjectionRecordsScorecard(t *testing.T) {
 		Kind: MessageCloseout, SourceCallID: "scorecard-call", CallerPhone: "+15555550101", OfficePhone: "+15555550102",
 		StartedAt: now.Add(-2 * time.Minute), EndedAt: &now, Status: CallCompleted,
 		Transcript:      syntheticTranscript(t, syntheticTool{"resolve_patient", `{"firstName":"Synthetic"}`, "no_results: A complete search found no matching patient."}, syntheticTool{"transfer_call", `{}`, "accepted: Provider accepted the transfer."}),
-		CloseoutPayload: json.RawMessage(`{"versions":{"agent":"0.14.0"},"domainOutcomes":[],"evaluation":{"evaluatorVersion":"typesafe-scorecard-v6","model":"typesafe-ai/jev","status":"complete","results":{"booking_requested":{"answers":{"booking_requested":{"type":"noul","noul":0.2}}}}}}`),
+		CloseoutPayload: json.RawMessage(`{"versions":{"agent":"0.14.0"},"domainOutcomes":[],"evaluation":{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev"],"status":"complete","results":{"booking_requested":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}}}}}`),
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

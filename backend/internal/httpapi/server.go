@@ -618,7 +618,6 @@ func (server *Server) QueryOperatorAIAnalytics(
 		ctx,
 		interaction.QueryAnalyticsCommand{
 			Identity:   identity,
-			ManualTag:  stringValue(body.ManualTag),
 			PracticeID: body.PracticeId.String(),
 			LocationID: uuidString(body.LocationId),
 			Range:      interaction.AnalyticsRange(body.Range),
@@ -3367,9 +3366,8 @@ func operatorAIAnalyticsPageResponse(
 	page interaction.AnalyticsPage,
 ) (api.OperatorAIAnalyticsPage, error) {
 	response := api.OperatorAIAnalyticsPage{
-		AvailableTags: &page.AvailableTags,
-		Calls:         make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
-		NextCursor:    page.NextCursor,
+		Calls:      make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
+		NextCursor: page.NextCursor,
 	}
 	if page.Summary != nil {
 		pendingIssues, err := operatorAICallIssuesResponse(page.PendingIssues)
@@ -3412,7 +3410,6 @@ func operatorAIAnalyticsPageResponse(
 		}
 		response.Calls = append(response.Calls, api.OperatorAICallAnalytics{
 			Id:                  id,
-			ManualTags:          &call.ManualTags,
 			ReviewReasons:       &call.ReviewReasons,
 			LocationId:          locationID,
 			LocationName:        call.LocationName,
