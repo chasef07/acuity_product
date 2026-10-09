@@ -1,10 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { BookOpenTextIcon, CircleAlertIcon } from "lucide-react"
+import { BookOpenTextIcon, ChevronRightIcon, CircleAlertIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -29,12 +28,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type {
+  OperatorAiAnalyticsRange,
   OperatorBookingConversionWeek,
   OperatorScorecardQuestion,
 } from "@/lib/api/generated/types.gen"
-import { useScorecardQuestions, useScorecardReport } from "@/lib/clients/call-review"
+import { useScorecardQuestions, useScorecardReport, useScorecardResults } from "@/lib/clients/call-review"
+import { formatShortDateTime } from "@/lib/format"
 
 export function useQuestionCatalog() {
   const query = useScorecardQuestions()
@@ -42,44 +42,32 @@ export function useQuestionCatalog() {
   return new Map(questions.map((question) => [question.key, question]))
 }
 
-export function questionSummary(question?: OperatorScorecardQuestion) {
-  if (!question) return ""
-  const [first] = question.question.split(/(?<=[?.])\s/)
-  return first
-}
-
 export function ScorecardDefinitions({ questions }: { questions: OperatorScorecardQuestion[] }) {
-  const groups = Array.from(new Set(questions.map((question) => question.group)))
   return (
-    <div className="space-y-6">
-      {groups.map((group) => (
-        <section key={group} aria-label={group}>
-          <h3 className="text-[0.6875rem] font-medium tracking-wide text-muted-foreground uppercase">{group}</h3>
-          <dl className="mt-2 divide-y rounded-lg border bg-card">
-            {questions.filter((question) => question.group === group).map((question) => (
-              <div key={question.key} className="space-y-2 px-4 py-3">
-                <dt className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-xs text-muted-foreground">{question.code}</span>
-                  <span className="text-sm font-semibold">{question.label}</span>
-                  <Badge variant={question.source === "judge" ? "secondary" : "outline"}>
-                    {question.source === "judge" ? "Judge" : "Code check"}
-                  </Badge>
-                </dt>
-                <dd className="text-sm leading-6">{question.question}</dd>
-                <dd className="grid gap-1 text-xs leading-5 sm:grid-cols-[3rem_1fr]">
-                  <span className="font-medium text-foreground">Yes</span>
-                  <span className="text-muted-foreground">{question.yes}</span>
-                  <span className="font-medium text-foreground">No</span>
-                  <span className="text-muted-foreground">{question.no}</span>
-                  <span className="font-medium text-foreground">Applies</span>
-                  <span className="text-muted-foreground">{question.appliesWhen}</span>
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </section>
+    <ul className="divide-y rounded-lg border bg-card">
+      {questions.filter((question) => question.source === "judge").map((question) => (
+        <li key={question.key}>
+          <details className="group px-4 py-3">
+            <summary className="flex cursor-pointer list-none items-start gap-2 text-sm [&::-webkit-details-marker]:hidden">
+              <ChevronRightIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden="true" />
+              <span>
+                <span className="mr-1.5 font-mono text-xs text-muted-foreground">{question.code}</span>
+                <span className="font-medium">{question.prompt}</span>
+              </span>
+            </summary>
+            <div className="mt-2 space-y-2 pl-6 text-sm leading-6">
+              <p className="text-muted-foreground">{question.question}</p>
+              <dl className="grid gap-1 text-xs leading-5 sm:grid-cols-[2.5rem_1fr]">
+                <dt className="font-medium">Yes</dt>
+                <dd className="text-muted-foreground">{question.yes}</dd>
+                <dt className="font-medium">No</dt>
+                <dd className="text-muted-foreground">{question.no}</dd>
+              </dl>
+            </div>
+          </details>
+        </li>
       ))}
-    </div>
+    </ul>
   )
 }
 
@@ -95,10 +83,8 @@ export function ScorecardDefinitionsButton() {
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
           <SheetHeader className="border-b px-5 py-4">
-            <SheetTitle>Scorecard definitions</SheetTitle>
-            <SheetDescription>
-              Every answer is yes or no. The judge wording below is exactly what the judge reads.
-            </SheetDescription>
+            <SheetTitle>Question definitions</SheetTitle>
+            <SheetDescription>What Jev reads for each question, and what counts as yes or no.</SheetDescription>
           </SheetHeader>
           <div className="px-5 py-5">
             {query.status === "ready" ? (
@@ -115,163 +101,212 @@ export function ScorecardDefinitionsButton() {
   )
 }
 
-const weekOptions = [4, 8, 12] as const
-
-export function ScorecardOverview({ practiceID, locationID }: { practiceID: string; locationID: string }) {
-  const [weeks, setWeeks] = useState<(typeof weekOptions)[number]>(4)
-  const report = useScorecardReport(practiceID, locationID, weeks)
-  const questions = useScorecardQuestions()
+function ReportFailure({ title, retry }: { title: string; retry: () => void }) {
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
-          Conversion is converted ÷ (booking calls − blocked). A booking call is one where the judge says the caller asked to
-          book, reschedule, or cancel (B1), so weeks before the judge ran show no booking calls.
-        </p>
-        <ToggleGroup
-          variant="segmented"
-          spacing={1}
-          value={[String(weeks)]}
-          aria-label="Weeks shown"
-          onValueChange={(values) => {
-            const value = Number(values[0])
-            if (weekOptions.some((option) => option === value)) setWeeks(value as (typeof weekOptions)[number])
-          }}
-        >
-          {weekOptions.map((option) => (
-            <ToggleGroupItem key={option} value={String(option)}>{option} weeks</ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </div>
+    <Alert variant="destructive">
+      <CircleAlertIcon aria-hidden="true" />
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>
+        <Button className="mt-2" size="sm" variant="outline" onClick={retry}>Retry</Button>
+      </AlertDescription>
+    </Alert>
+  )
+}
 
-      {report.status === "loading" && <Skeleton className="h-72 rounded-xl" />}
-      {report.status === "failed" && (
-        <Alert variant="destructive" className="max-w-2xl">
-          <CircleAlertIcon aria-hidden="true" />
-          <AlertTitle>Scorecard unavailable</AlertTitle>
-          <AlertDescription>
-            <p>Booking conversion could not be loaded.</p>
-            <Button className="mt-3" size="sm" variant="outline" onClick={report.retry}>Retry</Button>
-          </AlertDescription>
-        </Alert>
-      )}
-      {report.status === "ready" && (
-        <>
-          <Card size="sm">
-            <CardHeader>
-              <CardTitle className="text-sm">Booking conversion by office and week</CardTitle>
-              <CardDescription>
-                {report.data.from} to {report.data.through} · weeks start Monday ({report.data.timeZone})
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="overflow-x-auto px-0">
-              <Table className="min-w-[46rem]">
-                <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="pl-4">Week of</TableHead>
-                    <TableHead>Office</TableHead>
-                    <TableHead className="text-right">Booking calls</TableHead>
-                    <TableHead className="text-right">Converted</TableHead>
-                    <TableHead className="text-right">Missed</TableHead>
-                    <TableHead className="text-right">Blocked</TableHead>
-                    <TableHead className="text-right">Offered, not booked</TableHead>
-                    <TableHead className="text-right">Conversion</TableHead>
-                    <TableHead className="pr-4 text-right">Judged calls</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {report.data.weeks.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
-                        No scored calls in this range.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {report.data.weeks.map((week) => (
-                    <ConversionRow key={`${week.weekStart}:${week.locationId}`} week={week} />
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
-          <Card size="sm">
-            <CardHeader>
-              <CardTitle className="text-sm">Insurance plans the agent couldn&apos;t verify</CardTitle>
-              <CardDescription>
-                The last insurance check ended blocked or still needed information (I1). Not an agent failure: use these to update
-                each office&apos;s insurance rules.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="overflow-x-auto px-0">
-              <Table className="min-w-[40rem]">
-                <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="pl-4">Week of</TableHead>
-                    <TableHead>Office</TableHead>
-                    <TableHead>Plan as the caller said it</TableHead>
-                    <TableHead>What the insurance check said</TableHead>
-                    <TableHead className="pr-4 text-right">Calls</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {report.data.unverifiedInsurance.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
-                        Every insurance check in this range was verified.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {report.data.unverifiedInsurance.map((plan) => (
-                    <TableRow key={`${plan.weekStart}:${plan.locationId}:${plan.plan}:${plan.result}`}>
-                      <TableCell className="pl-4 tabular-nums">{plan.weekStart}</TableCell>
-                      <TableCell>{plan.locationName}</TableCell>
-                      <TableCell className="font-medium">{plan.plan}</TableCell>
-                      <TableCell className="max-w-96 text-xs whitespace-normal text-muted-foreground">{plan.result || "—"}</TableCell>
-                      <TableCell className="pr-4 text-right tabular-nums">{plan.calls}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </>
-      )}
-
-      <Card size="sm">
+export function ScorecardHighlights({ practiceID, locationID }: { practiceID: string; locationID: string }) {
+  const report = useScorecardReport(practiceID, locationID, 4)
+  const [insuranceOpen, setInsuranceOpen] = useState(false)
+  if (report.status === "loading") return <Skeleton className="h-56 rounded-xl" />
+  if (report.status === "failed") return <ReportFailure title="Booking conversion unavailable" retry={report.retry} />
+  const { weeks, unverifiedInsurance } = report.data
+  const plans = new Set(unverifiedInsurance.map((plan) => plan.plan.toLowerCase())).size
+  const insuranceCalls = unverifiedInsurance.reduce((sum, plan) => sum + plan.calls, 0)
+  return (
+    <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+      <Card size="sm" className="min-w-0">
         <CardHeader>
-          <CardTitle className="text-sm">Question definitions</CardTitle>
-          <CardDescription>What counts as yes and no for every scorecard question.</CardDescription>
+          <CardTitle className="text-sm">Booking conversion</CardTitle>
+          <CardDescription>
+            Converted ÷ (booking calls − blocked), by office and week. Weeks start Monday.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          {questions.status === "ready" ? (
-            <ScorecardDefinitions questions={questions.data.questions} />
-          ) : (
-            <Skeleton className="h-40 rounded-lg" />
-          )}
+        <CardContent className="overflow-x-auto px-0">
+          <Table className="min-w-[36rem]">
+            <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="pl-4">Week of</TableHead>
+                <TableHead>Office</TableHead>
+                <TableHead className="text-right">Booking calls</TableHead>
+                <TableHead className="text-right">Converted</TableHead>
+                <TableHead className="text-right">Missed</TableHead>
+                <TableHead className="text-right">Blocked</TableHead>
+                <TableHead className="pr-4 text-right">Conversion</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {weeks.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
+                    No scored calls in the last 4 weeks.
+                  </TableCell>
+                </TableRow>
+              )}
+              {weeks.map((week) => <ConversionRow key={`${week.weekStart}:${week.locationId}`} week={week} />)}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
+      <button
+        type="button"
+        onClick={() => setInsuranceOpen(true)}
+        className="rounded-xl border bg-card p-4 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40"
+      >
+        <span className="text-sm font-medium">Insurance plans we couldn&apos;t verify</span>
+        <span className="mt-2 block font-mono text-2xl font-semibold tracking-[-0.03em]">{plans}</span>
+        <span className="mt-1 block text-xs text-muted-foreground">
+          {plans === 1 ? "plan" : "plans"} across {insuranceCalls} {insuranceCalls === 1 ? "call" : "calls"}, last 4 weeks
+        </span>
+        <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium">
+          See plans <ChevronRightIcon className="size-3.5" aria-hidden="true" />
+        </span>
+      </button>
+      <Sheet open={insuranceOpen} onOpenChange={setInsuranceOpen}>
+        <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
+          <SheetHeader className="border-b px-5 py-4">
+            <SheetTitle>Insurance plans we couldn&apos;t verify</SheetTitle>
+            <SheetDescription>
+              The last insurance check ended blocked or still needed details. Use these to update each office&apos;s insurance rules.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[36rem]">
+              <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="pl-5">Plan as the caller said it</TableHead>
+                  <TableHead>Office</TableHead>
+                  <TableHead>What the check said</TableHead>
+                  <TableHead className="pr-5 text-right">Calls</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {unverifiedInsurance.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">Every insurance check was verified.</TableCell>
+                  </TableRow>
+                )}
+                {unverifiedInsurance.map((plan) => (
+                  <TableRow key={`${plan.weekStart}:${plan.locationId}:${plan.plan}:${plan.result}`}>
+                    <TableCell className="pl-5 font-medium">
+                      {plan.plan}
+                      <span className="block text-[0.6875rem] font-normal text-muted-foreground">Week of {plan.weekStart}</span>
+                    </TableCell>
+                    <TableCell>{plan.locationName}</TableCell>
+                    <TableCell className="max-w-72 text-xs whitespace-normal text-muted-foreground">{plan.result || "—"}</TableCell>
+                    <TableCell className="pr-5 text-right tabular-nums">{plan.calls}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }
 
 function ConversionRow({ week }: { week: OperatorBookingConversionWeek }) {
   const notJudged = week.judgedCalls === 0
+  const dash = (value: number) => (notJudged ? "—" : value)
   return (
     <TableRow>
       <TableCell className="pl-4 tabular-nums">{week.weekStart}</TableCell>
       <TableCell>{week.locationName}</TableCell>
-      <TableCell className="text-right tabular-nums">{notJudged ? "—" : week.bookingCalls}</TableCell>
-      <TableCell className="text-right tabular-nums">{notJudged ? "—" : week.converted}</TableCell>
-      <TableCell className={`text-right tabular-nums ${week.missed > 0 ? "text-destructive" : ""}`}>{notJudged ? "—" : week.missed}</TableCell>
-      <TableCell className="text-right tabular-nums">{notJudged ? "—" : week.blocked}</TableCell>
-      <TableCell className="text-right tabular-nums">{notJudged ? "—" : week.attempted}</TableCell>
-      <TableCell className="text-right font-mono font-semibold tabular-nums">
+      <TableCell className="text-right tabular-nums">{dash(week.bookingCalls)}</TableCell>
+      <TableCell className="text-right tabular-nums">{dash(week.converted)}</TableCell>
+      <TableCell className={`text-right tabular-nums ${week.missed > 0 ? "text-destructive" : ""}`}>{dash(week.missed)}</TableCell>
+      <TableCell className="text-right tabular-nums">{dash(week.blocked)}</TableCell>
+      <TableCell className="pr-4 text-right font-mono font-semibold tabular-nums">
         {week.conversion == null ? "—" : `${Math.round(week.conversion * 100)}%`}
       </TableCell>
-      <TableCell className="pr-4 text-right text-muted-foreground tabular-nums">
-        {week.judgedCalls} / {week.calls}
-      </TableCell>
     </TableRow>
+  )
+}
+
+export function ScorecardResultsCard({
+  practiceID,
+  locationID,
+  range,
+  onOpenCall,
+}: {
+  practiceID: string
+  locationID: string
+  range: OperatorAiAnalyticsRange
+  onOpenCall: (interactionID: string) => void
+}) {
+  const results = useScorecardResults(practiceID, locationID, range)
+  const catalog = useQuestionCatalog()
+  const [open, setOpen] = useState("")
+  if (results.status === "loading") return <Skeleton className="h-64 rounded-xl" />
+  if (results.status === "failed") return <ReportFailure title="Scores unavailable" retry={results.retry} />
+  const { calls, rows, noCalls, truncated } = results.data
+  return (
+    <Card size="sm" className="min-w-0">
+      <CardHeader>
+        <CardTitle className="text-sm">Scores on every call</CardTitle>
+        <CardDescription>
+          How many of {calls.toLocaleString()} scored calls got a no on each question. Click a question to see those calls.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="px-0">
+        <ul className="divide-y border-t">
+          {rows.length === 0 && <li className="px-4 py-8 text-center text-sm text-muted-foreground">No scored calls in this range.</li>}
+          {rows.map((row) => {
+            const question = catalog.get(row.question)
+            const share = row.answered ? row.no / row.answered : 0
+            const expanded = open === row.question
+            const list = noCalls.filter((call) => call.question === row.question)
+            return (
+              <li key={row.question}>
+                <button
+                  type="button"
+                  aria-expanded={expanded}
+                  disabled={row.no === 0}
+                  onClick={() => setOpen(expanded ? "" : row.question)}
+                  className="grid w-full grid-cols-[1fr_auto] items-center gap-3 px-4 py-2.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted disabled:hover:bg-transparent"
+                >
+                  <span className="min-w-0">
+                    <span className="mr-1.5 font-mono text-xs text-muted-foreground">{question?.code}</span>
+                    {question?.prompt ?? row.question}
+                    <span className="ml-2 inline-block h-1.5 w-24 overflow-hidden rounded-full bg-muted align-middle">
+                      <span className="block h-full rounded-full bg-destructive/70" style={{ width: `${Math.round(share * 100)}%` }} />
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2 text-xs tabular-nums text-muted-foreground">
+                    <span className={row.no > 0 ? "font-semibold text-foreground" : ""}>{row.no} no</span>
+                    <span>of {row.answered}</span>
+                    {row.no > 0 && <ChevronRightIcon className={`size-3.5 transition-transform ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />}
+                  </span>
+                </button>
+                {expanded && (
+                  <ul className="bg-muted/40 px-4 py-2">
+                    {list.map((call) => (
+                      <li key={call.interactionId}>
+                        <button type="button" className="flex w-full justify-between gap-3 rounded-sm py-1.5 text-left text-xs hover:underline" onClick={() => onOpenCall(call.interactionId)}>
+                          <span>{formatShortDateTime(call.startedAt)}</span>
+                          <span className="text-muted-foreground">{call.locationName}</span>
+                        </button>
+                      </li>
+                    ))}
+                    {truncated && list.length < row.no && (
+                      <li className="py-1.5 text-xs text-muted-foreground">Showing the first {list.length}. Narrow the range or office to see the rest.</li>
+                    )}
+                  </ul>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      </CardContent>
+    </Card>
   )
 }

@@ -196,7 +196,31 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		t.Fatalf("reviewer disagreements: %+v", accuracy.ReviewerDisagreements)
 	}
 
+	if accuracy.GoldenAnswers != 19 || len(accuracy.GoldenSet) != 2 || accuracy.GoldenSet[0].Answers+accuracy.GoldenSet[1].Answers != 19 {
+		t.Fatalf("golden set summary: answers=%d calls=%+v", accuracy.GoldenAnswers, accuracy.GoldenSet)
+	}
+
 	now = time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC)
+	results, err := module.QueryScorecardResults(ctx, ScorecardResultsCommand{Identity: first, PracticeID: practice, Range: AnalyticsRange7Days})
+	if err != nil || results.Calls != 32 {
+		t.Fatalf("scorecard results: %+v %v", results, err)
+	}
+	noByQuestion := map[string]int{}
+	for _, row := range results.Rows {
+		noByQuestion[row.Question] = row.No
+	}
+	clearNo := 0
+	for _, call := range results.NoCalls {
+		if call.Question == "clear_and_responsive" {
+			clearNo++
+			if call.LocationName != "Main" {
+				t.Fatalf("drill-in call carries its office: %+v", call)
+			}
+		}
+	}
+	if noByQuestion["clear_and_responsive"] != 6 || clearNo != 6 || noByQuestion["right_help"] != 1 {
+		t.Fatalf("no counts per question: %v", noByQuestion)
+	}
 	report, err := module.QueryScorecardReport(ctx, ScorecardReportCommand{Identity: first, PracticeID: practice, Weeks: 2, TimeZone: "America/New_York"})
 	if err != nil || len(report.Weeks) != 1 {
 		t.Fatalf("report: %+v %v", report, err)

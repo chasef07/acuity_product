@@ -6,6 +6,7 @@ import {
   openOperatorCallReviewQueue,
   queryOperatorJudgeAccuracy,
   queryOperatorScorecard,
+  queryOperatorScorecardResults,
   submitOperatorCallReview,
 } from "../api/generated/sdk.gen"
 import type { OperatorCallReviewSubmission } from "../api/generated/types.gen"
@@ -76,6 +77,17 @@ export function useScorecardReport(practiceID: string, locationID: string, weeks
           weeks,
           timeZone,
         },
+      }),
+  )
+}
+
+export function useScorecardResults(practiceID: string, locationID: string, range: "24h" | "7d" | "30d") {
+  return usePortalQuery(
+    practiceID ? `scorecard-results:${practiceID}:${locationID}:${range}` : null,
+    (transport) =>
+      queryOperatorScorecardResults({
+        ...transport,
+        body: { practiceId: practiceID, locationId: locationID || undefined, range },
       }),
   )
 }

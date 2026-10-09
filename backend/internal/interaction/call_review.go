@@ -135,8 +135,19 @@ type ReviewerDisagreement struct {
 	Answers       []ReviewerAnswer `json:"answers"`
 }
 
+type GoldenSetCall struct {
+	InteractionID string    `json:"interactionId"`
+	StartedAt     time.Time `json:"startedAt"`
+	LocationName  string    `json:"locationName"`
+	Reviewers     []string  `json:"reviewers"`
+	Answers       int       `json:"answers"`
+	Disagreements int       `json:"disagreements"`
+}
+
 type JudgeAccuracy struct {
 	ReviewedCalls         int                    `json:"reviewedCalls"`
+	GoldenAnswers         int                    `json:"goldenAnswers"`
+	GoldenSet             []GoldenSetCall        `json:"goldenSet"`
 	Unjudged              int                    `json:"unjudged"`
 	Rows                  []JudgeAccuracyRow     `json:"rows"`
 	JudgeDisagreements    []JudgeDisagreement    `json:"judgeDisagreements"`
@@ -563,7 +574,8 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 	result := JudgeAccuracy{Rows: []JudgeAccuracyRow{}, JudgeDisagreements: []JudgeDisagreement{}, ReviewerDisagreements: []ReviewerDisagreement{}}
 	type groupKey struct{ question, version string }
 	groups := map[groupKey]*JudgeAccuracyRow{}
-	calls := map[string]bool{}
+	calls := map[string]*GoldenSetCall{}
+	callList := []string{}
 	type callQuestion struct{ interaction, question string }
 	byCallQuestion := map[callQuestion]*ReviewerDisagreement{}
 	callOrder := []callQuestion{}
@@ -577,7 +589,22 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			return JudgeAccuracy{}, fmt.Errorf("read judge accuracy: %w", err)
 		}
 		item.LocationName = names[item.LocationName]
-		calls[item.InteractionID] = true
+		if calls[item.InteractionID] == nil {
+			calls[item.InteractionID] = &GoldenSetCall{InteractionID: item.InteractionID, StartedAt: item.StartedAt, LocationName: item.LocationName, Reviewers: []string{}}
+			callList = append(callList, item.InteractionID)
+		}
+		golden := calls[item.InteractionID]
+		golden.Answers++
+		result.GoldenAnswers++
+		if len(golden.Reviewers) == 0 || golden.Reviewers[len(golden.Reviewers)-1] != item.ReviewerEmail {
+			seen := false
+			for _, reviewer := range golden.Reviewers {
+				seen = seen || reviewer == item.ReviewerEmail
+			}
+			if !seen {
+				golden.Reviewers = append(golden.Reviewers, item.ReviewerEmail)
+			}
+		}
 		key := callQuestion{item.InteractionID, item.Question}
 		if byCallQuestion[key] == nil {
 			byCallQuestion[key] = &ReviewerDisagreement{InteractionID: item.InteractionID, StartedAt: item.StartedAt, LocationName: item.LocationName, Question: item.Question}
@@ -606,6 +633,9 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			}
 		case item.Human:
 			row.FalseAlarms++
+		}
+		if item.Human != item.Judge {
+			golden.Disagreements++
 		}
 		if item.Human != item.Judge && len(result.JudgeDisagreements) < reviewDisagreementRows {
 			result.JudgeDisagreements = append(result.JudgeDisagreements, item)
@@ -642,6 +672,10 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		return result.Rows[left].JudgeVersion < result.Rows[right].JudgeVersion
 	})
 	result.ReviewedCalls = len(calls)
+	result.GoldenSet = []GoldenSetCall{}
+	for _, id := range callList {
+		result.GoldenSet = append(result.GoldenSet, *calls[id])
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return JudgeAccuracy{}, fmt.Errorf("commit judge accuracy: %w", err)
 	}

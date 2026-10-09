@@ -1799,6 +1799,33 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "429":
           $ref: "#/components/responses/AnalyticsBusy"
+  /v1/operator/scorecard/results:
+    post:
+      operationId: queryOperatorScorecardResults
+      summary: Count no answers per scorecard question over a range, with the calls behind them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorScorecardResultsRequest"
+      responses:
+        "200":
+          description: Answered and no counts per question, plus up to 500 calls that got a no.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorScorecardResults"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "429":
+          $ref: "#/components/responses/AnalyticsBusy"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operator/call-reviews/queue:
     post:
       operationId: openOperatorCallReviewQueue
@@ -4200,9 +4227,13 @@ components:
     OperatorJudgeAccuracy:
       type: object
       additionalProperties: false
-      required: [reviewedCalls, unjudged, rows, judgeDisagreements, reviewerDisagreements]
+      required: [reviewedCalls, goldenAnswers, goldenSet, unjudged, rows, judgeDisagreements, reviewerDisagreements]
       properties:
         reviewedCalls: {type: integer}
+        goldenAnswers: {type: integer}
+        goldenSet:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorGoldenSetCall"}
         unjudged:
           type: integer
           description: Golden-set answers with no judge answer to compare, such as B5 when no availability was returned.
@@ -4215,6 +4246,57 @@ components:
         reviewerDisagreements:
           type: array
           items: {$ref: "#/components/schemas/OperatorReviewerDisagreement"}
+    OperatorScorecardResultsRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, range]
+      properties:
+        practiceId: {type: string, format: uuid}
+        locationId: {type: string, format: uuid}
+        range: {$ref: "#/components/schemas/OperatorAIAnalyticsRange"}
+    OperatorScorecardResultRow:
+      type: object
+      additionalProperties: false
+      required: [question, answered, "no"]
+      properties:
+        question: {type: string}
+        answered: {type: integer}
+        "no": {type: integer}
+    OperatorScorecardResultCall:
+      type: object
+      additionalProperties: false
+      required: [interactionId, startedAt, locationName, question]
+      properties:
+        interactionId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        locationName: {type: string}
+        question: {type: string}
+    OperatorScorecardResults:
+      type: object
+      additionalProperties: false
+      required: [calls, rows, noCalls, truncated]
+      properties:
+        calls: {type: integer}
+        rows:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorScorecardResultRow"}
+        noCalls:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorScorecardResultCall"}
+        truncated: {type: boolean}
+    OperatorGoldenSetCall:
+      type: object
+      additionalProperties: false
+      required: [interactionId, startedAt, locationName, reviewers, answers, disagreements]
+      properties:
+        interactionId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        locationName: {type: string}
+        reviewers:
+          type: array
+          items: {type: string}
+        answers: {type: integer}
+        disagreements: {type: integer}
     OperatorAICostQueryRequest:
       type: object
       additionalProperties: false

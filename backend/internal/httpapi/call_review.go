@@ -132,3 +132,28 @@ func (server *Server) SubmitOperatorCallReview(w http.ResponseWriter, r *http.Re
 	}
 	server.writeJSON(w, http.StatusOK, review)
 }
+
+func (server *Server) QueryOperatorScorecardResults(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.operatorIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.OperatorScorecardResultsRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, finish, ok := server.beginAnalytics(w, r)
+	if !ok {
+		return
+	}
+	defer finish()
+	results, err := server.interactions.QueryScorecardResults(ctx, interaction.ScorecardResultsCommand{
+		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: uuidString(body.LocationId),
+		Range: interaction.AnalyticsRange(body.Range),
+	})
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, results)
+}

@@ -1018,6 +1018,8 @@ export type OperatorReviewerDisagreement = {
 
 export type OperatorJudgeAccuracy = {
     reviewedCalls: number;
+    goldenAnswers: number;
+    goldenSet: Array<OperatorGoldenSetCall>;
     /**
      * Golden-set answers with no judge answer to compare, such as B5 when no availability was returned.
      */
@@ -1025,6 +1027,41 @@ export type OperatorJudgeAccuracy = {
     rows: Array<OperatorJudgeAccuracyRow>;
     judgeDisagreements: Array<OperatorJudgeDisagreement>;
     reviewerDisagreements: Array<OperatorReviewerDisagreement>;
+};
+
+export type OperatorScorecardResultsRequest = {
+    practiceId: string;
+    locationId?: string;
+    range: OperatorAiAnalyticsRange;
+};
+
+export type OperatorScorecardResultRow = {
+    question: string;
+    answered: number;
+    no: number;
+};
+
+export type OperatorScorecardResultCall = {
+    interactionId: string;
+    startedAt: string;
+    locationName: string;
+    question: string;
+};
+
+export type OperatorScorecardResults = {
+    calls: number;
+    rows: Array<OperatorScorecardResultRow>;
+    noCalls: Array<OperatorScorecardResultCall>;
+    truncated: boolean;
+};
+
+export type OperatorGoldenSetCall = {
+    interactionId: string;
+    startedAt: string;
+    locationName: string;
+    reviewers: Array<string>;
+    answers: number;
+    disagreements: number;
 };
 
 export type OperatorAiCostQueryRequest = {
@@ -4098,6 +4135,47 @@ export type QueryOperatorScorecardResponses = {
 };
 
 export type QueryOperatorScorecardResponse = QueryOperatorScorecardResponses[keyof QueryOperatorScorecardResponses];
+
+export type QueryOperatorScorecardResultsData = {
+    body: OperatorScorecardResultsRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/operator/scorecard/results';
+};
+
+export type QueryOperatorScorecardResultsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * Another analytics request is running on this portal instance. Retry later.
+     */
+    429: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryOperatorScorecardResultsError = QueryOperatorScorecardResultsErrors[keyof QueryOperatorScorecardResultsErrors];
+
+export type QueryOperatorScorecardResultsResponses = {
+    /**
+     * Answered and no counts per question, plus up to 500 calls that got a no.
+     */
+    200: OperatorScorecardResults;
+};
+
+export type QueryOperatorScorecardResultsResponse = QueryOperatorScorecardResultsResponses[keyof QueryOperatorScorecardResultsResponses];
 
 export type OpenOperatorCallReviewQueueData = {
     body: OperatorCallReviewQueueRequest;

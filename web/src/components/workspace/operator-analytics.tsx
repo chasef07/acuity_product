@@ -66,7 +66,7 @@ import {
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { PendingCallIssues } from "@/components/workspace/call-issue-review"
 import { CallReviewWorkspace } from "@/components/workspace/call-review"
-import { ScorecardOverview } from "@/components/workspace/scorecard-overview"
+import { ScorecardHighlights, ScorecardResultsCard } from "@/components/workspace/scorecard-overview"
 import type {
   OperatorAiCallIssue,
   OperatorAiCallTags,
@@ -84,12 +84,11 @@ import { formatShortDateTime } from "@/lib/format"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
 type AnalyticsNextPageState = AiCallLedger["nextPage"]
-type AnalyticsTab = "overview" | "cost" | "quality" | "tools" | "calls" | "review" | "scorecard"
+type AnalyticsTab = "overview" | "cost" | "quality" | "tools" | "calls" | "review"
 
 const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
   { value: "calls", label: "Calls" },
   { value: "review", label: "Review" },
-  { value: "scorecard", label: "Scorecard" },
   { value: "overview", label: "Overview" },
   { value: "cost", label: "Cost" },
   { value: "quality", label: "Quality" },
@@ -132,7 +131,6 @@ export function OperatorAnalytics({
   const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
   const costView = tab === "cost"
   const reviewView = tab === "review"
-  const scorecardView = tab === "scorecard"
   const [tagFilter, setTagFilter] = useState({ practiceID, value: "" })
   const manualTag = tagFilter.practiceID === practiceID ? tagFilter.value : ""
   const setManualTag = (value: string) => setTagFilter({ practiceID, value })
@@ -147,7 +145,7 @@ export function OperatorAnalytics({
     range,
     manualTag: activeTag,
     revision: requestVersion,
-    enabled: !costView && !reviewView && !scorecardView,
+    enabled: !costView && !reviewView,
   })
   const nextPageState = currentRequest.nextPage
 
@@ -203,7 +201,7 @@ export function OperatorAnalytics({
       <AnalyticsFrame
         section="AI diagnostics"
         title={analyticsTabs.find((item) => item.value === tab)!.label}
-        periodLabel={reviewView ? "Daily call review and golden set" : scorecardView ? "Weekly by office" : ranges.find((item) => item.value === range)!.label}
+        periodLabel={reviewView ? "Daily call review and golden set" : ranges.find((item) => item.value === range)!.label}
         controls={reviewView ? null : (
           <>
             <Select
@@ -224,7 +222,7 @@ export function OperatorAnalytics({
                 ))}
               </SelectContent>
             </Select>
-            {!scorecardView && <ToggleGroup
+            <ToggleGroup
               variant="segmented"
               spacing={1}
               value={[range]}
@@ -244,7 +242,7 @@ export function OperatorAnalytics({
                   {item.short}
                 </ToggleGroupItem>
               ))}
-            </ToggleGroup>}
+            </ToggleGroup>
           </>
         )}
         tabs={<div className="w-full space-y-3">
@@ -262,8 +260,6 @@ export function OperatorAnalytics({
       >
         {reviewView ? (
           <CallReviewWorkspace key={practiceID} practiceID={practiceID} onOpenCall={(id) => selectCall(id)} />
-        ) : scorecardView ? (
-          <ScorecardOverview practiceID={practiceID} locationID={locationID} />
         ) : costView ? (
           <CostOverview
             practiceID={practiceID}
@@ -292,6 +288,11 @@ export function OperatorAnalytics({
                 onSelect={selectCall}
               />
             )}
+            {tab === "quality" && (
+              <div className="mb-4">
+                <ScorecardResultsCard practiceID={practiceID} locationID={locationID} range={range} onOpenCall={(id) => selectCall(id)} />
+              </div>
+            )}
             {currentRequest.state === "ready" && currentRequest.data && (
               <AnalyticsReady
                 key={requestKey}
@@ -305,6 +306,11 @@ export function OperatorAnalytics({
                 onLoadNextPage={loadNextPage}
                 onSelect={selectCall}
               />
+            )}
+            {tab === "overview" && (
+              <div className="mt-4">
+                <ScorecardHighlights practiceID={practiceID} locationID={locationID} />
+              </div>
             )}
           </>
         )}

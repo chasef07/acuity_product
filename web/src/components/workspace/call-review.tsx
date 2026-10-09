@@ -27,6 +27,13 @@ import {
 } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import {
   MessageScroller,
   MessageScrollerContent,
   MessageScrollerProvider,
@@ -430,6 +437,7 @@ function JudgeAccuracyView({
   const accuracy = useJudgeAccuracy(practiceID, 0)
   const catalog = useQuestionCatalog()
   const [picked, setPicked] = useState("")
+  const [goldenOpen, setGoldenOpen] = useState(false)
   if (accuracy.status === "loading") return <Skeleton className="h-72 rounded-xl" />
   if (accuracy.status === "failed") {
     return (
@@ -474,7 +482,17 @@ function JudgeAccuracyView({
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <Stat label="Jev agrees with you" value={totals.sample ? `${Math.round((100 * totals.agreed) / totals.sample)}%` : "—"} note={`${totals.agreed} of ${totals.sample} answers, ${versionLabel(version)}`} />
-        <Stat label="Calls reviewed" value={data.reviewedCalls.toLocaleString()} note="All versions" />
+        <button
+          type="button"
+          onClick={() => setGoldenOpen(true)}
+          className="rounded-xl border bg-card px-4 py-3 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          <span className="text-xs text-muted-foreground">Golden set</span>
+          <span className="mt-1 block font-mono text-xl font-semibold tracking-[-0.03em]">{data.reviewedCalls.toLocaleString()} calls</span>
+          <span className="mt-1 flex items-center gap-1 text-[0.6875rem] text-muted-foreground">
+            {data.goldenAnswers.toLocaleString()} answers · See calls <ChevronRightIcon className="size-3" aria-hidden="true" />
+          </span>
+        </button>
         <Stat label="You and Chase disagreed" value={data.reviewerDisagreements.length.toLocaleString()} note="Questions to reword" />
       </div>
       <Card size="sm">
@@ -521,6 +539,39 @@ function JudgeAccuracyView({
           </Table>
         </CardContent>
       </Card>
+      <Sheet open={goldenOpen} onOpenChange={setGoldenOpen}>
+        <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+          <SheetHeader className="border-b px-5 py-4">
+            <SheetTitle>Golden set</SheetTitle>
+            <SheetDescription>
+              {data.reviewedCalls} calls and {data.goldenAnswers} answers from your reviews. Open a call to see the transcript and the answers.
+            </SheetDescription>
+          </SheetHeader>
+          <ul className="divide-y">
+            {data.goldenSet.map((call) => (
+              <li key={call.interactionId}>
+                <button
+                  type="button"
+                  className="flex w-full items-start justify-between gap-3 px-5 py-3 text-left text-sm hover:bg-muted"
+                  onClick={() => {
+                    setGoldenOpen(false)
+                    onOpenCall(call.interactionId)
+                  }}
+                >
+                  <span className="min-w-0">
+                    <span className="block font-medium">{formatShortDateTime(call.startedAt)} · {call.locationName}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{call.reviewers.join(", ")}</span>
+                  </span>
+                  <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                    {call.answers} answers
+                    {call.disagreements > 0 && <span className="block text-destructive">{call.disagreements} Jev disagreed</span>}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </SheetContent>
+      </Sheet>
       <details className="group rounded-xl border bg-card">
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
           Calls where Jev disagreed with you ({disagreements.length})
