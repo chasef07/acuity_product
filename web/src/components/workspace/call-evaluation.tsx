@@ -105,20 +105,22 @@ function JuryScorecard({ evaluation, prompts }: { evaluation: Record<string, unk
   const sentiment = record(results.expressed_sentiment)
   const score = typeof sentiment.score === "number" && sentiment.score >= 0 && sentiment.score <= 4 ? sentiment.score : undefined
   return <>
-    <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer.</p>
+    <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer. No means confident (0.20 or lower); between 0.20 and 0.40 is Unsure and goes to people.</p>
     <dl className="mt-3 divide-y rounded-lg border px-3">
       {names.map((name) => {
         const result = record(results[name])
         const failed = Object.hasOwn(errors, name)
         const notApplicable = result.status === "not_applicable"
         const verdict = typeof result.verdict === "boolean" ? result.verdict : undefined
-        const flagged = verdict === false && !bookingQuestions.includes(name)
+        const probability = typeof result.probability === "number" ? result.probability : undefined
+        const unsure = verdict === false && probability !== undefined && probability > 0.2
+        const flagged = verdict === false && !unsure && !bookingQuestions.includes(name)
         const votes = record(failed ? record(errors[name]).votes : result.votes)
         const jurorErrors = record(failed ? record(errors[name]).errors : result.errors)
         return <div key={name} className="py-3 text-xs">
           <div className="flex items-start justify-between gap-3">
             <dt>{prompts[name] ?? title(name)}</dt>
-            <dd className={`shrink-0 font-medium ${flagged ? "text-destructive" : ""}`}>{notApplicable ? "Not applicable" : verdict === undefined ? "No verdict" : verdict ? "Yes" : "No"}</dd>
+            <dd className={`shrink-0 font-medium ${flagged ? "text-destructive" : ""}`}>{notApplicable ? "Not applicable" : verdict === undefined ? "No verdict" : verdict ? "Yes" : unsure ? "Unsure" : "No"}</dd>
           </div>
           {notApplicable ? <dd className="mt-1 text-muted-foreground">{notApplicableReasons[String(result.reason)] ?? title(String(result.reason))}</dd> : <dd className="mt-1 flex flex-wrap gap-x-3 text-muted-foreground">
             {jurors.map((juror) => <span key={juror}>{jurorName(juror)}: {Object.hasOwn(jurorErrors, juror) ? `failed (${String(jurorErrors[juror])})` : typeof votes[juror] === "number" ? percent(votes[juror]) : "no answer"}</span>)}

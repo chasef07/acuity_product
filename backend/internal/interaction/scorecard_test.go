@@ -237,11 +237,11 @@ func TestTrustWeightsEachSampleByItsShareOfTheDaysCalls(t *testing.T) {
 	no, yes := false, true
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	calls := map[string]*trustCall{
-		"flagged-caught": {answers: map[string]bool{"kyle": false}, judge: &no, sample: "flagged", date: "2026-10-08", reviewedAt: now},
-		"flagged-alarm":  {answers: map[string]bool{"kyle": true}, judge: &no, sample: "flagged", date: "2026-10-08", reviewedAt: now},
-		"random-missed":  {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "random", date: "2026-10-08", reviewedAt: now},
-		"random-fine":    {answers: map[string]bool{"kyle": true}, judge: &yes, sample: "random", date: "2026-10-08", reviewedAt: now},
-		"imported":       {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "manual", date: "2026-10-01", reviewedAt: now},
+		"flagged-caught": {answers: map[string]bool{"kyle": false}, judge: &no, level: "no", sample: "flagged", date: "2026-10-08", reviewedAt: now},
+		"flagged-alarm":  {answers: map[string]bool{"kyle": true}, judge: &no, level: "no", sample: "flagged", date: "2026-10-08", reviewedAt: now},
+		"random-missed":  {answers: map[string]bool{"kyle": false}, judge: &yes, level: "yes", sample: "random", date: "2026-10-08", reviewedAt: now},
+		"random-fine":    {answers: map[string]bool{"kyle": true}, judge: &yes, level: "yes", sample: "random", date: "2026-10-08", reviewedAt: now},
+		"imported":       {answers: map[string]bool{"kyle": false}, judge: &yes, level: "yes", sample: "manual", date: "2026-10-01", reviewedAt: now},
 	}
 	estimate := estimateTrust(calls, map[string]reviewPool{"2026-10-08": {flagged: 20, random: 180}}, now)
 	if estimate.Calls != 4 || estimate.Failures != 2 {
@@ -268,7 +268,11 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 		if !judge {
 			verdict = &no
 		}
-		calls[id] = &trustCall{answers: answers, judge: verdict, sample: "random", date: "2026-10-08", reviewedAt: now}
+		level := "yes"
+		if !judge {
+			level = "no"
+		}
+		calls[id] = &trustCall{answers: answers, judge: verdict, level: level, sample: "random", date: "2026-10-08", reviewedAt: now}
 	}
 	for index := 0; index < 5; index++ {
 		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
@@ -290,23 +294,24 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusCollected {
 		t.Fatalf("20 of 20 caught only shows at least 84%%, short of 90%%: %+v", estimate)
 	}
-	for index := 20; index < 40; index++ {
+	for index := 20; index < 400; index++ {
 		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
 	}
-	for index := 60; index < 140; index++ {
+	for index := 60; index < 600; index++ {
 		add(fmt.Sprintf("fine-%d", index), true, true, "kyle")
 	}
-	pools["2026-10-08"] = reviewPool{random: 180}
+	pools["2026-10-08"] = reviewPool{random: 1000}
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusTrusted {
-		t.Fatalf("40 of 40 caught with reviewers in agreement is trusted: %+v", estimate)
+		t.Fatalf("400 confident no answers with no false alarm prove 1%%: %+v", estimate)
 	}
 }
 
 func TestStaffScorecardShowsVerdictsInCatalogOrder(t *testing.T) {
 	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev"],"status":"complete","results":{
 		"right_help":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
+		"clear_and_responsive":{"verdict":false,"probability":0.35,"votes":{"typesafe-ai/jev":0.35},"errors":{}},
 		"booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}}}}`))
-	if len(scorecard) != 2 || scorecard[0].Code != "B1" || !scorecard[0].Verdict || scorecard[1].Code != "H2" || scorecard[1].Verdict || scorecard[1].Prompt == "" {
+	if len(scorecard) != 3 || scorecard[0].Code != "B1" || scorecard[0].Answer != "yes" || scorecard[1].Answer != "no" || scorecard[2].Answer != "unsure" || scorecard[1].Prompt == "" {
 		t.Fatalf("staff scorecard: %+v", scorecard)
 	}
 	if got := agentCallScorecard(nil); len(got) != 0 || got == nil {

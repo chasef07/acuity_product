@@ -49,9 +49,9 @@ type AgentCallDetail struct {
 }
 
 type AgentCallVerdict struct {
-	Code    string `json:"code"`
-	Prompt  string `json:"prompt"`
-	Verdict bool   `json:"verdict"`
+	Code   string `json:"code"`
+	Prompt string `json:"prompt"`
+	Answer string `json:"answer"`
 }
 type AgentCallsPage struct {
 	Calls      []AgentCall `json:"calls"`
@@ -250,14 +250,14 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 }
 
 func agentCallScorecard(evaluation json.RawMessage) []AgentCallVerdict {
-	verdicts := map[string]bool{}
+	levels := map[string]string{}
 	for _, answer := range judgeAnswers(evaluation) {
-		verdicts[answer.Question] = answer.Answer
+		levels[answer.Question] = scorecardLevel(answer.Answer, answer.Probability)
 	}
 	scorecard := []AgentCallVerdict{}
 	for _, question := range ScorecardQuestions {
-		if verdict, found := verdicts[question.Key]; found {
-			scorecard = append(scorecard, AgentCallVerdict{Code: question.Code, Prompt: question.Prompt, Verdict: verdict})
+		if level, found := levels[question.Key]; found {
+			scorecard = append(scorecard, AgentCallVerdict{Code: question.Code, Prompt: question.Prompt, Answer: level})
 		}
 	}
 	return scorecard

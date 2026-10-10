@@ -3648,11 +3648,14 @@ components:
     AgentCallVerdict:
       type: object
       additionalProperties: false
-      required: [code, prompt, verdict]
+      required: [code, prompt, answer]
       properties:
         code: {type: string}
         prompt: {type: string}
-        verdict: {type: boolean}
+        answer:
+          type: string
+          enum: ["yes", "no", unsure]
+          description: No only when the jury is confident (probability at most 0.20); 0.20 to 0.40 is unsure and goes to human review.
     AIInteractionDetail:
       type: object
       additionalProperties: false
@@ -4085,9 +4088,9 @@ components:
       description: >-
         Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling
         flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size.
-        Trusted needs catch low bound >= 90%, false-alarm high bound <= 10%, agreement low bound within
+        Only confident no answers (probability at most 0.20) count as the jury saying no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 1%, agreement low bound within
         5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
-      required: [calls, failures, catch, catchLow, falseAlarms, falseAlarmHigh, agreement, agreementLow, humanAgreement, humanPairs, status, reason]
+      required: [calls, failures, catch, catchLow, falseAlarms, falseAlarmHigh, agreement, agreementLow, unsure, humanAgreement, humanPairs, status, reason]
       properties:
         calls: {type: integer}
         failures: {type: integer}
@@ -4097,6 +4100,10 @@ components:
         falseAlarmHigh: {type: number, nullable: true}
         agreement: {type: number, nullable: true}
         agreementLow: {type: number, nullable: true}
+        unsure:
+          type: number
+          nullable: true
+          description: Weighted share of calls the jury was unsure about, which a person still reviews.
         humanAgreement: {type: number, nullable: true}
         humanPairs: {type: integer}
         status: {type: string, enum: [trusted, collecting, below]}

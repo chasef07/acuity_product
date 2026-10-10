@@ -686,7 +686,10 @@ export type AgentCallDetail = {
 export type AgentCallVerdict = {
     code: string;
     prompt: string;
-    verdict: boolean;
+    /**
+     * No only when the jury is confident (probability at most 0.20); 0.20 to 0.40 is unsure and goes to human review.
+     */
+    answer: 'yes' | 'no' | 'unsure';
 };
 
 export type AiInteractionDetail = {
@@ -963,7 +966,7 @@ export type OperatorJudgeAccuracyRow = {
 };
 
 /**
- * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. Trusted needs catch low bound >= 90%, false-alarm high bound <= 10%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
+ * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. Only confident no answers (probability at most 0.20) count as the jury saying no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 1%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
  */
 export type OperatorJuryTrust = {
     calls: number;
@@ -974,6 +977,10 @@ export type OperatorJuryTrust = {
     falseAlarmHigh: number | null;
     agreement: number | null;
     agreementLow: number | null;
+    /**
+     * Weighted share of calls the jury was unsure about, which a person still reviews.
+     */
+    unsure: number | null;
     humanAgreement: number | null;
     humanPairs: number;
     status: 'trusted' | 'collecting' | 'below';

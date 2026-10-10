@@ -421,7 +421,7 @@ export function CallScorecard({ scorecard, sentiment }: { scorecard: AgentCallVe
         {scorecard.map((item) => (
           <li key={item.code} className="flex items-start justify-between gap-3 px-3 py-2">
             <span>{item.prompt}</span>
-            <span className={item.verdict ? "text-muted-foreground" : "font-medium"}>{item.verdict ? "Yes" : "No"}</span>
+            <span className={item.answer === "no" ? "font-medium" : "text-muted-foreground"}>{item.answer === "no" ? "No" : item.answer === "unsure" ? "Unsure" : "Yes"}</span>
           </li>
         ))}
         {sentiment !== undefined && (
