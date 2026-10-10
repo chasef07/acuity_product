@@ -2174,12 +2174,16 @@ func normalizeInboundPayload(payload telnyx.MessagingInboundMessagePayload) norm
 		From: payload.From.PhoneNumber,
 		Text: payload.Text,
 	}
-	result.To = make([]normalizedRecipient, 0, len(payload.To))
-	for _, recipient := range payload.To {
+	recipients := payload.To.OfMessagingInboundMessagePayloadToArray
+	result.To = make([]normalizedRecipient, 0, max(len(recipients), 1))
+	for _, recipient := range recipients {
 		result.To = append(result.To, normalizedRecipient{
 			Phone:  recipient.PhoneNumber,
 			Status: recipient.Status,
 		})
+	}
+	if len(recipients) == 0 && payload.To.OfString != "" {
+		result.To = append(result.To, normalizedRecipient{Phone: payload.To.OfString})
 	}
 	result.Media = make([]normalizedMedia, 0, len(payload.Media))
 	for _, media := range payload.Media {
