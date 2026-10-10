@@ -27,7 +27,7 @@
     "@next/mdx": "16.4.0",
     "@shadcn/react": "^0.3.1",
     "@telnyx/webrtc": "2.27.10",
-    "better-auth": "~1.7.7",
+    "better-auth": "~1.6.33",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.55.0",
