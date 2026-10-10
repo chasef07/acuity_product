@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	trustCatchFloor      = 0.80
-	trustFalseAlarmCap   = 0.20
+	trustCatchFloor      = 0.90
+	trustFalseAlarmCap   = 0.10
 	trustHumanMargin     = 0.05
 	trustMinimumPairs    = 20
 	trustRecentWindow    = 14 * 24 * time.Hour
@@ -165,13 +165,13 @@ func trustVerdict(estimate TrustEstimate, recent trustRates) (string, string) {
 	case estimate.Failures == 0 || estimate.CatchLow == nil:
 		return trustStatusCollected, "No reviewer-marked failures yet"
 	case *estimate.Catch < trustCatchFloor:
-		return trustStatusBelow, "Catches " + percent(estimate.Catch) + " of failures, needs 80%"
+		return trustStatusBelow, "Catches " + percent(estimate.Catch) + " of failures, needs 90%"
 	case estimate.FalseAlarms != nil && *estimate.FalseAlarms > trustFalseAlarmCap:
-		return trustStatusBelow, percent(estimate.FalseAlarms) + " of its no's are false alarms, max 20%"
+		return trustStatusBelow, percent(estimate.FalseAlarms) + " of its no's are false alarms, max 10%"
 	case estimate.HumanAgreement != nil && estimate.HumanPairs >= trustMinimumPairs && *estimate.Agreement < *estimate.HumanAgreement-trustHumanMargin:
 		return trustStatusBelow, "Agrees " + percent(estimate.Agreement) + ", reviewers agree " + percent(estimate.HumanAgreement)
 	case *estimate.CatchLow < trustCatchFloor:
-		return trustStatusCollected, "Catch is at least " + percent(estimate.CatchLow) + " so far; more failures needed to show 80%"
+		return trustStatusCollected, "Catch is at least " + percent(estimate.CatchLow) + " so far; more failures needed to show 90%"
 	case estimate.FalseAlarmHigh != nil && *estimate.FalseAlarmHigh > trustFalseAlarmCap:
 		return trustStatusCollected, "False alarms could be up to " + percent(estimate.FalseAlarmHigh) + "; more reviews needed"
 	case estimate.HumanPairs < trustMinimumPairs:

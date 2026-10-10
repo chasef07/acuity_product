@@ -464,7 +464,7 @@ function JudgeAccuracyView({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Can we trust the jury on each question? Daily-queue reviews are weighted by how many calls of each kind happened that day, so the flagged half of the queue does not flatter the jury. A question is trusted when, at 95% confidence, it catches at least 80% of the failures you mark, at most 20% of its no answers are false alarms, it agrees with you nearly as often as you and Chase agree with each other, and the last 14 days hold up.
+          Can we trust the jury on each question? Daily-queue reviews are weighted by how many calls of each kind happened that day, so the flagged half of the queue does not flatter the jury. A question is trusted when, at 95% confidence, it catches at least 90% of the failures you mark, at most 10% of its no answers are false alarms, it agrees with you nearly as often as you and Chase agree with each other, and the last 14 days hold up.
         </p>
         {versions.length > 1 && (
           <ToggleGroup

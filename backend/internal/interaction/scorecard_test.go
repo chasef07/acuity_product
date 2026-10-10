@@ -287,8 +287,18 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
 	}
 	pools["2026-10-08"] = reviewPool{random: 80}
+	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusCollected {
+		t.Fatalf("20 of 20 caught only shows at least 84%%, short of 90%%: %+v", estimate)
+	}
+	for index := 20; index < 40; index++ {
+		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
+	}
+	for index := 60; index < 140; index++ {
+		add(fmt.Sprintf("fine-%d", index), true, true, "kyle")
+	}
+	pools["2026-10-08"] = reviewPool{random: 180}
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusTrusted {
-		t.Fatalf("20 of 20 caught with reviewers in agreement is trusted: %+v", estimate)
+		t.Fatalf("40 of 40 caught with reviewers in agreement is trusted: %+v", estimate)
 	}
 }
 
