@@ -1,95 +1,139 @@
 practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
 officeKey: "sweetwater"
 entries:
-  - id: "after-hours"
-    title: "After-hours doctor contact"
-    text: |-
-      No after-hours contact information is supplied for this office.
-  - id: "appointment-expectations"
-    title: "Appointment Expectations"
-    text: |-
-      The practice typically sends an email confirmation after scheduling an appointment.
-      
-      New patient visits may take 1–2 hours depending on testing. Eye dilation may occur and can cause temporary blurry vision and light sensitivity.
-  - id: "billing"
-    title: "Billing"
-    text: |-
-      For account balances and billing concerns, give the billing department number: (786) 446-8333. Do not create a staff task or offer a billing callback. Self-pay pricing uses the applicable office pricing.
-  - id: "contact-lenses"
-    title: "Contact Lenses"
-    text: |-
-      If a patient wants contact lenses and already has a prescription, they can bring the prescription from their optometrist.
-      
-      If this is the patient's first set of contact lenses, the exam and insertion training take longer than a standard visit. First-time contact lens appointments must be scheduled before 3:00 PM Monday–Thursday and before 1:00 PM on Friday.
-  - id: "hours"
-    title: "Office opening hours and closing times"
-    text: |-
-      Monday–Thursday 8:30 AM–4:30 PM. Friday 8:30 AM–2:30 PM.
-      
-      Holiday closure: Closed for Yom Kippur on Monday, September 21, 2026.
-      
-      Closed Saturday and Sunday.
-  - id: "insurance-and-referrals"
-    title: "Insurance and Referrals"
-    text: |-
-      For staff follow-up: vision eligibility and coverage use appointments; medical coverage and procedure authorizations use insurance; medication authorizations use medication.
-
-      For routine-vision patients, some insurances do not cover retinal photos and there is a $39 charge.
-      
-      Retina surgical care needs referral to a retina surgeon. A primary care provider or insurance company can provide an appropriate referral when the patient does not have a retina surgeon.
   - id: "current-address"
-    title: "Office location address"
+    title: "Sweetwater office location and address"
     text: |-
-      Practice Name: Abita Eye Group Sweetwater
-      Address: 12750 NW 17th St, #201, Miami, FL 33182
+      Abita Eye Group Sweetwater is at 12750 NW 17th St, #201, Miami, FL 33182.
+  - id: "phone"
+    title: "Sweetwater office phone number"
+    text: |-
+      Sweetwater office phone: (786) 465-4836.
+  - id: "fax"
+    title: "Sweetwater office fax number"
+    text: |-
+      Sweetwater office fax: (305) 723-1910.
   - id: "paperwork-email"
     title: "Email for new-patient paperwork and requested documents"
     text: |-
       Administrative email for new-patient paperwork or requested documents: newpatient@abitaeye.com
       Use this address only for new-patient paperwork or requested documents.
-  - id: "fax"
-    title: "Office fax"
+  - id: "directions"
+    title: "Directions, parking, and landmarks"
     text: |-
-      Fax: (305) 723-1910
-  - id: "phone"
-    title: "Office phone number"
+      Directions, parking, and landmark details are not supplied for the Sweetwater office.
+  - id: "other-offices"
+    title: "Other Abita Eye Group office locations"
     text: |-
-      Phone: (786) 465-4836
-  - id: "hollywood-location"
-    title: "Other scheduling office: Hollywood address"
+      Other offices in this practice:
+      Spring Hill: Abita Eye Group, 10495 SpringHill Drive, Springhill, FL 34608. Phone number not supplied.
+      Crystal River: Eye Radiance, 1100 N Lyle Avenue, Crystal River, FL 34429. Phone number not supplied.
+      Hollywood: Abita Eye Group Hollywood, 4330 Sheridan St, Suite 102B, Hollywood, FL 33021. Phone: (954) 287-2010.
+      North Miami Beach Optical, also known as BrightView Optical: 633 NE 167th Street, North Miami Beach, FL 33162. Phone: (305) 509-5333.
+      No other office locations are supplied.
+      Hollywood is the other scheduling office for Sweetwater.
+  - id: "hours"
+    title: "Sweetwater office opening hours and closing times"
     text: |-
-      Other scheduling office: Abita Eye Group Hollywood
-      Other scheduling office address: 4330 Sheridan St, Suite 102B, Hollywood, FL 33021
+      Monday–Thursday 8:30 AM–4:30 PM. Friday 8:30 AM–2:30 PM. Closed Saturday and Sunday.
+  - id: "holiday-closures"
+    title: "Holiday closures"
+    text: |-
+      Upcoming holiday closures are not supplied for the Sweetwater office.
+  - id: "after-hours"
+    title: "After-hours doctor contact"
+    text: |-
+      No after-hours contact information is supplied for this office.
+  - id: "providers"
+    title: "Doctors at the Sweetwater office"
+    text: |-
+      Doctors at the Sweetwater location: Dr. Gisselle Calero, Dr. Kyler Farnan, and Dr. Maria Casas.
+      Medical scheduling: Dr. Austin Bach and Dr. Bach overflow.
+      Routine vision scheduling: Dr. Maria Casas, Dr. Kyler Farnan, and Dr. Gisselle Calero.
+  - id: "provider-languages"
+    title: "Spanish-speaking doctors and languages spoken"
+    text: |-
+      Languages spoken by Sweetwater doctors and staff are not supplied.
+  - id: "scope-of-services"
+    title: "Services at the Sweetwater office"
+    text: |-
+      Sweetwater schedules medical eye care and routine vision. Medical appointments cover current eye problems, symptoms, conditions, and ophthalmology care. Routine-vision appointments cover routine eye exams, eyeglass prescriptions, contact lens fittings, and insertion training when there is no active eye problem.
+  - id: "cataract-provider"
+    title: "Cataract visits, evaluations, and surgery"
+    text: |-
+      Dr. Bach schedules cataract exams, including cataract evaluations, and cataract surgery at Sweetwater.
+  - id: "routine-vision-and-children"
+    title: "Routine vision age limits for children and astigmatism"
+    text: |-
+      Routine-vision age minimums follow the scheduler provider rules: Dr. Maria Casas sees routine-vision patients age 7 and older, Dr. Kyler Farnan sees routine-vision patients age 5 and older, and Dr. Gisselle Calero sees routine-vision patients age 4 and older. Patients below the routine-vision providers' age minimums use pediatric ophthalmology with Dr. Bach.
+      Astigmatism is a routine-vision visit with an optometrist (OD) for patients age 4 and older. Patients age 3 or younger with astigmatism should see Dr. Bach through medical scheduling.
+  - id: "retina-care"
+    title: "Retina surgery restriction"
+    text: |-
+      Sweetwater does not perform retina surgical care. Retina surgical care requires a retina surgeon.
+  - id: "appointment-confirmation"
+    title: "Appointment confirmation email"
+    text: |-
+      The practice typically sends an email confirmation after scheduling an appointment.
+  - id: "new-patient-visit"
+    title: "New patient visit duration and dilation"
+    text: |-
+      New patient visits may take 1–2 hours depending on testing. Eye dilation may occur and can cause temporary blurry vision and light sensitivity.
+  - id: "what-to-bring"
+    title: "What to bring to the appointment"
+    text: |-
+      Photo ID, insurance card, list of current medications, and previous eye records if available.
+  - id: "referral-requirements"
+    title: "Referral requirements"
+    text: |-
+      General referral requirements are not supplied. Retina surgical care needs referral to a retina surgeon. A primary care provider or insurance company can provide an appropriate referral when the patient does not have a retina surgeon.
+  - id: "billing"
+    title: "Billing department phone number for bills and balances"
+    text: |-
+      Billing department phone: (786) 446-8333. The billing department handles account balances and billing concerns. Staff tasks and billing callbacks are not offered for billing questions. Self-pay price questions use this office's self-pay pricing.
+  - id: "payments"
+    title: "Payments and financing (CareCredit)"
+    text: |-
+      Payment handling is owned by the billing department. Financing options such as CareCredit are not supplied.
+  - id: "self-pay-pricing"
+    title: "Self-pay prices without insurance"
+    text: |-
+      New patient medical visit with an optometrist: $150. Established patient medical visit with an optometrist: $75. New patient medical visit with an ophthalmologist: $250. Established patient medical visit with an ophthalmologist: $125. Routine vision exam with an optometrist: $100. Routine vision with contact lens fitting: $150.
+  - id: "retinal-photo-fee"
+    title: "Routine vision retinal photo charge"
+    text: |-
+      For routine-vision patients, some insurances do not cover retinal photos and there is a $39 charge.
+  - id: "staff-task-routing"
+    title: "Staff follow-up categories for coverage and authorizations"
+    text: |-
+      For staff follow-up: vision eligibility and coverage use appointments; medical coverage and procedure authorizations use insurance; medication authorizations use medication.
   - id: "medical-records-requests"
-    title: "Medical records requests and patient email limits"
+    title: "Medical records requests"
     text: |-
       Records intake identifies whether the requester is a patient, medical office, or attorney office, and which records are requested. Patient callers provide their full name and date of birth; medical-office callers provide the office and requesting doctor's names. Preserve available patient details separately from requester details, without claiming identity verification.
-
-      Attorney offices must fax both the records request and patient authorization before fulfillment. Ask whether each was faxed (yes, no, or unknown) and when each was sent. If either is missing, explain the fax prerequisite. Caller-reported sending does not establish office receipt or valid authorization. Use only a supplied office fax number; do not invent one.
-
+      Preserve applicable collected details and explicitly list missing details or prerequisites in the staff request, even when intake is incomplete. Submitting the request means staff review, not records delivery or verified authorization.
+  - id: "attorney-records-requests"
+    title: "Attorney records requests"
+    text: |-
+      Attorney offices must fax both the records request and patient authorization before fulfillment. Ask whether each was faxed (yes, no, or unknown) and when each was sent. If either is missing, explain the fax prerequisite. Caller-reported sending does not establish office receipt or valid authorization.
+      Use only a supplied office fax number; do not invent one.
+  - id: "records-delivery"
+    title: "Medical records delivery to patients and offices"
+    text: |-
       For requested fax delivery, collect the destination fax number. For patient email delivery, collect the complete email address. Only a visit summary may be emailed to patients; full visit notes cannot. Preserve a request for full notes and its delivery preference for staff clarification; do not silently substitute a summary or promise another delivery method is approved.
-
-      Preserve applicable collected details and explicitly list missing details or prerequisites in the staff request, even when intake is incomplete. Submitting the request means staff review, not records delivery or verified authorization. A glasses or contact-lens prescription copy is an optical request, rather than a full medical-records request.
-  - id: "optical-and-glasses"
-    title: "Optical and Glasses"
+  - id: "prescription-copies"
+    title: "Copies of glasses or contact lens prescriptions"
+    text: |-
+      A glasses or contact-lens prescription copy is an optical request, rather than a full medical-records request. How prescription copies are delivered and how long they take are not supplied.
+  - id: "contact-lenses"
+    title: "Contact lenses and first-time fittings"
+    text: |-
+      If a patient wants contact lenses and already has a prescription, they can bring the prescription from their optometrist.
+      If this is the patient's first set of contact lenses, the exam and insertion training take longer than a standard visit. First-time contact lens appointments must be scheduled before 3:00 PM Monday–Thursday and before 1:00 PM on Friday.
+  - id: "frame-brands"
+    title: "Glasses frame brands"
     text: |-
       Sweetwater stocks many major frame brands, including Ray-Ban, Nike, Gucci, Chloe, Montblanc, Puma, Cartier, Lindberg, Mykita, and YSL.
-      
-      Lens upgrades and treatments are available. The office offers all types of lenses, including upgrades and treatments.
-      
-      Eyeglass prescriptions are valid for up to 2 years, but a yearly eye exam is recommended to make sure the prescription is current.
-      
-      If a patient wants glasses and already has a prescription, they can bring the prescription from their optometrist and choose from the office's frame selection. Patients needing a prescription can obtain one through an optometrist appointment.
-      
-      Glasses are usually ready in less than 10 business days.
-      
-      Non-prescription sunglasses are available for purchase. If the patient wears prescription glasses, the office can customize prescription lenses into those frames. Most vision insurance plans do not cover non-prescription sunglasses. Sunglass brands include Maui Jim, Costa, Ray-Ban, Gucci, and many more.
-      
-      Betty is the licensed optician. She has over 30 years of eyecare experience and specializes in frames, lenses, and fittings.
-      
-      No appointment is needed to look at glasses. Betty and Oliva are in the office Monday–Friday 8:30 AM–4:30 PM.
-      
-      Glasses pickup policy: a readiness text confirms glasses are ready for pickup; patients wait for that text before coming in. This policy does not establish an individual order's readiness.
   - id: "titanium-frames"
     title: "Titanium frames"
     text: |-
@@ -98,62 +142,47 @@ entries:
     title: "Meta smart glasses"
     text: |-
       Sweetwater carries Meta eyewear from both Ray-Ban and Oakley.
+  - id: "lens-options"
+    title: "Lens upgrades and treatments"
+    text: |-
+      The office offers all types of lenses, including lens upgrades and treatments.
+  - id: "outside-prescriptions"
+    title: "Outside eyeglass prescriptions"
+    text: |-
+      If a patient wants glasses and already has a prescription, they can bring the prescription from their optometrist and choose from the office's frame selection. Patients needing a prescription can obtain one through an optometrist appointment.
+  - id: "eyeglass-prescription-validity"
+    title: "Eyeglass prescription validity"
+    text: |-
+      Eyeglass prescriptions are valid for up to 2 years, but a yearly eye exam is recommended to make sure the prescription is current.
+  - id: "glasses-turnaround"
+    title: "How long glasses take to be ready"
+    text: |-
+      Glasses are usually ready in less than 10 business days.
+  - id: "glasses-pickup"
+    title: "Glasses pickup and ready text"
+    text: |-
+      Glasses pickup policy: a readiness text confirms glasses are ready for pickup; patients wait for that text before coming in. This policy does not establish an individual order's readiness.
+  - id: "sunglasses"
+    title: "Prescription and non-prescription sunglasses"
+    text: |-
+      Non-prescription sunglasses are available for purchase. If the patient wears prescription glasses, the office can customize prescription lenses into those frames. Most vision insurance plans do not cover non-prescription sunglasses. Sunglass brands include Maui Jim, Costa, Ray-Ban, Gucci, and many more.
+  - id: "optician"
+    title: "Optician and optical staff"
+    text: |-
+      Betty is the licensed optician. She has over 30 years of eyecare experience and specializes in frames, lenses, and fittings.
+  - id: "optical-walk-ins"
+    title: "Optical walk-ins without an appointment"
+    text: |-
+      No appointment is needed to look at glasses. Betty and Oliva are in the office during office hours.
   - id: "frame-adjustments"
-    title: "Frame adjustments"
+    title: "Glasses adjustments"
     text: |-
       Optical handles frame adjustments. No appointment is needed to have current glasses adjusted.
-  - id: "payments"
-    title: "Payments"
-    text: |-
-      Payment handling is owned by the billing department.
-  - id: "providers"
-    title: "Providers"
-    text: |-
-      Dr. Bach schedules cataract exams, including cataract evaluations, and cataract surgery at Sweetwater.
-      
-      Astigmatism is a routine-vision visit with an optometrist (OD) for patients age 4 and older. Patients age 3 or younger with astigmatism should see Dr. Bach through medical scheduling.
-      
-      Doctors at the Sweetwater location:
-      
-      - Dr. Gisselle Calero
-      - Dr. Kyler Farnan
-      - Dr. Maria Casas
-      
-      Medical scheduling:
-      
-      - Dr. Austin Bach
-      - Dr. Bach overflow
-      
-      Routine vision scheduling:
-      
-      - Dr. Maria Casas sees routine-vision patients age 7 and older.
-      - Dr. Kyler Farnan sees routine-vision patients age 5 and older.
-      - Dr. Gisselle Calero sees routine-vision patients age 4 and older.
   - id: "repairs-and-warranty"
-    title: "Repairs and Warranty"
+    title: "Broken glasses repair and warranty"
     text: |-
       Betty can complete minor repairs in the office at no cost when possible.
-  - id: "scope-of-services"
-    title: "Scope of Services"
-    text: |-
-      Dr. Bach schedules cataract exams, including cataract evaluations, and cataract surgery at Sweetwater.
-      
-      Astigmatism is a routine-vision visit with an optometrist (OD) for patients age 4 and older. Patients age 3 or younger with astigmatism should see Dr. Bach through medical scheduling.
-      
-      Sweetwater schedules medical eye care and routine vision. Medical appointments cover current eye problems, symptoms, conditions, and ophthalmology care. Routine-vision appointments cover routine eye exams, eyeglass prescriptions, contact lens fittings, and insertion training when there is no active eye problem.
-      
-      Routine-vision age minimums follow the scheduler provider rules: Dr. Maria Casas sees routine-vision patients age 7 and older, Dr. Kyler Farnan sees routine-vision patients age 5 and older, and Dr. Gisselle Calero sees routine-vision patients age 4 and older. Patients below the routine-vision providers' age minimums use pediatric ophthalmology with Dr. Bach.
-      
-      Sweetwater does not perform retina surgical care. Retina surgical care requires a retina surgeon; the primary care provider or insurance company can provide a referral when the patient does not have one.
-  - id: "self-pay-pricing"
-    title: "Self-Pay Pricing"
-    text: |-
-      New patient medical visit with an optometrist: $150. Established patient medical visit with an optometrist: $75. New patient medical visit with an ophthalmologist: $250. Established patient medical visit with an ophthalmologist: $125. Routine vision exam with an optometrist: $100. Routine vision with contact lens fitting: $150*.
   - id: "social-follow-up"
-    title: "Social Follow-Up"
+    title: "Social media"
     text: |-
       Abita Eye Group is on Facebook and Instagram at @abitaeyegroup.
-  - id: "what-to-bring"
-    title: "What to Bring"
-    text: |-
-      Photo ID, insurance card, list of current medications, and previous eye records if available.

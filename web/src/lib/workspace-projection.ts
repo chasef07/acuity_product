@@ -181,7 +181,7 @@ export type WorkspaceRealtimeCallbacks = {
 
 export type WorkspaceRealtimeController = {
   setScope: (scope?: { practiceID: string; locationID: string }) => void
-  refresh: () => void
+  refresh: () => Promise<void>
   visibilityChanged: () => void
   stop: () => void
 }
@@ -411,7 +411,7 @@ export function createWorkspaceProjection({
     token,
     signal,
     minimumVersion,
-  }: Parameters<WorkspaceRealtimeCallbacks["reconcile"]>[0]) {
+  }: Parameters<WorkspaceRealtimeCallbacks["reconcile"]>[0]): Promise<Reconciliation> {
     const generation = scopeGeneration
     const countGeneration = ++queryGenerations.taskCounts
     const taskGeneration = ++queryGenerations.tasks
@@ -492,7 +492,9 @@ export function createWorkspaceProjection({
             taskGeneration === queryGenerations.tasks
           const completedWindowCurrent = completedGeneration === queryGenerations.completedTasks
           const refreshedSelected =
-            taskWindowCurrent && selectedTaskResult?.kind === "success"
+            taskWindowCurrent && selectedTaskResult?.kind === "success" &&
+            !(currentState.selection.task?.id === selectedTaskResult.data.id &&
+              currentState.selection.task.version > selectedTaskResult.data.version)
               ? selectedTaskResult.data
               : undefined
           const tasks = taskWindowCurrent && taskResult.kind === "success"
@@ -527,7 +529,7 @@ export function createWorkspaceProjection({
                 taskError: "",
                 engagement: taskEngagement(refreshedSelected),
               }
-            } else if (selectedTaskResult) {
+            } else if (selectedTaskResult && selectedTaskResult.kind !== "success") {
               selection = {
                 ...selection,
                 taskError: selectedTaskDetailError,
@@ -882,7 +884,7 @@ export function createWorkspaceProjection({
       const ownsSelection = selectedID === intent.task.id || state.selection.taskGroup?.groupMembers?.some((member) => member.id === intent.task.id)
       queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
-      await refreshTaskWindows(state.search.applied)
+      await realtimeController.refresh()
       if (intent.advance && intent.task.state === "COMPLETED" && ownsSelection && generation === scopeGeneration && state.selection.task?.id === selectedID && !state.tasks.error) {
         const next = state.tasks.items.find((task) => task.id !== intent.task.id)
         if (next) selectEngagement(taskEngagement(next), next)
@@ -892,7 +894,7 @@ export function createWorkspaceProjection({
     if (intent.type === "task-created") {
       queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
-      await refreshTaskWindows(state.search.applied)
+      await realtimeController.refresh()
       return
     }
     if (intent.type === "visibility-changed") {
@@ -905,7 +907,7 @@ export function createWorkspaceProjection({
     }
     if (intent.type === "retry") {
       if (state.discovery && state.scope.practiceID && state.scope.locationID) {
-        realtimeController.refresh()
+        void realtimeController.refresh()
       } else {
         await start()
       }
@@ -1059,7 +1061,7 @@ export function createWorkspaceProjection({
       practiceID: nextScope.practiceID,
       locationID: nextScope.locationID,
     })
-    if (!activeScopeChanged) realtimeController.refresh()
+    if (!activeScopeChanged) void realtimeController.refresh()
   }
 
   async function loadMore(window: TaskWindow) {
@@ -1183,11 +1185,7 @@ export function createWorkspaceProjection({
     }
     queryGenerations.taskCounts += 1
     projectTaskIntent(result.data, false)
-    patch((current) => ({
-      ...current,
-      detailRevision: current.detailRevision + 1,
-    }))
-    await refreshTaskWindows(state.search.applied)
+    await realtimeController.refresh()
     if (generation !== scopeGeneration || stopped || state.loadState !== "ready") return
     patch((current) => ({
       ...current,
@@ -1361,7 +1359,7 @@ export function createWorkspaceProjection({
 
   async function handleDisposition(result: CallingDispositionResult) {
     focusedCallID = ""
-    realtimeController.refresh()
+    void realtimeController.refresh()
     const generation = scopeGeneration
     if (result.taskId) {
       const taskResult = await authenticatedRequest((token, signal) =>

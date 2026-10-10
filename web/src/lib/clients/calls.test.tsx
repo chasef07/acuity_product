@@ -17,7 +17,9 @@ const recoveryTask = {
   version: 3,
   callId: "call-missed",
   state: "OPEN",
-} as Pick<Task, "id" | "version" | "callId" | "state">
+  relatedInteractionCount: 2,
+  interactions: [],
+} as Pick<Task, "id" | "version" | "callId" | "state" | "relatedInteractionCount" | "interactions">
 
 const interactions = [
   { callId: "call-missed", type: "MISSED_CALL", occurredAt: "2026-09-01T10:00:00Z" },
@@ -75,6 +77,21 @@ test("recovery source loads the newest voicemail and keeps it through a failed r
   })
   assert.deepEqual(backend.requests.slice(2), [
     "GET /v1/tasks/task-1",
+    "GET /v1/calling/calls/call-voicemail",
+  ])
+})
+
+test("recovery source uses the authoritative Task it is given and reads only the Call per revision", async (t) => {
+  const backend = fakeBackend(t, (url) => Response.json({ id: url.pathname.split("/").at(-1) }))
+  const detailed = { ...recoveryTask, interactions } as typeof recoveryTask
+  const view = mount(t, (revision: number) => useRecoverySource(detailed, revision))
+  await view.render(0)
+  await waitFor(() => view.latest().call !== undefined)
+  assert.deepEqual(view.latest(), { interactions, call: { id: "call-voicemail" } })
+  await view.render(1)
+  await waitFor(() => backend.requests.length === 2)
+  assert.deepEqual(backend.requests, [
+    "GET /v1/calling/calls/call-voicemail",
     "GET /v1/calling/calls/call-voicemail",
   ])
 })

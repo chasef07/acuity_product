@@ -182,6 +182,45 @@ test("knowledge shows its import date and collapsed sections that keep line brea
   await page.unmount()
 })
 
+test("knowledge search filters sections by title and text, opens matches, and says when nothing matches", async (t) => {
+  const page = harness(t)
+  page.knowledge = {
+    locationId: locations[0].id,
+    sections: [
+      { id: "hours", title: "Office hours", text: "Monday to Friday\n8am to 5pm" },
+      { id: "fax", title: "Office fax number", text: "Synthetic fax: (000) 555-0100." },
+      { id: "languages", title: "Languages spoken", text: "Doctors speak Español and English." },
+    ],
+  }
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  const search = page.host.querySelector<HTMLInputElement>("input[type='search']")
+  assert.ok(search)
+  assert.equal(search.getAttribute("aria-label"), "Search knowledge")
+  const count = page.host.querySelector("[aria-live='polite']")
+  assert.equal(count?.textContent, "")
+
+  await page.type(search, "FAX")
+  assert.equal(page.host.querySelector("[aria-live='polite']"), count)
+  assert.equal(count?.textContent, "1 of 3 entries")
+  assert.deepEqual(page.rowTitles(), ["Office fax number"])
+  assert.equal(page.panel(page.button(/^Office fax number$/)).open, true)
+  assert.match(page.text(), /1 of 3 entries/)
+
+  await page.type(search, "espanol monday")
+  assert.deepEqual(page.rowTitles(), [])
+  assert.match(page.text(), /No entries match “espanol monday”\./)
+
+  await page.type(search, "espanol")
+  assert.deepEqual(page.rowTitles(), ["Languages spoken"])
+
+  await page.type(search, "")
+  assert.deepEqual(page.rowTitles(), ["Office hours", "Office fax number", "Languages spoken"])
+  assert.equal(page.panel(page.button(/^Office hours$/)).open, false)
+  assert.doesNotMatch(page.text(), /of 3 entries/)
+  await page.unmount()
+})
+
 test("knowledge without an import and unavailable knowledge say so", async (t) => {
   const page = harness(t)
   page.knowledge = { locationId: locations[0].id, sections: [] }
@@ -260,6 +299,14 @@ function harness(t: TestContext) {
       return { open: !panel.hasAttribute("hidden"), text: panel.textContent ?? "" }
     },
     alert: () => host.querySelector("[role='alert']")?.textContent ?? "",
+    type: (input: HTMLInputElement, value: string) =>
+      act(async () => {
+        Object.assign(input, { attachEvent() {}, detachEvent() {} })
+        input.focus()
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value)
+        input.dispatchEvent(new window.KeyboardEvent("keyup", { bubbles: true }))
+      }),
+    rowTitles: () => Array.from(host.querySelectorAll("li > button"), (row) => row.textContent ?? ""),
     button: (name: RegExp) => {
       const button = Array.from(host.querySelectorAll("button")).find((item) => name.test(item.textContent ?? ""))
       assert.ok(button, String(name))

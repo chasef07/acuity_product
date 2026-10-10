@@ -207,6 +207,36 @@ test("hint bursts coalesce to the newest version without regression", async () =
   sync.stop()
 })
 
+test("refresh settles after its forced reconciliation applies and covers that version's hint", async () => {
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  let serverVersion = 1
+  const applied: number[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller } })),
+    getToken: async () => "token",
+    reconcile: async () => {
+      const version = serverVersion
+      return { version, apply: () => applied.push(version) }
+    },
+    onStateChange: () => {},
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+  await eventually(() => assert.ok(stream))
+  stream!.enqueue(readyEvent(1))
+  await eventually(() => assert.deepEqual(applied, [1]))
+
+  serverVersion = 2
+  await sync.refresh()
+  assert.deepEqual(applied, [1, 2])
+  stream!.enqueue(hintEvent(2))
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.deepEqual(applied, [1, 2])
+  sync.stop()
+  await sync.refresh()
+})
+
 test("hidden hints defer DB reconciliation until one visible reconstruction", async () => {
   let hidden = false
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined

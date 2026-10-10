@@ -64,6 +64,7 @@ jobs:
         run: |
           python3 scripts/test-knowledge-publish.py
           python3 scripts/test-knowledge-release.py
+          bash scripts/knowledge-validate.sh
           bash ./scripts/test-release-container.sh
       - if: matrix.shard == 'support'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
