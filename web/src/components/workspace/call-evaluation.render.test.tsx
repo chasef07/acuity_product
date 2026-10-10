@@ -222,3 +222,23 @@ test("v5 omits the request-understood judge and keeps active review alerts and h
     assert.match(historical, /Caller request understood<\/dt><dd[^>]*>0.85 \/ 1/)
   }
 })
+
+test("scorecard v6 shows the jury verdict, each juror's vote, quorum failures and sentiment", () => {
+  const html = renderToStaticMarkup(<CallEvaluation prompts={{ clear_and_responsive: "Was the call clear and responsive?" }} evaluation={{
+    evaluator: "jury", evaluatorVersion: "typesafe-scorecard-v6", jurors: ["typesafe-ai/jev", "liquid/d1"], evaluatedAt: "2026-10-07T12:00:00Z", status: "incomplete",
+    results: {
+      booking_requested: { verdict: false, probability: 0.1, votes: { "typesafe-ai/jev": 0.1, "liquid/d1": 0.1 }, errors: {} },
+      clear_and_responsive: { verdict: false, probability: 0.2, votes: { "typesafe-ai/jev": 0.1, "liquid/d1": 0.3 }, errors: {} },
+      time_offered: { status: "not_applicable", reason: "no_availability_result" },
+      expressed_sentiment: { score: 1.2, probabilities: { "1": 0.8 }, model: "typesafe-ai/jev" },
+    },
+    errors: { right_help: { cause: "no_quorum", votes: { "typesafe-ai/jev": 0.9 }, errors: { "liquid/d1": "TimeoutError" } } },
+  }} />)
+  assert.match(html, /Jury: jev, d1/)
+  assert.match(html, /Was the call clear and responsive\?<\/dt><dd class="shrink-0 font-medium text-destructive">No/)
+  assert.match(html, /booking requested<\/dt><dd class="shrink-0 font-medium ">No/)
+  assert.match(html, /d1: failed \(TimeoutError\)/)
+  assert.match(html, /No quorum/)
+  assert.match(html, /No availability search returned a result/)
+  assert.match(html, /Negative · 1.2 \/ 4/)
+})

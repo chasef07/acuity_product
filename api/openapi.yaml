@@ -1140,57 +1140,6 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/operator/ai-interactions/{interactionId}/manual-tags:
-    parameters:
-      - name: interactionId
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-    get:
-      operationId: getOperatorAICallTags
-      summary: Read or update manual call tags as a Platform Operator.
-      responses:
-        "200":
-          description: Available practice tags and tags applied to this call.
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/OperatorAICallTags"}
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-    put:
-      operationId: setOperatorAICallTag
-      summary: Read or update manual call tags as a Platform Operator.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [name, applied]
-              properties:
-                name: {type: string, minLength: 1, maxLength: 60}
-                applied: {type: boolean}
-      responses:
-        "200":
-          description: Available practice tags and tags applied to this call.
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/OperatorAICallTags"}
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/operator/ai-interactions/{interactionId}/issue:
     parameters:
       - name: interactionId
@@ -1753,6 +1702,154 @@ paths:
                 format: binary
         "403":
           $ref: "#/components/responses/Denied"
+  /v1/operator/scorecard/questions:
+    get:
+      operationId: getOperatorScorecardQuestions
+      summary: Read the scorecard question definitions shown to reviewers.
+      responses:
+        "200":
+          description: Every scorecard question with its plain-English yes and no definitions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorScorecardQuestions"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/scorecard/results:
+    post:
+      operationId: queryOperatorScorecardResults
+      summary: Booking conversion and the daily share of calls with a problem over a range.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorScorecardResultsRequest"
+      responses:
+        "200":
+          description: Range totals and one point per UTC day.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorScorecardResults"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "429":
+          $ref: "#/components/responses/AnalyticsBusy"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/call-reviews/queue:
+    post:
+      operationId: openOperatorCallReviewQueue
+      summary: Open the caller's daily review queue, assigning calls on first open.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorCallReviewQueueRequest"
+      responses:
+        "200":
+          description: The reviewer's calls for the day, with a few calls shared with other reviewers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCallReviewQueue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/call-reviews/accuracy:
+    post:
+      operationId: queryOperatorJudgeAccuracy
+      summary: Compare judge answers with the golden set per question and judge version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorJudgeAccuracyRequest"
+      responses:
+        "200":
+          description: Agreement, failures caught, false alarms, and disagreements.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorJudgeAccuracy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "429":
+          $ref: "#/components/responses/AnalyticsBusy"
+  /v1/operator/call-reviews/{interactionId}:
+    parameters:
+      - name: interactionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getOperatorCallReview
+      summary: Read one call's review; judge answers are withheld until the reviewer submits.
+      responses:
+        "200":
+          description: Code-check facts, applicable questions, and the reviewer's own answers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCallReview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      operationId: submitOperatorCallReview
+      summary: Save the reviewer's answers to the golden set and reveal the judge's answers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorCallReviewSubmission"
+      responses:
+        "200":
+          description: The saved review with the judge's answers revealed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCallReview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operator/calls/{callId}/timeline:
     get:
       operationId: getOperatorCallingTimeline
@@ -3526,7 +3623,7 @@ components:
     AgentCallDetail:
       type: object
       additionalProperties: false
-      required: [call, locationName, messages]
+      required: [call, locationName, messages, scorecard]
       properties:
         call:
           $ref: "#/components/schemas/AgentCall"
@@ -3538,6 +3635,27 @@ components:
             $ref: "#/components/schemas/AgentCallMessage"
         issue:
           $ref: "#/components/schemas/AgentCallIssue"
+        scorecard:
+          type: array
+          description: The jury's verdict on each scorecard question it answered.
+          items:
+            $ref: "#/components/schemas/AgentCallVerdict"
+        sentiment:
+          type: number
+          minimum: 0
+          maximum: 4
+          description: Caller sentiment from 0 (very negative) to 4 (very positive). Shown, not graded.
+    AgentCallVerdict:
+      type: object
+      additionalProperties: false
+      required: [code, prompt, answer]
+      properties:
+        code: {type: string}
+        prompt: {type: string}
+        answer:
+          type: string
+          enum: ["yes", "no", unsure]
+          description: No only when the jury is confident (probability at most 0.20); 0.20 to 0.40 is unsure and goes to human review.
     AIInteractionDetail:
       type: object
       additionalProperties: false
@@ -3827,6 +3945,277 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BookingDay"
+    OperatorScorecardQuestion:
+      type: object
+      additionalProperties: false
+      required: [key, code, label, prompt, source, question, "yes", "no"]
+      properties:
+        key: {type: string}
+        code: {type: string}
+        label: {type: string}
+        prompt:
+          type: string
+          description: The question in one short line, as reviewers see it.
+        source: {type: string, enum: [judge, code]}
+        question: {type: string}
+        "yes": {type: string}
+        "no": {type: string}
+    OperatorScorecardQuestions:
+      type: object
+      additionalProperties: false
+      required: [questions]
+      properties:
+        questions:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorScorecardQuestion"}
+    OperatorCallReviewQueueRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, date, timeZone]
+      properties:
+        practiceId: {type: string, format: uuid}
+        date: {type: string, format: date}
+        timeZone: {type: string, minLength: 1, maxLength: 100}
+    OperatorCallReviewQueueCall:
+      type: object
+      additionalProperties: false
+      required: [interactionId, startedAt, locationName, durationSeconds, overlap]
+      properties:
+        interactionId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        locationName: {type: string}
+        durationSeconds: {type: integer}
+        overlap: {type: boolean}
+        completedAt: {type: string, format: date-time}
+    OperatorCallReviewQueue:
+      type: object
+      additionalProperties: false
+      required: [calls]
+      properties:
+        calls:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorCallReviewQueueCall"}
+    OperatorCallReviewFact:
+      type: object
+      additionalProperties: false
+      required: [question, answer]
+      properties:
+        question: {type: string}
+        answer: {type: boolean}
+        detail:
+          type: object
+          additionalProperties: true
+    OperatorCallReviewAnswer:
+      type: object
+      additionalProperties: false
+      required: [question, answer, note]
+      properties:
+        question: {type: string}
+        answer: {type: boolean}
+        note: {type: string, maxLength: 2000}
+    OperatorCallReviewJudgeAnswer:
+      type: object
+      additionalProperties: false
+      required: [question, answer, version]
+      properties:
+        question: {type: string}
+        answer: {type: boolean}
+        probability: {type: number}
+        version: {type: string}
+    OperatorCallReview:
+      type: object
+      additionalProperties: false
+      required: [interactionId, assigned, facts, questions, submitted, note, questionIdea, answers, judge]
+      properties:
+        interactionId: {type: string, format: uuid}
+        assigned: {type: boolean}
+        facts:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorCallReviewFact"}
+        questions:
+          type: array
+          items: {type: string}
+        submitted: {type: boolean}
+        note: {type: string}
+        questionIdea: {type: string}
+        answers:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorCallReviewAnswer"}
+        judge:
+          type: array
+          description: Empty until the reviewer submits, so answers stay blind.
+          items: {$ref: "#/components/schemas/OperatorCallReviewJudgeAnswer"}
+    OperatorCallReviewSubmission:
+      type: object
+      additionalProperties: false
+      required: [answers, note]
+      properties:
+        answers:
+          type: array
+          maxItems: 20
+          items: {$ref: "#/components/schemas/OperatorCallReviewAnswer"}
+        note: {type: string, maxLength: 2000}
+        questionIdea:
+          type: string
+          maxLength: 2000
+          description: Something wrong on this call that no question asks about.
+    OperatorJudgeAccuracyRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId]
+      properties:
+        practiceId: {type: string, format: uuid}
+    OperatorJudgeAccuracyRow:
+      type: object
+      additionalProperties: false
+      required: [question, judgeVersion, sample, agreed, humanNo, failuresCaught, falseAlarms, jurors, trust]
+      properties:
+        question: {type: string}
+        judgeVersion: {type: string}
+        sample: {type: integer}
+        agreed: {type: integer}
+        humanNo: {type: integer}
+        failuresCaught: {type: integer}
+        falseAlarms: {type: integer}
+        jurors:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorJurorAccuracy"}
+        trust:
+          $ref: "#/components/schemas/OperatorJuryTrust"
+    OperatorJuryTrust:
+      type: object
+      additionalProperties: false
+      description: >-
+        Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling
+        flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size.
+        Only confident no answers (probability at most 0.20) count as the jury saying no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 1%, agreement low bound within
+        5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
+      required: [calls, failures, catch, catchLow, falseAlarms, falseAlarmHigh, agreement, agreementLow, unsure, humanAgreement, humanPairs, status, reason]
+      properties:
+        calls: {type: integer}
+        failures: {type: integer}
+        catch: {type: number, nullable: true}
+        catchLow: {type: number, nullable: true}
+        falseAlarms: {type: number, nullable: true}
+        falseAlarmHigh: {type: number, nullable: true}
+        agreement: {type: number, nullable: true}
+        agreementLow: {type: number, nullable: true}
+        unsure:
+          type: number
+          nullable: true
+          description: Weighted share of calls the jury was unsure about, which a person still reviews.
+        humanAgreement: {type: number, nullable: true}
+        humanPairs: {type: integer}
+        status: {type: string, enum: [trusted, collecting, below]}
+        reason: {type: string}
+    OperatorJurorAccuracy:
+      type: object
+      additionalProperties: false
+      required: [model, compared, agreed]
+      properties:
+        model: {type: string}
+        compared: {type: integer}
+        agreed: {type: integer}
+    OperatorJudgeDisagreement:
+      type: object
+      additionalProperties: false
+      required: [interactionId, startedAt, locationName, question, judgeVersion, reviewerEmail, human, judge, note]
+      properties:
+        interactionId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        locationName: {type: string}
+        question: {type: string}
+        judgeVersion: {type: string}
+        reviewerEmail: {type: string}
+        human: {type: boolean}
+        judge: {type: boolean}
+        note: {type: string}
+    OperatorReviewerAnswer:
+      type: object
+      additionalProperties: false
+      required: [reviewerEmail, answer, note]
+      properties:
+        reviewerEmail: {type: string}
+        answer: {type: boolean}
+        note: {type: string}
+    OperatorReviewerDisagreement:
+      type: object
+      additionalProperties: false
+      required: [interactionId, startedAt, locationName, question, answers]
+      properties:
+        interactionId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        locationName: {type: string}
+        question: {type: string}
+        answers:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorReviewerAnswer"}
+    OperatorJudgeAccuracy:
+      type: object
+      additionalProperties: false
+      required: [reviewedCalls, goldenAnswers, goldenSet, rows, judgeDisagreements, reviewerDisagreements]
+      properties:
+        reviewedCalls: {type: integer}
+        goldenAnswers: {type: integer}
+        goldenSet:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorGoldenSetCall"}
+        rows:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorJudgeAccuracyRow"}
+        judgeDisagreements:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorJudgeDisagreement"}
+        reviewerDisagreements:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorReviewerDisagreement"}
+    OperatorScorecardResultsRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, range]
+      properties:
+        practiceId: {type: string, format: uuid}
+        locationId: {type: string, format: uuid}
+        range: {$ref: "#/components/schemas/OperatorAIAnalyticsRange"}
+    OperatorScorecardDay:
+      type: object
+      additionalProperties: false
+      required: [date, calls, problemCalls, problemRate]
+      properties:
+        date: {type: string, format: date}
+        calls: {type: integer}
+        problemCalls: {type: integer}
+        problemRate: {type: number, nullable: true}
+    OperatorScorecardResults:
+      type: object
+      additionalProperties: false
+      required: [calls, problemCalls, bookingCalls, converted, blocked, missed, conversion, daily]
+      properties:
+        calls: {type: integer}
+        problemCalls:
+          type: integer
+          description: Calls with a no on any failure question, or a missed booking.
+        bookingCalls: {type: integer}
+        converted: {type: integer}
+        blocked: {type: integer}
+        missed: {type: integer}
+        conversion: {type: number, nullable: true}
+        daily:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorScorecardDay"}
+    OperatorGoldenSetCall:
+      type: object
+      additionalProperties: false
+      required: [interactionId, startedAt, locationName, reviewers, answers, disagreements]
+      properties:
+        interactionId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        locationName: {type: string}
+        reviewers:
+          type: array
+          items: {type: string}
+        answers: {type: integer}
+        disagreements: {type: integer}
     OperatorAICostQueryRequest:
       type: object
       additionalProperties: false
@@ -3941,12 +4330,6 @@ components:
         outcome: {$ref: "#/components/schemas/OperatorAICallIssueOutcome"}
         reviewedBy: {type: string}
         reviewedAt: {type: string, format: date-time}
-    OperatorAICallTags:
-      type: object
-      required: [available, selected]
-      properties:
-        available: {type: array, items: {type: string}}
-        selected: {type: array, items: {type: string}}
     OperatorAIAnalyticsRange:
       type: string
       enum: [24h, 7d, 30d]
@@ -3955,10 +4338,6 @@ components:
       additionalProperties: false
       required: [practiceId, range]
       properties:
-        needsReviewOnly:
-          type: boolean
-          description: Return only calls with evaluation review reasons. Summary remains scoped to the full selected range.
-        manualTag: {type: string, maxLength: 60}
         practiceId:
           type: string
           format: uuid
@@ -4295,7 +4674,6 @@ components:
         - transcriptAvailable
       properties:
         reviewReasons: {type: array, items: {type: string}}
-        manualTags: {type: array, items: {type: string}}
         id:
           type: string
           format: uuid
@@ -4352,7 +4730,6 @@ components:
       additionalProperties: false
       required: [calls, nextCursor]
       properties:
-        availableTags: {type: array, items: {type: string}}
         pendingIssues:
           description: Staff-flagged calls awaiting Acuity review in the practice and office scope, regardless of range. First page only.
           type: array

@@ -103,8 +103,7 @@ func readInteraction(ctx context.Context, tx pgx.Tx, interactionID string) (Inte
 }
 
 const (
-	analyticsRowLimit        = 50000
-	analyticsReviewScanLimit = 2000
+	analyticsRowLimit = 50000
 )
 
 func (m *Module) beginAnalyticsScope(
@@ -114,15 +113,26 @@ func (m *Module) beginAnalyticsScope(
 	locationID string,
 	who audience,
 ) (pgx.Tx, []string, error) {
+	tx, _, locationIDs, err := m.beginAnalyticsAuthorization(ctx, identity, practiceID, locationID, who)
+	return tx, locationIDs, err
+}
+
+func (m *Module) beginAnalyticsAuthorization(
+	ctx context.Context,
+	identity access.Identity,
+	practiceID string,
+	locationID string,
+	who audience,
+) (pgx.Tx, access.Authorization, []string, error) {
 	if err := m.available(); err != nil {
-		return nil, nil, err
+		return nil, access.Authorization{}, nil, err
 	}
 	if !validUUID(practiceID) || (locationID != "" && !validUUID(locationID)) {
-		return nil, nil, ErrInvalidInput
+		return nil, access.Authorization{}, nil, ErrInvalidInput
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("begin AI analytics: %w", err)
+		return nil, access.Authorization{}, nil, fmt.Errorf("begin AI analytics: %w", err)
 	}
 	if _, err = tx.Exec(ctx, `SET LOCAL statement_timeout = '1500ms'; SET LOCAL lock_timeout = '100ms'; SET LOCAL max_parallel_workers_per_gather = 0; SET LOCAL work_mem = '4MB'`); err != nil {
 		err = fmt.Errorf("bound AI analytics: %w", err)
@@ -140,9 +150,17 @@ func (m *Module) beginAnalyticsScope(
 	}
 	if err != nil {
 		_ = tx.Rollback(ctx)
-		return nil, nil, err
+		return nil, access.Authorization{}, nil, err
 	}
-	return tx, locationIDs, nil
+	return tx, authorization, locationIDs, nil
+}
+
+func locationNames(authorization access.Authorization) map[string]string {
+	result := map[string]string{}
+	for _, location := range authorization.Locations {
+		result[location.ID] = location.Name
+	}
+	return result
 }
 
 func reportingZone(name string) (*time.Location, bool) {

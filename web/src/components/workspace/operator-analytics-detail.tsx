@@ -2,8 +2,7 @@
 
 import { CallEvaluation } from "./call-evaluation"
 import { CallIssueReview } from "./call-issue-review"
-import { CallManualTags } from "./call-manual-tags"
-import type { OperatorAiCallIssue, OperatorAiCallTags } from "@/lib/api/generated/types.gen"
+import type { OperatorAiCallIssue } from "@/lib/api/generated/types.gen"
 
 import type { MiddlewareRequestDiagnostic } from "@/lib/api/generated"
 import { MiddlewareRequestDetails } from "./middleware-request-details"
@@ -53,6 +52,7 @@ import type {
   OperatorAiTimelineItem,
 } from "@/lib/api/generated/types.gen"
 import { useAiCallEvidence } from "@/lib/clients/agent-calls"
+import { useScorecardQuestions } from "@/lib/clients/call-review"
 import { formatMediumDateTime } from "@/lib/format"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
@@ -63,7 +63,6 @@ export function OperatorAnalyticsDetailSheet({
   onNext,
   navigationLoading = false,
   navigationError = false,
-  onTagsChange,
   onIssueChange,
   onClose,
 }: {
@@ -73,7 +72,6 @@ export function OperatorAnalyticsDetailSheet({
   onNext?: () => void
   navigationLoading?: boolean
   navigationError?: boolean
-  onTagsChange: (id: string, tags: OperatorAiCallTags) => void
   onIssueChange: (issue: OperatorAiCallIssue) => void
   onClose: () => void
 }) {
@@ -149,7 +147,6 @@ export function OperatorAnalyticsDetailSheet({
             key={interactionID}
             detail={detail}
             focus={focus}
-            onTagsChange={onTagsChange}
             onIssueChange={onIssueChange}
           />
         )}
@@ -161,14 +158,14 @@ export function OperatorAnalyticsDetailSheet({
 function OperatorAnalyticsDetailView({
   detail,
   focus,
-  onTagsChange,
   onIssueChange,
 }: {
   detail: OperatorAiInteractionAnalytics
   focus?: DiagnosticFocus
-  onTagsChange: (id: string, tags: OperatorAiCallTags) => void
   onIssueChange: (issue: OperatorAiCallIssue) => void
 }) {
+  const questions = useScorecardQuestions()
+  const prompts = Object.fromEntries(questions.status === "ready" ? questions.data.questions.map((question) => [question.key, question.prompt]) : [])
   const [showTiming, setShowTiming] = useState(true)
   const messageCount = detail.timeline.filter(
     (item) => item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE",
@@ -222,8 +219,7 @@ function OperatorAnalyticsDetailView({
                 className="[content-visibility:visible]"
               >
                 <CallIssueReview key={`issue-${detail.id}`} interactionID={detail.id} initialIssue={detail.issue} onChange={onIssueChange} />
-                <CallEvaluation evaluation={detail.evaluation} />
-                <CallManualTags key={detail.id} interactionID={detail.id} onChange={onTagsChange} />
+                <CallEvaluation evaluation={detail.evaluation} prompts={prompts} />
                 <section
                   aria-label="Call conversation"
                   className="border-b px-5 py-5 sm:px-6"
@@ -498,19 +494,22 @@ function AppointmentFacts({ facts }: { facts: AiAppointmentFacts }) {
   )
 }
 
-function TimelineItem({
+export function TimelineItem({
   item,
   result,
   selected,
   showTiming,
   middlewareRequests,
+  callStartedAt,
 }: {
   middlewareRequests?: MiddlewareRequestDiagnostic[]
   item: OperatorAiTimelineItem
   result?: OperatorAiTimelineItem
   selected: boolean
   showTiming: boolean
+  callStartedAt?: string
 }) {
+  const time = callStartedAt ? formatOffset(item.occurredAt, callStartedAt) : formatTime(item.occurredAt)
   if (item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE") {
     const agent = item.kind === "AGENT_MESSAGE"
     return (
@@ -537,7 +536,7 @@ function TimelineItem({
             </Bubble>
             {(showTiming || selected) && (
               <MessageFooter className="flex-wrap gap-x-3 gap-y-1">
-                <time>{formatTime(item.occurredAt)}</time>
+                <time>{time}</time>
                 {[
                   ["STT final", item.sttMs],
                   ["TTFT", item.ttftMs],
@@ -580,6 +579,11 @@ function TimelineItem({
               className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90"
               aria-hidden="true"
             />
+            {callStartedAt && (
+              <time className="font-mono text-[0.625rem] tabular-nums text-muted-foreground">
+                {time}
+              </time>
+            )}
             <span className="text-xs font-semibold">
               {formatToolLabel(item.name)}
             </span>
@@ -655,7 +659,7 @@ function ToolPayload({
   )
 }
 
-function timelineEntries(items: OperatorAiTimelineItem[]) {
+export function timelineEntries(items: OperatorAiTimelineItem[]) {
   const entries: Array<{
     item: OperatorAiTimelineItem
     result?: OperatorAiTimelineItem
@@ -781,6 +785,15 @@ function formatAppointmentDateTime(facts: AiAppointmentFacts) {
   return facts.appointmentTime
     ? `${dateLabel} · ${facts.appointmentTime}`
     : dateLabel
+}
+
+export function formatOffset(value: string, startedAt: string): string {
+  const seconds = Math.max(
+    0,
+    Math.floor((new Date(value).getTime() - new Date(startedAt).getTime()) / 1000),
+  )
+  if (!Number.isFinite(seconds)) return "—"
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
 }
 
 function formatTime(value: string): string {

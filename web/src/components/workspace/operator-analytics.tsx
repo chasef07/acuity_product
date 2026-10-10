@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { type ReactNode, useState } from "react"
 import {
   ArrowRightIcon,
   CalendarCheck2Icon,
@@ -65,9 +65,10 @@ import {
 } from "@/components/ui/table"
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { PendingCallIssues } from "@/components/workspace/call-issue-review"
+import { CallReviewWorkspace } from "@/components/workspace/call-review"
+import { BookingConversionKpi, ImprovementTrend } from "@/components/workspace/scorecard-overview"
 import type {
   OperatorAiCallIssue,
-  OperatorAiCallTags,
   OperatorAiAnalyticsRange,
   OperatorAiAnalyticsSummary,
   OperatorAiCallAnalytics,
@@ -86,7 +87,7 @@ type AnalyticsTab = "overview" | "cost" | "quality" | "tools" | "calls" | "revie
 
 const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
   { value: "calls", label: "Calls" },
-  { value: "review", label: "Needs review" },
+  { value: "review", label: "Review" },
   { value: "overview", label: "Overview" },
   { value: "cost", label: "Cost" },
   { value: "quality", label: "Quality" },
@@ -128,23 +129,17 @@ export function OperatorAnalytics({
   const [tab, setTab] = useState<AnalyticsTab>("calls")
   const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
   const costView = tab === "cost"
-  const needsReviewOnly = tab === "review"
-  const [tagFilter, setTagFilter] = useState({ practiceID, value: "" })
-  const manualTag = tagFilter.practiceID === practiceID ? tagFilter.value : ""
-  const setManualTag = (value: string) => setTagFilter({ practiceID, value })
-  const activeTag = tab === "calls" || needsReviewOnly ? manualTag : ""
+  const reviewView = tab === "review"
   const [requestVersion, setRequestVersion] = useState(0)
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
-  const requestKey = `${practiceID}:${locationID}:${range}:${activeTag}:${needsReviewOnly}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${requestVersion}`
   const currentRequest = useAiCallAnalytics({
     practiceID,
     locationID,
     range,
-    manualTag: activeTag,
-    needsReviewOnly,
     revision: requestVersion,
-    enabled: !costView,
+    enabled: !costView && !reviewView,
   })
   const nextPageState = currentRequest.nextPage
 
@@ -170,14 +165,6 @@ export function OperatorAnalytics({
     }
   }
 
-  function updateCallTags(id: string, tags: OperatorAiCallTags) {
-    currentRequest.update((shown) => ({
-      ...shown,
-      availableTags: tags.available,
-      calls: shown.calls.map((call) => call.id === id ? { ...call, manualTags: tags.selected } : call),
-    }))
-  }
-
   function updateCallIssue(issue: OperatorAiCallIssue) {
     currentRequest.update((shown) => ({
       ...shown,
@@ -200,8 +187,8 @@ export function OperatorAnalytics({
       <AnalyticsFrame
         section="AI diagnostics"
         title={analyticsTabs.find((item) => item.value === tab)!.label}
-        periodLabel={ranges.find((item) => item.value === range)!.label}
-        controls={
+        periodLabel={reviewView ? "Daily call review and golden set" : ranges.find((item) => item.value === range)!.label}
+        controls={reviewView ? null : (
           <>
             <Select
               value={office}
@@ -243,21 +230,12 @@ export function OperatorAnalytics({
               ))}
             </ToggleGroup>
           </>
-        }
-        tabs={<div className="w-full space-y-3">
-          <AnalyticsTabs tab={tab} onChange={setTab} />
-          {(tab === "calls" || needsReviewOnly) && ((currentRequest.data?.availableTags?.length ?? 0) > 0 || manualTag) && (
-            <div role="group" aria-label="Filter calls by tag" className="flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-xs text-muted-foreground">Tags</span>
-              <Button size="xs" variant={manualTag ? "outline" : "secondary"} aria-pressed={!manualTag} onClick={() => setManualTag("")}>All calls</Button>
-              {Array.from(new Set([...(currentRequest.data?.availableTags ?? []), ...(manualTag ? [manualTag] : [])])).map((tag) => (
-                <Button key={tag} size="xs" variant={manualTag === tag ? "secondary" : "outline"} aria-pressed={manualTag === tag} onClick={() => setManualTag(tag)}>{tag}</Button>
-              ))}
-            </div>
-          )}
-        </div>}
+        )}
+        tabs={<AnalyticsTabs tab={tab} onChange={setTab} />}
       >
-        {costView ? (
+        {reviewView ? (
+          <CallReviewWorkspace key={practiceID} practiceID={practiceID} onOpenCall={(id) => selectCall(id)} />
+        ) : costView ? (
           <CostOverview
             practiceID={practiceID}
             locationID={locationID}
@@ -285,10 +263,16 @@ export function OperatorAnalytics({
                 onSelect={selectCall}
               />
             )}
+            {tab === "quality" && (
+              <div className="mb-4">
+                <ImprovementTrend practiceID={practiceID} locationID={locationID} range={range} />
+              </div>
+            )}
             {currentRequest.state === "ready" && currentRequest.data && (
               <AnalyticsReady
                 key={requestKey}
                 data={currentRequest.data}
+                practiceID={practiceID}
                 locations={locations}
                 versionSelection={versionSelection}
                 onVersionSelectionChange={setVersionSelection}
@@ -309,12 +293,8 @@ export function OperatorAnalytics({
         onNext={nextCall || canLoadNextCall ? selectNextCall : undefined}
         navigationLoading={nextPageState === "loading"}
         navigationError={canLoadNextCall && nextPageState === "unavailable"}
-        onTagsChange={updateCallTags}
         onIssueChange={updateCallIssue}
-        onClose={() => {
-          setSelectedCall({ id: "" })
-          if (manualTag) setRequestVersion((current) => current + 1)
-        }}
+        onClose={() => setSelectedCall({ id: "" })}
       />
     </section>
   )
@@ -322,6 +302,7 @@ export function OperatorAnalytics({
 
 function AnalyticsReady({
   data,
+  practiceID,
   locations,
   versionSelection,
   onVersionSelectionChange,
@@ -332,6 +313,7 @@ function AnalyticsReady({
   onSelect,
 }: {
   data: AiCallAnalytics
+  practiceID: string
   locations: Location[]
   versionSelection: VersionSelection
   onVersionSelectionChange: (selection: VersionSelection) => void
@@ -351,27 +333,26 @@ function AnalyticsReady({
       {(tab === "overview" || tab === "quality") && (
         <VersionToolbar view={versionView} onChange={onVersionSelectionChange} />
       )}
-      {tab === "overview" && <AnalyticsOverview summary={data.summary} versionView={versionView} />}
+      {tab === "overview" && <AnalyticsOverview summary={data.summary} versionView={versionView} kpi={<BookingConversionKpi practiceID={practiceID} range={range} />} />}
       {tab === "quality" && <DiagnosticsQuality summary={data.summary} versionView={versionView} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
-      {(tab === "calls" || tab === "review") && data.calls.length === 0 ? (
+      {tab === "calls" && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <InboxIcon aria-hidden="true" />
             </EmptyMedia>
-            <EmptyTitle>{tab === "review" ? "No flagged calls in this range" : "No AI calls in this range"}</EmptyTitle>
+            <EmptyTitle>No AI calls in this range</EmptyTitle>
             <EmptyDescription>
               Change the time range or workspace office to review another slice
               of call evidence.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
-      ) : tab === "calls" || tab === "review" ? (
+      ) : tab === "calls" ? (
         <CallLedger
           calls={data.calls}
-          totalCalls={tab === "review" ? undefined : data.summary.totalCalls}
-          needsReviewOnly={tab === "review"}
+          totalCalls={data.summary.totalCalls}
           range={range}
           hasNextPage={Boolean(data.nextCursor)}
           nextPageState={nextPageState}
@@ -416,9 +397,11 @@ function AnalyticsTabs({
 function AnalyticsOverview({
   summary,
   versionView,
+  kpi,
 }: {
   summary: OperatorAiAnalyticsSummary
   versionView: VersionView
+  kpi: ReactNode
 }) {
   const outcomes = [
     {
@@ -454,7 +437,7 @@ function AnalyticsOverview({
   ]
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {outcomes.map((item) => (
           <Card key={item.label} size="sm" className="min-w-0">
             <CardHeader className="grid-cols-[1fr_auto]">
@@ -473,6 +456,7 @@ function AnalyticsOverview({
             </CardContent>
           </Card>
         ))}
+        {kpi}
       </div>
 
       <DiagnosticsCallTrends summary={summary} versionView={versionView} />
@@ -510,7 +494,6 @@ function OperationalHealth({ summary }: { summary: OperatorAiAnalyticsSummary })
 }
 
 function CallLedger({
-  needsReviewOnly,
   calls,
   totalCalls,
   range,
@@ -520,7 +503,6 @@ function CallLedger({
   onSelect,
 }: {
   calls: OperatorAiCallAnalytics[]
-  needsReviewOnly: boolean
   totalCalls?: number
   range: OperatorAiAnalyticsRange
   hasNextPage: boolean
@@ -536,7 +518,7 @@ function CallLedger({
             Call ledger
           </p>
           <h2 id="call-ledger-title" className="mt-0.5 text-sm font-semibold">
-            {needsReviewOnly ? "Calls needing review" : "AI calls"}
+            AI calls
           </h2>
         </div>
         <p className="text-xs text-muted-foreground">
@@ -555,7 +537,6 @@ function CallLedger({
                 <TableHead>Duration</TableHead>
                 <TableHead>Actions</TableHead>
                 <TableHead>Tool errors</TableHead>
-                <TableHead>Tags</TableHead>
                 <TableHead>Transfer</TableHead>
               </TableRow>
             </TableHeader>
@@ -594,11 +575,6 @@ function CallLedger({
                     <Badge variant={call.toolErrorCount > 0 ? "destructive" : "outline"}>
                       {call.toolErrorCount}
                     </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex max-w-56 flex-wrap gap-1">
-                      {call.manualTags?.map((tag) => <Badge key={tag} variant="secondary" className="max-w-full whitespace-normal break-words">{tag}</Badge>)}
-                    </div>
                   </TableCell>
                   <TableCell>
                     <TransferBadge transferred={call.transferred} />
@@ -640,7 +616,6 @@ function CallLedger({
             </dl>
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               <ActionBadges actions={call.toolActions} />
-              {call.manualTags?.map((tag) => <Badge key={tag} variant="secondary">{tag}</Badge>)}
               <TransferBadge transferred={call.transferred} />
               {!call.transcriptAvailable && (
                 <Badge variant="outline">Transcript missing</Badge>

@@ -33,6 +33,11 @@ const scorecardChecks = [
   "appointment_datetime_correct",
   "office_rules_grounded",
 ]
+const bookingQuestions = ["booking_requested", "time_offered"]
+const notApplicableReasons: Record<string, string> = {
+  no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
+  no_availability_result: "No availability search returned a result.",
+}
 
 function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
   const results = record(evaluation.results)
@@ -50,9 +55,9 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
       {checks.map((name) => {
         const answer = record(record(record(results[name]).answers)[name])
         const failed = Object.hasOwn(errors, name)
-        const notApplicable = !failed && name === "appointment_datetime_correct" &&
-          record(results[name]).status === "not_applicable" &&
-          record(results[name]).reason === "no_appointment_action_result"
+        const reason = record(results[name]).reason
+        const notApplicable = !failed && record(results[name]).status === "not_applicable" &&
+          typeof reason === "string" && Object.hasOwn(notApplicableReasons, reason)
         const error = record(errors[name])
         const sentiment = name === "expressed_sentiment"
         const value = sentiment ? answer.score : answer.noul
@@ -73,7 +78,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
             Judge failed{typeof error.cause === "string" ? `: ${title(error.cause)}` : ""}
             {typeof error.httpStatus === "number" ? ` · HTTP ${error.httpStatus}` : ""}
             {typeof error.attempts === "number" ? ` · Attempts: ${error.attempts}` : ""}
-          </dd> : notApplicable ? <dd className="mt-1 text-muted-foreground">No booking, rescheduling, or cancellation tool returned a result.</dd> : !valid ? <dd className="mt-1 text-muted-foreground">No valid score was recorded.</dd> : sentiment ? <>
+          </dd> : notApplicable ? <dd className="mt-1 text-muted-foreground">{notApplicableReasons[String(reason)]}</dd> : !valid ? <dd className="mt-1 text-muted-foreground">No valid score was recorded.</dd> : sentiment ? <>
             <dd className="mt-1 text-muted-foreground">{evaluationScales.expressed_sentiment.map((label, index) => `${index}: ${label}`).join(" · ")}</dd>
             <dd className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
               {Object.entries(probabilities).map(([label, probability]) => <span key={label}>{evaluationScales.expressed_sentiment[Number(label)] ?? label}: {percent(probability)}</span>)}
@@ -86,7 +91,55 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
   </>
 }
 
-export function CallEvaluation({ evaluation }: { evaluation?: Record<string, unknown> }) {
+function jurorName(model: string): string {
+  return model.split("/").pop() ?? model
+}
+
+function JuryScorecard({ evaluation, prompts }: { evaluation: Record<string, unknown>; prompts: Record<string, string> }) {
+  const results = record(evaluation.results)
+  const errors = record(evaluation.errors)
+  const jurors = Array.isArray(evaluation.jurors) ? evaluation.jurors.map(String) : []
+  const order = Object.keys(prompts)
+  const rank = (name: string) => (order.includes(name) ? order.indexOf(name) : order.length)
+  const names = [...new Set([...Object.keys(results), ...Object.keys(errors)])].filter((name) => name !== "expressed_sentiment").sort((left, right) => rank(left) - rank(right))
+  const sentiment = record(results.expressed_sentiment)
+  const score = typeof sentiment.score === "number" && sentiment.score >= 0 && sentiment.score <= 4 ? sentiment.score : undefined
+  return <>
+    <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer. No means confident (0.20 or lower); between 0.20 and 0.40 is Unsure and goes to people.</p>
+    <dl className="mt-3 divide-y rounded-lg border px-3">
+      {names.map((name) => {
+        const result = record(results[name])
+        const failed = Object.hasOwn(errors, name)
+        const notApplicable = result.status === "not_applicable"
+        const verdict = typeof result.verdict === "boolean" ? result.verdict : undefined
+        const probability = typeof result.probability === "number" ? result.probability : undefined
+        const unsure = verdict === false && probability !== undefined && probability > 0.2
+        const flagged = verdict === false && !unsure && !bookingQuestions.includes(name)
+        const votes = record(failed ? record(errors[name]).votes : result.votes)
+        const jurorErrors = record(failed ? record(errors[name]).errors : result.errors)
+        return <div key={name} className="py-3 text-xs">
+          <div className="flex items-start justify-between gap-3">
+            <dt>{prompts[name] ?? title(name)}</dt>
+            <dd className={`shrink-0 font-medium ${flagged ? "text-destructive" : ""}`}>{notApplicable ? "Not applicable" : verdict === undefined ? "No verdict" : verdict ? "Yes" : unsure ? "Unsure" : "No"}</dd>
+          </div>
+          {notApplicable ? <dd className="mt-1 text-muted-foreground">{notApplicableReasons[String(result.reason)] ?? title(String(result.reason))}</dd> : <dd className="mt-1 flex flex-wrap gap-x-3 text-muted-foreground">
+            {jurors.map((juror) => <span key={juror}>{jurorName(juror)}: {Object.hasOwn(jurorErrors, juror) ? `failed (${String(jurorErrors[juror])})` : typeof votes[juror] === "number" ? percent(votes[juror]) : "no answer"}</span>)}
+            {failed && <span className="text-destructive">No quorum</span>}
+          </dd>}
+        </div>
+      })}
+      <div className="py-3 text-xs">
+        <div className="flex items-start justify-between gap-3">
+          <dt>Caller sentiment</dt>
+          <dd className="shrink-0">{score === undefined ? "Unavailable" : `${evaluationScales.expressed_sentiment[Math.round(score)]} · ${score.toFixed(1)} / 4`}</dd>
+        </div>
+        <dd className="mt-1 text-muted-foreground">Shown for context, not graded.</dd>
+      </div>
+    </dl>
+  </>
+}
+
+export function CallEvaluation({ evaluation, prompts = {} }: { evaluation?: Record<string, unknown>; prompts?: Record<string, string> }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
   const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3" || evaluation?.evaluatorVersion === "typesafe-scorecard-v4" || evaluation?.evaluatorVersion === "typesafe-scorecard-v5"
@@ -98,12 +151,12 @@ export function CallEvaluation({ evaluation }: { evaluation?: Record<string, unk
       </div>
       {!evaluation ? <p className="mt-2 text-xs text-muted-foreground">No evaluation was recorded for this call.</p> : <>
         <dl className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-          {[["Evaluator", evaluation.evaluator], ["Model", evaluation.model], ["Version", evaluation.evaluatorVersion], ["Evaluated at", evaluation.evaluatedAt]].map(([label, value]) => (
+          {[["Evaluator", evaluation.evaluator], ...(evaluation.model ? [["Model", evaluation.model]] : []), ["Version", evaluation.evaluatorVersion], ["Evaluated at", evaluation.evaluatedAt]].map(([label, value]) => (
             <div key={String(label)} className="min-w-0"><dt className="text-muted-foreground">{String(label)}</dt><dd className="break-words">{typeof value === "string" ? value : "Unavailable"}</dd></div>
           ))}
         </dl>
         {typeof evaluation.reason === "string" && <p className="mt-3 text-xs">{evaluation.status === "incomplete" ? "Evaluation incomplete" : "Evaluation unavailable"}: {title(evaluation.reason)}</p>}
-        {scorecard ? <Scorecard evaluation={evaluation} /> : <>
+        {evaluation.evaluatorVersion === "typesafe-scorecard-v6" ? <JuryScorecard evaluation={evaluation} prompts={prompts} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
         {!currentVersion && <p className="mt-3 text-xs text-muted-foreground">This evaluator version is shown as recorded. Automatic red highlights apply only to typesafe-trace-v4.</p>}
         {Object.entries(results).map(([group, raw]) => {
           const result = record(raw)

@@ -62,8 +62,6 @@ func TestCursorsBindTheirQuery(t *testing.T) {
 	for name, change := range map[string]func(*QueryAnalyticsCommand){
 		"location":     func(c *QueryAnalyticsCommand) { c.LocationID = "00000000-0000-0000-0000-000000000003" },
 		"range":        func(c *QueryAnalyticsCommand) { c.Range = AnalyticsRange30Days },
-		"review":       func(c *QueryAnalyticsCommand) { c.NeedsReviewOnly = true },
-		"tag":          func(c *QueryAnalyticsCommand) { c.ManualTag = "Synthetic" },
 		"corrupt":      func(c *QueryAnalyticsCommand) { c.Cursor = "%%%" },
 		"not a cursor": func(c *QueryAnalyticsCommand) { c.Cursor = "e30" },
 	} {

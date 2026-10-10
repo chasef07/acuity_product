@@ -1,0 +1,520 @@
+package interaction
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	ScorecardJudgeVersion = "typesafe-scorecard-v6"
+	ScorecardCodeVersion  = "code-checks-v1"
+	scorecardNoAtOrBelow  = 0.40
+	scorecardConfidentNo  = 0.20
+)
+
+type ScorecardQuestion struct {
+	Key      string `json:"key"`
+	Code     string `json:"code"`
+	Label    string `json:"label"`
+	Prompt   string `json:"prompt"`
+	Source   string `json:"source"`
+	Question string `json:"question"`
+	Yes      string `json:"yes"`
+	No       string `json:"no"`
+}
+
+var ScorecardQuestions = []ScorecardQuestion{
+	{
+		Key: "booking_requested", Code: "B1", Label: "Booking requested", Prompt: "Did the caller ask to book, reschedule, or cancel?", Source: "judge",
+		Question: "Did the caller ask to book a new appointment, or to reschedule or cancel an existing appointment, at any point in the call? Count a request for an appointment for someone else (for example a child). Asking about an existing appointment's time or location, confirming it, or asking about prescriptions, orders, insurance, or billing is not a booking request by itself.",
+		Yes:      "The caller asked to book, reschedule, or cancel an appointment.",
+		No:       "The caller never asked to book, reschedule, or cancel an appointment.",
+	},
+	{
+		Key: "scheduling_tool_called", Code: "B2", Label: "Scheduling tool called", Prompt: "Did the agent try to book, reschedule, or cancel?", Source: "code",
+		Question: "Did the agent call the matching scheduling tool?",
+		Yes:      "The agent called book_appointment, reschedule_appointment, or cancel_appointment.",
+		No:       "The agent never attempted a booking, reschedule, or cancellation.",
+	},
+	{
+		Key: "scheduling_succeeded", Code: "B3", Label: "Scheduling succeeded", Prompt: "Did the booking, reschedule, or cancel go through?", Source: "code",
+		Question: "Did the scheduling tool return a success?",
+		Yes:      "A booking, reschedule, or cancellation receipt came back successful. The call is converted.",
+		No:       "No scheduling receipt came back successful.",
+	},
+	{
+		Key: "booking_blocked", Code: "B4", Label: "Blocked by a tool result", Prompt: "Did a tool result block the booking?", Source: "code",
+		Question: "Did a tool result block it (no slots, insurance not accepted, policy)?",
+		Yes:      "Availability returned no openings or no eligible providers, or the insurance check said the plan is not accepted or needs a referral or prior authorization. Blocked calls are left out of conversion.",
+		No:       "No tool result blocked the booking. A system failure, such as availability that could not be verified, is not a block.",
+	},
+	{
+		Key: "time_offered", Code: "B5", Label: "Specific time offered", Prompt: "Did the agent offer a specific open time?", Source: "judge",
+		Question: "Did the agent offer the caller at least one specific appointment date and time taken from an availability tool result? A vague promise, a staff request to find a time, or a time the caller proposed that the agent did not confirm as available does not count.",
+		Yes:      "The agent offered at least one specific date and time from returned availability.",
+		No:       "The agent never offered a specific available date and time.",
+	},
+	{
+		Key: "need_understood", Code: "H1", Label: "Understood every request", Prompt: "Did the agent understand every request?", Source: "judge",
+		Question: "Did the agent correctly identify every request the caller made, including corrections and additional requests? First list each caller request, then check whether the agent's questions, tool calls, and statements address the request the caller actually made. Judge only whether the agent understood what was asked, not whether its answer was correct; factual accuracy is scored separately. Mishearing that the agent later corrected still counts as understood if the correction happened before any action was taken on the wrong understanding.",
+		Yes:      "The agent correctly identified every caller request, even if an answer it gave was wrong.",
+		No:       "The agent misunderstood, ignored, or acted on the wrong version of at least one caller request.",
+	},
+	{
+		Key: "right_help", Code: "H2", Label: "Right help or next step", Prompt: "Did every request end done, or with a clear next step?", Source: "judge",
+		Question: "By the end of the call, did the caller get the right help for each request: either the request was completed (supported by a successful tool result), or the caller was given a correct, clearly explained next step, such as a saved staff request they were told about, or a transfer to staff when the agent could not handle the request? A transfer counts only if the agent could not reasonably handle the request itself. If the call ended before any request was resolved or handed off, answer false.",
+		Yes:      "Every request was completed or handed off with a correct, clearly explained next step.",
+		No:       "At least one request was left unresolved, handed off unnecessarily, or the next step was missing, wrong, or unclear.",
+	},
+	{
+		Key: "clear_and_responsive", Code: "H4", Label: "Clear and responsive", Prompt: "Was the call clear and responsive?", Source: "judge",
+		Question: "Was the conversation clear and responsive from the caller's point of view? Answer false if the agent asked avoidable repeated questions, collected information it could not use for the caller's request, gave confusing or contradictory statements, or if the caller had to check whether the agent was still there or repeat themselves because the agent did not respond. These are not failures: a caller who asks for a person or does not want to talk to an AI and is transferred promptly (a brief offer to help first is fine); a transfer or staff request because a tool result says the agent cannot complete the request, such as insurance that cannot be verified; a short call; ordinary clarification of a hard-to-hear name or number, asked once or twice; caller-requested pauses.",
+		Yes:      "The conversation was clear and responsive, including prompt transfers the caller asked for.",
+		No:       "The conversation had avoidable repetition, wasted questions, confusing statements, or unresponsiveness.",
+	},
+	{
+		Key: "person_request_honored", Code: "T1", Label: "Person request honored", Prompt: "If the caller asked for a person, were they transferred promptly?", Source: "judge",
+		Question: "When the caller asked for a person, a representative, an agent, the front desk, or a transfer, did the agent transfer the call on that request? Answer false if, after the caller asked, the agent did any of these before transferring: said it was transferring, connecting, or checking who is available and then asked questions or offered help instead; said it could not transfer or that staff were busy or unavailable; collected details unrelated to the transfer; or let the caller ask again, including repeated words like 'agent' or 'representative' that went unanswered. Asking once what the call is about is fine only if the agent transfers right after the caller answers or asks again. If the caller accepts the agent's offer to help instead of a transfer, answer true. If the caller never asked for a person or a transfer, answer true.",
+		Yes:      "The caller never asked for a person, chose the agent's help instead, or was transferred on the request without the agent announcing, delaying, or ruling out the transfer.",
+		No:       "The agent announced a transfer and then pitched or asked questions, said it could not transfer or that staff were unavailable, or made the caller ask more than once.",
+	},
+	{
+		Key: "office_rules_grounded", Code: "A1", Label: "Office facts backed", Prompt: "Were all office facts backed by a lookup?", Source: "judge",
+		Question: "Was every factual claim about office hours, whether the office is open, providers, locations, services, or policies supported by recorded office instructions or a successful knowledge result available BEFORE the claim? Check each claim, including claims in Spanish, against earlier evidence for the relevant office. A caller's suggestion, the agent's own statements, general knowledge, or an unrelated tool result is not supporting evidence. If even one claim lacks earlier support or contradicts it, answer false. For example, saying 'we are open until five today' without earlier supporting hours fails. A later lookup, correction, or otherwise grounded answer does not erase an earlier unsupported claim. Greetings, acknowledgments, and explicit statements that information is unknown are not factual office claims.",
+		Yes:      "Every factual office claim has supporting evidence available before it was made, or no factual office claims were made.",
+		No:       "At least one factual office claim lacks earlier supporting evidence or contradicts it, even if the rest of the call is grounded or the claim is later corrected.",
+	},
+	{
+		Key: "appointment_datetime_correct", Code: "A2", Label: "Appointment matched the caller", Prompt: "Did the appointment match what the caller agreed to?", Source: "judge",
+		Question: "For every booking, rescheduling, or cancellation action, did the tool result match the caller's final intended appointment date and time? Use the final agreed date/time, including explicitly accepted alternatives, in the office timezone. For rescheduling check both the original appointment and the new date/time; for cancellation check the targeted appointment. Compare actual tool results, not the assistant's claim. Missing results cannot establish a match.",
+		Yes:      "Every appointment action's tool result confirms the caller's intended date and time.",
+		No:       "Any action targets or produces the wrong date/time, or there is insufficient evidence of a matching appointment action.",
+	},
+	{
+		Key: "no_results_retried", Code: "F2", Label: "Retried after no match", Prompt: "After no patient match, did the agent retry before transferring?", Source: "code",
+		Question: "After a patient lookup returned no_results, did the agent clarify and retry before transferring?",
+		Yes:      "The agent ran the patient lookup again before transferring the call.",
+		No:       "The agent transferred without retrying the patient lookup.",
+	},
+	{
+		Key: "staff_task_identified", Code: "F3", Label: "Staff task names the patient", Prompt: "Did every staff task name the patient?", Source: "code",
+		Question: "Did every staff task the agent saved name a patient?",
+		Yes:      "Every saved staff task named a patient (verified or not). The caller's number is always attached.",
+		No:       "At least one saved staff task said \"Patient: not identified\", so staff must work out who called.",
+	},
+	{
+		Key: "insurance_verified", Code: "I1", Label: "Insurance verified", Prompt: "Was the caller's insurance verified?", Source: "code",
+		Question: "Was the caller's insurance verified?",
+		Yes:      "The last insurance check accepted the plan.",
+		No:       "The last insurance check ended blocked or still needed information. This is not an agent failure; a task or transfer is fine. The plan name is recorded so staff can update the insurance rules.",
+	},
+}
+
+var scorecardQuestionByKey = func() map[string]ScorecardQuestion {
+	result := map[string]ScorecardQuestion{}
+	for _, question := range ScorecardQuestions {
+		result[question.Key] = question
+	}
+	return result
+}()
+
+type scorecardAnswer struct {
+	Question    string
+	Source      string
+	Answer      bool
+	Probability *float64
+	Version     string
+	JudgeModel  string
+	Detail      map[string]any
+}
+
+type scorecardToolCall struct {
+	Name      string
+	Arguments map[string]any
+	Output    string
+	Status    string
+	CallID    string
+}
+
+var (
+	schedulingWrites = map[string]bool{"book_appointment": true, "reschedule_appointment": true, "cancel_appointment": true}
+	blockingResults  = []struct{ tool, prefix, reason string }{
+		{"list_available_appointments", "no_results:", "No openings in the searched window"},
+		{"list_available_appointments", "blocked: No providers are eligible", "No eligible providers"},
+		{"check_insurance", "blocked: This plan is not accepted", "Insurance not accepted"},
+		{"check_insurance", "blocked: This office does not accept coverage", "Office does not accept this coverage"},
+		{"check_insurance", "blocked: This plan requires prior authorization", "Prior authorization required"},
+		{"check_insurance", "blocked: This plan requires a referral", "Referral required"},
+		{"check_insurance", "blocked: We accept this plan, but none of its doctors", "No doctor for the patient's age"},
+	}
+)
+
+func scorecardToolCalls(transcript json.RawMessage) []scorecardToolCall {
+	items := transcriptItems(decodeRecord(transcript))
+	outputs := map[string]map[string]any{}
+	for _, value := range items {
+		record := recordValue(value)
+		if strings.EqualFold(firstRecordString(record, "type"), "function_call_output") {
+			if callID := firstRecordString(record, "call_id", "callId"); callID != "" {
+				outputs[callID] = record
+			}
+		}
+	}
+	calls := []scorecardToolCall{}
+	for _, value := range items {
+		record := recordValue(value)
+		if !strings.EqualFold(firstRecordString(record, "type"), "function_call") {
+			continue
+		}
+		call := scorecardToolCall{
+			Name:      firstRecordString(record, "name"),
+			CallID:    firstRecordString(record, "call_id", "callId"),
+			Arguments: normalizedPayload(firstRecordValue(record, "arguments", "args")),
+		}
+		if call.Name == "" {
+			continue
+		}
+		if output, found := outputs[call.CallID]; found && call.CallID != "" {
+			switch typed := firstRecordValue(output, "output").(type) {
+			case string:
+				call.Output = strings.TrimSpace(typed)
+			case nil:
+			default:
+				encoded, _ := json.Marshal(typed)
+				call.Output = string(encoded)
+			}
+			if prefix, _, found := strings.Cut(call.Output, ":"); found && !strings.ContainsAny(prefix, " \n") {
+				call.Status = strings.ToLower(prefix)
+			}
+		}
+		calls = append(calls, call)
+	}
+	return calls
+}
+
+func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []scorecardAnswer {
+	calls := scorecardToolCalls(transcript)
+	answer := func(question string, value bool, detail map[string]any) scorecardAnswer {
+		return scorecardAnswer{Question: question, Source: "code", Answer: value, Version: ScorecardCodeVersion, Detail: detail}
+	}
+	receipts := domainOutcomeReceiptsByCallID(closeout)
+	writeCalled, writeSucceeded := false, false
+	lastOutput := map[string]string{}
+	for _, call := range calls {
+		lastOutput[call.Name] = call.Output
+		if schedulingWrites[call.Name] {
+			writeCalled = true
+			receipt := receipts[call.CallID]
+			if appointmentDomainOutcome(firstRecordString(receipt, "outcome")) && normalizedDomainStatus(firstRecordString(receipt, "status")) == "success" {
+				writeSucceeded = true
+			}
+		}
+	}
+	var blocked map[string]any
+	for _, rule := range blockingResults {
+		if output, called := lastOutput[rule.tool]; blocked == nil && called && strings.HasPrefix(output, rule.prefix) {
+			blocked = map[string]any{"reason": rule.reason, "tool": rule.tool}
+		}
+	}
+	answers := []scorecardAnswer{answer("scheduling_tool_called", writeCalled, nil)}
+	if writeCalled {
+		answers = append(answers, answer("scheduling_succeeded", writeSucceeded, nil))
+	}
+	answers = append(answers, answer("booking_blocked", blocked != nil, blocked))
+
+	noResults, retried := false, false
+	for _, call := range calls {
+		if call.Name == "resolve_patient" && noResults {
+			retried = true
+		} else if call.Name == "resolve_patient" && call.Status == "no_results" {
+			noResults = true
+		} else if call.Name == "transfer_call" && noResults {
+			answers = append(answers, answer("no_results_retried", retried, nil))
+			break
+		}
+	}
+
+	drafts := map[string]bool{}
+	draftOrder := []string{}
+	for _, call := range calls {
+		if call.Name != "save_staff_task" {
+			continue
+		}
+		draft := ""
+		for _, line := range strings.Split(call.Output, "\n") {
+			if value, found := strings.CutPrefix(line, "Draft ID: "); found {
+				draft = strings.TrimSpace(value)
+			}
+		}
+		if draft == "" {
+			continue
+		}
+		if _, known := drafts[draft]; !known {
+			draftOrder = append(draftOrder, draft)
+		}
+		switch call.Status {
+		case "saved":
+			drafts[draft] = !strings.Contains(call.Output, "\nPatient: not identified.")
+		case "cancelled":
+			delete(drafts, draft)
+		}
+	}
+	if len(drafts) > 0 {
+		identified, anonymous := true, 0
+		for _, draft := range draftOrder {
+			if named, saved := drafts[draft]; saved && !named {
+				identified = false
+				anonymous++
+			}
+		}
+		var detail map[string]any
+		if !identified {
+			detail = map[string]any{"unidentifiedTasks": anonymous}
+		}
+		answers = append(answers, answer("staff_task_identified", identified, detail))
+	}
+
+	var lastInsurance *scorecardToolCall
+	for index := range calls {
+		if calls[index].Name == "check_insurance" {
+			lastInsurance = &calls[index]
+		}
+	}
+	if lastInsurance != nil {
+		verified := lastInsurance.Status == "success"
+		var detail map[string]any
+		if !verified {
+			result, _, _ := strings.Cut(lastInsurance.Output, "\n")
+			detail = map[string]any{"plan": strings.TrimSpace(anyString(lastInsurance.Arguments["plan"])), "result": result}
+		}
+		answers = append(answers, answer("insurance_verified", verified, detail))
+	}
+	return answers
+}
+
+type juryEvaluation struct {
+	Version string                     `json:"evaluatorVersion"`
+	Jurors  []string                   `json:"jurors"`
+	Status  string                     `json:"status"`
+	Results map[string]json.RawMessage `json:"results"`
+	Errors  map[string]json.RawMessage `json:"errors"`
+}
+
+func readJury(evaluation json.RawMessage) (juryEvaluation, bool) {
+	var jury juryEvaluation
+	valid := json.Unmarshal(evaluation, &jury) == nil && jury.Version == ScorecardJudgeVersion &&
+		(jury.Status == "complete" || jury.Status == "incomplete") && len(jury.Jurors) > 0
+	return jury, valid
+}
+
+func validProbability(value *float64) bool {
+	return value != nil && !math.IsNaN(*value) && *value >= 0 && *value <= 1
+}
+
+func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
+	jury, valid := readJury(evaluation)
+	if !valid {
+		return nil
+	}
+	model := strings.Join(jury.Jurors, ",")
+	answers := []scorecardAnswer{}
+	for _, question := range ScorecardQuestions {
+		if question.Source != "judge" {
+			continue
+		}
+		if _, failed := jury.Errors[question.Key]; failed {
+			continue
+		}
+		var result struct {
+			Status      string             `json:"status"`
+			Reason      string             `json:"reason"`
+			Verdict     *bool              `json:"verdict"`
+			Probability *float64           `json:"probability"`
+			Votes       map[string]float64 `json:"votes"`
+		}
+		if json.Unmarshal(jury.Results[question.Key], &result) != nil {
+			continue
+		}
+		if result.Status == "not_applicable" {
+			if question.Key == "time_offered" && result.Reason == "no_availability_result" {
+				answers = append(answers, scorecardAnswer{
+					Question: question.Key, Source: "judge", Answer: false, Version: jury.Version,
+					JudgeModel: model, Detail: map[string]any{"reason": result.Reason},
+				})
+			}
+			continue
+		}
+		if result.Verdict == nil || !validProbability(result.Probability) {
+			continue
+		}
+		probability := *result.Probability
+		answers = append(answers, scorecardAnswer{
+			Question:    question.Key,
+			Source:      "judge",
+			Answer:      *result.Verdict,
+			Probability: &probability,
+			Version:     jury.Version,
+			JudgeModel:  model,
+			Detail:      map[string]any{"votes": result.Votes},
+		})
+	}
+	return answers
+}
+
+func scorecardLevel(answer bool, probability *float64) string {
+	switch {
+	case probability == nil && answer, probability != nil && *probability > scorecardNoAtOrBelow:
+		return "yes"
+	case probability == nil, *probability <= scorecardConfidentNo:
+		return "no"
+	}
+	return "unsure"
+}
+
+func jurySentiment(evaluation json.RawMessage) *float64 {
+	jury, valid := readJury(evaluation)
+	if !valid {
+		return nil
+	}
+	var sentiment struct {
+		Score *float64 `json:"score"`
+	}
+	if json.Unmarshal(jury.Results["expressed_sentiment"], &sentiment) != nil || sentiment.Score == nil || *sentiment.Score < 0 || *sentiment.Score > 4 {
+		return nil
+	}
+	return sentiment.Score
+}
+
+func scorecardAnswersFor(transcript, closeoutPayload json.RawMessage) []scorecardAnswer {
+	closeout := decodeRecord(closeoutPayload)
+	if len(transcriptItems(decodeRecord(transcript))) == 0 {
+		return nil
+	}
+	evaluation, _ := json.Marshal(closeout["evaluation"])
+	return append(codeCheckAnswers(transcript, closeout), judgeAnswers(evaluation)...)
+}
+
+func recordScorecard(ctx context.Context, tx pgx.Tx, interaction Interaction, computedAt time.Time) (int, error) {
+	if _, err := tx.Exec(ctx, `DELETE FROM ai_interaction_scorecard_answers WHERE interaction_id = $1`, interaction.ID); err != nil {
+		return 0, fmt.Errorf("clear scorecard answers: %w", err)
+	}
+	if interaction.LifecycleStage != LifecycleClosed {
+		return 0, nil
+	}
+	agentVersion := nullIfEmpty(strings.TrimSpace(firstRecordString(recordValue(decodeRecord(interaction.CloseoutPayload)["versions"]), "agent")))
+	if agentVersion == nil {
+		agentVersion = nullIfEmpty(strings.TrimSpace(firstRecordString(decodeRecord(interaction.CloseoutPayload), "agentVersion")))
+	}
+	answers := scorecardAnswersFor(interaction.Transcript, interaction.CloseoutPayload)
+	for _, answer := range answers {
+		var detail any
+		if answer.Detail != nil {
+			detail = answer.Detail
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO ai_interaction_scorecard_answers (
+				interaction_id, practice_id, question, source, answer, probability,
+				scorecard_version, judge_model, agent_version, detail, computed_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`, interaction.ID, interaction.PracticeID, answer.Question, answer.Source, answer.Answer, answer.Probability,
+			answer.Version, nullIfEmpty(answer.JudgeModel), agentVersion, detail, computedAt); err != nil {
+			return 0, fmt.Errorf("record scorecard answer: %w", err)
+		}
+	}
+	return len(answers), nil
+}
+
+type bookingOutcome string
+
+const (
+	bookingNotRequested bookingOutcome = ""
+	bookingConverted    bookingOutcome = "converted"
+	bookingBlocked      bookingOutcome = "blocked"
+	bookingMissed       bookingOutcome = "missed"
+	bookingAttempted    bookingOutcome = "attempted"
+)
+
+func classifyBooking(answers map[string]bool) bookingOutcome {
+	switch {
+	case !answers["booking_requested"]:
+		return bookingNotRequested
+	case answers["scheduling_succeeded"]:
+		return bookingConverted
+	case answers["booking_blocked"]:
+		return bookingBlocked
+	case !answers["scheduling_tool_called"] && !answers["time_offered"]:
+		return bookingMissed
+	default:
+		return bookingAttempted
+	}
+}
+
+type ScorecardBackfill struct {
+	Calls   int `json:"calls"`
+	Answers int `json:"answers"`
+}
+
+func (m *Module) BackfillScorecards(ctx context.Context, since time.Time, batch int) (ScorecardBackfill, error) {
+	if err := m.available(); err != nil {
+		return ScorecardBackfill{}, err
+	}
+	if batch < 1 {
+		return ScorecardBackfill{}, ErrInvalidInput
+	}
+	result := ScorecardBackfill{}
+	cursorStarted, cursorID := since, "00000000-0000-0000-0000-000000000000"
+	for {
+		tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return result, fmt.Errorf("begin scorecard backfill: %w", err)
+		}
+		rows, err := tx.Query(ctx, interactionSelect+`
+			WHERE interaction.lifecycle_stage = 3 AND (interaction.started_at, interaction.id) > ($1, $2::uuid)
+			ORDER BY interaction.started_at, interaction.id
+			LIMIT $3
+			FOR UPDATE OF interaction
+		`, cursorStarted, cursorID, batch)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return result, fmt.Errorf("read scorecard backfill: %w", err)
+		}
+		interactions := []Interaction{}
+		for rows.Next() {
+			interaction, err := scanInteraction(rows)
+			if err != nil {
+				rows.Close()
+				_ = tx.Rollback(ctx)
+				return result, fmt.Errorf("scan scorecard backfill: %w", err)
+			}
+			interactions = append(interactions, interaction)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			_ = tx.Rollback(ctx)
+			return result, fmt.Errorf("read scorecard backfill: %w", err)
+		}
+		for _, interaction := range interactions {
+			recorded, err := recordScorecard(ctx, tx, interaction, m.now())
+			if err != nil {
+				_ = tx.Rollback(ctx)
+				return result, err
+			}
+			result.Answers += recorded
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return result, fmt.Errorf("commit scorecard backfill: %w", err)
+		}
+		result.Calls += len(interactions)
+		if len(interactions) < batch {
+			return result, nil
+		}
+		last := interactions[len(interactions)-1]
+		cursorStarted, cursorID = last.StartedAt, last.ID
+	}
+}

@@ -617,14 +617,12 @@ func (server *Server) QueryOperatorAIAnalytics(
 	page, err := server.interactions.QueryAnalytics(
 		ctx,
 		interaction.QueryAnalyticsCommand{
-			Identity:        identity,
-			ManualTag:       stringValue(body.ManualTag),
-			NeedsReviewOnly: body.NeedsReviewOnly != nil && *body.NeedsReviewOnly,
-			PracticeID:      body.PracticeId.String(),
-			LocationID:      uuidString(body.LocationId),
-			Range:           interaction.AnalyticsRange(body.Range),
-			Cursor:          stringValue(body.Cursor),
-			Limit:           intValue(body.Limit),
+			Identity:   identity,
+			PracticeID: body.PracticeId.String(),
+			LocationID: uuidString(body.LocationId),
+			Range:      interaction.AnalyticsRange(body.Range),
+			Cursor:     stringValue(body.Cursor),
+			Limit:      intValue(body.Limit),
 		},
 	)
 	if err != nil {
@@ -2210,6 +2208,8 @@ func (server *Server) writeInteractionError(
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, interaction.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, interaction.ErrReviewLocked):
+		server.writeError(w, r, http.StatusConflict, "REVIEW_LOCKED", "This review was already submitted, so its answers stay as first saved.", false)
 	case errors.Is(err, interaction.ErrConflict):
 		server.writeError(w, r, http.StatusConflict, "INTERACTION_CONFLICT", "The source call conflicts with the stored Interaction.", false)
 	default:
@@ -3366,9 +3366,8 @@ func operatorAIAnalyticsPageResponse(
 	page interaction.AnalyticsPage,
 ) (api.OperatorAIAnalyticsPage, error) {
 	response := api.OperatorAIAnalyticsPage{
-		AvailableTags: &page.AvailableTags,
-		Calls:         make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
-		NextCursor:    page.NextCursor,
+		Calls:      make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
+		NextCursor: page.NextCursor,
 	}
 	if page.Summary != nil {
 		pendingIssues, err := operatorAICallIssuesResponse(page.PendingIssues)
@@ -3411,7 +3410,6 @@ func operatorAIAnalyticsPageResponse(
 		}
 		response.Calls = append(response.Calls, api.OperatorAICallAnalytics{
 			Id:                  id,
-			ManualTags:          &call.ManualTags,
 			ReviewReasons:       &call.ReviewReasons,
 			LocationId:          locationID,
 			LocationName:        call.LocationName,
