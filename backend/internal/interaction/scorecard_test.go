@@ -281,7 +281,7 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 	}
 	pools := map[string]reviewPool{"2026-10-08": {random: 65}}
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusCollected || *estimate.Catch != 1 {
-		t.Fatalf("5 of 5 caught is not yet proof of 80%%: %+v", estimate)
+		t.Fatalf("5 of 5 caught is not yet proof of 90%%: %+v", estimate)
 	}
 	for index := 5; index < 20; index++ {
 		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")

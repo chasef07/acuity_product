@@ -43,7 +43,7 @@ type ReviewQueueCall struct {
 	StartedAt       time.Time  `json:"startedAt"`
 	LocationName    string     `json:"locationName"`
 	DurationSeconds int        `json:"durationSeconds"`
-	Sample          string     `json:"sample"`
+	Sample          string     `json:"-"`
 	Overlap         bool       `json:"overlap"`
 	CompletedAt     *time.Time `json:"completedAt,omitempty"`
 }

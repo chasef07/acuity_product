@@ -3976,13 +3976,12 @@ components:
     OperatorCallReviewQueueCall:
       type: object
       additionalProperties: false
-      required: [interactionId, startedAt, locationName, durationSeconds, sample, overlap]
+      required: [interactionId, startedAt, locationName, durationSeconds, overlap]
       properties:
         interactionId: {type: string, format: uuid}
         startedAt: {type: string, format: date-time}
         locationName: {type: string}
         durationSeconds: {type: integer}
-        sample: {type: string, enum: [random, flagged]}
         overlap: {type: boolean}
         completedAt: {type: string, format: date-time}
     OperatorCallReviewQueue:

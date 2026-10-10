@@ -620,6 +620,9 @@ func expectedTablePrivileges() map[string]bool {
 		grant(role, "INSERT", "ai_interaction_scorecard_answers")
 		grant(role, "DELETE", "ai_interaction_scorecard_answers")
 	}
+	grant("acuity_portal", "SELECT", "ai_manual_tags", "ai_interaction_manual_tags")
+	grant("acuity_portal", "INSERT", "ai_manual_tags", "ai_interaction_manual_tags")
+	grant("acuity_portal", "DELETE", "ai_interaction_manual_tags")
 	grant("acuity_portal", "SELECT", "ai_call_review_assignments", "ai_call_reviews", "ai_call_review_pools")
 	grant("acuity_portal", "INSERT", "ai_call_review_assignments", "ai_call_reviews", "ai_call_review_pools")
 

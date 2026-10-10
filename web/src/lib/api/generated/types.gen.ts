@@ -893,7 +893,6 @@ export type OperatorCallReviewQueueCall = {
     startedAt: string;
     locationName: string;
     durationSeconds: number;
-    sample: 'random' | 'flagged';
     overlap: boolean;
     completedAt?: string;
 };
