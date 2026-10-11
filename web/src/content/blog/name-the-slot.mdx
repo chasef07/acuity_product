@@ -1,0 +1,205 @@
+Most unreliable AI agents don’t crash. They make a tool call that succeeds, does the wrong thing, and looks fine until a person finds out.
+
+Our voice agent books appointments for medical practices, writing straight into each practice’s EMR through its API. On one call, a patient phoned in to book a visit. Our agent found an opening and said, “I have Tuesday, September 15 at 9:00 with Dr. Reyes. Does that work?” The patient said yes. The agent booked Wednesday at 9:00.
+
+Same doctor, same time, wrong day. The booking went through without an error. If nobody catches it, the patient finds out on Tuesday, standing at the front desk for an appointment that doesn’t exist.
+
+The model hadn’t misunderstood anyone. It got the conversation right and the tool call wrong. This is the story of how we rebuilt that one tool call five times, and the rule that made it reliable and cut the hallucinations: **the model should only handle what a person can check.**
+
+## Version 1: the model fills in the form
+
+Our first booking tool was a thin wrapper over the EMR’s API. The model searched for openings, got back a list of slots, and then filled in the API’s fields itself:
+
+```ts
+parameters: z.object({
+  columnId: z.number(),
+  profileId: z.number(),
+  startDatetime: z.string(),
+  duration: z.number(),
+  appointmentTypeId: appointmentTypeIdSchema,
+  routing: z.enum(routingLanes).optional(),
+}),
+```
+
+The model copied four of those values out of a search result from earlier in the conversation. It chose the other two itself: a four-digit appointment type code, picked using rules in the prompt about office, patient status, age, and visit type, and a routing lane that decides which providers the patient can see. The tool’s description even said “If fails, retry once.”
+
+Look at that schema from the model’s side. `columnId` and `profileId` are integers that mean nothing to it. To book, it has to find the row the caller agreed to in a search result several turns back and copy four values from that same row, exactly.
+
+That’s a long-context retrieval problem, and it gets harder as the call goes on. Every turn adds transcript, tool calls, and new search results, so the row the model needs sits further back, among dozens of rows that look almost the same. Research on long contexts keeps finding the same pattern. Accuracy drops as the input grows, and it drops further when the relevant item sits in the middle of the context rather than near the start or end ([Liu et al.](https://arxiv.org/abs/2307.03172)). It drops again when similar-looking distractors surround it ([Chroma](https://research.trychroma.com/context-rot)). And across multi-turn conversations, the top models tested performed 39% worse on average than when given the same task in a single turn ([Laban et al.](https://arxiv.org/abs/2505.06120)). A column ID is the worst case: a number with no meaning to anchor on, surrounded by other numbers just like it.
+
+<ContextCopy />
+
+A copy from the wrong row doesn’t fail. The EMR accepts it and books a real slot, just not the one the caller chose. And of those six EMR arguments, the caller can only check one by ear: the date and time.
+
+So the first fix was obvious. Stop asking the model to carry the API’s fields.
+
+## Version 2: sign the slot, hand the model a letter
+
+So we took the raw EMR arguments away from the model. We built a small Go middleware that sits between the agent and the EMR’s API and translates in both directions: the agent’s tool calls come in using the caller’s words, and the EMR’s arguments go out. That gives the EMR’s IDs, scheduling rules, and login session one owner. The agent’s tools stay short and readable, and every write goes through code we can test, instead of through a prompt.
+
+When the middleware finds an opening, it puts every value the EMR will need into one record, called a booking token:
+
+```json
+{
+  "v": 1,
+  "officeId": "north",
+  "routing": "all_providers",
+  "columnId": 412,
+  "profileId": 87,
+  "startDatetime": "2026-09-15T09:00",
+  "duration": 15,
+  "dob": "<patient date of birth>",
+  "appointmentTypeIds": [1006],
+  "sameStartBooked": 0,
+  "sameStartCapacity": 2,
+  "provider": "Dr. Reyes",
+  "iat": 1789476300,
+  "exp": 1789477200
+}
+```
+
+The middleware base64-encodes the record and signs it with HMAC-SHA256. If any field changes, the signature stops matching and the middleware rejects the token. Every token expires 15 minutes after the middleware issues it.
+
+The model never sees a token. The agent’s code keeps the tokens in a lookup table and shows the model one letter per slot. To book, the model only has to say “book B.” The agent’s code swaps B for its token and sends the token to the middleware, and the middleware checks it and writes to the EMR.
+
+<TokenFlow />
+
+Six raw EMR arguments became a letter. For the first few days the model still picked the appointment type code too, until the middleware took that over as well. But the agent’s code assigned letters by position in the list, `String.fromCharCode("A".charCodeAt(0) + index)`, and rebuilt the table from the top on every search. Callers search more than once, so a letter from an earlier list could point at a different slot.
+
+<LetterShift />
+
+## Version 3: stable counters
+
+In June we keyed each slot by its date, time, provider, and routing lane, and gave it a counter that only goes up: `S1`, `S2`, `S3`. If a new search returned a slot the agent had already shown, the slot kept its number. A reference now meant the same slot for the whole call.
+
+Stable keys didn’t stop the wrong-slot bookings. In traces we still saw the model send a key next to the one the caller agreed to, because the keys all looked alike. `S6`, `S7`, `S16`, and `S17` differ by a character or two. That’s the distractor problem from the long-context research, now inside our own tool results. As the call went on, the right key sat further back among more keys just like it, and a one-character slip still named a real slot.
+
+<SimilarKeys />
+
+A counter also means nothing to a person. If the agent reads back Tuesday and sends the key for Wednesday, nothing in the tool call shows it: not to the model, and not to us reading the trace. The counter is an index into a table only the code can see.
+
+## Version 4: hash the slot to the search
+
+In September, after we moved our calls to a speech-to-speech agent, references became a hash: `ST_` plus the first six hex characters of a SHA-256 over the search, the office, the visit type, and the slot.
+
+```python
+identity = json.dumps((generation, key.office, key.visit, slot.key), separators=(",", ":"))
+ref = "ST_" + hashlib.sha256(identity.encode()).hexdigest()[:6].upper()
+```
+
+Because the search generation is part of the hash, every new search makes new references, and a reference from an earlier search can’t book anything. That closed a real hole. But `ST_9F3A1C` says even less about Tuesday than `S7` does.
+
+## Version 5: make the reference say what the caller heard
+
+Every version so far made the reference safer for the code and no clearer for anyone else. In October we changed the goal in our speech-to-speech agent: the reference should carry exactly what the caller just confirmed.
+
+```python
+def slot_reference(slot):
+    surname = "".join(filter(str.isalpha, provider_name(slot.provider).split()[-1]))
+    return f"{eastern_datetime(slot.datetime):%b%d-%H%M}-{surname}".upper()
+```
+
+Tuesday, September 15 at 9:00 with Dr. Reyes becomes `SEP15-0900-REYES`. Now the read-back and the tool call say the same thing. That also makes the copy easier: the right line in the calendar is the one that matches the words the model just spoke, not a number it has to remember from turns ago. If the agent says “Tuesday the 15th at 9:00” and sends `SEP16-0900-REYES`, the mismatch sits right there in the trace, where the model copying it, an engineer reading it, and the judge scoring the call can all see it. It’s a checksum a person can read. It doesn’t stop the error yet, but it makes the error visible.
+
+Two details make it work. Several backend schedule columns can sit behind one provider and start time, so the agent collapses them into one choice per provider and start, keeping the column that’s still empty. If two choices still produce the same string, the second gets a `-2`. And because a readable reference is the same in every search, the scoping the hash used to provide moved into code: a search with new inputs, or any write, clears the table of references that can book.
+
+<RefGenerations />
+
+## The math: embed up, project down
+
+Looking back, the five versions are five answers to one mathematical question. It’s worth stating precisely, because the precise version tells you what to build.
+
+**A slot is a point in a product space.** Each token field has a domain: the set of offices, the set of providers, the set of start times, and so on. A slot is one point in the product of all 15:
+
+> S = D₁ × D₂ × ⋯ × D₁₅
+
+<DimensionMap />
+
+**The token is an embedding.** The middleware maps each offered slot to E(s) = enc(s) ‖ HMAC(enc(s)). The map is injective, so no two slots share a token and nothing is lost. The signature also means the only valid tokens are the images of points the middleware actually offered. Code holds E(s), and the model never does.
+
+**The caller lives in a smaller space.** Out of 15 coordinates, a caller can check three by ear: the day, the time, and the doctor. Call that subspace V = Day × Time × Doctor, and the map that keeps only those coordinates the projection π: S → V. The read-back is a point in V. Call it ρ. A booking is correct exactly when the slot behind the model’s reference satisfies π(s) = ρ.
+
+<EmbedProject />
+
+**Every reference scheme is a map f from the offered slots O to strings.** The five versions differ only in which map we chose:
+
+- **Counters:** f(s) = Sᵢ, an arbitrary numbering. Neighbors in key space, `S6` and `S7`, are unrelated in S, and nothing about f(s) can be compared with ρ.
+- **Hashes:** f(s) = `ST_` ‖ h(g, s), where g is the search. That map is injective with high probability and scoped to one search, but its output is uniformly random. There is still nothing to compare with ρ.
+- **Projection:** f(s) = π(s), written as `SEP15-0900-REYES`. Now the reference and the read-back live in the same space, and the correctness condition π(s) = ρ can be read straight off the trace.
+
+**Projection alone isn’t injective, so code makes it injective on O.** Several schedule columns can sit behind one doctor and start time, which means the fiber π⁻¹(ρ) can hold more than one offered slot. The agent collapses each fiber to a single choice, keeping the column with the fewest bookings, and appends `-2` when two choices still produce the same string, such as two doctors who share a surname. After that, the reference picks out exactly one slot.
+
+**In coding-theory terms, a reference scheme is a code for a noisy copy channel.** The model copying a key is the channel. Counters are a code with minimum distance 1 and no redundancy: change one character and you get another valid key, with nothing to detect it. The readable reference adds redundancy, because its characters repeat what the read-back already said. A slip that lands on another valid slot, `SEP15` becoming `SEP16`, now also changes an observable coordinate, so it shows up against ρ.
+
+**Two more consequences follow.** The live coordinates, such as how many patients already start at that time, are the ones that can change between offer and write, so the write is conditioned on them, as the next sections show. And choosing instead of writing shrinks the model’s output space from all of S to the finite set O on its calendar, a set code can check membership in.
+
+## The same lesson, learned again with dates
+
+Dates went through the same evolution, and it took us just as long.
+
+At first the model did the date math. We gave it a tool that returned today’s date, and it turned “next Tuesday” into `2026-09-15` and passed that to the search. It mostly worked, until the edge cases: “October 14th” with no year, a call near midnight, “the Tuesday after next.”
+
+In July we took date math away from the model. It passed the caller’s words as spoken, and code parsed them with Chrono against the clinic’s clock in English and Spanish, refusing anything ambiguous instead of guessing.
+
+That fixed single requests, but callers don’t make single requests. They browse: “anything Tuesday?”, “what about later that week?”, “mornings are better,” “actually, is Dr. Reyes in on Thursday?” Every turn was a new phrase, a new parse, and a new tool call. A parser has to anticipate every way of saying a date in two languages, and callers always find one more.
+
+So in September we stopped asking the model which date it wanted. A first attempt let it widen the search to three months, and once it asked for 90 days, every later search stayed that wide. Three days later we fixed the window. The search takes an optional start date, defaults to tomorrow, and always returns 14 days, laid out as a calendar:
+
+```text
+success: Found eligible openings.
+Searched 2026-09-15 through 2026-09-28.
+Soonest options: SEP15-0900-REYES, SEP15-1400-REYES
+
+Tuesday, September 15, 2026 (tomorrow), EDT
+  Dr. Reyes morning: open 9:00 AM SEP15-0900-REYES, 9:30 AM SEP15-0930-REYES; shared 10:00 AM SEP15-1000-REYES
+  Dr. Reyes afternoon: open 2:00 PM SEP15-1400-REYES
+```
+
+That’s the whole tool result: days, times, providers, and a reference for each start, with no IDs and no tokens. “Shared” means another patient already starts at that time. The agent offers it only when no open time fits, so open slots fill before anyone is double-booked.
+
+Follow-ups like “later that week” or “mornings” are now answered from the calendar already in context, without another tool call. The model searches again only when the caller asks about dates outside the window, when the patient, office, or visit type changes, or when the offered slots expire. The model went from writing a date to choosing a line. Code can check a choice in a way it can’t check a written date: a reference that isn’t in the current table is rejected, and the other offers stay valid.
+
+The fixed window helped the backend too. Reading openings one provider and one day at a time cost the middleware 100 to 120 EMR requests per 14-day search, and the EMR started returning 429s in our busiest minutes. The middleware now reads each calendar month once for all of an office’s providers and sorts the rows by day.
+
+## What happens after the model says SEP15-0900-REYES
+
+The model’s part ends at the reference. Everything after that is code. Here is what happens between the model’s tool call and the EMR:
+
+1. **Look up the reference.** If it isn’t in the current table, the tool returns `needs_input: That slot reference was not returned. Choose a slot exactly as listed in the latest results.`
+2. **Require the read-back.** Without `readBack: true`, the tool doesn’t write. It returns `needs_input: Confirm 2026-09-15 at 9:00 AM Eastern with Dr. Reyes before booking.`, built from the slot rather than from the model’s memory.
+3. **Open the token.** The middleware checks the signature, the expiry, the office, and that the date of birth matches the patient being booked.
+4. **Re-run the rules.** The middleware works out the appointment type from patient status, age, and visit reason, and it must be one of the types the token allowed. The model never picks between two four-digit codes. If facts are missing, the result is `appointment_type_unresolved` with the missing facts listed, and the model asks the caller.
+5. **Re-read the schedule and compare.** The middleware reads that provider’s day from the EMR again and compares it with what the token recorded when the slot was offered:
+
+```go
+if booking.token.SameStartBooked != booked ||
+	booking.token.SameStartCapacity != sameStart.Capacity {
+	return time.Time{}, false, slotUnavailableError()
+}
+```
+
+This is a compare-and-swap. If anyone booked at that start time since the offer, even if the slot could still take another patient, the write is refused with `slot_unavailable` and the agent searches again. We don’t hold slots. We refuse to write on stale ones.
+
+6. **Write once.** A 409 from the EMR becomes `slot_unavailable`. A timeout or a 5xx is ambiguous, so the middleware reads the patient’s appointments back and looks for the one it tried to create. If it can’t tell, the outcome is `indeterminate_write`. Nothing retries it, further appointment writes for that patient are blocked for the rest of the call, and staff reconcile it.
+
+Compare that with version 1’s “If fails, retry once.”
+
+## How we know it works
+
+Two checks watch for the Tuesday-for-Wednesday booking.
+
+Calls that book, reschedule, or cancel are scored by Jev, TypeSafe’s judge model, on a yes/no condition called `appointment_datetime_correct`: does the date and time in the tool’s result match what the caller finally asked for? It checks the tool result, not what the agent said, because in the Tuesday call the agent said exactly the right thing.
+
+The call itself became a permanent simulation scenario, `slot_identity`. It fails if the first booking call sends the wrong reference, even if the agent catches the mistake and fixes it afterward.
+
+The next step closes the loop: compare the read-back with the reference in code, so a mismatch goes from visible to impossible.
+
+## What we’d tell anyone building agents
+
+1. **Sort every field by who can verify it.** Only what a person can check goes to the model. Everything else stays in code.
+2. **Keep IDs out of tool schemas, and test it.** Our CI fails if `patientId`, `bookingToken`, `cancellationToken`, or `columnId` appears in a scheduling tool’s schema.
+3. **Make the model choose, not write.** Load the candidates, and accept only a candidate you returned.
+4. **Name each candidate with what the person confirms,** so a wrong pick is visible in the trace.
+5. **Sign what you offered, re-check it before you write, and write once.**
+
+The model names the slot. Code carries it. The same split works anywhere an agent turns what a person says into a system’s IDs: an order to refund, a file to edit, a contact to email. Give the model what a person can check, and keep everything else where a person can’t break it.
