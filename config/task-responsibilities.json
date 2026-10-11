@@ -110,11 +110,6 @@
           "Role": "primary"
         },
         {
-          "Email": "abel@abitaeye.com",
-          "Category": "optical",
-          "Role": "primary"
-        },
-        {
           "Email": "frontdesk@abitaeye.com",
           "Category": "referrals",
           "Role": "primary"
@@ -266,11 +261,6 @@
         },
         {
           "Email": "sweetwateroptical@abitaeye.com",
-          "Category": "optical",
-          "Role": "primary"
-        },
-        {
-          "Email": "abel@abitaeye.com",
           "Category": "optical",
           "Role": "primary"
         },
@@ -430,11 +420,6 @@
           "Role": "primary"
         },
         {
-          "Email": "abel@abitaeye.com",
-          "Category": "optical",
-          "Role": "primary"
-        },
-        {
           "Email": "frontdesk@abitaeye.com",
           "Category": "referrals",
           "Role": "primary"
@@ -586,11 +571,6 @@
         },
         {
           "Email": "sweetwateroptical@abitaeye.com",
-          "Category": "optical",
-          "Role": "primary"
-        },
-        {
-          "Email": "abel@abitaeye.com",
           "Category": "optical",
           "Role": "primary"
         },
