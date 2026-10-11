@@ -370,7 +370,7 @@ func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
 
 func scorecardLevel(answer bool, probability *float64) string {
 	switch {
-	case probability == nil && answer, probability != nil && *probability > scorecardNoAtOrBelow:
+	case answer:
 		return "yes"
 	case probability == nil, *probability <= scorecardConfidentNo:
 		return "no"

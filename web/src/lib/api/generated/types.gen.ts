@@ -688,7 +688,7 @@ export type AgentCallVerdict = {
     code: string;
     prompt: string;
     /**
-     * No only when the jury is confident (probability at most 0.20); 0.20 to 0.40 is unsure and goes to human review.
+     * Yes is the jury majority verdict. When the verdict is no, No only when the jury is confident (mean probability at most 0.20); otherwise unsure, which goes to human review.
      */
     answer: 'yes' | 'no' | 'unsure';
 };

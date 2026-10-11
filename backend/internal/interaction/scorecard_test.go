@@ -306,6 +306,15 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 	}
 }
 
+func TestStaffScorecardFollowsTheJuryMajorityNotTheMean(t *testing.T) {
+	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["a","b","c"],"status":"complete","results":{
+		"need_understood":{"verdict":false,"probability":0.4667,"votes":{"a":0.1,"b":0.3,"c":1.0},"errors":{}},
+		"right_help":{"verdict":true,"probability":0.3,"votes":{"a":0.45,"b":0.45,"c":0.0},"errors":{}}}}`))
+	if len(scorecard) != 2 || scorecard[0].Answer != "unsure" || scorecard[1].Answer != "yes" {
+		t.Fatalf("a 1-2 split with a high mean is unsure, and a 2-1 yes with a low mean is yes: %+v", scorecard)
+	}
+}
+
 func TestStaffScorecardShowsVerdictsInCatalogOrder(t *testing.T) {
 	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev"],"status":"complete","results":{
 		"right_help":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
