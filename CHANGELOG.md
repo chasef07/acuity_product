@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.31.0](https://github.com/chasef07/acuity_product/compare/v1.30.0...v1.31.0) (2026-10-11)
+
+
+### Features
+
+* **scorecard:** yes/no scorecard, daily review golden set, and a weighted trust rule for the judge jury (ACU-99, ACU-93) ([#436](https://github.com/chasef07/acuity_product/issues/436)) ([de805a4](https://github.com/chasef07/acuity_product/commit/de805a4d9bc685d638bafe570a5ff7c93d1e88ba))
+* **web:** white marketing site, editorial blog cards, and platform positioning ([#443](https://github.com/chasef07/acuity_product/issues/443)) ([6284274](https://github.com/chasef07/acuity_product/commit/628427466375806fb6550c7d91008665b6620326))
+
 ## [1.30.0](https://github.com/chasef07/acuity_product/compare/v1.29.0...v1.30.0) (2026-10-11)
 
 
