@@ -46,7 +46,6 @@ func TestMissingDependenciesAreUnavailableNotInvalidInput(t *testing.T) {
 	_, calls["bookings"] = module.QueryBookingAnalytics(ctx, QueryBookingAnalyticsCommand{Identity: identity, PracticeID: practice, Days: 7, TimeZone: "UTC"})
 	_, calls["flag"] = module.FlagAgentCallIssue(ctx, identity, interaction, AgentCallIssueOther)
 	_, calls["review"] = module.ReviewCallIssue(ctx, identity, interaction, CallIssueConfirmed)
-	_, calls["tags"] = module.OperatorManualTags(ctx, identity, interaction, nil)
 	_, calls["recover"] = module.RecoverSourceClock(ctx, identity, interaction)
 	calls["retire"] = module.RetireLegacySummary(ctx, identity, interaction)
 	_, calls["worker"] = module.ProcessNextReceipt(ctx)

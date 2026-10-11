@@ -7,7 +7,6 @@ import { JSDOM } from "jsdom"
 import { clearAccessToken } from "../auth-client.ts"
 import {
   flagAgentCallIssue,
-  setCallTag,
   useAgentCalls,
   useAiCallAnalytics,
   useAiCallEvidence,
@@ -92,8 +91,6 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
     practiceID: "practice-1",
     locationID: "location-1",
     range: "24h",
-    manualTag: "",
-    needsReviewOnly: false,
     revision: 0,
     enabled: true,
   } as const
@@ -110,14 +107,13 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   answer = (body) =>
     body.cursor
       ? new Response("{}", { status: 503 })
-      : Response.json({ summary, availableTags: ["callback"], calls: [call("ai-1")], nextCursor: "next" })
+      : Response.json({ summary, calls: [call("ai-1")], nextCursor: "next" })
   await view.render({ ...filters, revision: 2 })
   await waitFor(() => view.latest().state === "ready")
   assert.deepEqual(backend.requests.at(-1)?.body, {
     practiceId: "practice-1",
     locationId: "location-1",
     range: "24h",
-    needsReviewOnly: false,
     limit: 50,
   })
 
@@ -146,25 +142,18 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
 })
 
 test("call commands report conflicts and send the saved choice", async (t) => {
-  const backend = fakeBackend(t, (path) =>
-    path.endsWith("/issue")
-      ? new Response("{}", { status: 409 })
-      : Response.json({ available: ["callback"], selected: ["callback"] }),
-  )
+  const backend = fakeBackend(t, () => new Response("{}", { status: 409 }))
   const flagged = await flagAgentCallIssue("call-1", "OTHER")
   assert.equal(!flagged.ok && flagged.failure.kind, "conflict")
-  const tagged = await setCallTag("call-1", "callback", true)
-  assert.deepEqual(tagged, { ok: true, data: { available: ["callback"], selected: ["callback"] } })
   assert.deepEqual(backend.requests, [
     { path: "/v1/agent-calls/call-1/issue", body: { reason: "OTHER" } },
-    { path: "/v1/operator/ai-interactions/call-1/manual-tags", body: { name: "callback", applied: true } },
   ])
 
   const view = mountHook(t, useAiCallEvidence)
   await view.render("")
   await settle()
   assert.equal(view.latest().status, "loading")
-  assert.equal(backend.requests.length, 2)
+  assert.equal(backend.requests.length, 1)
 })
 
 function fakeBackend(

@@ -673,6 +673,24 @@ export type AgentCallDetail = {
     locationName: string;
     messages: Array<AgentCallMessage>;
     issue?: AgentCallIssue;
+    /**
+     * The jury's verdict on each scorecard question it answered.
+     */
+    scorecard: Array<AgentCallVerdict>;
+    /**
+     * Caller sentiment from 0 (very negative) to 4 (very positive). Shown, not graded.
+     */
+    sentiment?: number;
+};
+
+export type AgentCallVerdict = {
+    question: string;
+    code: string;
+    prompt: string;
+    /**
+     * The jury's majority verdict.
+     */
+    answer: 'yes' | 'no';
 };
 
 export type AiInteractionDetail = {
@@ -850,6 +868,202 @@ export type BookingAnalytics = {
     daily: Array<BookingDay>;
 };
 
+export type OperatorScorecardQuestion = {
+    key: string;
+    code: string;
+    label: string;
+    /**
+     * The question in one short line, as reviewers see it.
+     */
+    prompt: string;
+    source: 'judge' | 'code';
+    question: string;
+    yes: string;
+    no: string;
+    /**
+     * The question is about the agent's own work, so a no flags the call for review.
+     */
+    failure: boolean;
+};
+
+export type OperatorScorecardQuestions = {
+    questions: Array<OperatorScorecardQuestion>;
+};
+
+export type OperatorCallReviewQueueRequest = {
+    practiceId: string;
+    date: string;
+    timeZone: string;
+};
+
+export type OperatorCallReviewQueueCall = {
+    interactionId: string;
+    startedAt: string;
+    locationName: string;
+    durationSeconds: number;
+    overlap: boolean;
+    completedAt?: string;
+};
+
+export type OperatorCallReviewQueue = {
+    calls: Array<OperatorCallReviewQueueCall>;
+};
+
+export type OperatorCallReviewFact = {
+    question: string;
+    answer: boolean;
+    detail?: {
+        [key: string]: unknown;
+    };
+};
+
+export type OperatorCallReviewAnswer = {
+    question: string;
+    answer: boolean;
+    note: string;
+};
+
+export type OperatorCallReviewJudgeAnswer = {
+    question: string;
+    answer: boolean;
+    probability?: number;
+    version: string;
+};
+
+export type OperatorCallReview = {
+    interactionId: string;
+    assigned: boolean;
+    facts: Array<OperatorCallReviewFact>;
+    questions: Array<string>;
+    submitted: boolean;
+    note: string;
+    questionIdea: string;
+    answers: Array<OperatorCallReviewAnswer>;
+    /**
+     * Empty until the reviewer submits, so answers stay blind.
+     */
+    judge: Array<OperatorCallReviewJudgeAnswer>;
+};
+
+export type OperatorCallReviewSubmission = {
+    answers: Array<OperatorCallReviewAnswer>;
+    note: string;
+    /**
+     * Something wrong on this call that no question asks about.
+     */
+    questionIdea?: string;
+};
+
+export type OperatorJudgeAccuracyRequest = {
+    practiceId: string;
+};
+
+export type OperatorJudgeAccuracyRow = {
+    question: string;
+    judgeVersion: string;
+    jurors: Array<OperatorJurorAccuracy>;
+    trust: OperatorJuryTrust;
+};
+
+/**
+ * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. The jury says no when its majority verdict is no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 1%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
+ */
+export type OperatorJuryTrust = {
+    calls: number;
+    failures: number;
+    catch: number | null;
+    catchLow: number | null;
+    falseAlarms: number | null;
+    falseAlarmHigh: number | null;
+    agreement: number | null;
+    agreementLow: number | null;
+    humanAgreement: number | null;
+    humanPairs: number;
+    status: 'trusted' | 'collecting' | 'below';
+    reason: string;
+};
+
+export type OperatorJurorAccuracy = {
+    model: string;
+    compared: number;
+    agreed: number;
+};
+
+export type OperatorJudgeDisagreement = {
+    interactionId: string;
+    startedAt: string;
+    locationName: string;
+    question: string;
+    judgeVersion: string;
+    reviewerEmail: string;
+    human: boolean;
+    judge: boolean;
+    note: string;
+};
+
+export type OperatorReviewerAnswer = {
+    reviewerEmail: string;
+    answer: boolean;
+    note: string;
+};
+
+export type OperatorReviewerDisagreement = {
+    interactionId: string;
+    startedAt: string;
+    locationName: string;
+    question: string;
+    answers: Array<OperatorReviewerAnswer>;
+};
+
+export type OperatorJudgeAccuracy = {
+    /**
+     * The judge version new calls are scored with.
+     */
+    currentJudgeVersion: string;
+    reviewedCalls: number;
+    goldenAnswers: number;
+    goldenSet: Array<OperatorGoldenSetCall>;
+    rows: Array<OperatorJudgeAccuracyRow>;
+    judgeDisagreements: Array<OperatorJudgeDisagreement>;
+    reviewerDisagreements: Array<OperatorReviewerDisagreement>;
+};
+
+export type OperatorScorecardResultsRequest = {
+    practiceId: string;
+    locationId?: string;
+    range: OperatorAiAnalyticsRange;
+};
+
+export type OperatorScorecardDay = {
+    date: string;
+    calls: number;
+    problemCalls: number;
+    problemRate: number | null;
+};
+
+export type OperatorScorecardResults = {
+    calls: number;
+    /**
+     * Calls with a no on any failure question, or a missed booking.
+     */
+    problemCalls: number;
+    bookingCalls: number;
+    converted: number;
+    blocked: number;
+    missed: number;
+    conversion: number | null;
+    daily: Array<OperatorScorecardDay>;
+};
+
+export type OperatorGoldenSetCall = {
+    interactionId: string;
+    startedAt: string;
+    locationName: string;
+    reviewers: Array<string>;
+    answers: number;
+    disagreements: number;
+};
+
 export type OperatorAiCostQueryRequest = {
     practiceId: string;
     locationId?: string;
@@ -946,18 +1160,20 @@ export type OperatorAiCallIssueReview = {
     reviewedAt: string;
 };
 
-export type OperatorAiCallTags = {
-    available: Array<string>;
-    selected: Array<string>;
-};
-
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
     /**
-     * Return only calls with evaluation review reasons. Summary remains scoped to the full selected range.
+     * Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
+     *
+     * @deprecated
      */
     needsReviewOnly?: boolean;
+    /**
+     * Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
+     *
+     * @deprecated
+     */
     manualTag?: string;
     practiceId: string;
     locationId?: string;
@@ -1185,7 +1401,6 @@ export type OperatorAiAnalyticsDiagnostics = {
 
 export type OperatorAiCallAnalytics = {
     reviewReasons?: Array<string>;
-    manualTags?: Array<string>;
     id: string;
     locationId: string;
     locationName: string;
@@ -1210,7 +1425,6 @@ export type OperatorAiCallAnalytics = {
  * The first page includes a fresh range summary. Cursor continuations return calls only within the initial reporting window; refresh without a cursor to obtain a new summary and window.
  */
 export type OperatorAiAnalyticsPage = {
-    availableTags?: Array<string>;
     /**
      * Staff-flagged calls awaiting Acuity review in the practice and office scope, regardless of range. First page only.
      */
@@ -1299,6 +1513,10 @@ export type ProviderErrorDiagnostic = {
 
 export type OperatorAiInteractionAnalytics = {
     issue?: OperatorAiCallIssue;
+    /**
+     * The jury's verdict on each scorecard question it answered, read the same way as the staff scorecard.
+     */
+    scorecard: Array<AgentCallVerdict>;
     /**
      * Complete stored evaluator result, including version, status, answers and usage.
      */
@@ -3046,87 +3264,6 @@ export type GetOperatorAiInteractionAnalyticsResponses = {
 
 export type GetOperatorAiInteractionAnalyticsResponse = GetOperatorAiInteractionAnalyticsResponses[keyof GetOperatorAiInteractionAnalyticsResponses];
 
-export type GetOperatorAiCallTagsData = {
-    body?: never;
-    path: {
-        interactionId: string;
-    };
-    query?: never;
-    url: '/v1/operator/ai-interactions/{interactionId}/manual-tags';
-};
-
-export type GetOperatorAiCallTagsErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type GetOperatorAiCallTagsError = GetOperatorAiCallTagsErrors[keyof GetOperatorAiCallTagsErrors];
-
-export type GetOperatorAiCallTagsResponses = {
-    /**
-     * Available practice tags and tags applied to this call.
-     */
-    200: OperatorAiCallTags;
-};
-
-export type GetOperatorAiCallTagsResponse = GetOperatorAiCallTagsResponses[keyof GetOperatorAiCallTagsResponses];
-
-export type SetOperatorAiCallTagData = {
-    body: {
-        name: string;
-        applied: boolean;
-    };
-    path: {
-        interactionId: string;
-    };
-    query?: never;
-    url: '/v1/operator/ai-interactions/{interactionId}/manual-tags';
-};
-
-export type SetOperatorAiCallTagErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type SetOperatorAiCallTagError = SetOperatorAiCallTagErrors[keyof SetOperatorAiCallTagErrors];
-
-export type SetOperatorAiCallTagResponses = {
-    /**
-     * Available practice tags and tags applied to this call.
-     */
-    200: OperatorAiCallTags;
-};
-
-export type SetOperatorAiCallTagResponse = SetOperatorAiCallTagResponses[keyof SetOperatorAiCallTagResponses];
-
 export type ReviewOperatorAiCallIssueData = {
     body: {
         outcome: OperatorAiCallIssueOutcome;
@@ -3847,6 +3984,244 @@ export type GetProviderMessageMediaResponses = {
 };
 
 export type GetProviderMessageMediaResponse = GetProviderMessageMediaResponses[keyof GetProviderMessageMediaResponses];
+
+export type GetOperatorScorecardQuestionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/v1/operator/scorecard/questions';
+};
+
+export type GetOperatorScorecardQuestionsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetOperatorScorecardQuestionsError = GetOperatorScorecardQuestionsErrors[keyof GetOperatorScorecardQuestionsErrors];
+
+export type GetOperatorScorecardQuestionsResponses = {
+    /**
+     * Every scorecard question with its plain-English yes and no definitions.
+     */
+    200: OperatorScorecardQuestions;
+};
+
+export type GetOperatorScorecardQuestionsResponse = GetOperatorScorecardQuestionsResponses[keyof GetOperatorScorecardQuestionsResponses];
+
+export type QueryOperatorScorecardResultsData = {
+    body: OperatorScorecardResultsRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/operator/scorecard/results';
+};
+
+export type QueryOperatorScorecardResultsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * Another analytics request is running on this portal instance. Retry later.
+     */
+    429: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryOperatorScorecardResultsError = QueryOperatorScorecardResultsErrors[keyof QueryOperatorScorecardResultsErrors];
+
+export type QueryOperatorScorecardResultsResponses = {
+    /**
+     * Range totals and one point per UTC day.
+     */
+    200: OperatorScorecardResults;
+};
+
+export type QueryOperatorScorecardResultsResponse = QueryOperatorScorecardResultsResponses[keyof QueryOperatorScorecardResultsResponses];
+
+export type OpenOperatorCallReviewQueueData = {
+    body: OperatorCallReviewQueueRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/operator/call-reviews/queue';
+};
+
+export type OpenOperatorCallReviewQueueErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type OpenOperatorCallReviewQueueError = OpenOperatorCallReviewQueueErrors[keyof OpenOperatorCallReviewQueueErrors];
+
+export type OpenOperatorCallReviewQueueResponses = {
+    /**
+     * The reviewer's calls for the day, with a few calls shared with other reviewers.
+     */
+    200: OperatorCallReviewQueue;
+};
+
+export type OpenOperatorCallReviewQueueResponse = OpenOperatorCallReviewQueueResponses[keyof OpenOperatorCallReviewQueueResponses];
+
+export type QueryOperatorJudgeAccuracyData = {
+    body: OperatorJudgeAccuracyRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/operator/call-reviews/accuracy';
+};
+
+export type QueryOperatorJudgeAccuracyErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * Another analytics request is running on this portal instance. Retry later.
+     */
+    429: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryOperatorJudgeAccuracyError = QueryOperatorJudgeAccuracyErrors[keyof QueryOperatorJudgeAccuracyErrors];
+
+export type QueryOperatorJudgeAccuracyResponses = {
+    /**
+     * Agreement, failures caught, false alarms, and disagreements.
+     */
+    200: OperatorJudgeAccuracy;
+};
+
+export type QueryOperatorJudgeAccuracyResponse = QueryOperatorJudgeAccuracyResponses[keyof QueryOperatorJudgeAccuracyResponses];
+
+export type GetOperatorCallReviewData = {
+    body?: never;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/operator/call-reviews/{interactionId}';
+};
+
+export type GetOperatorCallReviewErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetOperatorCallReviewError = GetOperatorCallReviewErrors[keyof GetOperatorCallReviewErrors];
+
+export type GetOperatorCallReviewResponses = {
+    /**
+     * Code-check facts, applicable questions, and the reviewer's own answers.
+     */
+    200: OperatorCallReview;
+};
+
+export type GetOperatorCallReviewResponse = GetOperatorCallReviewResponses[keyof GetOperatorCallReviewResponses];
+
+export type SubmitOperatorCallReviewData = {
+    body: OperatorCallReviewSubmission;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/operator/call-reviews/{interactionId}';
+};
+
+export type SubmitOperatorCallReviewErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type SubmitOperatorCallReviewError = SubmitOperatorCallReviewErrors[keyof SubmitOperatorCallReviewErrors];
+
+export type SubmitOperatorCallReviewResponses = {
+    /**
+     * The saved review with the judge's answers revealed.
+     */
+    200: OperatorCallReview;
+};
+
+export type SubmitOperatorCallReviewResponse = SubmitOperatorCallReviewResponses[keyof SubmitOperatorCallReviewResponses];
 
 export type GetOperatorCallingTimelineData = {
     body?: never;

@@ -300,6 +300,7 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
         json: {
           call: calls[index],
           locationName: "Synthetic office",
+          scorecard: [],
           issue: index === 0 && firstCallReported ? {
             reason: "INSURANCE_ISSUE",
             createdAt: calls[index].startedAt,

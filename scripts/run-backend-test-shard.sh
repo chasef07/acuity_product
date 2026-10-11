@@ -23,6 +23,7 @@ case "${1:-}" in
       ./backend/cmd/acuity
       ./backend/cmd/knowledge-import
       ./backend/cmd/receipt-audit
+      ./backend/cmd/scorecard
       ./backend/cmd/task-maintenance
       ./backend/internal/api
       ./backend/internal/app
