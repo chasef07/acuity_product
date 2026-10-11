@@ -250,6 +250,28 @@
   font-size: 0.84em;
 }
 
+.pre {
+  margin: 1.6em 0;
+  padding: 18px 20px;
+  overflow-x: auto;
+  border-radius: 14px;
+  background: #151715;
+  color: #f4f2ed;
+  font-family: var(--blog-mono);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .blockquote {
   margin: 2.5em 0;
   padding-left: 28px;
@@ -459,6 +481,192 @@
   color: #b7bbb3;
 }
 
+.generationRow {
+  padding: 14px 24px;
+  display: grid;
+  grid-template-columns: 84px 196px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+}
+
+.generationRow + .generationRow {
+  border-top: 1px solid #f2f1ec;
+}
+
+.generationWhen {
+  color: var(--marketing-ink-soft);
+  font-family: var(--blog-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.generationSees {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--blog-mono);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.generationSees .shippedBadge {
+  margin-left: 0;
+}
+
+.shiftGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 20px 24px 8px;
+}
+
+.shiftColumn {
+  padding: 16px;
+  border: 1px solid #efeee9;
+  border-radius: 14px;
+}
+
+.shiftTitle {
+  margin: 0;
+  color: var(--marketing-ink-soft);
+  font-family: var(--blog-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.shiftTurn {
+  margin: 6px 0 12px;
+  color: var(--blog-text);
+  font-size: 14px;
+}
+
+.shiftList {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  list-style: none;
+}
+
+.shiftRow {
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-radius: 8px;
+  background: #f6f5f1;
+  font-size: 14px;
+}
+
+.shiftRow code {
+  font-family: var(--blog-mono);
+  font-weight: 600;
+}
+
+.shiftAgreed {
+  background: #e7efe9;
+  box-shadow: inset 0 0 0 1px #287257;
+}
+
+.shiftBooked {
+  background: #fbe9df;
+  box-shadow: inset 0 0 0 1px var(--blog-signal);
+}
+
+.shiftNote {
+  margin: 0;
+  padding: 12px 24px 20px;
+  color: var(--blog-text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.shiftNote code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #ebe9e2;
+  font-family: var(--blog-mono);
+  font-size: 0.9em;
+}
+
+.keysBody {
+  padding: 20px 24px 22px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 24px;
+}
+
+.keyGrid {
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+  list-style: none;
+}
+
+.keyChip {
+  padding: 6px 0;
+  border-radius: 6px;
+  background: #f6f5f1;
+  color: var(--marketing-ink-soft);
+  font-family: var(--blog-mono);
+  font-size: 12px;
+  text-align: center;
+}
+
+.keyAgreed {
+  background: #e7efe9;
+  box-shadow: inset 0 0 0 1px #287257;
+  color: var(--marketing-ink);
+  font-weight: 600;
+}
+
+.keySent {
+  background: #fbe9df;
+  box-shadow: inset 0 0 0 1px var(--blog-signal);
+  color: var(--marketing-ink);
+  font-weight: 600;
+}
+
+.keyTrace {
+  padding-left: 24px;
+  border-left: 1px solid #efeee9;
+}
+
+.keyLine {
+  margin: 12px 0 0;
+  color: var(--blog-text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.keyLine span {
+  display: block;
+  color: var(--marketing-ink-soft);
+  font-size: 12px;
+}
+
+.keyLine code,
+.keyVerdict code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #ebe9e2;
+  font-family: var(--blog-mono);
+  font-size: 0.9em;
+}
+
+.keyVerdict {
+  margin: 16px 0 0;
+  color: var(--marketing-ink-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .diagram svg {
   width: 100%;
   height: auto;
@@ -618,6 +826,21 @@
 
   .approachRate {
     grid-column: 1 / -1;
+  }
+
+  .generationRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .shiftGrid,
+  .keysBody {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .keyTrace {
+    padding-left: 0;
+    border-left: 0;
   }
 
   .waveLegend span span {

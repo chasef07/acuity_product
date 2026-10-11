@@ -398,8 +398,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	`).Scan(&grantCount, &abitaGrantCount, &demoGrantCount); err != nil {
 		t.Fatalf("count provisioned Access Grants: %v", err)
 	}
-	if grantCount != 32 || abitaGrantCount != 32 || demoGrantCount != 0 {
-		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 32, 32, 0",
+	if grantCount != 31 || abitaGrantCount != 31 || demoGrantCount != 0 {
+		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 31, 31, 0",
 			grantCount, abitaGrantCount, demoGrantCount)
 	}
 	var brightVuEmail, brightVuRole, brightVuScope, brightVuLocation string
@@ -476,7 +476,6 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		JOIN access_grant_locations allowed ON allowed.access_grant_id = access_grant.id
 		JOIN access_locations location ON location.id = allowed.location_id
 		WHERE access_grant.provisioning_key IN (
-			'abel-alvarez',
 			'ari-nussbaum',
 			'denise-rivera',
 			'katie-einsohn',
@@ -485,7 +484,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	`).Scan(&hollywoodGrantCount, &sweetwaterOpticalGrantCount); err != nil {
 		t.Fatalf("count expanded Hollywood Access Grants: %v", err)
 	}
-	if hollywoodGrantCount != 5 || sweetwaterOpticalGrantCount != 0 {
+	if hollywoodGrantCount != 4 || sweetwaterOpticalGrantCount != 0 {
 		t.Fatalf(
 			"expanded Access Grant Locations = Hollywood:%d Sweetwater Optical:%d",
 			hollywoodGrantCount, sweetwaterOpticalGrantCount,
@@ -500,8 +499,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	if err := json.NewDecoder(outputFile).Decode(&provisioned); err != nil {
 		t.Fatalf("decode provisioning output: %v", err)
 	}
-	if provisioned.AccessGrantCount != 32 {
-		t.Fatalf("provisioning output Access Grant count = %d, want 32", provisioned.AccessGrantCount)
+	if provisioned.AccessGrantCount != 31 {
+		t.Fatalf("provisioning output Access Grant count = %d, want 31", provisioned.AccessGrantCount)
 	}
 }
 

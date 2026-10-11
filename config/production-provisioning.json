@@ -61,13 +61,6 @@
       ],
       "AccessGrants": [
         {
-          "Key": "abel-alvarez",
-          "Email": "abel@abitaeye.com",
-          "Role": "STAFF",
-          "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
-        },
-        {
           "Key": "aileen",
           "Email": "aileen@abitaeye.com",
           "Role": "STAFF",
