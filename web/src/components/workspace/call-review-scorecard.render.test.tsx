@@ -13,7 +13,6 @@ const catalog = new Map<string, OperatorScorecardQuestion>(
 const review = {
   interactionId: "00000000-0000-0000-0000-000000000001",
   assigned: true,
-  sample: "random",
   facts: [],
   questions: ["booking_requested", "time_offered", "need_understood"],
   submitted: false,
@@ -24,7 +23,7 @@ const review = {
 }
 
 test("the scorecard stays blind until the reviewer saves, and B5 waits for B1", () => {
-  const html = renderToStaticMarkup(<ScorecardPanel review={review} catalog={catalog} onSaved={() => {}} />)
+  const html = renderToStaticMarkup(<ScorecardPanel review={review} catalog={catalog} onSaved={() => {}} onConflict={() => {}} />)
   assert.match(html, /0 of 2 answered/)
   assert.doesNotMatch(html, /Judge:/)
   assert.doesNotMatch(html, /B5/)
@@ -49,6 +48,7 @@ test("a saved review shows agreement and locks the answers", () => {
     }}
     catalog={catalog}
     onSaved={() => {}}
+    onConflict={() => {}}
   />)
   assert.match(html, /Agrees/)
   assert.match(html, /Disagrees/)

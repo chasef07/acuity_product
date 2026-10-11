@@ -310,6 +310,9 @@ func readJury(evaluation json.RawMessage) (juryEvaluation, bool) {
 	var jury juryEvaluation
 	valid := json.Unmarshal(evaluation, &jury) == nil && jury.Version == ScorecardJudgeVersion &&
 		(jury.Status == "complete" || jury.Status == "incomplete") && len(jury.Jurors) > 0
+	for _, juror := range jury.Jurors {
+		valid = valid && strings.TrimSpace(juror) != ""
+	}
 	return jury, valid
 }
 
@@ -428,9 +431,11 @@ const (
 	bookingBlocked      bookingOutcome = "blocked"
 	bookingMissed       bookingOutcome = "missed"
 	bookingAttempted    bookingOutcome = "attempted"
+	bookingUnknown      bookingOutcome = "unknown"
 )
 
 func classifyBooking(answers map[string]bool) bookingOutcome {
+	offered, offerJudged := answers["time_offered"]
 	switch {
 	case !answers["booking_requested"]:
 		return bookingNotRequested
@@ -438,10 +443,12 @@ func classifyBooking(answers map[string]bool) bookingOutcome {
 		return bookingConverted
 	case answers["booking_blocked"]:
 		return bookingBlocked
-	case !answers["scheduling_tool_called"] && !answers["time_offered"]:
-		return bookingMissed
-	default:
+	case answers["scheduling_tool_called"] || offered:
 		return bookingAttempted
+	case !offerJudged:
+		return bookingUnknown
+	default:
+		return bookingMissed
 	}
 }
 

@@ -4336,6 +4336,15 @@ components:
       additionalProperties: false
       required: [practiceId, range]
       properties:
+        needsReviewOnly:
+          type: boolean
+          deprecated: true
+          description: Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
+        manualTag:
+          type: string
+          maxLength: 60
+          deprecated: true
+          description: Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
         practiceId:
           type: string
           format: uuid

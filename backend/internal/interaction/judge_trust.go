@@ -35,14 +35,13 @@ type TrustEstimate struct {
 }
 
 type trustCall struct {
-	answers    map[string]bool
-	judge      *bool
-	sample     string
-	date       string
-	reviewedAt time.Time
+	answers map[string]bool
+	judge   *bool
+	sample  string
+	date    string
 }
 
-type reviewPool struct{ flagged, random int }
+type reviewPool struct{ flagged, random, reviewedFlagged, reviewedRandom int }
 
 type weightedRate struct{ hits, total, squares float64 }
 
@@ -92,31 +91,25 @@ func consensus(answers map[string]bool) (bool, bool) {
 
 type trustRates struct{ catch, falseAlarm, agreement weightedRate }
 
-func measureTrust(calls map[string]*trustCall, pools map[string]reviewPool, since time.Time) (trustRates, int, int) {
-	sampled := map[string]int{}
-	for _, call := range calls {
-		if call.judge != nil && !call.reviewedAt.Before(since) {
-			sampled[call.date+":"+call.sample]++
-		}
-	}
+func measureTrust(calls map[string]*trustCall, pools map[string]reviewPool, since string) (trustRates, int, int) {
 	rates := trustRates{}
 	compared, failures := 0, 0
 	for _, call := range calls {
 		pool, pooled := pools[call.date]
 		human, agreed := consensus(call.answers)
-		if call.judge == nil || !pooled || !agreed || call.reviewedAt.Before(since) {
+		if call.judge == nil || !pooled || !agreed || call.date < since {
 			continue
 		}
-		population := pool.random
+		population, reviewed := pool.random, pool.reviewedRandom
 		if call.sample == "flagged" {
-			population = pool.flagged
+			population, reviewed = pool.flagged, pool.reviewedFlagged
 		} else if call.sample != "random" {
 			continue
 		}
-		weight := float64(population) / float64(sampled[call.date+":"+call.sample])
-		if weight <= 0 {
+		if population <= 0 || reviewed <= 0 {
 			continue
 		}
+		weight := float64(population) / float64(reviewed)
 		compared++
 		judgedNo := !*call.judge
 		rates.agreement.add(weight, judgedNo != human)
@@ -141,7 +134,7 @@ func estimateTrust(calls map[string]*trustCall, pools map[string]reviewPool, now
 			}
 		}
 	}
-	rates, compared, failures := measureTrust(calls, pools, time.Time{})
+	rates, compared, failures := measureTrust(calls, pools, "")
 	estimate := TrustEstimate{
 		Calls: compared, Failures: failures, HumanPairs: pairs,
 		Catch: rates.catch.value(), CatchLow: rates.catch.low(),
@@ -155,7 +148,7 @@ func estimateTrust(calls map[string]*trustCall, pools map[string]reviewPool, now
 		human := float64(pairsAgreed) / float64(pairs)
 		estimate.HumanAgreement = &human
 	}
-	recent, _, _ := measureTrust(calls, pools, now.Add(-trustRecentWindow))
+	recent, _, _ := measureTrust(calls, pools, now.Add(-trustRecentWindow).UTC().Format("2006-01-02"))
 	estimate.Status, estimate.Reason = trustVerdict(estimate, recent)
 	return estimate
 }

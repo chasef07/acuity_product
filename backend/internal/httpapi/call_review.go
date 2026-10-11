@@ -3,28 +3,20 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-func (server *Server) operatorIdentity(w http.ResponseWriter, r *http.Request) (access.Identity, bool) {
-	if !server.portalOnly(w, r) {
-		return access.Identity{}, false
-	}
-	return server.authenticate(w, r)
-}
-
 func (server *Server) GetOperatorScorecardQuestions(w http.ResponseWriter, r *http.Request) {
-	if _, ok := server.operatorIdentity(w, r); !ok {
+	if _, ok := server.portalIdentity(w, r); !ok {
 		return
 	}
 	server.writeJSON(w, http.StatusOK, map[string]any{"questions": interaction.ScorecardQuestions})
 }
 
 func (server *Server) OpenOperatorCallReviewQueue(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.operatorIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -45,7 +37,7 @@ func (server *Server) OpenOperatorCallReviewQueue(w http.ResponseWriter, r *http
 }
 
 func (server *Server) QueryOperatorJudgeAccuracy(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.operatorIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -67,7 +59,7 @@ func (server *Server) QueryOperatorJudgeAccuracy(w http.ResponseWriter, r *http.
 }
 
 func (server *Server) GetOperatorCallReview(w http.ResponseWriter, r *http.Request, interactionID openapi_types.UUID) {
-	identity, ok := server.operatorIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -82,7 +74,7 @@ func (server *Server) GetOperatorCallReview(w http.ResponseWriter, r *http.Reque
 }
 
 func (server *Server) SubmitOperatorCallReview(w http.ResponseWriter, r *http.Request, interactionID openapi_types.UUID) {
-	identity, ok := server.operatorIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -105,7 +97,7 @@ func (server *Server) SubmitOperatorCallReview(w http.ResponseWriter, r *http.Re
 }
 
 func (server *Server) QueryOperatorScorecardResults(w http.ResponseWriter, r *http.Request) {
-	identity, ok := server.operatorIdentity(w, r)
+	identity, ok := server.portalIdentity(w, r)
 	if !ok {
 		return
 	}

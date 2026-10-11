@@ -306,7 +306,7 @@ func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand
 				if len(picks) >= reviewQueueSize || (wantFlagged && flagged >= reviewQueueFlagged) {
 					break
 				}
-				if chosen[item.id] || item.other || item.overlap || (wantFlagged && !item.flagged) {
+				if chosen[item.id] || item.other || item.overlap || (wantFlagged && !item.flagged) || (item.flagged && flagged >= reviewQueueFlagged) {
 					continue
 				}
 				picks = append(picks, pick{item.id, sample(item), false})
@@ -561,8 +561,17 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 	return review, nil
 }
 
-func (m *Module) reviewPools(ctx context.Context, tx pgx.Tx, practiceID string) (map[string]reviewPool, error) {
-	rows, err := tx.Query(ctx, `SELECT review_date::text, flagged_calls, random_calls FROM ai_call_review_pools WHERE practice_id = $1`, practiceID)
+func reviewPools(ctx context.Context, tx pgx.Tx, practiceID string) (map[string]reviewPool, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT p.review_date::text, p.flagged_calls, p.random_calls,
+			count(DISTINCT a.interaction_id) FILTER (WHERE a.sample = 'flagged'),
+			count(DISTINCT a.interaction_id) FILTER (WHERE a.sample = 'random')
+		FROM ai_call_review_pools p
+		LEFT JOIN ai_call_review_assignments a
+			ON a.practice_id = p.practice_id AND a.review_date = p.review_date AND a.completed_at IS NOT NULL
+		WHERE p.practice_id = $1
+		GROUP BY p.review_date, p.flagged_calls, p.random_calls
+	`, practiceID)
 	if err != nil {
 		return nil, fmt.Errorf("query review pools: %w", err)
 	}
@@ -571,7 +580,7 @@ func (m *Module) reviewPools(ctx context.Context, tx pgx.Tx, practiceID string) 
 	for rows.Next() {
 		var date string
 		var pool reviewPool
-		if err := rows.Scan(&date, &pool.flagged, &pool.random); err != nil {
+		if err := rows.Scan(&date, &pool.flagged, &pool.random, &pool.reviewedFlagged, &pool.reviewedRandom); err != nil {
 			return nil, fmt.Errorf("read review pools: %w", err)
 		}
 		pools[date] = pool
@@ -588,14 +597,28 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
 		SELECT r.interaction_id::text, i.started_at, i.location_id::text, r.question, r.reviewer_email, r.answer, r.note,
-			r.judge_answer, COALESCE(r.judge_version, ''), r.reviewer, r.sample, r.review_date::text, r.reviewed_at,
-			(SELECT a.detail->'votes' FROM ai_interaction_scorecard_answers a WHERE a.interaction_id = r.interaction_id AND a.question = r.question AND a.source = 'judge')
+			r.judge_answer, COALESCE(r.judge_version, ''), r.reviewer, r.sample, r.review_date::text,
+			EXISTS (
+				SELECT 1 FROM ai_call_review_assignments q
+				WHERE q.practice_id = r.practice_id AND q.review_date = r.review_date AND q.reviewer = r.reviewer
+					AND q.interaction_id = r.interaction_id AND q.completed_at IS NOT NULL
+			),
+			EXISTS (
+				SELECT 1 FROM ai_call_review_assignments o
+				WHERE o.practice_id = r.practice_id AND o.interaction_id = r.interaction_id AND o.overlap
+			) AND NOT EXISTS (
+				SELECT 1 FROM ai_call_review_assignments v
+				WHERE v.practice_id = r.practice_id AND v.interaction_id = r.interaction_id
+					AND v.reviewer = $5 AND v.completed_at IS NOT NULL
+			),
+			(SELECT a.detail->'votes' FROM ai_interaction_scorecard_answers a
+				WHERE a.interaction_id = r.interaction_id AND a.question = r.question AND a.source = 'judge' AND a.scorecard_version = r.judge_version)
 		FROM ai_call_reviews r
 		JOIN ai_interactions i ON i.id = r.interaction_id
 		WHERE r.practice_id = $1 AND i.location_id = ANY($2::uuid[]) AND r.reviewed_at >= $4
 		ORDER BY i.started_at DESC, r.interaction_id, r.question, r.reviewer_email
 		LIMIT $3
-	`, practiceID, locations, analyticsRowLimit+1, m.now().Add(-judgeAccuracyWindow))
+	`, practiceID, locations, analyticsRowLimit+1, m.now().Add(-judgeAccuracyWindow), identity.Subject)
 	if err != nil {
 		return JudgeAccuracy{}, fmt.Errorf("query judge accuracy: %w", err)
 	}
@@ -615,15 +638,17 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		var judgeAnswer *bool
 		var votes map[string]float64
 		var reviewer, sample, reviewDate string
-		var reviewedAt time.Time
-		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &item.JudgeVersion, &reviewer, &sample, &reviewDate, &reviewedAt, &votes); err != nil {
+		var queued, hidden bool
+		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &item.JudgeVersion, &reviewer, &sample, &reviewDate, &queued, &hidden, &votes); err != nil {
 			rows.Close()
 			return JudgeAccuracy{}, fmt.Errorf("read judge accuracy: %w", err)
 		}
 		item.LocationName = names[item.LocationName]
 		if calls[item.InteractionID] == nil {
 			calls[item.InteractionID] = &GoldenSetCall{InteractionID: item.InteractionID, StartedAt: item.StartedAt, LocationName: item.LocationName, Reviewers: []string{}}
-			callList = append(callList, item.InteractionID)
+			if !hidden {
+				callList = append(callList, item.InteractionID)
+			}
 		}
 		golden := calls[item.InteractionID]
 		golden.Answers++
@@ -638,11 +663,13 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			}
 		}
 		key := callQuestion{item.InteractionID, item.Question}
-		if byCallQuestion[key] == nil {
+		if byCallQuestion[key] == nil && !hidden {
 			byCallQuestion[key] = &ReviewerDisagreement{InteractionID: item.InteractionID, StartedAt: item.StartedAt, LocationName: item.LocationName, Question: item.Question}
 			callOrder = append(callOrder, key)
 		}
-		byCallQuestion[key].Answers = append(byCallQuestion[key].Answers, ReviewerAnswer{ReviewerEmail: item.ReviewerEmail, Answer: item.Human, Note: item.Note})
+		if !hidden {
+			byCallQuestion[key].Answers = append(byCallQuestion[key].Answers, ReviewerAnswer{ReviewerEmail: item.ReviewerEmail, Answer: item.Human, Note: item.Note})
+		}
 		if judgeAnswer == nil {
 			continue
 		}
@@ -651,16 +678,14 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			groups[group] = &JudgeAccuracyRow{Question: item.Question, JudgeVersion: item.JudgeVersion, Jurors: []JurorAccuracy{}}
 		}
 		row := groups[group]
-		if trustCalls[group] == nil {
-			trustCalls[group] = map[string]*trustCall{}
-		}
-		if trustCalls[group][item.InteractionID] == nil {
-			trustCalls[group][item.InteractionID] = &trustCall{answers: map[string]bool{}, judge: judgeAnswer, sample: sample, date: reviewDate}
-		}
-		tracked := trustCalls[group][item.InteractionID]
-		tracked.answers[reviewer] = item.Human
-		if reviewedAt.After(tracked.reviewedAt) {
-			tracked.reviewedAt = reviewedAt
+		if queued {
+			if trustCalls[group] == nil {
+				trustCalls[group] = map[string]*trustCall{}
+			}
+			if trustCalls[group][item.InteractionID] == nil {
+				trustCalls[group][item.InteractionID] = &trustCall{answers: map[string]bool{}, judge: judgeAnswer, sample: sample, date: reviewDate}
+			}
+			trustCalls[group][item.InteractionID].answers[reviewer] = item.Human
 		}
 		for model, vote := range votes {
 			index := -1
@@ -681,7 +706,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		item.Judge = *judgeAnswer
 		if item.Human != item.Judge {
 			golden.Disagreements++
-			if len(result.JudgeDisagreements) < reviewDisagreementRows {
+			if !hidden && len(result.JudgeDisagreements) < reviewDisagreementRows {
 				result.JudgeDisagreements = append(result.JudgeDisagreements, item)
 			}
 		}
@@ -704,7 +729,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		}
 	}
 	order := questionOrder()
-	pools, err := m.reviewPools(ctx, tx, practiceID)
+	pools, err := reviewPools(ctx, tx, practiceID)
 	if err != nil {
 		return JudgeAccuracy{}, err
 	}

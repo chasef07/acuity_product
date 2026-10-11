@@ -289,8 +289,8 @@ export function OperatorAnalytics({
       <OperatorAnalyticsDetailSheet
         interactionID={selectedCall.id}
         focus={selectedCall.focus}
-        onPrevious={previousCall ? () => selectCall(previousCall.id) : undefined}
-        onNext={nextCall || canLoadNextCall ? selectNextCall : undefined}
+        onPrevious={!reviewView && previousCall ? () => selectCall(previousCall.id) : undefined}
+        onNext={!reviewView && (nextCall || canLoadNextCall) ? selectNextCall : undefined}
         navigationLoading={nextPageState === "loading"}
         navigationError={canLoadNextCall && nextPageState === "unavailable"}
         onIssueChange={updateCallIssue}

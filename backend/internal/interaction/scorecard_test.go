@@ -3,6 +3,7 @@ package interaction
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -158,7 +159,8 @@ func TestClassifyBooking(t *testing.T) {
 		bookingNotRequested: {"scheduling_succeeded": true},
 		bookingConverted:    {"booking_requested": true, "scheduling_tool_called": true, "scheduling_succeeded": true, "booking_blocked": true},
 		bookingBlocked:      {"booking_requested": true, "booking_blocked": true},
-		bookingMissed:       {"booking_requested": true},
+		bookingMissed:       {"booking_requested": true, "time_offered": false},
+		bookingUnknown:      {"booking_requested": true},
 		bookingAttempted:    {"booking_requested": true, "time_offered": true},
 	} {
 		if got := classifyBooking(answers); got != want {
@@ -237,13 +239,13 @@ func TestTrustWeightsEachSampleByItsShareOfTheDaysCalls(t *testing.T) {
 	no, yes := false, true
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	calls := map[string]*trustCall{
-		"flagged-caught": {answers: map[string]bool{"kyle": false}, judge: &no, sample: "flagged", date: "2026-10-08", reviewedAt: now},
-		"flagged-alarm":  {answers: map[string]bool{"kyle": true}, judge: &no, sample: "flagged", date: "2026-10-08", reviewedAt: now},
-		"random-missed":  {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "random", date: "2026-10-08", reviewedAt: now},
-		"random-fine":    {answers: map[string]bool{"kyle": true}, judge: &yes, sample: "random", date: "2026-10-08", reviewedAt: now},
-		"imported":       {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "manual", date: "2026-10-01", reviewedAt: now},
+		"flagged-caught": {answers: map[string]bool{"kyle": false}, judge: &no, sample: "flagged", date: "2026-10-08"},
+		"flagged-alarm":  {answers: map[string]bool{"kyle": true}, judge: &no, sample: "flagged", date: "2026-10-08"},
+		"random-missed":  {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "random", date: "2026-10-08"},
+		"random-fine":    {answers: map[string]bool{"kyle": true}, judge: &yes, sample: "random", date: "2026-10-08"},
+		"imported":       {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "manual", date: "2026-10-01"},
 	}
-	estimate := estimateTrust(calls, map[string]reviewPool{"2026-10-08": {flagged: 20, random: 180}}, now)
+	estimate := estimateTrust(calls, map[string]reviewPool{"2026-10-08": {flagged: 20, random: 180, reviewedFlagged: 2, reviewedRandom: 2}}, now)
 	if estimate.Calls != 4 || estimate.Failures != 2 {
 		t.Fatalf("only queue samples with a recorded pool count: %+v", estimate)
 	}
@@ -252,6 +254,22 @@ func TestTrustWeightsEachSampleByItsShareOfTheDaysCalls(t *testing.T) {
 	}
 	if *estimate.Agreement != 100.0/200.0 || estimate.Status != trustStatusBelow {
 		t.Fatalf("weighted agreement and verdict: %+v", estimate)
+	}
+}
+
+func TestTrustWeightsByEveryReviewedCallNotOnlyWhereTheQuestionApplied(t *testing.T) {
+	no, yes := false, true
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	calls := map[string]*trustCall{}
+	for index := 0; index < 8; index++ {
+		calls[fmt.Sprintf("flagged-%d", index)] = &trustCall{answers: map[string]bool{"kyle": false}, judge: &no, sample: "flagged", date: "2026-10-08"}
+	}
+	calls["random-missed"] = &trustCall{answers: map[string]bool{"kyle": false}, judge: &yes, sample: "random", date: "2026-10-08"}
+	calls["random-fine"] = &trustCall{answers: map[string]bool{"kyle": true}, judge: &yes, sample: "random", date: "2026-10-08"}
+	pools := map[string]reviewPool{"2026-10-08": {flagged: 20, random: 180, reviewedFlagged: 10, reviewedRandom: 10}}
+	estimate := estimateTrust(calls, pools, now)
+	if want := 16.0 / 34.0; math.Abs(*estimate.Catch-want) > 1e-9 {
+		t.Fatalf("catch = %v, want %v (8 caught at weight 2 vs 1 missed at weight 18)", *estimate.Catch, want)
 	}
 }
 
@@ -268,7 +286,7 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 		if !judge {
 			verdict = &no
 		}
-		calls[id] = &trustCall{answers: answers, judge: verdict, sample: "random", date: "2026-10-08", reviewedAt: now}
+		calls[id] = &trustCall{answers: answers, judge: verdict, sample: "random", date: "2026-10-08"}
 	}
 	for index := 0; index < 5; index++ {
 		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
@@ -279,14 +297,14 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 	for index := 30; index < 60; index++ {
 		add(fmt.Sprintf("fine-%d", index), true, true, "kyle")
 	}
-	pools := map[string]reviewPool{"2026-10-08": {random: 65}}
+	pools := map[string]reviewPool{"2026-10-08": {random: 65, reviewedRandom: 65}}
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusCollected || *estimate.Catch != 1 {
 		t.Fatalf("5 of 5 caught is not yet proof of 90%%: %+v", estimate)
 	}
 	for index := 5; index < 20; index++ {
 		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
 	}
-	pools["2026-10-08"] = reviewPool{random: 80}
+	pools["2026-10-08"] = reviewPool{random: 80, reviewedRandom: 80}
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusCollected {
 		t.Fatalf("20 of 20 caught only shows at least 84%%, short of 90%%: %+v", estimate)
 	}
@@ -296,7 +314,7 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 	for index := 60; index < 600; index++ {
 		add(fmt.Sprintf("fine-%d", index), true, true, "kyle")
 	}
-	pools["2026-10-08"] = reviewPool{random: 1000}
+	pools["2026-10-08"] = reviewPool{random: 1000, reviewedRandom: 1000}
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusTrusted {
 		t.Fatalf("400 no answers with no false alarm prove 1%%: %+v", estimate)
 	}

@@ -62,7 +62,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	insert(40, 10, nil, healthy)
 	booked := insert(41, 90, []syntheticTool{
 		{"check_insurance", `{"plan":"Synthetic Gold Plan"}`, "blocked: The office needs to verify this plan's coverage before scheduling."},
-	}, map[string]float64{"booking_requested": 0.95, "need_understood": 0.9, "right_help": 0.3, "clear_and_responsive": 0.9, "office_rules_grounded": 0.9})
+	}, map[string]float64{"booking_requested": 0.95, "time_offered": 0.2, "need_understood": 0.9, "right_help": 0.3, "clear_and_responsive": 0.9, "office_rules_grounded": 0.9})
 
 	module := New(pool, accessModule, clock)
 	backfill, err := module.BackfillScorecards(ctx, time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC), 7)
@@ -163,7 +163,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	}
 	answers := []ReviewAnswer{{Question: "booking_requested", Answer: true}, {Question: "time_offered", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true, Note: "Staff verification was the right next step."}, {Question: "clear_and_responsive", Answer: true}, {Question: "person_request_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}}
 	revealed, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Synthetic review", QuestionIdea: "Did the agent mention the insurance card?"})
-	if err != nil || !revealed.Submitted || revealed.QuestionIdea != "Did the agent mention the insurance card?" || len(revealed.Answers) != 7 || len(revealed.Judge) != 5 {
+	if err != nil || !revealed.Submitted || revealed.QuestionIdea != "Did the agent mention the insurance card?" || len(revealed.Answers) != 7 || len(revealed.Judge) != 6 {
 		t.Fatalf("submitted review reveals judge answers: %+v %v", revealed, err)
 	}
 	if _, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Changed after reveal"}); !errors.Is(err, ErrReviewLocked) {
@@ -179,10 +179,20 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	shortAnswers := func(clear bool) []ReviewAnswer {
 		return []ReviewAnswer{{Question: "booking_requested", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true}, {Question: "clear_and_responsive", Answer: clear}, {Question: "person_request_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}}
 	}
-	for identity, clear := range map[access.Identity]bool{first: true, second: false} {
-		if _, err := module.SubmitCallReview(ctx, identity, overlapCall, CallReviewSubmission{Answers: shortAnswers(clear)}); err != nil {
-			t.Fatal(err)
+	if _, err := module.SubmitCallReview(ctx, first, overlapCall, CallReviewSubmission{Answers: shortAnswers(true)}); err != nil {
+		t.Fatal(err)
+	}
+	unseen, err := module.QueryJudgeAccuracy(ctx, second, practice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range unseen.GoldenSet {
+		if call.InteractionID == overlapCall {
+			t.Fatal("a shared call stays hidden from a reviewer who has not reviewed it yet")
 		}
+	}
+	if _, err := module.SubmitCallReview(ctx, second, overlapCall, CallReviewSubmission{Answers: shortAnswers(false)}); err != nil {
+		t.Fatal(err)
 	}
 
 	accuracy, err := module.QueryJudgeAccuracy(ctx, first, practice)
@@ -206,6 +216,10 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		t.Fatalf("golden set summary: answers=%d calls=%+v", accuracy.GoldenAnswers, accuracy.GoldenSet)
 	}
 
+	insert(42, 60, nil, nil)
+	if _, err := module.BackfillScorecards(ctx, time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC), 7); err != nil {
+		t.Fatal(err)
+	}
 	now = time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC)
 	results, err := module.QueryScorecardResults(ctx, ScorecardResultsCommand{Identity: first, PracticeID: practice, Range: AnalyticsRange7Days})
 	if err != nil || results.Calls != 32 || results.ProblemCalls != 7 || results.BookingCalls != 1 || results.Missed != 1 || results.Conversion == nil || *results.Conversion != 0 {

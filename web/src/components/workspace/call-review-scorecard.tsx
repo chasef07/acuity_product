@@ -17,11 +17,13 @@ export function ScorecardPanel({
   review,
   catalog,
   onSaved,
+  onConflict,
   onNext,
 }: {
   review: OperatorCallReview
   catalog: Map<string, OperatorScorecardQuestion>
   onSaved: () => void
+  onConflict: () => void
   onNext?: () => void
 }) {
   const [shown, setShown] = useState(review)
@@ -59,13 +61,15 @@ export function ScorecardPanel({
       answers: applicable.map((question) => ({ question, answer: answers[question], note: notes[question] ?? "" })),
     })
     setSaving(false)
+    if (!outcome.ok && outcome.failure.kind === "conflict") {
+      onConflict()
+      return
+    }
     if (!outcome.ok) {
       setError(
         outcome.failure.kind === "rejected"
-          ? "Answer every question, then save."
-          : outcome.failure.kind === "conflict"
-            ? "This call was already reviewed. Answers stay as first saved so the golden set stays blind."
-            : "The review could not be saved. Try again.",
+          ? "The server rejected this review. Reload the call and try again."
+          : "The review could not be saved. Try again.",
       )
       return
     }

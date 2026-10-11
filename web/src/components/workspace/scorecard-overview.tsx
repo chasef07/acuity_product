@@ -26,13 +26,7 @@ import type {
   OperatorAiAnalyticsRange,
   OperatorScorecardQuestion,
 } from "@/lib/api/generated/types.gen"
-import { useScorecardQuestions, useScorecardResults } from "@/lib/clients/call-review"
-
-export function useQuestionCatalog() {
-  const query = useScorecardQuestions()
-  const questions = query.status === "ready" ? query.data.questions : []
-  return new Map(questions.map((question) => [question.key, question]))
-}
+import { useScorecardResults } from "@/lib/clients/call-review"
 
 function ScorecardDefinitions({ questions }: { questions: OperatorScorecardQuestion[] }) {
   return (
@@ -63,9 +57,8 @@ function ScorecardDefinitions({ questions }: { questions: OperatorScorecardQuest
   )
 }
 
-export function ScorecardDefinitionsButton() {
+export function ScorecardDefinitionsButton({ questions }: { questions: OperatorScorecardQuestion[] }) {
   const [open, setOpen] = useState(false)
-  const query = useScorecardQuestions()
   return (
     <>
       <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
@@ -79,13 +72,7 @@ export function ScorecardDefinitionsButton() {
             <SheetDescription>What the jury reads for each question, and what counts as yes or no.</SheetDescription>
           </SheetHeader>
           <div className="px-5 py-5">
-            {query.status === "ready" ? (
-              <ScorecardDefinitions questions={query.data.questions} />
-            ) : query.status === "loading" ? (
-              <Skeleton className="h-64 rounded-lg" />
-            ) : (
-              <p className="text-sm text-destructive">Definitions could not be loaded.</p>
-            )}
+            <ScorecardDefinitions questions={questions} />
           </div>
         </SheetContent>
       </Sheet>
@@ -100,7 +87,7 @@ export function BookingConversionKpi({ practiceID, range }: { practiceID: string
     <Card size="sm" className="min-w-0">
       <CardHeader className="grid-cols-[1fr_auto]">
         <div>
-          <CardDescription>Booking conversion</CardDescription>
+          <CardDescription>Booking conversion, all offices</CardDescription>
           <CardTitle className="mt-1 font-mono text-xl font-semibold tracking-[-0.03em] sm:text-2xl">
             {results.status === "loading" ? <Skeleton className="h-7 w-14" /> : data?.conversion == null ? "—" : `${Math.round(data.conversion * 100)}%`}
           </CardTitle>

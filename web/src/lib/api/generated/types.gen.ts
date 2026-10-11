@@ -1163,6 +1163,18 @@ export type OperatorAiCallIssueReview = {
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
+    /**
+     * Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
+     *
+     * @deprecated
+     */
+    needsReviewOnly?: boolean;
+    /**
+     * Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
+     *
+     * @deprecated
+     */
+    manualTag?: string;
     practiceId: string;
     locationId?: string;
     range: OperatorAiAnalyticsRange;

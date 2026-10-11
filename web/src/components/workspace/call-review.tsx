@@ -56,10 +56,7 @@ import {
   TimelineItem,
   timelineEntries,
 } from "@/components/workspace/operator-analytics-detail"
-import {
-  ScorecardDefinitionsButton,
-  useQuestionCatalog,
-} from "@/components/workspace/scorecard-overview"
+import { ScorecardDefinitionsButton } from "@/components/workspace/scorecard-overview"
 import type {
   OperatorCallReviewQueueCall,
   OperatorScorecardQuestion,
@@ -69,10 +66,13 @@ import {
   useCallReview,
   useJudgeAccuracy,
   useReviewQueue,
+  useScorecardQuestions,
 } from "@/lib/clients/call-review"
 import { formatShortDateTime } from "@/lib/format"
 
 const silenceSeconds = 8
+
+type QuestionCatalog = Map<string, OperatorScorecardQuestion>
 
 type ReviewView = "queue" | "accuracy"
 
@@ -85,6 +85,20 @@ export function CallReviewWorkspace({
 }) {
   const [view, setView] = useState<ReviewView>("queue")
   const [date, setDate] = useState(yesterday)
+  const questions = useScorecardQuestions()
+  if (questions.status === "loading") return <Skeleton className="h-[32rem] rounded-xl" />
+  if (questions.status === "failed") {
+    return (
+      <Alert variant="destructive" className="max-w-2xl">
+        <CircleAlertIcon aria-hidden="true" />
+        <AlertTitle>Scorecard questions unavailable</AlertTitle>
+        <AlertDescription>
+          <Button className="mt-2" size="sm" variant="outline" onClick={questions.retry}>Retry</Button>
+        </AlertDescription>
+      </Alert>
+    )
+  }
+  const catalog = new Map(questions.data.questions.map((question) => [question.key, question]))
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -113,13 +127,13 @@ export function CallReviewWorkspace({
               />
             </label>
           )}
-          <ScorecardDefinitionsButton />
+          <ScorecardDefinitionsButton questions={questions.data.questions} />
         </div>
       </div>
       {view === "queue" ? (
-        <ReviewQueue key={`${practiceID}:${date}`} practiceID={practiceID} date={date} />
+        <ReviewQueue key={`${practiceID}:${date}`} practiceID={practiceID} date={date} catalog={catalog} />
       ) : (
-        <JudgeAccuracyView practiceID={practiceID} onOpenCall={onOpenCall} />
+        <JudgeAccuracyView practiceID={practiceID} catalog={catalog} onOpenCall={onOpenCall} />
       )}
     </div>
   )
@@ -131,7 +145,7 @@ function yesterday() {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`
 }
 
-function ReviewQueue({ practiceID, date }: { practiceID: string; date: string }) {
+function ReviewQueue({ practiceID, date, catalog }: { practiceID: string; date: string; catalog: QuestionCatalog }) {
   const [revision, setRevision] = useState(0)
   const queue = useReviewQueue(practiceID, date, revision)
   const [selected, setSelected] = useState("")
@@ -140,6 +154,7 @@ function ReviewQueue({ practiceID, date }: { practiceID: string; date: string })
   const index = calls.findIndex((call) => call.interactionId === selectedID)
 
   const onKey = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
     const target = event.target as HTMLElement | null
     if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable)) return
     if (event.key === "j" && index < calls.length - 1) setSelected(calls[index + 1].interactionId)
@@ -206,6 +221,7 @@ function ReviewQueue({ practiceID, date }: { practiceID: string; date: string })
           key={selectedCall.interactionId}
           call={selectedCall}
           position={index + 1}
+          catalog={catalog}
           onPrevious={index > 0 ? () => setSelected(calls[index - 1].interactionId) : undefined}
           onNext={index < calls.length - 1 ? () => setSelected(calls[index + 1].interactionId) : undefined}
           onSaved={() => {
@@ -234,7 +250,7 @@ function QueueRow({
     <button
       type="button"
       aria-current={active || undefined}
-      aria-label={`Call ${position}, ${call.locationName}, ${formatShortDateTime(call.startedAt)}, ${state}`}
+      aria-label={`Call ${position}, ${call.locationName}, ${formatShortDateTime(call.startedAt)}, ${state}${call.overlap ? ", shared" : ""}`}
       onClick={onSelect}
       className="flex w-full items-start gap-2.5 border-l-2 border-transparent px-4 py-2 text-left outline-none transition-colors hover:bg-muted focus-visible:bg-muted aria-[current]:border-foreground aria-[current]:bg-muted"
     >
@@ -262,18 +278,20 @@ function QueueRow({
 function ReviewCall({
   call,
   position,
+  catalog,
   onPrevious,
   onNext,
   onSaved,
 }: {
   call: OperatorCallReviewQueueCall
   position: number
+  catalog: QuestionCatalog
   onPrevious?: () => void
   onNext?: () => void
   onSaved: () => void
 }) {
   const review = useCallReview(call.interactionId)
-  const catalog = useQuestionCatalog()
+  const [conflict, setConflict] = useState(false)
   return (
     <>
       <section aria-label="Call transcript" className="flex min-h-0 flex-col border-b lg:border-r lg:border-b-0">
@@ -320,8 +338,23 @@ function ReviewCall({
             </Alert>
           </div>
         )}
+        {conflict && (
+          <p role="status" className="border-b px-4 py-2 text-xs text-muted-foreground">
+            This call was already reviewed elsewhere. Answers stay as first saved so the golden set stays blind.
+          </p>
+        )}
         {review.status === "ready" && (
-          <ScorecardPanel review={review.data} catalog={catalog} onSaved={onSaved} onNext={onNext} />
+          <ScorecardPanel
+            review={review.data}
+            catalog={catalog}
+            onSaved={onSaved}
+            onConflict={() => {
+              setConflict(true)
+              review.retry()
+              onSaved()
+            }}
+            onNext={onNext}
+          />
         )}
       </aside>
     </>
@@ -338,7 +371,7 @@ function FactChip({
   detail?: Record<string, unknown>
 }) {
   const extra = [detail?.reason, detail?.plan].filter((value): value is string => typeof value === "string" && value !== "")
-  const failing = !answer && question?.key !== "scheduling_tool_called" && question?.key !== "booking_blocked"
+  const failing = !answer && question?.failure === true
   return (
     <span
       title={question?.question}
@@ -427,13 +460,14 @@ function versionLabel(version: string, current: string) {
 
 function JudgeAccuracyView({
   practiceID,
+  catalog,
   onOpenCall,
 }: {
   practiceID: string
+  catalog: QuestionCatalog
   onOpenCall: (interactionID: string) => void
 }) {
   const accuracy = useJudgeAccuracy(practiceID)
-  const catalog = useQuestionCatalog()
   const [picked, setPicked] = useState("")
   const [goldenOpen, setGoldenOpen] = useState(false)
   if (accuracy.status === "loading") return <Skeleton className="h-72 rounded-xl" />
@@ -542,7 +576,7 @@ function JudgeAccuracyView({
                       </span>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {row.jurors.map((juror) => `${juror.model.split("/").pop()} ${juror.compared ? Math.round((100 * juror.agreed) / juror.compared) : 0}%`).join(" · ") || "—"}
+                      {row.jurors.map((juror) => `${juror.model.split("/").pop()} ${juror.compared ? `${Math.round((100 * juror.agreed) / juror.compared)}%` : "—"}`).join(" · ") || "—"}
                     </TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
                       {trust.calls} calls
