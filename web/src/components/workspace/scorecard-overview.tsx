@@ -76,7 +76,7 @@ export function ScorecardDefinitionsButton() {
         <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
           <SheetHeader className="border-b px-5 py-4">
             <SheetTitle>Question definitions</SheetTitle>
-            <SheetDescription>What Jev reads for each question, and what counts as yes or no.</SheetDescription>
+            <SheetDescription>What the jury reads for each question, and what counts as yes or no.</SheetDescription>
           </SheetHeader>
           <div className="px-5 py-5">
             {query.status === "ready" ? (

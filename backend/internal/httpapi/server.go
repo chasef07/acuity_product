@@ -3472,6 +3472,15 @@ func operatorAIInteractionAnalyticsResponse(
 		P50TotalLatencyMs:     detail.P50TotalLatencyMs,
 		Timeline:              make([]api.OperatorAITimelineItem, 0, len(detail.Timeline)),
 		ToolExecutions:        make([]api.OperatorAIToolExecution, 0, len(detail.ToolExecutions)),
+		Scorecard:             make([]api.AgentCallVerdict, 0, len(detail.Scorecard)),
+	}
+	for _, verdict := range detail.Scorecard {
+		response.Scorecard = append(response.Scorecard, api.AgentCallVerdict{
+			Question: verdict.Question,
+			Code:     verdict.Code,
+			Prompt:   verdict.Prompt,
+			Answer:   api.AgentCallVerdictAnswer(verdict.Answer),
+		})
 	}
 	for _, item := range detail.Timeline {
 		payload := item.Payload

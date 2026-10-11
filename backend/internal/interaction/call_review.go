@@ -25,17 +25,6 @@ const (
 	reviewDisagreementRows = 200
 )
 
-var reviewFailureQuestions = map[string]bool{
-	"need_understood":              true,
-	"right_help":                   true,
-	"clear_and_responsive":         true,
-	"office_rules_grounded":        true,
-	"appointment_datetime_correct": true,
-	"no_results_retried":           true,
-	"person_request_honored":       true,
-	"staff_task_identified":        true,
-}
-
 var ErrReviewLocked = errors.New("call review already submitted")
 
 type ReviewQueueCall struct {
@@ -98,15 +87,10 @@ type CallReviewSubmission struct {
 }
 
 type JudgeAccuracyRow struct {
-	Question       string          `json:"question"`
-	JudgeVersion   string          `json:"judgeVersion"`
-	Sample         int             `json:"sample"`
-	Agreed         int             `json:"agreed"`
-	HumanNo        int             `json:"humanNo"`
-	FailuresCaught int             `json:"failuresCaught"`
-	FalseAlarms    int             `json:"falseAlarms"`
-	Jurors         []JurorAccuracy `json:"jurors"`
-	Trust          TrustEstimate   `json:"trust"`
+	Question     string          `json:"question"`
+	JudgeVersion string          `json:"judgeVersion"`
+	Jurors       []JurorAccuracy `json:"jurors"`
+	Trust        TrustEstimate   `json:"trust"`
 }
 
 type JurorAccuracy struct {
@@ -151,6 +135,7 @@ type GoldenSetCall struct {
 }
 
 type JudgeAccuracy struct {
+	CurrentJudgeVersion   string                 `json:"currentJudgeVersion"`
 	ReviewedCalls         int                    `json:"reviewedCalls"`
 	GoldenAnswers         int                    `json:"goldenAnswers"`
 	GoldenSet             []GoldenSetCall        `json:"goldenSet"`
@@ -178,7 +163,7 @@ func reviewRank(interactionID, date string) string {
 
 func failedReviewQuestion(answers map[string]bool) bool {
 	for question, answer := range answers {
-		if !answer && reviewFailureQuestions[question] {
+		if !answer && scorecardQuestionByKey[question].Failure {
 			return true
 		}
 	}
@@ -614,7 +599,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 	if err != nil {
 		return JudgeAccuracy{}, fmt.Errorf("query judge accuracy: %w", err)
 	}
-	result := JudgeAccuracy{Rows: []JudgeAccuracyRow{}, JudgeDisagreements: []JudgeDisagreement{}, ReviewerDisagreements: []ReviewerDisagreement{}}
+	result := JudgeAccuracy{CurrentJudgeVersion: ScorecardJudgeVersion, Rows: []JudgeAccuracyRow{}, JudgeDisagreements: []JudgeDisagreement{}, ReviewerDisagreements: []ReviewerDisagreement{}}
 	type groupKey struct{ question, version string }
 	groups := map[groupKey]*JudgeAccuracyRow{}
 	trustCalls := map[groupKey]map[string]*trustCall{}
@@ -698,24 +683,11 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			}
 		}
 		item.Judge = *judgeAnswer
-		row.Sample++
-		if !item.Human {
-			row.HumanNo++
-		}
-		switch {
-		case item.Human == item.Judge:
-			row.Agreed++
-			if !item.Human {
-				row.FailuresCaught++
-			}
-		case item.Human:
-			row.FalseAlarms++
-		}
 		if item.Human != item.Judge {
 			golden.Disagreements++
-		}
-		if item.Human != item.Judge && len(result.JudgeDisagreements) < reviewDisagreementRows {
-			result.JudgeDisagreements = append(result.JudgeDisagreements, item)
+			if len(result.JudgeDisagreements) < reviewDisagreementRows {
+				result.JudgeDisagreements = append(result.JudgeDisagreements, item)
+			}
 		}
 	}
 	rows.Close()

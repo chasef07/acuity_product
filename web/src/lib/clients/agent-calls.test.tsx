@@ -107,7 +107,7 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   answer = (body) =>
     body.cursor
       ? new Response("{}", { status: 503 })
-      : Response.json({ summary, availableTags: ["callback"], calls: [call("ai-1")], nextCursor: "next" })
+      : Response.json({ summary, calls: [call("ai-1")], nextCursor: "next" })
   await view.render({ ...filters, revision: 2 })
   await waitFor(() => view.latest().state === "ready")
   assert.deepEqual(backend.requests.at(-1)?.body, {

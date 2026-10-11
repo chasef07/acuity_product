@@ -36,14 +36,10 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 	}
 	if _, jury := readJury(raw); jury {
 		reading := evaluationReading{Version: ScorecardJudgeVersion, Flags: []evaluationFlag{}, Sentiment: jurySentiment(raw)}
-		labels := map[string]string{}
-		for _, question := range ScorecardQuestions {
-			labels[question.Key] = question.Label
-		}
 		for _, answer := range judgeAnswers(raw) {
 			reading.Scored = append(reading.Scored, answer.Question)
-			if !answer.Answer && reviewFailureQuestions[answer.Question] {
-				reading.Flags = append(reading.Flags, evaluationFlag{Check: answer.Question, Reason: labels[answer.Question] + " needs review"})
+			if question := scorecardQuestionByKey[answer.Question]; !answer.Answer && question.Failure {
+				reading.Flags = append(reading.Flags, evaluationFlag{Check: answer.Question, Reason: question.Label + " needs review"})
 			}
 		}
 		reading.Evaluated = len(reading.Scored) > 0

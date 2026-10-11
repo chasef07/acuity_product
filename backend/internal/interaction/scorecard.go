@@ -27,6 +27,7 @@ type ScorecardQuestion struct {
 	Question string `json:"question"`
 	Yes      string `json:"yes"`
 	No       string `json:"no"`
+	Failure  bool   `json:"failure"`
 }
 
 var ScorecardQuestions = []ScorecardQuestion{
@@ -61,49 +62,49 @@ var ScorecardQuestions = []ScorecardQuestion{
 		No:       "The agent never offered a specific available date and time.",
 	},
 	{
-		Key: "need_understood", Code: "H1", Label: "Understood every request", Prompt: "Did the agent understand every request?", Source: "judge",
+		Key: "need_understood", Failure: true, Code: "H1", Label: "Understood every request", Prompt: "Did the agent understand every request?", Source: "judge",
 		Question: "Did the agent correctly identify every request the caller made, including corrections and additional requests? First list each caller request, then check whether the agent's questions, tool calls, and statements address the request the caller actually made. Judge only whether the agent understood what was asked, not whether its answer was correct; factual accuracy is scored separately. Mishearing that the agent later corrected still counts as understood if the correction happened before any action was taken on the wrong understanding.",
 		Yes:      "The agent correctly identified every caller request, even if an answer it gave was wrong.",
 		No:       "The agent misunderstood, ignored, or acted on the wrong version of at least one caller request.",
 	},
 	{
-		Key: "right_help", Code: "H2", Label: "Right help or next step", Prompt: "Did every request end done, or with a clear next step?", Source: "judge",
+		Key: "right_help", Failure: true, Code: "H2", Label: "Right help or next step", Prompt: "Did every request end done, or with a clear next step?", Source: "judge",
 		Question: "By the end of the call, did the caller get the right help for each request: either the request was completed (supported by a successful tool result), or the caller was given a correct, clearly explained next step, such as a saved staff request they were told about, or a transfer to staff when the agent could not handle the request? A transfer counts only if the agent could not reasonably handle the request itself. If the call ended before any request was resolved or handed off, answer false.",
 		Yes:      "Every request was completed or handed off with a correct, clearly explained next step.",
 		No:       "At least one request was left unresolved, handed off unnecessarily, or the next step was missing, wrong, or unclear.",
 	},
 	{
-		Key: "clear_and_responsive", Code: "H4", Label: "Clear and responsive", Prompt: "Was the call clear and responsive?", Source: "judge",
+		Key: "clear_and_responsive", Failure: true, Code: "H4", Label: "Clear and responsive", Prompt: "Was the call clear and responsive?", Source: "judge",
 		Question: "Was the conversation clear and responsive from the caller's point of view? Answer false if the agent asked avoidable repeated questions, collected information it could not use for the caller's request, gave confusing or contradictory statements, or if the caller had to check whether the agent was still there or repeat themselves because the agent did not respond. These are not failures: a caller who asks for a person or does not want to talk to an AI and is transferred promptly (a brief offer to help first is fine); a transfer or staff request because a tool result says the agent cannot complete the request, such as insurance that cannot be verified; a short call; ordinary clarification of a hard-to-hear name or number, asked once or twice; caller-requested pauses.",
 		Yes:      "The conversation was clear and responsive, including prompt transfers the caller asked for.",
 		No:       "The conversation had avoidable repetition, wasted questions, confusing statements, or unresponsiveness.",
 	},
 	{
-		Key: "person_request_honored", Code: "T1", Label: "Person request honored", Prompt: "If the caller asked for a person, were they transferred promptly?", Source: "judge",
+		Key: "person_request_honored", Failure: true, Code: "T1", Label: "Person request honored", Prompt: "If the caller asked for a person, were they transferred promptly?", Source: "judge",
 		Question: "When the caller asked for a person, a representative, an agent, the front desk, or a transfer, did the agent transfer the call on that request? Answer false if, after the caller asked, the agent did any of these before transferring: said it was transferring, connecting, or checking who is available and then asked questions or offered help instead; said it could not transfer or that staff were busy or unavailable; collected details unrelated to the transfer; or let the caller ask again, including repeated words like 'agent' or 'representative' that went unanswered. Asking once what the call is about is fine only if the agent transfers right after the caller answers or asks again. If the caller accepts the agent's offer to help instead of a transfer, answer true. If the caller never asked for a person or a transfer, answer true.",
 		Yes:      "The caller never asked for a person, chose the agent's help instead, or was transferred on the request without the agent announcing, delaying, or ruling out the transfer.",
 		No:       "The agent announced a transfer and then pitched or asked questions, said it could not transfer or that staff were unavailable, or made the caller ask more than once.",
 	},
 	{
-		Key: "office_rules_grounded", Code: "A1", Label: "Office facts backed", Prompt: "Were all office facts backed by a lookup?", Source: "judge",
+		Key: "office_rules_grounded", Failure: true, Code: "A1", Label: "Office facts backed", Prompt: "Were all office facts backed by a lookup?", Source: "judge",
 		Question: "Was every factual claim about office hours, whether the office is open, providers, locations, services, or policies supported by recorded office instructions or a successful knowledge result available BEFORE the claim? Check each claim, including claims in Spanish, against earlier evidence for the relevant office. A caller's suggestion, the agent's own statements, general knowledge, or an unrelated tool result is not supporting evidence. If even one claim lacks earlier support or contradicts it, answer false. For example, saying 'we are open until five today' without earlier supporting hours fails. A later lookup, correction, or otherwise grounded answer does not erase an earlier unsupported claim. Greetings, acknowledgments, and explicit statements that information is unknown are not factual office claims.",
 		Yes:      "Every factual office claim has supporting evidence available before it was made, or no factual office claims were made.",
 		No:       "At least one factual office claim lacks earlier supporting evidence or contradicts it, even if the rest of the call is grounded or the claim is later corrected.",
 	},
 	{
-		Key: "appointment_datetime_correct", Code: "A2", Label: "Appointment matched the caller", Prompt: "Did the appointment match what the caller agreed to?", Source: "judge",
+		Key: "appointment_datetime_correct", Failure: true, Code: "A2", Label: "Appointment matched the caller", Prompt: "Did the appointment match what the caller agreed to?", Source: "judge",
 		Question: "For every booking, rescheduling, or cancellation action, did the tool result match the caller's final intended appointment date and time? Use the final agreed date/time, including explicitly accepted alternatives, in the office timezone. For rescheduling check both the original appointment and the new date/time; for cancellation check the targeted appointment. Compare actual tool results, not the assistant's claim. Missing results cannot establish a match.",
 		Yes:      "Every appointment action's tool result confirms the caller's intended date and time.",
 		No:       "Any action targets or produces the wrong date/time, or there is insufficient evidence of a matching appointment action.",
 	},
 	{
-		Key: "no_results_retried", Code: "F2", Label: "Retried after no match", Prompt: "After no patient match, did the agent retry before transferring?", Source: "code",
+		Key: "no_results_retried", Failure: true, Code: "F2", Label: "Retried after no match", Prompt: "After no patient match, did the agent retry before transferring?", Source: "code",
 		Question: "After a patient lookup returned no_results, did the agent clarify and retry before transferring?",
 		Yes:      "The agent ran the patient lookup again before transferring the call.",
 		No:       "The agent transferred without retrying the patient lookup.",
 	},
 	{
-		Key: "staff_task_identified", Code: "F3", Label: "Staff task names the patient", Prompt: "Did every staff task name the patient?", Source: "code",
+		Key: "staff_task_identified", Failure: true, Code: "F3", Label: "Staff task names the patient", Prompt: "Did every staff task name the patient?", Source: "code",
 		Question: "Did every staff task the agent saved name a patient?",
 		Yes:      "Every saved staff task named a patient (verified or not). The caller's number is always attached.",
 		No:       "At least one saved staff task said \"Patient: not identified\", so staff must work out who called.",

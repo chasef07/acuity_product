@@ -146,6 +146,7 @@ type OperatorAnalyticsDetail struct {
 	P50TotalLatencyMs *int
 	Timeline          []TimelineItem
 	ToolExecutions    []ToolExecution
+	Scorecard         []AgentCallVerdict
 }
 
 type analyticsCursor struct {
@@ -524,6 +525,10 @@ func (m *Module) ReadOperatorAnalytics(
 		stored.CloseoutPayload,
 		stored.StartedAt,
 	)
+	var closeout struct {
+		Evaluation json.RawMessage `json:"evaluation"`
+	}
+	_ = json.Unmarshal(stored.CloseoutPayload, &closeout)
 	return OperatorAnalyticsDetail{
 		Interaction:       stored,
 		Issue:             issue,
@@ -537,6 +542,7 @@ func (m *Module) ReadOperatorAnalytics(
 			stored.CloseoutPayload,
 			stored.StartedAt,
 		),
+		Scorecard: agentCallScorecard(closeout.Evaluation),
 	}, nil
 }
 

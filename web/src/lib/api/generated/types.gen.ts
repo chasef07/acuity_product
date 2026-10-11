@@ -684,6 +684,7 @@ export type AgentCallDetail = {
 };
 
 export type AgentCallVerdict = {
+    question: string;
     code: string;
     prompt: string;
     /**
@@ -879,6 +880,10 @@ export type OperatorScorecardQuestion = {
     question: string;
     yes: string;
     no: string;
+    /**
+     * The question is about the agent's own work, so a no flags the call for review.
+     */
+    failure: boolean;
 };
 
 export type OperatorScorecardQuestions = {
@@ -956,11 +961,6 @@ export type OperatorJudgeAccuracyRequest = {
 export type OperatorJudgeAccuracyRow = {
     question: string;
     judgeVersion: string;
-    sample: number;
-    agreed: number;
-    humanNo: number;
-    failuresCaught: number;
-    falseAlarms: number;
     jurors: Array<OperatorJurorAccuracy>;
     trust: OperatorJuryTrust;
 };
@@ -1020,6 +1020,10 @@ export type OperatorReviewerDisagreement = {
 };
 
 export type OperatorJudgeAccuracy = {
+    /**
+     * The judge version new calls are scored with.
+     */
+    currentJudgeVersion: string;
     reviewedCalls: number;
     goldenAnswers: number;
     goldenSet: Array<OperatorGoldenSetCall>;
@@ -1501,6 +1505,10 @@ export type ProviderErrorDiagnostic = {
 
 export type OperatorAiInteractionAnalytics = {
     issue?: OperatorAiCallIssue;
+    /**
+     * The jury's verdict on each scorecard question it answered, read the same way as the staff scorecard.
+     */
+    scorecard: Array<AgentCallVerdict>;
     /**
      * Complete stored evaluator result, including version, status, answers and usage.
      */

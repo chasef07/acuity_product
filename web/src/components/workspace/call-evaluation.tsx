@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge"
+import type { AgentCallVerdict, OperatorScorecardQuestion } from "@/lib/api/generated/types.gen"
 
 export const evaluationLabels: Record<string, string> = {
   request_understood: "Caller request understood",
@@ -33,7 +34,7 @@ const scorecardChecks = [
   "appointment_datetime_correct",
   "office_rules_grounded",
 ]
-const bookingQuestions = ["booking_requested", "time_offered"]
+const verdictLabels: Record<AgentCallVerdict["answer"], string> = { yes: "Yes", no: "No", unsure: "Unsure" }
 const notApplicableReasons: Record<string, string> = {
   no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
   no_availability_result: "No availability search returned a result.",
@@ -95,32 +96,32 @@ function jurorName(model: string): string {
   return model.split("/").pop() ?? model
 }
 
-function JuryScorecard({ evaluation, prompts }: { evaluation: Record<string, unknown>; prompts: Record<string, string> }) {
+function JuryScorecard({ evaluation, verdicts, questions }: { evaluation: Record<string, unknown>; verdicts: AgentCallVerdict[]; questions: OperatorScorecardQuestion[] }) {
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
   const jurors = Array.isArray(evaluation.jurors) ? evaluation.jurors.map(String) : []
-  const order = Object.keys(prompts)
+  const catalog = new Map(questions.map((question) => [question.key, question]))
+  const answers = new Map(verdicts.map((verdict) => [verdict.question, verdict.answer]))
+  const order = questions.map((question) => question.key)
   const rank = (name: string) => (order.includes(name) ? order.indexOf(name) : order.length)
   const names = [...new Set([...Object.keys(results), ...Object.keys(errors)])].filter((name) => name !== "expressed_sentiment").sort((left, right) => rank(left) - rank(right))
   const sentiment = record(results.expressed_sentiment)
   const score = typeof sentiment.score === "number" && sentiment.score >= 0 && sentiment.score <= 4 ? sentiment.score : undefined
   return <>
-    <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer. No means confident (0.20 or lower); between 0.20 and 0.40 is Unsure and goes to people.</p>
+    <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer. No means the jury is confident; Unsure goes to people.</p>
     <dl className="mt-3 divide-y rounded-lg border px-3">
       {names.map((name) => {
         const result = record(results[name])
         const failed = Object.hasOwn(errors, name)
         const notApplicable = result.status === "not_applicable"
-        const verdict = typeof result.verdict === "boolean" ? result.verdict : undefined
-        const probability = typeof result.probability === "number" ? result.probability : undefined
-        const unsure = verdict === false && probability !== undefined && probability > 0.2
-        const flagged = verdict === false && !unsure && !bookingQuestions.includes(name)
+        const verdict = answers.get(name)
+        const flagged = verdict === "no" && catalog.get(name)?.failure === true
         const votes = record(failed ? record(errors[name]).votes : result.votes)
         const jurorErrors = record(failed ? record(errors[name]).errors : result.errors)
         return <div key={name} className="py-3 text-xs">
           <div className="flex items-start justify-between gap-3">
-            <dt>{prompts[name] ?? title(name)}</dt>
-            <dd className={`shrink-0 font-medium ${flagged ? "text-destructive" : ""}`}>{notApplicable ? "Not applicable" : verdict === undefined ? "No verdict" : verdict ? "Yes" : unsure ? "Unsure" : "No"}</dd>
+            <dt>{catalog.get(name)?.prompt ?? title(name)}</dt>
+            <dd className={`shrink-0 font-medium ${flagged ? "text-destructive" : ""}`}>{notApplicable ? "Not applicable" : verdict ? verdictLabels[verdict] : "No verdict"}</dd>
           </div>
           {notApplicable ? <dd className="mt-1 text-muted-foreground">{notApplicableReasons[String(result.reason)] ?? title(String(result.reason))}</dd> : <dd className="mt-1 flex flex-wrap gap-x-3 text-muted-foreground">
             {jurors.map((juror) => <span key={juror}>{jurorName(juror)}: {Object.hasOwn(jurorErrors, juror) ? `failed (${String(jurorErrors[juror])})` : typeof votes[juror] === "number" ? percent(votes[juror]) : "no answer"}</span>)}
@@ -139,7 +140,7 @@ function JuryScorecard({ evaluation, prompts }: { evaluation: Record<string, unk
   </>
 }
 
-export function CallEvaluation({ evaluation, prompts = {} }: { evaluation?: Record<string, unknown>; prompts?: Record<string, string> }) {
+export function CallEvaluation({ evaluation, verdicts = [], questions = [] }: { evaluation?: Record<string, unknown>; verdicts?: AgentCallVerdict[]; questions?: OperatorScorecardQuestion[] }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
   const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3" || evaluation?.evaluatorVersion === "typesafe-scorecard-v4" || evaluation?.evaluatorVersion === "typesafe-scorecard-v5"
@@ -156,7 +157,7 @@ export function CallEvaluation({ evaluation, prompts = {} }: { evaluation?: Reco
           ))}
         </dl>
         {typeof evaluation.reason === "string" && <p className="mt-3 text-xs">{evaluation.status === "incomplete" ? "Evaluation incomplete" : "Evaluation unavailable"}: {title(evaluation.reason)}</p>}
-        {evaluation.evaluatorVersion === "typesafe-scorecard-v6" ? <JuryScorecard evaluation={evaluation} prompts={prompts} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
+        {evaluation.evaluatorVersion === "typesafe-scorecard-v6" ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
         {!currentVersion && <p className="mt-3 text-xs text-muted-foreground">This evaluator version is shown as recorded. Automatic red highlights apply only to typesafe-trace-v4.</p>}
         {Object.entries(results).map(([group, raw]) => {
           const result = record(raw)

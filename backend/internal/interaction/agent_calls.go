@@ -49,9 +49,10 @@ type AgentCallDetail struct {
 }
 
 type AgentCallVerdict struct {
-	Code   string `json:"code"`
-	Prompt string `json:"prompt"`
-	Answer string `json:"answer"`
+	Question string `json:"question"`
+	Code     string `json:"code"`
+	Prompt   string `json:"prompt"`
+	Answer   string `json:"answer"`
 }
 type AgentCallsPage struct {
 	Calls      []AgentCall `json:"calls"`
@@ -257,7 +258,7 @@ func agentCallScorecard(evaluation json.RawMessage) []AgentCallVerdict {
 	scorecard := []AgentCallVerdict{}
 	for _, question := range ScorecardQuestions {
 		if level, found := levels[question.Key]; found {
-			scorecard = append(scorecard, AgentCallVerdict{Code: question.Code, Prompt: question.Prompt, Answer: level})
+			scorecard = append(scorecard, AgentCallVerdict{Question: question.Key, Code: question.Code, Prompt: question.Prompt, Answer: level})
 		}
 	}
 	return scorecard

@@ -3648,8 +3648,9 @@ components:
     AgentCallVerdict:
       type: object
       additionalProperties: false
-      required: [code, prompt, answer]
+      required: [question, code, prompt, answer]
       properties:
+        question: {type: string}
         code: {type: string}
         prompt: {type: string}
         answer:
@@ -3948,7 +3949,7 @@ components:
     OperatorScorecardQuestion:
       type: object
       additionalProperties: false
-      required: [key, code, label, prompt, source, question, "yes", "no"]
+      required: [key, code, label, prompt, source, question, "yes", "no", failure]
       properties:
         key: {type: string}
         code: {type: string}
@@ -3960,6 +3961,9 @@ components:
         question: {type: string}
         "yes": {type: string}
         "no": {type: string}
+        failure:
+          type: boolean
+          description: The question is about the agent's own work, so a no flags the call for review.
     OperatorScorecardQuestions:
       type: object
       additionalProperties: false
@@ -4068,15 +4072,10 @@ components:
     OperatorJudgeAccuracyRow:
       type: object
       additionalProperties: false
-      required: [question, judgeVersion, sample, agreed, humanNo, failuresCaught, falseAlarms, jurors, trust]
+      required: [question, judgeVersion, jurors, trust]
       properties:
         question: {type: string}
         judgeVersion: {type: string}
-        sample: {type: integer}
-        agreed: {type: integer}
-        humanNo: {type: integer}
-        failuresCaught: {type: integer}
-        falseAlarms: {type: integer}
         jurors:
           type: array
           items: {$ref: "#/components/schemas/OperatorJurorAccuracy"}
@@ -4153,8 +4152,11 @@ components:
     OperatorJudgeAccuracy:
       type: object
       additionalProperties: false
-      required: [reviewedCalls, goldenAnswers, goldenSet, rows, judgeDisagreements, reviewerDisagreements]
+      required: [currentJudgeVersion, reviewedCalls, goldenAnswers, goldenSet, rows, judgeDisagreements, reviewerDisagreements]
       properties:
+        currentJudgeVersion:
+          type: string
+          description: The judge version new calls are scored with.
         reviewedCalls: {type: integer}
         goldenAnswers: {type: integer}
         goldenSet:
@@ -4869,8 +4871,14 @@ components:
         - updatedAt
         - timeline
         - toolExecutions
+        - scorecard
       properties:
         issue: {$ref: "#/components/schemas/OperatorAICallIssue"}
+        scorecard:
+          type: array
+          description: The jury's verdict on each scorecard question it answered, read the same way as the staff scorecard.
+          items:
+            $ref: "#/components/schemas/AgentCallVerdict"
         evaluation:
           type: object
           additionalProperties: true

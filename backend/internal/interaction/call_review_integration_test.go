@@ -189,12 +189,14 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows := map[string]JudgeAccuracyRow{}
-	for _, row := range accuracy.Rows {
-		rows[row.Question] = row
+	falseAlarms := 0
+	for _, item := range accuracy.JudgeDisagreements {
+		if item.Question == "right_help" && item.Human && !item.Judge {
+			falseAlarms++
+		}
 	}
-	if accuracy.ReviewedCalls != 2 || rows["right_help"].Sample != 3 || rows["right_help"].FalseAlarms != 1 || accuracy.GoldenAnswers != 19 {
-		t.Fatalf("accuracy counts false alarms: %+v", accuracy)
+	if accuracy.ReviewedCalls != 2 || falseAlarms != 1 || accuracy.GoldenAnswers != 19 || accuracy.CurrentJudgeVersion != ScorecardJudgeVersion {
+		t.Fatalf("accuracy lists the false alarm: %+v", accuracy)
 	}
 	if len(accuracy.ReviewerDisagreements) != 1 || accuracy.ReviewerDisagreements[0].Question != "clear_and_responsive" {
 		t.Fatalf("reviewer disagreements: %+v", accuracy.ReviewerDisagreements)

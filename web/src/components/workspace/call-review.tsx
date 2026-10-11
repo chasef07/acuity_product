@@ -420,9 +420,8 @@ function Transcript({ interactionID }: { interactionID: string }) {
   )
 }
 
-function versionLabel(version: string) {
-  if (version === "typesafe-scorecard-v6") return "Current (v6)"
-  if (version === "v1") return "Batch 1 (v1)"
+function versionLabel(version: string, current: string) {
+  if (version === current) return `Current (${version})`
   return version || "Unknown"
 }
 
@@ -450,7 +449,8 @@ function JudgeAccuracyView({
     )
   }
   const data = accuracy.data
-  const versions = Array.from(new Set(data.rows.map((row) => row.judgeVersion))).sort((left, right) => (left === "typesafe-scorecard-v6" ? -1 : right === "typesafe-scorecard-v6" ? 1 : left.localeCompare(right)))
+  const current = data.currentJudgeVersion
+  const versions = Array.from(new Set(data.rows.map((row) => row.judgeVersion))).sort((left, right) => (left === current ? -1 : right === current ? 1 : left.localeCompare(right)))
   const version = versions.includes(picked) ? picked : versions[0] ?? ""
   const rows = data.rows.filter((row) => row.judgeVersion === version)
   const disagreements = data.judgeDisagreements.filter((item) => item.judgeVersion === version)
@@ -458,12 +458,11 @@ function JudgeAccuracyView({
     const question = catalog.get(key)
     return question ? `${question.code} ${question.label}` : key
   }
-  const totals = rows.reduce((sum, row) => ({ sample: sum.sample + row.sample, agreed: sum.agreed + row.agreed }), { sample: 0, agreed: 0 })
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          A question is trusted when, at 95% confidence, the jury&apos;s confident no answers catch at least 90% of the failures you mark, at most 1% of them are false alarms, and it agrees with you nearly as often as you and Chase agree. The last 14 days must also meet those bars on their own. Unsure answers go to people and don&apos;t count as a no. Reviews are weighted by each day&apos;s mix of flagged and unflagged calls, over the last 120 days.
+          A question is trusted when, at 95% confidence, the jury&apos;s confident no answers catch at least 90% of the failures reviewers mark, at most 1% of them are false alarms, and it agrees with reviewers nearly as often as reviewers agree with each other. The last 14 days must also meet those bars on their own. Unsure answers go to people and don&apos;t count as a no. Reviews are weighted by each day&apos;s mix of flagged and unflagged calls, over the last 120 days.
         </p>
         {versions.length > 1 && (
           <ToggleGroup
@@ -474,13 +473,12 @@ function JudgeAccuracyView({
             onValueChange={(values) => values[0] && setPicked(values[0])}
           >
             {versions.map((item) => (
-              <ToggleGroupItem key={item} value={item}>{versionLabel(item)}</ToggleGroupItem>
+              <ToggleGroupItem key={item} value={item}>{versionLabel(item, current)}</ToggleGroupItem>
             ))}
           </ToggleGroup>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <Stat label="Jury agrees with you" value={totals.sample ? `${Math.round((100 * totals.agreed) / totals.sample)}%` : "—"} note={`${totals.agreed} of ${totals.sample} answers, ${versionLabel(version)}`} />
+      <div className="grid grid-cols-2 gap-3">
         <button
           type="button"
           onClick={() => setGoldenOpen(true)}
@@ -492,7 +490,7 @@ function JudgeAccuracyView({
             {data.goldenAnswers.toLocaleString()} answers · See calls <ChevronRightIcon className="size-3" aria-hidden="true" />
           </span>
         </button>
-        <Stat label="You and Chase disagreed" value={data.reviewerDisagreements.length.toLocaleString()} note="Questions to reword" />
+        <Stat label="Reviewers disagreed" value={data.reviewerDisagreements.length.toLocaleString()} note="Questions to reword" />
       </div>
       <Card size="sm">
         <CardHeader>
@@ -508,7 +506,7 @@ function JudgeAccuracyView({
                 <TableHead className="pl-4">Question</TableHead>
                 <TableHead className="text-right">Catches failures</TableHead>
                 <TableHead className="text-right">False alarms</TableHead>
-                <TableHead className="text-right">Agrees with you</TableHead>
+                <TableHead className="text-right">Agrees with reviewers</TableHead>
                 <TableHead className="text-right">Unsure</TableHead>
                 <TableHead>Each juror</TableHead>
                 <TableHead className="text-right">Reviewed</TableHead>
@@ -541,7 +539,7 @@ function JudgeAccuracyView({
                       {pct(trust.agreement)}
                       <span className="block text-[0.6875rem] text-muted-foreground">
                         {trust.agreementLow != null ? `≥ ${pct(trust.agreementLow)}` : ""}
-                        {trust.humanAgreement != null ? ` · you two ${pct(trust.humanAgreement)}` : ""}
+                        {trust.humanAgreement != null ? ` · reviewers ${pct(trust.humanAgreement)}` : ""}
                       </span>
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{pct(trust.unsure)}</TableCell>
@@ -590,7 +588,7 @@ function JudgeAccuracyView({
                   </span>
                   <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                     {call.answers} answers
-                    {call.disagreements > 0 && <span className="block text-destructive">{call.disagreements} Jev disagreed</span>}
+                    {call.disagreements > 0 && <span className="block text-destructive">{call.disagreements} jury disagreements</span>}
                   </span>
                 </button>
               </li>
@@ -600,7 +598,7 @@ function JudgeAccuracyView({
       </Sheet>
       <details className="group rounded-xl border bg-card">
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-          Calls where Jev disagreed with you ({disagreements.length})
+          Calls where the jury disagreed with a reviewer ({disagreements.length})
         </summary>
         <div className="overflow-x-auto border-t">
           <Table className="min-w-[44rem]">
@@ -608,8 +606,8 @@ function JudgeAccuracyView({
               <TableRow className="hover:bg-transparent">
                 <TableHead className="pl-4">Call</TableHead>
                 <TableHead>Question</TableHead>
-                <TableHead>You</TableHead>
-                <TableHead>Jev</TableHead>
+                <TableHead>Reviewer</TableHead>
+                <TableHead>Jury</TableHead>
                 <TableHead className="pr-4">Note</TableHead>
               </TableRow>
             </TableHeader>
@@ -642,7 +640,7 @@ function JudgeAccuracyView({
       {data.reviewerDisagreements.length > 0 && (
         <details className="rounded-xl border bg-card">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-            Calls where you and Chase disagreed ({data.reviewerDisagreements.length})
+            Calls where reviewers disagreed ({data.reviewerDisagreements.length})
           </summary>
           <ul className="divide-y border-t px-4">
             {data.reviewerDisagreements.map((item) => (

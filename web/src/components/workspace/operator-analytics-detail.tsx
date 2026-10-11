@@ -165,7 +165,6 @@ function OperatorAnalyticsDetailView({
   onIssueChange: (issue: OperatorAiCallIssue) => void
 }) {
   const questions = useScorecardQuestions()
-  const prompts = Object.fromEntries(questions.status === "ready" ? questions.data.questions.map((question) => [question.key, question.prompt]) : [])
   const [showTiming, setShowTiming] = useState(true)
   const messageCount = detail.timeline.filter(
     (item) => item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE",
@@ -219,7 +218,7 @@ function OperatorAnalyticsDetailView({
                 className="[content-visibility:visible]"
               >
                 <CallIssueReview key={`issue-${detail.id}`} interactionID={detail.id} initialIssue={detail.issue} onChange={onIssueChange} />
-                <CallEvaluation evaluation={detail.evaluation} prompts={prompts} />
+                <CallEvaluation evaluation={detail.evaluation} verdicts={detail.scorecard} questions={questions.status === "ready" ? questions.data.questions : []} />
                 <section
                   aria-label="Call conversation"
                   className="border-b px-5 py-5 sm:px-6"
