@@ -7,7 +7,7 @@ export const siteConfig = {
   url: "https://acuityhealth.io",
   title: "Voice AI Agents for Patient Access | Acuity Health",
   description:
-    "Acuity Health helps medical enterprises onboard voice AI agents to answer calls, check insurance eligibility, book appointments, and support staff.",
+    "Acuity is the infrastructure platform and partner for medical practices to deploy, measure, and continuously improve AI agents they own, starting with the phone.",
 } as const
 
 export const siteSocialImage = {

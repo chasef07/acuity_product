@@ -5,7 +5,7 @@
   --marketing-accent-deep: #343a35;
   --marketing-surface: #e4e7df;
   --marketing-surface-deep: #555e53;
-  --marketing-paper: #f4f2ed;
+  --marketing-paper: #ffffff;
   --marketing-line: #dadcd5;
   min-height: 100%;
   overflow: clip;
@@ -61,7 +61,7 @@
   border: 0;
   border-bottom: 1px solid rgb(255 255 255 / 0.48);
   border-radius: 0;
-  background: rgb(244 242 237 / 0.94);
+  background: rgb(255 255 255 / 0.94);
   box-shadow: none;
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   backdrop-filter: blur(24px) saturate(160%);
@@ -657,7 +657,7 @@
 
 .footerContact:hover,
 .footerContact:focus-visible {
-  background: white;
+  background: var(--marketing-line);
 }
 
 .footerCopyright {
