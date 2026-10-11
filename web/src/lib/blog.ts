@@ -19,7 +19,7 @@ export type BlogPost = {
   readingTime: string
   category: string
   author: BlogAuthor
-  hero?: "dead-air"
+  hero: "dead-air" | "name-the-slot"
   load: () => Promise<{ default: ComponentType }>
 }
 
@@ -41,6 +41,7 @@ export const blogPosts: BlogPost[] = [
     readingTime: "10 min read",
     category: "Voice AI",
     author: chase,
+    hero: "name-the-slot",
     load: () => import("@/content/blog/name-the-slot.mdx"),
   },
   {

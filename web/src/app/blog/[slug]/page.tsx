@@ -108,8 +108,8 @@ export default async function BlogPostPage({ params }: PageProps) {
         <section className={styles.cta}>
           <h2>Voice AI agents for patient access, judged on every call.</h2>
           <p>
-            Acuity Health helps medical enterprises onboard voice AI agents that answer calls, check
-            insurance eligibility, and book appointments.
+            Acuity is the infrastructure platform and partner for medical practices to deploy, measure,
+            and continuously improve AI agents they own, starting with the phone.
           </p>
           <Link className={styles.ctaButton} href="/work-with-us">
             Build with us
