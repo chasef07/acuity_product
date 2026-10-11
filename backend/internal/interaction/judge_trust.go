@@ -28,7 +28,6 @@ type TrustEstimate struct {
 	FalseAlarmHigh *float64 `json:"falseAlarmHigh"`
 	Agreement      *float64 `json:"agreement"`
 	AgreementLow   *float64 `json:"agreementLow"`
-	Unsure         *float64 `json:"unsure"`
 	HumanAgreement *float64 `json:"humanAgreement"`
 	HumanPairs     int      `json:"humanPairs"`
 	Status         string   `json:"status"`
@@ -38,7 +37,6 @@ type TrustEstimate struct {
 type trustCall struct {
 	answers    map[string]bool
 	judge      *bool
-	level      string
 	sample     string
 	date       string
 	reviewedAt time.Time
@@ -92,7 +90,7 @@ func consensus(answers map[string]bool) (bool, bool) {
 	return value, len(seen) == 1
 }
 
-type trustRates struct{ catch, falseAlarm, agreement, unsure weightedRate }
+type trustRates struct{ catch, falseAlarm, agreement weightedRate }
 
 func measureTrust(calls map[string]*trustCall, pools map[string]reviewPool, since time.Time) (trustRates, int, int) {
 	sampled := map[string]int{}
@@ -120,14 +118,13 @@ func measureTrust(calls map[string]*trustCall, pools map[string]reviewPool, sinc
 			continue
 		}
 		compared++
-		confidentNo := call.level == "no"
-		rates.agreement.add(weight, confidentNo != human)
-		rates.unsure.add(weight, call.level == "unsure")
+		judgedNo := !*call.judge
+		rates.agreement.add(weight, judgedNo != human)
 		if !human {
 			failures++
-			rates.catch.add(weight, confidentNo)
+			rates.catch.add(weight, judgedNo)
 		}
-		if confidentNo {
+		if judgedNo {
 			rates.falseAlarm.add(weight, human)
 		}
 	}
@@ -149,7 +146,6 @@ func estimateTrust(calls map[string]*trustCall, pools map[string]reviewPool, now
 		Calls: compared, Failures: failures, HumanPairs: pairs,
 		Catch: rates.catch.value(), CatchLow: rates.catch.low(),
 		FalseAlarms: rates.falseAlarm.value(), Agreement: rates.agreement.value(), AgreementLow: rates.agreement.low(),
-		Unsure: rates.unsure.value(),
 	}
 	if rates.falseAlarm.total > 0 {
 		high := 1 - wilsonLow(1-rates.falseAlarm.hits/rates.falseAlarm.total, rates.falseAlarm.total*rates.falseAlarm.total/rates.falseAlarm.squares)
@@ -179,7 +175,7 @@ func trustVerdict(estimate TrustEstimate, recent trustRates) (string, string) {
 	case *estimate.CatchLow < trustCatchFloor:
 		return trustStatusCollected, "Catch is at least " + percent(estimate.CatchLow) + " so far; more failures needed to show 90%"
 	case estimate.FalseAlarmHigh != nil && *estimate.FalseAlarmHigh > trustFalseAlarmCap:
-		return trustStatusCollected, "False alarms could be up to " + percentTenths(estimate.FalseAlarmHigh) + "; more confident no answers needed to show 1%"
+		return trustStatusCollected, "False alarms could be up to " + percentTenths(estimate.FalseAlarmHigh) + "; more no answers needed to show 1%"
 	case estimate.HumanPairs < trustMinimumPairs:
 		return trustStatusCollected, fmt.Sprintf("%d of %d shared reviews needed to measure reviewer agreement", estimate.HumanPairs, trustMinimumPairs)
 	case *estimate.AgreementLow < *estimate.HumanAgreement-trustHumanMargin:

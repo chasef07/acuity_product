@@ -688,9 +688,9 @@ export type AgentCallVerdict = {
     code: string;
     prompt: string;
     /**
-     * Yes is the jury majority verdict. When the verdict is no, No only when the jury is confident (mean probability at most 0.20); otherwise unsure, which goes to human review.
+     * The jury's majority verdict.
      */
-    answer: 'yes' | 'no' | 'unsure';
+    answer: 'yes' | 'no';
 };
 
 export type AiInteractionDetail = {
@@ -966,7 +966,7 @@ export type OperatorJudgeAccuracyRow = {
 };
 
 /**
- * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. Only confident no answers (probability at most 0.20) count as the jury saying no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 1%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
+ * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. The jury says no when its majority verdict is no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 1%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
  */
 export type OperatorJuryTrust = {
     calls: number;
@@ -977,10 +977,6 @@ export type OperatorJuryTrust = {
     falseAlarmHigh: number | null;
     agreement: number | null;
     agreementLow: number | null;
-    /**
-     * Weighted share of calls the jury was unsure about, which a person still reviews.
-     */
-    unsure: number | null;
     humanAgreement: number | null;
     humanPairs: number;
     status: 'trusted' | 'collecting' | 'below';

@@ -34,7 +34,7 @@ const scorecardChecks = [
   "appointment_datetime_correct",
   "office_rules_grounded",
 ]
-const verdictLabels: Record<AgentCallVerdict["answer"], string> = { yes: "Yes", no: "No", unsure: "Unsure" }
+const verdictLabels: Record<AgentCallVerdict["answer"], string> = { yes: "Yes", no: "No" }
 const notApplicableReasons: Record<string, string> = {
   no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
   no_availability_result: "No availability search returned a result.",
@@ -108,7 +108,7 @@ function JuryScorecard({ evaluation, verdicts, questions }: { evaluation: Record
   const sentiment = record(results.expressed_sentiment)
   const score = typeof sentiment.score === "number" && sentiment.score >= 0 && sentiment.score <= 4 ? sentiment.score : undefined
   return <>
-    <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer. No means the jury is confident; Unsure goes to people.</p>
+    <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer.</p>
     <dl className="mt-3 divide-y rounded-lg border px-3">
       {names.map((name) => {
         const result = record(results[name])

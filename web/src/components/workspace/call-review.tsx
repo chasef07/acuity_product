@@ -462,7 +462,7 @@ function JudgeAccuracyView({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          A question is trusted when, at 95% confidence, the jury&apos;s confident no answers catch at least 90% of the failures reviewers mark, at most 1% of them are false alarms, and it agrees with reviewers nearly as often as reviewers agree with each other. The last 14 days must also meet those bars on their own. Unsure answers go to people and don&apos;t count as a no. Reviews are weighted by each day&apos;s mix of flagged and unflagged calls, over the last 120 days.
+          A question is trusted when, at 95% confidence, the jury&apos;s no answers catch at least 90% of the failures reviewers mark, at most 1% of them are false alarms, and it agrees with reviewers nearly as often as reviewers agree with each other. The last 14 days must also meet those bars on their own. Reviews are weighted by each day&apos;s mix of flagged and unflagged calls, over the last 120 days.
         </p>
         {versions.length > 1 && (
           <ToggleGroup
@@ -507,7 +507,6 @@ function JudgeAccuracyView({
                 <TableHead className="text-right">Catches failures</TableHead>
                 <TableHead className="text-right">False alarms</TableHead>
                 <TableHead className="text-right">Agrees with reviewers</TableHead>
-                <TableHead className="text-right">Unsure</TableHead>
                 <TableHead>Each juror</TableHead>
                 <TableHead className="text-right">Reviewed</TableHead>
                 <TableHead className="pr-4">Status</TableHead>
@@ -516,7 +515,7 @@ function JudgeAccuracyView({
             <TableBody>
               {rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
                     No reviewed calls yet. Answers from the daily queue land here.
                   </TableCell>
                 </TableRow>
@@ -542,7 +541,6 @@ function JudgeAccuracyView({
                         {trust.humanAgreement != null ? ` · reviewers ${pct(trust.humanAgreement)}` : ""}
                       </span>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{pct(trust.unsure)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {row.jurors.map((juror) => `${juror.model.split("/").pop()} ${juror.compared ? Math.round((100 * juror.agreed) / juror.compared) : 0}%`).join(" · ") || "—"}
                     </TableCell>

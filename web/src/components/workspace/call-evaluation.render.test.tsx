@@ -228,7 +228,7 @@ test("scorecard v6 shows the backend verdict, each juror's vote, quorum failures
   const questions = [question("booking_requested", "Did the caller ask to book?", false), question("need_understood", "Did the agent understand every request?", true), question("clear_and_responsive", "Was the call clear and responsive?", true)]
   const scorecard = [
     { question: "booking_requested", code: "B1", prompt: "", answer: "no" as const },
-    { question: "need_understood", code: "H1", prompt: "", answer: "unsure" as const },
+    { question: "need_understood", code: "H1", prompt: "", answer: "yes" as const },
     { question: "clear_and_responsive", code: "H4", prompt: "", answer: "no" as const },
   ]
   const html = renderToStaticMarkup(<CallEvaluation questions={questions} verdicts={scorecard} evaluation={{
@@ -245,7 +245,7 @@ test("scorecard v6 shows the backend verdict, each juror's vote, quorum failures
   assert.match(html, /Jury: jev, d1/)
   assert.match(html, /Was the call clear and responsive\?<\/dt><dd class="shrink-0 font-medium text-destructive">No/)
   assert.match(html, /Did the caller ask to book\?<\/dt><dd class="shrink-0 font-medium ">No/)
-  assert.match(html, /Did the agent understand every request\?<\/dt><dd class="shrink-0 font-medium ">Unsure/)
+  assert.match(html, /Did the agent understand every request\?<\/dt><dd class="shrink-0 font-medium ">Yes/)
   assert.match(html, /d1: failed \(TimeoutError\)/)
   assert.match(html, /No quorum/)
   assert.match(html, /No availability search returned a result/)

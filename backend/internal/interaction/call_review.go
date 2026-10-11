@@ -588,7 +588,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
 		SELECT r.interaction_id::text, i.started_at, i.location_id::text, r.question, r.reviewer_email, r.answer, r.note,
-			r.judge_answer, r.judge_probability, COALESCE(r.judge_version, ''), r.reviewer, r.sample, r.review_date::text, r.reviewed_at,
+			r.judge_answer, COALESCE(r.judge_version, ''), r.reviewer, r.sample, r.review_date::text, r.reviewed_at,
 			(SELECT a.detail->'votes' FROM ai_interaction_scorecard_answers a WHERE a.interaction_id = r.interaction_id AND a.question = r.question AND a.source = 'judge')
 		FROM ai_call_reviews r
 		JOIN ai_interactions i ON i.id = r.interaction_id
@@ -616,8 +616,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		var votes map[string]float64
 		var reviewer, sample, reviewDate string
 		var reviewedAt time.Time
-		var judgeProbability *float64
-		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &judgeProbability, &item.JudgeVersion, &reviewer, &sample, &reviewDate, &reviewedAt, &votes); err != nil {
+		if err := rows.Scan(&item.InteractionID, &item.StartedAt, &item.LocationName, &item.Question, &item.ReviewerEmail, &item.Human, &item.Note, &judgeAnswer, &item.JudgeVersion, &reviewer, &sample, &reviewDate, &reviewedAt, &votes); err != nil {
 			rows.Close()
 			return JudgeAccuracy{}, fmt.Errorf("read judge accuracy: %w", err)
 		}
@@ -657,9 +656,6 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		}
 		if trustCalls[group][item.InteractionID] == nil {
 			trustCalls[group][item.InteractionID] = &trustCall{answers: map[string]bool{}, judge: judgeAnswer, sample: sample, date: reviewDate}
-			if judgeAnswer != nil {
-				trustCalls[group][item.InteractionID].level = scorecardLevel(*judgeAnswer, judgeProbability)
-			}
 		}
 		tracked := trustCalls[group][item.InteractionID]
 		tracked.answers[reviewer] = item.Human

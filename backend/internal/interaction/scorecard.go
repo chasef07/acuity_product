@@ -15,7 +15,6 @@ const (
 	ScorecardJudgeVersion = "typesafe-scorecard-v6"
 	ScorecardCodeVersion  = "code-checks-v1"
 	scorecardNoAtOrBelow  = 0.40
-	scorecardConfidentNo  = 0.20
 )
 
 type ScorecardQuestion struct {
@@ -366,16 +365,6 @@ func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
 		})
 	}
 	return answers
-}
-
-func scorecardLevel(answer bool, probability *float64) string {
-	switch {
-	case answer:
-		return "yes"
-	case probability == nil, *probability <= scorecardConfidentNo:
-		return "no"
-	}
-	return "unsure"
 }
 
 func jurySentiment(evaluation json.RawMessage) *float64 {

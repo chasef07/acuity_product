@@ -251,14 +251,17 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 }
 
 func agentCallScorecard(evaluation json.RawMessage) []AgentCallVerdict {
-	levels := map[string]string{}
+	verdicts := map[string]string{}
 	for _, answer := range judgeAnswers(evaluation) {
-		levels[answer.Question] = scorecardLevel(answer.Answer, answer.Probability)
+		verdicts[answer.Question] = "no"
+		if answer.Answer {
+			verdicts[answer.Question] = "yes"
+		}
 	}
 	scorecard := []AgentCallVerdict{}
 	for _, question := range ScorecardQuestions {
-		if level, found := levels[question.Key]; found {
-			scorecard = append(scorecard, AgentCallVerdict{Question: question.Key, Code: question.Code, Prompt: question.Prompt, Answer: level})
+		if verdict, found := verdicts[question.Key]; found {
+			scorecard = append(scorecard, AgentCallVerdict{Question: question.Key, Code: question.Code, Prompt: question.Prompt, Answer: verdict})
 		}
 	}
 	return scorecard

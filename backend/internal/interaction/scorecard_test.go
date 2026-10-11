@@ -237,11 +237,11 @@ func TestTrustWeightsEachSampleByItsShareOfTheDaysCalls(t *testing.T) {
 	no, yes := false, true
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	calls := map[string]*trustCall{
-		"flagged-caught": {answers: map[string]bool{"kyle": false}, judge: &no, level: "no", sample: "flagged", date: "2026-10-08", reviewedAt: now},
-		"flagged-alarm":  {answers: map[string]bool{"kyle": true}, judge: &no, level: "no", sample: "flagged", date: "2026-10-08", reviewedAt: now},
-		"random-missed":  {answers: map[string]bool{"kyle": false}, judge: &yes, level: "yes", sample: "random", date: "2026-10-08", reviewedAt: now},
-		"random-fine":    {answers: map[string]bool{"kyle": true}, judge: &yes, level: "yes", sample: "random", date: "2026-10-08", reviewedAt: now},
-		"imported":       {answers: map[string]bool{"kyle": false}, judge: &yes, level: "yes", sample: "manual", date: "2026-10-01", reviewedAt: now},
+		"flagged-caught": {answers: map[string]bool{"kyle": false}, judge: &no, sample: "flagged", date: "2026-10-08", reviewedAt: now},
+		"flagged-alarm":  {answers: map[string]bool{"kyle": true}, judge: &no, sample: "flagged", date: "2026-10-08", reviewedAt: now},
+		"random-missed":  {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "random", date: "2026-10-08", reviewedAt: now},
+		"random-fine":    {answers: map[string]bool{"kyle": true}, judge: &yes, sample: "random", date: "2026-10-08", reviewedAt: now},
+		"imported":       {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "manual", date: "2026-10-01", reviewedAt: now},
 	}
 	estimate := estimateTrust(calls, map[string]reviewPool{"2026-10-08": {flagged: 20, random: 180}}, now)
 	if estimate.Calls != 4 || estimate.Failures != 2 {
@@ -268,11 +268,7 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 		if !judge {
 			verdict = &no
 		}
-		level := "yes"
-		if !judge {
-			level = "no"
-		}
-		calls[id] = &trustCall{answers: answers, judge: verdict, level: level, sample: "random", date: "2026-10-08", reviewedAt: now}
+		calls[id] = &trustCall{answers: answers, judge: verdict, sample: "random", date: "2026-10-08", reviewedAt: now}
 	}
 	for index := 0; index < 5; index++ {
 		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
@@ -302,7 +298,7 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 	}
 	pools["2026-10-08"] = reviewPool{random: 1000}
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusTrusted {
-		t.Fatalf("400 confident no answers with no false alarm prove 1%%: %+v", estimate)
+		t.Fatalf("400 no answers with no false alarm prove 1%%: %+v", estimate)
 	}
 }
 
@@ -310,8 +306,8 @@ func TestStaffScorecardFollowsTheJuryMajorityNotTheMean(t *testing.T) {
 	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["a","b","c"],"status":"complete","results":{
 		"need_understood":{"verdict":false,"probability":0.4667,"votes":{"a":0.1,"b":0.3,"c":1.0},"errors":{}},
 		"right_help":{"verdict":true,"probability":0.3,"votes":{"a":0.45,"b":0.45,"c":0.0},"errors":{}}}}`))
-	if len(scorecard) != 2 || scorecard[0].Answer != "unsure" || scorecard[1].Answer != "yes" {
-		t.Fatalf("a 1-2 split with a high mean is unsure, and a 2-1 yes with a low mean is yes: %+v", scorecard)
+	if len(scorecard) != 2 || scorecard[0].Answer != "no" || scorecard[1].Answer != "yes" {
+		t.Fatalf("a 1-2 split with a high mean is no, and a 2-1 yes with a low mean is yes: %+v", scorecard)
 	}
 }
 
@@ -320,7 +316,7 @@ func TestStaffScorecardShowsVerdictsInCatalogOrder(t *testing.T) {
 		"right_help":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
 		"clear_and_responsive":{"verdict":false,"probability":0.35,"votes":{"typesafe-ai/jev":0.35},"errors":{}},
 		"booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}}}}`))
-	if len(scorecard) != 3 || scorecard[0].Code != "B1" || scorecard[0].Answer != "yes" || scorecard[1].Answer != "no" || scorecard[2].Answer != "unsure" || scorecard[1].Prompt == "" {
+	if len(scorecard) != 3 || scorecard[0].Code != "B1" || scorecard[0].Answer != "yes" || scorecard[1].Answer != "no" || scorecard[2].Answer != "no" || scorecard[1].Prompt == "" {
 		t.Fatalf("staff scorecard: %+v", scorecard)
 	}
 	if got := agentCallScorecard(nil); len(got) != 0 || got == nil {
