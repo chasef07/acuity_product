@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.0](https://github.com/chasef07/acuity_product/compare/v1.29.0...v1.30.0) (2026-10-11)
+
+
+### Features
+
+* **web:** add the Name the Slot blog post ([#439](https://github.com/chasef07/acuity_product/issues/439)) ([95883ba](https://github.com/chasef07/acuity_product/commit/95883badb72396d88b800c267342fe9a6a815f43))
+
 ## [1.29.0](https://github.com/chasef07/acuity_product/compare/v1.28.4...v1.29.0) (2026-10-08)
 
 
