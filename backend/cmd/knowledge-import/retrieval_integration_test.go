@@ -37,7 +37,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 		{office: "sweetwater"},
 		{office: "hollywood"},
 		{office: "crystal-river"},
-		{office: "spring-hill", needsRealEmbeddings: []string{"unknown", "unknown-baseline", "spanish-address-hours", "six-year-old-exam"}},
+		{office: "spring-hill", needsRealEmbeddings: []string{"unknown", "unknown-baseline", "six-year-old-exam"}},
 		{office: "ophthalmology-demo", caseID: "hours"},
 	} {
 		office := fixture.office

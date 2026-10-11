@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-go@v7
         id: go
         with:
-          go-version: "1.26.7"
+          go-version: "1.26.9"
           cache: false
       # Separate workloads cannot overwrite each other's partial Go caches.
       - uses: actions/cache@v5
@@ -135,7 +135,7 @@ jobs:
       - uses: actions/setup-go@v7
         id: go
         with:
-          go-version: "1.26.7"
+          go-version: "1.26.9"
           cache: false
       # Separate workloads cannot overwrite each other's partial Go caches.
       - uses: actions/cache@v5
@@ -196,7 +196,7 @@ jobs:
       - uses: actions/setup-go@v7
         id: go
         with:
-          go-version: "1.26.7"
+          go-version: "1.26.9"
           cache: false
       # Separate workloads cannot overwrite each other's partial Go caches.
       - uses: actions/cache@v5

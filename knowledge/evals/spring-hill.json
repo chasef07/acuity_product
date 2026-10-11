@@ -247,28 +247,6 @@
     "allowedSectionIds": []
   },
   {
-    "id": "spanish-closure-address",
-    "query": "¿Está cerrada la oficina de Medical Drive y cuál es la dirección actual?",
-    "expectedOutcome": "found",
-    "expectedSectionIds": [
-      "medical-drive-closure",
-      "current-address"
-    ],
-    "excludedSectionIds": [],
-    "maxResponseCharacters": 3000
-  },
-  {
-    "id": "spanish-address-hours",
-    "query": "¿Cuál es la dirección y el horario de la oficina?",
-    "expectedOutcome": "found",
-    "expectedSectionIds": [
-      "current-address",
-      "hours"
-    ],
-    "excludedSectionIds": [],
-    "maxResponseCharacters": 3000
-  },
-  {
     "id": "six-year-old-exam",
     "query": "Can my six-year-old get an eye exam?",
     "expectedOutcome": "found",

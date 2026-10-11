@@ -131,9 +131,14 @@ func (adapter *TelnyxAdapter) Reconcile(
 		MessageID: providerMessageID,
 		State:     DeliverySent,
 	}
-	to := response.Data.To.OfMessagingOutboundMessagePayloadToArray
-	if len(to) > 0 {
-		state, known := providerDeliveryState(to[0].Status)
+	status, hasRecipient := "", false
+	if to := response.Data.To.OfOutboundMessagePayloadToArray; len(to) > 0 {
+		status, hasRecipient = to[0].Status, true
+	} else if to := response.Data.To.OfMessagingInboundMessagePayloadToArray; len(to) > 0 {
+		status, hasRecipient = to[0].Status, true
+	}
+	if hasRecipient {
+		state, known := providerDeliveryState(status)
 		if !known {
 			return ProviderResult{}, fmt.Errorf(
 				"%w: unrecognized Telnyx delivery status",
