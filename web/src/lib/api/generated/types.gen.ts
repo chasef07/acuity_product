@@ -664,10 +664,18 @@ export type AgentCallIssueReason = 'WRONG_APPOINTMENT_TYPE' | 'INSURANCE_ISSUE' 
 
 export type AgentCallIssueInput = {
     reason: AgentCallIssueReason;
+    /**
+     * Optional staff explanation of what happened.
+     */
+    note?: string;
 };
 
 export type AgentCallIssue = {
     reason: AgentCallIssueReason;
+    /**
+     * Staff explanation of what happened, when given.
+     */
+    note?: string;
     createdAt: string;
 };
 
@@ -1158,6 +1166,10 @@ export type OperatorAiCallIssue = {
     phone: string;
     startedAt: string;
     reason: AgentCallIssueReason;
+    /**
+     * Staff explanation of what happened, when given.
+     */
+    note?: string;
     reportedBy: string;
     reportedAt: string;
     review?: OperatorAiCallIssueReview;

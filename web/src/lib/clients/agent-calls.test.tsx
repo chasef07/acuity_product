@@ -143,10 +143,10 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
 
 test("call commands report conflicts and send the saved choice", async (t) => {
   const backend = fakeBackend(t, () => new Response("{}", { status: 409 }))
-  const flagged = await flagAgentCallIssue("call-1", "OTHER")
+  const flagged = await flagAgentCallIssue("call-1", "OTHER", "")
   assert.equal(!flagged.ok && flagged.failure.kind, "conflict")
   assert.deepEqual(backend.requests, [
-    { path: "/v1/agent-calls/call-1/issue", body: { reason: "OTHER" } },
+    { path: "/v1/agent-calls/call-1/issue", body: { reason: "OTHER", note: "" } },
   ])
 
   const view = mountHook(t, useAiCallEvidence)
