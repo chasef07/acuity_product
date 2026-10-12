@@ -1693,6 +1693,59 @@ test("back during the initial load restores the newer URL", async () => {
   projection.stop()
 })
 
+test("back during a real sync reconciliation reloads the unchanged scope", async (t) => {
+  const first = task("first-task")
+  const second = task("second-task", { phone: "+15557654321" })
+  const navigation = memoryNavigation({ view: "task", taskID: first.id })
+  const gate = deferred<void>()
+  const requested = deferred<void>()
+  let workspaceReads = 0
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  const base = deterministicAuthority({
+    discovery: accessDiscovery(),
+    snapshot: workspaceSnapshot(1),
+    tasks: taskPage([first, second]),
+  })
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...base,
+      workspace: async (...args) => {
+        workspaceReads += 1
+        requested.resolve()
+        if (workspaceReads === 1) await gate.promise
+        return base.workspace(...args)
+      },
+    },
+    realtime: {
+      connect: (callbacks) => createWorkspaceSync({
+        ...callbacks,
+        realtimeURL: "https://realtime.example",
+        fetch: async () => new Response(new ReadableStream<Uint8Array>({
+          start(controller) { stream = controller },
+        })),
+      }),
+    },
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  t.after(() => projection.stop())
+
+  await projection.start()
+  await waitUntil(() => Boolean(stream))
+  stream!.enqueue(new TextEncoder().encode(
+    'event: ready\ndata: {"practiceId":"practice-1","version":1}\n\n',
+  ))
+  await requested.promise
+  navigation.go({ view: "task", taskID: second.id })
+  await projection.dispatch({ type: "navigation-changed" })
+  gate.resolve()
+
+  await waitUntil(() => projection.getSnapshot().loadState === "ready")
+  assert.ok(projection.getSnapshot().workspace)
+  assert.equal(projection.getSnapshot().selection.task?.id, second.id)
+  assert.equal(workspaceReads, 2)
+})
+
 function memoryNavigation(initial: WorkspaceLocation = { view: "none" }) {
   let current = initial
   const writes: Array<{ location: WorkspaceLocation; mode: "push" | "replace" }> = []
