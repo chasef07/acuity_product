@@ -24,8 +24,8 @@ var requiredAbitaEntries = []string{
 	"medical-records-requests", "prescription-copies", "social-follow-up",
 }
 
-var markdownLine = regexp.MustCompile(`^(#|[-*+>] |\d+[.)] )`)
-var markdownInline = regexp.MustCompile("\\*\\*|__|`|\\]\\(|(^|[\\s(])[*_][^\\s*_][^*_]*[*_]($|[\\s.,;:!?)])")
+var markdownLine = regexp.MustCompile(`^(#|>|[-*+] |\d+[.)] )`)
+var markdownInline = regexp.MustCompile("\\*\\*|__|`|\\]\\(|(^|[\\s(\"'“‘—–-])(\\*[^\\s*][^*]*\\*|_[^\\s_][^_]*_($|[^\\p{L}\\p{N}_]))")
 
 type EntryError struct {
 	EntryID string
