@@ -65,6 +65,7 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
   const revision = knowledge.status === "ready" ? knowledge.data.revision : undefined
   const [search, setSearch] = useState("")
   const words = fold(search).split(/\s+/).filter(Boolean)
+  const draftKey = knowledgeDraftKey(actorSubject, props.practiceID, props.locationID)
 
   return (
     <AgentPage
@@ -114,8 +115,8 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
       >
         {(data) => (
           <KnowledgeEditor
-            key={knowledgeDraftKey(actorSubject, props.practiceID, props.locationID)}
-            draftKey={knowledgeDraftKey(actorSubject, props.practiceID, props.locationID)}
+            key={draftKey}
+            draftKey={draftKey}
             practiceID={props.practiceID}
             locationID={props.locationID}
             loaded={data}
@@ -128,8 +129,6 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
     </AgentPage>
   )
 }
-
-type PublishState = { status: "idle" } | { status: "failed"; failure: PortalFailure }
 
 function KnowledgeEditor({
   draftKey,
@@ -153,26 +152,25 @@ function KnowledgeEditor({
       base: loaded,
       entries: loaded.sections.map((section) => ({ ...section, key: section.id })),
       reason: "",
-      publishing: false,
+      publish: { status: "idle" },
     }),
     [loaded],
   )
   const stored = useSyncExternalStore(subscribeKnowledgeDrafts, () => readKnowledgeDraft(draftKey), () => undefined)
   const draft = stored ?? fresh
   const [editing, setEditing] = useState("")
-  const [publish, setPublish] = useState<PublishState>({ status: "idle" })
   const [revealed, setRevealed] = useState({ key: "", count: 0 })
-  const wasPublishing = useRef(draft.publishing)
+  const wasPublishing = useRef(draft.publish.status === "publishing")
   const reasonID = useId()
 
   useEffect(() => {
     if (wasPublishing.current && !stored) onReload()
-    wasPublishing.current = stored?.publishing ?? false
+    wasPublishing.current = stored?.publish.status === "publishing"
   }, [stored, onReload])
 
   function update(next: Draft) {
-    writeKnowledgeDraft(draftKey, changed(next) || next.reason.trim() ? next : undefined)
-    setPublish({ status: "idle" })
+    const idle: Draft = { ...next, publish: { status: "idle" } }
+    writeKnowledgeDraft(draftKey, changed(idle) || idle.reason.trim() ? idle : undefined)
   }
 
   function updateEntry(key: string, change: Partial<KnowledgeSection>) {
@@ -187,11 +185,11 @@ function KnowledgeEditor({
 
   const unpublished = changed(draft)
   const sections = publishedSections(draft.entries)
-  const failure = publish.status === "failed" ? publish.failure : undefined
+  const failure = draft.publish.status === "failed" ? draft.publish.failure : undefined
   const entryFailure = failure?.kind === "rejected" ? failure.entryId : undefined
   const failedEntry = draft.entries.find((_, index) => entryFailure !== undefined && sections[index].id === entryFailure)
   const shown = draft.entries.filter((entry) => entry.key === editing || matches(entry, words))
-  const publishing = draft.publishing
+  const publishing = draft.publish.status === "publishing"
   const failureBesideEntry = failedEntry !== undefined && shown.includes(failedEntry)
 
   async function submit() {
@@ -204,14 +202,12 @@ function KnowledgeEditor({
     }
     const payload = JSON.stringify(publication)
     const attempt = draft.attempt?.payload === payload ? draft.attempt : { payload, revisionID: crypto.randomUUID() }
-    const sent: Draft = { ...draft, publishing: true, attempt }
+    const sent: Draft = { ...draft, publish: { status: "publishing" }, attempt }
     writeKnowledgeDraft(draftKey, sent)
-    setPublish({ status: "idle" })
     const outcome = await publishLocationKnowledge({ ...publication, revisionId: attempt.revisionID })
     const current = readKnowledgeDraft(draftKey) === sent
     if (!outcome.ok) {
-      if (current) writeKnowledgeDraft(draftKey, { ...sent, publishing: false })
-      setPublish({ status: "failed", failure: outcome.failure })
+      if (current) writeKnowledgeDraft(draftKey, { ...sent, publish: { status: "failed", failure: outcome.failure } })
       if (outcome.failure.entryId) {
         const index = sections.findIndex((section) => section.id === outcome.failure.entryId)
         if (index >= 0) {
@@ -276,7 +272,7 @@ function KnowledgeEditor({
             <DisclosureRow
               key={entry.key === revealed.key ? `${entry.key}:${revealed.count}` : entry.key}
               title={entry.title || "Untitled entry"}
-              defaultOpen={words.length > 0 || !entry.id || entry.key === revealed.key}
+              defaultOpen={words.length > 0 || !entry.id || entry.key === revealed.key || entry === failedEntry}
             >
               <div className="flex flex-col gap-3 px-3 pb-3 pl-9">
                 {entry === failedEntry && failure && (

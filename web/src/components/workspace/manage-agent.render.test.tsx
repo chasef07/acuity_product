@@ -423,6 +423,33 @@ test("a publish still running after leaving and returning stays locked, then sho
   await page.unmount()
 })
 
+test("a publish that fails after leaving and returning says why and keeps the changes", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Office hours", "Edit")
+  await page.fill(page.field("Text"), "Closes at six")
+  await page.fill(page.field("Why are you changing this?"), "Later closing")
+  page.publishStatus = 409
+  page.publishError = { code: "KNOWLEDGE_CHANGED", message: "Someone else changed this office's knowledge. Reload to see their changes.", correlationId: "synthetic", retryable: false }
+  let release!: () => void
+  page.publishGate = new Promise((resolve) => { release = resolve })
+  await page.click("Publish")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+
+  await page.render(insuranceList())
+  await waitFor(() => page.groups().length === 3)
+  await page.render(knowledgeBase(), "returned")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+  release()
+  await waitFor(() => page.alert() === "Someone else changed this office's knowledge. Reload to see their changes.")
+  assert.equal(page.field("Why are you changing this?").value, "Later closing")
+  assert.equal(page.button(/^Publish$/).disabled, false)
+  await page.click("Discard changes")
+  await page.unmount()
+})
+
 test("unpublished changes belong to the person who made them", async (t) => {
   const page = harness(t)
   page.knowledge = syntheticKnowledge
