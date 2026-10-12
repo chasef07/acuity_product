@@ -122,11 +122,11 @@ also rejects comments in hand-written Go; only tool directives such as
 Knowledge uses Access for Practice and office authorization, a Google Vertex AI
 adapter for embeddings, and PostgreSQL/pgvector for passages and immutable revisions.
 Embedding requests run outside database transactions; the Agent has read-only access.
-Reviewed office facts live in [`knowledge/offices/`](knowledge/offices/). The
-[Knowledge workflow](knowledge/README.md) validates edits and publishes complete
-office revisions from Git. Search combines semantic and text matching, preserving
+Each office's active database revision is its only knowledge source; staff
+publish complete office revisions through the Portal backend, as described in the
+[Knowledge workflow](knowledge/README.md). Search combines semantic and text matching, preserving
 complete facts and restrictions while limiting the evidence returned to the Agent.
-Staff read a Location's current revision, in import order and without embeddings,
+Staff read a Location's current revision, in saved order and without embeddings,
 through its single Abita Office Route.
 
 The browser/backend contract is [`api/openapi.yaml`](api/openapi.yaml).

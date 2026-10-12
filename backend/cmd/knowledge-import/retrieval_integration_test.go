@@ -53,7 +53,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 			if err := pool.QueryRow(ctx, `SELECT id::text FROM access_practices WHERE provisioning_key='focused'`).Scan(&practice); err != nil {
 				t.Fatal(err)
 			}
-			file, err := os.Open(filepath.Join("../../..", "knowledge/offices", office+".yaml"))
+			file, err := os.Open(filepath.Join("testdata/offices", office+".yaml"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +62,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cmd, err := sourceCommand(source, "0000000000000000000000000000000000000000", "none")
+			cmd, err := sourceCommand(source, "0000000000000000000000000000000000000000")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -84,7 +84,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 				AllowedSectionIDs     *[]string `json:"allowedSectionIds"`
 				MaxResponseCharacters int       `json:"maxResponseCharacters"`
 			}
-			caseFile, err := os.ReadFile(filepath.Join("../../..", "knowledge/evals", office+".json"))
+			caseFile, err := os.ReadFile(filepath.Join("testdata/evals", office+".json"))
 			if err != nil {
 				t.Fatal(err)
 			}
