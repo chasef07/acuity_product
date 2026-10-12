@@ -9,53 +9,24 @@ import (
 	"github.com/oasdiff/yaml3"
 )
 
-func TestKnowledgePublishesAfterEachReleaseDeploy(t *testing.T) {
+func TestNoWorkflowPublishesKnowledge(t *testing.T) {
 	root := filepath.Dir(releaseDeployDirectory(t))
-	if _, err := os.Stat(filepath.Join(root, ".github", "workflows", "knowledge.yml")); !os.IsNotExist(err) {
-		t.Fatal("knowledge must publish only through the Release workflow")
+	workflows, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.y*ml"))
+	if err != nil || len(workflows) == 0 {
+		t.Fatalf("workflows: %v, %v", workflows, err)
 	}
-	raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var release map[string]any
-	if err := yaml.Unmarshal(raw, &release); err != nil {
-		t.Fatal(err)
-	}
-	knowledge, ok := release["jobs"].(map[string]any)["knowledge"].(map[string]any)
-	if !ok {
-		t.Fatal("release workflow must publish knowledge")
-	}
-	if knowledge["continue-on-error"] != true {
-		t.Fatal("knowledge publication must not determine application release status")
-	}
-	if knowledge["if"] != "${{ !cancelled() && needs.deploy.result == 'success' }}" {
-		t.Fatal("knowledge must publish after every successful deploy, including when verification was already done by CI")
-	}
-	concurrency, _ := knowledge["concurrency"].(map[string]any)
-	if concurrency["group"] != "knowledge-production" || concurrency["cancel-in-progress"] != false {
-		t.Fatal("knowledge publications must run one at a time")
-	}
-	needs, _ := knowledge["needs"].([]any)
-	if len(needs) != 2 || needs[0] != "release-please" || needs[1] != "deploy" {
-		t.Fatalf("knowledge publication must follow the deploy: %v", needs)
-	}
-	steps := knowledge["steps"].([]any)
-	if steps[0].(map[string]any)["with"].(map[string]any)["ref"] != "${{ needs.release-please.outputs.release_sha }}" {
-		t.Fatal("knowledge must publish from the released commit")
-	}
-	published := false
-	for _, value := range steps {
-		step := value.(map[string]any)
-		if step["name"] != "Publish and verify office knowledge" {
-			continue
+	for _, path := range workflows {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
 		}
-		env := step["env"].(map[string]any)
-		published = env["KNOWLEDGE_COMMIT"] == "${{ needs.release-please.outputs.release_sha }}" &&
-			env["KNOWLEDGE_SERVICE_TOKEN_SECRETS"] == "${{ vars.KNOWLEDGE_SERVICE_TOKEN_SECRETS }}"
-	}
-	if !published {
-		t.Fatal("publisher must receive the released commit and practice-scoped verification secret mappings")
+		var workflow map[string]any
+		if err := yaml.Unmarshal(raw, &workflow); err != nil {
+			t.Fatal(err)
+		}
+		if jobs, _ := workflow["jobs"].(map[string]any); jobs["knowledge"] != nil || strings.Contains(string(raw), "knowledge-import") || strings.Contains(string(raw), "knowledge/offices") {
+			t.Fatalf("%s publishes knowledge; each office's active database revision is its only source", filepath.Base(path))
+		}
 	}
 }
 

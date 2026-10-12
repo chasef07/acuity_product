@@ -47,7 +47,7 @@ bounded retrieval:
 - Six-year-old eye exam: the under-seven restriction is included among four
   entries. The original live API also included this restriction.
 
-One existing failure remains explicitly recorded in `evals/known-gaps.json`:
+One existing failure remains explicitly recorded in `backend/cmd/knowledge-import/testdata/evals/known-gaps.json`:
 “Can I get my glasses prescription renewed for my toddler?” omits the under-seven
 restriction in both the original live API and the proposed retrieval. This is a
 known failure, not a passing test or a resolved patient workflow. Implicit-age
