@@ -21,6 +21,7 @@ export type PortalFailure = {
   code?: string
   message?: string
   correlationId?: string
+  entryId?: string
 }
 
 export type PortalOutcome<T> =
@@ -132,6 +133,7 @@ function portalFailure(status: number | undefined, error: unknown): PortalFailur
           code: envelope.code,
           message: envelope.message,
           correlationId: envelope.correlationId,
+          ...(envelope.entryId === undefined ? {} : { entryId: envelope.entryId }),
         }
       : {}),
   }
@@ -151,11 +153,11 @@ function errorEnvelope(value: unknown): ErrorEnvelope["error"] | undefined {
   if (typeof value !== "object" || value === null) return undefined
   const error = (value as { error?: unknown }).error
   if (typeof error !== "object" || error === null) return undefined
-  const { code, message, correlationId, retryable } = error as Record<string, unknown>
+  const { code, message, correlationId, retryable, entryId } = error as Record<string, unknown>
   return typeof code === "string" &&
     typeof message === "string" &&
     typeof correlationId === "string" &&
     typeof retryable === "boolean"
-    ? { code, message, correlationId, retryable }
+    ? { code, message, correlationId, retryable, ...(typeof entryId === "string" ? { entryId } : {}) }
     : undefined
 }

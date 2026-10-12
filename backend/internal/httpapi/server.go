@@ -2244,12 +2244,16 @@ func (server *Server) writeError(
 	message string,
 	retryable bool,
 ) {
+	server.writeJSON(w, status, errorEnvelope(r, code, message, retryable))
+}
+
+func errorEnvelope(r *http.Request, code, message string, retryable bool) api.ErrorEnvelope {
 	var envelope api.ErrorEnvelope
 	envelope.Error.Code = code
 	envelope.Error.Message = message
 	envelope.Error.CorrelationId = correlationID(r.Context())
 	envelope.Error.Retryable = retryable
-	server.writeJSON(w, status, envelope)
+	return envelope
 }
 
 func (server *Server) writeJSON(w http.ResponseWriter, status int, value any) {

@@ -88,7 +88,9 @@ func (server *Server) PublishLocationKnowledge(w http.ResponseWriter, r *http.Re
 	case err == nil:
 		server.writeJSON(w, http.StatusOK, revision)
 	case errors.As(err, &entry):
-		server.writeError(w, r, http.StatusBadRequest, "INVALID_KNOWLEDGE_ENTRY", entry.Error(), false)
+		envelope := errorEnvelope(r, "INVALID_KNOWLEDGE_ENTRY", entry.Error(), false)
+		envelope.Error.EntryId = &entry.EntryID
+		server.writeJSON(w, http.StatusBadRequest, envelope)
 	case errors.Is(err, knowledge.ErrInvalidInput):
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, access.ErrDenied):

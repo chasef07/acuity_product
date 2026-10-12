@@ -270,7 +270,7 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 	} {
 		t.Run("Abita standard rejects "+tc.name, func(t *testing.T) {
 			status, response := publish("staff-token", hollywood(tc.change(syntheticAbitaSections())))
-			if status != http.StatusBadRequest || !strings.Contains(response, `\"`+tc.entry+`\"`) {
+			if status != http.StatusBadRequest || !strings.Contains(response, `\"`+tc.entry+`\"`) || !strings.Contains(response, `"entryId":"`+tc.entry+`"`) {
 				t.Fatalf("status=%d body=%s", status, response)
 			}
 			if active(abita, "hollywood") != initial.ID {

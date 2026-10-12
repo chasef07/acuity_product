@@ -371,6 +371,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
             ) : view === "manage-agent" ? (
               <ManageAgent
                 key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
+                actorSubject={discovery.actor.subject}
                 practiceID={state.scope.practiceID}
                 locationScopeID={state.scope.locationScopeID}
                 locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
