@@ -1207,7 +1207,7 @@ func (m *Module) CreateAITask(
 					AND title = $4
 					AND urgency = $5
 					AND source_category = $6
-					AND COALESCE(caller_name, '') = $7
+					AND lower(COALESCE(caller_name, '')) = lower($7)
 					AND source_call_id = $8
 					AND source_message = $9
 					AND state = 'OPEN'
