@@ -27,10 +27,21 @@ func validateSections(sections []Section) error {
 	}
 	seen := map[string]bool{}
 	for index, section := range sections {
-		if !sectionID.MatchString(section.ID) || seen[section.ID] || strings.TrimSpace(section.Title) == "" || utf8.RuneCountInString(section.Title) > 200 || strings.TrimSpace(section.Text) == "" || utf8.RuneCountInString(section.Text) > 6000 {
-			return fmt.Errorf("section %d needs a unique safe ID, nonempty title (up to 200 characters), and complete text (up to 6000 characters): %w", index+1, ErrInvalidInput)
+		var rule string
+		switch {
+		case !sectionID.MatchString(section.ID):
+			rule = fmt.Sprintf("at position %d needs an ID of up to 100 letters, numbers, dots, dashes, or underscores", index+1)
+		case seen[section.ID]:
+			rule = "is used twice"
+		case strings.TrimSpace(section.Title) == "" || utf8.RuneCountInString(section.Title) > 200:
+			rule = "needs a title of 1 to 200 characters"
+		case strings.TrimSpace(section.Text) == "" || utf8.RuneCountInString(section.Text) > 6000:
+			rule = "needs text of 1 to 6000 characters"
+		default:
+			seen[section.ID] = true
+			continue
 		}
-		seen[section.ID] = true
+		return &EntryError{EntryID: section.ID, Rule: rule}
 	}
 	return nil
 }
@@ -58,7 +69,7 @@ func ValidateImport(cmd ImportCommand) error {
 			return ErrInvalidInput
 		}
 	}
-	if !sectionID.MatchString(cmd.OfficeKey) || strings.TrimSpace(cmd.Provenance) == "" || len(cmd.Provenance) > 4000 || strings.TrimSpace(cmd.Reason) == "" || len(cmd.Reason) > 2000 || strings.TrimSpace(cmd.ActorSubject) == "" || len(cmd.ActorSubject) > 320 {
+	if !sectionID.MatchString(cmd.OfficeKey) || strings.TrimSpace(cmd.Provenance) == "" || len(cmd.Provenance) > 4000 || strings.TrimSpace(cmd.Reason) == "" || utf8.RuneCountInString(cmd.Reason) > 2000 || strings.TrimSpace(cmd.ActorSubject) == "" || len(cmd.ActorSubject) > 320 {
 		return ErrInvalidInput
 	}
 	if err := validateSections(cmd.Sections); err != nil {
@@ -94,13 +105,6 @@ func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision
 		return Revision{}, err
 	}
 	defer tx.Rollback(ctx)
-	var route string
-	if err = tx.QueryRow(ctx, `SELECT office_key FROM access_abita_office_locations WHERE practice_id=$1 AND office_key=$2 FOR SHARE`, cmd.PracticeID, cmd.OfficeKey).Scan(&route); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = access.ErrDenied
-		}
-		return Revision{}, err
-	}
 	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_corpora(practice_id,office_key) VALUES($1,$2) ON CONFLICT DO NOTHING`, cmd.PracticeID, cmd.OfficeKey); err != nil {
 		return Revision{}, err
 	}

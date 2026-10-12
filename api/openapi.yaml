@@ -1966,6 +1966,34 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/knowledge/revisions:
+    post:
+      operationId: publishLocationKnowledge
+      summary: Publish a complete knowledge revision for one authorized Location.
+      description: Replaces the Location's office knowledge with the ordered sections in one new revision. Abita searches the new revision on its next lookup. The office comes from the Location, never the request. Repeating the same revisionId with the same content returns the same revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgePublication"
+      responses:
+        "200":
+          description: The published revision, now active for the Location's office.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeRevisionSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/agent/knowledge/search:
     post:
       operationId: searchOfficeKnowledge
@@ -2088,6 +2116,33 @@ components:
           $ref: "#/components/schemas/KnowledgeRevisionSummary"
         sections:
           type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeSection"
+    KnowledgePublication:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId, revisionId, reason, sections]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        revisionId:
+          type: string
+          format: uuid
+        expectedRevisionId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        sections:
+          type: array
+          minItems: 1
+          maxItems: 100
           items:
             $ref: "#/components/schemas/KnowledgeSection"
     KnowledgeRevisionSummary:

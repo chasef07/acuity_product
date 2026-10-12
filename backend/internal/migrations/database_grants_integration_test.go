@@ -686,7 +686,10 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_softphone_leases",
 		"human_calling_staff_transfers",
 		"human_calling_timeline",
+		"knowledge_corpora",
+		"knowledge_passages",
 		"knowledge_retrieval_observations",
+		"knowledge_revisions",
 		"messaging_attachments",
 		"messaging_messages",
 		"messaging_provider_commands",
@@ -861,6 +864,7 @@ func expectedColumnPrivileges() map[string]bool {
 		"reviewed_at",
 	)
 	grant("acuity_portal", "public.ai_call_review_assignments", "UPDATE", "note", "question_idea", "completed_at")
+	grant("acuity_portal", "public.knowledge_corpora", "UPDATE", "revision_id")
 	grant(
 		"acuity_portal",
 		"public.ai_interaction_receipts",

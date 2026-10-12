@@ -15,6 +15,15 @@ export type LocationKnowledge = {
     sections: Array<KnowledgeSection>;
 };
 
+export type KnowledgePublication = {
+    practiceId: string;
+    locationId: string;
+    revisionId: string;
+    expectedRevisionId?: string;
+    reason: string;
+    sections: Array<KnowledgeSection>;
+};
+
 export type KnowledgeRevisionSummary = {
     id: string;
     createdAt: string;
@@ -4375,6 +4384,47 @@ export type QueryLocationKnowledgeResponses = {
 };
 
 export type QueryLocationKnowledgeResponse = QueryLocationKnowledgeResponses[keyof QueryLocationKnowledgeResponses];
+
+export type PublishLocationKnowledgeData = {
+    body: KnowledgePublication;
+    path?: never;
+    query?: never;
+    url: '/v1/knowledge/revisions';
+};
+
+export type PublishLocationKnowledgeErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type PublishLocationKnowledgeError = PublishLocationKnowledgeErrors[keyof PublishLocationKnowledgeErrors];
+
+export type PublishLocationKnowledgeResponses = {
+    /**
+     * The published revision, now active for the Location's office.
+     */
+    200: KnowledgeRevisionSummary;
+};
+
+export type PublishLocationKnowledgeResponse = PublishLocationKnowledgeResponses[keyof PublishLocationKnowledgeResponses];
 
 export type SearchOfficeKnowledgeData = {
     body: {

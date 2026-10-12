@@ -128,6 +128,7 @@ type Actor struct {
 
 type Practice struct {
 	ID      string `json:"id"`
+	Key     string `json:"-"`
 	Name    string `json:"name"`
 	Version int64  `json:"version"`
 }
@@ -1543,11 +1544,12 @@ func loadOperatorAuthorization(
 		PlatformOperator: true,
 	}
 	if err := tx.QueryRow(ctx, `
-		SELECT id::text, name, workspace_version
+		SELECT id::text, provisioning_key, name, workspace_version
 		FROM access_practices
 		WHERE id = $1
 	`, practiceID).Scan(
 		&result.Practice.ID,
+		&result.Practice.Key,
 		&result.Practice.Name,
 		&result.Practice.Version,
 	); err != nil {
@@ -1710,6 +1712,7 @@ func loadMembershipAuthorization(
 			m.role,
 			m.location_scope,
 			p.id::text,
+			p.provisioning_key,
 			p.name,
 			p.workspace_version
 		FROM access_memberships m
@@ -1727,6 +1730,7 @@ func loadMembershipAuthorization(
 		&result.Membership.Role,
 		&result.Membership.LocationScope,
 		&result.Practice.ID,
+		&result.Practice.Key,
 		&result.Practice.Name,
 		&result.Practice.Version,
 	); err != nil {

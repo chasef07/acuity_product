@@ -95,8 +95,8 @@ func TestKnowledgeHTTPServiceScopeAndRuntimeDatabaseRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtimePool.Exec(ctx, `UPDATE knowledge_corpora SET revision_id=NULL WHERE practice_id=$1`, practice); err == nil {
-		t.Fatal("runtime may update corpus")
+	if _, err := runtimePool.Exec(ctx, `UPDATE knowledge_passages SET text='rewritten' WHERE revision_id=$1`, revision.ID); err == nil {
+		t.Fatal("runtime may rewrite published passages")
 	}
 	service := access.ServiceIdentity{Subject: "agent", PracticeID: practice, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityReadKnowledge}}
 	wrongPractice := service
