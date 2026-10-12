@@ -28,6 +28,7 @@ type OperatorCallIssue struct {
 	Phone         string
 	StartedAt     time.Time
 	Reason        AgentCallIssueReason
+	Note          string
 	ReportedBy    string
 	ReportedAt    time.Time
 	Review        *CallIssueReview
@@ -35,6 +36,7 @@ type OperatorCallIssue struct {
 
 const operatorCallIssueSelect = `
 SELECT interaction.id::text, interaction.phone, interaction.started_at, issue.reason,
+ ` + issueNoteWithoutPreviousReleaseReasonCopy + `,
  COALESCE(
   (SELECT email FROM access_memberships WHERE user_subject = issue.reported_by AND practice_id = interaction.practice_id),
   (SELECT email FROM access_platform_operators WHERE user_subject = issue.reported_by),
@@ -50,7 +52,7 @@ func scanOperatorCallIssue(row pgx.Row) (OperatorCallIssue, error) {
 	var review CallIssueReview
 	var outcome *CallIssueOutcome
 	var reviewedAt *time.Time
-	err := row.Scan(&issue.InteractionID, &issue.Phone, &issue.StartedAt, &issue.Reason, &issue.ReportedBy, &issue.ReportedAt, &outcome, &review.ReviewedBy, &reviewedAt)
+	err := row.Scan(&issue.InteractionID, &issue.Phone, &issue.StartedAt, &issue.Reason, &issue.Note, &issue.ReportedBy, &issue.ReportedAt, &outcome, &review.ReviewedBy, &reviewedAt)
 	if outcome != nil {
 		review.Outcome, review.ReviewedAt = *outcome, *reviewedAt
 		issue.Review = &review

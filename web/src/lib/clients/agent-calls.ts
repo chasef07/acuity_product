@@ -69,12 +69,16 @@ export function useAgentCall(interactionID: string) {
   )
 }
 
-export function flagAgentCallIssue(interactionID: string, reason: AgentCallIssueReason) {
+export function flagAgentCallIssue(
+  interactionID: string,
+  reason: AgentCallIssueReason,
+  note: string,
+) {
   return portalRequest((transport) =>
     flagAgentCallIssueRequest({
       ...transport,
       path: { interactionId: interactionID },
-      body: { reason },
+      body: { reason, note },
     }),
   )
 }

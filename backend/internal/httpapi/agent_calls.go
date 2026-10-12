@@ -60,9 +60,13 @@ func (server *Server) FlagAgentCallIssue(w http.ResponseWriter, r *http.Request,
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
+	note := ""
+	if body.Note != nil {
+		note = *body.Note
+	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	issue, err := server.interactions.FlagAgentCallIssue(ctx, identity, id.String(), interaction.AgentCallIssueReason(body.Reason))
+	issue, err := server.interactions.FlagAgentCallIssue(ctx, identity, id.String(), interaction.AgentCallIssueReason(body.Reason), note)
 	if err != nil {
 		server.writeInteractionError(w, r, err)
 		return
