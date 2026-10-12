@@ -585,6 +585,20 @@ func (m *Module) LockReadAuthorization(
 	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, false, true)
 }
 
+func (m *Module) ReadPracticeKey(ctx context.Context, practiceID string) (string, error) {
+	if m.database == nil {
+		return "", ErrDenied
+	}
+	var key string
+	if err := m.database.QueryRow(ctx, `SELECT provisioning_key FROM access_practices WHERE id = $1`, practiceID).Scan(&key); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrDenied
+		}
+		return "", fmt.Errorf("read Practice key: %w", err)
+	}
+	return key, nil
+}
+
 func (m *Module) ReadLocationAbitaOfficeKey(
 	ctx context.Context,
 	identity Identity,
@@ -602,6 +616,30 @@ func (m *Module) ReadLocationAbitaOfficeKey(
 	if _, err := m.LockReadAuthorization(ctx, tx, identity, practiceID, locationID); err != nil {
 		return "", err
 	}
+	key, err := locationAbitaOfficeKey(ctx, tx, practiceID, locationID)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit Abita Office Route read: %w", err)
+	}
+	return key, nil
+}
+
+func (m *Module) LockLocationAbitaOfficeKey(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+	practiceID string,
+	locationID string,
+) (string, error) {
+	if _, err := m.LockMutationAuthorization(ctx, tx, identity, practiceID, locationID); err != nil {
+		return "", err
+	}
+	return locationAbitaOfficeKey(ctx, tx, practiceID, locationID)
+}
+
+func locationAbitaOfficeKey(ctx context.Context, tx pgx.Tx, practiceID, locationID string) (string, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT office_key
 		FROM access_abita_office_locations
@@ -615,9 +653,6 @@ func (m *Module) ReadLocationAbitaOfficeKey(
 	keys, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
 		return "", fmt.Errorf("scan Abita Office Routes: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", fmt.Errorf("commit Abita Office Route read: %w", err)
 	}
 	if len(keys) != 1 {
 		return "", ErrNoOfficeRoute

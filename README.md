@@ -175,8 +175,10 @@ containing data you need.** Backend tests require a name ending in `_test`;
 browser tests require `_e2e`.
 
 These examples assume local PostgreSQL accepts your current OS user on
-`127.0.0.1` and has the pgvector extension installed (for example,
-`brew install pgvector`); without it, migrations stop at `0066_office_knowledge`.
+`127.0.0.1` and has the pgvector extension installed; without it, migrations
+stop at `0066_office_knowledge`. Homebrew's `pgvector` installs only for
+`postgresql@17` and newer, so run tests on `postgresql@17` or CI's
+`pgvector/pgvector:0.8.5-pg16-bookworm` image.
 Adjust the connection settings for your local installation. Create
 the databases once, then set the URLs in the shell where you run the tests.
 

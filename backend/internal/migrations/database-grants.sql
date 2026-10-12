@@ -606,9 +606,11 @@ ON TABLE public.messaging_attachment_cleanup
 TO acuity_portal, acuity_worker;
 GRANT UPDATE (object_key) ON TABLE public.messaging_attachments TO acuity_portal;
 
--- Knowledge search reads imported facts; only the operator CLI can replace them.
-GRANT SELECT ON TABLE public.knowledge_corpora, public.knowledge_revisions,
+-- Staff publish whole new revisions and switch the active one; published
+-- revisions and passages are never updated or deleted.
+GRANT SELECT, INSERT ON TABLE public.knowledge_corpora, public.knowledge_revisions,
     public.knowledge_passages TO acuity_portal;
+GRANT UPDATE (revision_id) ON TABLE public.knowledge_corpora TO acuity_portal;
 GRANT INSERT ON TABLE public.knowledge_retrieval_observations TO acuity_portal;
 
 -- Human reply snapshots and provider-confirmed shared completion.

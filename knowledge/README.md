@@ -61,8 +61,10 @@ test; add an ID there before publishing a new topic.
 2. Merge the reviewed PR into `main` with a `fix(knowledge): …` or
    `feat(knowledge): …` title so release-please includes it in the next release.
 3. Merge the release PR. After that Release run deploys to production, its
-   `knowledge` job publishes from exactly the released commit. This is the only
-   way knowledge reaches production. It checks each office against its active
+   `knowledge` job publishes from exactly the released commit. The backend can
+   also publish a revision through `POST /v1/knowledge/revisions`, but the next
+   release republishes any office whose YAML differs from its active revision,
+   so do not ship Portal editing until these files are retired. The job checks each office against its active
    database revision, publishes changed content, and skips unchanged offices
    without generating new embeddings or revisions. A Release run that does not
    deploy publishes nothing.

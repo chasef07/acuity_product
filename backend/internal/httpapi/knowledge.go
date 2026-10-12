@@ -52,6 +52,59 @@ func (server *Server) writeKnowledgeUnavailable(w http.ResponseWriter) {
 	server.writeJSON(w, http.StatusServiceUnavailable, knowledge.SearchResult{Outcome: "temporary_failure", Passages: []knowledge.Passage{}})
 }
 
+func (server *Server) PublishLocationKnowledge(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.KnowledgePublication
+	if !server.decodeJSONLimit(w, r, &body, 4<<20) {
+		return
+	}
+	if server.knowledge == nil {
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Not published. Nothing changed. Try again.", true)
+		return
+	}
+	sections := make([]knowledge.Section, len(body.Sections))
+	for i, section := range body.Sections {
+		sections[i] = knowledge.Section{ID: section.Id, Title: section.Title, Text: section.Text}
+	}
+	expected := ""
+	if body.ExpectedRevisionId != nil {
+		expected = body.ExpectedRevisionId.String()
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	revision, err := server.knowledge.PublishLocation(ctx, knowledge.PublishCommand{
+		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: body.LocationId.String(),
+		RevisionID: body.RevisionId.String(), ExpectedRevisionID: expected, Reason: body.Reason, Sections: sections,
+	})
+	var entry *knowledge.EntryError
+	switch {
+	case err == nil:
+		server.writeJSON(w, http.StatusOK, revision)
+	case errors.As(err, &entry):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_KNOWLEDGE_ENTRY", entry.Error(), false)
+	case errors.Is(err, knowledge.ErrInvalidInput):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, access.ErrDenied):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, knowledge.ErrConflict):
+		server.writeError(w, r, http.StatusConflict, "KNOWLEDGE_CHANGED", "Someone else changed this office's knowledge. Reload to see their changes.", false)
+	case errors.Is(err, access.ErrNoOfficeRoute):
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Knowledge isn't available for this Location.", false)
+	default:
+		if r.Context().Err() == nil {
+			slog.Warn("location_knowledge_publish_failed", "cause", knowledge.FailureCode(err), "error", err.Error(), "elapsed_ms", time.Since(started).Milliseconds())
+		}
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Not published. Nothing changed. Try again.", true)
+	}
+}
+
 func (server *Server) QueryLocationKnowledge(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	if !server.portalOnly(w, r) {

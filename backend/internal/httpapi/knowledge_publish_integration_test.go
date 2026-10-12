@@ -1,0 +1,431 @@
+package httpapi_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/httpapi"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
+	"github.com/chasef07/acuity_product/backend/internal/knowledge"
+	"github.com/chasef07/acuity_product/backend/internal/messaging"
+	"github.com/chasef07/acuity_product/backend/internal/migrations"
+	"github.com/chasef07/acuity_product/backend/internal/testaccess"
+	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type switchableEmbedder struct {
+	fail   atomic.Bool
+	during atomic.Pointer[func()]
+}
+
+func (e *switchableEmbedder) Embed(ctx context.Context, texts []string, task knowledge.TaskType) ([][]float32, error) {
+	if e.fail.Load() {
+		return nil, errors.New("synthetic embedding outage")
+	}
+	if during := e.during.Swap(nil); during != nil {
+		(*during)()
+	}
+	return constantEmbedder{}.Embed(ctx, texts, task)
+}
+
+var syntheticRequiredAbitaEntries = []string{
+	"current-address", "phone", "fax", "paperwork-email", "directions", "other-offices",
+	"hours", "holiday-closures", "after-hours",
+	"providers", "provider-languages", "scope-of-services",
+	"appointment-confirmation", "new-patient-visit", "what-to-bring", "referral-requirements",
+	"billing", "payments", "self-pay-pricing",
+	"medical-records-requests", "prescription-copies", "social-follow-up",
+}
+
+func syntheticAbitaSections() []knowledge.Section {
+	sections := make([]knowledge.Section, len(syntheticRequiredAbitaEntries))
+	for i, id := range syntheticRequiredAbitaEntries {
+		sections[i] = knowledge.Section{ID: id, Title: "Synthetic " + id, Text: "Synthetic fact for " + id + "."}
+	}
+	return sections
+}
+
+type publishBody struct {
+	PracticeID         string              `json:"practiceId"`
+	LocationID         string              `json:"locationId"`
+	RevisionID         string              `json:"revisionId"`
+	ExpectedRevisionID string              `json:"expectedRevisionId,omitempty"`
+	Reason             string              `json:"reason"`
+	Sections           []knowledge.Section `json:"sections"`
+}
+
+func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	owner := access.New(pool, nil)
+	if _, err := owner.Provision(ctx, access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "knowledge-publish-http-test",
+		PlatformOperators: []string{"operator@acuity.test"},
+		Practices: []access.PracticeProvision{
+			{
+				Key:  "abita-eye-group",
+				Name: "Synthetic Abita",
+				Locations: []access.LocationProvision{
+					{Key: "hollywood", Name: "Hollywood", AbitaOfficeKeys: []string{"hollywood"}},
+					{Key: "spring-hill", Name: "Spring Hill", AbitaOfficeKeys: []string{"spring-hill"}},
+				},
+				AccessGrants: []access.AccessGrantProvision{
+					{Key: "hollywood-staff", Email: "staff@abita.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"hollywood"}},
+				},
+			},
+			{
+				Key:  "synthetic-demo",
+				Name: "Synthetic demo",
+				Locations: []access.LocationProvision{
+					{Key: "demo", Name: "Demo", AbitaOfficeKeys: []string{"demo-office"}},
+				},
+				AccessGrants: []access.AccessGrantProvision{
+					{Key: "demo-admin", Email: "admin@demo.test", Role: access.RoleAdmin, LocationScope: access.LocationScopeAll},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("provision knowledge publish fixture: %v", err)
+	}
+	staff := access.Identity{Subject: "staff-subject", Email: "staff@abita.test", EmailVerified: true}
+	demoAdmin := access.Identity{Subject: "demo-admin-subject", Email: "admin@demo.test", EmailVerified: true}
+	operator := access.Identity{Subject: "operator-subject", Email: "operator@acuity.test", EmailVerified: true}
+	staffAuthorization := testaccess.Activate(t, owner, staff)
+	demoAuthorization := testaccess.Activate(t, owner, demoAdmin)
+	if _, err := owner.DiscoverActor(ctx, operator); err != nil {
+		t.Fatalf("activate operator: %v", err)
+	}
+	abita := staffAuthorization.Practice.ID
+	demo := demoAuthorization.Practice.ID
+	locations := map[string]string{}
+	for _, row := range []struct{ practice, key string }{{abita, "hollywood"}, {abita, "spring-hill"}, {demo, "demo"}} {
+		var id string
+		if err := pool.QueryRow(ctx, `SELECT id::text FROM access_locations WHERE practice_id=$1 AND provisioning_key=$2`, row.practice, row.key).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		locations[row.key] = id
+	}
+
+	embedder := &switchableEmbedder{}
+	ownerKnowledge, err := knowledge.New(pool, owner, embedder, knowledge.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := ownerKnowledge.ReplaceCorpus(ctx, knowledge.ImportCommand{
+		ID: uuid.NewString(), PracticeID: abita, OfficeKey: "hollywood",
+		Sections:   append(syntheticAbitaSections(), knowledge.Section{ID: "sunglasses", Title: "Sunglasses", Text: "Synthetic sunglasses are sold here."}),
+		Provenance: "approved synthetic fixture", Reason: "initial import", ActorSubject: "synthetic-operator",
+	})
+	if err != nil {
+		t.Fatalf("import initial knowledge: %v", err)
+	}
+
+	for _, role := range []string{"acuity_portal", "acuity_provider", "acuity_realtime", "acuity_worker", "acuity_auth", "acuity_migrate"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)`, role).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			if _, err := pool.Exec(ctx, "CREATE ROLE "+pgx.Identifier{role}.Sanitize()+" NOLOGIN"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := migrations.ApplyRuntimeGrants(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	config := pool.Config().Copy()
+	config.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `SET ROLE acuity_portal`)
+		return err
+	}
+	runtimePool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtimePool.Close()
+
+	accessModule := access.New(runtimePool, nil)
+	knowledgeModule, err := knowledge.New(runtimePool, accessModule, embedder, knowledge.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceAuthenticator, err := access.NewServiceAuthenticator(
+		access.ServiceCredential{Token: "abita-agent-token", Identity: access.ServiceIdentity{Subject: "abita-agent", PracticeID: abita, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityReadKnowledge}}},
+		access.ServiceCredential{Token: "demo-agent-token", Identity: access.ServiceIdentity{Subject: "demo-agent", PracticeID: demo, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityReadKnowledge}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workModule := work.New(runtimePool, accessModule, nil)
+	handler, err := httpapi.NewPortal(httpapi.Config{AcquireTimeout: time.Second}, runtimePool, httpapi.PortalDependencies{
+		Access:               accessModule,
+		Authenticator:        staticAuthenticator{"staff-token": staff, "demo-token": demoAdmin, "operator-token": operator},
+		Calling:              humancalling.New(runtimePool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil),
+		Interactions:         interaction.New(runtimePool, accessModule, nil),
+		Messaging:            messaging.New(runtimePool, accessModule, workModule, nil, messaging.Config{}, nil),
+		Work:                 workModule,
+		Workspace:            workspace.New(runtimePool, accessModule),
+		Knowledge:            knowledgeModule,
+		ServiceAuthenticator: serviceAuthenticator,
+	})
+	if err != nil {
+		t.Fatalf("create portal: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	publish := func(token string, body publishBody) (int, string) {
+		t.Helper()
+		payload, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/knowledge/revisions", token, payload)
+		defer response.Body.Close()
+		return response.StatusCode, readBody(t, response)
+	}
+	active := func(practice, office string) string {
+		t.Helper()
+		var revision string
+		if err := pool.QueryRow(ctx, `SELECT revision_id::text FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2`, practice, office).Scan(&revision); err != nil {
+			t.Fatal(err)
+		}
+		return revision
+	}
+	search := func(office string) knowledge.SearchResult {
+		t.Helper()
+		payload := []byte(`{"query":"When does the office close?"}`)
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/agent/knowledge/search", strings.NewReader(string(payload)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer abita-agent-token")
+		req.Header.Set("X-Office-Key", office)
+		req.Header.Set("Content-Type", "application/json")
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result knowledge.SearchResult
+		decode(t, response, &result)
+		return result
+	}
+	hollywood := func(sections []knowledge.Section) publishBody {
+		return publishBody{PracticeID: abita, LocationID: locations["hollywood"], RevisionID: uuid.NewString(), ExpectedRevisionID: initial.ID, Reason: "Correct closing time", Sections: sections}
+	}
+
+	edited := syntheticAbitaSections()
+	edited[6].Text = "The synthetic office now closes at half past five."
+	edited = append([]knowledge.Section{{ID: "parking", Title: "Parking", Text: "Synthetic free parking is behind the building."}}, edited...)
+	first := hollywood(edited)
+
+	t.Run("staff without access to the Location is denied", func(t *testing.T) {
+		body := first
+		body.LocationID = locations["spring-hill"]
+		if status, response := publish("staff-token", body); status != http.StatusForbidden {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		if active(abita, "hollywood") != initial.ID {
+			t.Fatal("denied publish changed the active revision")
+		}
+	})
+
+	for _, tc := range []struct {
+		name, entry string
+		change      func([]knowledge.Section) []knowledge.Section
+	}{
+		{"required entry removed", "hours", func(s []knowledge.Section) []knowledge.Section {
+			return slices.DeleteFunc(s, func(x knowledge.Section) bool { return x.ID == "hours" })
+		}},
+		{"entry too long", "billing", func(s []knowledge.Section) []knowledge.Section {
+			s[16].Text = strings.Repeat("a", 801)
+			return s
+		}},
+		{"markdown", "payments", func(s []knowledge.Section) []knowledge.Section {
+			s[17].Text = "Synthetic payments.\n- **Cards** accepted"
+			return s
+		}},
+		{"duplicate title", "fax", func(s []knowledge.Section) []knowledge.Section {
+			s[2].Title = s[1].Title
+			return s
+		}},
+	} {
+		t.Run("Abita standard rejects "+tc.name, func(t *testing.T) {
+			status, response := publish("staff-token", hollywood(tc.change(syntheticAbitaSections())))
+			if status != http.StatusBadRequest || !strings.Contains(response, `\"`+tc.entry+`\"`) {
+				t.Fatalf("status=%d body=%s", status, response)
+			}
+			if active(abita, "hollywood") != initial.ID {
+				t.Fatal("rejected publish changed the active revision")
+			}
+		})
+	}
+
+	t.Run("missing revision ID is rejected", func(t *testing.T) {
+		body := first
+		body.RevisionID = uuid.Nil.String()
+		if status, response := publish("staff-token", body); status != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+	})
+
+	t.Run("embedding failure leaves the previous revision searchable", func(t *testing.T) {
+		embedder.fail.Store(true)
+		status, response := publish("staff-token", hollywood(edited))
+		embedder.fail.Store(false)
+		if status != http.StatusServiceUnavailable || !strings.Contains(response, "Nothing changed") {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		if active(abita, "hollywood") != initial.ID {
+			t.Fatal("failed publish changed the active revision")
+		}
+		if result := search("hollywood"); result.RevisionID == nil || *result.RevisionID != initial.ID {
+			t.Fatalf("search after failed publish=%+v", result)
+		}
+	})
+
+	t.Run("access revoked while embedding blocks the publish", func(t *testing.T) {
+		revoke := func() {
+			if _, err := pool.Exec(ctx, `UPDATE access_memberships SET revoked_at=now() WHERE user_subject=$1`, staff.Subject); err != nil {
+				t.Error(err)
+			}
+		}
+		embedder.during.Store(&revoke)
+		status, response := publish("staff-token", hollywood(edited))
+		if _, err := pool.Exec(ctx, `UPDATE access_memberships SET revoked_at=NULL WHERE user_subject=$1`, staff.Subject); err != nil {
+			t.Fatal(err)
+		}
+		if status != http.StatusForbidden {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		if active(abita, "hollywood") != initial.ID {
+			t.Fatal("revoked member changed the active revision")
+		}
+	})
+
+	t.Run("staff publish is live for the agent and attributed", func(t *testing.T) {
+		status, response := publish("staff-token", first)
+		if status != http.StatusOK {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		var revision struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(response), &revision); err != nil || revision.ID != first.RevisionID {
+			t.Fatalf("revision=%s err=%v", response, err)
+		}
+		if active(abita, "hollywood") != first.RevisionID {
+			t.Fatal("publish did not switch the active revision")
+		}
+		result := search("hollywood")
+		if result.RevisionID == nil || *result.RevisionID != first.RevisionID {
+			t.Fatalf("agent search=%+v", result)
+		}
+		var createdBy, provenance, reason, previous string
+		if err := pool.QueryRow(ctx, `SELECT created_by, provenance, reason, previous_revision_id::text FROM knowledge_revisions WHERE id=$1`, first.RevisionID).Scan(&createdBy, &provenance, &reason, &previous); err != nil {
+			t.Fatal(err)
+		}
+		if createdBy != staff.Subject || provenance != "portal" || reason != first.Reason || previous != initial.ID {
+			t.Fatalf("attribution=%s %s %s %s", createdBy, provenance, reason, previous)
+		}
+		rows, err := pool.Query(ctx, `SELECT section_id FROM knowledge_passages WHERE revision_id=$1 ORDER BY position`, first.RevisionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		order, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := make([]string, len(edited))
+		for i, s := range edited {
+			want[i] = s.ID
+		}
+		if !slices.Equal(order, want) {
+			t.Fatalf("order=%v want=%v", order, want)
+		}
+	})
+
+	t.Run("repeating the same revision is idempotent", func(t *testing.T) {
+		status, response := publish("staff-token", first)
+		if status != http.StatusOK || !strings.Contains(response, first.RevisionID) {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		var count int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM knowledge_revisions WHERE practice_id=$1 AND office_key='hollywood'`, abita).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 2 {
+			t.Fatalf("revisions=%d", count)
+		}
+	})
+
+	t.Run("stale expected revision conflicts", func(t *testing.T) {
+		status, response := publish("staff-token", hollywood(syntheticAbitaSections()))
+		if status != http.StatusConflict {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		if active(abita, "hollywood") != first.RevisionID {
+			t.Fatal("conflicting publish changed the active revision")
+		}
+	})
+
+	t.Run("platform operator publishes under their own identity", func(t *testing.T) {
+		body := hollywood(syntheticAbitaSections())
+		body.ExpectedRevisionID = first.RevisionID
+		if status, response := publish("operator-token", body); status != http.StatusOK {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		var createdBy string
+		if err := pool.QueryRow(ctx, `SELECT created_by FROM knowledge_revisions WHERE id=$1`, body.RevisionID).Scan(&createdBy); err != nil {
+			t.Fatal(err)
+		}
+		if createdBy != operator.Subject {
+			t.Fatalf("created_by=%s", createdBy)
+		}
+	})
+
+	t.Run("other practices are not held to the Abita standard", func(t *testing.T) {
+		body := publishBody{PracticeID: demo, LocationID: locations["demo"], RevisionID: uuid.NewString(), Reason: "First demo facts"}
+		for i := range 30 {
+			body.Sections = append(body.Sections, knowledge.Section{ID: fmt.Sprintf("topic-%d", i), Title: fmt.Sprintf("Topic %d", i), Text: strings.Repeat("Demo fact. ", 545)})
+		}
+		if status, response := publish("demo-token", body); status != http.StatusOK {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		if active(demo, "demo-office") != body.RevisionID {
+			t.Fatal("demo publish did not switch the active revision")
+		}
+	})
+
+	t.Run("portal role cannot rewrite or delete published knowledge", func(t *testing.T) {
+		for _, statement := range []string{
+			`UPDATE knowledge_revisions SET reason='rewritten'`,
+			`UPDATE knowledge_passages SET text='rewritten'`,
+			`DELETE FROM knowledge_passages`,
+			`DELETE FROM knowledge_revisions`,
+			`UPDATE knowledge_corpora SET office_key='other'`,
+		} {
+			if _, err := runtimePool.Exec(ctx, statement); err == nil {
+				t.Fatalf("portal role may run %s", statement)
+			}
+		}
+	})
+}
