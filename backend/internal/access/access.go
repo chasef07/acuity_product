@@ -599,6 +599,37 @@ func (m *Module) ReadPracticeKey(ctx context.Context, practiceID string) (string
 	return key, nil
 }
 
+func (m *Module) ReadSubjectEmails(ctx context.Context, practiceID string, subjects []string) (map[string]string, error) {
+	if m.database == nil {
+		return nil, ErrDenied
+	}
+	rows, err := m.database.Query(ctx, `
+		SELECT subject, COALESCE(
+			(SELECT email FROM access_memberships WHERE user_subject = subject AND practice_id = $1),
+			(SELECT email FROM access_platform_operators WHERE user_subject = subject))
+		FROM unnest($2::text[]) AS subject
+	`, practiceID, subjects)
+	if err != nil {
+		return nil, fmt.Errorf("read subject emails: %w", err)
+	}
+	defer rows.Close()
+	emails := map[string]string{}
+	for rows.Next() {
+		var subject string
+		var email *string
+		if err := rows.Scan(&subject, &email); err != nil {
+			return nil, fmt.Errorf("scan subject email: %w", err)
+		}
+		if email != nil {
+			emails[subject] = *email
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read subject emails: %w", err)
+	}
+	return emails, nil
+}
+
 func (m *Module) ReadLocationAbitaOfficeKey(
 	ctx context.Context,
 	identity Identity,

@@ -64,7 +64,6 @@ var sqlBaseline = []struct {
 	{"backend/internal/interaction/call_issue_review.go", read, "access_memberships access_platform_operators", "issue review shows reporter and reviewer emails"},
 	{"backend/internal/interaction/interaction.go", read, "access_locations", "AI Interaction views join Location names"},
 	{"backend/internal/knowledge/knowledge.go", read, "access_abita_office_locations", "publication confirms the office route exists"},
-	{"backend/internal/knowledge/location.go", read, "access_memberships access_platform_operators", "revision history shows each publisher's email"},
 	{"backend/internal/messaging/messaging.go", read, "access_locations access_practices work_task_acknowledgements", "messaging reads Practice/Location context; send claims join acknowledgements"},
 	{"backend/internal/work/responsibilities.go", read, "access_grant_locations access_grants access_locations access_membership_locations access_memberships access_practices", "responsibility routing resolves eligible staff"},
 	{"backend/internal/work/text_replies.go", lock, "messaging_threads", "text reply completion takes the thread lock inbound projection uses"},

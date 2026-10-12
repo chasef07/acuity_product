@@ -153,34 +153,65 @@ func (m *Module) replaceCorpus(ctx context.Context, cmd ImportCommand, authorize
 	if tag.RowsAffected() != 1 {
 		return Revision{}, ErrConflict
 	}
+	if rev.Version, err = revisionVersion(ctx, tx, cmd.PracticeID, cmd.OfficeKey, cmd.ID); err != nil {
+		return Revision{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return Revision{}, err
 	}
 	return rev, nil
 }
+
+const officeRevisions = `
+	SELECT r.*, row_number() OVER (ORDER BY r.created_at, r.id) AS version
+	FROM knowledge_revisions r
+	WHERE r.practice_id = $1 AND r.office_key = $2`
+
+func revisionVersion(ctx context.Context, tx pgx.Tx, practiceID, officeKey, revisionID string) (int, error) {
+	var version int
+	err := tx.QueryRow(ctx, `SELECT version FROM (`+officeRevisions+`) r WHERE r.id = $3`, practiceID, officeKey, revisionID).Scan(&version)
+	return version, err
+}
+
 func (m *Module) ReadRevision(ctx context.Context, practiceID, officeKey, revisionID string) (string, []Section, error) {
 	if uuid.Validate(practiceID) != nil || (revisionID != "" && uuid.Validate(revisionID) != nil) {
 		return "", nil, ErrInvalidInput
 	}
-	rows, err := m.db.Query(ctx, `SELECT r.id::text,p.section_id,p.title,p.text FROM knowledge_revisions r JOIN knowledge_passages p ON p.revision_id=r.id WHERE r.practice_id=$1 AND r.office_key=$2 AND r.id=COALESCE($3::uuid,(SELECT revision_id FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2)) ORDER BY p.position NULLS LAST,p.section_id`, practiceID, officeKey, optionalID(revisionID))
+	revision, sections, err := m.readRevision(ctx, practiceID, officeKey, revisionID)
 	if err != nil {
 		return "", nil, err
 	}
+	if revision == nil {
+		return "", nil, fmt.Errorf("no such revision for office %q: %w", officeKey, ErrInvalidInput)
+	}
+	return revision.ID, sections, nil
+}
+
+func (m *Module) readRevision(ctx context.Context, practiceID, officeKey, revisionID string) (*RevisionSummary, []Section, error) {
+	rows, err := m.db.Query(ctx, `
+		SELECT r.id::text, r.version, r.created_at, p.section_id, p.title, p.text
+		FROM (`+officeRevisions+`) r
+		JOIN knowledge_passages p ON p.revision_id = r.id
+		WHERE r.id = COALESCE($3::uuid, (SELECT revision_id FROM knowledge_corpora WHERE practice_id = $1 AND office_key = $2))
+		ORDER BY p.position NULLS LAST, p.section_id
+	`, practiceID, officeKey, optionalID(revisionID))
+	if err != nil {
+		return nil, nil, err
+	}
 	defer rows.Close()
-	var revision string
+	var revision *RevisionSummary
 	sections := []Section{}
 	for rows.Next() {
+		var summary RevisionSummary
 		var section Section
-		if err := rows.Scan(&revision, &section.ID, &section.Title, &section.Text); err != nil {
-			return "", nil, err
+		if err := rows.Scan(&summary.ID, &summary.Version, &summary.CreatedAt, &section.ID, &section.Title, &section.Text); err != nil {
+			return nil, nil, err
 		}
+		revision = &summary
 		sections = append(sections, section)
 	}
 	if err := rows.Err(); err != nil {
-		return "", nil, err
-	}
-	if len(sections) == 0 {
-		return "", nil, fmt.Errorf("no such revision for office %q: %w", officeKey, ErrInvalidInput)
+		return nil, nil, err
 	}
 	return revision, sections, nil
 }
@@ -207,7 +238,8 @@ func (m *Module) inspectImport(ctx context.Context, tx pgx.Tx, cmd ImportCommand
 		if current == nil || *current != cmd.ID || practice != cmd.PracticeID || office != cmd.OfficeKey || rev.ContentHash != hash || provenance != cmd.Provenance || reason != cmd.Reason || actor != cmd.ActorSubject || prior != cmd.ExpectedRevisionID {
 			return Revision{}, false, ErrConflict
 		}
-		return rev, true, nil
+		rev.Version, err = revisionVersion(ctx, tx, cmd.PracticeID, cmd.OfficeKey, cmd.ID)
+		return rev, err == nil, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Revision{}, false, err

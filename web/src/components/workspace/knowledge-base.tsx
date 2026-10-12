@@ -79,29 +79,31 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
     <AgentPage
       title="Knowledge base"
       action={
-        revision && (
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            <p className="text-sm text-muted-foreground">
-              Updated <time dateTime={revision.createdAt}>{revisionTime(revision.createdAt)}</time> · Version{" "}
-              {revision.version}
-            </p>
-            <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
-              <HistoryIcon data-icon="inline-start" />
-              History
-            </Button>
-            <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
-              <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
-                <SheetHeader className="border-b px-5 py-4">
-                  <SheetTitle>History</SheetTitle>
-                  <SheetDescription>
-                    Every published version of this office&apos;s knowledge. Restoring publishes an earlier version as a new one.
-                  </SheetDescription>
-                </SheetHeader>
-                <KnowledgeHistory practiceID={props.practiceID} locationID={props.locationID} onRestored={knowledge.retry} />
-              </SheetContent>
-            </Sheet>
-          </div>
-        )
+        <>
+          {revision && (
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <p className="text-sm text-muted-foreground">
+                Updated <time dateTime={revision.createdAt}>{revisionTime(revision.createdAt)}</time> · Version{" "}
+                {revision.version}
+              </p>
+              <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
+                <HistoryIcon data-icon="inline-start" />
+                History
+              </Button>
+            </div>
+          )}
+          <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+            <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+              <SheetHeader className="border-b px-5 py-4">
+                <SheetTitle>History</SheetTitle>
+                <SheetDescription>
+                  Every published version of this office&apos;s knowledge. Restoring publishes an earlier version as a new one.
+                </SheetDescription>
+              </SheetHeader>
+              <KnowledgeHistory practiceID={props.practiceID} locationID={props.locationID} onRestored={knowledge.retry} />
+            </SheetContent>
+          </Sheet>
+        </>
       }
       controls={
         <>

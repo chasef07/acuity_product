@@ -9,11 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const officeRevisions = `
-	SELECT r.*, row_number() OVER (ORDER BY r.created_at, r.id) AS version
-	FROM knowledge_revisions r
-	WHERE r.practice_id = $1 AND r.office_key = $2`
-
 type RevisionSummary struct {
 	ID        string    `json:"id"`
 	Version   int       `json:"version"`
@@ -64,31 +59,11 @@ func (m *Module) readLocationRevision(ctx context.Context, identity access.Ident
 	if err != nil {
 		return LocationKnowledge{}, err
 	}
-	rows, err := m.db.Query(ctx, `
-		SELECT r.id::text, r.version, r.created_at, p.section_id, p.title, p.text
-		FROM (`+officeRevisions+`) r
-		JOIN knowledge_passages p ON p.revision_id = r.id
-		WHERE r.id = COALESCE($3::uuid, (SELECT revision_id FROM knowledge_corpora WHERE practice_id = $1 AND office_key = $2))
-		ORDER BY p.position NULLS LAST, p.section_id
-	`, practiceID, officeKey, optionalID(revisionID))
+	revision, sections, err := m.readRevision(ctx, practiceID, officeKey, revisionID)
 	if err != nil {
 		return LocationKnowledge{}, err
 	}
-	defer rows.Close()
-	result := LocationKnowledge{LocationID: locationID, Sections: []Section{}}
-	for rows.Next() {
-		var revision RevisionSummary
-		var section Section
-		if err := rows.Scan(&revision.ID, &revision.Version, &revision.CreatedAt, &section.ID, &section.Title, &section.Text); err != nil {
-			return LocationKnowledge{}, err
-		}
-		result.Revision = &revision
-		result.Sections = append(result.Sections, section)
-	}
-	if err := rows.Err(); err != nil {
-		return LocationKnowledge{}, err
-	}
-	return result, nil
+	return LocationKnowledge{LocationID: locationID, Revision: revision, Sections: sections}, nil
 }
 
 func (m *Module) ReadLocationHistory(ctx context.Context, identity access.Identity, practiceID, locationID string) (LocationHistory, error) {
@@ -97,12 +72,7 @@ func (m *Module) ReadLocationHistory(ctx context.Context, identity access.Identi
 		return LocationHistory{}, err
 	}
 	rows, err := m.db.Query(ctx, `
-		SELECT r.id::text, r.version, r.created_at,
-			COALESCE(
-				(SELECT email FROM access_memberships WHERE user_subject = r.created_by AND practice_id = r.practice_id),
-				(SELECT email FROM access_platform_operators WHERE user_subject = r.created_by),
-				'Unknown user'),
-			r.provenance, r.reason, r.previous_revision_id::text,
+		SELECT r.id::text, r.version, r.created_at, r.created_by, r.provenance, r.reason, r.previous_revision_id::text,
 			r.id IS NOT DISTINCT FROM (SELECT revision_id FROM knowledge_corpora WHERE practice_id = $1 AND office_key = $2),
 			o.last_search, COALESCE(o.searches, 0)
 		FROM (`+officeRevisions+`) r
@@ -119,15 +89,28 @@ func (m *Module) ReadLocationHistory(ctx context.Context, identity access.Identi
 	}
 	defer rows.Close()
 	result := LocationHistory{LocationID: locationID, Revisions: []RevisionHistoryEntry{}}
+	subjects := []string{}
 	for rows.Next() {
 		var entry RevisionHistoryEntry
-		if err := rows.Scan(&entry.ID, &entry.Version, &entry.CreatedAt, &entry.Author, &entry.Provenance, &entry.Reason, &entry.PreviousRevisionID, &entry.Active, &entry.LastAgentSearchAt, &entry.AgentSearchCount); err != nil {
+		var subject string
+		if err := rows.Scan(&entry.ID, &entry.Version, &entry.CreatedAt, &subject, &entry.Provenance, &entry.Reason, &entry.PreviousRevisionID, &entry.Active, &entry.LastAgentSearchAt, &entry.AgentSearchCount); err != nil {
 			return LocationHistory{}, err
 		}
 		result.Revisions = append(result.Revisions, entry)
+		subjects = append(subjects, subject)
 	}
 	if err := rows.Err(); err != nil {
 		return LocationHistory{}, err
+	}
+	emails, err := m.access.ReadSubjectEmails(ctx, practiceID, subjects)
+	if err != nil {
+		return LocationHistory{}, err
+	}
+	for i, subject := range subjects {
+		result.Revisions[i].Author = emails[subject]
+		if result.Revisions[i].Author == "" {
+			result.Revisions[i].Author = "Unknown user"
+		}
 	}
 	return result, nil
 }
@@ -137,10 +120,4 @@ func (m *Module) readLocationOfficeKey(ctx context.Context, identity access.Iden
 		return "", ErrInvalidInput
 	}
 	return m.access.ReadLocationAbitaOfficeKey(ctx, identity, practiceID, locationID)
-}
-
-func (m *Module) revisionVersion(ctx context.Context, practiceID, officeKey, revisionID string) (int, error) {
-	var version int
-	err := m.db.QueryRow(ctx, `SELECT version FROM (`+officeRevisions+`) r WHERE r.id = $3`, practiceID, officeKey, revisionID).Scan(&version)
-	return version, err
 }

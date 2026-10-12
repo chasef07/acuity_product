@@ -80,6 +80,7 @@ type Revision struct {
 	ContentHash string    `json:"contentHash"`
 	Model       string    `json:"model"`
 	Dimensions  int       `json:"dimensions"`
+	Version     int       `json:"version"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
 type Passage struct {
