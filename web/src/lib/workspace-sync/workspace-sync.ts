@@ -34,6 +34,7 @@ type WorkspaceSyncTiming = {
   degradedGraceMilliseconds: number
   pollMinimumMilliseconds: number
   pollMaximumMilliseconds: number
+  idleTimeoutMilliseconds: number
 }
 
 type DeferredCatchUp = "none" | "hint" | "force"
@@ -44,6 +45,7 @@ const defaultTiming: WorkspaceSyncTiming = {
   degradedGraceMilliseconds: 3_000,
   pollMinimumMilliseconds: 15_000,
   pollMaximumMilliseconds: 30_000,
+  idleTimeoutMilliseconds: 45_000,
 }
 
 export type WorkspaceSync = {
@@ -357,7 +359,11 @@ export function createWorkspaceSync(
         }
 
         let ready = false
-        for await (const event of readEvents(response.body, signal)) {
+        for await (const event of readEvents(
+          response.body,
+          signal,
+          timing.idleTimeoutMilliseconds,
+        )) {
           if (
             event.practiceID !== scope.practiceID ||
             event.version < 1
@@ -431,6 +437,7 @@ function wait(milliseconds: number, signal: AbortSignal) {
 async function* readEvents(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
+  idleTimeoutMilliseconds: number,
 ) {
   const reader = stream.getReader()
   const cancel = () => void reader.cancel()
@@ -439,7 +446,16 @@ async function* readEvents(
   let buffer = ""
   try {
     while (!signal.aborted) {
-      const { value, done } = await reader.read()
+      let idleTimeout: ReturnType<typeof setTimeout> | undefined
+      const idle = new Promise<never>((_, reject) => {
+        idleTimeout = setTimeout(() => {
+          reject(new Error("realtime stream timed out"))
+          void reader.cancel()
+        }, idleTimeoutMilliseconds)
+      })
+      const { value, done } = await Promise.race([reader.read(), idle]).finally(
+        () => clearTimeout(idleTimeout),
+      )
       if (done) return
       buffer += decoder.decode(value, { stream: true })
       const blocks = buffer.split(/\r?\n\r?\n/)
