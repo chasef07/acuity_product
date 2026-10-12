@@ -6,9 +6,23 @@ export type KnowledgeDraft = {
   base: LocationKnowledge
   entries: KnowledgeDraftEntry[]
   reason: string
+  publishing: boolean
+  attempt?: { payload: string; revisionID: string }
 }
 
 const drafts = new Map<string, KnowledgeDraft>()
+const listeners = new Set<() => void>()
+
+export function knowledgeDraftKey(actorSubject: string, practiceID: string, locationID: string) {
+  return `${actorSubject}:${practiceID}:${locationID}`
+}
+
+export function subscribeKnowledgeDrafts(listener: () => void) {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
 
 export function readKnowledgeDraft(key: string) {
   return drafts.get(key)
@@ -17,17 +31,18 @@ export function readKnowledgeDraft(key: string) {
 export function writeKnowledgeDraft(key: string, draft: KnowledgeDraft | undefined) {
   if (draft) drafts.set(key, draft)
   else drafts.delete(key)
-  warnBeforeUnload(drafts.size > 0)
+  changedDrafts()
 }
 
 export function clearKnowledgeDrafts() {
   drafts.clear()
-  warnBeforeUnload(false)
+  changedDrafts()
 }
 
-function warnBeforeUnload(active: boolean) {
-  if (active) window.addEventListener("beforeunload", warnUnpublished)
+function changedDrafts() {
+  if (drafts.size > 0) window.addEventListener("beforeunload", warnUnpublished)
   else window.removeEventListener("beforeunload", warnUnpublished)
+  for (const listener of listeners) listener()
 }
 
 function warnUnpublished(event: BeforeUnloadEvent) {

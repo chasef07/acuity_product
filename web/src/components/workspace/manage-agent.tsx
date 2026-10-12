@@ -38,11 +38,13 @@ const ranges: { value: AgentCallsQuery["range"]; label: string }[] = [
 ]
 
 export function ManageAgent({
+  actorSubject,
   practiceID,
   locationScopeID,
   locations,
   page,
 }: {
+  actorSubject: string
   practiceID: string
   locationScopeID: string
   locations: Location[]
@@ -58,7 +60,7 @@ export function ManageAgent({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-canvas">
       {page === "knowledge" ? (
-        <KnowledgeBase {...location} />
+        <KnowledgeBase {...location} actorSubject={actorSubject} />
       ) : page === "insurance" ? (
         <InsuranceList {...location} coverage={coverage} onCoverage={setCoverage} />
       ) : (

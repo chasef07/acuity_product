@@ -47,7 +47,7 @@ test("Manage agent shows the selected page at full width without its own navigat
   const page = harness(t)
   for (const [selected, heading] of [["transcripts", "Transcripts"], ["knowledge", "Knowledge base"], ["insurance", "Insurance list"]] as const) {
     await page.render(
-      <ManageAgent practiceID="practice-1" locationScopeID="" locations={locations} page={selected} />,
+      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID="" locations={locations} page={selected} />,
     )
     assert.equal(page.host.querySelector("h1")?.textContent, heading)
     assert.equal(page.host.querySelector("nav"), null)
@@ -393,12 +393,61 @@ test("unpublished changes survive leaving the page and the browser asks before u
   await page.unmount()
 })
 
+test("a publish still running after leaving and returning stays locked, then shows the new revision", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Office hours", "Edit")
+  await page.fill(page.field("Text"), "Closes at six")
+  await page.fill(page.field("Why are you changing this?"), "Later closing")
+  page.publishResult = { id: "00000000-0000-4000-8000-0000000000a3", createdAt: "2026-10-12T19:00:00Z" }
+  page.afterPublish = { ...syntheticKnowledge, revision: page.publishResult, sections: [{ ...syntheticKnowledge.sections[0], text: "Closes at six" }, syntheticKnowledge.sections[1]] }
+  let release!: () => void
+  page.publishGate = new Promise((resolve) => { release = resolve })
+  await page.click("Publish")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+
+  await page.render(insuranceList())
+  await waitFor(() => page.groups().length === 3)
+  await page.render(knowledgeBase(), "returned")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+  assert.equal(page.maybeButton("Publishing…")!.closest("fieldset")?.disabled, true)
+
+  release()
+  await waitFor(() => page.maybeButton("Publishing…") === undefined && page.host.querySelector("time")?.getAttribute("dateTime") === "2026-10-12T19:00:00Z")
+  assert.equal(page.maybeButton("Publish"), undefined)
+  assert.equal(page.unload(), false)
+  await act(async () => page.button(/^Office hours$/).click())
+  assert.match(page.text(), /Closes at six/)
+  await page.unmount()
+})
+
+test("unpublished changes belong to the person who made them", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase("", "staff-a"))
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Parking", "Remove")
+  await page.fill(page.field("Why are you changing this?"), "Garage closed")
+
+  await page.render(knowledgeBase("", "staff-b"), "someone else")
+  await waitFor(() => page.rowTitles().length === 2)
+  assert.equal(page.maybeButton("Publish"), undefined)
+
+  await page.render(knowledgeBase("", "staff-a"), "back again")
+  await waitFor(() => page.rowTitles().length === 1)
+  assert.equal(page.field("Why are you changing this?").value, "Garage closed")
+  await page.click("Discard changes")
+  await page.unmount()
+})
+
 function insuranceList(locationScopeID = "") {
-  return <ManageAgent practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" />
+  return <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" />
 }
 
-function knowledgeBase(locationScopeID = "") {
-  return <ManageAgent practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" />
+function knowledgeBase(locationScopeID = "", actorSubject = "staff-a") {
+  return <ManageAgent actorSubject={actorSubject} practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" />
 }
 
 function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {

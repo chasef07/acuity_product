@@ -1,6 +1,6 @@
 "use client"
 
-import { useId, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { PlusIcon, SearchIcon } from "lucide-react"
 
 import { Alert, AlertTitle } from "@/components/ui/alert"
@@ -13,7 +13,9 @@ import type { KnowledgeSection, LocationKnowledge } from "@/lib/api/generated/ty
 import { publishLocationKnowledge, useLocationKnowledge } from "@/lib/clients/location-knowledge"
 import type { PortalFailure } from "@/lib/clients/portal-request"
 import {
+  knowledgeDraftKey,
   readKnowledgeDraft,
+  subscribeKnowledgeDrafts,
   writeKnowledgeDraft,
   type KnowledgeDraft as Draft,
   type KnowledgeDraftEntry as Entry,
@@ -48,10 +50,17 @@ function publishedSections(entries: Entry[]): KnowledgeSection[] {
 }
 
 function changed(draft: Draft) {
-  return JSON.stringify(publishedSections(draft.entries)) !== JSON.stringify(draft.base.sections)
+  const sections = publishedSections(draft.entries)
+  return (
+    sections.length !== draft.base.sections.length ||
+    sections.some((section, index) => {
+      const base = draft.base.sections[index]
+      return section.id !== base.id || section.title !== base.title || section.text !== base.text
+    })
+  )
 }
 
-export function KnowledgeBase(props: AgentLocationProps) {
+export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & { actorSubject: string }) {
   const knowledge = useLocationKnowledge(props)
   const revision = knowledge.status === "ready" ? knowledge.data.revision : undefined
   const [search, setSearch] = useState("")
@@ -105,7 +114,8 @@ export function KnowledgeBase(props: AgentLocationProps) {
       >
         {(data) => (
           <KnowledgeEditor
-            key={`${props.practiceID}:${props.locationID}`}
+            key={knowledgeDraftKey(actorSubject, props.practiceID, props.locationID)}
+            draftKey={knowledgeDraftKey(actorSubject, props.practiceID, props.locationID)}
             practiceID={props.practiceID}
             locationID={props.locationID}
             loaded={data}
@@ -119,9 +129,10 @@ export function KnowledgeBase(props: AgentLocationProps) {
   )
 }
 
-type PublishState = { status: "idle" } | { status: "publishing" } | { status: "failed"; failure: PortalFailure }
+type PublishState = { status: "idle" } | { status: "failed"; failure: PortalFailure }
 
 function KnowledgeEditor({
+  draftKey,
   practiceID,
   locationID,
   loaded,
@@ -129,6 +140,7 @@ function KnowledgeEditor({
   words,
   onReload,
 }: {
+  draftKey: string
   practiceID: string
   locationID: string
   loaded: LocationKnowledge
@@ -136,24 +148,30 @@ function KnowledgeEditor({
   words: string[]
   onReload: () => void
 }) {
-  const draftKey = `${practiceID}:${locationID}`
-  const [draft, setDraft] = useState<Draft>(
-    () =>
-      readKnowledgeDraft(draftKey) ?? {
-        base: loaded,
-        entries: loaded.sections.map((section) => ({ ...section, key: section.id })),
-        reason: "",
-      },
+  const fresh = useMemo<Draft>(
+    () => ({
+      base: loaded,
+      entries: loaded.sections.map((section) => ({ ...section, key: section.id })),
+      reason: "",
+      publishing: false,
+    }),
+    [loaded],
   )
+  const stored = useSyncExternalStore(subscribeKnowledgeDrafts, () => readKnowledgeDraft(draftKey), () => undefined)
+  const draft = stored ?? fresh
   const [editing, setEditing] = useState("")
   const [publish, setPublish] = useState<PublishState>({ status: "idle" })
   const [revealed, setRevealed] = useState({ key: "", count: 0 })
-  const attempt = useRef<{ payload: string; revisionID: string }>(undefined)
+  const wasPublishing = useRef(draft.publishing)
   const reasonID = useId()
+
+  useEffect(() => {
+    if (wasPublishing.current && !stored) onReload()
+    wasPublishing.current = stored?.publishing ?? false
+  }, [stored, onReload])
 
   function update(next: Draft) {
     writeKnowledgeDraft(draftKey, changed(next) || next.reason.trim() ? next : undefined)
-    setDraft(next)
     setPublish({ status: "idle" })
   }
 
@@ -173,7 +191,7 @@ function KnowledgeEditor({
   const entryFailure = failure?.kind === "rejected" ? failure.entryId : undefined
   const failedEntry = draft.entries.find((_, index) => entryFailure !== undefined && sections[index].id === entryFailure)
   const shown = draft.entries.filter((entry) => entry.key === editing || matches(entry, words))
-  const publishing = publish.status === "publishing"
+  const publishing = draft.publishing
   const failureBesideEntry = failedEntry !== undefined && shown.includes(failedEntry)
 
   async function submit() {
@@ -185,10 +203,14 @@ function KnowledgeEditor({
       sections,
     }
     const payload = JSON.stringify(publication)
-    if (attempt.current?.payload !== payload) attempt.current = { payload, revisionID: crypto.randomUUID() }
-    setPublish({ status: "publishing" })
-    const outcome = await publishLocationKnowledge({ ...publication, revisionId: attempt.current.revisionID })
+    const attempt = draft.attempt?.payload === payload ? draft.attempt : { payload, revisionID: crypto.randomUUID() }
+    const sent: Draft = { ...draft, publishing: true, attempt }
+    writeKnowledgeDraft(draftKey, sent)
+    setPublish({ status: "idle" })
+    const outcome = await publishLocationKnowledge({ ...publication, revisionId: attempt.revisionID })
+    const current = readKnowledgeDraft(draftKey) === sent
     if (!outcome.ok) {
+      if (current) writeKnowledgeDraft(draftKey, { ...sent, publishing: false })
       setPublish({ status: "failed", failure: outcome.failure })
       if (outcome.failure.entryId) {
         const index = sections.findIndex((section) => section.id === outcome.failure.entryId)
@@ -200,8 +222,7 @@ function KnowledgeEditor({
       }
       return
     }
-    writeKnowledgeDraft(draftKey, undefined)
-    onReload()
+    if (current) writeKnowledgeDraft(draftKey, undefined)
   }
 
   function discard() {
