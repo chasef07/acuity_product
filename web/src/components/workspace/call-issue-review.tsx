@@ -80,6 +80,7 @@ export function CallIssueReview({ interactionID, initialIssue, onChange }: {
         <AlertTitle>Flagged by {issue.reportedBy}</AlertTitle>
         <AlertDescription>
           <p>{issueReasons[issue.reason]} · {formatIssueTime(issue.reportedAt)}</p>
+          {issue.note && <p className="whitespace-pre-wrap text-foreground">{issue.note}</p>}
           <div className="mt-2 flex flex-wrap gap-2">
             {outcomes.map((outcome) => {
               const selected = issue.review?.outcome === outcome.value

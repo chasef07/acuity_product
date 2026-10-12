@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -22,6 +23,9 @@ var requiredAbitaEntries = []string{
 	"billing", "payments", "self-pay-pricing",
 	"medical-records-requests", "prescription-copies", "social-follow-up",
 }
+
+var markdownLine = regexp.MustCompile(`^(#|[-*+>] |\d+[.)] )`)
+var markdownInline = regexp.MustCompile("\\*\\*|__|`|\\]\\(|(^|[\\s(])[*_][^\\s*_][^*_]*[*_]($|[\\s.,;:!?)])")
 
 type EntryError struct {
 	EntryID string
@@ -45,22 +49,30 @@ func (m *Module) PublishLocation(ctx context.Context, cmd PublishCommand) (Revis
 	if uuid.Validate(cmd.PracticeID) != nil || uuid.Validate(cmd.LocationID) != nil || cmd.RevisionID == uuid.Nil.String() {
 		return RevisionSummary{}, ErrInvalidInput
 	}
+	lock := func(ctx context.Context, tx pgx.Tx) (string, error) {
+		return m.access.LockLocationAbitaOfficeKey(ctx, tx, cmd.Identity, cmd.PracticeID, cmd.LocationID)
+	}
 	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return RevisionSummary{}, err
 	}
-	_, err = m.access.LockMutationAuthorization(ctx, tx, cmd.Identity, cmd.PracticeID, cmd.LocationID)
+	officeKey, err := lock(ctx, tx)
 	_ = tx.Rollback(ctx)
 	if err != nil {
 		return RevisionSummary{}, err
 	}
-	officeKey, err := m.access.ReadLocationAbitaOfficeKey(ctx, cmd.Identity, cmd.PracticeID, cmd.LocationID)
-	if err != nil {
-		return RevisionSummary{}, err
-	}
-	revision, err := m.ReplaceCorpus(ctx, ImportCommand{
+	revision, err := m.replaceCorpus(ctx, ImportCommand{
 		ID: cmd.RevisionID, PracticeID: cmd.PracticeID, OfficeKey: officeKey, ExpectedRevisionID: cmd.ExpectedRevisionID,
 		Sections: cmd.Sections, Provenance: "portal", Reason: cmd.Reason, ActorSubject: cmd.Identity.Subject,
+	}, func(ctx context.Context, tx pgx.Tx) error {
+		current, err := lock(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if current != officeKey {
+			return ErrConflict
+		}
+		return nil
 	})
 	if err != nil {
 		return RevisionSummary{}, err
@@ -82,7 +94,7 @@ func validateAbitaStandard(sections []Section) error {
 		}
 		for _, line := range strings.Split(section.Text, "\n") {
 			line = strings.TrimSpace(line)
-			if strings.Contains(line, "**") || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "- ") {
+			if markdownLine.MatchString(line) || markdownInline.MatchString(line) {
 				return &EntryError{EntryID: section.ID, Rule: "uses markdown formatting; write plain text"}
 			}
 		}

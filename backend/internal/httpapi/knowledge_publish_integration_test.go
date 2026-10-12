@@ -29,11 +29,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type switchableEmbedder struct{ fail atomic.Bool }
+type switchableEmbedder struct {
+	fail   atomic.Bool
+	during atomic.Pointer[func()]
+}
 
 func (e *switchableEmbedder) Embed(ctx context.Context, texts []string, task knowledge.TaskType) ([][]float32, error) {
 	if e.fail.Load() {
 		return nil, errors.New("synthetic embedding outage")
+	}
+	if during := e.during.Swap(nil); during != nil {
+		(*during)()
 	}
 	return constantEmbedder{}.Embed(ctx, texts, task)
 }
@@ -293,6 +299,25 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		}
 		if result := search("hollywood"); result.RevisionID == nil || *result.RevisionID != initial.ID {
 			t.Fatalf("search after failed publish=%+v", result)
+		}
+	})
+
+	t.Run("access revoked while embedding blocks the publish", func(t *testing.T) {
+		revoke := func() {
+			if _, err := pool.Exec(ctx, `UPDATE access_memberships SET revoked_at=now() WHERE user_subject=$1`, staff.Subject); err != nil {
+				t.Error(err)
+			}
+		}
+		embedder.during.Store(&revoke)
+		status, response := publish("staff-token", hollywood(edited))
+		if _, err := pool.Exec(ctx, `UPDATE access_memberships SET revoked_at=NULL WHERE user_subject=$1`, staff.Subject); err != nil {
+			t.Fatal(err)
+		}
+		if status != http.StatusForbidden {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		if active(abita, "hollywood") != initial.ID {
+			t.Fatal("revoked member changed the active revision")
 		}
 	})
 

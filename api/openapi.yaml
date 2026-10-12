@@ -3651,6 +3651,10 @@ components:
       properties:
         reason:
           $ref: "#/components/schemas/AgentCallIssueReason"
+        note:
+          type: string
+          maxLength: 2000
+          description: Optional staff explanation of what happened.
     AgentCallIssue:
       type: object
       additionalProperties: false
@@ -3658,6 +3662,9 @@ components:
       properties:
         reason:
           $ref: "#/components/schemas/AgentCallIssueReason"
+        note:
+          type: string
+          description: Staff explanation of what happened, when given.
         createdAt:
           type: string
           format: date-time
@@ -4372,6 +4379,7 @@ components:
         phone: {type: string}
         startedAt: {type: string, format: date-time}
         reason: {$ref: "#/components/schemas/AgentCallIssueReason"}
+        note: {type: string, description: "Staff explanation of what happened, when given."}
         reportedBy: {type: string}
         reportedAt: {type: string, format: date-time}
         review: {$ref: "#/components/schemas/OperatorAICallIssueReview"}
