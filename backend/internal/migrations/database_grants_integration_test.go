@@ -660,6 +660,7 @@ func expectedTablePrivileges() map[string]bool {
 		"knowledge_corpora",
 		"knowledge_revisions",
 		"knowledge_passages",
+		"knowledge_retrieval_observations",
 		"messaging_attachments",
 		"messaging_location_configurations",
 		"messaging_messages",

@@ -77,7 +77,11 @@ func (m *Module) PublishLocation(ctx context.Context, cmd PublishCommand) (Revis
 	if err != nil {
 		return RevisionSummary{}, err
 	}
-	return RevisionSummary{ID: revision.ID, CreatedAt: revision.CreatedAt}, nil
+	version, err := m.revisionVersion(ctx, cmd.PracticeID, officeKey, revision.ID)
+	if err != nil {
+		return RevisionSummary{}, err
+	}
+	return RevisionSummary{ID: revision.ID, Version: version, CreatedAt: revision.CreatedAt}, nil
 }
 
 func validateAbitaStandard(sections []Section) error {

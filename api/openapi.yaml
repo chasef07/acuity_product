@@ -1994,6 +1994,58 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/knowledge/revisions/query:
+    post:
+      operationId: queryLocationKnowledgeHistory
+      summary: List every knowledge revision for one authorized Location's office.
+      description: Newest first, with each revision's version, author, reason, whether it is active, and when the agent last searched it. Nothing is changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocationKnowledgeQuery"
+      responses:
+        "200":
+          description: The office's revision history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocationKnowledgeHistory"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/knowledge/revisions/read:
+    post:
+      operationId: readLocationKnowledgeRevision
+      summary: Read one knowledge revision of an authorized Location's office.
+      description: The revision's ordered entries. A revision of another office is rejected. Nothing is changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocationKnowledgeRevisionQuery"
+      responses:
+        "200":
+          description: The revision and its entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocationKnowledge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/agent/knowledge/search:
     post:
       operationId: searchOfficeKnowledge
@@ -2148,14 +2200,78 @@ components:
     KnowledgeRevisionSummary:
       type: object
       additionalProperties: false
-      required: [id, createdAt]
+      required: [id, version, createdAt]
       properties:
         id:
           type: string
           format: uuid
+        version:
+          type: integer
+          minimum: 1
+          description: Position in the office's revision history, starting at 1 for the oldest.
         createdAt:
           type: string
           format: date-time
+    LocationKnowledgeRevisionQuery:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId, revisionId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        revisionId:
+          type: string
+          format: uuid
+    LocationKnowledgeHistory:
+      type: object
+      additionalProperties: false
+      required: [locationId, revisions]
+      properties:
+        locationId:
+          type: string
+          format: uuid
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeRevisionHistoryEntry"
+    KnowledgeRevisionHistoryEntry:
+      type: object
+      additionalProperties: false
+      required: [id, version, createdAt, author, provenance, reason, active, agentSearchCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        author:
+          type: string
+          description: The publisher's email, or "Unknown user" when it cannot be resolved.
+        provenance:
+          type: string
+        reason:
+          type: string
+        previousRevisionId:
+          type: string
+          format: uuid
+        active:
+          type: boolean
+          description: Whether Abita searches this revision now.
+        lastAgentSearchAt:
+          type: string
+          format: date-time
+          description: The latest agent search of this revision; absent when the agent has not searched it.
+        agentSearchCount:
+          type: integer
+          minimum: 0
     KnowledgeSection:
       type: object
       additionalProperties: false
