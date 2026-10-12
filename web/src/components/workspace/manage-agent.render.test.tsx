@@ -450,6 +450,34 @@ test("a publish that fails after leaving and returning says why and keeps the ch
   await page.unmount()
 })
 
+test("a rejected entry is shown open beside its message after leaving and returning", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Office hours", "Edit")
+  await page.fill(page.field("Text"), "**Closes** at six")
+  await page.fill(page.field("Why are you changing this?"), "Later closing")
+  page.publishStatus = 400
+  page.publishError = { code: "INVALID_KNOWLEDGE_ENTRY", message: "Entry \"hours\" uses markdown formatting; write plain text.", correlationId: "synthetic", retryable: false, entryId: "hours" }
+  let release!: () => void
+  page.publishGate = new Promise((resolve) => { release = resolve })
+  await page.click("Publish")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+
+  await page.render(insuranceList())
+  await waitFor(() => page.groups().length === 3)
+  await page.render(knowledgeBase(), "returned")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+  release()
+  await waitFor(() => page.maybeButton("Publishing…") === undefined)
+  const hours = page.button(/^Office hours$/)
+  assert.equal(hours.getAttribute("aria-expanded"), "true")
+  assert.equal(hours.closest("li")!.querySelector("[role='alert']")?.textContent, "Entry \"hours\" uses markdown formatting; write plain text.")
+  await page.click("Discard changes")
+  await page.unmount()
+})
+
 test("unpublished changes belong to the person who made them", async (t) => {
   const page = harness(t)
   page.knowledge = syntheticKnowledge

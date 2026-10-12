@@ -188,6 +188,14 @@ function KnowledgeEditor({
   const failure = draft.publish.status === "failed" ? draft.publish.failure : undefined
   const entryFailure = failure?.kind === "rejected" ? failure.entryId : undefined
   const failedEntry = draft.entries.find((_, index) => entryFailure !== undefined && sections[index].id === entryFailure)
+  const [seenFailure, setSeenFailure] = useState(failure)
+  if (failure !== seenFailure) {
+    setSeenFailure(failure)
+    if (failedEntry) {
+      setEditing(failedEntry.key)
+      setRevealed((current) => ({ key: failedEntry.key, count: current.count + 1 }))
+    }
+  }
   const shown = draft.entries.filter((entry) => entry.key === editing || matches(entry, words))
   const publishing = draft.publish.status === "publishing"
   const failureBesideEntry = failedEntry !== undefined && shown.includes(failedEntry)
@@ -208,14 +216,6 @@ function KnowledgeEditor({
     const current = readKnowledgeDraft(draftKey) === sent
     if (!outcome.ok) {
       if (current) writeKnowledgeDraft(draftKey, { ...sent, publish: { status: "failed", failure: outcome.failure } })
-      if (outcome.failure.entryId) {
-        const index = sections.findIndex((section) => section.id === outcome.failure.entryId)
-        if (index >= 0) {
-          const key = draft.entries[index].key
-          setEditing(key)
-          setRevealed((current) => ({ key, count: current.count + 1 }))
-        }
-      }
       return
     }
     if (current) writeKnowledgeDraft(draftKey, undefined)
