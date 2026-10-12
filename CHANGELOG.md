@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.33.0](https://github.com/chasef07/acuity_product/compare/v1.32.0...v1.33.0) (2026-10-12)
+
+
+### Features
+
+* **knowledge:** let staff publish office knowledge through the backend ([#447](https://github.com/chasef07/acuity_product/issues/447)) ([1cf848f](https://github.com/chasef07/acuity_product/commit/1cf848ffc7781f7180aa4b1fc4861ce40037d928))
+* **web:** edit, add, and remove office knowledge entries in the Portal ([#449](https://github.com/chasef07/acuity_product/issues/449)) ([8db6313](https://github.com/chasef07/acuity_product/commit/8db6313451cef70c2878e100fa1901e74f0c4f11))
+
 ## [1.32.0](https://github.com/chasef07/acuity_product/compare/v1.31.0...v1.32.0) (2026-10-12)
 
 
