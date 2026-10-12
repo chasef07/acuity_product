@@ -693,6 +693,9 @@ export function createWorkspaceProjection({
       failClosed("unauthorized")
       return
     }
+    const activeScopeChanged =
+      scope.practiceID !== state.scope.practiceID ||
+      scope.locationID !== state.scope.locationID
     obsoleteScope()
     const rail = restoreRailPreferences(
       preferences,
@@ -717,6 +720,7 @@ export function createWorkspaceProjection({
       practiceID: scope.practiceID,
       locationID: scope.locationID,
     })
+    if (!activeScopeChanged) void realtimeController.refresh()
   }
 
   async function restoreNavigation() {
