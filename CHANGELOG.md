@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.32.0](https://github.com/chasef07/acuity_product/compare/v1.31.0...v1.32.0) (2026-10-12)
+
+
+### Features
+
+* **manage-agent:** let staff explain a flagged call in a note ([#445](https://github.com/chasef07/acuity_product/issues/445)) ([9dc88d5](https://github.com/chasef07/acuity_product/commit/9dc88d540527e8f6fe4028d09a5f29f07ce836a0))
+
+
+### Bug Fixes
+
+* **knowledge:** correct North Miami Beach operating days ([#444](https://github.com/chasef07/acuity_product/issues/444)) ([26374a2](https://github.com/chasef07/acuity_product/commit/26374a26d29d35971175d280bb55f282c5adce87))
+
 ## [1.31.0](https://github.com/chasef07/acuity_product/compare/v1.30.0...v1.31.0) (2026-10-11)
 
 
