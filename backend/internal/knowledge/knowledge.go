@@ -82,6 +82,15 @@ func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision
 	if err := ValidateImport(cmd); err != nil {
 		return Revision{}, err
 	}
+	practiceKey, err := m.access.ReadPracticeKey(ctx, cmd.PracticeID)
+	if err != nil {
+		return Revision{}, err
+	}
+	if practiceKey == abitaPracticeKey {
+		if err := validateAbitaStandard(cmd.Sections); err != nil {
+			return Revision{}, err
+		}
+	}
 	hash := hashSections(cmd.Sections)
 	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -140,36 +149,31 @@ func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision
 	}
 	return rev, nil
 }
-func (m *Module) RecordSectionOrder(ctx context.Context, cmd ImportCommand, revisionID string) error {
-	if uuid.Validate(cmd.PracticeID) != nil || uuid.Validate(revisionID) != nil {
-		return ErrInvalidInput
+func (m *Module) ReadRevision(ctx context.Context, practiceID, officeKey, revisionID string) (string, []Section, error) {
+	if uuid.Validate(practiceID) != nil || (revisionID != "" && uuid.Validate(revisionID) != nil) {
+		return "", nil, ErrInvalidInput
 	}
-	if err := validateSections(cmd.Sections); err != nil {
-		return err
-	}
-	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
+	rows, err := m.db.Query(ctx, `SELECT r.id::text,p.section_id,p.title,p.text FROM knowledge_revisions r JOIN knowledge_passages p ON p.revision_id=r.id WHERE r.practice_id=$1 AND r.office_key=$2 AND r.id=COALESCE($3::uuid,(SELECT revision_id FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2)) ORDER BY p.position NULLS LAST,p.section_id`, practiceID, officeKey, optionalID(revisionID))
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var current *string
-	if err := tx.QueryRow(ctx, `SELECT revision_id::text FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2 FOR UPDATE`, cmd.PracticeID, cmd.OfficeKey).Scan(&current); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrConflict
+	defer rows.Close()
+	var revision string
+	sections := []Section{}
+	for rows.Next() {
+		var section Section
+		if err := rows.Scan(&revision, &section.ID, &section.Title, &section.Text); err != nil {
+			return "", nil, err
 		}
-		return err
+		sections = append(sections, section)
 	}
-	if current == nil || *current != revisionID {
-		return ErrConflict
+	if err := rows.Err(); err != nil {
+		return "", nil, err
 	}
-	ids := make([]string, len(cmd.Sections))
-	for i, section := range cmd.Sections {
-		ids[i] = section.ID
+	if len(sections) == 0 {
+		return "", nil, fmt.Errorf("no such revision for office %q: %w", officeKey, ErrInvalidInput)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE knowledge_passages p SET position=o.ordinal-1 FROM unnest($2::text[]) WITH ORDINALITY AS o(section_id,ordinal) WHERE p.revision_id=$1 AND p.section_id=o.section_id`, revisionID, ids); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return revision, sections, nil
 }
 
 func (m *Module) inspectImport(ctx context.Context, tx pgx.Tx, cmd ImportCommand, hash string) (Revision, bool, error) {

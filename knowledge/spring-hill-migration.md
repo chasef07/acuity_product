@@ -31,4 +31,4 @@ The after-hours entry title is clarified to `After-hours doctor contact` so ordi
 
 ## Evaluation
 
-`evals/spring-hill.json` contains synthetic questions with expected entry IDs and response budgets. These are acceptance cases, not evidence that live retrieval has passed. Evaluate against the active published revision and record outcomes separately. Preserving the September 7, 2026 holiday statement preserves the live source; it must remain explicitly dated and must not be presented as a current closure.
+`backend/cmd/knowledge-import/testdata/evals/spring-hill.json` contains synthetic questions with expected entry IDs and response budgets. These are acceptance cases, not evidence that live retrieval has passed. Evaluate against the active published revision and record outcomes separately. Preserving the September 7, 2026 holiday statement preserves the live source; it must remain explicitly dated and must not be presented as a current closure.

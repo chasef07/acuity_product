@@ -49,7 +49,7 @@ func (m *Module) PublishLocation(ctx context.Context, cmd PublishCommand) (Revis
 	if err != nil {
 		return RevisionSummary{}, err
 	}
-	authorization, err := m.access.LockMutationAuthorization(ctx, tx, cmd.Identity, cmd.PracticeID, cmd.LocationID)
+	_, err = m.access.LockMutationAuthorization(ctx, tx, cmd.Identity, cmd.PracticeID, cmd.LocationID)
 	_ = tx.Rollback(ctx)
 	if err != nil {
 		return RevisionSummary{}, err
@@ -57,11 +57,6 @@ func (m *Module) PublishLocation(ctx context.Context, cmd PublishCommand) (Revis
 	officeKey, err := m.access.ReadLocationAbitaOfficeKey(ctx, cmd.Identity, cmd.PracticeID, cmd.LocationID)
 	if err != nil {
 		return RevisionSummary{}, err
-	}
-	if authorization.Practice.Key == abitaPracticeKey {
-		if err := validateAbitaStandard(cmd.Sections); err != nil {
-			return RevisionSummary{}, err
-		}
 	}
 	revision, err := m.ReplaceCorpus(ctx, ImportCommand{
 		ID: cmd.RevisionID, PracticeID: cmd.PracticeID, OfficeKey: officeKey, ExpectedRevisionID: cmd.ExpectedRevisionID,

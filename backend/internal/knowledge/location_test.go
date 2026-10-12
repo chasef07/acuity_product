@@ -57,8 +57,7 @@ func TestReadLocationReturnsTheCurrentRevisionForAnAuthorizedLocation(t *testing
 		{ID: "hours", Title: "Office hours", Text: "The synthetic office closes at six."},
 		{ID: "billing", Title: "Billing", Text: "Synthetic billing questions go to the front desk."},
 	}
-	firstCommand := ImportCommand{ID: uuid.NewString(), PracticeID: practiceID, OfficeKey: "office-alpha", Sections: sections, Provenance: "approved synthetic fixture", Reason: "initial import", ActorSubject: "operator@example.com"}
-	first, err := m.ReplaceCorpus(ctx, firstCommand)
+	first, err := m.ReplaceCorpus(ctx, ImportCommand{ID: uuid.NewString(), PracticeID: practiceID, OfficeKey: "office-alpha", Sections: sections, Provenance: "approved synthetic fixture", Reason: "initial import", ActorSubject: "operator@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,17 +73,6 @@ func TestReadLocationReturnsTheCurrentRevisionForAnAuthorizedLocation(t *testing
 	if err != nil || got.Revision == nil || got.Revision.ID != first.ID || !got.Revision.CreatedAt.Equal(first.CreatedAt) || !reflect.DeepEqual(got.Sections, sections) {
 		t.Fatalf("first revision = %+v, %v", got, err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE knowledge_passages SET position = NULL WHERE revision_id = $1`, first.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.RecordSectionOrder(ctx, firstCommand, first.ID); err != nil {
-		t.Fatalf("record section order: %v", err)
-	}
-	got, err = m.ReadLocation(ctx, staff, practiceID, locations["Alpha"])
-	if err != nil || got.Revision == nil || got.Revision.ID != first.ID || !reflect.DeepEqual(got.Sections, sections) {
-		t.Fatalf("revision after recording section order = %+v, %v", got, err)
-	}
-
 	next := []Section{{ID: "hours", Title: "Office hours", Text: "The synthetic office closes at five."}}
 	second, err := m.ReplaceCorpus(ctx, ImportCommand{ID: uuid.NewString(), PracticeID: practiceID, OfficeKey: "office-alpha", ExpectedRevisionID: first.ID, Sections: next, Provenance: "approved synthetic fixture", Reason: "update", ActorSubject: "operator@example.com"})
 	if err != nil {
