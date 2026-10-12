@@ -102,6 +102,10 @@ export type ErrorEnvelope = {
         message: string;
         correlationId: string;
         retryable: boolean;
+        /**
+         * The knowledge entry that broke a rule, when a knowledge publication is rejected.
+         */
+        entryId?: string;
     };
 };
 

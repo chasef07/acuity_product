@@ -1,5 +1,9 @@
-import { queryLocationKnowledge } from "../api/generated/sdk.gen"
-import { usePortalQuery } from "./portal-request"
+import {
+  publishLocationKnowledge as publishLocationKnowledgeRequest,
+  queryLocationKnowledge,
+} from "../api/generated/sdk.gen"
+import type { KnowledgePublication } from "../api/generated/types.gen"
+import { portalRequest, usePortalQuery } from "./portal-request"
 
 export function useLocationKnowledge({
   practiceID,
@@ -17,5 +21,11 @@ export function useLocationKnowledge({
         ...transport,
         body: { practiceId: practiceID, locationId: locationID },
       }),
+  )
+}
+
+export function publishLocationKnowledge(publication: KnowledgePublication) {
+  return portalRequest((transport) =>
+    publishLocationKnowledgeRequest({ ...transport, body: publication }),
   )
 }
