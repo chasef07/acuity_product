@@ -17,7 +17,7 @@ func TestAbitaStandardRejectsMarkdown(t *testing.T) {
 	for _, text := range []string{
 		"# Address", "- First line", "* First line", "+ First line", "> Quoted", "1. First step", "2) Second step",
 		"See **this**", "See __this__", "Use `code`", "Visit [our site](https://example.invalid)",
-		"An *emphasized* word", "An _emphasized_ word",
+		"An *emphasized* word", "An _emphasized_ word", ">Quoted", "*front_desk email*", "*Note*—bring ID", "\"*Note*\" applies", "_Note_—bring ID",
 	} {
 		var entry *EntryError
 		if err := validateAbitaStandard(sections(text)); !errors.As(err, &entry) || entry.EntryID != requiredAbitaEntries[0] {
