@@ -79,8 +79,21 @@ func ValidateImport(cmd ImportCommand) error {
 }
 
 func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision, error) {
+	return m.replaceCorpus(ctx, cmd, nil)
+}
+
+func (m *Module) replaceCorpus(ctx context.Context, cmd ImportCommand, authorize func(context.Context, pgx.Tx) error) (Revision, error) {
 	if err := ValidateImport(cmd); err != nil {
 		return Revision{}, err
+	}
+	practiceKey, err := m.access.ReadPracticeKey(ctx, cmd.PracticeID)
+	if err != nil {
+		return Revision{}, err
+	}
+	if practiceKey == abitaPracticeKey {
+		if err := validateAbitaStandard(cmd.Sections); err != nil {
+			return Revision{}, err
+		}
 	}
 	hash := hashSections(cmd.Sections)
 	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
@@ -105,6 +118,11 @@ func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision
 		return Revision{}, err
 	}
 	defer tx.Rollback(ctx)
+	if authorize != nil {
+		if err = authorize(ctx, tx); err != nil {
+			return Revision{}, err
+		}
+	}
 	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_corpora(practice_id,office_key) VALUES($1,$2) ON CONFLICT DO NOTHING`, cmd.PracticeID, cmd.OfficeKey); err != nil {
 		return Revision{}, err
 	}

@@ -42,7 +42,7 @@ func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) 
 		Environment: "test",
 		RequestedBy: "insurance-rules-http-test",
 		Practices: []access.PracticeProvision{{
-			Key:  "abita-eye-group",
+			Key:  "synthetic-insurance",
 			Name: "Abita Eye Group",
 			Locations: []access.LocationProvision{
 				{Key: "hollywood", Name: "Hollywood", AbitaOfficeKeys: []string{"hollywood"}},
