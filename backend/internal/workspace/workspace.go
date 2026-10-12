@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -82,8 +83,11 @@ func (m *Module) authorizedLocationIDs(
 	authorization, err := m.access.LockReadAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	)
-	if err != nil {
+	if errors.Is(err, access.ErrDenied) {
 		return nil, ErrDenied
+	}
+	if err != nil {
+		return nil, fmt.Errorf("authorize Workspace read: %w", err)
 	}
 	if locationID != "" {
 		return []string{locationID}, nil
