@@ -4368,17 +4368,29 @@ components:
     OperatorScorecardResults:
       type: object
       additionalProperties: false
-      required: [calls, problemCalls, bookingCalls, converted, blocked, missed, conversion, daily]
+      required: [calls, problemCalls, bookingCallers, converted, blocked, missed, notSearched, conversion, daily]
       properties:
         calls: {type: integer}
         problemCalls:
           type: integer
-          description: Calls with a no on any failure question, or a missed booking.
-        bookingCalls: {type: integer}
-        converted: {type: integer}
-        blocked: {type: integer}
+          description: Calls with a no on any failure question, a missed booking, or a new-booking request with no availability search.
+        bookingCallers:
+          type: integer
+          description: Caller numbers that asked for a new appointment in the window, each counted once. Cancels and reschedules are not counted.
+        converted:
+          type: integer
+          description: Booking caller numbers with a call that booked successfully.
+        blocked:
+          type: integer
+          description: Booking caller numbers blocked by a tool result and not converted; left out of the conversion denominator.
         missed: {type: integer}
-        conversion: {type: number, nullable: true}
+        notSearched:
+          type: integer
+          description: Booking caller numbers whose new-booking calls never searched availability.
+        conversion:
+          type: number
+          nullable: true
+          description: converted / (bookingCallers - blocked).
         daily:
           type: array
           items: {$ref: "#/components/schemas/OperatorScorecardDay"}

@@ -100,7 +100,7 @@ export function BookingConversionKpi({ practiceID, range }: { practiceID: string
         {results.status === "failed"
           ? "Unavailable"
           : data
-            ? `${data.converted} of ${data.bookingCalls - data.blocked} booking calls · ${data.missed} missed`
+            ? `${data.converted} of ${data.bookingCallers - data.blocked} new-booking callers · ${data.missed} missed · ${data.notSearched} not searched · ${data.blocked} blocked`
             : "Loading"}
       </CardContent>
     </Card>

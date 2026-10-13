@@ -1102,13 +1102,29 @@ export type OperatorScorecardDay = {
 export type OperatorScorecardResults = {
     calls: number;
     /**
-     * Calls with a no on any failure question, or a missed booking.
+     * Calls with a no on any failure question, a missed booking, or a new-booking request with no availability search.
      */
     problemCalls: number;
-    bookingCalls: number;
+    /**
+     * Caller numbers that asked for a new appointment in the window, each counted once. Cancels and reschedules are not counted.
+     */
+    bookingCallers: number;
+    /**
+     * Booking caller numbers with a call that booked successfully.
+     */
     converted: number;
+    /**
+     * Booking caller numbers blocked by a tool result and not converted; left out of the conversion denominator.
+     */
     blocked: number;
     missed: number;
+    /**
+     * Booking caller numbers whose new-booking calls never searched availability.
+     */
+    notSearched: number;
+    /**
+     * converted / (bookingCallers - blocked).
+     */
     conversion: number | null;
     daily: Array<OperatorScorecardDay>;
 };

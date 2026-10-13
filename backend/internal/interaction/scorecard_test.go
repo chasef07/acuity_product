@@ -158,12 +158,13 @@ func TestJudgeAnswersReadTheJuryVerdict(t *testing.T) {
 
 func TestClassifyBooking(t *testing.T) {
 	for want, answers := range map[bookingOutcome]map[string]bool{
-		bookingNotRequested: {"scheduling_succeeded": true},
+		bookingNotRequested: {"scheduling_succeeded": true, "availability_searched": false},
 		bookingConverted:    {"new_booking_requested": true, "scheduling_tool_called": true, "scheduling_succeeded": true, "booking_blocked": true},
 		bookingBlocked:      {"new_booking_requested": true, "booking_blocked": true},
-		bookingMissed:       {"new_booking_requested": true, "time_offered": false},
+		bookingMissed:       {"new_booking_requested": true, "availability_searched": true, "time_offered": false},
 		bookingUnknown:      {"new_booking_requested": true},
 		bookingAttempted:    {"new_booking_requested": true, "time_offered": true},
+		bookingNotSearched:  {"new_booking_requested": true, "availability_searched": false, "time_offered": false},
 	} {
 		if got := classifyBooking(answers); got != want {
 			t.Errorf("classifyBooking(%v) = %q, want %q", answers, got, want)
@@ -184,6 +185,31 @@ func TestReviewAsksGatedQuestionsOnlyWhenTheyApply(t *testing.T) {
 		if got := fmt.Sprint(reviewQuestions(test.facts)); got != test.want {
 			t.Errorf("%s: %s", name, got)
 		}
+	}
+}
+
+func TestBookingConversionCountsEachCallerNumberOnce(t *testing.T) {
+	callers := map[string]bookingOutcome{}
+	for _, call := range []struct {
+		phone   string
+		outcome bookingOutcome
+	}{
+		{"+15555550001", bookingNotSearched}, {"+15555550001", bookingConverted}, {"+15555550001", bookingMissed},
+		{"+15555550002", bookingMissed}, {"+15555550002", bookingNotSearched},
+		{"+15555550003", bookingNotSearched}, {"+15555550003", bookingNotRequested},
+		{"+15555550004", bookingBlocked}, {"+15555550004", bookingNotSearched},
+		{"+15555550005", bookingUnknown},
+		{"+15555550006", bookingNotRequested},
+	} {
+		recordCallerBooking(callers, call.phone, call.outcome)
+	}
+	result := ScorecardResults{}
+	result.countBookingCallers(callers)
+	if result.BookingCallers != 4 || result.Converted != 1 || result.Missed != 1 || result.NotSearched != 1 || result.Blocked != 1 || *result.Conversion != 1.0/3.0 {
+		t.Fatalf("one outcome per caller number, any booked call converts it, blocked numbers leave the denominator: %+v", result)
+	}
+	if !scorecardProblem(map[string]bool{"new_booking_requested": true, "availability_searched": false}) {
+		t.Fatal("a new-booking caller with no availability search is a problem call")
 	}
 }
 

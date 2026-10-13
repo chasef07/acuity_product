@@ -396,6 +396,7 @@ const (
 	bookingNotRequested bookingOutcome = ""
 	bookingConverted    bookingOutcome = "converted"
 	bookingBlocked      bookingOutcome = "blocked"
+	bookingNotSearched  bookingOutcome = "not_searched"
 	bookingMissed       bookingOutcome = "missed"
 	bookingAttempted    bookingOutcome = "attempted"
 	bookingUnknown      bookingOutcome = "unknown"
@@ -403,6 +404,7 @@ const (
 
 func classifyBooking(answers map[string]bool) bookingOutcome {
 	offered, offerJudged := answers["time_offered"]
+	searched, searchKnown := answers["availability_searched"]
 	switch {
 	case !answers["new_booking_requested"]:
 		return bookingNotRequested
@@ -410,6 +412,8 @@ func classifyBooking(answers map[string]bool) bookingOutcome {
 		return bookingConverted
 	case answers["booking_blocked"]:
 		return bookingBlocked
+	case searchKnown && !searched:
+		return bookingNotSearched
 	case answers["scheduling_tool_called"] || offered:
 		return bookingAttempted
 	case !offerJudged:
