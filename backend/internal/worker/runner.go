@@ -88,6 +88,7 @@ func New(
 		config.HealthInterval <= 0 ||
 		config.HealthTimeout <= 0 ||
 		config.ReceiptBatchSize <= 0 ||
+		config.ReceiptWorkers < 0 ||
 		config.RecoveryAndMessagingBatchSize <= 0 ||
 		config.ProviderCommandBatchSize <= 0 ||
 		config.CommandWorkers <= 0 {
@@ -95,9 +96,6 @@ func New(
 	}
 	if config.ReceiptWorkers == 0 {
 		config.ReceiptWorkers = 1
-	}
-	if config.ReceiptWorkers < 0 {
-		return nil, fmt.Errorf("positive worker limits are required")
 	}
 	if config.ErrorBackoffMin == 0 {
 		config.ErrorBackoffMin = config.WorkInterval
@@ -192,7 +190,7 @@ func (runner *Runner) Run(ctx context.Context) error {
 	}()
 	go func() {
 		defer lanes.Done()
-		runner.runQueueLaneWithIdleMaximum(ctx, 1, "recording_retention_failed", runner.work.ProcessNextRecordingRetention, time.Minute)
+		runner.runQueueLaneWithIdleMaximum(ctx, 1, "recording_retention_failed", runner.work.ProcessNextRecordingRetention, time.Minute, false)
 	}()
 	go func() {
 		defer lanes.Done()
@@ -206,7 +204,7 @@ func (runner *Runner) runCallingReceipts(ctx context.Context) {
 	var workers sync.WaitGroup
 	for range runner.config.ReceiptWorkers {
 		workers.Go(func() {
-			runner.runQueueLoop(
+			runner.runQueueLaneWithIdleMaximum(
 				ctx,
 				runner.config.ReceiptBatchSize,
 				"provider_receipt_processing_failed",
@@ -396,20 +394,11 @@ func (runner *Runner) runQueueLane(
 		failureEvent,
 		process,
 		runner.config.IdleBackoffMax,
+		false,
 	)
 }
 
 func (runner *Runner) runQueueLaneWithIdleMaximum(
-	ctx context.Context,
-	batchSize int,
-	failureEvent string,
-	process func(context.Context) (bool, error),
-	idleMaximum time.Duration,
-) {
-	runner.runQueueLoop(ctx, batchSize, failureEvent, process, idleMaximum, false)
-}
-
-func (runner *Runner) runQueueLoop(
 	ctx context.Context,
 	batchSize int,
 	failureEvent string,
