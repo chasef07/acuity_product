@@ -479,19 +479,22 @@ func (m *Module) readCallingStateETag(
 			UNION
 			SELECT own_leg.call_id
 			FROM human_calling_call_legs own_leg
-			JOIN human_calling_calls call ON call.id = own_leg.call_id
 			WHERE own_leg.role = 'STAFF'
 				AND own_leg.staff_subject = $1
 				AND (
 					own_leg.state IN ('PENDING', 'DIALING', 'RINGING', 'ANSWERED',
 						'BRIDGE_PENDING', 'BRIDGED')
 					OR (own_leg.state = 'ENDING' AND own_leg.answered_at IS NOT NULL)
-					OR (
-						own_leg.bridged_at IS NOT NULL
-						AND call.terminal_outcome = 'ENDED'
-						AND call.disposition_at IS NULL
-					)
 				)
+			UNION
+			SELECT own_leg.call_id
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs own_leg ON own_leg.call_id = call.id
+			WHERE call.terminal_outcome = 'ENDED'
+				AND call.disposition_at IS NULL
+				AND own_leg.role = 'STAFF'
+				AND own_leg.staff_subject = $1
+				AND own_leg.bridged_at IS NOT NULL
 			UNION
 			SELECT own_transfer.call_id
 			FROM human_calling_staff_transfers own_transfer
