@@ -364,9 +364,16 @@ func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand
 }
 
 func reviewQuestions(facts map[string]bool) []string {
+	_, insuranceChecked := facts["insurance_verified"]
+	gates := map[string]bool{
+		"time_offered":                 facts["availability_searched"],
+		"requested_time_honored":       facts["availability_searched"],
+		"appointment_datetime_correct": facts["scheduling_tool_called"],
+		"insurance_plan_as_stated":     insuranceChecked,
+	}
 	questions := []string{}
 	for _, question := range ScorecardQuestions {
-		if question.Source != "judge" || (question.Key == "appointment_datetime_correct" && !facts["scheduling_tool_called"]) {
+		if open, gated := gates[question.Key]; question.Source != "judge" || (gated && !open) {
 			continue
 		}
 		questions = append(questions, question.Key)
@@ -473,12 +480,8 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 			}
 			answers[answer.Question] = answer
 		}
-		if booking, answered := answers["booking_requested"]; answered && !booking.Answer && answers["time_offered"].Question != "" {
-			return CallReview{}, ErrInvalidInput
-		}
 		for _, question := range review.Questions {
-			required := question != "time_offered" || answers["booking_requested"].Answer
-			if _, answered := answers[question]; required && !answered {
+			if _, answered := answers[question]; !answered {
 				return CallReview{}, ErrInvalidInput
 			}
 		}

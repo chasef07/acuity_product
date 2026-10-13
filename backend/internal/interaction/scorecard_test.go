@@ -120,34 +120,36 @@ func TestNoResultsRetryCheck(t *testing.T) {
 
 func TestJudgeAnswersReadTheJuryVerdict(t *testing.T) {
 	evaluation := json.RawMessage(`{
-		"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev","liquid/d1"],"status":"incomplete",
+		"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v7","jurors":["typesafe-ai/jev","liquid/d1"],"status":"incomplete",
 		"results":{
-			"booking_requested":{"verdict":true,"probability":0.91,"votes":{"typesafe-ai/jev":0.91,"liquid/d1":0.91},"errors":{}},
-			"clear_and_responsive":{"verdict":false,"probability":0.4,"votes":{"typesafe-ai/jev":0.7,"liquid/d1":0.1},"errors":{}},
+			"new_booking_requested":{"verdict":true,"probability":0.91,"votes":{"typesafe-ai/jev":0.91,"liquid/d1":0.91},"errors":{}},
+			"office_question_answered":{"verdict":false,"probability":0.4,"votes":{"typesafe-ai/jev":0.7,"liquid/d1":0.1},"errors":{}},
 			"time_offered":{"status":"not_applicable","reason":"no_availability_result"},
+			"requested_time_honored":{"status":"not_applicable","reason":"no_availability_result"},
+			"insurance_plan_as_stated":{"status":"not_applicable","reason":"no_insurance_check"},
 			"expressed_sentiment":{"score":3,"probabilities":{"3":1},"model":"typesafe-ai/jev"}
 		},
-		"errors":{"right_help":{"cause":"no_quorum","votes":{},"errors":{"typesafe-ai/jev":"TimeoutError"}}}
+		"errors":{"promises_backed":{"cause":"no_quorum","votes":{},"errors":{"typesafe-ai/jev":"TimeoutError"}}}
 	}`)
 	answers := answersByQuestion(judgeAnswers(evaluation))
-	if len(answers) != 3 || !answers["booking_requested"].Answer || answers["clear_and_responsive"].Answer {
+	if len(answers) != 3 || !answers["new_booking_requested"].Answer || answers["office_question_answered"].Answer {
 		t.Fatalf("the jury verdict is the answer: %+v", answers)
 	}
-	if votes, _ := answers["clear_and_responsive"].Detail["votes"].(map[string]float64); votes["liquid/d1"] != 0.1 {
-		t.Fatalf("each juror's vote is kept: %+v", answers["clear_and_responsive"].Detail)
+	if votes, _ := answers["office_question_answered"].Detail["votes"].(map[string]float64); votes["liquid/d1"] != 0.1 {
+		t.Fatalf("each juror's vote is kept: %+v", answers["office_question_answered"].Detail)
 	}
 	if sentiment := jurySentiment(evaluation); sentiment == nil || *sentiment != 3 {
 		t.Fatalf("sentiment: %v", sentiment)
 	}
 	reading := readEvaluation(evaluation)
-	if !reading.Evaluated || len(reading.Flags) != 1 || reading.Flags[0].Check != "clear_and_responsive" || reading.Sentiment == nil {
+	if !reading.Evaluated || len(reading.Flags) != 1 || reading.Flags[0].Check != "office_question_answered" || reading.Sentiment == nil {
 		t.Fatalf("a no verdict on a failure question flags the call, a booking no does not: %+v", reading)
 	}
 	if skipped := answers["time_offered"]; skipped.Answer || skipped.Probability != nil || skipped.Detail["reason"] != "no_availability_result" {
 		t.Fatalf("B5 skipped for lack of availability is a no without a probability: %+v", skipped)
 	}
-	if answers["booking_requested"].JudgeModel != "typesafe-ai/jev,liquid/d1" || *answers["booking_requested"].Probability != 0.91 {
-		t.Fatalf("judge provenance: %+v", answers["booking_requested"])
+	if answers["new_booking_requested"].JudgeModel != "typesafe-ai/jev,liquid/d1" || *answers["new_booking_requested"].Probability != 0.91 {
+		t.Fatalf("judge provenance: %+v", answers["new_booking_requested"])
 	}
 	if got := judgeAnswers(json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v5","model":"typesafe-ai/jev","status":"complete","results":{"office_rules_grounded":{"answers":{"office_rules_grounded":{"type":"noul","noul":0.9}}}}}`)); len(got) != 0 {
 		t.Fatalf("older scorecards are not the yes/no scorecard: %+v", got)
@@ -157,11 +159,11 @@ func TestJudgeAnswersReadTheJuryVerdict(t *testing.T) {
 func TestClassifyBooking(t *testing.T) {
 	for want, answers := range map[bookingOutcome]map[string]bool{
 		bookingNotRequested: {"scheduling_succeeded": true},
-		bookingConverted:    {"booking_requested": true, "scheduling_tool_called": true, "scheduling_succeeded": true, "booking_blocked": true},
-		bookingBlocked:      {"booking_requested": true, "booking_blocked": true},
-		bookingMissed:       {"booking_requested": true, "time_offered": false},
-		bookingUnknown:      {"booking_requested": true},
-		bookingAttempted:    {"booking_requested": true, "time_offered": true},
+		bookingConverted:    {"new_booking_requested": true, "scheduling_tool_called": true, "scheduling_succeeded": true, "booking_blocked": true},
+		bookingBlocked:      {"new_booking_requested": true, "booking_blocked": true},
+		bookingMissed:       {"new_booking_requested": true, "time_offered": false},
+		bookingUnknown:      {"new_booking_requested": true},
+		bookingAttempted:    {"new_booking_requested": true, "time_offered": true},
 	} {
 		if got := classifyBooking(answers); got != want {
 			t.Errorf("classifyBooking(%v) = %q, want %q", answers, got, want)
@@ -169,12 +171,28 @@ func TestClassifyBooking(t *testing.T) {
 	}
 }
 
+func TestReviewAsksGatedQuestionsOnlyWhenTheyApply(t *testing.T) {
+	for name, test := range map[string]struct {
+		facts map[string]bool
+		want  string
+	}{
+		"no tools":           {map[string]bool{"availability_searched": false, "scheduling_tool_called": false}, "[new_booking_requested office_rules_grounded office_question_answered promises_backed ended_while_caller_active]"},
+		"availability":       {map[string]bool{"availability_searched": true}, "[new_booking_requested time_offered requested_time_honored office_rules_grounded office_question_answered promises_backed ended_while_caller_active]"},
+		"scheduling write":   {map[string]bool{"scheduling_tool_called": true}, "[new_booking_requested office_rules_grounded appointment_datetime_correct office_question_answered promises_backed ended_while_caller_active]"},
+		"insurance rejected": {map[string]bool{"insurance_verified": false}, "[new_booking_requested office_rules_grounded office_question_answered promises_backed ended_while_caller_active insurance_plan_as_stated]"},
+	} {
+		if got := fmt.Sprint(reviewQuestions(test.facts)); got != test.want {
+			t.Errorf("%s: %s", name, got)
+		}
+	}
+}
+
 func TestReviewFlaggedIgnoresBookingNos(t *testing.T) {
-	missed := map[string]bool{"booking_requested": true, "scheduling_tool_called": false, "time_offered": false, "need_understood": true}
+	missed := map[string]bool{"new_booking_requested": true, "scheduling_tool_called": false, "time_offered": false, "ended_while_caller_active": true}
 	if reviewFlagged(missed, nil) {
 		t.Fatal("a booking no alone must not flag a call for review")
 	}
-	if !reviewFlagged(map[string]bool{"booking_requested": true, "right_help": false}, nil) {
+	if !reviewFlagged(map[string]bool{"new_booking_requested": true, "promises_backed": false}, nil) {
 		t.Fatal("a failure-question no must flag a call for review")
 	}
 }
@@ -228,7 +246,7 @@ func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 		}
 		seen[question.Key], seen[question.Code] = true, true
 	}
-	for _, key := range []string{"person_request_honored", "staff_task_identified"} {
+	for _, key := range []string{"new_booking_requested", "time_offered", "promises_backed", "ended_while_caller_active", "office_rules_grounded", "office_question_answered", "appointment_datetime_correct", "insurance_plan_as_stated", "requested_time_honored", "staff_task_identified"} {
 		if !seen[key] {
 			t.Errorf("catalog is missing %s", key)
 		}
@@ -321,19 +339,19 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 }
 
 func TestStaffScorecardFollowsTheJuryMajorityNotTheMean(t *testing.T) {
-	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["a","b","c"],"status":"complete","results":{
-		"need_understood":{"verdict":false,"probability":0.4667,"votes":{"a":0.1,"b":0.3,"c":1.0},"errors":{}},
-		"right_help":{"verdict":true,"probability":0.3,"votes":{"a":0.45,"b":0.45,"c":0.0},"errors":{}}}}`))
+	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v7","jurors":["a","b","c"],"status":"complete","results":{
+		"promises_backed":{"verdict":false,"probability":0.4667,"votes":{"a":0.1,"b":0.3,"c":1.0},"errors":{}},
+		"ended_while_caller_active":{"verdict":true,"probability":0.3,"votes":{"a":0.45,"b":0.45,"c":0.0},"errors":{}}}}`))
 	if len(scorecard) != 2 || scorecard[0].Answer != "no" || scorecard[1].Answer != "yes" {
 		t.Fatalf("a 1-2 split with a high mean is no, and a 2-1 yes with a low mean is yes: %+v", scorecard)
 	}
 }
 
 func TestStaffScorecardShowsVerdictsInCatalogOrder(t *testing.T) {
-	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev"],"status":"complete","results":{
-		"right_help":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
-		"clear_and_responsive":{"verdict":false,"probability":0.35,"votes":{"typesafe-ai/jev":0.35},"errors":{}},
-		"booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}}}}`))
+	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v7","jurors":["typesafe-ai/jev"],"status":"complete","results":{
+		"promises_backed":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
+		"office_question_answered":{"verdict":false,"probability":0.35,"votes":{"typesafe-ai/jev":0.35},"errors":{}},
+		"new_booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}}}}`))
 	if len(scorecard) != 3 || scorecard[0].Code != "B1" || scorecard[0].Answer != "yes" || scorecard[1].Answer != "no" || scorecard[2].Answer != "no" || scorecard[1].Prompt == "" {
 		t.Fatalf("staff scorecard: %+v", scorecard)
 	}

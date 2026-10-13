@@ -39,17 +39,13 @@ export function ScorecardPanel({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
-  const applicable = shown.questions.filter((question) => question !== "time_offered" || answers.booking_requested === true)
+  const applicable = shown.questions
   const complete = applicable.every((question) => answers[question] !== undefined)
   const judge = new Map(shown.judge.map((answer) => [answer.question, answer]))
   const revealed = shown.submitted
 
   function answer(question: string, value: boolean) {
-    setAnswers((current) => {
-      const next = { ...current, [question]: value }
-      if (question === "booking_requested" && !value) delete next.time_offered
-      return next
-    })
+    setAnswers((current) => ({ ...current, [question]: value }))
   }
 
   async function save() {

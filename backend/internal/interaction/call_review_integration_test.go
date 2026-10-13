@@ -50,19 +50,20 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		}
 		return id
 	}
-	healthy := map[string]float64{"booking_requested": 0.1, "need_understood": 0.9, "right_help": 0.9, "clear_and_responsive": 0.9, "office_rules_grounded": 0.9}
+	healthy := map[string]float64{"new_booking_requested": 0.1, "promises_backed": 0.9, "ended_while_caller_active": 0.9, "office_question_answered": 0.9, "office_rules_grounded": 0.9}
 	ids := []string{}
 	for index := 0; index < 30; index++ {
 		judged := healthy
 		if index%5 == 0 {
-			judged = map[string]float64{"booking_requested": 0.1, "need_understood": 0.9, "right_help": 0.9, "clear_and_responsive": 0.2, "office_rules_grounded": 0.9}
+			judged = map[string]float64{"new_booking_requested": 0.1, "promises_backed": 0.9, "ended_while_caller_active": 0.9, "office_question_answered": 0.2, "office_rules_grounded": 0.9}
 		}
 		ids = append(ids, insert(index, 60, nil, judged))
 	}
 	insert(40, 10, nil, healthy)
 	booked := insert(41, 90, []syntheticTool{
 		{"check_insurance", `{"plan":"Synthetic Gold Plan"}`, "blocked: The office needs to verify this plan's coverage before scheduling."},
-	}, map[string]float64{"booking_requested": 0.95, "time_offered": 0.2, "need_understood": 0.9, "right_help": 0.3, "clear_and_responsive": 0.9, "office_rules_grounded": 0.9})
+		{"list_available_appointments", `{}`, "success: Openings found.\nslot-1 – Monday"},
+	}, map[string]float64{"new_booking_requested": 0.95, "time_offered": 0.2, "promises_backed": 0.9, "ended_while_caller_active": 0.3, "office_question_answered": 0.9, "office_rules_grounded": 0.9})
 
 	module := New(pool, accessModule, clock)
 	backfill, err := module.BackfillScorecards(ctx, time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC), 7)
@@ -71,7 +72,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	}
 	var agentVersion string
 	var probability float64
-	if err := pool.QueryRow(ctx, `SELECT agent_version, probability FROM ai_interaction_scorecard_answers WHERE interaction_id=$1 AND question='booking_requested'`, booked).Scan(&agentVersion, &probability); err != nil || agentVersion != "0.13.1" || probability != 0.95 {
+	if err := pool.QueryRow(ctx, `SELECT agent_version, probability FROM ai_interaction_scorecard_answers WHERE interaction_id=$1 AND question='new_booking_requested'`, booked).Scan(&agentVersion, &probability); err != nil || agentVersion != "0.13.1" || probability != 0.95 {
 		t.Fatalf("stored judge answer: %q %v %v", agentVersion, probability, err)
 	}
 
@@ -104,7 +105,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		}
 	}
 	if flagged != 7 || len(overlap) != reviewQueueOverlap {
-		t.Fatalf("all 7 flagged calls (6 low H4 + 1 low H2) and %d overlap calls: flagged=%d overlap=%d", reviewQueueOverlap, flagged, len(overlap))
+		t.Fatalf("all 7 flagged calls (6 low A3 + 1 low E1) and %d overlap calls: flagged=%d overlap=%d", reviewQueueOverlap, flagged, len(overlap))
 	}
 	command.Identity = second
 	queueB, err := module.OpenReviewQueue(ctx, command)
@@ -141,8 +142,8 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if err != nil || blind.Submitted || len(blind.Judge) != 0 || !blind.Assigned {
 		t.Fatalf("judge answers stay hidden before review: %+v %v", blind, err)
 	}
-	if fmt.Sprint(blind.Questions) != "[booking_requested time_offered need_understood right_help clear_and_responsive person_request_honored office_rules_grounded]" {
-		t.Fatalf("A2 only applies after a scheduling write: %v", blind.Questions)
+	if fmt.Sprint(blind.Questions) != "[new_booking_requested time_offered requested_time_honored office_rules_grounded office_question_answered promises_backed ended_while_caller_active insurance_plan_as_stated]" {
+		t.Fatalf("B5 and B6 apply after an availability search, I2 after an insurance check, A2 only after a scheduling write: %v", blind.Questions)
 	}
 	var insurance *ReviewFact
 	for index := range blind.Facts {
@@ -153,17 +154,17 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if insurance == nil || insurance.Answer || insurance.Detail["plan"] != "Synthetic Gold Plan" {
 		t.Fatalf("code-check facts at the top: %+v", blind.Facts)
 	}
-	incomplete := CallReviewSubmission{Answers: []ReviewAnswer{{Question: "booking_requested", Answer: true}}}
+	incomplete := CallReviewSubmission{Answers: []ReviewAnswer{{Question: "new_booking_requested", Answer: true}}}
 	if _, err := module.SubmitCallReview(ctx, first, booked, incomplete); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("every applicable question needs an answer: %v", err)
 	}
-	gatedOut := CallReviewSubmission{Answers: []ReviewAnswer{{Question: "booking_requested", Answer: false}, {Question: "time_offered", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true}, {Question: "clear_and_responsive", Answer: true}, {Question: "person_request_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}}}
+	answers := []ReviewAnswer{{Question: "new_booking_requested", Answer: true}, {Question: "time_offered", Answer: false}, {Question: "requested_time_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}, {Question: "office_question_answered", Answer: true}, {Question: "promises_backed", Answer: true}, {Question: "ended_while_caller_active", Answer: true, Note: "The caller said goodbye first."}, {Question: "insurance_plan_as_stated", Answer: true}}
+	gatedOut := CallReviewSubmission{Answers: append(append([]ReviewAnswer{}, answers...), ReviewAnswer{Question: "appointment_datetime_correct", Answer: true})}
 	if _, err := module.SubmitCallReview(ctx, first, booked, gatedOut); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("B5 is not answerable when B1 is no: %v", err)
+		t.Fatalf("A2 is not answerable without a scheduling write: %v", err)
 	}
-	answers := []ReviewAnswer{{Question: "booking_requested", Answer: true}, {Question: "time_offered", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true, Note: "Staff verification was the right next step."}, {Question: "clear_and_responsive", Answer: true}, {Question: "person_request_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}}
 	revealed, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Synthetic review", QuestionIdea: "Did the agent mention the insurance card?"})
-	if err != nil || !revealed.Submitted || revealed.QuestionIdea != "Did the agent mention the insurance card?" || len(revealed.Answers) != 7 || len(revealed.Judge) != 6 {
+	if err != nil || !revealed.Submitted || revealed.QuestionIdea != "Did the agent mention the insurance card?" || len(revealed.Answers) != 8 || len(revealed.Judge) != 6 {
 		t.Fatalf("submitted review reveals judge answers: %+v %v", revealed, err)
 	}
 	if _, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Changed after reveal"}); !errors.Is(err, ErrReviewLocked) {
@@ -177,7 +178,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		overlapCall = id
 	}
 	shortAnswers := func(clear bool) []ReviewAnswer {
-		return []ReviewAnswer{{Question: "booking_requested", Answer: false}, {Question: "need_understood", Answer: true}, {Question: "right_help", Answer: true}, {Question: "clear_and_responsive", Answer: clear}, {Question: "person_request_honored", Answer: true}, {Question: "office_rules_grounded", Answer: true}}
+		return []ReviewAnswer{{Question: "new_booking_requested", Answer: false}, {Question: "office_rules_grounded", Answer: true}, {Question: "office_question_answered", Answer: clear}, {Question: "promises_backed", Answer: true}, {Question: "ended_while_caller_active", Answer: true}}
 	}
 	if _, err := module.SubmitCallReview(ctx, first, overlapCall, CallReviewSubmission{Answers: shortAnswers(true)}); err != nil {
 		t.Fatal(err)
@@ -201,18 +202,18 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	}
 	falseAlarms := 0
 	for _, item := range accuracy.JudgeDisagreements {
-		if item.Question == "right_help" && item.Human && !item.Judge {
+		if item.Question == "ended_while_caller_active" && item.Human && !item.Judge {
 			falseAlarms++
 		}
 	}
-	if accuracy.ReviewedCalls != 2 || falseAlarms != 1 || accuracy.GoldenAnswers != 19 || accuracy.CurrentJudgeVersion != ScorecardJudgeVersion {
+	if accuracy.ReviewedCalls != 2 || falseAlarms != 1 || accuracy.GoldenAnswers != 18 || accuracy.CurrentJudgeVersion != ScorecardJudgeVersion {
 		t.Fatalf("accuracy lists the false alarm: %+v", accuracy)
 	}
-	if len(accuracy.ReviewerDisagreements) != 1 || accuracy.ReviewerDisagreements[0].Question != "clear_and_responsive" {
+	if len(accuracy.ReviewerDisagreements) != 1 || accuracy.ReviewerDisagreements[0].Question != "office_question_answered" {
 		t.Fatalf("reviewer disagreements: %+v", accuracy.ReviewerDisagreements)
 	}
 
-	if accuracy.GoldenAnswers != 19 || len(accuracy.GoldenSet) != 2 || accuracy.GoldenSet[0].Answers+accuracy.GoldenSet[1].Answers != 19 {
+	if accuracy.GoldenAnswers != 18 || len(accuracy.GoldenSet) != 2 || accuracy.GoldenSet[0].Answers+accuracy.GoldenSet[1].Answers != 18 {
 		t.Fatalf("golden set summary: answers=%d calls=%+v", accuracy.GoldenAnswers, accuracy.GoldenSet)
 	}
 
