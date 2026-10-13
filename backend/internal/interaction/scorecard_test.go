@@ -215,29 +215,6 @@ func TestParseGoldenSetJudgeAnswer(t *testing.T) {
 	}
 }
 
-func TestStaffTaskIdentifiedCheck(t *testing.T) {
-	saved := func(draft, patient string) syntheticTool {
-		return syntheticTool{"save_staff_task", `{}`, "saved: Draft saved for submission when the call ends. Not yet sent.\nDraft ID: " + draft + "\nRequest: Synthetic request\nPatient: " + patient}
-	}
-	for name, test := range map[string]struct {
-		tools   []syntheticTool
-		applies bool
-		want    bool
-	}{
-		"no staff task":        {nil, false, false},
-		"identified patient":   {[]syntheticTool{saved("d1", "Synthetic Sample (unverified).")}, true, true},
-		"no patient":           {[]syntheticTool{saved("d1", "not identified.")}, true, false},
-		"updated to a patient": {[]syntheticTool{saved("d1", "not identified."), saved("d1", "Synthetic Sample (verified).")}, true, true},
-		"cancelled anonymous":  {[]syntheticTool{saved("d1", "not identified."), {"save_staff_task", `{"cancel":true}`, "cancelled: Request cancelled. It will not be submitted.\nDraft ID: d1"}}, false, false},
-		"one of two anonymous": {[]syntheticTool{saved("d1", "Synthetic Sample (verified)."), saved("d2", "not identified.")}, true, false},
-	} {
-		answer, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t, test.tools...), map[string]any{}))["staff_task_identified"]
-		if found != test.applies || answer.Answer != test.want {
-			t.Errorf("%s: found=%v answer=%v", name, found, answer.Answer)
-		}
-	}
-}
-
 func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 	seen := map[string]bool{}
 	for _, question := range ScorecardQuestions {
@@ -246,7 +223,7 @@ func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 		}
 		seen[question.Key], seen[question.Code] = true, true
 	}
-	for _, key := range []string{"new_booking_requested", "time_offered", "promises_backed", "ended_while_caller_active", "office_rules_grounded", "office_question_answered", "appointment_datetime_correct", "insurance_plan_as_stated", "requested_time_honored", "staff_task_identified"} {
+	for _, key := range []string{"new_booking_requested", "time_offered", "promises_backed", "ended_while_caller_active", "office_rules_grounded", "office_question_answered", "appointment_datetime_correct", "insurance_plan_as_stated", "requested_time_honored"} {
 		if !seen[key] {
 			t.Errorf("catalog is missing %s", key)
 		}

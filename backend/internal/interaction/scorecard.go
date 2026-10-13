@@ -109,12 +109,6 @@ var ScorecardQuestions = []ScorecardQuestion{
 		No:       "The agent transferred without retrying the patient lookup.",
 	},
 	{
-		Key: "staff_task_identified", Failure: true, Code: "F3", Label: "Staff task names the patient", Prompt: "Did every staff task name the patient?", Source: "code",
-		Question: "Did every staff task the agent saved name a patient?",
-		Yes:      "Every saved staff task named a patient (verified or not). The caller's number is always attached.",
-		No:       "At least one saved staff task said \"Patient: not identified\", so staff must work out who called.",
-	},
-	{
 		Key: "insurance_verified", Code: "I1", Label: "Insurance verified", Prompt: "Was the caller's insurance verified?", Source: "code",
 		Question: "Was the caller's insurance verified?",
 		Yes:      "The last insurance check accepted the plan.",
@@ -251,46 +245,6 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 			answers = append(answers, answer("no_results_retried", retried, nil))
 			break
 		}
-	}
-
-	drafts := map[string]bool{}
-	draftOrder := []string{}
-	for _, call := range calls {
-		if call.Name != "save_staff_task" {
-			continue
-		}
-		draft := ""
-		for _, line := range strings.Split(call.Output, "\n") {
-			if value, found := strings.CutPrefix(line, "Draft ID: "); found {
-				draft = strings.TrimSpace(value)
-			}
-		}
-		if draft == "" {
-			continue
-		}
-		if _, known := drafts[draft]; !known {
-			draftOrder = append(draftOrder, draft)
-		}
-		switch call.Status {
-		case "saved":
-			drafts[draft] = !strings.Contains(call.Output, "\nPatient: not identified.")
-		case "cancelled":
-			delete(drafts, draft)
-		}
-	}
-	if len(drafts) > 0 {
-		identified, anonymous := true, 0
-		for _, draft := range draftOrder {
-			if named, saved := drafts[draft]; saved && !named {
-				identified = false
-				anonymous++
-			}
-		}
-		var detail map[string]any
-		if !identified {
-			detail = map[string]any{"unidentifiedTasks": anonymous}
-		}
-		answers = append(answers, answer("staff_task_identified", identified, detail))
 	}
 
 	var lastInsurance *scorecardToolCall
