@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { CheckIcon, EyeIcon, NotebookPenIcon } from "lucide-react"
+import { CheckIcon, EyeIcon, NotebookPenIcon, SaveIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,13 +17,11 @@ export function ScorecardPanel({
   review,
   catalog,
   onSaved,
-  onConflict,
   onNext,
 }: {
   review: OperatorCallReview
   catalog: Map<string, OperatorScorecardQuestion>
   onSaved: () => void
-  onConflict: () => void
   onNext?: () => void
 }) {
   const [shown, setShown] = useState(review)
@@ -43,6 +41,9 @@ export function ScorecardPanel({
   const complete = applicable.every((question) => answers[question] !== undefined)
   const judge = new Map(shown.judge.map((answer) => [answer.question, answer]))
   const revealed = shown.submitted
+  const saved = new Map(shown.answers.map((answer) => [answer.question, answer]))
+  const changed = note.trim() !== shown.note || questionIdea.trim() !== shown.questionIdea ||
+    applicable.some((key) => answers[key] !== saved.get(key)?.answer || (notes[key] ?? "").trim() !== (saved.get(key)?.note ?? ""))
 
   function answer(question: string, value: boolean) {
     setAnswers((current) => ({ ...current, [question]: value }))
@@ -57,10 +58,6 @@ export function ScorecardPanel({
       answers: applicable.map((question) => ({ question, answer: answers[question], note: notes[question] ?? "" })),
     })
     setSaving(false)
-    if (!outcome.ok && outcome.failure.kind === "conflict") {
-      onConflict()
-      return
-    }
     if (!outcome.ok) {
       setError(
         outcome.failure.kind === "rejected"
@@ -101,21 +98,18 @@ export function ScorecardPanel({
                 </p>
                 <div className="flex items-center gap-1.5">
                   <div role="group" aria-label={`${question?.code ?? key} answer`} className="flex gap-1">
-                    <Button size="xs" className="h-7 w-14" variant={value === true ? "default" : "outline"} aria-pressed={value === true} disabled={revealed && value !== true} onClick={() => answer(key, true)}>
+                    <Button size="xs" className="h-7 w-14" variant={value === true ? "default" : "outline"} aria-pressed={value === true} onClick={() => answer(key, true)}>
                       Yes
                     </Button>
-                    <Button size="xs" className="h-7 w-14" variant={value === false ? "destructive" : "outline"} aria-pressed={value === false} disabled={revealed && value !== false} onClick={() => answer(key, false)}>
+                    <Button size="xs" className="h-7 w-14" variant={value === false ? "destructive" : "outline"} aria-pressed={value === false} onClick={() => answer(key, false)}>
                       No
                     </Button>
                   </div>
-                  {revealed ? (
-                    <JudgeLine human={value} judged={judge.get(key)} />
-                  ) : (
-                    !noteOpen && (
-                      <Button size="icon-xs" variant="ghost" className="ml-auto" aria-label={`Add a note to ${question?.code ?? key}`} title="Add note" onClick={() => setOpenNotes((current) => ({ ...current, [key]: true }))}>
-                        <NotebookPenIcon aria-hidden="true" />
-                      </Button>
-                    )
+                  {revealed && <JudgeLine human={value} judged={judge.get(key)} />}
+                  {!noteOpen && (
+                    <Button size="icon-xs" variant="ghost" className={revealed ? "" : "ml-auto"} aria-label={`Add a note to ${question?.code ?? key}`} title="Add note" onClick={() => setOpenNotes((current) => ({ ...current, [key]: true }))}>
+                      <NotebookPenIcon aria-hidden="true" />
+                    </Button>
                   )}
                 </div>
                 {noteOpen && (
@@ -124,7 +118,6 @@ export function ScorecardPanel({
                     placeholder="Why? Timestamps help."
                     className="min-h-10 text-xs"
                     value={notes[key] ?? ""}
-                    readOnly={revealed}
                     onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))}
                   />
                 )}
@@ -139,7 +132,6 @@ export function ScorecardPanel({
             className="mt-1 min-h-12 text-xs"
             placeholder="What went wrong, with timestamps."
             value={note}
-            readOnly={revealed}
             onChange={(event) => setNote(event.target.value)}
           />
           <label htmlFor="review-question-idea" className="mt-3 block text-xs font-medium">Missing question?</label>
@@ -149,14 +141,18 @@ export function ScorecardPanel({
             className="mt-1 min-h-10 text-xs"
             placeholder="e.g. The agent quoted a price without looking it up."
             value={questionIdea}
-            readOnly={revealed}
             onChange={(event) => setQuestionIdea(event.target.value)}
           />
         </div>
       </div>
       <footer className="space-y-2 border-t p-4">
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-        {revealed ? (
+        {revealed && changed ? (
+          <Button className="w-full" disabled={!complete || saving} onClick={() => void save()}>
+            {saving ? <Spinner /> : <SaveIcon aria-hidden="true" />}
+            Save changes
+          </Button>
+        ) : revealed ? (
           <Button className="w-full" disabled={!onNext} onClick={onNext}>
             <CheckIcon aria-hidden="true" /> Saved · Next call
           </Button>

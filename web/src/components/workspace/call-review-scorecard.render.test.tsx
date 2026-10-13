@@ -23,17 +23,17 @@ const review = {
 }
 
 test("the scorecard stays blind until the reviewer saves, and asks exactly the questions the server gated in", () => {
-  const html = renderToStaticMarkup(<ScorecardPanel review={review} catalog={catalog} onSaved={() => {}} onConflict={() => {}} />)
+  const html = renderToStaticMarkup(<ScorecardPanel review={review} catalog={catalog} onSaved={() => {}} />)
   assert.match(html, /0 of 3 answered/)
   assert.doesNotMatch(html, /Judge:/)
   assert.match(html, /B5/)
-  const ungated = renderToStaticMarkup(<ScorecardPanel review={{ ...review, questions: ["new_booking_requested", "promises_backed"] }} catalog={catalog} onSaved={() => {}} onConflict={() => {}} />)
+  const ungated = renderToStaticMarkup(<ScorecardPanel review={{ ...review, questions: ["new_booking_requested", "promises_backed"] }} catalog={catalog} onSaved={() => {}} />)
   assert.match(ungated, /0 of 2 answered/)
   assert.doesNotMatch(ungated, /B5/)
   assert.match(html, /Save and reveal judge/)
 })
 
-test("a saved review shows agreement and locks the answers", () => {
+test("a saved review shows agreement and stays editable", () => {
   const html = renderToStaticMarkup(<ScorecardPanel
     review={{
       ...review,
@@ -51,11 +51,12 @@ test("a saved review shows agreement and locks the answers", () => {
     }}
     catalog={catalog}
     onSaved={() => {}}
-    onConflict={() => {}}
   />)
   assert.match(html, /Agrees/)
   assert.match(html, /Disagrees/)
   assert.match(html, /title="0.95"/)
   assert.doesNotMatch(html, /Save and reveal judge/)
-  assert.match(html, /disabled=""/)
+  assert.match(html, /Saved · Next call/)
+  assert.doesNotMatch(html, /aria-pressed="false"[^>]*disabled=""/)
+  assert.doesNotMatch(html, /readonly=""/i)
 })

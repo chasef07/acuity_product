@@ -288,7 +288,6 @@ function ReviewCall({
   onSaved: () => void
 }) {
   const review = useCallReview(call.interactionId)
-  const [conflict, setConflict] = useState(false)
   return (
     <>
       <section aria-label="Call transcript" className="flex min-h-0 flex-col border-b lg:border-r lg:border-b-0">
@@ -335,21 +334,11 @@ function ReviewCall({
             </Alert>
           </div>
         )}
-        {conflict && (
-          <p role="status" className="border-b px-4 py-2 text-xs text-muted-foreground">
-            This call was already reviewed elsewhere. Answers stay as first saved so the golden set stays blind.
-          </p>
-        )}
         {review.status === "ready" && (
           <ScorecardPanel
             review={review.data}
             catalog={catalog}
             onSaved={onSaved}
-            onConflict={() => {
-              setConflict(true)
-              review.retry()
-              onSaved()
-            }}
             onNext={onNext}
           />
         )}

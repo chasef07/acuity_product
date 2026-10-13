@@ -4351,10 +4351,6 @@ export type SubmitOperatorCallReviewErrors = {
      */
     403: ErrorEnvelope;
     /**
-     * The requested transition is no longer available.
-     */
-    409: ErrorEnvelope;
-    /**
      * A required dependency is temporarily unavailable.
      */
     503: ErrorEnvelope;
