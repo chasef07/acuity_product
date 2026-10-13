@@ -58,8 +58,8 @@ var ScorecardQuestions = []ScorecardQuestion{
 	},
 	{
 		Key: "availability_searched", Code: "B0", Label: "Availability searched", Prompt: "Did the agent search for open times?", Source: "code",
-		Question: "Did the agent call list_available_appointments?",
-		Yes:      "The agent searched availability at least once.",
+		Question: "Did a list_available_appointments call return a result?",
+		Yes:      "At least one availability search returned a result, even if it found no openings.",
 		No:       "The agent never searched availability. A new-booking caller without a search is a not-searched booking.",
 	},
 	{
@@ -255,10 +255,11 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 		return scorecardAnswer{Question: question, Source: "code", Answer: value, Version: ScorecardCodeVersion, Detail: detail}
 	}
 	receipts := domainOutcomeReceiptsByCallID(closeout)
-	writeCalled, writeSucceeded := false, false
+	writeCalled, writeSucceeded, searched := false, false, false
 	lastOutput := map[string]string{}
 	for _, call := range calls {
 		lastOutput[call.Name] = call.Output
+		searched = searched || (call.Name == "list_available_appointments" && call.Output != "")
 		if schedulingWrites[call.Name] {
 			writeCalled = true
 			receipt := receipts[call.CallID]
@@ -273,7 +274,6 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 			blocked = map[string]any{"reason": rule.reason, "tool": rule.tool}
 		}
 	}
-	_, searched := lastOutput["list_available_appointments"]
 	answers := []scorecardAnswer{answer("availability_searched", searched, nil), answer("scheduling_tool_called", writeCalled, nil)}
 	if writeCalled {
 		answers = append(answers, answer("scheduling_succeeded", writeSucceeded, nil))

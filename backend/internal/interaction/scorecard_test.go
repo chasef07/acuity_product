@@ -98,6 +98,19 @@ func TestCodeChecksReadToolResultsAndReceipts(t *testing.T) {
 	}
 }
 
+func TestAvailabilitySearchedNeedsAReturnedResult(t *testing.T) {
+	unanswered, _ := json.Marshal(map[string]any{"items": []any{
+		map[string]any{"type": "function_call", "name": "list_available_appointments", "call_id": "call-a", "arguments": "{}"},
+	}})
+	if answer := answersByQuestion(codeCheckAnswers(unanswered, map[string]any{}))["availability_searched"]; answer.Answer {
+		t.Fatal("a search with no returned result is not a search, matching the jury's time_offered gate")
+	}
+	returned := syntheticTranscript(t, syntheticTool{"list_available_appointments", `{}`, "no_results: No eligible openings in the searched window."})
+	if answer := answersByQuestion(codeCheckAnswers(returned, map[string]any{}))["availability_searched"]; !answer.Answer {
+		t.Fatal("a returned search counts, even with no openings")
+	}
+}
+
 func TestNoResultsRetryCheck(t *testing.T) {
 	noMatch := syntheticTool{"resolve_patient", `{"firstName":"Synthetic"}`, "no_results: A complete search found no matching patient."}
 	transfer := syntheticTool{"transfer_call", `{}`, "success: Transferring."}
