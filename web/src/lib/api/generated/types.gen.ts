@@ -1026,7 +1026,7 @@ export type OperatorJudgeAccuracyRow = {
 };
 
 /**
- * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. The jury says no when its majority verdict is no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 1%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
+ * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. The jury says no when its majority verdict is no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 5%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
  */
 export type OperatorJuryTrust = {
     calls: number;

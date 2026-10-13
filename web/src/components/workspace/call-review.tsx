@@ -494,7 +494,7 @@ function JudgeAccuracyView({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          A question is trusted when, at 95% confidence, the jury&apos;s no answers catch at least 90% of the failures reviewers mark, at most 1% of them are false alarms, and it agrees with reviewers nearly as often as reviewers agree with each other. The last 14 days must also meet those bars on their own. Reviews are weighted by each day&apos;s mix of flagged and unflagged calls, over the last 120 days.
+          A question is trusted when, at 95% confidence, the jury&apos;s no answers catch at least 90% of the failures reviewers mark, at most 5% of them are false alarms, and it agrees with reviewers nearly as often as reviewers agree with each other. The last 14 days must also meet those bars on their own. Reviews are weighted by each day&apos;s mix of flagged and unflagged calls, over the last 120 days.
         </p>
         {versions.length > 1 && (
           <ToggleGroup

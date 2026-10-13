@@ -461,7 +461,7 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 	}
 	pools["2026-10-08"] = reviewPool{random: 1000, reviewedRandom: 1000}
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusTrusted {
-		t.Fatalf("400 no answers with no false alarm prove 1%%: %+v", estimate)
+		t.Fatalf("400 no answers with no false alarm prove 5%%: %+v", estimate)
 	}
 }
 
@@ -510,5 +510,17 @@ func TestGoldenSetDaysSplitJuryNosAndReviewerNos(t *testing.T) {
 	}
 	if week != (GoldenSetCounts{JudgeNo: 3, FalseAlarms: 2, HumanNo: 2, Misses: 1}) {
 		t.Fatalf("the week total sums the days: %+v", week)
+	}
+}
+
+func TestTrustAllowsFalseAlarmsUpToFivePercent(t *testing.T) {
+	value := func(v float64) *float64 { return &v }
+	estimate := TrustEstimate{Failures: 50, Catch: value(0.97), CatchLow: value(0.92), FalseAlarms: value(0.03), FalseAlarmHigh: value(0.045), Agreement: value(0.95), AgreementLow: value(0.93), HumanAgreement: value(0.95), HumanPairs: 30}
+	if status, reason := trustVerdict(estimate, trustRates{}); status != trustStatusTrusted {
+		t.Fatalf("3%% false alarms with a 4.5%% bound is trusted: %s %s", status, reason)
+	}
+	estimate.FalseAlarms = value(0.06)
+	if status, reason := trustVerdict(estimate, trustRates{}); status != trustStatusBelow || reason != "6% of its no's are false alarms, max 5%" {
+		t.Fatalf("over 5%% false alarms is below the bar: %s %s", status, reason)
 	}
 }
