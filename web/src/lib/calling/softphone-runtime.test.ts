@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { projectCallingCard } from "./calling-card.ts"
+import { projectCallingCard, projectCallingFailure } from "./calling-card.ts"
 import type {
   CallingCall,
   CallingDispositionResult,
@@ -2818,6 +2818,87 @@ test("a non-owner can take over and a later lease loss fails media and readiness
   assert.equal(runtime.getSnapshot().readiness.mediaState, "unavailable")
   assert.equal(runtime.getSnapshot().failure?.kind, "ownership")
   assert.equal(media.disconnects, 1)
+})
+
+test("a lost lease on readiness offers recovery instead of an access block", async () => {
+  const clock = new ManualClock()
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    availabilityIntent: true,
+    clock,
+    visibility: visible(),
+  })
+  await runtime.start()
+  assert.equal(media.connects, 1)
+
+  backend.writeReadinessHandler = () => {
+    backend.lease = lease({ owner: false })
+    backend.state = callingState({ softphone: backend.lease })
+    throw new SoftphoneAdapterError(
+      "conflict",
+      "Calling ownership moved to another browser.",
+    )
+  }
+  const writesBeforeConflict = backend.readinessWrites.length
+  while (
+    clock.now < 4_000 &&
+    backend.readinessWrites.length === writesBeforeConflict
+  ) {
+    await clock.advance(1)
+  }
+  assert.equal(backend.readinessWrites.length, writesBeforeConflict + 1)
+
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().failure?.kind, "ownership"),
+  )
+  const failure = runtime.getSnapshot().failure!
+  assert.equal(failure.recoverable, true)
+  assert.equal(projectCallingFailure(failure).action?.kind, "recover")
+  assert.equal(runtime.getSnapshot().lease?.owner, false)
+
+  backend.writeReadinessHandler = undefined
+  backend.acquireLeaseHandler = async () => {
+    backend.lease = lease({ owner: true })
+    backend.state = callingState({ softphone: backend.lease })
+    return backend.lease
+  }
+  await runtime.recover()
+  await drainMicrotasks()
+
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+  assert.equal(runtime.getSnapshot().failure, undefined)
+  assert.equal(media.connects, 2)
+})
+
+test("temporary readiness and refresh failures keep an active Call's audio", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-temporary-outage")
+  const unavailable = () => {
+    throw new SoftphoneAdapterError(
+      "temporary-request",
+      "A required dependency is unavailable.",
+      true,
+    )
+  }
+  fixture.backend.writeReadinessHandler = unavailable
+  fixture.backend.readStateHandler = unavailable
+
+  await fixture.clock.advance(20_000)
+
+  const snapshot = fixture.runtime.getSnapshot()
+  assert.equal(snapshot.failure?.kind, "temporary-request")
+  assert.ok(fixture.backend.readinessWrites.length > 0)
+  assert.equal(fixture.media.disconnects, 0)
+  assert.equal(snapshot.mediaAttachment?.mediaToken, fixture.exact.mediaToken)
+  assert.equal(snapshot.activeCall?.id, fixture.connected.id)
+  assert.equal(snapshot.lease?.owner, true)
+  assert.equal(snapshot.controls.canEnd, true)
 })
 
 test("another session's active lease never becomes local ownership on refresh", async () => {

@@ -385,7 +385,7 @@ func (m *Module) authorizeMediaJWT(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := m.access.LockOperationalActor(ctx, tx, identity); err != nil {
-		return "", ErrDenied
+		return "", callingAccessError(err)
 	}
 	var leaseCurrent bool
 	err = tx.QueryRow(ctx, `
@@ -393,11 +393,14 @@ func (m *Module) authorizeMediaJWT(
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1 FOR SHARE
 	`, identity.Subject, sessionID, m.now()).Scan(&leaseCurrent)
-	if errors.Is(err, pgx.ErrNoRows) || !leaseCurrent {
-		return "", ErrDenied
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrConflict
 	}
 	if err != nil {
 		return "", fmt.Errorf("verify media lease: %w", err)
+	}
+	if !leaseCurrent {
+		return "", ErrConflict
 	}
 	var credentialID string
 	err = tx.QueryRow(ctx, `
