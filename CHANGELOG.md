@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.1](https://github.com/chasef07/acuity_product/compare/v1.34.0...v1.34.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **knowledge:** stop the 3s search timeout from cutting off Portal publishes ([#457](https://github.com/chasef07/acuity_product/issues/457)) ([784242b](https://github.com/chasef07/acuity_product/commit/784242b0445a135f01e8848cae39b05f2e665d71))
+
 ## [1.34.0](https://github.com/chasef07/acuity_product/compare/v1.33.0...v1.34.0) (2026-10-13)
 
 
