@@ -241,6 +241,87 @@ func TestParseGoldenSetJudgeAnswer(t *testing.T) {
 	}
 }
 
+func agentTranscript(t *testing.T, said ...string) json.RawMessage {
+	t.Helper()
+	items := []any{map[string]any{"type": "message", "role": "user", "content": []string{"Synthetic caller turn."}}}
+	for _, text := range said {
+		items = append(items, map[string]any{"type": "message", "role": "assistant", "content": []string{text}})
+	}
+	raw, err := json.Marshal(map[string]any{"items": items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestKnowledgeAnsweredCheck(t *testing.T) {
+	search := func(query, output string) syntheticTool {
+		return syntheticTool{"search_office_knowledge", `{"query":"` + query + `"}`, output}
+	}
+	for name, test := range map[string]struct {
+		tools   []syntheticTool
+		applies bool
+		want    bool
+		queries any
+	}{
+		"no search":            {nil, false, false, nil},
+		"answered":             {[]syntheticTool{search("What are the hours?", "success: Open 8 to 5 on weekdays.")}, true, true, nil},
+		"other office phone":   {[]syntheticTool{search("Where are your offices?", "success: Spring Hill: Synthetic Eye, 1 Main St. Phone number not supplied.")}, true, true, nil},
+		"not supplied":         {[]syntheticTool{search("Is there parking?", "success: Directions, parking, and landmark details are not supplied for this office.")}, true, false, []any{"Is there parking?"}},
+		"could not be checked": {[]syntheticTool{search("What are the hours?", "blocked: Office information could not be checked. Offer staff help if needed.")}, true, false, []any{"What are the hours?"}},
+		"one of two missing":   {[]syntheticTool{search("What are the hours?", "success: Open 8 to 5."), search("Do you take CareCredit?", "success: Financing options such as CareCredit are not supplied.")}, true, false, []any{"Do you take CareCredit?"}},
+	} {
+		answer, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t, test.tools...), map[string]any{}))["knowledge_answered"]
+		if found != test.applies || answer.Answer != test.want || !reflect.DeepEqual(answer.Detail["queries"], test.queries) {
+			t.Errorf("%s: found=%v answer=%v detail=%v", name, found, answer.Answer, answer.Detail)
+		}
+	}
+}
+
+func TestTransferNotRefusedCheck(t *testing.T) {
+	for name, test := range map[string]struct {
+		said []string
+		want bool
+	}{
+		"transfers":            {[]string{"One moment, I'll transfer you to the front desk."}, true},
+		"can transfer":         {[]string{"I can transfer you now if you'd like."}, true},
+		"does not transfer":    {[]string{"Sorry, I don't transfer calls, but I can take a message."}, false},
+		"cannot transfer":      {[]string{"I can't transfer you right now."}, false},
+		"curly apostrophe":     {[]string{"I’m unable to transfer the call."}, false},
+		"later refusal counts": {[]string{"Hello, how can I help?", "We do not transfer calls to billing."}, false},
+	} {
+		answer, found := answersByQuestion(codeCheckAnswers(agentTranscript(t, test.said...), map[string]any{}))["transfer_not_refused"]
+		if !found || answer.Answer != test.want {
+			t.Errorf("%s: found=%v answer=%v", name, found, answer.Answer)
+		}
+	}
+	if _, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t), map[string]any{}))["transfer_not_refused"]; found {
+		t.Error("a call with no agent message has nothing to check")
+	}
+}
+
+func TestInsuranceResolvedCheck(t *testing.T) {
+	ask := syntheticTool{"check_insurance", `{"plan":"Synthetic"}`, "Ask what insurance plan is on the card."}
+	choose := syntheticTool{"check_insurance", `{"plan":"Synthetic Medicaid"}`, "Ask which plan is on the card: Synthetic A, Synthetic B."}
+	prefixed := syntheticTool{"check_insurance", `{"plan":"Synthetic"}`, "needs_input: Which of these is on your card: A or B?"}
+	accepted := syntheticTool{"check_insurance", `{"plan":"Synthetic A"}`, "Synthetic A is accepted for medical visits at this office."}
+	for name, test := range map[string]struct {
+		tools   []syntheticTool
+		applies bool
+		want    bool
+	}{
+		"no insurance check": {nil, false, false},
+		"accepted":           {[]syntheticTool{accepted}, true, true},
+		"asked twice":        {[]syntheticTool{ask, choose, accepted}, true, true},
+		"asked three times":  {[]syntheticTool{ask, choose, prefixed, accepted}, true, false},
+	} {
+		answer, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t, test.tools...), map[string]any{}))["insurance_resolved"]
+		if found != test.applies || answer.Answer != test.want {
+			t.Errorf("%s: found=%v answer=%v", name, found, answer.Answer)
+		}
+	}
+}
+
 func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 	seen := map[string]bool{}
 	for _, question := range ScorecardQuestions {

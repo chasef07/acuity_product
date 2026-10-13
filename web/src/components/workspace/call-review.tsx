@@ -370,7 +370,8 @@ function FactChip({
   answer: boolean
   detail?: Record<string, unknown>
 }) {
-  const extra = [detail?.reason, detail?.plan].filter((value): value is string => typeof value === "string" && value !== "")
+  const queries = Array.isArray(detail?.queries) ? detail.queries : []
+  const extra = [detail?.reason, detail?.plan, ...queries].filter((value): value is string => typeof value === "string" && value !== "")
   const failing = !answer && question?.failure === true
   return (
     <span

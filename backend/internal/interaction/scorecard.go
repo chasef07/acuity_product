@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 
 const (
 	ScorecardJudgeVersion = "typesafe-scorecard-v7"
-	ScorecardCodeVersion  = "code-checks-v1"
+	ScorecardCodeVersion  = "code-checks-v2"
 	scorecardNoAtOrBelow  = 0.40
 )
 
@@ -109,6 +110,24 @@ var ScorecardQuestions = []ScorecardQuestion{
 		No:       "The agent transferred without retrying the patient lookup.",
 	},
 	{
+		Key: "knowledge_answered", Failure: true, Code: "K1", Label: "Office knowledge had the answer", Prompt: "Did every office knowledge search return an answer?", Source: "code",
+		Question: "Did every search_office_knowledge result answer the search, without saying the information is not supplied or could not be checked?",
+		Yes:      "Every office knowledge search returned an answer. The standard \"Phone number not supplied\" line for other offices is ignored.",
+		No:       "At least one search said the information is not supplied or could not be checked. The search queries are recorded so staff can fill the gap.",
+	},
+	{
+		Key: "transfer_not_refused", Failure: true, Code: "T2", Label: "Transfer not refused", Prompt: "Did the agent avoid saying it cannot transfer calls?", Source: "code",
+		Question: "Did the agent avoid saying it does not or cannot transfer calls?",
+		Yes:      "The agent never said it does not or cannot transfer calls.",
+		No:       "The agent said it does not or cannot transfer calls, for example \"I don't transfer calls\".",
+	},
+	{
+		Key: "insurance_resolved", Failure: true, Code: "I3", Label: "Insurance settled without repeated asks", Prompt: "Did the insurance check settle in fewer than 3 asks for plan details?", Source: "code",
+		Question: "Did check_insurance ask for more plan information fewer than 3 times?",
+		Yes:      "The insurance check asked for more plan information at most twice.",
+		No:       "The insurance check asked what plan is on the card 3 or more times.",
+	},
+	{
 		Key: "insurance_verified", Code: "I1", Label: "Insurance verified", Prompt: "Was the caller's insurance verified?", Source: "code",
 		Question: "Was the caller's insurance verified?",
 		Yes:      "The last insurance check accepted the plan.",
@@ -148,7 +167,10 @@ type scorecardToolCall struct {
 	CallID    string
 }
 
+const insuranceAskLimit = 3
+
 var (
+	transferRefusal  = regexp.MustCompile(`(?i)\b(i|we)(\s+am|\s+are|'m|'re)?\s+(don't|do not|can't|cannot|can not|won't|will not|unable to|not able to)\s+transfer`)
 	schedulingWrites = map[string]bool{"book_appointment": true, "reschedule_appointment": true, "cancel_appointment": true}
 	blockingResults  = []struct{ tool, prefix, reason string }{
 		{"list_available_appointments", "no_results:", "No openings in the searched window"},
@@ -247,13 +269,51 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 		}
 	}
 
+	knowledgeSearched, knowledgeGaps := false, []any{}
+	for _, call := range calls {
+		if call.Name != "search_office_knowledge" {
+			continue
+		}
+		knowledgeSearched = true
+		if strings.HasPrefix(call.Output, "blocked: Office information could not be checked") || strings.Contains(strings.ReplaceAll(call.Output, "Phone number not supplied.", ""), "not supplied") {
+			knowledgeGaps = append(knowledgeGaps, strings.TrimSpace(anyString(call.Arguments["query"])))
+		}
+	}
+	if knowledgeSearched {
+		var detail map[string]any
+		if len(knowledgeGaps) > 0 {
+			detail = map[string]any{"queries": knowledgeGaps}
+		}
+		answers = append(answers, answer("knowledge_answered", len(knowledgeGaps) == 0, detail))
+	}
+
+	spoke, refused := false, false
+	for _, value := range transcriptItems(decodeRecord(transcript)) {
+		if record := recordValue(value); strings.EqualFold(firstRecordString(record, "role"), "assistant") {
+			spoke = true
+			refused = refused || transferRefusal.MatchString(strings.ReplaceAll(messageText(record), "’", "'"))
+		}
+	}
+	if spoke {
+		answers = append(answers, answer("transfer_not_refused", !refused, nil))
+	}
+
 	var lastInsurance *scorecardToolCall
+	insuranceAsks := 0
 	for index := range calls {
 		if calls[index].Name == "check_insurance" {
 			lastInsurance = &calls[index]
+			if calls[index].Status == "needs_input" || strings.Contains(calls[index].Output, "on the card") {
+				insuranceAsks++
+			}
 		}
 	}
 	if lastInsurance != nil {
+		var asks map[string]any
+		if insuranceAsks >= insuranceAskLimit {
+			asks = map[string]any{"asks": insuranceAsks}
+		}
+		answers = append(answers, answer("insurance_resolved", insuranceAsks < insuranceAskLimit, asks))
 		verified := lastInsurance.Status == "success"
 		var detail map[string]any
 		if !verified {
