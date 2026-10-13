@@ -62,6 +62,24 @@ func TestReceiptClaimHoldsEachCallSessionBehindItsInFlightReceipt(t *testing.T) 
 	assertReceiptStates(t, pool, map[string]string{
 		"session-3-backing-off": "PENDING", "session-3-ready": "UNKNOWN",
 	})
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_provider_receipts (
+			event_id, event_type, occurred_at, received_at, signature_timestamp,
+			raw_body, next_attempt_at, state, projection_attempts,
+			processing_started_at, last_attempt_at
+		) VALUES
+			('sessionless-in-flight', 'call.dtmf.received', $1, $1, 1, '{}'::bytea, $1,
+			 'PROCESSING', 1, $2, $2),
+			('sessionless-ready', 'call.dtmf.received', $1, $1, 1, '{}'::bytea, $1,
+			 'PENDING', 0, NULL, NULL)
+	`, now, currentTime); err != nil {
+		t.Fatal(err)
+	}
+	processReceipt(t, calling, true)
+	assertReceiptStates(t, pool, map[string]string{
+		"sessionless-in-flight": "PROCESSING", "sessionless-ready": "FAILED",
+	})
 }
 
 func TestConcurrentReceiptWorkersApplyEachCallSessionInArrivalOrder(t *testing.T) {

@@ -385,7 +385,7 @@ func (m *Module) resolveQuarantinedReceiptReference(
 }
 
 const claimNextReceiptQuery = `
-	WITH queued AS MATERIALIZED (
+	WITH queued AS (
 		SELECT
 			event_id,
 			call_session_id,
@@ -395,7 +395,8 @@ const claimNextReceiptQuery = `
 			state = 'PROCESSING'
 				AND processing_started_at > $1::timestamptz - interval '30 seconds' AS in_flight
 		FROM human_calling_provider_receipts
-		WHERE state IN ('PENDING', 'PROCESSING')
+		WHERE state = 'PROCESSING'
+			OR (state = 'PENDING' AND next_attempt_at <= $1)
 	), call_heads AS (
 		SELECT DISTINCT ON (call_session_id, sessionless_event_id) event_id, in_flight
 		FROM queued
