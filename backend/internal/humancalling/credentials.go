@@ -414,7 +414,7 @@ func (m *Module) authorizeMediaJWT(
 		return "", fmt.Errorf("load active media credential: %w", err)
 	}
 	if expectedCredentialID != "" && credentialID != expectedCredentialID {
-		return "", ErrDenied
+		return "", ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", fmt.Errorf("commit media JWT authorization: %w", err)

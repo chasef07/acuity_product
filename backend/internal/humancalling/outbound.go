@@ -534,7 +534,7 @@ func (m *Module) ConfirmOutboundMedia(
 	}
 	if _, err := m.access.LockMutationAuthorization(ctx, tx, command.Identity,
 		practiceID, locationID); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingAccessError(err)
 	}
 	var staffLegID, staffControlID, staffSession, staffState string
 	var answered bool
