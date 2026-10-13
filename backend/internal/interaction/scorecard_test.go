@@ -132,7 +132,7 @@ func TestJudgeAnswersReadTheJuryVerdict(t *testing.T) {
 		"errors":{"promises_backed":{"cause":"no_quorum","votes":{},"errors":{"typesafe-ai/jev":"TimeoutError"}}}
 	}`)
 	answers := answersByQuestion(judgeAnswers(evaluation))
-	if len(answers) != 3 || !answers["new_booking_requested"].Answer || answers["office_question_answered"].Answer {
+	if len(answers) != 2 || !answers["new_booking_requested"].Answer || answers["office_question_answered"].Answer {
 		t.Fatalf("the jury verdict is the answer: %+v", answers)
 	}
 	if votes, _ := answers["office_question_answered"].Detail["votes"].(map[string]float64); votes["liquid/d1"] != 0.1 {
@@ -145,8 +145,10 @@ func TestJudgeAnswersReadTheJuryVerdict(t *testing.T) {
 	if !reading.Evaluated || len(reading.Flags) != 1 || reading.Flags[0].Check != "office_question_answered" || reading.Sentiment == nil {
 		t.Fatalf("a no verdict on a failure question flags the call, a booking no does not: %+v", reading)
 	}
-	if skipped := answers["time_offered"]; skipped.Answer || skipped.Probability != nil || skipped.Detail["reason"] != "no_availability_result" {
-		t.Fatalf("B5 skipped for lack of availability is a no without a probability: %+v", skipped)
+	for _, gated := range []string{"time_offered", "requested_time_honored", "insurance_plan_as_stated"} {
+		if skipped, found := answers[gated]; found {
+			t.Fatalf("a question the jury skipped as not applicable has no answer: %+v", skipped)
+		}
 	}
 	if answers["new_booking_requested"].JudgeModel != "typesafe-ai/jev,liquid/d1" || *answers["new_booking_requested"].Probability != 0.91 {
 		t.Fatalf("judge provenance: %+v", answers["new_booking_requested"])

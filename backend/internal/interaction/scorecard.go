@@ -413,22 +413,11 @@ func juryAnswers(jury juryEvaluation, questions []juryQuestion) []scorecardAnswe
 			continue
 		}
 		var result struct {
-			Status      string             `json:"status"`
-			Reason      string             `json:"reason"`
 			Verdict     *bool              `json:"verdict"`
 			Probability *float64           `json:"probability"`
 			Votes       map[string]float64 `json:"votes"`
 		}
 		if json.Unmarshal(jury.Results[question.key], &result) != nil {
-			continue
-		}
-		if result.Status == "not_applicable" {
-			if question.key == "time_offered" && result.Reason == "no_availability_result" {
-				answers = append(answers, scorecardAnswer{
-					Question: question.key, Source: "judge", Answer: false, Version: jury.Version,
-					JudgeModel: model, Detail: map[string]any{"reason": result.Reason},
-				})
-			}
 			continue
 		}
 		if result.Verdict == nil || !validProbability(result.Probability) {

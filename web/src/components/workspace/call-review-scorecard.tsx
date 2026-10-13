@@ -109,7 +109,7 @@ export function ScorecardPanel({
                     </Button>
                   </div>
                   {revealed ? (
-                    <JudgeLine question={key} human={value} judged={judge.get(key)} />
+                    <JudgeLine human={value} judged={judge.get(key)} />
                   ) : (
                     !noteOpen && (
                       <Button size="icon-xs" variant="ghost" className="ml-auto" aria-label={`Add a note to ${question?.code ?? key}`} title="Add note" onClick={() => setOpenNotes((current) => ({ ...current, [key]: true }))}>
@@ -172,11 +172,9 @@ export function ScorecardPanel({
 }
 
 function JudgeLine({
-  question,
   human,
   judged,
 }: {
-  question: string
   human?: boolean
   judged?: { answer: boolean; probability?: number }
 }) {
@@ -184,9 +182,7 @@ function JudgeLine({
     return <span className="ml-auto text-[0.6875rem] text-muted-foreground">Judge: no answer</span>
   }
   const agrees = human === judged.answer
-  const detail = judged.probability !== undefined
-    ? judged.probability.toFixed(2)
-    : question === "time_offered" ? "no availability returned" : ""
+  const detail = judged.probability?.toFixed(2) ?? ""
   return (
     <span className="ml-auto flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground" title={detail}>
       Judge {judged.answer ? "Yes" : "No"}

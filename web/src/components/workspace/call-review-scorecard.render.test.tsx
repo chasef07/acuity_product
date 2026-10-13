@@ -55,7 +55,7 @@ test("a saved review shows agreement and locks the answers", () => {
   />)
   assert.match(html, /Agrees/)
   assert.match(html, /Disagrees/)
-  assert.match(html, /no availability returned/)
+  assert.match(html, /title="0.95"/)
   assert.doesNotMatch(html, /Save and reveal judge/)
   assert.match(html, /disabled=""/)
 })
