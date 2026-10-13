@@ -415,6 +415,145 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		}
 	})
 
+	type historyRow struct {
+		ID                 string     `json:"id"`
+		Version            int        `json:"version"`
+		CreatedAt          time.Time  `json:"createdAt"`
+		Author             string     `json:"author"`
+		Provenance         string     `json:"provenance"`
+		Reason             string     `json:"reason"`
+		PreviousRevisionID *string    `json:"previousRevisionId"`
+		Active             bool       `json:"active"`
+		LastAgentSearchAt  *time.Time `json:"lastAgentSearchAt"`
+		AgentSearchCount   int        `json:"agentSearchCount"`
+	}
+	type revisionView struct {
+		LocationID string `json:"locationId"`
+		Revision   *struct {
+			ID      string `json:"id"`
+			Version int    `json:"version"`
+		} `json:"revision"`
+		Sections []knowledge.Section `json:"sections"`
+	}
+	post := func(token, path string, body any) (int, string) {
+		t.Helper()
+		payload, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := request(t, server.Client(), http.MethodPost, server.URL+path, token, payload)
+		defer response.Body.Close()
+		return response.StatusCode, readBody(t, response)
+	}
+	history := func(t *testing.T) []historyRow {
+		t.Helper()
+		status, response := post("staff-token", "/v1/knowledge/revisions/query", map[string]string{"practiceId": abita, "locationId": locations["hollywood"]})
+		if status != http.StatusOK {
+			t.Fatalf("history status=%d body=%s", status, response)
+		}
+		var body struct {
+			LocationID string       `json:"locationId"`
+			Revisions  []historyRow `json:"revisions"`
+		}
+		if err := json.Unmarshal([]byte(response), &body); err != nil || body.LocationID != locations["hollywood"] {
+			t.Fatalf("history=%s err=%v", response, err)
+		}
+		return body.Revisions
+	}
+	readRevision := func(t *testing.T, token, location, revision string) (int, revisionView) {
+		t.Helper()
+		status, response := post(token, "/v1/knowledge/revisions/read", map[string]string{"practiceId": abita, "locationId": location, "revisionId": revision})
+		var view revisionView
+		if status == http.StatusOK {
+			if err := json.Unmarshal([]byte(response), &view); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return status, view
+	}
+
+	t.Run("history lists every revision newest first with version, author, and agent use", func(t *testing.T) {
+		latest := active(abita, "hollywood")
+		rows := history(t)
+		var ids, authors, reasons []string
+		var versions []int
+		for _, row := range rows {
+			ids, versions, authors, reasons = append(ids, row.ID), append(versions, row.Version), append(authors, row.Author), append(reasons, row.Reason)
+			if row.Active != (row.ID == latest) {
+				t.Errorf("revision %s active=%v", row.ID, row.Active)
+			}
+			var count int
+			var last *time.Time
+			if err := pool.QueryRow(ctx, `SELECT count(*), max(created_at) FROM knowledge_retrieval_observations WHERE revision_id=$1`, row.ID).Scan(&count, &last); err != nil {
+				t.Fatal(err)
+			}
+			if row.AgentSearchCount != count || (last == nil) != (row.LastAgentSearchAt == nil) || (last != nil && !last.Equal(*row.LastAgentSearchAt)) {
+				t.Errorf("revision %s agent use=%d %v; want %d %v", row.ID, row.AgentSearchCount, row.LastAgentSearchAt, count, last)
+			}
+		}
+		if !slices.Equal(ids, []string{latest, first.RevisionID, initial.ID}) || !slices.Equal(versions, []int{3, 2, 1}) {
+			t.Fatalf("history ids=%v versions=%v", ids, versions)
+		}
+		if !slices.Equal(authors, []string{"operator@acuity.test", "staff@abita.test", "Unknown user"}) || !slices.Equal(reasons, []string{"Correct closing time", "Correct closing time", "initial import"}) {
+			t.Fatalf("history authors=%v reasons=%v", authors, reasons)
+		}
+		if rows[0].Provenance != "portal" || rows[2].Provenance != "approved synthetic fixture" || rows[2].PreviousRevisionID != nil || *rows[1].PreviousRevisionID != initial.ID || *rows[0].PreviousRevisionID != first.RevisionID {
+			t.Fatalf("history provenance and lineage=%+v", rows)
+		}
+		if rows[1].AgentSearchCount == 0 || rows[0].AgentSearchCount != 0 || rows[0].LastAgentSearchAt != nil {
+			t.Fatalf("agent use not distinguished=%+v", rows)
+		}
+	})
+
+	t.Run("history and revision reads are limited to the Location's office", func(t *testing.T) {
+		if status, response := post("staff-token", "/v1/knowledge/revisions/query", map[string]string{"practiceId": abita, "locationId": locations["spring-hill"]}); status != http.StatusForbidden {
+			t.Fatalf("other Location history status=%d body=%s", status, response)
+		}
+		if status, response := post("demo-token", "/v1/knowledge/revisions/query", map[string]string{"practiceId": abita, "locationId": locations["hollywood"]}); status != http.StatusForbidden {
+			t.Fatalf("other Practice history status=%d body=%s", status, response)
+		}
+		if status, _ := readRevision(t, "staff-token", locations["spring-hill"], initial.ID); status != http.StatusForbidden {
+			t.Fatalf("other Location revision read status=%d", status)
+		}
+		if status, _ := readRevision(t, "staff-token", locations["hollywood"], active(demo, "demo-office")); status != http.StatusBadRequest {
+			t.Fatalf("other office revision read status=%d", status)
+		}
+	})
+
+	t.Run("revision read returns that revision's entries in order", func(t *testing.T) {
+		status, view := readRevision(t, "staff-token", locations["hollywood"], initial.ID)
+		want := append(syntheticAbitaSections(), knowledge.Section{ID: "sunglasses", Title: "Sunglasses", Text: "Synthetic sunglasses are sold here."})
+		if status != http.StatusOK || view.LocationID != locations["hollywood"] || view.Revision == nil || view.Revision.ID != initial.ID || view.Revision.Version != 1 || !slices.Equal(view.Sections, want) {
+			t.Fatalf("status=%d view=%+v", status, view)
+		}
+	})
+
+	t.Run("restoring an earlier revision publishes it as the next version", func(t *testing.T) {
+		before := active(abita, "hollywood")
+		_, old := readRevision(t, "staff-token", locations["hollywood"], initial.ID)
+		restore := publishBody{PracticeID: abita, LocationID: locations["hollywood"], RevisionID: uuid.NewString(), ExpectedRevisionID: before, Reason: "Restore version 1", Sections: old.Sections}
+		status, response := publish("staff-token", restore)
+		var published struct {
+			ID      string `json:"id"`
+			Version int    `json:"version"`
+		}
+		if status != http.StatusOK || json.Unmarshal([]byte(response), &published) != nil || published.ID != restore.RevisionID || published.Version != 4 {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		status, current := post("staff-token", "/v1/knowledge/query", map[string]string{"practiceId": abita, "locationId": locations["hollywood"]})
+		var view revisionView
+		if status != http.StatusOK || json.Unmarshal([]byte(current), &view) != nil || view.Revision == nil || view.Revision.ID != restore.RevisionID || view.Revision.Version != 4 || !slices.Equal(view.Sections, old.Sections) {
+			t.Fatalf("current status=%d body=%s", status, current)
+		}
+		if result := search("hollywood"); result.RevisionID == nil || *result.RevisionID != restore.RevisionID {
+			t.Fatalf("agent search after restore=%+v", result)
+		}
+		rows := history(t)
+		if len(rows) != 4 || rows[0].ID != restore.RevisionID || rows[0].Version != 4 || !rows[0].Active || rows[0].Reason != "Restore version 1" || *rows[0].PreviousRevisionID != before || rows[0].AgentSearchCount != 1 || rows[3].ID != initial.ID {
+			t.Fatalf("history after restore=%+v", rows)
+		}
+	})
+
 	t.Run("portal role cannot rewrite or delete published knowledge", func(t *testing.T) {
 		for _, statement := range []string{
 			`UPDATE knowledge_revisions SET reason='rewritten'`,

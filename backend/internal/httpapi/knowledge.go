@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -108,6 +109,27 @@ func (server *Server) PublishLocationKnowledge(w http.ResponseWriter, r *http.Re
 }
 
 func (server *Server) QueryLocationKnowledge(w http.ResponseWriter, r *http.Request) {
+	var body api.LocationKnowledgeQuery
+	server.readLocationKnowledge(w, r, &body, func(ctx context.Context, identity access.Identity) (any, error) {
+		return server.knowledge.ReadLocation(ctx, identity, body.PracticeId.String(), body.LocationId.String())
+	})
+}
+
+func (server *Server) QueryLocationKnowledgeHistory(w http.ResponseWriter, r *http.Request) {
+	var body api.LocationKnowledgeQuery
+	server.readLocationKnowledge(w, r, &body, func(ctx context.Context, identity access.Identity) (any, error) {
+		return server.knowledge.ReadLocationHistory(ctx, identity, body.PracticeId.String(), body.LocationId.String())
+	})
+}
+
+func (server *Server) ReadLocationKnowledgeRevision(w http.ResponseWriter, r *http.Request) {
+	var body api.LocationKnowledgeRevisionQuery
+	server.readLocationKnowledge(w, r, &body, func(ctx context.Context, identity access.Identity) (any, error) {
+		return server.knowledge.ReadLocationRevision(ctx, identity, body.PracticeId.String(), body.LocationId.String(), body.RevisionId.String())
+	})
+}
+
+func (server *Server) readLocationKnowledge(w http.ResponseWriter, r *http.Request, body any, read func(context.Context, access.Identity) (any, error)) {
 	started := time.Now()
 	if !server.portalOnly(w, r) {
 		return
@@ -116,8 +138,7 @@ func (server *Server) QueryLocationKnowledge(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	var body api.LocationKnowledgeQuery
-	if !server.decodeJSON(w, r, &body) {
+	if !server.decodeJSON(w, r, body) {
 		return
 	}
 	if server.knowledge == nil {
@@ -126,7 +147,7 @@ func (server *Server) QueryLocationKnowledge(w http.ResponseWriter, r *http.Requ
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	result, err := server.knowledge.ReadLocation(ctx, identity, body.PracticeId.String(), body.LocationId.String())
+	result, err := read(ctx, identity)
 	switch {
 	case err == nil:
 		server.writeJSON(w, http.StatusOK, result)
@@ -138,7 +159,7 @@ func (server *Server) QueryLocationKnowledge(w http.ResponseWriter, r *http.Requ
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Knowledge isn't available for this Location.", false)
 	default:
 		if r.Context().Err() == nil {
-			slog.Warn("location_knowledge_read_failed", "error", err.Error(), "elapsed_ms", time.Since(started).Milliseconds())
+			slog.Warn("location_knowledge_read_failed", "path", r.URL.Path, "error", err.Error(), "elapsed_ms", time.Since(started).Milliseconds())
 		}
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Knowledge isn't available right now.", true)
 	}

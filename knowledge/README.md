@@ -45,7 +45,13 @@ Staff publish a complete, ordered entry list with a reason through
 `POST /v1/knowledge/revisions`. Each publish creates a new revision recording
 who changed it and why, and switches the office to it only if no one else
 published first. The next Abita search uses it. Earlier revisions are never
-changed; to undo a change, publish the earlier content again.
+changed.
+
+Each revision has a version number, its position in the office's history
+starting at 1. The Portal's History panel lists every version with its author,
+reason, and when the agent last searched it, and shows what each changed from
+the one before. Restoring publishes an earlier version's entries as a new
+version with a reason; it never edits history.
 
 ## Search regression fixtures
 

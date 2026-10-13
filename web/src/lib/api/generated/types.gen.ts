@@ -26,7 +26,44 @@ export type KnowledgePublication = {
 
 export type KnowledgeRevisionSummary = {
     id: string;
+    /**
+     * Position in the office's revision history, starting at 1 for the oldest.
+     */
+    version: number;
     createdAt: string;
+};
+
+export type LocationKnowledgeRevisionQuery = {
+    practiceId: string;
+    locationId: string;
+    revisionId: string;
+};
+
+export type LocationKnowledgeHistory = {
+    locationId: string;
+    revisions: Array<KnowledgeRevisionHistoryEntry>;
+};
+
+export type KnowledgeRevisionHistoryEntry = {
+    id: string;
+    version: number;
+    createdAt: string;
+    /**
+     * The publisher's email, or "Unknown user" when it cannot be resolved.
+     */
+    author: string;
+    provenance: string;
+    reason: string;
+    previousRevisionId?: string;
+    /**
+     * Whether Abita searches this revision now.
+     */
+    active: boolean;
+    /**
+     * The latest agent search of this revision; absent when the agent has not searched it.
+     */
+    lastAgentSearchAt?: string;
+    agentSearchCount: number;
 };
 
 export type KnowledgeSection = {
@@ -4441,6 +4478,80 @@ export type PublishLocationKnowledgeResponses = {
 };
 
 export type PublishLocationKnowledgeResponse = PublishLocationKnowledgeResponses[keyof PublishLocationKnowledgeResponses];
+
+export type QueryLocationKnowledgeHistoryData = {
+    body: LocationKnowledgeQuery;
+    path?: never;
+    query?: never;
+    url: '/v1/knowledge/revisions/query';
+};
+
+export type QueryLocationKnowledgeHistoryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryLocationKnowledgeHistoryError = QueryLocationKnowledgeHistoryErrors[keyof QueryLocationKnowledgeHistoryErrors];
+
+export type QueryLocationKnowledgeHistoryResponses = {
+    /**
+     * The office's revision history.
+     */
+    200: LocationKnowledgeHistory;
+};
+
+export type QueryLocationKnowledgeHistoryResponse = QueryLocationKnowledgeHistoryResponses[keyof QueryLocationKnowledgeHistoryResponses];
+
+export type ReadLocationKnowledgeRevisionData = {
+    body: LocationKnowledgeRevisionQuery;
+    path?: never;
+    query?: never;
+    url: '/v1/knowledge/revisions/read';
+};
+
+export type ReadLocationKnowledgeRevisionErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReadLocationKnowledgeRevisionError = ReadLocationKnowledgeRevisionErrors[keyof ReadLocationKnowledgeRevisionErrors];
+
+export type ReadLocationKnowledgeRevisionResponses = {
+    /**
+     * The revision and its entries.
+     */
+    200: LocationKnowledge;
+};
+
+export type ReadLocationKnowledgeRevisionResponse = ReadLocationKnowledgeRevisionResponses[keyof ReadLocationKnowledgeRevisionResponses];
 
 export type SearchOfficeKnowledgeData = {
     body: {

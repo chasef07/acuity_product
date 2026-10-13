@@ -611,7 +611,8 @@ GRANT UPDATE (object_key) ON TABLE public.messaging_attachments TO acuity_portal
 GRANT SELECT, INSERT ON TABLE public.knowledge_corpora, public.knowledge_revisions,
     public.knowledge_passages TO acuity_portal;
 GRANT UPDATE (revision_id) ON TABLE public.knowledge_corpora TO acuity_portal;
-GRANT INSERT ON TABLE public.knowledge_retrieval_observations TO acuity_portal;
+-- Staff history shows when the agent last searched each revision.
+GRANT SELECT, INSERT ON TABLE public.knowledge_retrieval_observations TO acuity_portal;
 
 -- Human reply snapshots and provider-confirmed shared completion.
 GRANT SELECT, INSERT ON work_text_replies TO acuity_portal;

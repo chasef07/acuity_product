@@ -25,8 +25,9 @@ that connects them.
   and flag a call with a durable note. Acuity Platform Operators review these in
   Manage my agent using the Flagged calls filter within the selected Practice.
   Flags preserve the original report; they do not create patient Tasks or send notifications.
-  Manage my agent also shows, read-only, the knowledge and insurance list Abita uses
-  at each authorized Location.
+  Manage my agent also lets staff edit the knowledge Abita uses at each authorized
+  Location, see its version history, and restore an earlier version, and shows,
+  read-only, the insurance list.
 - **AI evidence:** preserve AI Interactions, transcripts, and receipt-backed
   appointment outcomes without treating an automated claim as proof of success.
 
