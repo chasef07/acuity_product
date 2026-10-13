@@ -95,9 +95,9 @@ func (m *Module) QueryScorecardResults(ctx context.Context, command ScorecardRes
 		WHERE i.practice_id = $1 AND i.location_id = ANY($2::uuid[])
 			AND i.started_at >= $3 AND i.started_at < $4 AND i.lifecycle_stage = 3
 		GROUP BY i.id
-		HAVING bool_or(a.source = 'judge')
+		HAVING bool_or(a.source = 'judge' AND a.scorecard_version = $6)
 		LIMIT $5
-	`, command.PracticeID, locations, from, to, analyticsRowLimit+1)
+	`, command.PracticeID, locations, from, to, analyticsRowLimit+1, ScorecardJudgeVersion)
 	if err != nil {
 		return ScorecardResults{}, fmt.Errorf("query scorecard results: %w", err)
 	}

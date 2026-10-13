@@ -240,14 +240,14 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	}
 	now = time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC)
 	results, err := module.QueryScorecardResults(ctx, ScorecardResultsCommand{Identity: first, PracticeID: practice, Range: AnalyticsRange7Days})
-	if err != nil || results.Calls != 35 || results.ProblemCalls != 9 || results.BookingCallers != 2 || results.Missed != 1 || results.NotSearched != 1 || results.Conversion == nil || *results.Conversion != 0 {
+	if err != nil || results.Calls != 34 || results.ProblemCalls != 9 || results.BookingCallers != 2 || results.Missed != 1 || results.NotSearched != 1 || results.Conversion == nil || *results.Conversion != 0 {
 		t.Fatalf("scorecard results: %+v %v", results, err)
 	}
 	if len(results.Daily) != 8 {
 		t.Fatalf("one point per UTC day in range: %d", len(results.Daily))
 	}
 	for _, day := range results.Daily {
-		if (day.Date == "2026-10-06") != (day.Calls == 35) || (day.Calls == 0 && day.ProblemRate != nil) {
+		if (day.Date == "2026-10-06") != (day.Calls == 34) || (day.Calls == 0 && day.ProblemRate != nil) {
 			t.Fatalf("daily trend: %+v", results.Daily)
 		}
 	}

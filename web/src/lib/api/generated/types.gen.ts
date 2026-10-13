@@ -1100,6 +1100,9 @@ export type OperatorScorecardDay = {
 };
 
 export type OperatorScorecardResults = {
+    /**
+     * Calls scored by the current judge version only, so a window spanning a judge release does not mix versions.
+     */
     calls: number;
     /**
      * Calls with a no on any failure question, a missed booking, or a new-booking request with no availability search.
