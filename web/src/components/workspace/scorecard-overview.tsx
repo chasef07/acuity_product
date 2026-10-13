@@ -96,7 +96,7 @@ export function BookingConversionKpi({ practiceID, range }: { practiceID: string
           <TrendingUpIcon className="size-3.5" aria-hidden="true" />
         </span>
       </CardHeader>
-      <CardContent className="truncate text-[0.6875rem] text-muted-foreground">
+      <CardContent className="text-[0.6875rem] text-muted-foreground">
         {results.status === "failed"
           ? "Unavailable"
           : data
