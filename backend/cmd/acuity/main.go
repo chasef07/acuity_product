@@ -295,7 +295,7 @@ func runAuthorizedHTTP(
 			}
 			embedder = provider
 		}
-		knowledgeModule, err := knowledge.New(database, accessModule, embedder, knowledge.Config{ProviderTimeout: 3 * time.Second})
+		knowledgeModule, err := knowledge.New(database, accessModule, embedder, knowledge.Config{SearchEmbeddingTimeout: 3 * time.Second})
 		if err != nil {
 			return err
 		}
