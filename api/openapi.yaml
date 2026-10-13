@@ -4156,11 +4156,13 @@ components:
     OperatorCallReviewQueueRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, date, timeZone]
+      required: [practiceId, date]
       properties:
         practiceId: {type: string, format: uuid}
-        date: {type: string, format: date}
-        timeZone: {type: string, minLength: 1, maxLength: 100}
+        date:
+          type: string
+          format: date
+          description: Review day D covers calls from D-1 4:00 PM Eastern to D 4:00 PM Eastern, and opens at D 4:00 PM Eastern.
     OperatorCallReviewQueueCall:
       type: object
       additionalProperties: false
@@ -4268,7 +4270,7 @@ components:
       description: >-
         Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling
         flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size.
-        The jury says no when its majority verdict is no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 1%, agreement low bound within
+        The jury says no when its majority verdict is no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 5%, agreement low bound within
         5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
       required: [calls, failures, catch, catchLow, falseAlarms, falseAlarmHigh, agreement, agreementLow, humanAgreement, humanPairs, status, reason]
       properties:
@@ -4326,14 +4328,75 @@ components:
         answers:
           type: array
           items: {$ref: "#/components/schemas/OperatorReviewerAnswer"}
+    OperatorGoldenSetCounts:
+      type: object
+      additionalProperties: false
+      required: [judgeNo, falseAlarms, humanNo, misses]
+      properties:
+        judgeNo:
+          type: integer
+          description: Reviewed answers where the jury said no.
+        falseAlarms:
+          type: integer
+          description: Jury no answers the reviewer marked fine.
+        humanNo:
+          type: integer
+          description: Answers the reviewer marked no (real issues).
+        misses:
+          type: integer
+          description: Reviewer no answers where the jury said yes.
+    OperatorGoldenSetQuestionCounts:
+      type: object
+      additionalProperties: false
+      required: [question, judgeNo, falseAlarms, humanNo, misses]
+      properties:
+        question: {type: string}
+        judgeNo:
+          type: integer
+          description: Reviewed answers where the jury said no.
+        falseAlarms:
+          type: integer
+          description: Jury no answers the reviewer marked fine.
+        humanNo:
+          type: integer
+          description: Answers the reviewer marked no (real issues).
+        misses:
+          type: integer
+          description: Reviewer no answers where the jury said yes.
+    OperatorGoldenSetDay:
+      type: object
+      additionalProperties: false
+      required: [date, judgeNo, falseAlarms, humanNo, misses, questions]
+      properties:
+        date: {type: string, format: date}
+        judgeNo:
+          type: integer
+          description: Reviewed answers where the jury said no.
+        falseAlarms:
+          type: integer
+          description: Jury no answers the reviewer marked fine.
+        humanNo:
+          type: integer
+          description: Answers the reviewer marked no (real issues).
+        misses:
+          type: integer
+          description: Reviewer no answers where the jury said yes.
+        questions:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorGoldenSetQuestionCounts"}
     OperatorJudgeAccuracy:
       type: object
       additionalProperties: false
-      required: [currentJudgeVersion, reviewedCalls, goldenAnswers, goldenSet, rows, judgeDisagreements, reviewerDisagreements]
+      required: [currentJudgeVersion, days, week, reviewedCalls, goldenAnswers, goldenSet, rows, judgeDisagreements, reviewerDisagreements]
       properties:
         currentJudgeVersion:
           type: string
           description: The judge version new calls are scored with.
+        days:
+          type: array
+          description: The current judge version's reviewed answers per review day over the last 7 review days, newest first. Built only from stored human reviews; shared calls the viewer has not reviewed are left out.
+          items: {$ref: "#/components/schemas/OperatorGoldenSetDay"}
+        week: {$ref: "#/components/schemas/OperatorGoldenSetCounts"}
         reviewedCalls: {type: integer}
         goldenAnswers: {type: integer}
         goldenSet:
@@ -4368,17 +4431,31 @@ components:
     OperatorScorecardResults:
       type: object
       additionalProperties: false
-      required: [calls, problemCalls, bookingCalls, converted, blocked, missed, conversion, daily]
+      required: [calls, problemCalls, bookingCallers, converted, blocked, missed, notSearched, conversion, daily]
       properties:
-        calls: {type: integer}
+        calls:
+          type: integer
+          description: Calls scored by the current judge version only, so a window spanning a judge release does not mix versions.
         problemCalls:
           type: integer
-          description: Calls with a no on any failure question, or a missed booking.
-        bookingCalls: {type: integer}
-        converted: {type: integer}
-        blocked: {type: integer}
+          description: Calls with a no on any failure question, a missed booking, or a new-booking request with no availability search.
+        bookingCallers:
+          type: integer
+          description: Caller numbers that asked for a new appointment in the window, each counted once. Cancels and reschedules are not counted.
+        converted:
+          type: integer
+          description: Booking caller numbers with a call that booked successfully.
+        blocked:
+          type: integer
+          description: Booking caller numbers blocked by a tool result and not converted; left out of the conversion denominator.
         missed: {type: integer}
-        conversion: {type: number, nullable: true}
+        notSearched:
+          type: integer
+          description: Booking caller numbers whose new-booking calls never searched availability.
+        conversion:
+          type: number
+          nullable: true
+          description: converted / (bookingCallers - blocked).
         daily:
           type: array
           items: {$ref: "#/components/schemas/OperatorScorecardDay"}

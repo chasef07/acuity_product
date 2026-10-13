@@ -96,11 +96,11 @@ export function BookingConversionKpi({ practiceID, range }: { practiceID: string
           <TrendingUpIcon className="size-3.5" aria-hidden="true" />
         </span>
       </CardHeader>
-      <CardContent className="truncate text-[0.6875rem] text-muted-foreground">
+      <CardContent className="text-[0.6875rem] text-muted-foreground">
         {results.status === "failed"
           ? "Unavailable"
           : data
-            ? `${data.converted} of ${data.bookingCalls - data.blocked} booking calls · ${data.missed} missed`
+            ? `${data.converted} of ${data.bookingCallers - data.blocked} new-booking callers · ${data.missed} missed · ${data.notSearched} not searched · ${data.blocked} blocked`
             : "Loading"}
       </CardContent>
     </Card>

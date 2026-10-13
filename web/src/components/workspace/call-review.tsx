@@ -56,6 +56,7 @@ import {
   TimelineItem,
   timelineEntries,
 } from "@/components/workspace/operator-analytics-detail"
+import { GoldenSetDays } from "@/components/workspace/golden-set-days"
 import { ScorecardDefinitionsButton } from "@/components/workspace/scorecard-overview"
 import type {
   OperatorCallReviewQueueCall,
@@ -69,6 +70,7 @@ import {
   useScorecardQuestions,
 } from "@/lib/clients/call-review"
 import { formatShortDateTime } from "@/lib/format"
+import { latestReviewDay } from "@/lib/review-day"
 
 const silenceSeconds = 8
 
@@ -84,7 +86,7 @@ export function CallReviewWorkspace({
   onOpenCall: (interactionID: string) => void
 }) {
   const [view, setView] = useState<ReviewView>("queue")
-  const [date, setDate] = useState(yesterday)
+  const [date, setDate] = useState(() => latestReviewDay())
   const questions = useScorecardQuestions()
   if (questions.status === "loading") return <Skeleton className="h-[32rem] rounded-xl" />
   if (questions.status === "failed") {
@@ -116,13 +118,13 @@ export function CallReviewWorkspace({
         </ToggleGroup>
         <div className="flex items-center gap-2">
           {view === "queue" && (
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              Calls from
+            <label className="flex items-center gap-2 text-xs text-muted-foreground" title="Calls from 4:00 PM Eastern the day before to 4:00 PM Eastern. Opens at 4:00 PM Eastern.">
+              Review day
               <Input
                 type="date"
                 className="h-8 w-40"
                 value={date}
-                max={yesterday()}
+                max={latestReviewDay()}
                 onChange={(event) => event.target.value && setDate(event.target.value)}
               />
             </label>
@@ -139,11 +141,6 @@ export function CallReviewWorkspace({
   )
 }
 
-function yesterday() {
-  const value = new Date()
-  value.setDate(value.getDate() - 1)
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`
-}
 
 function ReviewQueue({ practiceID, date, catalog }: { practiceID: string; date: string; catalog: QuestionCatalog }) {
   const [revision, setRevision] = useState(0)
@@ -370,7 +367,8 @@ function FactChip({
   answer: boolean
   detail?: Record<string, unknown>
 }) {
-  const extra = [detail?.reason, detail?.plan].filter((value): value is string => typeof value === "string" && value !== "")
+  const queries = Array.isArray(detail?.queries) ? detail.queries : []
+  const extra = [detail?.reason, detail?.plan, ...queries].filter((value): value is string => typeof value === "string" && value !== "")
   const failing = !answer && question?.failure === true
   return (
     <span
@@ -496,7 +494,7 @@ function JudgeAccuracyView({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          A question is trusted when, at 95% confidence, the jury&apos;s no answers catch at least 90% of the failures reviewers mark, at most 1% of them are false alarms, and it agrees with reviewers nearly as often as reviewers agree with each other. The last 14 days must also meet those bars on their own. Reviews are weighted by each day&apos;s mix of flagged and unflagged calls, over the last 120 days.
+          A question is trusted when, at 95% confidence, the jury&apos;s no answers catch at least 90% of the failures reviewers mark, at most 5% of them are false alarms, and it agrees with reviewers nearly as often as reviewers agree with each other. The last 14 days must also meet those bars on their own. Reviews are weighted by each day&apos;s mix of flagged and unflagged calls, over the last 120 days.
         </p>
         {versions.length > 1 && (
           <ToggleGroup
@@ -526,6 +524,7 @@ function JudgeAccuracyView({
         </button>
         <Stat label="Reviewers disagreed" value={data.reviewerDisagreements.length.toLocaleString()} note="Questions to reword" />
       </div>
+      {version === current && <GoldenSetDays days={data.days} week={data.week} label={label} />}
       <Card size="sm">
         <CardHeader>
           <CardTitle className="text-sm">By question</CardTitle>

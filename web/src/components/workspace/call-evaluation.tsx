@@ -38,6 +38,7 @@ const verdictLabels: Record<AgentCallVerdict["answer"], string> = { yes: "Yes", 
 const notApplicableReasons: Record<string, string> = {
   no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
   no_availability_result: "No availability search returned a result.",
+  no_insurance_check: "No insurance check returned a result.",
 }
 
 function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
@@ -157,7 +158,7 @@ export function CallEvaluation({ evaluation, verdicts = [], questions = [] }: { 
           ))}
         </dl>
         {typeof evaluation.reason === "string" && <p className="mt-3 text-xs">{evaluation.status === "incomplete" ? "Evaluation incomplete" : "Evaluation unavailable"}: {title(evaluation.reason)}</p>}
-        {evaluation.evaluatorVersion === "typesafe-scorecard-v6" ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
+        {evaluation.evaluatorVersion === "typesafe-scorecard-v6" || evaluation.evaluatorVersion === "typesafe-scorecard-v7" ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
         {!currentVersion && <p className="mt-3 text-xs text-muted-foreground">This evaluator version is shown as recorded. Automatic red highlights apply only to typesafe-trace-v4.</p>}
         {Object.entries(results).map(([group, raw]) => {
           const result = record(raw)

@@ -8,7 +8,7 @@ import (
 
 const (
 	trustCatchFloor      = 0.90
-	trustFalseAlarmCap   = 0.01
+	trustFalseAlarmCap   = 0.05
 	trustHumanMargin     = 0.05
 	trustMinimumPairs    = 20
 	trustRecentWindow    = 14 * 24 * time.Hour
@@ -162,13 +162,13 @@ func trustVerdict(estimate TrustEstimate, recent trustRates) (string, string) {
 	case *estimate.Catch < trustCatchFloor:
 		return trustStatusBelow, "Catches " + percent(estimate.Catch) + " of failures, needs 90%"
 	case estimate.FalseAlarms != nil && *estimate.FalseAlarms > trustFalseAlarmCap:
-		return trustStatusBelow, percent(estimate.FalseAlarms) + " of its no's are false alarms, max 1%"
+		return trustStatusBelow, percent(estimate.FalseAlarms) + " of its no's are false alarms, max 5%"
 	case estimate.HumanAgreement != nil && estimate.HumanPairs >= trustMinimumPairs && *estimate.Agreement < *estimate.HumanAgreement-trustHumanMargin:
 		return trustStatusBelow, "Agrees " + percent(estimate.Agreement) + ", reviewers agree " + percent(estimate.HumanAgreement)
 	case *estimate.CatchLow < trustCatchFloor:
 		return trustStatusCollected, "Catch is at least " + percent(estimate.CatchLow) + " so far; more failures needed to show 90%"
 	case estimate.FalseAlarmHigh != nil && *estimate.FalseAlarmHigh > trustFalseAlarmCap:
-		return trustStatusCollected, "False alarms could be up to " + percentTenths(estimate.FalseAlarmHigh) + "; more no answers needed to show 1%"
+		return trustStatusCollected, "False alarms could be up to " + percentTenths(estimate.FalseAlarmHigh) + "; more no answers needed to show 5%"
 	case estimate.HumanPairs < trustMinimumPairs:
 		return trustStatusCollected, fmt.Sprintf("%d of %d shared reviews needed to measure reviewer agreement", estimate.HumanPairs, trustMinimumPairs)
 	case *estimate.AgreementLow < *estimate.HumanAgreement-trustHumanMargin:

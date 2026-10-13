@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,8 +13,9 @@ import (
 )
 
 const (
-	ScorecardJudgeVersion = "typesafe-scorecard-v6"
-	ScorecardCodeVersion  = "code-checks-v1"
+	ScorecardJudgeVersion = "typesafe-scorecard-v7"
+	previousJudgeVersion  = "typesafe-scorecard-v6"
+	ScorecardCodeVersion  = "code-checks-v2"
 	scorecardNoAtOrBelow  = 0.40
 )
 
@@ -31,10 +33,10 @@ type ScorecardQuestion struct {
 
 var ScorecardQuestions = []ScorecardQuestion{
 	{
-		Key: "booking_requested", Code: "B1", Label: "Booking requested", Prompt: "Did the caller ask to book, reschedule, or cancel?", Source: "judge",
-		Question: "Did the caller ask to book a new appointment, or to reschedule or cancel an existing appointment, at any point in the call? Count a request for an appointment for someone else (for example a child). Asking about an existing appointment's time or location, confirming it, or asking about prescriptions, orders, insurance, or billing is not a booking request by itself.",
-		Yes:      "The caller asked to book, reschedule, or cancel an appointment.",
-		No:       "The caller never asked to book, reschedule, or cancel an appointment.",
+		Key: "new_booking_requested", Code: "B1", Label: "New booking requested", Prompt: "Did the caller ask to book a new appointment?", Source: "judge",
+		Question: "Did the caller ask to book a NEW appointment, for themselves or someone else (for example a child)? Rescheduling, moving, or cancelling an existing appointment does not count. Asking about an existing appointment, insurance, prescriptions, glasses, records, or billing does not count by itself.",
+		Yes:      "The caller asked to book a new appointment.",
+		No:       "The caller did not ask to book a new appointment (they may have asked to cancel or reschedule, or something else).",
 	},
 	{
 		Key: "scheduling_tool_called", Code: "B2", Label: "Scheduling tool called", Prompt: "Did the agent try to book, reschedule, or cancel?", Source: "code",
@@ -55,40 +57,28 @@ var ScorecardQuestions = []ScorecardQuestion{
 		No:       "No tool result blocked the booking. A system failure, such as availability that could not be verified, is not a block.",
 	},
 	{
+		Key: "availability_searched", Code: "B0", Label: "Availability searched", Prompt: "Did the agent search for open times?", Source: "code",
+		Question: "Did a list_available_appointments call return a result?",
+		Yes:      "At least one availability search returned a result, even if it found no openings.",
+		No:       "The agent never searched availability. A new-booking caller without a search is a not-searched booking.",
+	},
+	{
 		Key: "time_offered", Code: "B5", Label: "Specific time offered", Prompt: "Did the agent offer a specific open time?", Source: "judge",
 		Question: "Did the agent offer the caller at least one specific appointment date and time taken from an availability tool result? A vague promise, a staff request to find a time, or a time the caller proposed that the agent did not confirm as available does not count.",
 		Yes:      "The agent offered at least one specific date and time from returned availability.",
 		No:       "The agent never offered a specific available date and time.",
 	},
 	{
-		Key: "need_understood", Failure: true, Code: "H1", Label: "Understood every request", Prompt: "Did the agent understand every request?", Source: "judge",
-		Question: "Did the agent correctly identify every request the caller made, including corrections and additional requests? First list each caller request, then check whether the agent's questions, tool calls, and statements address the request the caller actually made. Judge only whether the agent understood what was asked, not whether its answer was correct; factual accuracy is scored separately. Mishearing that the agent later corrected still counts as understood if the correction happened before any action was taken on the wrong understanding.",
-		Yes:      "The agent correctly identified every caller request, even if an answer it gave was wrong.",
-		No:       "The agent misunderstood, ignored, or acted on the wrong version of at least one caller request.",
+		Key: "requested_time_honored", Failure: true, Code: "B6", Label: "Requested time honored", Prompt: "Did the agent offer the day or time the caller asked for, or say none matched?", Source: "judge",
+		Question: "When the caller asked for a specific day, date, time of day (morning, afternoon), or the earliest opening, did the agent either offer a matching time from the availability results, or plainly say no matching time was available before suggesting other times? If the caller never asked for a specific day or time, answer true.",
+		Yes:      "Every specific day or time the caller asked for was offered from the results, or the agent plainly said none matched.",
+		No:       "The caller asked for a day or time and the agent offered other times without offering a matching one or saying none matched.",
 	},
 	{
-		Key: "right_help", Failure: true, Code: "H2", Label: "Right help or next step", Prompt: "Did every request end done, or with a clear next step?", Source: "judge",
-		Question: "By the end of the call, did the caller get the right help for each request: either the request was completed (supported by a successful tool result), or the caller was given a correct, clearly explained next step, such as a saved staff request they were told about, or a transfer to staff when the agent could not handle the request? A transfer counts only if the agent could not reasonably handle the request itself. If the call ended before any request was resolved or handed off, answer false.",
-		Yes:      "Every request was completed or handed off with a correct, clearly explained next step.",
-		No:       "At least one request was left unresolved, handed off unnecessarily, or the next step was missing, wrong, or unclear.",
-	},
-	{
-		Key: "clear_and_responsive", Failure: true, Code: "H4", Label: "Clear and responsive", Prompt: "Was the call clear and responsive?", Source: "judge",
-		Question: "Was the conversation clear and responsive from the caller's point of view? Answer false if the agent asked avoidable repeated questions, collected information it could not use for the caller's request, gave confusing or contradictory statements, or if the caller had to check whether the agent was still there or repeat themselves because the agent did not respond. These are not failures: a caller who asks for a person or does not want to talk to an AI and is transferred promptly (a brief offer to help first is fine); a transfer or staff request because a tool result says the agent cannot complete the request, such as insurance that cannot be verified; a short call; ordinary clarification of a hard-to-hear name or number, asked once or twice; caller-requested pauses.",
-		Yes:      "The conversation was clear and responsive, including prompt transfers the caller asked for.",
-		No:       "The conversation had avoidable repetition, wasted questions, confusing statements, or unresponsiveness.",
-	},
-	{
-		Key: "person_request_honored", Failure: true, Code: "T1", Label: "Person request honored", Prompt: "If the caller asked for a person, were they transferred promptly?", Source: "judge",
-		Question: "When the caller asked for a person, a representative, an agent, the front desk, or a transfer, did the agent transfer the call on that request? Answer false if, after the caller asked, the agent did any of these before transferring: said it was transferring, connecting, or checking who is available and then asked questions or offered help instead; said it could not transfer or that staff were busy or unavailable; collected details unrelated to the transfer; or let the caller ask again, including repeated words like 'agent' or 'representative' that went unanswered. Asking once what the call is about is fine only if the agent transfers right after the caller answers or asks again. If the caller accepts the agent's offer to help instead of a transfer, answer true. If the caller never asked for a person or a transfer, answer true.",
-		Yes:      "The caller never asked for a person, chose the agent's help instead, or was transferred on the request without the agent announcing, delaying, or ruling out the transfer.",
-		No:       "The agent announced a transfer and then pitched or asked questions, said it could not transfer or that staff were unavailable, or made the caller ask more than once.",
-	},
-	{
-		Key: "office_rules_grounded", Failure: true, Code: "A1", Label: "Office facts backed", Prompt: "Were all office facts backed by a lookup?", Source: "judge",
-		Question: "Was every factual claim about office hours, whether the office is open, providers, locations, services, or policies supported by recorded office instructions or a successful knowledge result available BEFORE the claim? Check each claim, including claims in Spanish, against earlier evidence for the relevant office. A caller's suggestion, the agent's own statements, general knowledge, or an unrelated tool result is not supporting evidence. If even one claim lacks earlier support or contradicts it, answer false. For example, saying 'we are open until five today' without earlier supporting hours fails. A later lookup, correction, or otherwise grounded answer does not erase an earlier unsupported claim. Greetings, acknowledgments, and explicit statements that information is unknown are not factual office claims.",
-		Yes:      "Every factual office claim has supporting evidence available before it was made, or no factual office claims were made.",
-		No:       "At least one factual office claim lacks earlier supporting evidence or contradicts it, even if the rest of the call is grounded or the claim is later corrected.",
+		Key: "office_rules_grounded", Failure: true, Code: "A1", Label: "Office facts backed", Prompt: "Were all office and record facts backed by an earlier lookup?", Source: "judge",
+		Question: "Compare every fact the agent stated about the office or a patient record against the text of tool results that came BEFORE it: hours or whether the office is open, which locations offer which services, where a provider practices, a staff member's title or credential (optician is not optometrist), floor, suite, address, phone, fees, policies, or whether a patient has an appointment. Answer FALSE if any stated fact is not in an earlier tool result, goes beyond what the result says, changes a word in a way that changes the meaning, or confirms a caller's guess that no result confirmed - even if a later lookup corrects it. Saying the information could not be confirmed is fine. Answer true if no such facts were stated or every one matches an earlier result.",
+		Yes:      "Every office or record fact the agent stated matches an earlier tool result.",
+		No:       "At least one office or record fact was not in, went beyond, or changed an earlier tool result.",
 	},
 	{
 		Key: "appointment_datetime_correct", Failure: true, Code: "A2", Label: "Appointment matched the caller", Prompt: "Did the appointment match what the caller agreed to?", Source: "judge",
@@ -97,22 +87,58 @@ var ScorecardQuestions = []ScorecardQuestion{
 		No:       "Any action targets or produces the wrong date/time, or there is insufficient evidence of a matching appointment action.",
 	},
 	{
+		Key: "office_question_answered", Failure: true, Code: "A3", Label: "Office question answered", Prompt: "Did office knowledge have the answer to every office question the caller asked?", Source: "judge",
+		Question: "Did the caller ask a question about the office - hours, locations, phone or fax numbers, providers, services, fees, policies, how to get records or prescriptions, referrals, parking, directions? If so, did the agent give a specific answer taken from an office knowledge or tool result? Answer FALSE if the caller asked an office question and the agent said it could not confirm or find the answer, the knowledge result said the information was not supplied, or the agent had to offer a staff message or transfer only because the answer was missing. Answer true if the caller asked no office questions or every office question was answered from a tool result. Questions about the caller's own appointments, insurance coverage, or medical advice do not count.",
+		Yes:      "Every office question the caller asked was answered from office knowledge, or none was asked.",
+		No:       "The caller asked an office question that office knowledge could not answer.",
+	},
+	{
+		Key: "promises_backed", Failure: true, Code: "P1", Label: "Promises backed by a tool", Prompt: "Was every promise or \"done\" backed by a tool result?", Source: "judge",
+		Question: "Check every statement the agent made about what has happened or will happen next. Did a tool result support each one? Answer FALSE if the agent said any of these without a tool result that says so: that staff WILL call the caller back, follow up, take care of it, email or send something, or contact them by a certain time (a saved staff task result only says a draft was saved for staff - it does not promise a callback); that it is transferring to a specific person or department (transfer_call has no destination); that it is checking the caller's record, appointment, or staff availability when no such lookup tool ran; that something is already done, booked, cancelled, noted, or sent ('listo', 'anotado', 'ya lo dejo') before the tool result for it; or that it will note or do something and then no tool ever did it. Saying staff will review the saved request, or that the request will be sent when the call ends, is supported.",
+		Yes:      "Every statement about what happened or will happen next was supported by a tool result.",
+		No:       "The agent promised a callback, follow-up, specific transfer destination, lookup, or completed action that no tool result supported.",
+	},
+	{
+		Key: "ended_while_caller_active", Failure: true, Code: "E1", Label: "Ended when the caller was done", Prompt: "Did the agent end the call only after the caller was done?", Source: "judge",
+		Question: "Look at the end of the call. Did the agent end the call (end_call) only after the caller said goodbye, said they needed nothing else, or stopped responding? Answer FALSE if, right before the agent ended the call, the caller was still talking, had just asked a question or raised a new concern that went unanswered, asked for a person, or was in the middle of giving information. If the agent did not end the call, answer true.",
+		Yes:      "The agent ended the call only after the caller was done, or the agent did not end the call.",
+		No:       "The agent ended the call while the caller was still talking, asking something, or giving information.",
+	},
+	{
 		Key: "no_results_retried", Failure: true, Code: "F2", Label: "Retried after no match", Prompt: "After no patient match, did the agent retry before transferring?", Source: "code",
 		Question: "After a patient lookup returned no_results, did the agent clarify and retry before transferring?",
 		Yes:      "The agent ran the patient lookup again before transferring the call.",
 		No:       "The agent transferred without retrying the patient lookup.",
 	},
 	{
-		Key: "staff_task_identified", Failure: true, Code: "F3", Label: "Staff task names the patient", Prompt: "Did every staff task name the patient?", Source: "code",
-		Question: "Did every staff task the agent saved name a patient?",
-		Yes:      "Every saved staff task named a patient (verified or not). The caller's number is always attached.",
-		No:       "At least one saved staff task said \"Patient: not identified\", so staff must work out who called.",
+		Key: "knowledge_answered", Code: "K1", Label: "Office knowledge had the answer", Prompt: "Did every office knowledge search return an answer?", Source: "code",
+		Question: "Did every search_office_knowledge result answer the search?",
+		Yes:      "Every office knowledge search returned an answer, or a knowledge outage stopped the search. An answer that also mentions something not supplied still counts as an answer.",
+		No:       "At least one search found nothing (no_results) or returned only \"not supplied\" sentences. This is a fact, not an agent failure: A3 is the failure question. The search queries are recorded so staff can fill the gap.",
+	},
+	{
+		Key: "transfer_not_refused", Failure: true, Code: "T2", Label: "Transfer not refused", Prompt: "Did the agent avoid saying it cannot transfer calls?", Source: "code",
+		Question: "Did the agent avoid saying it does not or cannot transfer calls?",
+		Yes:      "The agent never said it does not or cannot transfer calls.",
+		No:       "The agent said it does not or cannot transfer calls, for example \"I don't transfer calls\".",
+	},
+	{
+		Key: "insurance_resolved", Failure: true, Code: "I3", Label: "Insurance settled without repeated asks", Prompt: "Did the insurance check settle in fewer than 3 asks for plan details?", Source: "code",
+		Question: "Did check_insurance ask for more plan information fewer than 3 times?",
+		Yes:      "The insurance check asked for more plan information at most twice.",
+		No:       "The insurance check asked what plan is on the card 3 or more times.",
 	},
 	{
 		Key: "insurance_verified", Code: "I1", Label: "Insurance verified", Prompt: "Was the caller's insurance verified?", Source: "code",
 		Question: "Was the caller's insurance verified?",
 		Yes:      "The last insurance check accepted the plan.",
 		No:       "The last insurance check ended blocked or still needed information. This is not an agent failure; a task or transfer is fine. The plan name is recorded so staff can update the insurance rules.",
+	},
+	{
+		Key: "insurance_plan_as_stated", Failure: true, Code: "I2", Label: "Insurance checked as stated", Prompt: "Did every insurance check use the plan the caller described?", Source: "judge",
+		Question: "Did every check_insurance call use the plan as the caller described it, including words like Medicaid, Medicare, HMO, PPO, or a network name, and was the plan checked again after the caller added to or corrected the plan? Normal spelling or capitalization changes are fine.",
+		Yes:      "Every insurance check used the caller's complete plan description, including later additions or corrections.",
+		No:       "An insurance check dropped or changed part of the plan the caller described, or was not repeated after the caller corrected it.",
 	},
 }
 
@@ -142,7 +168,12 @@ type scorecardToolCall struct {
 	CallID    string
 }
 
+const insuranceAskLimit = 3
+
 var (
+	sentenceEnd     = regexp.MustCompile(`[.!?](\s+|$)|\n`)
+	transferRefusal = regexp.MustCompile(`(?i)\b(i|we)(\s+am|\s+are|'m|'re)?\s+(don't|do not|can't|cannot|can not|won't|will not|unable to|not able to)\s+transfer\s+(you|calls|the call|your call|this call)\b` +
+		`|\bno\s+(puedo|podemos)\s+transferir(le|la|lo)?(\s+(la|su|esta)\s+llamada|\s+llamadas|\s*[.,!?]|\s*$)|\bno\s+(transfiero|transferimos)\s+llamadas\b`)
 	schedulingWrites = map[string]bool{"book_appointment": true, "reschedule_appointment": true, "cancel_appointment": true}
 	blockingResults  = []struct{ tool, prefix, reason string }{
 		{"list_available_appointments", "no_results:", "No openings in the searched window"},
@@ -198,16 +229,38 @@ func scorecardToolCalls(transcript json.RawMessage) []scorecardToolCall {
 	return calls
 }
 
+func knowledgeGap(output string) bool {
+	if strings.HasPrefix(output, "no_results:") {
+		return true
+	}
+	answer, found := strings.CutPrefix(output, "success:")
+	if !found {
+		return false
+	}
+	gap := false
+	for _, sentence := range sentenceEnd.Split(answer, -1) {
+		if sentence = strings.TrimSpace(sentence); sentence == "" {
+			continue
+		}
+		if !strings.Contains(sentence, "not supplied") {
+			return false
+		}
+		gap = true
+	}
+	return gap
+}
+
 func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []scorecardAnswer {
 	calls := scorecardToolCalls(transcript)
 	answer := func(question string, value bool, detail map[string]any) scorecardAnswer {
 		return scorecardAnswer{Question: question, Source: "code", Answer: value, Version: ScorecardCodeVersion, Detail: detail}
 	}
 	receipts := domainOutcomeReceiptsByCallID(closeout)
-	writeCalled, writeSucceeded := false, false
+	writeCalled, writeSucceeded, searched := false, false, false
 	lastOutput := map[string]string{}
 	for _, call := range calls {
 		lastOutput[call.Name] = call.Output
+		searched = searched || (call.Name == "list_available_appointments" && call.Output != "")
 		if schedulingWrites[call.Name] {
 			writeCalled = true
 			receipt := receipts[call.CallID]
@@ -222,7 +275,7 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 			blocked = map[string]any{"reason": rule.reason, "tool": rule.tool}
 		}
 	}
-	answers := []scorecardAnswer{answer("scheduling_tool_called", writeCalled, nil)}
+	answers := []scorecardAnswer{answer("availability_searched", searched, nil), answer("scheduling_tool_called", writeCalled, nil)}
 	if writeCalled {
 		answers = append(answers, answer("scheduling_succeeded", writeSucceeded, nil))
 	}
@@ -240,53 +293,51 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 		}
 	}
 
-	drafts := map[string]bool{}
-	draftOrder := []string{}
+	knowledgeSearched, knowledgeGaps := false, []any{}
 	for _, call := range calls {
-		if call.Name != "save_staff_task" {
+		if call.Name != "search_office_knowledge" {
 			continue
 		}
-		draft := ""
-		for _, line := range strings.Split(call.Output, "\n") {
-			if value, found := strings.CutPrefix(line, "Draft ID: "); found {
-				draft = strings.TrimSpace(value)
-			}
-		}
-		if draft == "" {
-			continue
-		}
-		if _, known := drafts[draft]; !known {
-			draftOrder = append(draftOrder, draft)
-		}
-		switch call.Status {
-		case "saved":
-			drafts[draft] = !strings.Contains(call.Output, "\nPatient: not identified.")
-		case "cancelled":
-			delete(drafts, draft)
+		knowledgeSearched = true
+		if knowledgeGap(call.Output) {
+			knowledgeGaps = append(knowledgeGaps, strings.TrimSpace(anyString(call.Arguments["query"])))
 		}
 	}
-	if len(drafts) > 0 {
-		identified, anonymous := true, 0
-		for _, draft := range draftOrder {
-			if named, saved := drafts[draft]; saved && !named {
-				identified = false
-				anonymous++
-			}
-		}
+	if knowledgeSearched {
 		var detail map[string]any
-		if !identified {
-			detail = map[string]any{"unidentifiedTasks": anonymous}
+		if len(knowledgeGaps) > 0 {
+			detail = map[string]any{"queries": knowledgeGaps}
 		}
-		answers = append(answers, answer("staff_task_identified", identified, detail))
+		answers = append(answers, answer("knowledge_answered", len(knowledgeGaps) == 0, detail))
+	}
+
+	spoke, refused := false, false
+	for _, value := range transcriptItems(decodeRecord(transcript)) {
+		if record := recordValue(value); strings.EqualFold(firstRecordString(record, "role"), "assistant") {
+			spoke = true
+			refused = refused || transferRefusal.MatchString(strings.ReplaceAll(messageText(record), "’", "'"))
+		}
+	}
+	if spoke {
+		answers = append(answers, answer("transfer_not_refused", !refused, nil))
 	}
 
 	var lastInsurance *scorecardToolCall
+	insuranceAsks := 0
 	for index := range calls {
 		if calls[index].Name == "check_insurance" {
 			lastInsurance = &calls[index]
+			if strings.Contains(calls[index].Output, "on the card") {
+				insuranceAsks++
+			}
 		}
 	}
 	if lastInsurance != nil {
+		var asks map[string]any
+		if insuranceAsks >= insuranceAskLimit {
+			asks = map[string]any{"asks": insuranceAsks}
+		}
+		answers = append(answers, answer("insurance_resolved", insuranceAsks < insuranceAskLimit, asks))
 		verified := lastInsurance.Status == "success"
 		var detail map[string]any
 		if !verified {
@@ -306,9 +357,36 @@ type juryEvaluation struct {
 	Errors  map[string]json.RawMessage `json:"errors"`
 }
 
+type juryQuestion struct{ key, failureLabel string }
+
+var previousJuryQuestions = []juryQuestion{
+	{"booking_requested", ""}, {"time_offered", ""}, {"need_understood", "Understood every request"},
+	{"right_help", "Right help or next step"}, {"clear_and_responsive", "Clear and responsive"},
+	{"person_request_honored", "Person request honored"}, {"office_rules_grounded", "Office facts backed"},
+	{"appointment_datetime_correct", "Appointment matched the caller"},
+}
+
+func juryQuestions(version string) []juryQuestion {
+	if version == previousJudgeVersion {
+		return previousJuryQuestions
+	}
+	questions := []juryQuestion{}
+	for _, question := range ScorecardQuestions {
+		if question.Source != "judge" {
+			continue
+		}
+		label := ""
+		if question.Failure {
+			label = question.Label
+		}
+		questions = append(questions, juryQuestion{question.Key, label})
+	}
+	return questions
+}
+
 func readJury(evaluation json.RawMessage) (juryEvaluation, bool) {
 	var jury juryEvaluation
-	valid := json.Unmarshal(evaluation, &jury) == nil && jury.Version == ScorecardJudgeVersion &&
+	valid := json.Unmarshal(evaluation, &jury) == nil && (jury.Version == ScorecardJudgeVersion || jury.Version == previousJudgeVersion) &&
 		(jury.Status == "complete" || jury.Status == "incomplete") && len(jury.Jurors) > 0
 	for _, juror := range jury.Jurors {
 		valid = valid && strings.TrimSpace(juror) != ""
@@ -322,35 +400,25 @@ func validProbability(value *float64) bool {
 
 func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
 	jury, valid := readJury(evaluation)
-	if !valid {
+	if !valid || jury.Version != ScorecardJudgeVersion {
 		return nil
 	}
+	return juryAnswers(jury, juryQuestions(jury.Version))
+}
+
+func juryAnswers(jury juryEvaluation, questions []juryQuestion) []scorecardAnswer {
 	model := strings.Join(jury.Jurors, ",")
 	answers := []scorecardAnswer{}
-	for _, question := range ScorecardQuestions {
-		if question.Source != "judge" {
-			continue
-		}
-		if _, failed := jury.Errors[question.Key]; failed {
+	for _, question := range questions {
+		if _, failed := jury.Errors[question.key]; failed {
 			continue
 		}
 		var result struct {
-			Status      string             `json:"status"`
-			Reason      string             `json:"reason"`
 			Verdict     *bool              `json:"verdict"`
 			Probability *float64           `json:"probability"`
 			Votes       map[string]float64 `json:"votes"`
 		}
-		if json.Unmarshal(jury.Results[question.Key], &result) != nil {
-			continue
-		}
-		if result.Status == "not_applicable" {
-			if question.Key == "time_offered" && result.Reason == "no_availability_result" {
-				answers = append(answers, scorecardAnswer{
-					Question: question.Key, Source: "judge", Answer: false, Version: jury.Version,
-					JudgeModel: model, Detail: map[string]any{"reason": result.Reason},
-				})
-			}
+		if json.Unmarshal(jury.Results[question.key], &result) != nil {
 			continue
 		}
 		if result.Verdict == nil || !validProbability(result.Probability) {
@@ -358,7 +426,7 @@ func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
 		}
 		probability := *result.Probability
 		answers = append(answers, scorecardAnswer{
-			Question:    question.Key,
+			Question:    question.key,
 			Source:      "judge",
 			Answer:      *result.Verdict,
 			Probability: &probability,
@@ -394,7 +462,10 @@ func scorecardAnswersFor(transcript, closeoutPayload json.RawMessage) []scorecar
 }
 
 func recordScorecard(ctx context.Context, tx pgx.Tx, interaction Interaction, computedAt time.Time) (int, error) {
-	if _, err := tx.Exec(ctx, `DELETE FROM ai_interaction_scorecard_answers WHERE interaction_id = $1`, interaction.ID); err != nil {
+	evaluation, _ := json.Marshal(decodeRecord(interaction.CloseoutPayload)["evaluation"])
+	jury, judged := readJury(evaluation)
+	keepPreviousJudge := interaction.LifecycleStage == LifecycleClosed && judged && jury.Version == previousJudgeVersion
+	if _, err := tx.Exec(ctx, `DELETE FROM ai_interaction_scorecard_answers WHERE interaction_id = $1 AND NOT ($2 AND source = 'judge')`, interaction.ID, keepPreviousJudge); err != nil {
 		return 0, fmt.Errorf("clear scorecard answers: %w", err)
 	}
 	if interaction.LifecycleStage != LifecycleClosed {
@@ -429,6 +500,7 @@ const (
 	bookingNotRequested bookingOutcome = ""
 	bookingConverted    bookingOutcome = "converted"
 	bookingBlocked      bookingOutcome = "blocked"
+	bookingNotSearched  bookingOutcome = "not_searched"
 	bookingMissed       bookingOutcome = "missed"
 	bookingAttempted    bookingOutcome = "attempted"
 	bookingUnknown      bookingOutcome = "unknown"
@@ -436,13 +508,16 @@ const (
 
 func classifyBooking(answers map[string]bool) bookingOutcome {
 	offered, offerJudged := answers["time_offered"]
+	searched, searchKnown := answers["availability_searched"]
 	switch {
-	case !answers["booking_requested"]:
+	case !answers["new_booking_requested"]:
 		return bookingNotRequested
 	case answers["scheduling_succeeded"]:
 		return bookingConverted
 	case answers["booking_blocked"]:
 		return bookingBlocked
+	case searchKnown && !searched:
+		return bookingNotSearched
 	case answers["scheduling_tool_called"] || offered:
 		return bookingAttempted
 	case !offerJudged:

@@ -24,18 +24,48 @@ type ScorecardDay struct {
 }
 
 type ScorecardResults struct {
-	Calls        int            `json:"calls"`
-	ProblemCalls int            `json:"problemCalls"`
-	BookingCalls int            `json:"bookingCalls"`
-	Converted    int            `json:"converted"`
-	Blocked      int            `json:"blocked"`
-	Missed       int            `json:"missed"`
-	Conversion   *float64       `json:"conversion"`
-	Daily        []ScorecardDay `json:"daily"`
+	Calls          int            `json:"calls"`
+	ProblemCalls   int            `json:"problemCalls"`
+	BookingCallers int            `json:"bookingCallers"`
+	Converted      int            `json:"converted"`
+	Blocked        int            `json:"blocked"`
+	Missed         int            `json:"missed"`
+	NotSearched    int            `json:"notSearched"`
+	Conversion     *float64       `json:"conversion"`
+	Daily          []ScorecardDay `json:"daily"`
 }
 
+var bookingStrength = map[bookingOutcome]int{bookingConverted: 5, bookingBlocked: 4, bookingAttempted: 3, bookingMissed: 2, bookingNotSearched: 1}
+
 func scorecardProblem(answers map[string]bool) bool {
-	return classifyBooking(answers) == bookingMissed || failedReviewQuestion(answers)
+	outcome := classifyBooking(answers)
+	return outcome == bookingMissed || outcome == bookingNotSearched || failedReviewQuestion(answers)
+}
+
+func recordCallerBooking(callers map[string]bookingOutcome, phone string, outcome bookingOutcome) {
+	if current, seen := callers[phone]; outcome != bookingNotRequested && (!seen || bookingStrength[outcome] > bookingStrength[current]) {
+		callers[phone] = outcome
+	}
+}
+
+func (result *ScorecardResults) countBookingCallers(callers map[string]bookingOutcome) {
+	for _, outcome := range callers {
+		if outcome == bookingUnknown {
+			continue
+		}
+		result.BookingCallers++
+		switch outcome {
+		case bookingConverted:
+			result.Converted++
+		case bookingBlocked:
+			result.Blocked++
+		case bookingMissed:
+			result.Missed++
+		case bookingNotSearched:
+			result.NotSearched++
+		}
+	}
+	result.Conversion = rate(result.Converted, result.BookingCallers-result.Blocked)
 }
 
 func rate(part, whole int) *float64 {
@@ -59,15 +89,15 @@ func (m *Module) QueryScorecardResults(ctx context.Context, command ScorecardRes
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
-		SELECT i.started_at, jsonb_object_agg(a.question, a.answer)
+		SELECT i.started_at, i.phone, jsonb_object_agg(a.question, a.answer)
 		FROM ai_interactions i
 		JOIN ai_interaction_scorecard_answers a ON a.interaction_id = i.id
 		WHERE i.practice_id = $1 AND i.location_id = ANY($2::uuid[])
 			AND i.started_at >= $3 AND i.started_at < $4 AND i.lifecycle_stage = 3
 		GROUP BY i.id
-		HAVING bool_or(a.source = 'judge')
+		HAVING bool_or(a.source = 'judge' AND a.scorecard_version = $6)
 		LIMIT $5
-	`, command.PracticeID, locations, from, to, analyticsRowLimit+1)
+	`, command.PracticeID, locations, from, to, analyticsRowLimit+1, ScorecardJudgeVersion)
 	if err != nil {
 		return ScorecardResults{}, fmt.Errorf("query scorecard results: %w", err)
 	}
@@ -78,12 +108,14 @@ func (m *Module) QueryScorecardResults(ctx context.Context, command ScorecardRes
 		result.Daily = append(result.Daily, ScorecardDay{Date: key})
 		days[key] = &result.Daily[len(result.Daily)-1]
 	}
+	callers := map[string]bookingOutcome{}
 	count := 0
 	for rows.Next() {
 		count++
 		var startedAt time.Time
+		var phone string
 		var raw json.RawMessage
-		if err := rows.Scan(&startedAt, &raw); err != nil {
+		if err := rows.Scan(&startedAt, &phone, &raw); err != nil {
 			rows.Close()
 			return ScorecardResults{}, fmt.Errorf("read scorecard results: %w", err)
 		}
@@ -102,18 +134,7 @@ func (m *Module) QueryScorecardResults(ctx context.Context, command ScorecardRes
 			result.ProblemCalls++
 			day.ProblemCalls++
 		}
-		outcome := classifyBooking(answers)
-		if outcome != bookingNotRequested && outcome != bookingUnknown {
-			result.BookingCalls++
-		}
-		switch outcome {
-		case bookingConverted:
-			result.Converted++
-		case bookingBlocked:
-			result.Blocked++
-		case bookingMissed:
-			result.Missed++
-		}
+		recordCallerBooking(callers, phone, classifyBooking(answers))
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -122,7 +143,7 @@ func (m *Module) QueryScorecardResults(ctx context.Context, command ScorecardRes
 	if count > analyticsRowLimit {
 		return ScorecardResults{}, fmt.Errorf("scorecard results exceed bounded reporting window")
 	}
-	result.Conversion = rate(result.Converted, result.BookingCalls-result.Blocked)
+	result.countBookingCallers(callers)
 	for index := range result.Daily {
 		day := &result.Daily[index]
 		day.ProblemRate = rate(day.ProblemCalls, day.Calls)

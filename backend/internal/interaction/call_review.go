@@ -45,7 +45,6 @@ type ReviewQueueCommand struct {
 	Identity   access.Identity
 	PracticeID string
 	Date       string
-	TimeZone   string
 }
 
 type ReviewFact struct {
@@ -134,8 +133,78 @@ type GoldenSetCall struct {
 	Disagreements int       `json:"disagreements"`
 }
 
+type GoldenSetCounts struct {
+	JudgeNo     int `json:"judgeNo"`
+	FalseAlarms int `json:"falseAlarms"`
+	HumanNo     int `json:"humanNo"`
+	Misses      int `json:"misses"`
+}
+
+func (counts *GoldenSetCounts) add(human, judge bool) {
+	if !judge {
+		counts.JudgeNo++
+		if human {
+			counts.FalseAlarms++
+		}
+	}
+	if !human {
+		counts.HumanNo++
+		if judge {
+			counts.Misses++
+		}
+	}
+}
+
+type GoldenSetQuestionCounts struct {
+	Question string `json:"question"`
+	GoldenSetCounts
+}
+
+type GoldenSetDay struct {
+	Date string `json:"date"`
+	GoldenSetCounts
+	Questions []GoldenSetQuestionCounts `json:"questions"`
+}
+
+type goldenSetDays map[string]map[string]*GoldenSetCounts
+
+func (days goldenSetDays) add(date, question string, human, judge bool) {
+	if days[date] == nil {
+		days[date] = map[string]*GoldenSetCounts{}
+	}
+	if days[date][question] == nil {
+		days[date][question] = &GoldenSetCounts{}
+	}
+	days[date][question].add(human, judge)
+}
+
+func (days goldenSetDays) list() ([]GoldenSetDay, GoldenSetCounts) {
+	order := questionOrder()
+	result, week := []GoldenSetDay{}, GoldenSetCounts{}
+	for date, questions := range days {
+		day := GoldenSetDay{Date: date, Questions: []GoldenSetQuestionCounts{}}
+		for question, counts := range questions {
+			day.Questions = append(day.Questions, GoldenSetQuestionCounts{Question: question, GoldenSetCounts: *counts})
+			for _, total := range []*GoldenSetCounts{&day.GoldenSetCounts, &week} {
+				total.JudgeNo += counts.JudgeNo
+				total.FalseAlarms += counts.FalseAlarms
+				total.HumanNo += counts.HumanNo
+				total.Misses += counts.Misses
+			}
+		}
+		sort.Slice(day.Questions, func(left, right int) bool {
+			return order[day.Questions[left].Question] < order[day.Questions[right].Question]
+		})
+		result = append(result, day)
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].Date > result[right].Date })
+	return result, week
+}
+
 type JudgeAccuracy struct {
 	CurrentJudgeVersion   string                 `json:"currentJudgeVersion"`
+	Days                  []GoldenSetDay         `json:"days"`
+	Week                  GoldenSetCounts        `json:"week"`
 	ReviewedCalls         int                    `json:"reviewedCalls"`
 	GoldenAnswers         int                    `json:"goldenAnswers"`
 	GoldenSet             []GoldenSetCall        `json:"goldenSet"`
@@ -144,16 +213,32 @@ type JudgeAccuracy struct {
 	ReviewerDisagreements []ReviewerDisagreement `json:"reviewerDisagreements"`
 }
 
-func reviewDay(date, timeZone string) (time.Time, time.Time, bool) {
-	zone, valid := reportingZone(timeZone)
-	if !valid {
-		return time.Time{}, time.Time{}, false
+var reviewZone = func() *time.Location {
+	zone, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		panic(err)
 	}
-	day, err := time.ParseInLocation("2006-01-02", date, zone)
+	return zone
+}()
+
+const reviewCutoffHour = 16
+
+func reviewDay(date string) (time.Time, time.Time, bool) {
+	day, err := time.ParseInLocation("2006-01-02", date, reviewZone)
 	if err != nil {
 		return time.Time{}, time.Time{}, false
 	}
-	return day, day.AddDate(0, 0, 1), true
+	end := time.Date(day.Year(), day.Month(), day.Day(), reviewCutoffHour, 0, 0, 0, reviewZone)
+	return end.AddDate(0, 0, -1), end, true
+}
+
+func latestReviewDay(now time.Time) time.Time {
+	local := now.In(reviewZone)
+	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, reviewZone)
+	if local.Hour() < reviewCutoffHour {
+		day = day.AddDate(0, 0, -1)
+	}
+	return day
 }
 
 func reviewRank(interactionID, date string) string {
@@ -183,7 +268,7 @@ func questionOrder() map[string]int {
 }
 
 func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand) (ReviewQueue, error) {
-	from, to, valid := reviewDay(command.Date, command.TimeZone)
+	from, to, valid := reviewDay(command.Date)
 	if !valid || !validUUID(command.PracticeID) || command.Identity.Subject == "" || to.After(m.now()) {
 		return ReviewQueue{}, ErrInvalidInput
 	}
@@ -364,9 +449,16 @@ func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand
 }
 
 func reviewQuestions(facts map[string]bool) []string {
+	_, insuranceChecked := facts["insurance_verified"]
+	gates := map[string]bool{
+		"time_offered":                 facts["availability_searched"],
+		"requested_time_honored":       facts["availability_searched"],
+		"appointment_datetime_correct": facts["scheduling_tool_called"],
+		"insurance_plan_as_stated":     insuranceChecked,
+	}
 	questions := []string{}
 	for _, question := range ScorecardQuestions {
-		if question.Source != "judge" || (question.Key == "appointment_datetime_correct" && !facts["scheduling_tool_called"]) {
+		if open, gated := gates[question.Key]; question.Source != "judge" || (gated && !open) {
 			continue
 		}
 		questions = append(questions, question.Key)
@@ -473,12 +565,8 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 			}
 			answers[answer.Question] = answer
 		}
-		if booking, answered := answers["booking_requested"]; answered && !booking.Answer && answers["time_offered"].Question != "" {
-			return CallReview{}, ErrInvalidInput
-		}
 		for _, question := range review.Questions {
-			required := question != "time_offered" || answers["booking_requested"].Answer
-			if _, answered := answers[question]; required && !answered {
+			if _, answered := answers[question]; !answered {
 				return CallReview{}, ErrInvalidInput
 			}
 		}
@@ -623,6 +711,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		return JudgeAccuracy{}, fmt.Errorf("query judge accuracy: %w", err)
 	}
 	result := JudgeAccuracy{CurrentJudgeVersion: ScorecardJudgeVersion, Rows: []JudgeAccuracyRow{}, JudgeDisagreements: []JudgeDisagreement{}, ReviewerDisagreements: []ReviewerDisagreement{}}
+	days, weekStart := goldenSetDays{}, latestReviewDay(m.now()).AddDate(0, 0, -6).Format("2006-01-02")
 	type groupKey struct{ question, version string }
 	groups := map[groupKey]*JudgeAccuracyRow{}
 	trustCalls := map[groupKey]map[string]*trustCall{}
@@ -704,6 +793,9 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			}
 		}
 		item.Judge = *judgeAnswer
+		if !hidden && item.JudgeVersion == ScorecardJudgeVersion && reviewDate >= weekStart {
+			days.add(reviewDate, item.Question, item.Human, item.Judge)
+		}
 		if item.Human != item.Judge {
 			golden.Disagreements++
 			if !hidden && len(result.JudgeDisagreements) < reviewDisagreementRows {
@@ -745,6 +837,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		return result.Rows[left].JudgeVersion < result.Rows[right].JudgeVersion
 	})
 	result.ReviewedCalls = len(calls)
+	result.Days, result.Week = days.list()
 	result.GoldenSet = []GoldenSetCall{}
 	for _, id := range callList {
 		result.GoldenSet = append(result.GoldenSet, *calls[id])

@@ -98,6 +98,19 @@ func TestCodeChecksReadToolResultsAndReceipts(t *testing.T) {
 	}
 }
 
+func TestAvailabilitySearchedNeedsAReturnedResult(t *testing.T) {
+	unanswered, _ := json.Marshal(map[string]any{"items": []any{
+		map[string]any{"type": "function_call", "name": "list_available_appointments", "call_id": "call-a", "arguments": "{}"},
+	}})
+	if answer := answersByQuestion(codeCheckAnswers(unanswered, map[string]any{}))["availability_searched"]; answer.Answer {
+		t.Fatal("a search with no returned result is not a search, matching the jury's time_offered gate")
+	}
+	returned := syntheticTranscript(t, syntheticTool{"list_available_appointments", `{}`, "no_results: No eligible openings in the searched window."})
+	if answer := answersByQuestion(codeCheckAnswers(returned, map[string]any{}))["availability_searched"]; !answer.Answer {
+		t.Fatal("a returned search counts, even with no openings")
+	}
+}
+
 func TestNoResultsRetryCheck(t *testing.T) {
 	noMatch := syntheticTool{"resolve_patient", `{"firstName":"Synthetic"}`, "no_results: A complete search found no matching patient."}
 	transfer := syntheticTool{"transfer_call", `{}`, "success: Transferring."}
@@ -120,48 +133,67 @@ func TestNoResultsRetryCheck(t *testing.T) {
 
 func TestJudgeAnswersReadTheJuryVerdict(t *testing.T) {
 	evaluation := json.RawMessage(`{
-		"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev","liquid/d1"],"status":"incomplete",
+		"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v7","jurors":["typesafe-ai/jev","liquid/d1"],"status":"incomplete",
 		"results":{
-			"booking_requested":{"verdict":true,"probability":0.91,"votes":{"typesafe-ai/jev":0.91,"liquid/d1":0.91},"errors":{}},
-			"clear_and_responsive":{"verdict":false,"probability":0.4,"votes":{"typesafe-ai/jev":0.7,"liquid/d1":0.1},"errors":{}},
+			"new_booking_requested":{"verdict":true,"probability":0.91,"votes":{"typesafe-ai/jev":0.91,"liquid/d1":0.91},"errors":{}},
+			"office_question_answered":{"verdict":false,"probability":0.4,"votes":{"typesafe-ai/jev":0.7,"liquid/d1":0.1},"errors":{}},
 			"time_offered":{"status":"not_applicable","reason":"no_availability_result"},
+			"requested_time_honored":{"status":"not_applicable","reason":"no_availability_result"},
+			"insurance_plan_as_stated":{"status":"not_applicable","reason":"no_insurance_check"},
 			"expressed_sentiment":{"score":3,"probabilities":{"3":1},"model":"typesafe-ai/jev"}
 		},
-		"errors":{"right_help":{"cause":"no_quorum","votes":{},"errors":{"typesafe-ai/jev":"TimeoutError"}}}
+		"errors":{"promises_backed":{"cause":"no_quorum","votes":{},"errors":{"typesafe-ai/jev":"TimeoutError"}}}
 	}`)
 	answers := answersByQuestion(judgeAnswers(evaluation))
-	if len(answers) != 3 || !answers["booking_requested"].Answer || answers["clear_and_responsive"].Answer {
+	if len(answers) != 2 || !answers["new_booking_requested"].Answer || answers["office_question_answered"].Answer {
 		t.Fatalf("the jury verdict is the answer: %+v", answers)
 	}
-	if votes, _ := answers["clear_and_responsive"].Detail["votes"].(map[string]float64); votes["liquid/d1"] != 0.1 {
-		t.Fatalf("each juror's vote is kept: %+v", answers["clear_and_responsive"].Detail)
+	if votes, _ := answers["office_question_answered"].Detail["votes"].(map[string]float64); votes["liquid/d1"] != 0.1 {
+		t.Fatalf("each juror's vote is kept: %+v", answers["office_question_answered"].Detail)
 	}
 	if sentiment := jurySentiment(evaluation); sentiment == nil || *sentiment != 3 {
 		t.Fatalf("sentiment: %v", sentiment)
 	}
 	reading := readEvaluation(evaluation)
-	if !reading.Evaluated || len(reading.Flags) != 1 || reading.Flags[0].Check != "clear_and_responsive" || reading.Sentiment == nil {
+	if !reading.Evaluated || len(reading.Flags) != 1 || reading.Flags[0].Check != "office_question_answered" || reading.Sentiment == nil {
 		t.Fatalf("a no verdict on a failure question flags the call, a booking no does not: %+v", reading)
 	}
-	if skipped := answers["time_offered"]; skipped.Answer || skipped.Probability != nil || skipped.Detail["reason"] != "no_availability_result" {
-		t.Fatalf("B5 skipped for lack of availability is a no without a probability: %+v", skipped)
+	for _, gated := range []string{"time_offered", "requested_time_honored", "insurance_plan_as_stated"} {
+		if skipped, found := answers[gated]; found {
+			t.Fatalf("a question the jury skipped as not applicable has no answer: %+v", skipped)
+		}
 	}
-	if answers["booking_requested"].JudgeModel != "typesafe-ai/jev,liquid/d1" || *answers["booking_requested"].Probability != 0.91 {
-		t.Fatalf("judge provenance: %+v", answers["booking_requested"])
+	if answers["new_booking_requested"].JudgeModel != "typesafe-ai/jev,liquid/d1" || *answers["new_booking_requested"].Probability != 0.91 {
+		t.Fatalf("judge provenance: %+v", answers["new_booking_requested"])
 	}
 	if got := judgeAnswers(json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v5","model":"typesafe-ai/jev","status":"complete","results":{"office_rules_grounded":{"answers":{"office_rules_grounded":{"type":"noul","noul":0.9}}}}}`)); len(got) != 0 {
 		t.Fatalf("older scorecards are not the yes/no scorecard: %+v", got)
 	}
 }
 
+func TestPreviousJuryStillReadsForDisplayButNotAsAnswers(t *testing.T) {
+	evaluation := json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev"],"status":"complete","results":{
+		"booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}},
+		"clear_and_responsive":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
+		"expressed_sentiment":{"score":1,"probabilities":{"1":1},"model":"typesafe-ai/jev"}}}`)
+	reading := readEvaluation(evaluation)
+	if !reading.Evaluated || reading.Version != "typesafe-scorecard-v6" || len(reading.Flags) != 1 || reading.Flags[0].Reason != "Clear and responsive needs review" || reading.Sentiment == nil || *reading.Sentiment != 1 {
+		t.Fatalf("v6 calls keep their flags, evaluated count, and sentiment: %+v", reading)
+	}
+	if got := judgeAnswers(evaluation); len(got) != 0 {
+		t.Fatalf("v6 verdicts are not recorded as v7 scorecard answers: %+v", got)
+	}
+}
+
 func TestClassifyBooking(t *testing.T) {
 	for want, answers := range map[bookingOutcome]map[string]bool{
-		bookingNotRequested: {"scheduling_succeeded": true},
-		bookingConverted:    {"booking_requested": true, "scheduling_tool_called": true, "scheduling_succeeded": true, "booking_blocked": true},
-		bookingBlocked:      {"booking_requested": true, "booking_blocked": true},
-		bookingMissed:       {"booking_requested": true, "time_offered": false},
-		bookingUnknown:      {"booking_requested": true},
-		bookingAttempted:    {"booking_requested": true, "time_offered": true},
+		bookingNotRequested: {"scheduling_succeeded": true, "availability_searched": false},
+		bookingConverted:    {"new_booking_requested": true, "scheduling_tool_called": true, "scheduling_succeeded": true, "booking_blocked": true},
+		bookingBlocked:      {"new_booking_requested": true, "booking_blocked": true},
+		bookingMissed:       {"new_booking_requested": true, "availability_searched": true, "time_offered": false},
+		bookingUnknown:      {"new_booking_requested": true},
+		bookingAttempted:    {"new_booking_requested": true, "time_offered": true},
+		bookingNotSearched:  {"new_booking_requested": true, "availability_searched": false, "time_offered": false},
 	} {
 		if got := classifyBooking(answers); got != want {
 			t.Errorf("classifyBooking(%v) = %q, want %q", answers, got, want)
@@ -169,12 +201,53 @@ func TestClassifyBooking(t *testing.T) {
 	}
 }
 
+func TestReviewAsksGatedQuestionsOnlyWhenTheyApply(t *testing.T) {
+	for name, test := range map[string]struct {
+		facts map[string]bool
+		want  string
+	}{
+		"no tools":           {map[string]bool{"availability_searched": false, "scheduling_tool_called": false}, "[new_booking_requested office_rules_grounded office_question_answered promises_backed ended_while_caller_active]"},
+		"availability":       {map[string]bool{"availability_searched": true}, "[new_booking_requested time_offered requested_time_honored office_rules_grounded office_question_answered promises_backed ended_while_caller_active]"},
+		"scheduling write":   {map[string]bool{"scheduling_tool_called": true}, "[new_booking_requested office_rules_grounded appointment_datetime_correct office_question_answered promises_backed ended_while_caller_active]"},
+		"insurance rejected": {map[string]bool{"insurance_verified": false}, "[new_booking_requested office_rules_grounded office_question_answered promises_backed ended_while_caller_active insurance_plan_as_stated]"},
+	} {
+		if got := fmt.Sprint(reviewQuestions(test.facts)); got != test.want {
+			t.Errorf("%s: %s", name, got)
+		}
+	}
+}
+
+func TestBookingConversionCountsEachCallerNumberOnce(t *testing.T) {
+	callers := map[string]bookingOutcome{}
+	for _, call := range []struct {
+		phone   string
+		outcome bookingOutcome
+	}{
+		{"+15555550001", bookingNotSearched}, {"+15555550001", bookingConverted}, {"+15555550001", bookingMissed},
+		{"+15555550002", bookingMissed}, {"+15555550002", bookingNotSearched},
+		{"+15555550003", bookingNotSearched}, {"+15555550003", bookingNotRequested},
+		{"+15555550004", bookingBlocked}, {"+15555550004", bookingNotSearched},
+		{"+15555550005", bookingUnknown},
+		{"+15555550006", bookingNotRequested},
+	} {
+		recordCallerBooking(callers, call.phone, call.outcome)
+	}
+	result := ScorecardResults{}
+	result.countBookingCallers(callers)
+	if result.BookingCallers != 4 || result.Converted != 1 || result.Missed != 1 || result.NotSearched != 1 || result.Blocked != 1 || *result.Conversion != 1.0/3.0 {
+		t.Fatalf("one outcome per caller number, any booked call converts it, blocked numbers leave the denominator: %+v", result)
+	}
+	if !scorecardProblem(map[string]bool{"new_booking_requested": true, "availability_searched": false}) {
+		t.Fatal("a new-booking caller with no availability search is a problem call")
+	}
+}
+
 func TestReviewFlaggedIgnoresBookingNos(t *testing.T) {
-	missed := map[string]bool{"booking_requested": true, "scheduling_tool_called": false, "time_offered": false, "need_understood": true}
+	missed := map[string]bool{"new_booking_requested": true, "scheduling_tool_called": false, "time_offered": false, "ended_while_caller_active": true}
 	if reviewFlagged(missed, nil) {
 		t.Fatal("a booking no alone must not flag a call for review")
 	}
-	if !reviewFlagged(map[string]bool{"booking_requested": true, "right_help": false}, nil) {
+	if !reviewFlagged(map[string]bool{"new_booking_requested": true, "promises_backed": false}, nil) {
 		t.Fatal("a failure-question no must flag a call for review")
 	}
 }
@@ -197,23 +270,95 @@ func TestParseGoldenSetJudgeAnswer(t *testing.T) {
 	}
 }
 
-func TestStaffTaskIdentifiedCheck(t *testing.T) {
-	saved := func(draft, patient string) syntheticTool {
-		return syntheticTool{"save_staff_task", `{}`, "saved: Draft saved for submission when the call ends. Not yet sent.\nDraft ID: " + draft + "\nRequest: Synthetic request\nPatient: " + patient}
+func agentTranscript(t *testing.T, said ...string) json.RawMessage {
+	t.Helper()
+	items := []any{map[string]any{"type": "message", "role": "user", "content": []string{"Synthetic caller turn."}}}
+	for _, text := range said {
+		items = append(items, map[string]any{"type": "message", "role": "assistant", "content": []string{text}})
+	}
+	raw, err := json.Marshal(map[string]any{"items": items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestKnowledgeAnsweredIsAFactNotAFailure(t *testing.T) {
+	if scorecardQuestionByKey["knowledge_answered"].Failure {
+		t.Fatal("A3 office_question_answered is the failure question for knowledge gaps; K1 must not double-flag")
+	}
+}
+
+func TestKnowledgeAnsweredCheck(t *testing.T) {
+	search := func(query, output string) syntheticTool {
+		return syntheticTool{"search_office_knowledge", `{"query":"` + query + `"}`, output}
 	}
 	for name, test := range map[string]struct {
 		tools   []syntheticTool
 		applies bool
 		want    bool
+		queries any
 	}{
-		"no staff task":        {nil, false, false},
-		"identified patient":   {[]syntheticTool{saved("d1", "Synthetic Sample (unverified).")}, true, true},
-		"no patient":           {[]syntheticTool{saved("d1", "not identified.")}, true, false},
-		"updated to a patient": {[]syntheticTool{saved("d1", "not identified."), saved("d1", "Synthetic Sample (verified).")}, true, true},
-		"cancelled anonymous":  {[]syntheticTool{saved("d1", "not identified."), {"save_staff_task", `{"cancel":true}`, "cancelled: Request cancelled. It will not be submitted.\nDraft ID: d1"}}, false, false},
-		"one of two anonymous": {[]syntheticTool{saved("d1", "Synthetic Sample (verified)."), saved("d2", "not identified.")}, true, false},
+		"no search":             {nil, false, false, nil},
+		"answered":              {[]syntheticTool{search("What are the hours?", "success: Open 8 to 5 on weekdays.")}, true, true, nil},
+		"other office phone":    {[]syntheticTool{search("Where are your offices?", "success: Spring Hill: Synthetic Eye, 1 Main St. Phone number not supplied.")}, true, true, nil},
+		"answer with a gap too": {[]syntheticTool{search("How do I pay?", "success: Payment is handled by billing. Financing options such as CareCredit are not supplied.")}, true, true, nil},
+		"only not supplied":     {[]syntheticTool{search("Is there parking?", "success: Directions, parking, and landmark details are not supplied for this office.")}, true, false, []any{"Is there parking?"}},
+		"no results":            {[]syntheticTool{search("Do you do LASIK?", "no_results: No information was found for this question. This does not establish that the service is unavailable.")}, true, false, []any{"Do you do LASIK?"}},
+		"outage is not a gap":   {[]syntheticTool{search("What are the hours?", "blocked: Office information could not be checked. Offer staff help if needed.")}, true, true, nil},
+		"one of two missing":    {[]syntheticTool{search("What are the hours?", "success: Open 8 to 5."), search("Do you take CareCredit?", "success: Financing options such as CareCredit are not supplied.")}, true, false, []any{"Do you take CareCredit?"}},
 	} {
-		answer, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t, test.tools...), map[string]any{}))["staff_task_identified"]
+		answer, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t, test.tools...), map[string]any{}))["knowledge_answered"]
+		if found != test.applies || answer.Answer != test.want || !reflect.DeepEqual(answer.Detail["queries"], test.queries) {
+			t.Errorf("%s: found=%v answer=%v detail=%v", name, found, answer.Answer, answer.Detail)
+		}
+	}
+}
+
+func TestTransferNotRefusedCheck(t *testing.T) {
+	for name, test := range map[string]struct {
+		said []string
+		want bool
+	}{
+		"transfers":            {[]string{"One moment, I'll transfer you to the front desk."}, true},
+		"can transfer":         {[]string{"I can transfer you now if you'd like."}, true},
+		"does not transfer":    {[]string{"Sorry, I don't transfer calls, but I can take a message."}, false},
+		"cannot transfer":      {[]string{"I can't transfer you right now."}, false},
+		"curly apostrophe":     {[]string{"I’m unable to transfer the call."}, false},
+		"later refusal counts": {[]string{"Hello, how can I help?", "We do not transfer calls to billing."}, false},
+		"records, not a call":  {[]string{"We can't transfer your records over the phone."}, true},
+		"prescription":         {[]string{"I can't transfer your prescription to another pharmacy."}, true},
+		"spanish cannot":       {[]string{"Lo siento, no puedo transferir la llamada."}, false},
+		"spanish cannot, bare": {[]string{"Lo siento, no puedo transferirle."}, false},
+		"spanish do not":       {[]string{"No transfiero llamadas, pero puedo tomar un mensaje."}, false},
+		"spanish records":      {[]string{"No podemos transferir su receta por teléfono."}, true},
+		"spanish transfers":    {[]string{"Le transfiero la llamada ahora."}, true},
+	} {
+		answer, found := answersByQuestion(codeCheckAnswers(agentTranscript(t, test.said...), map[string]any{}))["transfer_not_refused"]
+		if !found || answer.Answer != test.want {
+			t.Errorf("%s: found=%v answer=%v", name, found, answer.Answer)
+		}
+	}
+	if _, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t), map[string]any{}))["transfer_not_refused"]; found {
+		t.Error("a call with no agent message has nothing to check")
+	}
+}
+
+func TestInsuranceResolvedCheck(t *testing.T) {
+	ask := syntheticTool{"check_insurance", `{"plan":"Synthetic"}`, "Ask what insurance plan is on the card."}
+	choose := syntheticTool{"check_insurance", `{"plan":"Synthetic Medicaid"}`, "Ask which plan is on the card: Synthetic A, Synthetic B."}
+	accepted := syntheticTool{"check_insurance", `{"plan":"Synthetic A"}`, "Synthetic A is accepted for medical visits at this office."}
+	for name, test := range map[string]struct {
+		tools   []syntheticTool
+		applies bool
+		want    bool
+	}{
+		"no insurance check": {nil, false, false},
+		"accepted":           {[]syntheticTool{accepted}, true, true},
+		"asked twice":        {[]syntheticTool{ask, choose, accepted}, true, true},
+		"asked three times":  {[]syntheticTool{ask, choose, ask, accepted}, true, false},
+	} {
+		answer, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t, test.tools...), map[string]any{}))["insurance_resolved"]
 		if found != test.applies || answer.Answer != test.want {
 			t.Errorf("%s: found=%v answer=%v", name, found, answer.Answer)
 		}
@@ -228,7 +373,7 @@ func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 		}
 		seen[question.Key], seen[question.Code] = true, true
 	}
-	for _, key := range []string{"person_request_honored", "staff_task_identified"} {
+	for _, key := range []string{"new_booking_requested", "time_offered", "promises_backed", "ended_while_caller_active", "office_rules_grounded", "office_question_answered", "appointment_datetime_correct", "insurance_plan_as_stated", "requested_time_honored"} {
 		if !seen[key] {
 			t.Errorf("catalog is missing %s", key)
 		}
@@ -316,28 +461,66 @@ func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
 	}
 	pools["2026-10-08"] = reviewPool{random: 1000, reviewedRandom: 1000}
 	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusTrusted {
-		t.Fatalf("400 no answers with no false alarm prove 1%%: %+v", estimate)
+		t.Fatalf("400 no answers with no false alarm prove 5%%: %+v", estimate)
 	}
 }
 
 func TestStaffScorecardFollowsTheJuryMajorityNotTheMean(t *testing.T) {
-	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["a","b","c"],"status":"complete","results":{
-		"need_understood":{"verdict":false,"probability":0.4667,"votes":{"a":0.1,"b":0.3,"c":1.0},"errors":{}},
-		"right_help":{"verdict":true,"probability":0.3,"votes":{"a":0.45,"b":0.45,"c":0.0},"errors":{}}}}`))
+	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v7","jurors":["a","b","c"],"status":"complete","results":{
+		"promises_backed":{"verdict":false,"probability":0.4667,"votes":{"a":0.1,"b":0.3,"c":1.0},"errors":{}},
+		"ended_while_caller_active":{"verdict":true,"probability":0.3,"votes":{"a":0.45,"b":0.45,"c":0.0},"errors":{}}}}`))
 	if len(scorecard) != 2 || scorecard[0].Answer != "no" || scorecard[1].Answer != "yes" {
 		t.Fatalf("a 1-2 split with a high mean is no, and a 2-1 yes with a low mean is yes: %+v", scorecard)
 	}
 }
 
 func TestStaffScorecardShowsVerdictsInCatalogOrder(t *testing.T) {
-	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev"],"status":"complete","results":{
-		"right_help":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
-		"clear_and_responsive":{"verdict":false,"probability":0.35,"votes":{"typesafe-ai/jev":0.35},"errors":{}},
-		"booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}}}}`))
+	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v7","jurors":["typesafe-ai/jev"],"status":"complete","results":{
+		"promises_backed":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
+		"office_question_answered":{"verdict":false,"probability":0.35,"votes":{"typesafe-ai/jev":0.35},"errors":{}},
+		"new_booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}}}}`))
 	if len(scorecard) != 3 || scorecard[0].Code != "B1" || scorecard[0].Answer != "yes" || scorecard[1].Answer != "no" || scorecard[2].Answer != "no" || scorecard[1].Prompt == "" {
 		t.Fatalf("staff scorecard: %+v", scorecard)
 	}
 	if got := agentCallScorecard(nil); len(got) != 0 || got == nil {
 		t.Fatalf("no evaluation is an empty scorecard: %+v", got)
+	}
+}
+
+func TestGoldenSetDaysSplitJuryNosAndReviewerNos(t *testing.T) {
+	days := goldenSetDays{}
+	for _, review := range []struct {
+		date, question string
+		human, judge   bool
+	}{
+		{"2026-10-11", "promises_backed", true, false},
+		{"2026-10-11", "promises_backed", false, false},
+		{"2026-10-11", "office_rules_grounded", false, true},
+		{"2026-10-11", "office_rules_grounded", true, true},
+		{"2026-10-10", "promises_backed", true, false},
+	} {
+		days.add(review.date, review.question, review.human, review.judge)
+	}
+	result, week := days.list()
+	if len(result) != 2 || result[0].Date != "2026-10-11" || result[0].GoldenSetCounts != (GoldenSetCounts{JudgeNo: 2, FalseAlarms: 1, HumanNo: 2, Misses: 1}) {
+		t.Fatalf("newest day first, with jury nos, false alarms, reviewer nos, and misses: %+v", result)
+	}
+	if len(result[0].Questions) != 2 || result[0].Questions[0].Question != "office_rules_grounded" || result[0].Questions[1].GoldenSetCounts != (GoldenSetCounts{JudgeNo: 2, FalseAlarms: 1, HumanNo: 1}) {
+		t.Fatalf("each day splits by question in catalog order: %+v", result[0].Questions)
+	}
+	if week != (GoldenSetCounts{JudgeNo: 3, FalseAlarms: 2, HumanNo: 2, Misses: 1}) {
+		t.Fatalf("the week total sums the days: %+v", week)
+	}
+}
+
+func TestTrustAllowsFalseAlarmsUpToFivePercent(t *testing.T) {
+	value := func(v float64) *float64 { return &v }
+	estimate := TrustEstimate{Failures: 50, Catch: value(0.97), CatchLow: value(0.92), FalseAlarms: value(0.03), FalseAlarmHigh: value(0.045), Agreement: value(0.95), AgreementLow: value(0.93), HumanAgreement: value(0.95), HumanPairs: 30}
+	if status, reason := trustVerdict(estimate, trustRates{}); status != trustStatusTrusted {
+		t.Fatalf("3%% false alarms with a 4.5%% bound is trusted: %s %s", status, reason)
+	}
+	estimate.FalseAlarms = value(0.06)
+	if status, reason := trustVerdict(estimate, trustRates{}); status != trustStatusBelow || reason != "6% of its no's are false alarms, max 5%" {
+		t.Fatalf("over 5%% false alarms is below the bar: %s %s", status, reason)
 	}
 }

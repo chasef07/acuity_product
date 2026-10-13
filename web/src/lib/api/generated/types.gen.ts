@@ -950,8 +950,10 @@ export type OperatorScorecardQuestions = {
 
 export type OperatorCallReviewQueueRequest = {
     practiceId: string;
+    /**
+     * Review day D covers calls from D-1 4:00 PM Eastern to D 4:00 PM Eastern, and opens at D 4:00 PM Eastern.
+     */
     date: string;
-    timeZone: string;
 };
 
 export type OperatorCallReviewQueueCall = {
@@ -1024,7 +1026,7 @@ export type OperatorJudgeAccuracyRow = {
 };
 
 /**
- * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. The jury says no when its majority verdict is no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 1%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
+ * Daily-queue reviews weighted by each sample's share of that day's calls, so oversampling flagged calls does not flatter the jury. Bounds are 95% Wilson bounds on the effective sample size. The jury says no when its majority verdict is no. Trusted needs catch low bound >= 90%, false-alarm high bound <= 5%, agreement low bound within 5 points of reviewer-reviewer agreement (20+ shared reviews), and the last 14 days passing too.
  */
 export type OperatorJuryTrust = {
     calls: number;
@@ -1073,11 +1075,76 @@ export type OperatorReviewerDisagreement = {
     answers: Array<OperatorReviewerAnswer>;
 };
 
+export type OperatorGoldenSetCounts = {
+    /**
+     * Reviewed answers where the jury said no.
+     */
+    judgeNo: number;
+    /**
+     * Jury no answers the reviewer marked fine.
+     */
+    falseAlarms: number;
+    /**
+     * Answers the reviewer marked no (real issues).
+     */
+    humanNo: number;
+    /**
+     * Reviewer no answers where the jury said yes.
+     */
+    misses: number;
+};
+
+export type OperatorGoldenSetQuestionCounts = {
+    question: string;
+    /**
+     * Reviewed answers where the jury said no.
+     */
+    judgeNo: number;
+    /**
+     * Jury no answers the reviewer marked fine.
+     */
+    falseAlarms: number;
+    /**
+     * Answers the reviewer marked no (real issues).
+     */
+    humanNo: number;
+    /**
+     * Reviewer no answers where the jury said yes.
+     */
+    misses: number;
+};
+
+export type OperatorGoldenSetDay = {
+    date: string;
+    /**
+     * Reviewed answers where the jury said no.
+     */
+    judgeNo: number;
+    /**
+     * Jury no answers the reviewer marked fine.
+     */
+    falseAlarms: number;
+    /**
+     * Answers the reviewer marked no (real issues).
+     */
+    humanNo: number;
+    /**
+     * Reviewer no answers where the jury said yes.
+     */
+    misses: number;
+    questions: Array<OperatorGoldenSetQuestionCounts>;
+};
+
 export type OperatorJudgeAccuracy = {
     /**
      * The judge version new calls are scored with.
      */
     currentJudgeVersion: string;
+    /**
+     * The current judge version's reviewed answers per review day over the last 7 review days, newest first. Built only from stored human reviews; shared calls the viewer has not reviewed are left out.
+     */
+    days: Array<OperatorGoldenSetDay>;
+    week: OperatorGoldenSetCounts;
     reviewedCalls: number;
     goldenAnswers: number;
     goldenSet: Array<OperatorGoldenSetCall>;
@@ -1100,15 +1167,34 @@ export type OperatorScorecardDay = {
 };
 
 export type OperatorScorecardResults = {
+    /**
+     * Calls scored by the current judge version only, so a window spanning a judge release does not mix versions.
+     */
     calls: number;
     /**
-     * Calls with a no on any failure question, or a missed booking.
+     * Calls with a no on any failure question, a missed booking, or a new-booking request with no availability search.
      */
     problemCalls: number;
-    bookingCalls: number;
+    /**
+     * Caller numbers that asked for a new appointment in the window, each counted once. Cancels and reschedules are not counted.
+     */
+    bookingCallers: number;
+    /**
+     * Booking caller numbers with a call that booked successfully.
+     */
     converted: number;
+    /**
+     * Booking caller numbers blocked by a tool result and not converted; left out of the conversion denominator.
+     */
     blocked: number;
     missed: number;
+    /**
+     * Booking caller numbers whose new-booking calls never searched availability.
+     */
+    notSearched: number;
+    /**
+     * converted / (bookingCallers - blocked).
+     */
     conversion: number | null;
     daily: Array<OperatorScorecardDay>;
 };

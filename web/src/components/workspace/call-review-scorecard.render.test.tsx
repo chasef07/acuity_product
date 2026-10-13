@@ -5,16 +5,16 @@ import { ScorecardPanel } from "./call-review-scorecard.tsx"
 import type { OperatorScorecardQuestion } from "../../lib/api/generated/types.gen.ts"
 
 const catalog = new Map<string, OperatorScorecardQuestion>(
-  ["booking_requested", "time_offered", "need_understood"].map((key, index) => [
+  ["new_booking_requested", "time_offered", "promises_backed"].map((key, index) => [
     key,
-    { key, code: ["B1", "B5", "H1"][index], label: key, prompt: `Short ${key}?`, source: "judge" as const, question: `Synthetic ${key}?`, yes: "Yes.", no: "No.", failure: key === "need_understood" },
+    { key, code: ["B1", "B5", "P1"][index], label: key, prompt: `Short ${key}?`, source: "judge" as const, question: `Synthetic ${key}?`, yes: "Yes.", no: "No.", failure: key === "promises_backed" },
   ]),
 )
 const review = {
   interactionId: "00000000-0000-0000-0000-000000000001",
   assigned: true,
   facts: [],
-  questions: ["booking_requested", "time_offered", "need_understood"],
+  questions: ["new_booking_requested", "time_offered", "promises_backed"],
   submitted: false,
   note: "",
   questionIdea: "",
@@ -22,11 +22,14 @@ const review = {
   judge: [],
 }
 
-test("the scorecard stays blind until the reviewer saves, and B5 waits for B1", () => {
+test("the scorecard stays blind until the reviewer saves, and asks exactly the questions the server gated in", () => {
   const html = renderToStaticMarkup(<ScorecardPanel review={review} catalog={catalog} onSaved={() => {}} onConflict={() => {}} />)
-  assert.match(html, /0 of 2 answered/)
+  assert.match(html, /0 of 3 answered/)
   assert.doesNotMatch(html, /Judge:/)
-  assert.doesNotMatch(html, /B5/)
+  assert.match(html, /B5/)
+  const ungated = renderToStaticMarkup(<ScorecardPanel review={{ ...review, questions: ["new_booking_requested", "promises_backed"] }} catalog={catalog} onSaved={() => {}} onConflict={() => {}} />)
+  assert.match(ungated, /0 of 2 answered/)
+  assert.doesNotMatch(ungated, /B5/)
   assert.match(html, /Save and reveal judge/)
 })
 
@@ -36,14 +39,14 @@ test("a saved review shows agreement and locks the answers", () => {
       ...review,
       submitted: true,
       answers: [
-        { question: "booking_requested", answer: true, note: "" },
+        { question: "new_booking_requested", answer: true, note: "" },
         { question: "time_offered", answer: true, note: "" },
-        { question: "need_understood", answer: true, note: "" },
+        { question: "promises_backed", answer: true, note: "" },
       ],
       judge: [
-        { question: "booking_requested", answer: true, probability: 0.95, version: "typesafe-scorecard-v6" },
-        { question: "time_offered", answer: false, version: "typesafe-scorecard-v6" },
-        { question: "need_understood", answer: false, probability: 0.2, version: "typesafe-scorecard-v6" },
+        { question: "new_booking_requested", answer: true, probability: 0.95, version: "typesafe-scorecard-v7" },
+        { question: "time_offered", answer: false, version: "typesafe-scorecard-v7" },
+        { question: "promises_backed", answer: false, probability: 0.2, version: "typesafe-scorecard-v7" },
       ],
     }}
     catalog={catalog}
@@ -52,7 +55,7 @@ test("a saved review shows agreement and locks the answers", () => {
   />)
   assert.match(html, /Agrees/)
   assert.match(html, /Disagrees/)
-  assert.match(html, /no availability returned/)
+  assert.match(html, /title="0.95"/)
   assert.doesNotMatch(html, /Save and reveal judge/)
   assert.match(html, /disabled=""/)
 })

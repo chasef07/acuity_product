@@ -223,7 +223,7 @@ test("v5 omits the request-understood judge and keeps active review alerts and h
   }
 })
 
-test("scorecard v6 shows the backend verdict, each juror's vote, quorum failures and sentiment", () => {
+for (const version of ["typesafe-scorecard-v6", "typesafe-scorecard-v7"]) test(`jury scorecard ${version} shows the backend verdict, each juror's vote, quorum failures and sentiment`, () => {
   const question = (key: string, prompt: string, failure: boolean) => ({ key, code: "", label: "", prompt, source: "judge" as const, question: "", yes: "", no: "", failure })
   const questions = [question("booking_requested", "Did the caller ask to book?", false), question("need_understood", "Did the agent understand every request?", true), question("clear_and_responsive", "Was the call clear and responsive?", true)]
   const scorecard = [
@@ -232,7 +232,7 @@ test("scorecard v6 shows the backend verdict, each juror's vote, quorum failures
     { question: "clear_and_responsive", code: "H4", prompt: "", answer: "no" as const },
   ]
   const html = renderToStaticMarkup(<CallEvaluation questions={questions} verdicts={scorecard} evaluation={{
-    evaluator: "jury", evaluatorVersion: "typesafe-scorecard-v6", jurors: ["typesafe-ai/jev", "liquid/d1"], evaluatedAt: "2026-10-07T12:00:00Z", status: "incomplete",
+    evaluator: "jury", evaluatorVersion: version, jurors: ["typesafe-ai/jev", "liquid/d1"], evaluatedAt: "2026-10-07T12:00:00Z", status: "incomplete",
     results: {
       booking_requested: { verdict: false, probability: 0.1, votes: { "typesafe-ai/jev": 0.1, "liquid/d1": 0.1 }, errors: {} },
       need_understood: { verdict: true, probability: 0.3, votes: { "typesafe-ai/jev": 0.45, "liquid/d1": 0.15 }, errors: {} },
