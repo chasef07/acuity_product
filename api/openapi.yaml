@@ -4156,11 +4156,13 @@ components:
     OperatorCallReviewQueueRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, date, timeZone]
+      required: [practiceId, date]
       properties:
         practiceId: {type: string, format: uuid}
-        date: {type: string, format: date}
-        timeZone: {type: string, minLength: 1, maxLength: 100}
+        date:
+          type: string
+          format: date
+          description: Review day D covers calls from D-1 4:00 PM Eastern to D 4:00 PM Eastern, and opens at D 4:00 PM Eastern.
     OperatorCallReviewQueueCall:
       type: object
       additionalProperties: false

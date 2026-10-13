@@ -27,7 +27,7 @@ func (server *Server) OpenOperatorCallReviewQueue(w http.ResponseWriter, r *http
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	queue, err := server.interactions.OpenReviewQueue(ctx, interaction.ReviewQueueCommand{
-		Identity: identity, PracticeID: body.PracticeId.String(), Date: body.Date.String(), TimeZone: body.TimeZone,
+		Identity: identity, PracticeID: body.PracticeId.String(), Date: body.Date.String(),
 	})
 	if err != nil {
 		server.writeInteractionError(w, r, err)

@@ -76,11 +76,16 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		t.Fatalf("stored judge answer: %q %v %v", agentVersion, probability, err)
 	}
 
-	command := ReviewQueueCommand{Identity: first, PracticeID: practice, Date: "2026-10-06", TimeZone: "America/New_York"}
-	if _, err := module.OpenReviewQueue(ctx, ReviewQueueCommand{Identity: staff, PracticeID: practice, Date: command.Date, TimeZone: command.TimeZone}); !errors.Is(err, ErrDenied) {
+	command := ReviewQueueCommand{Identity: first, PracticeID: practice, Date: "2026-10-06"}
+	now = time.Date(2026, 10, 6, 19, 59, 0, 0, time.UTC)
+	if _, err := module.OpenReviewQueue(ctx, command); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a review day opens at 4:00 PM Eastern, not 3:59: %v", err)
+	}
+	now = time.Date(2026, 10, 6, 20, 0, 0, 0, time.UTC)
+	if _, err := module.OpenReviewQueue(ctx, ReviewQueueCommand{Identity: staff, PracticeID: practice, Date: command.Date}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("practice admins cannot open the operator review queue: %v", err)
 	}
-	if _, err := module.OpenReviewQueue(ctx, ReviewQueueCommand{Identity: first, PracticeID: practice, Date: "2026-10-07", TimeZone: command.TimeZone}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := module.OpenReviewQueue(ctx, ReviewQueueCommand{Identity: first, PracticeID: practice, Date: "2026-10-07"}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("today's queue is not reviewable until the day is over: %v", err)
 	}
 	queueA, err := module.OpenReviewQueue(ctx, command)

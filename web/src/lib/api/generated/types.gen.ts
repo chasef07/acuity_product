@@ -950,8 +950,10 @@ export type OperatorScorecardQuestions = {
 
 export type OperatorCallReviewQueueRequest = {
     practiceId: string;
+    /**
+     * Review day D covers calls from D-1 4:00 PM Eastern to D 4:00 PM Eastern, and opens at D 4:00 PM Eastern.
+     */
     date: string;
-    timeZone: string;
 };
 
 export type OperatorCallReviewQueueCall = {

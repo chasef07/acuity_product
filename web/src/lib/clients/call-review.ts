@@ -1,5 +1,3 @@
-import { useState } from "react"
-
 import {
   getOperatorCallReview,
   getOperatorScorecardQuestions,
@@ -11,13 +9,6 @@ import {
 import type { OperatorCallReviewSubmission } from "../api/generated/types.gen"
 import { portalRequest, usePortalQuery } from "./portal-request"
 
-function useBrowserTimeZone() {
-  const [timeZone] = useState(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
-  )
-  return timeZone
-}
-
 export function useScorecardQuestions() {
   return usePortalQuery("scorecard-questions", (transport) =>
     getOperatorScorecardQuestions(transport),
@@ -25,13 +16,12 @@ export function useScorecardQuestions() {
 }
 
 export function useReviewQueue(practiceID: string, date: string, revision: number) {
-  const timeZone = useBrowserTimeZone()
   return usePortalQuery(
-    practiceID && date ? `review-queue:${practiceID}:${date}:${timeZone}:${revision}` : null,
+    practiceID && date ? `review-queue:${practiceID}:${date}:${revision}` : null,
     (transport) =>
       openOperatorCallReviewQueue({
         ...transport,
-        body: { practiceId: practiceID, date, timeZone },
+        body: { practiceId: practiceID, date },
       }),
     { keepPrevious: true },
   )

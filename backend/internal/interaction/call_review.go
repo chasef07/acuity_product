@@ -45,7 +45,6 @@ type ReviewQueueCommand struct {
 	Identity   access.Identity
 	PracticeID string
 	Date       string
-	TimeZone   string
 }
 
 type ReviewFact struct {
@@ -144,16 +143,32 @@ type JudgeAccuracy struct {
 	ReviewerDisagreements []ReviewerDisagreement `json:"reviewerDisagreements"`
 }
 
-func reviewDay(date, timeZone string) (time.Time, time.Time, bool) {
-	zone, valid := reportingZone(timeZone)
-	if !valid {
-		return time.Time{}, time.Time{}, false
+var reviewZone = func() *time.Location {
+	zone, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		panic(err)
 	}
-	day, err := time.ParseInLocation("2006-01-02", date, zone)
+	return zone
+}()
+
+const reviewCutoffHour = 16
+
+func reviewDay(date string) (time.Time, time.Time, bool) {
+	day, err := time.ParseInLocation("2006-01-02", date, reviewZone)
 	if err != nil {
 		return time.Time{}, time.Time{}, false
 	}
-	return day, day.AddDate(0, 0, 1), true
+	end := time.Date(day.Year(), day.Month(), day.Day(), reviewCutoffHour, 0, 0, 0, reviewZone)
+	return end.AddDate(0, 0, -1), end, true
+}
+
+func latestReviewDay(now time.Time) time.Time {
+	local := now.In(reviewZone)
+	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, reviewZone)
+	if local.Hour() < reviewCutoffHour {
+		day = day.AddDate(0, 0, -1)
+	}
+	return day
 }
 
 func reviewRank(interactionID, date string) string {
@@ -183,7 +198,7 @@ func questionOrder() map[string]int {
 }
 
 func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand) (ReviewQueue, error) {
-	from, to, valid := reviewDay(command.Date, command.TimeZone)
+	from, to, valid := reviewDay(command.Date)
 	if !valid || !validUUID(command.PracticeID) || command.Identity.Subject == "" || to.After(m.now()) {
 		return ReviewQueue{}, ErrInvalidInput
 	}

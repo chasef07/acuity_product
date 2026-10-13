@@ -69,6 +69,7 @@ import {
   useScorecardQuestions,
 } from "@/lib/clients/call-review"
 import { formatShortDateTime } from "@/lib/format"
+import { latestReviewDay } from "@/lib/review-day"
 
 const silenceSeconds = 8
 
@@ -84,7 +85,7 @@ export function CallReviewWorkspace({
   onOpenCall: (interactionID: string) => void
 }) {
   const [view, setView] = useState<ReviewView>("queue")
-  const [date, setDate] = useState(yesterday)
+  const [date, setDate] = useState(() => latestReviewDay())
   const questions = useScorecardQuestions()
   if (questions.status === "loading") return <Skeleton className="h-[32rem] rounded-xl" />
   if (questions.status === "failed") {
@@ -116,13 +117,13 @@ export function CallReviewWorkspace({
         </ToggleGroup>
         <div className="flex items-center gap-2">
           {view === "queue" && (
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              Calls from
+            <label className="flex items-center gap-2 text-xs text-muted-foreground" title="Calls from 4:00 PM Eastern the day before to 4:00 PM Eastern. Opens at 4:00 PM Eastern.">
+              Review day
               <Input
                 type="date"
                 className="h-8 w-40"
                 value={date}
-                max={yesterday()}
+                max={latestReviewDay()}
                 onChange={(event) => event.target.value && setDate(event.target.value)}
               />
             </label>
@@ -139,11 +140,6 @@ export function CallReviewWorkspace({
   )
 }
 
-function yesterday() {
-  const value = new Date()
-  value.setDate(value.getDate() - 1)
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`
-}
 
 function ReviewQueue({ practiceID, date, catalog }: { practiceID: string; date: string; catalog: QuestionCatalog }) {
   const [revision, setRevision] = useState(0)
