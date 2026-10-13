@@ -171,8 +171,9 @@ type scorecardToolCall struct {
 const insuranceAskLimit = 3
 
 var (
-	sentenceEnd      = regexp.MustCompile(`[.!?](\s+|$)|\n`)
-	transferRefusal  = regexp.MustCompile(`(?i)\b(i|we)(\s+am|\s+are|'m|'re)?\s+(don't|do not|can't|cannot|can not|won't|will not|unable to|not able to)\s+transfer`)
+	sentenceEnd     = regexp.MustCompile(`[.!?](\s+|$)|\n`)
+	transferRefusal = regexp.MustCompile(`(?i)\b(i|we)(\s+am|\s+are|'m|'re)?\s+(don't|do not|can't|cannot|can not|won't|will not|unable to|not able to)\s+transfer\s+(you|calls|the call|your call|this call)\b` +
+		`|\bno\s+(puedo|podemos)\s+transferir(le|la|lo)?(\s+(la|su|esta)\s+llamada|\s+llamadas|\s*[.,!?]|\s*$)|\bno\s+(transfiero|transferimos)\s+llamadas\b`)
 	schedulingWrites = map[string]bool{"book_appointment": true, "reschedule_appointment": true, "cancel_appointment": true}
 	blockingResults  = []struct{ tool, prefix, reason string }{
 		{"list_available_appointments", "no_results:", "No openings in the searched window"},

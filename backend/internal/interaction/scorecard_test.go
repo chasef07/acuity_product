@@ -326,6 +326,13 @@ func TestTransferNotRefusedCheck(t *testing.T) {
 		"cannot transfer":      {[]string{"I can't transfer you right now."}, false},
 		"curly apostrophe":     {[]string{"I’m unable to transfer the call."}, false},
 		"later refusal counts": {[]string{"Hello, how can I help?", "We do not transfer calls to billing."}, false},
+		"records, not a call":  {[]string{"We can't transfer your records over the phone."}, true},
+		"prescription":         {[]string{"I can't transfer your prescription to another pharmacy."}, true},
+		"spanish cannot":       {[]string{"Lo siento, no puedo transferir la llamada."}, false},
+		"spanish cannot, bare": {[]string{"Lo siento, no puedo transferirle."}, false},
+		"spanish do not":       {[]string{"No transfiero llamadas, pero puedo tomar un mensaje."}, false},
+		"spanish records":      {[]string{"No podemos transferir su receta por teléfono."}, true},
+		"spanish transfers":    {[]string{"Le transfiero la llamada ahora."}, true},
 	} {
 		answer, found := answersByQuestion(codeCheckAnswers(agentTranscript(t, test.said...), map[string]any{}))["transfer_not_refused"]
 		if !found || answer.Answer != test.want {
