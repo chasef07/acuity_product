@@ -133,8 +133,78 @@ type GoldenSetCall struct {
 	Disagreements int       `json:"disagreements"`
 }
 
+type GoldenSetCounts struct {
+	JudgeNo     int `json:"judgeNo"`
+	FalseAlarms int `json:"falseAlarms"`
+	HumanNo     int `json:"humanNo"`
+	Misses      int `json:"misses"`
+}
+
+func (counts *GoldenSetCounts) add(human, judge bool) {
+	if !judge {
+		counts.JudgeNo++
+		if human {
+			counts.FalseAlarms++
+		}
+	}
+	if !human {
+		counts.HumanNo++
+		if judge {
+			counts.Misses++
+		}
+	}
+}
+
+type GoldenSetQuestionCounts struct {
+	Question string `json:"question"`
+	GoldenSetCounts
+}
+
+type GoldenSetDay struct {
+	Date string `json:"date"`
+	GoldenSetCounts
+	Questions []GoldenSetQuestionCounts `json:"questions"`
+}
+
+type goldenSetDays map[string]map[string]*GoldenSetCounts
+
+func (days goldenSetDays) add(date, question string, human, judge bool) {
+	if days[date] == nil {
+		days[date] = map[string]*GoldenSetCounts{}
+	}
+	if days[date][question] == nil {
+		days[date][question] = &GoldenSetCounts{}
+	}
+	days[date][question].add(human, judge)
+}
+
+func (days goldenSetDays) list() ([]GoldenSetDay, GoldenSetCounts) {
+	order := questionOrder()
+	result, week := []GoldenSetDay{}, GoldenSetCounts{}
+	for date, questions := range days {
+		day := GoldenSetDay{Date: date, Questions: []GoldenSetQuestionCounts{}}
+		for question, counts := range questions {
+			day.Questions = append(day.Questions, GoldenSetQuestionCounts{Question: question, GoldenSetCounts: *counts})
+			for _, total := range []*GoldenSetCounts{&day.GoldenSetCounts, &week} {
+				total.JudgeNo += counts.JudgeNo
+				total.FalseAlarms += counts.FalseAlarms
+				total.HumanNo += counts.HumanNo
+				total.Misses += counts.Misses
+			}
+		}
+		sort.Slice(day.Questions, func(left, right int) bool {
+			return order[day.Questions[left].Question] < order[day.Questions[right].Question]
+		})
+		result = append(result, day)
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].Date > result[right].Date })
+	return result, week
+}
+
 type JudgeAccuracy struct {
 	CurrentJudgeVersion   string                 `json:"currentJudgeVersion"`
+	Days                  []GoldenSetDay         `json:"days"`
+	Week                  GoldenSetCounts        `json:"week"`
 	ReviewedCalls         int                    `json:"reviewedCalls"`
 	GoldenAnswers         int                    `json:"goldenAnswers"`
 	GoldenSet             []GoldenSetCall        `json:"goldenSet"`
@@ -641,6 +711,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		return JudgeAccuracy{}, fmt.Errorf("query judge accuracy: %w", err)
 	}
 	result := JudgeAccuracy{CurrentJudgeVersion: ScorecardJudgeVersion, Rows: []JudgeAccuracyRow{}, JudgeDisagreements: []JudgeDisagreement{}, ReviewerDisagreements: []ReviewerDisagreement{}}
+	days, weekStart := goldenSetDays{}, latestReviewDay(m.now()).AddDate(0, 0, -6).Format("2006-01-02")
 	type groupKey struct{ question, version string }
 	groups := map[groupKey]*JudgeAccuracyRow{}
 	trustCalls := map[groupKey]map[string]*trustCall{}
@@ -722,6 +793,9 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 			}
 		}
 		item.Judge = *judgeAnswer
+		if !hidden && item.JudgeVersion == ScorecardJudgeVersion && reviewDate >= weekStart {
+			days.add(reviewDate, item.Question, item.Human, item.Judge)
+		}
 		if item.Human != item.Judge {
 			golden.Disagreements++
 			if !hidden && len(result.JudgeDisagreements) < reviewDisagreementRows {
@@ -763,6 +837,7 @@ func (m *Module) QueryJudgeAccuracy(ctx context.Context, identity access.Identit
 		return result.Rows[left].JudgeVersion < result.Rows[right].JudgeVersion
 	})
 	result.ReviewedCalls = len(calls)
+	result.Days, result.Week = days.list()
 	result.GoldenSet = []GoldenSetCall{}
 	for _, id := range callList {
 		result.GoldenSet = append(result.GoldenSet, *calls[id])

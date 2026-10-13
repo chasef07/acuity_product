@@ -175,12 +175,20 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if _, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Changed after reveal"}); !errors.Is(err, ErrReviewLocked) {
 		t.Fatalf("answers are locked once the judge is revealed: %v", err)
 	}
-	if _, err := module.SubmitCallReview(ctx, second, booked, CallReviewSubmission{Answers: answers}); !errors.Is(err, ErrInvalidInput) {
+	onlyFirst := ""
+	for _, call := range queueA.Calls {
+		if !overlap[call.InteractionID] {
+			onlyFirst = call.InteractionID
+		}
+	}
+	if _, err := module.SubmitCallReview(ctx, second, onlyFirst, CallReviewSubmission{Answers: answers}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("a reviewer submits only assigned calls: %v", err)
 	}
 	overlapCall := ""
 	for id := range overlap {
-		overlapCall = id
+		if id != booked {
+			overlapCall = id
+		}
 	}
 	shortAnswers := func(clear bool) []ReviewAnswer {
 		return []ReviewAnswer{{Question: "new_booking_requested", Answer: false}, {Question: "office_rules_grounded", Answer: true}, {Question: "office_question_answered", Answer: clear}, {Question: "promises_backed", Answer: true}, {Question: "ended_while_caller_active", Answer: true}}
@@ -213,6 +221,18 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	}
 	if accuracy.ReviewedCalls != 2 || falseAlarms != 1 || accuracy.GoldenAnswers != 18 || accuracy.CurrentJudgeVersion != ScorecardJudgeVersion {
 		t.Fatalf("accuracy lists the false alarm: %+v", accuracy)
+	}
+	if len(accuracy.Days) != 1 || accuracy.Days[0].Date != "2026-10-06" || accuracy.Week != accuracy.Days[0].GoldenSetCounts || accuracy.Week.JudgeNo < accuracy.Week.FalseAlarms {
+		t.Fatalf("golden set by review day: %+v week=%+v", accuracy.Days, accuracy.Week)
+	}
+	endedAlarms := -1
+	for _, question := range accuracy.Days[0].Questions {
+		if question.Question == "ended_while_caller_active" {
+			endedAlarms = question.FalseAlarms
+		}
+	}
+	if endedAlarms != 1 {
+		t.Fatalf("the E1 false alarm is counted on its day: %+v", accuracy.Days[0].Questions)
 	}
 	if len(accuracy.ReviewerDisagreements) != 1 || accuracy.ReviewerDisagreements[0].Question != "office_question_answered" {
 		t.Fatalf("reviewer disagreements: %+v", accuracy.ReviewerDisagreements)

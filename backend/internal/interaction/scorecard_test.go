@@ -486,3 +486,29 @@ func TestStaffScorecardShowsVerdictsInCatalogOrder(t *testing.T) {
 		t.Fatalf("no evaluation is an empty scorecard: %+v", got)
 	}
 }
+
+func TestGoldenSetDaysSplitJuryNosAndReviewerNos(t *testing.T) {
+	days := goldenSetDays{}
+	for _, review := range []struct {
+		date, question string
+		human, judge   bool
+	}{
+		{"2026-10-11", "promises_backed", true, false},
+		{"2026-10-11", "promises_backed", false, false},
+		{"2026-10-11", "office_rules_grounded", false, true},
+		{"2026-10-11", "office_rules_grounded", true, true},
+		{"2026-10-10", "promises_backed", true, false},
+	} {
+		days.add(review.date, review.question, review.human, review.judge)
+	}
+	result, week := days.list()
+	if len(result) != 2 || result[0].Date != "2026-10-11" || result[0].GoldenSetCounts != (GoldenSetCounts{JudgeNo: 2, FalseAlarms: 1, HumanNo: 2, Misses: 1}) {
+		t.Fatalf("newest day first, with jury nos, false alarms, reviewer nos, and misses: %+v", result)
+	}
+	if len(result[0].Questions) != 2 || result[0].Questions[0].Question != "office_rules_grounded" || result[0].Questions[1].GoldenSetCounts != (GoldenSetCounts{JudgeNo: 2, FalseAlarms: 1, HumanNo: 1}) {
+		t.Fatalf("each day splits by question in catalog order: %+v", result[0].Questions)
+	}
+	if week != (GoldenSetCounts{JudgeNo: 3, FalseAlarms: 2, HumanNo: 2, Misses: 1}) {
+		t.Fatalf("the week total sums the days: %+v", week)
+	}
+}

@@ -56,6 +56,7 @@ import {
   TimelineItem,
   timelineEntries,
 } from "@/components/workspace/operator-analytics-detail"
+import { GoldenSetDays } from "@/components/workspace/golden-set-days"
 import { ScorecardDefinitionsButton } from "@/components/workspace/scorecard-overview"
 import type {
   OperatorCallReviewQueueCall,
@@ -523,6 +524,7 @@ function JudgeAccuracyView({
         </button>
         <Stat label="Reviewers disagreed" value={data.reviewerDisagreements.length.toLocaleString()} note="Questions to reword" />
       </div>
+      {version === current && <GoldenSetDays days={data.days} week={data.week} label={label} />}
       <Card size="sm">
         <CardHeader>
           <CardTitle className="text-sm">By question</CardTitle>

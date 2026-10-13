@@ -4328,14 +4328,75 @@ components:
         answers:
           type: array
           items: {$ref: "#/components/schemas/OperatorReviewerAnswer"}
+    OperatorGoldenSetCounts:
+      type: object
+      additionalProperties: false
+      required: [judgeNo, falseAlarms, humanNo, misses]
+      properties:
+        judgeNo:
+          type: integer
+          description: Reviewed answers where the jury said no.
+        falseAlarms:
+          type: integer
+          description: Jury no answers the reviewer marked fine.
+        humanNo:
+          type: integer
+          description: Answers the reviewer marked no (real issues).
+        misses:
+          type: integer
+          description: Reviewer no answers where the jury said yes.
+    OperatorGoldenSetQuestionCounts:
+      type: object
+      additionalProperties: false
+      required: [question, judgeNo, falseAlarms, humanNo, misses]
+      properties:
+        question: {type: string}
+        judgeNo:
+          type: integer
+          description: Reviewed answers where the jury said no.
+        falseAlarms:
+          type: integer
+          description: Jury no answers the reviewer marked fine.
+        humanNo:
+          type: integer
+          description: Answers the reviewer marked no (real issues).
+        misses:
+          type: integer
+          description: Reviewer no answers where the jury said yes.
+    OperatorGoldenSetDay:
+      type: object
+      additionalProperties: false
+      required: [date, judgeNo, falseAlarms, humanNo, misses, questions]
+      properties:
+        date: {type: string, format: date}
+        judgeNo:
+          type: integer
+          description: Reviewed answers where the jury said no.
+        falseAlarms:
+          type: integer
+          description: Jury no answers the reviewer marked fine.
+        humanNo:
+          type: integer
+          description: Answers the reviewer marked no (real issues).
+        misses:
+          type: integer
+          description: Reviewer no answers where the jury said yes.
+        questions:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorGoldenSetQuestionCounts"}
     OperatorJudgeAccuracy:
       type: object
       additionalProperties: false
-      required: [currentJudgeVersion, reviewedCalls, goldenAnswers, goldenSet, rows, judgeDisagreements, reviewerDisagreements]
+      required: [currentJudgeVersion, days, week, reviewedCalls, goldenAnswers, goldenSet, rows, judgeDisagreements, reviewerDisagreements]
       properties:
         currentJudgeVersion:
           type: string
           description: The judge version new calls are scored with.
+        days:
+          type: array
+          description: The current judge version's reviewed answers per review day over the last 7 review days, newest first. Built only from stored human reviews; shared calls the viewer has not reviewed are left out.
+          items: {$ref: "#/components/schemas/OperatorGoldenSetDay"}
+        week: {$ref: "#/components/schemas/OperatorGoldenSetCounts"}
         reviewedCalls: {type: integer}
         goldenAnswers: {type: integer}
         goldenSet:

@@ -1075,11 +1075,76 @@ export type OperatorReviewerDisagreement = {
     answers: Array<OperatorReviewerAnswer>;
 };
 
+export type OperatorGoldenSetCounts = {
+    /**
+     * Reviewed answers where the jury said no.
+     */
+    judgeNo: number;
+    /**
+     * Jury no answers the reviewer marked fine.
+     */
+    falseAlarms: number;
+    /**
+     * Answers the reviewer marked no (real issues).
+     */
+    humanNo: number;
+    /**
+     * Reviewer no answers where the jury said yes.
+     */
+    misses: number;
+};
+
+export type OperatorGoldenSetQuestionCounts = {
+    question: string;
+    /**
+     * Reviewed answers where the jury said no.
+     */
+    judgeNo: number;
+    /**
+     * Jury no answers the reviewer marked fine.
+     */
+    falseAlarms: number;
+    /**
+     * Answers the reviewer marked no (real issues).
+     */
+    humanNo: number;
+    /**
+     * Reviewer no answers where the jury said yes.
+     */
+    misses: number;
+};
+
+export type OperatorGoldenSetDay = {
+    date: string;
+    /**
+     * Reviewed answers where the jury said no.
+     */
+    judgeNo: number;
+    /**
+     * Jury no answers the reviewer marked fine.
+     */
+    falseAlarms: number;
+    /**
+     * Answers the reviewer marked no (real issues).
+     */
+    humanNo: number;
+    /**
+     * Reviewer no answers where the jury said yes.
+     */
+    misses: number;
+    questions: Array<OperatorGoldenSetQuestionCounts>;
+};
+
 export type OperatorJudgeAccuracy = {
     /**
      * The judge version new calls are scored with.
      */
     currentJudgeVersion: string;
+    /**
+     * The current judge version's reviewed answers per review day over the last 7 review days, newest first. Built only from stored human reviews; shared calls the viewer has not reviewed are left out.
+     */
+    days: Array<OperatorGoldenSetDay>;
+    week: OperatorGoldenSetCounts;
     reviewedCalls: number;
     goldenAnswers: number;
     goldenSet: Array<OperatorGoldenSetCall>;
