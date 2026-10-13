@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/chasef07/acuity_product/compare/v1.35.0...v1.36.0) (2026-10-13)
+
+
+### Features
+
+* **call-review:** let reviewers change answers after the judge is revealed ([#461](https://github.com/chasef07/acuity_product/issues/461)) ([51ed0f6](https://github.com/chasef07/acuity_product/commit/51ed0f664a3e13e1316f40f376d59a1d7f45d281))
+
 ## [1.35.0](https://github.com/chasef07/acuity_product/compare/v1.34.1...v1.35.0) (2026-10-13)
 
 
