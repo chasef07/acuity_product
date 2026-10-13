@@ -556,6 +556,9 @@ func (m *Module) ensureRecoveryOutcome(
 		opaqueReference(task.ID), string(outcome), fact.OccurredAt); err != nil {
 		return "", err
 	}
+	if err := publishCallingHint(ctx, tx, practiceID); err != nil {
+		return "", err
+	}
 	return task.ID, nil
 }
 

@@ -595,6 +595,11 @@ func (m *Module) finishCallLegCommand(
 			return fmt.Errorf("converge absent Hangup target: %w", err)
 		}
 	}
+	if command.CallLegID != "" && state != "PENDING" {
+		if err := publishCallLegCallingHint(ctx, tx, command.CallLegID); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 

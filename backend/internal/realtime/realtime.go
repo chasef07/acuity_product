@@ -17,7 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const notificationChannel = "acuity_workspace_hints"
+const (
+	notificationChannel        = "acuity_workspace_hints"
+	callingNotificationChannel = "acuity_calling_hints"
+)
 
 type Config struct {
 	DatabaseURL          string
@@ -32,8 +35,19 @@ type Config struct {
 }
 
 type Hint struct {
+	PracticeID            string `json:"practiceId"`
+	Version               int64  `json:"version"`
+	CallingHints          bool   `json:"callingHints,omitempty"`
+	HeartbeatMilliseconds int64  `json:"heartbeatMilliseconds,omitempty"`
+}
+
+type CallingHint struct {
 	PracticeID string `json:"practiceId"`
-	Version    int64  `json:"version"`
+}
+
+type subscription struct {
+	hints   chan Hint
+	calling chan struct{}
 }
 
 type Hub struct {
@@ -42,7 +56,7 @@ type Hub struct {
 	observer observability.Observer
 
 	mu          sync.RWMutex
-	subscribers map[string]map[chan Hint]struct{}
+	subscribers map[string]map[*subscription]struct{}
 	listener    chan struct{}
 	ready       atomic.Bool
 }
@@ -64,7 +78,7 @@ func New(config Config, accessModule *access.Module) (*Hub, error) {
 		config:      config,
 		access:      accessModule,
 		observer:    config.Observer,
-		subscribers: map[string]map[chan Hint]struct{}{},
+		subscribers: map[string]map[*subscription]struct{}{},
 		listener:    make(chan struct{}),
 	}, nil
 }
@@ -90,7 +104,7 @@ func (hub *Hub) Run(ctx context.Context) {
 			backoff = min(backoff*2, hub.config.ReconnectMax)
 			continue
 		}
-		if _, err := connection.Exec(ctx, "LISTEN "+notificationChannel); err != nil {
+		if err := listen(ctx, connection); err != nil {
 			hub.ready.Store(false)
 			observability.Record(
 				hub.observer,
@@ -118,6 +132,15 @@ func (hub *Hub) Run(ctx context.Context) {
 			notification, err := connection.WaitForNotification(ctx)
 			if err != nil {
 				break
+			}
+			if notification.Channel == callingNotificationChannel {
+				var hint CallingHint
+				if err := json.Unmarshal([]byte(notification.Payload), &hint); err != nil ||
+					hint.PracticeID == "" {
+					continue
+				}
+				hub.publishCalling(hint.PracticeID)
+				continue
 			}
 			var hint Hint
 			if err := json.Unmarshal([]byte(notification.Payload), &hint); err != nil ||
@@ -165,7 +188,7 @@ func (hub *Hub) Stream(
 	if !ready {
 		return errors.New("realtime listener is unavailable")
 	}
-	hints, unsubscribe := hub.subscribe(practiceID)
+	subscriber, unsubscribe := hub.subscribe(practiceID)
 	defer unsubscribe()
 	currentListener, ready := hub.listenerSnapshot()
 	if !ready || currentListener != listener {
@@ -185,8 +208,10 @@ func (hub *Hub) Stream(
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	if err := writeEvent(w, "ready", Hint{
-		PracticeID: practiceID,
-		Version:    authorization.Practice.Version,
+		PracticeID:            practiceID,
+		Version:               authorization.Practice.Version,
+		CallingHints:          true,
+		HeartbeatMilliseconds: hub.config.HeartbeatInterval.Milliseconds(),
 	}); err != nil {
 		closeReason = observability.SSEWriteFailed
 		return nil
@@ -217,8 +242,14 @@ func (hub *Hub) Stream(
 		case <-listener:
 			closeReason = observability.SSEListenerChanged
 			return nil
-		case hint := <-hints:
+		case hint := <-subscriber.hints:
 			if err := writeEvent(w, "hint", hint); err != nil {
+				closeReason = observability.SSEWriteFailed
+				return nil
+			}
+			flusher.Flush()
+		case <-subscriber.calling:
+			if err := writeEvent(w, "calling", CallingHint{PracticeID: practiceID}); err != nil {
 				closeReason = observability.SSEWriteFailed
 				return nil
 			}
@@ -254,18 +285,21 @@ func (hub *Hub) rotateListener() {
 	hub.mu.Unlock()
 }
 
-func (hub *Hub) subscribe(practiceID string) (<-chan Hint, func()) {
-	channel := make(chan Hint, 1)
+func (hub *Hub) subscribe(practiceID string) (*subscription, func()) {
+	subscriber := &subscription{
+		hints:   make(chan Hint, 1),
+		calling: make(chan struct{}, 1),
+	}
 	hub.mu.Lock()
 	if hub.subscribers[practiceID] == nil {
-		hub.subscribers[practiceID] = map[chan Hint]struct{}{}
+		hub.subscribers[practiceID] = map[*subscription]struct{}{}
 	}
-	hub.subscribers[practiceID][channel] = struct{}{}
+	hub.subscribers[practiceID][subscriber] = struct{}{}
 	hub.mu.Unlock()
 
-	return channel, func() {
+	return subscriber, func() {
 		hub.mu.Lock()
-		delete(hub.subscribers[practiceID], channel)
+		delete(hub.subscribers[practiceID], subscriber)
 		if len(hub.subscribers[practiceID]) == 0 {
 			delete(hub.subscribers, practiceID)
 		}
@@ -279,24 +313,44 @@ func (hub *Hub) publish(hint Hint) {
 	for subscriber := range hub.subscribers[hint.PracticeID] {
 		latest := hint
 		select {
-		case subscriber <- latest:
+		case subscriber.hints <- latest:
 		default:
 			select {
-			case queued := <-subscriber:
+			case queued := <-subscriber.hints:
 				if queued.Version > latest.Version {
 					latest = queued
 				}
 			default:
 			}
 			select {
-			case subscriber <- latest:
+			case subscriber.hints <- latest:
 			default:
 			}
 		}
 	}
 }
 
-func writeEvent(w http.ResponseWriter, event string, hint Hint) error {
+func (hub *Hub) publishCalling(practiceID string) {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	for subscriber := range hub.subscribers[practiceID] {
+		select {
+		case subscriber.calling <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func listen(ctx context.Context, connection *pgx.Conn) error {
+	for _, channel := range []string{notificationChannel, callingNotificationChannel} {
+		if _, err := connection.Exec(ctx, "LISTEN "+channel); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeEvent(w http.ResponseWriter, event string, hint any) error {
 	payload, err := json.Marshal(hint)
 	if err != nil {
 		return err
