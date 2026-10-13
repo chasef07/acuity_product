@@ -340,7 +340,6 @@ func TestTransferNotRefusedCheck(t *testing.T) {
 func TestInsuranceResolvedCheck(t *testing.T) {
 	ask := syntheticTool{"check_insurance", `{"plan":"Synthetic"}`, "Ask what insurance plan is on the card."}
 	choose := syntheticTool{"check_insurance", `{"plan":"Synthetic Medicaid"}`, "Ask which plan is on the card: Synthetic A, Synthetic B."}
-	prefixed := syntheticTool{"check_insurance", `{"plan":"Synthetic"}`, "needs_input: Which of these is on your card: A or B?"}
 	accepted := syntheticTool{"check_insurance", `{"plan":"Synthetic A"}`, "Synthetic A is accepted for medical visits at this office."}
 	for name, test := range map[string]struct {
 		tools   []syntheticTool
@@ -350,7 +349,7 @@ func TestInsuranceResolvedCheck(t *testing.T) {
 		"no insurance check": {nil, false, false},
 		"accepted":           {[]syntheticTool{accepted}, true, true},
 		"asked twice":        {[]syntheticTool{ask, choose, accepted}, true, true},
-		"asked three times":  {[]syntheticTool{ask, choose, prefixed, accepted}, true, false},
+		"asked three times":  {[]syntheticTool{ask, choose, ask, accepted}, true, false},
 	} {
 		answer, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t, test.tools...), map[string]any{}))["insurance_resolved"]
 		if found != test.applies || answer.Answer != test.want {

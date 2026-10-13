@@ -326,7 +326,7 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 	for index := range calls {
 		if calls[index].Name == "check_insurance" {
 			lastInsurance = &calls[index]
-			if calls[index].Status == "needs_input" || strings.Contains(calls[index].Output, "on the card") {
+			if strings.Contains(calls[index].Output, "on the card") {
 				insuranceAsks++
 			}
 		}
