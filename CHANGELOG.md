@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.36.1](https://github.com/chasef07/acuity_product/compare/v1.36.0...v1.36.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **calling:** apply Telnyx receipts concurrently per call session ([#466](https://github.com/chasef07/acuity_product/issues/466)) ([810bda5](https://github.com/chasef07/acuity_product/commit/810bda570338921fd396f72221fd3e234fbe8076))
+* **calling:** stop locking staff out on DB errors and lost softphone leases ([#464](https://github.com/chasef07/acuity_product/issues/464)) ([93624e9](https://github.com/chasef07/acuity_product/commit/93624e92c850b37633edfa69bf5051a0d0bca25c))
+
+
+### Performance Improvements
+
+* **calling:** index the /v1/calling/state validator reads ([#463](https://github.com/chasef07/acuity_product/issues/463)) ([1fb5d88](https://github.com/chasef07/acuity_product/commit/1fb5d88ea611eb92a4c0697c594bda46531b285b))
+* **calling:** push calling-state hints and poll idle softphones every 10s ([#425](https://github.com/chasef07/acuity_product/issues/425)) ([a06c574](https://github.com/chasef07/acuity_product/commit/a06c57450e4ff8cdd58c41b1e7653cacae14a86b))
+
 ## [1.36.0](https://github.com/chasef07/acuity_product/compare/v1.35.0...v1.36.0) (2026-10-13)
 
 
