@@ -110,7 +110,7 @@ func applyPublication(command knowledge.ImportCommand, apply bool) error {
 	if err != nil {
 		return err
 	}
-	module, err := knowledge.New(pool, access.New(pool, nil), provider, knowledge.Config{ProviderTimeout: 30 * time.Second})
+	module, err := knowledge.New(pool, access.New(pool, nil), provider, knowledge.Config{})
 	if err != nil {
 		return err
 	}

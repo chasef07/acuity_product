@@ -258,11 +258,9 @@ func (m *Module) embed(ctx context.Context, texts []string, task TaskType) ([]st
 	if m.embedder == nil {
 		return nil, errProviderNotConfigured
 	}
-	providerCtx, cancel := context.WithTimeout(ctx, m.config.ProviderTimeout)
-	defer cancel()
-	vectors, err := m.embedder.Embed(providerCtx, texts, task)
-	if providerCtx.Err() != nil {
-		return nil, providerCtx.Err()
+	vectors, err := m.embedder.Embed(ctx, texts, task)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 	if err != nil {
 		var classified *ProviderFailure
@@ -321,7 +319,9 @@ func (m *Module) Search(ctx context.Context, identity access.ServiceIdentity, of
 	if initial == nil {
 		return empty, ErrUnavailable
 	}
-	vectors, err := m.embed(ctx, []string{query}, RetrievalQuery)
+	embeddingCtx, cancel := context.WithTimeout(ctx, m.config.SearchEmbeddingTimeout)
+	defer cancel()
+	vectors, err := m.embed(embeddingCtx, []string{query}, RetrievalQuery)
 	if err != nil {
 		return empty, err
 	}

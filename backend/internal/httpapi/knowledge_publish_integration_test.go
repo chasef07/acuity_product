@@ -163,7 +163,7 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 	defer runtimePool.Close()
 
 	accessModule := access.New(runtimePool, nil)
-	knowledgeModule, err := knowledge.New(runtimePool, accessModule, embedder, knowledge.Config{})
+	knowledgeModule, err := knowledge.New(runtimePool, accessModule, embedder, knowledge.Config{SearchEmbeddingTimeout: 500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	workModule := work.New(runtimePool, accessModule, nil)
-	handler, err := httpapi.NewPortal(httpapi.Config{AcquireTimeout: time.Second}, runtimePool, httpapi.PortalDependencies{
+	handler, err := httpapi.NewPortal(httpapi.Config{AcquireTimeout: time.Second, RequestTimeout: 5 * time.Second}, runtimePool, httpapi.PortalDependencies{
 		Access:               accessModule,
 		Authenticator:        staticAuthenticator{"staff-token": staff, "demo-token": demoAdmin, "operator-token": operator},
 		Calling:              humancalling.New(runtimePool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil),
@@ -321,7 +321,17 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		}
 	})
 
-	t.Run("staff publish is live for the agent and attributed", func(t *testing.T) {
+	t.Run("search embedding slower than its timeout fails the search", func(t *testing.T) {
+		slowEmbedding := func() { time.Sleep(1500 * time.Millisecond) }
+		embedder.during.Store(&slowEmbedding)
+		if result := search("hollywood"); result.Outcome != "temporary_failure" {
+			t.Fatalf("slow search=%+v", result)
+		}
+	})
+
+	t.Run("staff publish slower than the search embedding timeout is live for the agent and attributed", func(t *testing.T) {
+		slowEmbedding := func() { time.Sleep(1500 * time.Millisecond) }
+		embedder.during.Store(&slowEmbedding)
 		status, response := publish("staff-token", first)
 		if status != http.StatusOK {
 			t.Fatalf("status=%d body=%s", status, response)
