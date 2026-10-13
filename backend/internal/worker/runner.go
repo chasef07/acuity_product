@@ -51,6 +51,7 @@ type Config struct {
 	MetricInterval                time.Duration
 	MetricTimeout                 time.Duration
 	ReceiptBatchSize              int
+	ReceiptWorkers                int
 	RecoveryAndMessagingBatchSize int
 	ProviderCommandBatchSize      int
 	CommandWorkers                int
@@ -90,6 +91,12 @@ func New(
 		config.RecoveryAndMessagingBatchSize <= 0 ||
 		config.ProviderCommandBatchSize <= 0 ||
 		config.CommandWorkers <= 0 {
+		return nil, fmt.Errorf("positive worker limits are required")
+	}
+	if config.ReceiptWorkers == 0 {
+		config.ReceiptWorkers = 1
+	}
+	if config.ReceiptWorkers < 0 {
 		return nil, fmt.Errorf("positive worker limits are required")
 	}
 	if config.ErrorBackoffMin == 0 {
@@ -196,13 +203,20 @@ func (runner *Runner) Run(ctx context.Context) error {
 }
 
 func (runner *Runner) runCallingReceipts(ctx context.Context) {
-	runner.runQueueLaneWithIdleMaximum(
-		ctx,
-		runner.config.ReceiptBatchSize,
-		"provider_receipt_processing_failed",
-		runner.processNextCallingReceipt,
-		runner.config.WorkInterval,
-	)
+	var workers sync.WaitGroup
+	for range runner.config.ReceiptWorkers {
+		workers.Go(func() {
+			runner.runQueueLoop(
+				ctx,
+				runner.config.ReceiptBatchSize,
+				"provider_receipt_processing_failed",
+				runner.processNextCallingReceipt,
+				runner.config.WorkInterval,
+				true,
+			)
+		})
+	}
+	workers.Wait()
 }
 
 func (runner *Runner) notifyProviderCommands() {
@@ -392,6 +406,17 @@ func (runner *Runner) runQueueLaneWithIdleMaximum(
 	process func(context.Context) (bool, error),
 	idleMaximum time.Duration,
 ) {
+	runner.runQueueLoop(ctx, batchSize, failureEvent, process, idleMaximum, false)
+}
+
+func (runner *Runner) runQueueLoop(
+	ctx context.Context,
+	batchSize int,
+	failureEvent string,
+	process func(context.Context) (bool, error),
+	idleMaximum time.Duration,
+	continueAfterFullBatch bool,
+) {
 	backoff := newFailureBackoff(
 		runner.config.ErrorBackoffMin,
 		runner.config.ErrorBackoffMax,
@@ -402,7 +427,7 @@ func (runner *Runner) runQueueLaneWithIdleMaximum(
 	idleBackoff := newFailureBackoff(runner.config.WorkInterval, idleMaximum)
 	for ctx.Err() == nil {
 		failed := false
-		progressed := false
+		processedCount := 0
 		for range batchSize {
 			processed, err := runBoolWork(
 				ctx,
@@ -418,14 +443,17 @@ func (runner *Runner) runQueueLaneWithIdleMaximum(
 			if !processed {
 				break
 			}
-			progressed = true
+			processedCount++
 		}
 		delay := runner.config.WorkInterval
 		if failed {
 			idleBackoff.reset()
 			delay = backoff.fail(runner.jitter)
-		} else if progressed {
+		} else if processedCount > 0 {
 			idleBackoff.reset()
+			if continueAfterFullBatch && processedCount == batchSize {
+				delay = 0
+			}
 		} else {
 			delay = idleBackoff.step()
 		}

@@ -393,7 +393,10 @@ func runWorker(
 	return runner.Run(ctx)
 }
 
-const productionProviderCommandWorkers = 10
+const (
+	productionProviderCommandWorkers = 10
+	productionReceiptWorkers         = 4
+)
 
 func productionWorkerConfig(acquireTimeout time.Duration) worker.Config {
 	return worker.Config{
@@ -406,6 +409,7 @@ func productionWorkerConfig(acquireTimeout time.Duration) worker.Config {
 		MetricInterval:                30 * time.Second,
 		MetricTimeout:                 acquireTimeout,
 		ReceiptBatchSize:              8,
+		ReceiptWorkers:                productionReceiptWorkers,
 		RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize:      8,
 		CommandWorkers:                productionProviderCommandWorkers,

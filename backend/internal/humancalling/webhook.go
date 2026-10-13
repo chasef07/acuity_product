@@ -92,9 +92,9 @@ func (m *Module) ReceiveWebhook(
 	err = tx.QueryRow(ctx, `
 		INSERT INTO human_calling_provider_receipts (
 			event_id, event_type, occurred_at, received_at,
-			signature_timestamp, raw_body, next_attempt_at
+			signature_timestamp, raw_body, next_attempt_at, call_session_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $4)
+		VALUES ($1, $2, $3, $4, $5, $6, $4, NULLIF($7, ''))
 		ON CONFLICT (event_id) DO NOTHING
 		RETURNING event_id
 	`,
@@ -104,6 +104,7 @@ func (m *Module) ReceiveWebhook(
 		m.now(),
 		timestamp,
 		raw,
+		event.Data.Payload.CallSessionID,
 	).Scan(&inserted)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return WebhookReceipt{}, fmt.Errorf("commit provider receipt: %w", err)
@@ -383,56 +384,66 @@ func (m *Module) resolveQuarantinedReceiptReference(
 	return "", fmt.Errorf("%w: provider receipt recovery reference is unavailable", ErrConflict)
 }
 
+const claimNextReceiptQuery = `
+	WITH queued AS MATERIALIZED (
+		SELECT
+			event_id,
+			call_session_id,
+			CASE WHEN call_session_id IS NULL THEN event_id END AS sessionless_event_id,
+			next_attempt_at,
+			received_at,
+			state = 'PROCESSING'
+				AND processing_started_at > $1::timestamptz - interval '30 seconds' AS in_flight
+		FROM human_calling_provider_receipts
+		WHERE state IN ('PENDING', 'PROCESSING')
+	), call_heads AS (
+		SELECT DISTINCT ON (call_session_id, sessionless_event_id) event_id, in_flight
+		FROM queued
+		WHERE in_flight OR next_attempt_at <= $1
+		ORDER BY call_session_id, sessionless_event_id, in_flight DESC,
+			next_attempt_at, received_at, event_id
+	), claimed AS (
+		SELECT receipt.event_id
+		FROM human_calling_provider_receipts receipt
+		JOIN call_heads ON call_heads.event_id = receipt.event_id
+		WHERE NOT call_heads.in_flight
+			AND receipt.next_attempt_at <= $1
+			AND (
+				receipt.state = 'PENDING'
+				OR (
+					receipt.state = 'PROCESSING'
+					AND receipt.processing_started_at <= $1 - interval '30 seconds'
+				)
+			)
+		ORDER BY receipt.next_attempt_at, receipt.received_at, receipt.event_id
+		FOR UPDATE OF receipt SKIP LOCKED
+		LIMIT 1
+	)
+	UPDATE human_calling_provider_receipts receipt
+	SET
+		state = 'PROCESSING',
+		projection_attempts = receipt.projection_attempts + 1,
+		processing_started_at = $1,
+		last_attempt_at = $1
+	FROM claimed
+	WHERE receipt.event_id = claimed.event_id
+	RETURNING receipt.event_id, receipt.raw_body, receipt.received_at,
+		receipt.projection_attempts
+`
+
 func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 	now := m.now()
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return false, fmt.Errorf("begin provider receipt claim: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
 	var eventID string
 	var raw []byte
 	var receivedAt time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT event_id, raw_body, received_at
-		FROM human_calling_provider_receipts
-		WHERE next_attempt_at <= $1
-			AND (
-				state = 'PENDING'
-				OR (
-					state = 'PROCESSING'
-					AND processing_started_at <= $1 - interval '30 seconds'
-				)
-			)
-		ORDER BY next_attempt_at, received_at, event_id
-		FOR UPDATE SKIP LOCKED
-		LIMIT 1
-	`, now).Scan(&eventID, &raw, &receivedAt)
-	if err != nil {
+	var projectionAttempts int
+	if err := m.database.QueryRow(ctx, claimNextReceiptQuery, now).Scan(
+		&eventID, &raw, &receivedAt, &projectionAttempts,
+	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			if err := tx.Commit(ctx); err != nil {
-				return false, fmt.Errorf("commit empty provider receipt claim: %w", err)
-			}
 			return false, nil
 		}
 		return false, fmt.Errorf("claim provider receipt: %w", err)
-	}
-	var projectionAttempts int
-	if err := tx.QueryRow(ctx, `
-		UPDATE human_calling_provider_receipts
-		SET
-			state = 'PROCESSING',
-			projection_attempts = projection_attempts + 1,
-			processing_started_at = $2,
-			last_attempt_at = $2
-		WHERE event_id = $1
-		RETURNING projection_attempts
-	`, eventID, now).Scan(&projectionAttempts); err != nil {
-		return false, fmt.Errorf("mark provider receipt processing: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit provider receipt claim: %w", err)
 	}
 
 	state, errorCode := m.replayProviderReceipt(ctx, eventID, raw)

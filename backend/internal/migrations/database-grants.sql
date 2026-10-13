@@ -237,7 +237,8 @@ GRANT INSERT (
     received_at,
     signature_timestamp,
     raw_body,
-    next_attempt_at
+    next_attempt_at,
+    call_session_id
 )
 ON TABLE public.human_calling_provider_receipts
 TO acuity_provider;
