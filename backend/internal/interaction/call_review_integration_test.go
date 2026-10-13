@@ -223,19 +223,31 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET phone='+15555550122' WHERE id=$1`, otherCaller); err != nil {
 		t.Fatal(err)
 	}
+	previous := insert(45, 60, nil, nil)
+	if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET closeout_payload = jsonb_set(closeout_payload, '{evaluation}', $2::jsonb) WHERE id = $1`, previous,
+		`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev"],"status":"complete","results":{"booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_scorecard_answers (interaction_id, practice_id, question, source, answer, probability, scorecard_version, judge_model, computed_at) VALUES ($1, $2, 'booking_requested', 'judge', true, 0.9, 'typesafe-scorecard-v6', 'typesafe-ai/jev', $3)`, previous, practice, now); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := module.BackfillScorecards(ctx, time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC), 7); err != nil {
 		t.Fatal(err)
 	}
+	var keptVersion string
+	if err := pool.QueryRow(ctx, `SELECT scorecard_version FROM ai_interaction_scorecard_answers WHERE interaction_id = $1 AND source = 'judge'`, previous).Scan(&keptVersion); err != nil || keptVersion != "typesafe-scorecard-v6" {
+		t.Fatalf("a backfill keeps the judge rows of a call the previous jury scored: %q %v", keptVersion, err)
+	}
 	now = time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC)
 	results, err := module.QueryScorecardResults(ctx, ScorecardResultsCommand{Identity: first, PracticeID: practice, Range: AnalyticsRange7Days})
-	if err != nil || results.Calls != 34 || results.ProblemCalls != 9 || results.BookingCallers != 2 || results.Missed != 1 || results.NotSearched != 1 || results.Conversion == nil || *results.Conversion != 0 {
+	if err != nil || results.Calls != 35 || results.ProblemCalls != 9 || results.BookingCallers != 2 || results.Missed != 1 || results.NotSearched != 1 || results.Conversion == nil || *results.Conversion != 0 {
 		t.Fatalf("scorecard results: %+v %v", results, err)
 	}
 	if len(results.Daily) != 8 {
 		t.Fatalf("one point per UTC day in range: %d", len(results.Daily))
 	}
 	for _, day := range results.Daily {
-		if (day.Date == "2026-10-06") != (day.Calls == 34) || (day.Calls == 0 && day.ProblemRate != nil) {
+		if (day.Date == "2026-10-06") != (day.Calls == 35) || (day.Calls == 0 && day.ProblemRate != nil) {
 			t.Fatalf("daily trend: %+v", results.Daily)
 		}
 	}

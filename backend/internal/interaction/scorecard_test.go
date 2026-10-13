@@ -156,6 +156,20 @@ func TestJudgeAnswersReadTheJuryVerdict(t *testing.T) {
 	}
 }
 
+func TestPreviousJuryStillReadsForDisplayButNotAsAnswers(t *testing.T) {
+	evaluation := json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v6","jurors":["typesafe-ai/jev"],"status":"complete","results":{
+		"booking_requested":{"verdict":true,"probability":0.9,"votes":{"typesafe-ai/jev":0.9},"errors":{}},
+		"clear_and_responsive":{"verdict":false,"probability":0.2,"votes":{"typesafe-ai/jev":0.2},"errors":{}},
+		"expressed_sentiment":{"score":1,"probabilities":{"1":1},"model":"typesafe-ai/jev"}}}`)
+	reading := readEvaluation(evaluation)
+	if !reading.Evaluated || reading.Version != "typesafe-scorecard-v6" || len(reading.Flags) != 1 || reading.Flags[0].Reason != "Clear and responsive needs review" || reading.Sentiment == nil || *reading.Sentiment != 1 {
+		t.Fatalf("v6 calls keep their flags, evaluated count, and sentiment: %+v", reading)
+	}
+	if got := judgeAnswers(evaluation); len(got) != 0 {
+		t.Fatalf("v6 verdicts are not recorded as v7 scorecard answers: %+v", got)
+	}
+}
+
 func TestClassifyBooking(t *testing.T) {
 	for want, answers := range map[bookingOutcome]map[string]bool{
 		bookingNotRequested: {"scheduling_succeeded": true, "availability_searched": false},

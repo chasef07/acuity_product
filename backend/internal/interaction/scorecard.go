@@ -14,6 +14,7 @@ import (
 
 const (
 	ScorecardJudgeVersion = "typesafe-scorecard-v7"
+	previousJudgeVersion  = "typesafe-scorecard-v6"
 	ScorecardCodeVersion  = "code-checks-v2"
 	scorecardNoAtOrBelow  = 0.40
 )
@@ -333,9 +334,36 @@ type juryEvaluation struct {
 	Errors  map[string]json.RawMessage `json:"errors"`
 }
 
+type juryQuestion struct{ key, failureLabel string }
+
+var previousJuryQuestions = []juryQuestion{
+	{"booking_requested", ""}, {"time_offered", ""}, {"need_understood", "Understood every request"},
+	{"right_help", "Right help or next step"}, {"clear_and_responsive", "Clear and responsive"},
+	{"person_request_honored", "Person request honored"}, {"office_rules_grounded", "Office facts backed"},
+	{"appointment_datetime_correct", "Appointment matched the caller"},
+}
+
+func juryQuestions(version string) []juryQuestion {
+	if version == previousJudgeVersion {
+		return previousJuryQuestions
+	}
+	questions := []juryQuestion{}
+	for _, question := range ScorecardQuestions {
+		if question.Source != "judge" {
+			continue
+		}
+		label := ""
+		if question.Failure {
+			label = question.Label
+		}
+		questions = append(questions, juryQuestion{question.Key, label})
+	}
+	return questions
+}
+
 func readJury(evaluation json.RawMessage) (juryEvaluation, bool) {
 	var jury juryEvaluation
-	valid := json.Unmarshal(evaluation, &jury) == nil && jury.Version == ScorecardJudgeVersion &&
+	valid := json.Unmarshal(evaluation, &jury) == nil && (jury.Version == ScorecardJudgeVersion || jury.Version == previousJudgeVersion) &&
 		(jury.Status == "complete" || jury.Status == "incomplete") && len(jury.Jurors) > 0
 	for _, juror := range jury.Jurors {
 		valid = valid && strings.TrimSpace(juror) != ""
@@ -349,16 +377,17 @@ func validProbability(value *float64) bool {
 
 func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
 	jury, valid := readJury(evaluation)
-	if !valid {
+	if !valid || jury.Version != ScorecardJudgeVersion {
 		return nil
 	}
+	return juryAnswers(jury, juryQuestions(jury.Version))
+}
+
+func juryAnswers(jury juryEvaluation, questions []juryQuestion) []scorecardAnswer {
 	model := strings.Join(jury.Jurors, ",")
 	answers := []scorecardAnswer{}
-	for _, question := range ScorecardQuestions {
-		if question.Source != "judge" {
-			continue
-		}
-		if _, failed := jury.Errors[question.Key]; failed {
+	for _, question := range questions {
+		if _, failed := jury.Errors[question.key]; failed {
 			continue
 		}
 		var result struct {
@@ -368,13 +397,13 @@ func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
 			Probability *float64           `json:"probability"`
 			Votes       map[string]float64 `json:"votes"`
 		}
-		if json.Unmarshal(jury.Results[question.Key], &result) != nil {
+		if json.Unmarshal(jury.Results[question.key], &result) != nil {
 			continue
 		}
 		if result.Status == "not_applicable" {
-			if question.Key == "time_offered" && result.Reason == "no_availability_result" {
+			if question.key == "time_offered" && result.Reason == "no_availability_result" {
 				answers = append(answers, scorecardAnswer{
-					Question: question.Key, Source: "judge", Answer: false, Version: jury.Version,
+					Question: question.key, Source: "judge", Answer: false, Version: jury.Version,
 					JudgeModel: model, Detail: map[string]any{"reason": result.Reason},
 				})
 			}
@@ -385,7 +414,7 @@ func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
 		}
 		probability := *result.Probability
 		answers = append(answers, scorecardAnswer{
-			Question:    question.Key,
+			Question:    question.key,
 			Source:      "judge",
 			Answer:      *result.Verdict,
 			Probability: &probability,
@@ -421,7 +450,10 @@ func scorecardAnswersFor(transcript, closeoutPayload json.RawMessage) []scorecar
 }
 
 func recordScorecard(ctx context.Context, tx pgx.Tx, interaction Interaction, computedAt time.Time) (int, error) {
-	if _, err := tx.Exec(ctx, `DELETE FROM ai_interaction_scorecard_answers WHERE interaction_id = $1`, interaction.ID); err != nil {
+	evaluation, _ := json.Marshal(decodeRecord(interaction.CloseoutPayload)["evaluation"])
+	jury, judged := readJury(evaluation)
+	keepPreviousJudge := interaction.LifecycleStage == LifecycleClosed && judged && jury.Version == previousJudgeVersion
+	if _, err := tx.Exec(ctx, `DELETE FROM ai_interaction_scorecard_answers WHERE interaction_id = $1 AND NOT ($2 AND source = 'judge')`, interaction.ID, keepPreviousJudge); err != nil {
 		return 0, fmt.Errorf("clear scorecard answers: %w", err)
 	}
 	if interaction.LifecycleStage != LifecycleClosed {
