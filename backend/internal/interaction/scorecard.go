@@ -111,10 +111,10 @@ var ScorecardQuestions = []ScorecardQuestion{
 		No:       "The agent transferred without retrying the patient lookup.",
 	},
 	{
-		Key: "knowledge_answered", Failure: true, Code: "K1", Label: "Office knowledge had the answer", Prompt: "Did every office knowledge search return an answer?", Source: "code",
-		Question: "Did every search_office_knowledge result answer the search, without saying the information is not supplied or could not be checked?",
-		Yes:      "Every office knowledge search returned an answer. The standard \"Phone number not supplied\" line for other offices is ignored.",
-		No:       "At least one search said the information is not supplied or could not be checked. The search queries are recorded so staff can fill the gap.",
+		Key: "knowledge_answered", Code: "K1", Label: "Office knowledge had the answer", Prompt: "Did every office knowledge search return an answer?", Source: "code",
+		Question: "Did every search_office_knowledge result answer the search?",
+		Yes:      "Every office knowledge search returned an answer, or a knowledge outage stopped the search. An answer that also mentions something not supplied still counts as an answer.",
+		No:       "At least one search found nothing (no_results) or returned only \"not supplied\" sentences. This is a fact, not an agent failure: A3 is the failure question. The search queries are recorded so staff can fill the gap.",
 	},
 	{
 		Key: "transfer_not_refused", Failure: true, Code: "T2", Label: "Transfer not refused", Prompt: "Did the agent avoid saying it cannot transfer calls?", Source: "code",
@@ -171,6 +171,7 @@ type scorecardToolCall struct {
 const insuranceAskLimit = 3
 
 var (
+	sentenceEnd      = regexp.MustCompile(`[.!?](\s+|$)|\n`)
 	transferRefusal  = regexp.MustCompile(`(?i)\b(i|we)(\s+am|\s+are|'m|'re)?\s+(don't|do not|can't|cannot|can not|won't|will not|unable to|not able to)\s+transfer`)
 	schedulingWrites = map[string]bool{"book_appointment": true, "reschedule_appointment": true, "cancel_appointment": true}
 	blockingResults  = []struct{ tool, prefix, reason string }{
@@ -227,6 +228,27 @@ func scorecardToolCalls(transcript json.RawMessage) []scorecardToolCall {
 	return calls
 }
 
+func knowledgeGap(output string) bool {
+	if strings.HasPrefix(output, "no_results:") {
+		return true
+	}
+	answer, found := strings.CutPrefix(output, "success:")
+	if !found {
+		return false
+	}
+	gap := false
+	for _, sentence := range sentenceEnd.Split(answer, -1) {
+		if sentence = strings.TrimSpace(sentence); sentence == "" {
+			continue
+		}
+		if !strings.Contains(sentence, "not supplied") {
+			return false
+		}
+		gap = true
+	}
+	return gap
+}
+
 func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []scorecardAnswer {
 	calls := scorecardToolCalls(transcript)
 	answer := func(question string, value bool, detail map[string]any) scorecardAnswer {
@@ -276,7 +298,7 @@ func codeCheckAnswers(transcript json.RawMessage, closeout map[string]any) []sco
 			continue
 		}
 		knowledgeSearched = true
-		if strings.HasPrefix(call.Output, "blocked: Office information could not be checked") || strings.Contains(strings.ReplaceAll(call.Output, "Phone number not supplied.", ""), "not supplied") {
+		if knowledgeGap(call.Output) {
 			knowledgeGaps = append(knowledgeGaps, strings.TrimSpace(anyString(call.Arguments["query"])))
 		}
 	}

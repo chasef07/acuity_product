@@ -268,6 +268,12 @@ func agentTranscript(t *testing.T, said ...string) json.RawMessage {
 	return raw
 }
 
+func TestKnowledgeAnsweredIsAFactNotAFailure(t *testing.T) {
+	if scorecardQuestionByKey["knowledge_answered"].Failure {
+		t.Fatal("A3 office_question_answered is the failure question for knowledge gaps; K1 must not double-flag")
+	}
+}
+
 func TestKnowledgeAnsweredCheck(t *testing.T) {
 	search := func(query, output string) syntheticTool {
 		return syntheticTool{"search_office_knowledge", `{"query":"` + query + `"}`, output}
@@ -278,12 +284,14 @@ func TestKnowledgeAnsweredCheck(t *testing.T) {
 		want    bool
 		queries any
 	}{
-		"no search":            {nil, false, false, nil},
-		"answered":             {[]syntheticTool{search("What are the hours?", "success: Open 8 to 5 on weekdays.")}, true, true, nil},
-		"other office phone":   {[]syntheticTool{search("Where are your offices?", "success: Spring Hill: Synthetic Eye, 1 Main St. Phone number not supplied.")}, true, true, nil},
-		"not supplied":         {[]syntheticTool{search("Is there parking?", "success: Directions, parking, and landmark details are not supplied for this office.")}, true, false, []any{"Is there parking?"}},
-		"could not be checked": {[]syntheticTool{search("What are the hours?", "blocked: Office information could not be checked. Offer staff help if needed.")}, true, false, []any{"What are the hours?"}},
-		"one of two missing":   {[]syntheticTool{search("What are the hours?", "success: Open 8 to 5."), search("Do you take CareCredit?", "success: Financing options such as CareCredit are not supplied.")}, true, false, []any{"Do you take CareCredit?"}},
+		"no search":             {nil, false, false, nil},
+		"answered":              {[]syntheticTool{search("What are the hours?", "success: Open 8 to 5 on weekdays.")}, true, true, nil},
+		"other office phone":    {[]syntheticTool{search("Where are your offices?", "success: Spring Hill: Synthetic Eye, 1 Main St. Phone number not supplied.")}, true, true, nil},
+		"answer with a gap too": {[]syntheticTool{search("How do I pay?", "success: Payment is handled by billing. Financing options such as CareCredit are not supplied.")}, true, true, nil},
+		"only not supplied":     {[]syntheticTool{search("Is there parking?", "success: Directions, parking, and landmark details are not supplied for this office.")}, true, false, []any{"Is there parking?"}},
+		"no results":            {[]syntheticTool{search("Do you do LASIK?", "no_results: No information was found for this question. This does not establish that the service is unavailable.")}, true, false, []any{"Do you do LASIK?"}},
+		"outage is not a gap":   {[]syntheticTool{search("What are the hours?", "blocked: Office information could not be checked. Offer staff help if needed.")}, true, true, nil},
+		"one of two missing":    {[]syntheticTool{search("What are the hours?", "success: Open 8 to 5."), search("Do you take CareCredit?", "success: Financing options such as CareCredit are not supplied.")}, true, false, []any{"Do you take CareCredit?"}},
 	} {
 		answer, found := answersByQuestion(codeCheckAnswers(syntheticTranscript(t, test.tools...), map[string]any{}))["knowledge_answered"]
 		if found != test.applies || answer.Answer != test.want || !reflect.DeepEqual(answer.Detail["queries"], test.queries) {
