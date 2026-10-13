@@ -172,8 +172,20 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if err != nil || !revealed.Submitted || revealed.QuestionIdea != "Did the agent mention the insurance card?" || len(revealed.Answers) != 8 || len(revealed.Judge) != 6 {
 		t.Fatalf("submitted review reveals judge answers: %+v %v", revealed, err)
 	}
-	if _, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: answers, Note: "Changed after reveal"}); !errors.Is(err, ErrReviewLocked) {
-		t.Fatalf("answers are locked once the judge is revealed: %v", err)
+	changed := append([]ReviewAnswer{}, answers...)
+	changed[1] = ReviewAnswer{Question: "time_offered", Answer: true, Note: "The judge was right; a time was offered."}
+	revised, err := module.SubmitCallReview(ctx, first, booked, CallReviewSubmission{Answers: changed, Note: "Changed after reveal"})
+	if err != nil || revised.Note != "Changed after reveal" || revised.QuestionIdea != "" || len(revised.Answers) != 8 || len(revised.Judge) != 6 {
+		t.Fatalf("a reviewer can change answers after the reveal: %+v %v", revised, err)
+	}
+	for _, answer := range revised.Answers {
+		if answer.Question == "time_offered" && (!answer.Answer || answer.Note != "The judge was right; a time was offered.") {
+			t.Fatalf("the changed answer overwrites the first one: %+v", answer)
+		}
+	}
+	var revisions int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM access_audit_events WHERE action='ai_call_review.revised' AND details->>'resourceId'=$1`, booked).Scan(&revisions); err != nil || revisions != 1 {
+		t.Fatalf("a change after the reveal is audited as a revision: %d %v", revisions, err)
 	}
 	onlyFirst := ""
 	for _, call := range queueA.Calls {

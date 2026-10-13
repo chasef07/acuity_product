@@ -25,8 +25,6 @@ const (
 	reviewDisagreementRows = 200
 )
 
-var ErrReviewLocked = errors.New("call review already submitted")
-
 type ReviewQueueCall struct {
 	InteractionID   string     `json:"interactionId"`
 	StartedAt       time.Time  `json:"startedAt"`
@@ -547,13 +545,6 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 		if !review.Assigned {
 			return CallReview{}, ErrInvalidInput
 		}
-		var answered bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ai_call_reviews WHERE interaction_id = $1 AND reviewer = $2)`, interactionID, identity.Subject).Scan(&answered); err != nil {
-			return CallReview{}, fmt.Errorf("read call review state: %w", err)
-		}
-		if review.Submitted || answered {
-			return CallReview{}, ErrReviewLocked
-		}
 		applicable := map[string]bool{}
 		for _, question := range review.Questions {
 			applicable[question] = true
@@ -570,6 +561,10 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 				return CallReview{}, ErrInvalidInput
 			}
 		}
+		action := "ai_call_review.submitted"
+		if review.Submitted {
+			action = "ai_call_review.revised"
+		}
 		now := m.now()
 		for _, answer := range answers {
 			snapshot, judged := judge[answer.Question]
@@ -584,18 +579,19 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 					interaction_id, practice_id, question, reviewer, reviewer_email, answer, note,
 					review_date, sample, scorecard_version, judge_answer, judge_probability, judge_version, reviewed_at
 				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13, $14)
+				ON CONFLICT (interaction_id, question, reviewer) DO UPDATE SET answer = EXCLUDED.answer, note = EXCLUDED.note
 			`, interactionID, authorization.Practice.ID, answer.Question, identity.Subject, identity.Email, answer.Answer, answer.Note,
 				reviewDate, review.Sample, ScorecardJudgeVersion, judgeAnswer, snapshot.Probability, judgeVersion, now); err != nil {
 				return CallReview{}, fmt.Errorf("save call review: %w", err)
 			}
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE ai_call_review_assignments SET note = $4, question_idea = $5, completed_at = $6
+			UPDATE ai_call_review_assignments SET note = $4, question_idea = $5, completed_at = COALESCE(completed_at, $6)
 			WHERE practice_id = $1 AND reviewer = $2 AND interaction_id = $3 AND review_date = $7::date
 		`, authorization.Practice.ID, identity.Subject, interactionID, submission.Note, submission.QuestionIdea, now, reviewDate); err != nil {
 			return CallReview{}, fmt.Errorf("complete review assignment: %w", err)
 		}
-		if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{Action: "ai_call_review.submitted", ResourceType: "ai_interaction", ResourceID: interactionID, ResourceVersion: 1, OccurredAt: now}); err != nil {
+		if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{Action: action, ResourceType: "ai_interaction", ResourceID: interactionID, ResourceVersion: 1, OccurredAt: now}); err != nil {
 			return CallReview{}, err
 		}
 		review.Submitted, review.Note, review.QuestionIdea = true, submission.Note, submission.QuestionIdea

@@ -919,7 +919,7 @@ export const getOperatorCallReview = <ThrowOnError extends boolean = false>(opti
 });
 
 /**
- * Save the reviewer's answers to the golden set and reveal the judge's answers.
+ * Save the reviewer's answers to the golden set and reveal the judge's answers; saving again replaces them.
  */
 export const submitOperatorCallReview = <ThrowOnError extends boolean = false>(options: Options<SubmitOperatorCallReviewData, ThrowOnError>): RequestResult<SubmitOperatorCallReviewResponses, SubmitOperatorCallReviewErrors, ThrowOnError> => (options.client ?? client).put<SubmitOperatorCallReviewResponses, SubmitOperatorCallReviewErrors, ThrowOnError>({
     security: [{
