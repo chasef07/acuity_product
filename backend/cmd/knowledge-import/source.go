@@ -12,11 +12,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/knowledge"
 	"github.com/google/uuid"
-	"github.com/oasdiff/yaml3"
+	yaml "github.com/oasdiff/yaml3"
 )
 
 type Source struct {
@@ -50,7 +49,7 @@ func readSource(r io.Reader) (Source, error) {
 	return source, nil
 }
 
-func sourceCommand(source Source, commit, expected string) (knowledge.ImportCommand, error) {
+func sourceCommand(source Source, commit string) (knowledge.ImportCommand, error) {
 	if !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(commit) {
 		return knowledge.ImportCommand{}, errors.New("--commit must be a full lowercase Git commit SHA")
 	}
@@ -62,11 +61,8 @@ func sourceCommand(source Source, commit, expected string) (knowledge.ImportComm
 	if err != nil {
 		return knowledge.ImportCommand{}, err
 	}
-	id := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(commit+"\n"+expected+"\n"), body...)).String()
-	if expected == "none" {
-		expected = ""
-	}
-	command := knowledge.ImportCommand{ID: id, PracticeID: source.PracticeID, OfficeKey: source.OfficeKey, Sections: sections, ExpectedRevisionID: expected, Provenance: "git:" + commit, Reason: "Publish reviewed Git knowledge", ActorSubject: "validation-only"}
+	id := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(commit+"\n"), body...)).String()
+	command := knowledge.ImportCommand{ID: id, PracticeID: source.PracticeID, OfficeKey: source.OfficeKey, Sections: sections, Provenance: "git:" + commit, Reason: "Set up office knowledge", ActorSubject: "validation-only"}
 	if err := knowledge.ValidateImport(command); err != nil {
 		return command, err
 	}
@@ -74,7 +70,7 @@ func sourceCommand(source Source, commit, expected string) (knowledge.ImportComm
 	return command, nil
 }
 
-func runSource(path, commit, expected string, apply bool) error {
+func runSource(path, commit string, apply bool) error {
 	if !apply && commit == "" {
 		commit = "0000000000000000000000000000000000000000"
 	}
@@ -86,7 +82,7 @@ func runSource(path, commit, expected string, apply bool) error {
 	if err != nil {
 		return err
 	}
-	command, err := sourceCommand(source, commit, expected)
+	command, err := sourceCommand(source, commit)
 	if err != nil {
 		return err
 	}
@@ -95,7 +91,7 @@ func runSource(path, commit, expected string, apply bool) error {
 			return err
 		}
 	}
-	return applyPublication(command, apply, expected == "")
+	return applyPublication(command, apply)
 }
 
 func verifySourceAtCommit(path, commit string, body []byte) error {
@@ -127,47 +123,22 @@ func verifySourceAtCommit(path, commit string, body []byte) error {
 	return nil
 }
 
-func exportSource(practice, office string) error {
+func exportSource(ctx context.Context, module *knowledge.Module, practice, office, revision string, w io.Writer) (string, error) {
 	if _, err := uuid.Parse(practice); err != nil || office == "" {
-		return errors.New("export requires --practice UUID and --office key")
+		return "", errors.New("export requires --practice UUID and --office key")
 	}
-	if os.Getenv("KNOWLEDGE_IMPORT_DATABASE_URL") == "" {
-		return errors.New("KNOWLEDGE_IMPORT_DATABASE_URL is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	pool, err := openPool(ctx)
+	exported, sections, err := module.ReadRevision(ctx, practice, office, revision)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("could not read the office revision: %w", err)
 	}
-	defer pool.Close()
-	rows, err := pool.Query(ctx, `SELECT c.revision_id::text,p.section_id,p.title,p.text FROM knowledge_corpora c JOIN knowledge_passages p ON p.revision_id=c.revision_id WHERE c.practice_id=$1 AND c.office_key=$2 ORDER BY p.section_id`, practice, office)
-	if err != nil {
-		return errors.New("could not read active corpus")
+	source := Source{PracticeID: practice, OfficeKey: office, Entries: make([]Entry, len(sections))}
+	for i, section := range sections {
+		source.Entries[i] = Entry{ID: section.ID, Title: section.Title, Text: section.Text}
 	}
-	defer rows.Close()
-	source := Source{PracticeID: practice, OfficeKey: office}
-	var revision string
-	for rows.Next() {
-		var entry Entry
-		if err := rows.Scan(&revision, &entry.ID, &entry.Title, &entry.Text); err != nil {
-			return err
-		}
-		source.Entries = append(source.Entries, entry)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if len(source.Entries) == 0 {
-		return errors.New("no active office corpus found")
-	}
-	encoder := yaml.NewEncoder(os.Stdout)
+	encoder := yaml.NewEncoder(w)
 	encoder.SetIndent(2)
 	if err := encoder.Encode(source); err != nil {
-		return err
+		return "", err
 	}
-	if err := encoder.Close(); err != nil {
-		return err
-	}
-	return json.NewEncoder(os.Stderr).Encode(map[string]any{"officeKey": office, "revisionId": revision, "entries": len(source.Entries)})
+	return exported, encoder.Close()
 }

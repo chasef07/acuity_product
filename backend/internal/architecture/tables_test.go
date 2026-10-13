@@ -46,8 +46,7 @@ var sqlBaseline = []struct {
 	reason string
 }{
 	{"backend/cmd/knowledge-import/main.go", read, "knowledge_corpora", "import command confirms the published revision"},
-	{"backend/cmd/knowledge-import/publication.go", read, "access_abita_office_locations access_platform_operators knowledge_corpora knowledge_passages knowledge_revisions", "import command resolves the operator and current office corpora"},
-	{"backend/cmd/knowledge-import/source.go", read, "knowledge_corpora knowledge_passages", "import command diffs Git facts against the active revision"},
+	{"backend/cmd/knowledge-import/publication.go", read, "access_abita_office_locations access_platform_operators knowledge_corpora", "import command resolves the operator and refuses offices that already have knowledge"},
 	{"backend/internal/access/access.go", read, "human_calling_location_voice_numbers", "service authorization resolves a Location by voice number"},
 	{"backend/internal/humancalling/callleg_projection.go", read, "access_calling_scopes access_membership_locations access_memberships access_operational_scopes access_practices", "call projection resolves staff scope and practice policy (also FOR SHARE OF practice, appended with +=)"},
 	{"backend/internal/humancalling/calls.go", read, "access_locations", "call views join Location names"},
@@ -64,7 +63,7 @@ var sqlBaseline = []struct {
 	{"backend/internal/interaction/analytics.go", read, "access_locations", "analytics joins Location names"},
 	{"backend/internal/interaction/call_issue_review.go", read, "access_memberships access_platform_operators", "issue review shows reporter and reviewer emails"},
 	{"backend/internal/interaction/interaction.go", read, "access_locations", "AI Interaction views join Location names"},
-	{"backend/internal/knowledge/knowledge.go", lock, "access_abita_office_locations", "publication holds the office route stable"},
+	{"backend/internal/knowledge/knowledge.go", read, "access_abita_office_locations", "publication confirms the office route exists"},
 	{"backend/internal/messaging/messaging.go", read, "access_locations access_practices work_task_acknowledgements", "messaging reads Practice/Location context; send claims join acknowledgements"},
 	{"backend/internal/work/responsibilities.go", read, "access_grant_locations access_grants access_locations access_membership_locations access_memberships access_practices", "responsibility routing resolves eligible staff"},
 	{"backend/internal/work/text_replies.go", lock, "messaging_threads", "text reply completion takes the thread lock inbound projection uses"},

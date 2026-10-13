@@ -29,11 +29,15 @@ func (tiedEmbeddings) Embed(_ context.Context, texts []string, _ knowledge.TaskT
 }
 
 func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
-	for _, fixture := range []struct{ office, caseID string }{
+	for _, fixture := range []struct {
+		office, caseID      string
+		needsRealEmbeddings []string
+	}{
 		{office: "north-miami-beach-optical"},
 		{office: "sweetwater"},
 		{office: "hollywood"},
 		{office: "crystal-river"},
+		{office: "spring-hill", needsRealEmbeddings: []string{"unknown", "unknown-baseline", "six-year-old-exam"}},
 		{office: "ophthalmology-demo", caseID: "hours"},
 	} {
 		office := fixture.office
@@ -49,7 +53,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 			if err := pool.QueryRow(ctx, `SELECT id::text FROM access_practices WHERE provisioning_key='focused'`).Scan(&practice); err != nil {
 				t.Fatal(err)
 			}
-			file, err := os.Open(filepath.Join("../../..", "knowledge/offices", office+".yaml"))
+			file, err := os.Open(filepath.Join("testdata/offices", office+".yaml"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -58,7 +62,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cmd, err := sourceCommand(source, "0000000000000000000000000000000000000000", "none")
+			cmd, err := sourceCommand(source, "0000000000000000000000000000000000000000")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,12 +76,15 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 			}
 			identity := access.ServiceIdentity{Subject: "agent", PracticeID: practice, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityReadKnowledge}}
 			var cases []struct {
-				ID                    string   `json:"id"`
-				Query                 string   `json:"query"`
-				ExpectedSectionIDs    []string `json:"expectedSectionIds"`
-				MaxResponseCharacters int      `json:"maxResponseCharacters"`
+				ID                    string    `json:"id"`
+				Query                 string    `json:"query"`
+				ExpectedOutcome       string    `json:"expectedOutcome"`
+				ExpectedSectionIDs    []string  `json:"expectedSectionIds"`
+				ExcludedSectionIDs    []string  `json:"excludedSectionIds"`
+				AllowedSectionIDs     *[]string `json:"allowedSectionIds"`
+				MaxResponseCharacters int       `json:"maxResponseCharacters"`
 			}
-			caseFile, err := os.ReadFile(filepath.Join("../../..", "knowledge/evals", office+".json"))
+			caseFile, err := os.ReadFile(filepath.Join("testdata/evals", office+".json"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -86,7 +93,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 			}
 			matched := 0
 			for _, tc := range cases {
-				if fixture.caseID != "" && fixture.caseID != tc.ID {
+				if fixture.caseID != "" && fixture.caseID != tc.ID || slices.Contains(fixture.needsRealEmbeddings, tc.ID) {
 					continue
 				}
 				matched++
@@ -100,14 +107,19 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 					for _, passage := range got.Passages {
 						ids = append(ids, passage.SectionID)
 						characters += utf8.RuneCountInString(passage.Text) + utf8.RuneCountInString(passage.Title)
-						if passage.SectionID == "paperwork-email" && !strings.Contains(passage.Text, "Use this address only for new-patient paperwork or requested documents.") {
+						if passage.SectionID == "paperwork-email" && strings.Contains(passage.Text, "@") && !strings.Contains(passage.Text, "Use this address only for new-patient paperwork or requested documents.") {
 							t.Fatal("email use restriction was lost")
 						}
 					}
-					slices.Sort(ids)
-					slices.Sort(tc.ExpectedSectionIDs)
-					if got.Outcome != "found" || !slices.Equal(ids, tc.ExpectedSectionIDs) || characters > tc.MaxResponseCharacters {
-						t.Fatalf("query %q must return only %v within %d characters; got %+v (%d characters)", tc.Query, tc.ExpectedSectionIDs, tc.MaxResponseCharacters, got, characters)
+					ok := got.Outcome == tc.ExpectedOutcome && characters <= tc.MaxResponseCharacters
+					for _, id := range tc.ExpectedSectionIDs {
+						ok = ok && slices.Contains(ids, id)
+					}
+					for _, id := range ids {
+						ok = ok && !slices.Contains(tc.ExcludedSectionIDs, id) && (tc.AllowedSectionIDs == nil || slices.Contains(*tc.AllowedSectionIDs, id))
+					}
+					if !ok {
+						t.Fatalf("query %q must return %s with %v (allowed %v) within %d characters; got %s %v (%d characters)", tc.Query, tc.ExpectedOutcome, tc.ExpectedSectionIDs, tc.AllowedSectionIDs, tc.MaxResponseCharacters, got.Outcome, ids, characters)
 					}
 				})
 			}

@@ -333,6 +333,7 @@ GRANT SELECT ON TABLE
     public.work_task_activities,
     public.work_task_acknowledgements,
     public.work_task_interactions,
+	public.work_recovery_reconciliation_queue,
 	public.work_recovery_resolution_checkpoints,
     public.work_tasks
 TO acuity_worker;
@@ -453,6 +454,15 @@ GRANT UPDATE ON TABLE
     public.human_calling_staff_transfers,
 	public.work_recovery_resolution_checkpoints,
     public.work_tasks
+TO acuity_worker;
+
+-- PostgreSQL requires UPDATE authority for SELECT ... FOR UPDATE even when the
+-- worker only locks and later deletes the claimed reconciliation queue row.
+GRANT UPDATE (enqueued_at)
+ON TABLE public.work_recovery_reconciliation_queue
+TO acuity_worker;
+
+GRANT DELETE ON TABLE public.work_recovery_reconciliation_queue
 TO acuity_worker;
 
 GRANT UPDATE (
@@ -596,10 +606,13 @@ ON TABLE public.messaging_attachment_cleanup
 TO acuity_portal, acuity_worker;
 GRANT UPDATE (object_key) ON TABLE public.messaging_attachments TO acuity_portal;
 
--- Knowledge search reads imported facts; only the operator CLI can replace them.
-GRANT SELECT ON TABLE public.knowledge_corpora, public.knowledge_revisions,
+-- Staff publish whole new revisions and switch the active one; published
+-- revisions and passages are never updated or deleted.
+GRANT SELECT, INSERT ON TABLE public.knowledge_corpora, public.knowledge_revisions,
     public.knowledge_passages TO acuity_portal;
-GRANT INSERT ON TABLE public.knowledge_retrieval_observations TO acuity_portal;
+GRANT UPDATE (revision_id) ON TABLE public.knowledge_corpora TO acuity_portal;
+-- Staff history shows when the agent last searched each revision.
+GRANT SELECT, INSERT ON TABLE public.knowledge_retrieval_observations TO acuity_portal;
 
 -- Human reply snapshots and provider-confirmed shared completion.
 GRANT SELECT, INSERT ON work_text_replies TO acuity_portal;
@@ -612,3 +625,12 @@ GRANT UPDATE (review_outcome, reviewed_by, reviewed_at) ON public.ai_interaction
 -- Manual call review labels are owned by the operator-facing portal.
 GRANT SELECT, INSERT ON ai_manual_tags TO acuity_portal;
 GRANT SELECT, INSERT, DELETE ON ai_interaction_manual_tags TO acuity_portal;
+
+-- Scorecard answers are rebuilt from saved call evidence whenever a call closes.
+GRANT SELECT, INSERT, DELETE ON ai_interaction_scorecard_answers TO acuity_portal, acuity_worker;
+-- Platform Operators keep the daily review queue and golden set in the portal.
+GRANT SELECT, INSERT ON ai_call_review_assignments TO acuity_portal;
+GRANT UPDATE (note, question_idea, completed_at) ON ai_call_review_assignments TO acuity_portal;
+GRANT SELECT, INSERT ON ai_call_reviews TO acuity_portal;
+GRANT UPDATE (answer, note) ON ai_call_reviews TO acuity_portal;
+GRANT SELECT, INSERT ON ai_call_review_pools TO acuity_portal;

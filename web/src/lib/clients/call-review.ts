@@ -1,0 +1,65 @@
+import {
+  getOperatorCallReview,
+  getOperatorScorecardQuestions,
+  openOperatorCallReviewQueue,
+  queryOperatorJudgeAccuracy,
+  queryOperatorScorecardResults,
+  submitOperatorCallReview,
+} from "../api/generated/sdk.gen"
+import type { OperatorCallReviewSubmission } from "../api/generated/types.gen"
+import { portalRequest, usePortalQuery } from "./portal-request"
+
+export function useScorecardQuestions() {
+  return usePortalQuery("scorecard-questions", (transport) =>
+    getOperatorScorecardQuestions(transport),
+  )
+}
+
+export function useReviewQueue(practiceID: string, date: string, revision: number) {
+  return usePortalQuery(
+    practiceID && date ? `review-queue:${practiceID}:${date}:${revision}` : null,
+    (transport) =>
+      openOperatorCallReviewQueue({
+        ...transport,
+        body: { practiceId: practiceID, date },
+      }),
+    { keepPrevious: true },
+  )
+}
+
+export function useCallReview(interactionID: string) {
+  return usePortalQuery(
+    interactionID ? `call-review:${interactionID}` : null,
+    (transport) =>
+      getOperatorCallReview({ ...transport, path: { interactionId: interactionID } }),
+  )
+}
+
+export function submitCallReview(interactionID: string, body: OperatorCallReviewSubmission) {
+  return portalRequest((transport) =>
+    submitOperatorCallReview({
+      ...transport,
+      path: { interactionId: interactionID },
+      body,
+    }),
+  )
+}
+
+export function useJudgeAccuracy(practiceID: string) {
+  return usePortalQuery(
+    practiceID ? `judge-accuracy:${practiceID}` : null,
+    (transport) =>
+      queryOperatorJudgeAccuracy({ ...transport, body: { practiceId: practiceID } }),
+  )
+}
+
+export function useScorecardResults(practiceID: string, locationID: string, range: "24h" | "7d" | "30d") {
+  return usePortalQuery(
+    practiceID ? `scorecard-results:${practiceID}:${locationID}:${range}` : null,
+    (transport) =>
+      queryOperatorScorecardResults({
+        ...transport,
+        body: { practiceId: practiceID, locationId: locationID || undefined, range },
+      }),
+  )
+}

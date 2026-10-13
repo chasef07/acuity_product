@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -13,10 +14,9 @@ import (
 	"github.com/google/uuid"
 )
 
-type publicationEmbedder struct{ calls int }
+type publicationEmbedder struct{}
 
-func (e *publicationEmbedder) Embed(_ context.Context, texts []string, _ knowledge.TaskType) ([][]float32, error) {
-	e.calls++
+func (publicationEmbedder) Embed(_ context.Context, texts []string, _ knowledge.TaskType) ([][]float32, error) {
 	vectors := make([][]float32, len(texts))
 	for i := range vectors {
 		vectors[i] = make([]float32, knowledge.Dimensions)
@@ -25,7 +25,7 @@ func (e *publicationEmbedder) Embed(_ context.Context, texts []string, _ knowled
 	return vectors, nil
 }
 
-func TestAutomaticPublication(t *testing.T) {
+func TestImportPublishesOnlyOfficesWithoutKnowledge(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
 	auth := access.New(pool, nil)
@@ -39,90 +39,133 @@ func TestAutomaticPublication(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT practice_id::text FROM access_abita_office_locations WHERE office_key='synthetic-office'`).Scan(&practice); err != nil {
 		t.Fatal(err)
 	}
-	source := Source{PracticeID: practice, OfficeKey: "synthetic-office", Entries: []Entry{{ID: "hours", Title: "Hours", Text: "Closes at five."}, {ID: "parking", Title: "Parking", Text: "Use the visitor lot."}}}
-	command, err := sourceCommand(source, strings.Repeat("a", 40), "")
+	source := Source{PracticeID: practice, OfficeKey: "synthetic-office", Entries: []Entry{{ID: "hours", Title: "Hours", Text: "Closes at five."}}}
+	command, err := sourceCommand(source, strings.Repeat("a", 40))
 	if err != nil {
 		t.Fatal(err)
-	}
-	initial, receipt, err := preparePublication(ctx, pool, command, email, true)
-	if err != nil || receipt != nil || initial.ExpectedRevisionID != "" {
-		t.Fatalf("initial: %+v, %+v, %v", initial, receipt, err)
-	}
-	embedder := &publicationEmbedder{}
-	module, err := knowledge.New(pool, auth, embedder, knowledge.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	revision, err := module.ReplaceCorpus(ctx, initial)
-	if err != nil {
-		t.Fatal(err)
-	}
-	command.Sections[0], command.Sections[1] = command.Sections[1], command.Sections[0]
-	command.Provenance = "git:" + strings.Repeat("b", 40)
-	_, receipt, err = preparePublication(ctx, pool, command, email, true)
-	if err != nil || receipt == nil {
-		t.Fatalf("unchanged: %+v, %v", receipt, err)
-	}
-	if !receipt.Unchanged || receipt.Applied || !receipt.ActiveRevisionVerified || receipt.Revision.ID != revision.ID || receipt.Provenance != initial.Provenance || receipt.SourceGitCommit != strings.Repeat("b", 40) {
-		t.Fatalf("receipt: %+v", receipt)
-	}
-	if embedder.calls != 1 {
-		t.Fatalf("unchanged source embedded again: %d", embedder.calls)
-	}
-	positions := func() string {
-		t.Helper()
-		var order string
-		if err := pool.QueryRow(ctx, `SELECT string_agg(section_id || '=' || coalesce(position::text, 'null'), ',' ORDER BY section_id) FROM knowledge_passages WHERE revision_id = $1`, revision.ID).Scan(&order); err != nil {
-			t.Fatal(err)
-		}
-		return order
-	}
-	if positions() != "hours=0,parking=1" {
-		t.Fatalf("imported positions = %s", positions())
-	}
-	if _, err := pool.Exec(ctx, `UPDATE knowledge_passages SET position = NULL WHERE revision_id = $1 AND section_id = 'hours'`, revision.ID); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if err := module.RecordSectionOrder(ctx, command, revision.ID); err != nil || positions() != "hours=1,parking=0" {
-			t.Fatalf("unchanged source order = %s, %v", positions(), err)
-		}
-	}
-	if err := module.RecordSectionOrder(ctx, command, uuid.NewString()); !errors.Is(err, knowledge.ErrConflict) {
-		t.Fatalf("section order for a superseded revision: %v", err)
 	}
 	for _, actor := range []string{"", "unknown@example.com"} {
-		if _, _, err := preparePublication(ctx, pool, command, actor, true); err == nil {
-			t.Fatal("unchanged source bypassed operator check")
+		if _, err := preparePublication(ctx, pool, command, actor); err == nil {
+			t.Fatal("import bypassed the operator check")
 		}
 	}
 	unknown := command
 	unknown.OfficeKey = "unknown-office"
-	if _, _, err := preparePublication(ctx, pool, unknown, email, true); err == nil {
+	if _, err := preparePublication(ctx, pool, unknown, email); err == nil {
 		t.Fatal("accepted unknown route")
 	}
-	explicit, receipt, err := preparePublication(ctx, pool, command, email, false)
-	if err != nil || receipt != nil || explicit.ExpectedRevisionID != command.ExpectedRevisionID || explicit.ID != command.ID {
-		t.Fatalf("explicit: %+v, %+v, %v", explicit, receipt, err)
+	prepared, err := preparePublication(ctx, pool, command, email)
+	if err != nil || prepared.ActorSubject != "synthetic-operator" || prepared.ExpectedRevisionID != "" {
+		t.Fatalf("first import: %+v, %v", prepared, err)
 	}
-	command.Sections = []knowledge.Section{{ID: "hours", Title: "Hours", Text: "Closes at six."}}
-	changed, receipt, err := preparePublication(ctx, pool, command, email, true)
-	if err != nil || receipt != nil || changed.ExpectedRevisionID != revision.ID || changed.ID == initial.ID {
-		t.Fatalf("changed: %+v, %+v, %v", changed, receipt, err)
-	}
-	if _, err := module.ReplaceCorpus(ctx, changed); err != nil {
+	module, err := knowledge.New(pool, auth, publicationEmbedder{}, knowledge.Config{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	stale := changed
-	stale.ID = uuid.NewString()
-	if _, err := module.ReplaceCorpus(ctx, stale); !errors.Is(err, knowledge.ErrConflict) {
-		t.Fatalf("concurrent publication: %v", err)
-	}
-	var count int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM knowledge_revisions`).Scan(&count); err != nil {
+	if _, err := module.ReplaceCorpus(ctx, prepared); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
-		t.Fatalf("unexpected revisions: %d", count)
+	command.Sections[0].Text = "Closes at six."
+	if _, err := preparePublication(ctx, pool, command, email); err == nil || !strings.Contains(err.Error(), "Portal") {
+		t.Fatalf("import over an active revision: %v", err)
+	}
+}
+
+func TestExportRoundTripsARevision(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	auth := access.New(pool, nil)
+	_, err := auth.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "synthetic", Name: "Synthetic practice", Locations: []access.LocationProvision{
+		{Key: "seeded", Name: "Seeded", AbitaOfficeKeys: []string{"seeded"}},
+		{Key: "copy-active", Name: "Active copy", AbitaOfficeKeys: []string{"copy-active"}},
+		{Key: "copy-earlier", Name: "Earlier copy", AbitaOfficeKeys: []string{"copy-earlier"}},
+	}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var practice string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM access_practices WHERE provisioning_key='synthetic'`).Scan(&practice); err != nil {
+		t.Fatal(err)
+	}
+	module, err := knowledge.New(pool, auth, publicationEmbedder{}, knowledge.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := func(expected string, sections []knowledge.Section) knowledge.Revision {
+		t.Helper()
+		revision, err := module.ReplaceCorpus(ctx, knowledge.ImportCommand{ID: uuid.NewString(), PracticeID: practice, OfficeKey: "seeded", ExpectedRevisionID: expected, Sections: sections, Provenance: "portal", Reason: "seed", ActorSubject: "synthetic"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return revision
+	}
+	earlier := seed("", []knowledge.Section{
+		{ID: "parking", Title: "Parking", Text: "Use the visitor lot.\nLevel two: \"staff only\"."},
+		{ID: "hours", Title: "Hours", Text: "Closes at five."},
+	})
+	active := seed(earlier.ID, []knowledge.Section{{ID: "hours", Title: "Hours", Text: "Closes at six."}})
+
+	for _, tc := range []struct {
+		target, revision string
+		want             knowledge.Revision
+	}{{"copy-active", "", active}, {"copy-earlier", earlier.ID, earlier}} {
+		t.Run(tc.target, func(t *testing.T) {
+			var out bytes.Buffer
+			exported, err := exportSource(ctx, module, practice, "seeded", tc.revision, &out)
+			if err != nil || exported != tc.want.ID {
+				t.Fatalf("export: %s, %v", exported, err)
+			}
+			source, err := readSource(&out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if source.PracticeID != practice || source.OfficeKey != "seeded" {
+				t.Fatalf("exported scope: %+v", source)
+			}
+			source.OfficeKey = tc.target
+			command, err := sourceCommand(source, strings.Repeat("b", 40))
+			if err != nil {
+				t.Fatal(err)
+			}
+			command.ActorSubject = "synthetic"
+			imported, err := module.ReplaceCorpus(ctx, command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if imported.ContentHash != tc.want.ContentHash {
+				t.Fatalf("round trip hash %s, want %s", imported.ContentHash, tc.want.ContentHash)
+			}
+		})
+	}
+	var out bytes.Buffer
+	if _, err := exportSource(ctx, module, practice, "copy-active", earlier.ID, &out); err == nil {
+		t.Fatal("exported a revision from another office")
+	}
+}
+
+func TestImportHoldsAbitaOfficesToTheEntryStandard(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	auth := access.New(pool, nil)
+	_, err := auth.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "abita-eye-group", Name: "Synthetic Abita", Locations: []access.LocationProvision{{Key: "new", Name: "New office", AbitaOfficeKeys: []string{"new-office"}}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var practice string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM access_practices WHERE provisioning_key='abita-eye-group'`).Scan(&practice); err != nil {
+		t.Fatal(err)
+	}
+	command, err := sourceCommand(Source{PracticeID: practice, OfficeKey: "new-office", Entries: []Entry{{ID: "hours", Title: "Hours", Text: "Closes at five."}}}, strings.Repeat("c", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command.ActorSubject = "synthetic-operator"
+	module, err := knowledge.New(pool, auth, publicationEmbedder{}, knowledge.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry *knowledge.EntryError
+	if _, err := module.ReplaceCorpus(ctx, command); !errors.As(err, &entry) || entry.EntryID != "current-address" {
+		t.Fatalf("non-standard Abita import: %v", err)
 	}
 }

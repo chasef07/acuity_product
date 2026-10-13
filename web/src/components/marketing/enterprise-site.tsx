@@ -247,10 +247,11 @@ export function EnterpriseHome({
     <MarketingFrame current="/" initiallyOpen={initiallyOpen}>
       <section className={styles.hero}>
         <div className={styles.heroCopy}>
-          <h1>Voice AI agents<br />for patient access.</h1>
+          <h1>Applied AI<br />for medical enterprises.</h1>
           <p className={styles.heroBody}>
-            Acuity Health helps medical enterprises onboard voice AI agents that
-            answer calls, check insurance eligibility, and book appointments.
+            Acuity is the infrastructure platform and partner for medical practices
+            to deploy, measure, and continuously improve AI agents they own,
+            starting with the phone.
           </p>
           <div className={styles.heroActions}>
             <Link className={styles.darkButton} href="/work-with-us">

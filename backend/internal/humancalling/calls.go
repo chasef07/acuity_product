@@ -47,7 +47,7 @@ func (m *Module) ReadCall(
 	if _, err := m.access.LockReadAuthorization(
 		ctx, tx, identity, projection.call.PracticeID, projection.call.LocationID,
 	); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingAccessError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Call{}, fmt.Errorf("commit Call read: %w", err)
@@ -243,13 +243,15 @@ func (m *Module) RequestHangup(
 		FOR UPDATE OF call
 	`, callID).Scan(
 		&practiceID, &locationID, &direction, &initiatingSubject, &terminal,
-	); err != nil {
+	); errors.Is(err, pgx.ErrNoRows) {
 		return Call{}, ErrDenied
+	} else if err != nil {
+		return Call{}, fmt.Errorf("lock Hangup Call: %w", err)
 	}
 	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingAccessError(err)
 	}
 	hangupCommitted := terminal
 	if !hangupCommitted {
@@ -452,14 +454,16 @@ func (m *Module) RecordDisposition(
 		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 		WHERE call.id = $1 FOR UPDATE OF call
 	`, callID).Scan(&practiceID, &locationID, &direction, &entryPoint, &taskID,
-		&phone, &reason, &terminal, &existing, &placedAt); err != nil {
+		&phone, &reason, &terminal, &existing, &placedAt); errors.Is(err, pgx.ErrNoRows) {
 		return DispositionResult{}, ErrDenied
+	} else if err != nil {
+		return DispositionResult{}, fmt.Errorf("lock disposition Call: %w", err)
 	}
 	authorization, err := m.access.LockMutationAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	)
 	if err != nil {
-		return DispositionResult{}, ErrDenied
+		return DispositionResult{}, callingAccessError(err)
 	}
 	var owner bool
 	if err := tx.QueryRow(ctx, `

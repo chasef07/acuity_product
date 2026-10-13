@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-go@v7
         id: go
         with:
-          go-version: "1.26.7"
+          go-version: "1.26.9"
           cache: false
       # Separate workloads cannot overwrite each other's partial Go caches.
       - uses: actions/cache@v5
@@ -62,8 +62,6 @@ jobs:
       - run: bash ./scripts/run-backend-test-shard.sh ${{ matrix.shard }}
       - if: matrix.shard == 'support'
         run: |
-          python3 scripts/test-knowledge-publish.py
-          python3 scripts/test-knowledge-release.py
           bash ./scripts/test-release-container.sh
       - if: matrix.shard == 'support'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
@@ -134,7 +132,7 @@ jobs:
       - uses: actions/setup-go@v7
         id: go
         with:
-          go-version: "1.26.7"
+          go-version: "1.26.9"
           cache: false
       # Separate workloads cannot overwrite each other's partial Go caches.
       - uses: actions/cache@v5
@@ -195,7 +193,7 @@ jobs:
       - uses: actions/setup-go@v7
         id: go
         with:
-          go-version: "1.26.7"
+          go-version: "1.26.9"
           cache: false
       # Separate workloads cannot overwrite each other's partial Go caches.
       - uses: actions/cache@v5

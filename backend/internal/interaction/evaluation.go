@@ -34,6 +34,22 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 		Results map[string]json.RawMessage `json:"results"`
 		Errors  map[string]json.RawMessage `json:"errors"`
 	}
+	if jury, valid := readJury(raw); valid {
+		reading := evaluationReading{Version: jury.Version, Flags: []evaluationFlag{}, Sentiment: jurySentiment(raw)}
+		questions := juryQuestions(jury.Version)
+		labels := map[string]string{}
+		for _, question := range questions {
+			labels[question.key] = question.failureLabel
+		}
+		for _, answer := range juryAnswers(jury, questions) {
+			reading.Scored = append(reading.Scored, answer.Question)
+			if label := labels[answer.Question]; !answer.Answer && label != "" {
+				reading.Flags = append(reading.Flags, evaluationFlag{Check: answer.Question, Reason: label + " needs review"})
+			}
+		}
+		reading.Evaluated = len(reading.Scored) > 0
+		return reading
+	}
 	if json.Unmarshal(raw, &scorecard) == nil &&
 		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3" || scorecard.Version == "typesafe-scorecard-v4" || scorecard.Version == "typesafe-scorecard-v5") &&
 		(scorecard.Status == "complete" || scorecard.Status == "incomplete") {

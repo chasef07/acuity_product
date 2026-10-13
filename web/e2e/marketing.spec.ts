@@ -11,7 +11,7 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
 
   await expect(
     page.getByRole("heading", {
-      name: "Voice AI agents for patient access.",
+      name: "Applied AI for medical enterprises.",
     }),
   ).toBeVisible()
   await expect(page.getByText("AI agents", { exact: true })).toBeVisible()
@@ -26,7 +26,7 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
   await expect(methodCapabilities).toContainText("transformation")
   await expect(
     page.getByText(
-      "Acuity Health helps medical enterprises onboard voice AI agents that answer calls, check insurance eligibility, and book appointments.",
+      "Acuity is the infrastructure platform and partner for medical practices to deploy, measure, and continuously improve AI agents they own, starting with the phone.",
     ),
   ).toBeVisible()
 })
@@ -264,7 +264,7 @@ test("public pages expose canonical metadata and browser identity assets", async
       canonical: "https://acuityhealth.io",
       title: "Voice AI Agents for Patient Access | Acuity Health",
       description:
-        "Acuity Health helps medical enterprises onboard voice AI agents to answer calls, check insurance eligibility, book appointments, and support staff.",
+        "Acuity is the infrastructure platform and partner for medical practices to deploy, measure, and continuously improve AI agents they own, starting with the phone.",
     },
     {
       route: "/integrations",

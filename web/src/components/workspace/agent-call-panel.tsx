@@ -22,6 +22,7 @@ import type {
   AgentCall,
   AgentCallIssue,
   AgentCallIssueReason,
+  AgentCallVerdict,
 } from "@/lib/api/generated/types.gen"
 import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
 import { formatUSPhone } from "@/lib/phone"
@@ -35,6 +36,7 @@ import {
 import { FieldGroup, FieldError } from "@/components/ui/field"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Message,
   MessageContent,
@@ -184,6 +186,7 @@ function CallContent({
   const [flagged, setFlagged] = useState<AgentCallIssue>()
   const [reporting, setReporting] = useState(false)
   const [reason, setReason] = useState<AgentCallIssueReason | null>(null)
+  const [note, setNote] = useState("")
   const [saveError, setSaveError] = useState("")
   const detail =
     call.status === "ready"
@@ -196,7 +199,7 @@ function CallContent({
     if (!reason || saving) return
     onSavingChange(true)
     setSaveError("")
-    const outcome = await flagAgentCallIssue(id, reason)
+    const outcome = await flagAgentCallIssue(id, reason, note)
     onSavingChange(false)
     if (!outcome.ok && outcome.failure.kind !== "conflict") {
       setSaveError("Your issue could not be saved. Try again.")
@@ -275,12 +278,16 @@ function CallContent({
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 scrollbar-thin"
         >
           <div className="flex flex-col gap-6">
+            <CallScorecard scorecard={detail.scorecard} sentiment={detail.sentiment} />
             {detail.issue ? (
               <Alert role="status">
                 <FlagIcon aria-hidden="true" />
                 <AlertTitle>Issue flagged</AlertTitle>
                 <AlertDescription>
                   <p>{issueReasons[detail.issue.reason]}</p>
+                  {detail.issue.note && (
+                    <p className="whitespace-pre-wrap">{detail.issue.note}</p>
+                  )}
                   <p>
                     Saved for Acuity review ·{" "}
                     {new Date(detail.issue.createdAt).toLocaleString()}
@@ -330,11 +337,26 @@ function CallContent({
                         </SelectGroup>
                       </SelectContent>
                     </Select>
+                    <label
+                      htmlFor="agent-issue-note"
+                      className="text-sm font-medium"
+                    >
+                      What happened? (optional)
+                    </label>
+                    <Textarea
+                      id="agent-issue-note"
+                      value={note}
+                      onChange={(event) => setNote(event.target.value)}
+                      maxLength={2000}
+                      disabled={saving}
+                      placeholder="For example, the caller asked for a contact lens fitting but was booked for a routine exam."
+                      className="max-h-40"
+                    />
                     <p
                       id="agent-issue-help"
                       className="text-xs text-muted-foreground"
                     >
-                      This call and the reason will be saved for Acuity review.
+                      This call, the reason, and your note will be saved for Acuity review.
                     </p>
                     {saveError && (
                       <FieldError id="agent-issue-error">
@@ -405,5 +427,30 @@ function CallContent({
         </div>
       )}
     </>
+  )
+}
+
+const sentimentLabels = ["Very negative", "Negative", "Neutral or mixed", "Positive", "Very positive"]
+
+export function CallScorecard({ scorecard, sentiment }: { scorecard: AgentCallVerdict[]; sentiment?: number }) {
+  if (scorecard.length === 0 && sentiment === undefined) return null
+  return (
+    <section aria-label="Call scorecard" className="rounded-lg border">
+      <h3 className="border-b px-3 py-2 text-sm font-medium">Scorecard</h3>
+      <ul className="divide-y text-sm">
+        {scorecard.map((item) => (
+          <li key={item.code} className="flex items-start justify-between gap-3 px-3 py-2">
+            <span>{item.prompt}</span>
+            <span className={item.answer === "no" ? "font-medium" : "text-muted-foreground"}>{item.answer === "no" ? "No" : "Yes"}</span>
+          </li>
+        ))}
+        {sentiment !== undefined && (
+          <li className="flex items-start justify-between gap-3 px-3 py-2">
+            <span>Caller sentiment</span>
+            <span className="text-muted-foreground">{sentimentLabels[Math.round(sentiment)]}</span>
+          </li>
+        )}
+      </ul>
+    </section>
   )
 }

@@ -51,15 +51,17 @@ export function DeadAirWaveform({ compact = false }: { compact?: boolean }) {
           strokeWidth="2"
           strokeLinecap="round"
         />
-        <line
-          className={styles.playhead}
-          x1="370"
-          x2="370"
-          y1="34"
-          y2="106"
-          stroke={signal}
-          strokeWidth="2"
-        />
+        {compact ? null : (
+          <line
+            className={styles.playhead}
+            x1="370"
+            x2="370"
+            y1="34"
+            y2="106"
+            stroke={signal}
+            strokeWidth="2"
+          />
+        )}
         {callerBars.map((height, index) => (
           <rect
             key={`caller-${index}`}

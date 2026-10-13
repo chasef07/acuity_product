@@ -125,6 +125,86 @@ test("planned stream rotation reconnects quietly and reconciles once", async () 
   sync.stop()
 })
 
+test("a stream that stops sending bytes is canceled and reconnected", async () => {
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  let firstStreamCanceled = false
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () => {
+      const index = streams.length
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller)
+          },
+          cancel() {
+            if (index === 0) firstStreamCanceled = true
+          },
+        }),
+      )
+    },
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => ({
+      version: minimumVersion,
+      apply: () => {},
+    }),
+    onStateChange: () => {},
+    timing: { streamSilenceMilliseconds: 20 },
+  })
+
+  try {
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.equal(streams.length, 1))
+    streams[0]!.enqueue(readyEvent(1))
+
+    await eventually(() => assert.equal(streams.length, 2))
+    assert.equal(firstStreamCanceled, true)
+  } finally {
+    sync.stop()
+  }
+})
+
+test("heartbeat comments keep an otherwise idle stream connected", async () => {
+  let fetches = 0
+  let heartbeat: ReturnType<typeof setInterval> | undefined
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () => {
+      fetches += 1
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(readyEvent(1))
+            heartbeat = setInterval(() => {
+              controller.enqueue(new TextEncoder().encode(": heartbeat\n\n"))
+            }, 5)
+          },
+          cancel() {
+            clearInterval(heartbeat)
+          },
+        }),
+      )
+    },
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => ({
+      version: minimumVersion,
+      apply: () => {},
+    }),
+    onStateChange: () => {},
+    timing: { streamSilenceMilliseconds: 20 },
+  })
+
+  try {
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.equal(fetches, 1))
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    assert.equal(fetches, 1)
+  } finally {
+    sync.stop()
+    clearInterval(heartbeat)
+  }
+})
+
 test("a failed reconciliation cancels the superseded stream before reconnecting", async () => {
   const streams: ReadableStreamDefaultController<Uint8Array>[] = []
   let firstStreamCanceled = false
@@ -206,6 +286,36 @@ test("hint bursts coalesce to the newest version without regression", async () =
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.deepEqual(requested, [1, 2, 9])
   sync.stop()
+})
+
+test("refresh settles after its forced reconciliation applies and covers that version's hint", async () => {
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  let serverVersion = 1
+  const applied: number[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller } })),
+    getToken: async () => "token",
+    reconcile: async () => {
+      const version = serverVersion
+      return { version, apply: () => applied.push(version) }
+    },
+    onStateChange: () => {},
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+  await eventually(() => assert.ok(stream))
+  stream!.enqueue(readyEvent(1))
+  await eventually(() => assert.deepEqual(applied, [1]))
+
+  serverVersion = 2
+  await sync.refresh()
+  assert.deepEqual(applied, [1, 2])
+  stream!.enqueue(hintEvent(2))
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.deepEqual(applied, [1, 2])
+  sync.stop()
+  await sync.refresh()
 })
 
 test("hidden hints defer DB reconciliation until one visible reconstruction", async () => {

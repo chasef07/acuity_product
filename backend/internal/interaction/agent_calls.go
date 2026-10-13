@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/jackc/pgx/v5"
@@ -32,6 +33,7 @@ const (
 
 type AgentCallIssue struct {
 	Reason    AgentCallIssueReason `json:"reason"`
+	Note      string               `json:"note,omitempty"`
 	CreatedAt time.Time            `json:"createdAt"`
 }
 type AgentCallMessage struct {
@@ -44,6 +46,15 @@ type AgentCallDetail struct {
 	LocationName string             `json:"locationName"`
 	Messages     []AgentCallMessage `json:"messages"`
 	Issue        *AgentCallIssue    `json:"issue,omitempty"`
+	Scorecard    []AgentCallVerdict `json:"scorecard"`
+	Sentiment    *float64           `json:"sentiment,omitempty"`
+}
+
+type AgentCallVerdict struct {
+	Question string `json:"question"`
+	Code     string `json:"code"`
+	Prompt   string `json:"prompt"`
+	Answer   string `json:"answer"`
 }
 type AgentCallsPage struct {
 	Calls      []AgentCall `json:"calls"`
@@ -206,7 +217,7 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 		return AgentCallDetail{}, err
 	}
 	var issue AgentCallIssue
-	err = tx.QueryRow(ctx, `SELECT reason, created_at FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Reason, &issue.CreatedAt)
+	err = tx.QueryRow(ctx, `SELECT reason, `+issueNoteWithoutPreviousReleaseReasonCopy+`, created_at FROM ai_interaction_issues issue WHERE interaction_id = $1`, id).Scan(&issue.Reason, &issue.Note, &issue.CreatedAt)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return AgentCallDetail{}, err
 	}
@@ -216,9 +227,12 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 	}
 	var closeout struct {
 		DomainOutcomes json.RawMessage `json:"domainOutcomes"`
+		Evaluation     json.RawMessage `json:"evaluation"`
 	}
 	_ = json.Unmarshal(stored.CloseoutPayload, &closeout)
 	detail.Call = agentCall(stored, closeout.DomainOutcomes, detail.Issue != nil)
+	detail.Scorecard = agentCallScorecard(closeout.Evaluation)
+	detail.Sentiment = jurySentiment(closeout.Evaluation)
 	timeline, _ := normalizeTimeline(stored.Transcript, nil, stored.StartedAt)
 	for _, item := range timeline {
 		speaker := ""
@@ -238,10 +252,33 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 	return detail, nil
 }
 
-func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identity, id string, reason AgentCallIssueReason) (AgentCallIssue, error) {
+func agentCallScorecard(evaluation json.RawMessage) []AgentCallVerdict {
+	verdicts := map[string]string{}
+	for _, answer := range judgeAnswers(evaluation) {
+		verdicts[answer.Question] = "no"
+		if answer.Answer {
+			verdicts[answer.Question] = "yes"
+		}
+	}
+	scorecard := []AgentCallVerdict{}
+	for _, question := range ScorecardQuestions {
+		if verdict, found := verdicts[question.Key]; found {
+			scorecard = append(scorecard, AgentCallVerdict{Question: question.Key, Code: question.Code, Prompt: question.Prompt, Answer: verdict})
+		}
+	}
+	return scorecard
+}
+
+const issueNoteWithoutPreviousReleaseReasonCopy = `COALESCE(NULLIF(issue.note, issue.reason), '')`
+
+func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identity, id string, reason AgentCallIssueReason, note string) (AgentCallIssue, error) {
 	switch reason {
 	case AgentCallIssueWrongAppointmentType, AgentCallIssueInsurance, AgentCallIssueOther:
 	default:
+		return AgentCallIssue{}, ErrInvalidInput
+	}
+	note = strings.TrimSpace(note)
+	if utf8.RuneCountInString(note) > 2000 {
 		return AgentCallIssue{}, ErrInvalidInput
 	}
 	tx, authorization, err := m.beginInteractionAccess(ctx, identity, id, true, audienceStaff)
@@ -249,7 +286,7 @@ func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identit
 		return AgentCallIssue{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	result, err := tx.Exec(ctx, `INSERT INTO ai_interaction_issues (interaction_id, reported_by, reason, note) VALUES ($1, $2, $3, $3) ON CONFLICT (interaction_id) DO NOTHING`, id, identity.Subject, reason)
+	result, err := tx.Exec(ctx, `INSERT INTO ai_interaction_issues (interaction_id, reported_by, reason, note) VALUES ($1, $2, $3, NULLIF($4, '')) ON CONFLICT (interaction_id) DO NOTHING`, id, identity.Subject, reason, note)
 	if err != nil {
 		return AgentCallIssue{}, fmt.Errorf("record AI call issue: %w", err)
 	}
@@ -260,7 +297,7 @@ func (m *Module) FlagAgentCallIssue(ctx context.Context, identity access.Identit
 	}
 	var issue AgentCallIssue
 	var reporter string
-	if err := tx.QueryRow(ctx, `SELECT reason, created_at, reported_by FROM ai_interaction_issues WHERE interaction_id = $1`, id).Scan(&issue.Reason, &issue.CreatedAt, &reporter); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT reason, `+issueNoteWithoutPreviousReleaseReasonCopy+`, created_at, reported_by FROM ai_interaction_issues issue WHERE interaction_id = $1`, id).Scan(&issue.Reason, &issue.Note, &issue.CreatedAt, &reporter); err != nil {
 		return AgentCallIssue{}, fmt.Errorf("read AI call issue: %w", err)
 	}
 	if issue.Reason != reason || reporter != identity.Subject {

@@ -1,29 +1,16 @@
-# Versioned office knowledge
+# Office knowledge
 
-`offices/*.yaml` is the reviewed source for each office's reusable, non-patient
-knowledge. PostgreSQL/pgvector holds published immutable revisions and generated
-embeddings. Merging office content to `main` publishes changed offices
-automatically through the Knowledge workflow, with a visible receipt for every
-office. Knowledge publication and retrieval verification run independently of
-application releases; their failures do not change application release status.
-
-```yaml
-practiceId: 11111111-1111-4111-8111-111111111111
-officeKey: synthetic-office
-entries:
-  - id: former-office-closure
-    title: Former office location
-    text: >-
-      The former office is permanently closed. Do not direct patients there
-      or offer to book or move appointments there.
-```
+Each office's reusable, non-patient knowledge lives in PostgreSQL/pgvector as
+immutable revisions. The office's active revision is the only source: Abita
+searches it on every lookup, and staff edit it in the Portal. There are no
+knowledge files in this repository.
 
 Each entry has a stable ID, title, and complete text. Keep one coherent topic
 per entry, including all qualifications and restrictions required to interpret
 it correctly. Do not split by arbitrary character counts or duplicate the same
-fact across entries. Existing large entries can be migrated gradually. Never put
-patient information, transcripts, secrets, or operator identities in these files.
-The Practice and Abita Office Route identify the authorized retrieval scope.
+fact across entries. Never put patient information, transcripts, secrets, or
+operator identities in entries. The Practice and Abita Office Route identify the
+authorized retrieval scope.
 
 Write the useful fact directly. Do not include `Status: available` labels,
 document-export boilerplate, or instructions explaining when to read the entry.
@@ -32,107 +19,76 @@ The Abita tool renders selected facts as plain text. Revision IDs and source IDs
 remain in the API/audit records, rather than the model's tool response. No extra
 AI call rewrites the facts.
 
+## Abita office standard
+
+The Abita Eye Group offices use one entry standard, enforced on every publish,
+from the Portal or the setup command, by
+[`backend/internal/knowledge/publish.go`](../backend/internal/knowledge/publish.go).
+Every office keeps the same required entry IDs (address, phone, fax, paperwork
+email, directions, other offices, hours, holiday closures, after-hours,
+providers, provider languages, services, appointment confirmation, new-patient
+visit, what to bring, referrals, billing, payments, self-pay pricing, medical
+records, prescription copies, and social follow-up). Staff may add other topics.
+
+- When an office has no answer, the entry says so ("… is not supplied") so the
+  agent does not borrow another office's fact or guess.
+- Keep each entry under 800 characters and use plain sentences, not markdown.
+- Title entries with the words callers use. Title words that appear in the
+  question weigh most in ranking, so prefer "Broken glasses repair" over "Repairs".
+- `other-offices` lists the practice's other offices, followed by any
+  office-specific note.
+- Remove holiday closures once they pass.
+
 ## Editing and publishing
 
-1. Edit an office YAML file in a branch and open a PR. Knowledge CI validates all
-   sources and rejects unknown fields, duplicate entry IDs, malformed routing,
-   empty content, and entries exceeding the importer limits. Review the actual
-   facts and preserve their conditions; structural validation is not fact-checking.
-2. Merge the reviewed PR into `main`. When the merge changes
-   `knowledge/offices/` or `knowledge/evals/`, the Knowledge workflow publishes
-   automatically. It checks each office against its active database revision,
-   publishes changed content, and skips unchanged offices without generating new
-   embeddings or revisions. No database revision input is needed.
-3. A merge that also changes `backend/`, `go.mod`, or `go.sum` is not published
-   automatically, because knowledge publication does not deploy code and the
-   deployed backend must support the source and retrieval checks. The run shows a
-   notice. After the release deploys, use **Actions → Knowledge → Run workflow** on
-   `main`. Leave `office` as `all` to process every office, or enter one office
-   filename without `.yaml`. Manual dispatch also republishes or reverifies at any
-   time.
-4. Merges that change neither office sources nor retrieval fixtures only validate.
-5. Review the per-office summary and publication receipts. The importer reads the
-   current revision automatically, then uses the existing atomic comparison to
-   reject a concurrent change. A rerun safely skips offices already up to date.
-6. If `evals/<office>.json` exists, the workflow runs its synthetic questions
-   against the deployed API, including for unchanged offices. Failed checks fail
-   the run but leave published revisions visible for inspection. Other offices
-   still run, so a partially failed run may have updated some offices. The artifact
-   records each office's publication and retrieval results. An office without a
-   fixture has database verification only; this does not prove spoken behavior.
+Staff publish a complete, ordered entry list with a reason through
+`POST /v1/knowledge/revisions`. Each publish creates a new revision recording
+who changed it and why, and switches the office to it only if no one else
+published first. The next Abita search uses it. Earlier revisions are never
+changed.
 
-After the complete publication and its configured retrieval checks succeed, the
-workflow records a GitHub release named `Knowledge <commit> (<selection>)`, tagged
-`knowledge-<full commit>-<selection>`. Notes list changed offices, database revision
-IDs, and the workflow evidence. Knowledge releases never replace the Product
-release as GitHub's Latest release. Unchanged content from an earlier commit
-creates no release. Rerunning the same commit and office selection reuses its
-release; if release creation failed after publication, revision provenance lets
-the rerun recover the missing record. A failed publication creates no release.
-These records describe a publication event, not the current live revision forever.
+Each revision has a version number, its position in the office's history
+starting at 1. The Portal's History panel lists every version with its author,
+reason, and when the agent last searched it, and shows what each changed from
+the one before. Restoring publishes an earlier version's entries as a new
+version with a reason; it never edits history.
 
-All entries in a file replace the complete office corpus. Removing an entry from
-Git removes it from the next published revision; prior revisions remain available
-as evidence. To roll back, revert the content in a new PR and publish the reverted content. No agent deployment is needed for content-only edits.
+## Search regression fixtures
+
+[`backend/cmd/knowledge-import/testdata/`](../backend/cmd/knowledge-import/testdata/)
+holds a frozen copy of the office entries and their retrieval cases. CI uses
+them only to test search code. They are never published and do not track
+production; editing them changes no office's knowledge.
 
 ## Operator commands
 
-Validate without database access or credentials:
+Set `KNOWLEDGE_IMPORT_DATABASE_URL` to an authorized database connection.
 
-```sh
-bash scripts/knowledge-validate.sh
-go run ./backend/cmd/knowledge-import --source knowledge/offices/spring-hill.yaml
-```
-
-Export the live source using an authorized database connection:
+Export a revision as YAML, the active one by default, to read or diff it:
 
 ```sh
 go run ./backend/cmd/knowledge-import --export \
-  --practice PRACTICE_UUID --office OFFICE_KEY > /tmp/office.yaml
+  --practice PRACTICE_UUID --office OFFICE_KEY [--revision REVISION_UUID] > /tmp/office.yaml
 ```
 
-YAML goes to stdout and the active revision receipt goes to stderr. This is a
-read-only snapshot, not a command to overwrite reviewed Git files automatically.
+YAML goes to stdout in saved entry order, and the exported revision ID goes to
+stderr. Revisions published before entry order was saved export in entry ID
+order.
 
-For an explicit operator publication, set `KNOWLEDGE_IMPORT_DATABASE_URL`,
+Set up a new office that has no knowledge yet. Commit its YAML (same format as
+the export) on a branch so the source is reviewable, then also set
 `KNOWLEDGE_OPERATOR_EMAIL`, `KNOWLEDGE_GOOGLE_PROJECT`, and optionally
-`KNOWLEDGE_GOOGLE_LOCATION` (defaults to `us-east1`). Then:
+`KNOWLEDGE_GOOGLE_LOCATION` (defaults to `us-east1`), then:
 
 ```sh
 go run ./backend/cmd/knowledge-import \
-  --source knowledge/offices/spring-hill.yaml \
-  --commit FULL_REVIEWED_GIT_SHA --apply
+  --source office.yaml --commit FULL_REVIEWED_GIT_SHA --apply
 ```
 
-The CLI rejects a source that differs from its bytes at the declared Git commit.
-The workflow checks out that immutable commit automatically. The CLI resolves the supplied
-email to an existing bound Platform Operator; a source cannot forge attribution.
-Legacy reviewed JSON imports remain supported by `--file` for operational recovery.
-
-## GitHub production configuration
-
-The workflow reuses the production environment and existing Workload Identity
-Federation variables: `GCP_WORKLOAD_IDENTITY_PROVIDER`,
-`GCP_DEPLOY_SERVICE_ACCOUNT`, `GCP_PROJECT_ID`, and `GCP_REGION`. Configure:
-
-- `KNOWLEDGE_SQL_INSTANCE`: Cloud SQL instance connection name.
-- `KNOWLEDGE_DATABASE_SECRET`: Secret Manager name containing the authorized
-  PostgreSQL URL; the workflow overrides its host with the local Cloud SQL proxy.
-- `KNOWLEDGE_OPERATOR_EMAIL`: existing bound Platform Operator attribution.
-- `KNOWLEDGE_API_URL`: deployed agent API base URL, required when the office has
-  a retrieval evaluation fixture.
-- `KNOWLEDGE_SERVICE_TOKEN_SECRETS`: JSON object mapping each Practice ID to
-  its authorized agent service-token secret name, for example
-  `{"practice-a":"practice-a-token","practice-b":"practice-b-token"}`.
-  These are Secret Manager names, not token values. Every Practice with retrieval
-  fixtures needs a mapping; credentials are checked before any office is written.
-
-The publishing service account needs access to the database and configured service-token secrets, Cloud SQL connection
-permission, and Vertex AI embedding permission. It uses short-lived Google
-credentials; database credentials stay in process memory and are never committed
-or printed. The instance must be reachable by Cloud SQL Auth Proxy from the
-runner. Publication is serialized and only permitted from the current `main` commit,
-automatically after a content-only knowledge merge or through manual dispatch.
-PR runs never authenticate to production. The backend must already support the
-published source and its retrieval checks; content publication does not deploy
-backend code.
+The CLI refuses an office that already has an active revision; change that
+office in the Portal. If a setup run fails after publishing, `--export` shows
+whether it landed before you retry. It rejects a source that differs from its bytes at the
+declared Git commit and resolves the supplied email to an existing bound
+Platform Operator, so a source cannot forge attribution. Without `--apply` it
+validates the source structure only. Legacy reviewed JSON imports remain
+supported by `--file`, under the same refusal.

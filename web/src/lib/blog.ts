@@ -19,7 +19,7 @@ export type BlogPost = {
   readingTime: string
   category: string
   author: BlogAuthor
-  hero?: "dead-air"
+  hero: "dead-air" | "name-the-slot"
   load: () => Promise<{ default: ComponentType }>
 }
 
@@ -31,6 +31,19 @@ const chase: BlogAuthor = {
 }
 
 export const blogPosts: BlogPost[] = [
+  {
+    slug: "name-the-slot",
+    title: "Only Let the Model Handle What a Person Can Check",
+    dek: "Our booking tool used to ask the model for six values. Today the slot is one argument: SEP15-0900-REYES. What that taught us about reliable tool calls.",
+    description:
+      "How a medical voice agent turns what a caller says into a correct booking: a 15-field signed slot token, five generations of slot references, a loaded calendar instead of a date parser, and compare-and-swap booking instead of holds.",
+    date: "2026-10-14",
+    readingTime: "10 min read",
+    category: "Voice AI",
+    author: chase,
+    hero: "name-the-slot",
+    load: () => import("@/content/blog/name-the-slot.mdx"),
+  },
   {
     slug: "the-dead-air-problem",
     title: "The Dead Air Problem",

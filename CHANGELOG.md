@@ -1,5 +1,107 @@
 # Changelog
 
+## [1.36.0](https://github.com/chasef07/acuity_product/compare/v1.35.0...v1.36.0) (2026-10-13)
+
+
+### Features
+
+* **call-review:** let reviewers change answers after the judge is revealed ([#461](https://github.com/chasef07/acuity_product/issues/461)) ([51ed0f6](https://github.com/chasef07/acuity_product/commit/51ed0f664a3e13e1316f40f376d59a1d7f45d281))
+
+## [1.35.0](https://github.com/chasef07/acuity_product/compare/v1.34.1...v1.35.0) (2026-10-13)
+
+
+### Features
+
+* **scorecard:** v7 judge questions, per-caller booking conversion, code checks, and 4 PM ET review days ([#459](https://github.com/chasef07/acuity_product/issues/459)) ([c65b777](https://github.com/chasef07/acuity_product/commit/c65b77767cc86ac070f03a5afca43b19d940a692))
+
+## [1.34.1](https://github.com/chasef07/acuity_product/compare/v1.34.0...v1.34.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **knowledge:** stop the 3s search timeout from cutting off Portal publishes ([#457](https://github.com/chasef07/acuity_product/issues/457)) ([784242b](https://github.com/chasef07/acuity_product/commit/784242b0445a135f01e8848cae39b05f2e665d71))
+
+## [1.34.0](https://github.com/chasef07/acuity_product/compare/v1.33.0...v1.34.0) (2026-10-13)
+
+
+### Features
+
+* **knowledge:** show office knowledge history and restore an earlier version ([#456](https://github.com/chasef07/acuity_product/issues/456)) ([74858e4](https://github.com/chasef07/acuity_product/commit/74858e42186069830d67563d289da1e2b48fb4d8))
+
+
+### Bug Fixes
+
+* **tasks:** match AI task caller names case-insensitively ([#455](https://github.com/chasef07/acuity_product/issues/455)) ([9c0fa8f](https://github.com/chasef07/acuity_product/commit/9c0fa8fab4899bae4948845e7cb3be2bc3182c28))
+* **tasks:** preserve authorization infrastructure errors ([#451](https://github.com/chasef07/acuity_product/issues/451)) ([8b8c929](https://github.com/chasef07/acuity_product/commit/8b8c929d814547baf733eac9bd09bb18654cbe31))
+* **web:** reconnect stalled realtime streams ([#452](https://github.com/chasef07/acuity_product/issues/452)) ([eb050d9](https://github.com/chasef07/acuity_product/commit/eb050d9b298103858aec79776115e7e82fdb28ee))
+
+## [1.33.0](https://github.com/chasef07/acuity_product/compare/v1.32.0...v1.33.0) (2026-10-12)
+
+
+### Features
+
+* **knowledge:** let staff publish office knowledge through the backend ([#447](https://github.com/chasef07/acuity_product/issues/447)) ([1cf848f](https://github.com/chasef07/acuity_product/commit/1cf848ffc7781f7180aa4b1fc4861ce40037d928))
+* **web:** edit, add, and remove office knowledge entries in the Portal ([#449](https://github.com/chasef07/acuity_product/issues/449)) ([8db6313](https://github.com/chasef07/acuity_product/commit/8db6313451cef70c2878e100fa1901e74f0c4f11))
+
+## [1.32.0](https://github.com/chasef07/acuity_product/compare/v1.31.0...v1.32.0) (2026-10-12)
+
+
+### Features
+
+* **manage-agent:** let staff explain a flagged call in a note ([#445](https://github.com/chasef07/acuity_product/issues/445)) ([9dc88d5](https://github.com/chasef07/acuity_product/commit/9dc88d540527e8f6fe4028d09a5f29f07ce836a0))
+
+
+### Bug Fixes
+
+* **knowledge:** correct North Miami Beach operating days ([#444](https://github.com/chasef07/acuity_product/issues/444)) ([26374a2](https://github.com/chasef07/acuity_product/commit/26374a26d29d35971175d280bb55f282c5adce87))
+
+## [1.31.0](https://github.com/chasef07/acuity_product/compare/v1.30.0...v1.31.0) (2026-10-11)
+
+
+### Features
+
+* **scorecard:** yes/no scorecard, daily review golden set, and a weighted trust rule for the judge jury (ACU-99, ACU-93) ([#436](https://github.com/chasef07/acuity_product/issues/436)) ([de805a4](https://github.com/chasef07/acuity_product/commit/de805a4d9bc685d638bafe570a5ff7c93d1e88ba))
+* **web:** white marketing site, editorial blog cards, and platform positioning ([#443](https://github.com/chasef07/acuity_product/issues/443)) ([6284274](https://github.com/chasef07/acuity_product/commit/628427466375806fb6550c7d91008665b6620326))
+
+## [1.30.0](https://github.com/chasef07/acuity_product/compare/v1.29.0...v1.30.0) (2026-10-11)
+
+
+### Features
+
+* **web:** add the Name the Slot blog post ([#439](https://github.com/chasef07/acuity_product/issues/439)) ([95883ba](https://github.com/chasef07/acuity_product/commit/95883badb72396d88b800c267342fe9a6a815f43))
+
+## [1.29.0](https://github.com/chasef07/acuity_product/compare/v1.28.4...v1.29.0) (2026-10-08)
+
+
+### Features
+
+* **web:** search the knowledge base by title and text ([#432](https://github.com/chasef07/acuity_product/issues/432)) ([1f08d9f](https://github.com/chasef07/acuity_product/commit/1f08d9f8c989211a22dd371d308c68711466553e))
+
+
+### Bug Fixes
+
+* **knowledge:** standardize Abita office entries and cover common caller questions ([#431](https://github.com/chasef07/acuity_product/issues/431)) ([3a64d4f](https://github.com/chasef07/acuity_product/commit/3a64d4fc8c5078930b6c6b09dd45c44060bd22db))
+
+## [1.28.4](https://github.com/chasef07/acuity_product/compare/v1.28.3...v1.28.4) (2026-10-08)
+
+
+### Performance Improvements
+
+* **workspace:** one refresh path for your own Task changes ([#426](https://github.com/chasef07/acuity_product/issues/426)) ([8990e45](https://github.com/chasef07/acuity_product/commit/8990e453998387d373d1c8331a5e82484989b474))
+
+## [1.28.3](https://github.com/chasef07/acuity_product/compare/v1.28.2...v1.28.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* **migrations:** keep the recovery queue table until the old worker is gone ([#423](https://github.com/chasef07/acuity_product/issues/423)) ([78e6f8e](https://github.com/chasef07/acuity_product/commit/78e6f8e247438155b2c443fe136f308d9c23a39b))
+
+
+### Performance Improvements
+
+* **httpapi:** allow two concurrent analytics requests per instance ([#424](https://github.com/chasef07/acuity_product/issues/424)) ([7e525ff](https://github.com/chasef07/acuity_product/commit/7e525ffa1fde5c9a03d8cd21713c43d9478742cf))
+* **workspace:** serve Task search from trigram indexes ([#427](https://github.com/chasef07/acuity_product/issues/427)) ([ac77e38](https://github.com/chasef07/acuity_product/commit/ac77e38af354256de62fcd1356b5be7a5e2287c2))
+
 ## [1.28.2](https://github.com/chasef07/acuity_product/compare/v1.28.1...v1.28.2) (2026-10-06)
 
 

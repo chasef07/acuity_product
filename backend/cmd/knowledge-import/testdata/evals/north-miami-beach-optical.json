@@ -1,0 +1,291 @@
+[
+  {
+    "id": "address",
+    "query": "office location address",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "current-address"
+    ],
+    "allowedSectionIds": [
+      "current-address"
+    ],
+    "maxResponseCharacters": 220
+  },
+  {
+    "id": "hours",
+    "query": "office hours",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "hours"
+    ],
+    "allowedSectionIds": [
+      "hours"
+    ],
+    "maxResponseCharacters": 300
+  },
+  {
+    "id": "closing-time",
+    "query": "closing time today",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "hours"
+    ],
+    "allowedSectionIds": [
+      "hours"
+    ],
+    "maxResponseCharacters": 300
+  },
+  {
+    "id": "fax",
+    "query": "office fax",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "fax"
+    ],
+    "allowedSectionIds": [
+      "fax"
+    ],
+    "maxResponseCharacters": 100
+  },
+  {
+    "id": "address-and-fax",
+    "query": "office address and fax",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "current-address",
+      "fax"
+    ],
+    "allowedSectionIds": [
+      "current-address",
+      "fax"
+    ],
+    "maxResponseCharacters": 300
+  },
+  {
+    "id": "after-hours",
+    "query": "after-hours doctor contact",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "after-hours"
+    ],
+    "allowedSectionIds": [
+      "after-hours"
+    ],
+    "maxResponseCharacters": 160
+  },
+  {
+    "id": "paperwork-email",
+    "query": "email for new patient paperwork",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "paperwork-email"
+    ],
+    "allowedSectionIds": [
+      "paperwork-email"
+    ],
+    "maxResponseCharacters": 400
+  },
+  {
+    "id": "titanium-frames",
+    "query": "Do you carry titanium frames?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "titanium-frames"
+    ],
+    "excludedSectionIds": [
+      "hours",
+      "billing"
+    ],
+    "maxResponseCharacters": 2600,
+    "allowedSectionIds": [
+      "titanium-frames",
+      "optical-and-glasses",
+      "meta-eyewear",
+      "frame-adjustments",
+      "repairs-and-warranty"
+    ]
+  },
+  {
+    "id": "meta-eyewear",
+    "query": "Do you sell the Ray-Ban Meta or Oakley Meta smart glasses?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "meta-eyewear"
+    ],
+    "excludedSectionIds": [
+      "hours",
+      "billing"
+    ],
+    "maxResponseCharacters": 2600,
+    "allowedSectionIds": [
+      "meta-eyewear",
+      "optical-and-glasses",
+      "titanium-frames",
+      "frame-adjustments",
+      "repairs-and-warranty"
+    ]
+  },
+  {
+    "id": "frame-adjustments",
+    "query": "Do I need an appointment to get my glasses adjusted?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "frame-adjustments"
+    ],
+    "excludedSectionIds": [
+      "hours",
+      "billing"
+    ],
+    "maxResponseCharacters": 2600,
+    "allowedSectionIds": [
+      "frame-adjustments",
+      "optical-and-glasses",
+      "titanium-frames",
+      "meta-eyewear",
+      "repairs-and-warranty"
+    ]
+  },
+  {
+    "id": "phone",
+    "query": "What is the office phone number?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "phone"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "phone"
+    ]
+  },
+  {
+    "id": "other-offices",
+    "query": "What other office locations do you have?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "other-offices"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "other-offices"
+    ]
+  },
+  {
+    "id": "billing",
+    "query": "What number do I call about my bill?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "billing"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "billing"
+    ]
+  },
+  {
+    "id": "spanish-doctor",
+    "query": "Do any of the doctors speak Spanish?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "provider-languages"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "provider-languages"
+    ]
+  },
+  {
+    "id": "carecredit",
+    "query": "Do you accept CareCredit?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "payments"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "payments"
+    ]
+  },
+  {
+    "id": "prescription-copy",
+    "query": "Can I get a copy of my glasses prescription?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "prescription-copies"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "prescription-copies"
+    ]
+  },
+  {
+    "id": "referral",
+    "query": "Do I need a referral?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "referral-requirements"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "referral-requirements"
+    ]
+  },
+  {
+    "id": "holiday",
+    "query": "Are you closed for any upcoming holidays?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "holiday-closures"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "holiday-closures"
+    ]
+  },
+  {
+    "id": "parking",
+    "query": "Is there parking at the office?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "directions"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "directions"
+    ]
+  },
+  {
+    "id": "broken-glasses",
+    "query": "Can you repair my broken glasses?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "repairs-and-warranty"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "repairs-and-warranty"
+    ]
+  },
+  {
+    "id": "glasses-turnaround",
+    "query": "How long until my glasses are ready?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "glasses-turnaround"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 900,
+    "allowedSectionIds": [
+      "glasses-turnaround"
+    ]
+  }
+]

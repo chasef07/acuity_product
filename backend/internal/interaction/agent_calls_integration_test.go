@@ -77,7 +77,7 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	if _, err = module.ReadAgentCall(ctx, staff, forbidden); !errors.Is(err, ErrDenied) {
 		t.Fatalf("denied detail: %v", err)
 	}
-	if _, err = module.FlagAgentCallIssue(ctx, staff, forbidden, AgentCallIssueOther); !errors.Is(err, ErrDenied) {
+	if _, err = module.FlagAgentCallIssue(ctx, staff, forbidden, AgentCallIssueOther, ""); !errors.Is(err, ErrDenied) {
 		t.Fatalf("denied flag: %v", err)
 	}
 	detail, err := module.ReadAgentCall(ctx, staff, first)
@@ -91,25 +91,25 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	if strings.Contains(string(raw), "private") {
 		t.Fatal("staff projection leaked internal evidence")
 	}
-	if _, err = module.FlagAgentCallIssue(ctx, staff, first, "Incorrect office hours"); !errors.Is(err, ErrInvalidInput) {
+	if _, err = module.FlagAgentCallIssue(ctx, staff, first, "Incorrect office hours", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("free-text report: %v", err)
 	}
-	issue, err := module.FlagAgentCallIssue(ctx, staff, first, AgentCallIssueWrongAppointmentType)
-	if err != nil || issue.Reason != AgentCallIssueWrongAppointmentType {
+	issue, err := module.FlagAgentCallIssue(ctx, staff, first, AgentCallIssueWrongAppointmentType, " Booked the wrong exam. ")
+	if err != nil || issue.Reason != AgentCallIssueWrongAppointmentType || issue.Note != "Booked the wrong exam." {
 		t.Fatalf("issue: %+v %v", issue, err)
 	}
-	retry, err := module.FlagAgentCallIssue(ctx, staff, first, AgentCallIssueWrongAppointmentType)
+	retry, err := module.FlagAgentCallIssue(ctx, staff, first, AgentCallIssueWrongAppointmentType, issue.Note)
 	if err != nil || retry != issue {
 		t.Fatalf("retry must preserve report: %+v %v", retry, err)
 	}
-	if _, err = module.FlagAgentCallIssue(ctx, staff, first, AgentCallIssueInsurance); !errors.Is(err, ErrConflict) {
+	if _, err = module.FlagAgentCallIssue(ctx, staff, first, AgentCallIssueInsurance, ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("different reason must conflict: %v", err)
 	}
-	if _, err = module.FlagAgentCallIssue(ctx, operator, first, issue.Reason); !errors.Is(err, ErrConflict) {
+	if _, err = module.FlagAgentCallIssue(ctx, operator, first, issue.Reason, ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("different reporter must conflict: %v", err)
 	}
 	detail, err = module.ReadAgentCall(ctx, operator, first)
-	if err != nil || detail.Issue == nil || detail.Issue.Reason != issue.Reason || !detail.Call.IssueFlagged {
+	if err != nil || detail.Issue == nil || *detail.Issue != issue || !detail.Call.IssueFlagged {
 		t.Fatalf("operator review: %+v %v", detail, err)
 	}
 	command = QueryAgentCallsCommand{QueryAnalyticsCommand: QueryAnalyticsCommand{Identity: operator, PracticeID: practice, Range: AnalyticsRange7Days}, FlaggedOnly: true}
@@ -119,7 +119,7 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	}
 
 	old := insert(allowed, "old", now.Add(-10*24*time.Hour))
-	if _, err = module.FlagAgentCallIssue(ctx, staff, old, AgentCallIssueInsurance); err != nil {
+	if _, err = module.FlagAgentCallIssue(ctx, staff, old, AgentCallIssueInsurance, ""); err != nil {
 		t.Fatal(err)
 	}
 	analytics := QueryAnalyticsCommand{Identity: operator, PracticeID: practice, Range: AnalyticsRange24Hours}
@@ -158,7 +158,7 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 		t.Fatalf("reviewed issue still pending: %+v %v", diagnostics.PendingIssues, err)
 	}
 	operatorFlagged := insert(allowed, "operator-flagged", now.Add(-3*time.Minute))
-	if _, err = module.FlagAgentCallIssue(ctx, operator, operatorFlagged, AgentCallIssueOther); err != nil {
+	if _, err = module.FlagAgentCallIssue(ctx, operator, operatorFlagged, AgentCallIssueOther, ""); err != nil {
 		t.Fatal(err)
 	}
 	var reported []string

@@ -22,20 +22,20 @@ func main() {
 	file := flag.String("file", "", "reviewed legacy office corpus JSON")
 	source := flag.String("source", "", "Git-versioned office knowledge YAML")
 	commit := flag.String("commit", "", "full Git commit SHA for source provenance")
-	expected := flag.String("expected-revision", "", "optional expected active revision UUID (none for initial publication); defaults to observed active revision")
-	export := flag.Bool("export", false, "export the active office corpus as YAML")
+	export := flag.Bool("export", false, "export an office revision as YAML")
 	practice := flag.String("practice", "", "Practice UUID for export")
 	office := flag.String("office", "", "Abita office key for export")
-	apply := flag.Bool("apply", false, "atomically replace the configured office corpus")
+	revision := flag.String("revision", "", "revision UUID for export; defaults to the active revision")
+	apply := flag.Bool("apply", false, "publish knowledge for an office that has none yet")
 	flag.Parse()
 	var err error
 	if *export {
-		err = exportSource(*practice, *office)
+		err = runExport(*practice, *office, *revision)
 	} else if *source != "" {
 		if *file != "" {
 			err = errors.New("use either --source or --file")
 		} else {
-			err = runSource(*source, *commit, *expected, *apply)
+			err = runSource(*source, *commit, *apply)
 		}
 	} else {
 		err = run(*file, *apply)
@@ -75,16 +75,16 @@ func run(path string, apply bool) error {
 	if err != nil {
 		return err
 	}
-	return applyPublication(command, apply, false)
+	return applyPublication(command, apply)
 }
 
-func applyPublication(command knowledge.ImportCommand, apply, automatic bool) error {
+func applyPublication(command knowledge.ImportCommand, apply bool) error {
 	if !apply {
 		command.ActorSubject = "validation-only"
 		if err := knowledge.ValidateImport(command); err != nil {
 			return err
 		}
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"applied": false, "validation": "Content structure only; --apply checks operator, route, revision and embeddings; source approval remains an operator responsibility", "practiceId": command.PracticeID, "officeKey": command.OfficeKey, "sections": len(command.Sections), "expectedRevisionId": command.ExpectedRevisionID})
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"applied": false, "validation": "Content structure only; --apply checks the operator, the route, that the office has no knowledge yet, the Abita entry standard, and embeddings; source approval remains an operator responsibility", "practiceId": command.PracticeID, "officeKey": command.OfficeKey, "sections": len(command.Sections)})
 	}
 	if os.Getenv("KNOWLEDGE_IMPORT_DATABASE_URL") == "" || os.Getenv("KNOWLEDGE_OPERATOR_EMAIL") == "" || os.Getenv("KNOWLEDGE_GOOGLE_PROJECT") == "" {
 		return errors.New("KNOWLEDGE_IMPORT_DATABASE_URL, KNOWLEDGE_OPERATOR_EMAIL and KNOWLEDGE_GOOGLE_PROJECT are required")
@@ -98,19 +98,9 @@ func applyPublication(command knowledge.ImportCommand, apply, automatic bool) er
 		return err
 	}
 	defer pool.Close()
-	command, unchanged, err := preparePublication(ctx, pool, command, os.Getenv("KNOWLEDGE_OPERATOR_EMAIL"), automatic)
+	command, err = preparePublication(ctx, pool, command, os.Getenv("KNOWLEDGE_OPERATOR_EMAIL"))
 	if err != nil {
 		return err
-	}
-	if unchanged != nil {
-		module, err := knowledge.New(pool, access.New(pool, nil), nil, knowledge.Config{})
-		if err != nil {
-			return err
-		}
-		if err := module.RecordSectionOrder(ctx, command, unchanged.Revision.ID); err != nil {
-			return fmt.Errorf("unchanged corpus section order could not be recorded: %w", err)
-		}
-		return json.NewEncoder(os.Stdout).Encode(unchanged)
 	}
 	location := os.Getenv("KNOWLEDGE_GOOGLE_LOCATION")
 	if location == "" {
@@ -120,7 +110,7 @@ func applyPublication(command knowledge.ImportCommand, apply, automatic bool) er
 	if err != nil {
 		return err
 	}
-	module, err := knowledge.New(pool, access.New(pool, nil), provider, knowledge.Config{ProviderTimeout: 30 * time.Second})
+	module, err := knowledge.New(pool, access.New(pool, nil), provider, knowledge.Config{})
 	if err != nil {
 		return err
 	}
@@ -138,6 +128,28 @@ func applyPublication(command knowledge.ImportCommand, apply, automatic bool) er
 		SourceGitCommit: strings.TrimPrefix(command.Provenance, "git:"),
 		PracticeID:      command.PracticeID, OfficeKey: command.OfficeKey, Sections: len(command.Sections),
 	})
+}
+
+func runExport(practice, office, revision string) error {
+	if os.Getenv("KNOWLEDGE_IMPORT_DATABASE_URL") == "" {
+		return errors.New("KNOWLEDGE_IMPORT_DATABASE_URL is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := openPool(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	module, err := knowledge.New(pool, access.New(pool, nil), nil, knowledge.Config{})
+	if err != nil {
+		return err
+	}
+	exported, err := exportSource(ctx, module, practice, office, revision, os.Stdout)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stderr).Encode(map[string]string{"officeKey": office, "revisionId": exported})
 }
 
 func openPool(ctx context.Context) (*pgxpool.Pool, error) {

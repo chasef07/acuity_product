@@ -186,18 +186,20 @@ export function DisclosureRow({
   detail,
   aside,
   group = false,
+  defaultOpen = group,
   children,
 }: {
   title: string
   detail?: ReactNode
   aside?: ReactNode
   group?: boolean
+  defaultOpen?: boolean
   children: ReactNode
 }) {
   const titleID = useId()
   return (
     <Collapsible
-      defaultOpen={group}
+      defaultOpen={defaultOpen}
       render={group ? <div role="group" aria-labelledby={titleID} /> : <li />}
     >
       <CollapsibleTrigger

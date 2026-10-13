@@ -585,6 +585,51 @@ func (m *Module) LockReadAuthorization(
 	return resolveAuthorization(ctx, tx, identity, practiceID, locationID, false, true)
 }
 
+func (m *Module) ReadPracticeKey(ctx context.Context, practiceID string) (string, error) {
+	if m.database == nil {
+		return "", ErrDenied
+	}
+	var key string
+	if err := m.database.QueryRow(ctx, `SELECT provisioning_key FROM access_practices WHERE id = $1`, practiceID).Scan(&key); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrDenied
+		}
+		return "", fmt.Errorf("read Practice key: %w", err)
+	}
+	return key, nil
+}
+
+func (m *Module) ReadSubjectEmails(ctx context.Context, practiceID string, subjects []string) (map[string]string, error) {
+	if m.database == nil {
+		return nil, ErrDenied
+	}
+	rows, err := m.database.Query(ctx, `
+		SELECT subject, COALESCE(
+			(SELECT email FROM access_memberships WHERE user_subject = subject AND practice_id = $1),
+			(SELECT email FROM access_platform_operators WHERE user_subject = subject))
+		FROM unnest($2::text[]) AS subject
+	`, practiceID, subjects)
+	if err != nil {
+		return nil, fmt.Errorf("read subject emails: %w", err)
+	}
+	defer rows.Close()
+	emails := map[string]string{}
+	for rows.Next() {
+		var subject string
+		var email *string
+		if err := rows.Scan(&subject, &email); err != nil {
+			return nil, fmt.Errorf("scan subject email: %w", err)
+		}
+		if email != nil {
+			emails[subject] = *email
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read subject emails: %w", err)
+	}
+	return emails, nil
+}
+
 func (m *Module) ReadLocationAbitaOfficeKey(
 	ctx context.Context,
 	identity Identity,
@@ -602,6 +647,30 @@ func (m *Module) ReadLocationAbitaOfficeKey(
 	if _, err := m.LockReadAuthorization(ctx, tx, identity, practiceID, locationID); err != nil {
 		return "", err
 	}
+	key, err := locationAbitaOfficeKey(ctx, tx, practiceID, locationID)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit Abita Office Route read: %w", err)
+	}
+	return key, nil
+}
+
+func (m *Module) LockLocationAbitaOfficeKey(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+	practiceID string,
+	locationID string,
+) (string, error) {
+	if _, err := m.LockMutationAuthorization(ctx, tx, identity, practiceID, locationID); err != nil {
+		return "", err
+	}
+	return locationAbitaOfficeKey(ctx, tx, practiceID, locationID)
+}
+
+func locationAbitaOfficeKey(ctx context.Context, tx pgx.Tx, practiceID, locationID string) (string, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT office_key
 		FROM access_abita_office_locations
@@ -615,9 +684,6 @@ func (m *Module) ReadLocationAbitaOfficeKey(
 	keys, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
 		return "", fmt.Errorf("scan Abita Office Routes: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", fmt.Errorf("commit Abita Office Route read: %w", err)
 	}
 	if len(keys) != 1 {
 		return "", ErrNoOfficeRoute

@@ -349,7 +349,7 @@ func (m *Module) idempotentStaffTransfer(
 	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, command.Identity, existing.PracticeID, existing.LocationID,
 	); err != nil {
-		return StaffTransfer{}, false, ErrDenied
+		return StaffTransfer{}, false, callingAccessError(err)
 	}
 	return existing, true, nil
 }
@@ -430,7 +430,7 @@ func (m *Module) respondStaffTransfer(
 	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, command.Identity, transfer.PracticeID, transfer.LocationID,
 	); err != nil {
-		return StaffTransfer{}, ErrDenied
+		return StaffTransfer{}, callingAccessError(err)
 	}
 	availability := leaveTransferTargetAvailability
 	if responder == staffTransferOriginator {
@@ -527,7 +527,7 @@ func (m *Module) lockTransferSource(
 	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	); err != nil {
-		return "", "", 0, ErrDenied
+		return "", "", 0, callingAccessError(err)
 	}
 	var ownsLease bool
 	if err := tx.QueryRow(ctx, `

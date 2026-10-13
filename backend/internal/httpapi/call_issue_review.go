@@ -58,6 +58,9 @@ func operatorAICallIssueResponse(issue interaction.OperatorCallIssue) (api.Opera
 		ReportedBy:    issue.ReportedBy,
 		ReportedAt:    issue.ReportedAt,
 	}
+	if issue.Note != "" {
+		response.Note = &issue.Note
+	}
 	if issue.Review != nil {
 		response.Review = &api.OperatorAICallIssueReview{
 			Outcome:    api.OperatorAICallIssueOutcome(issue.Review.Outcome),

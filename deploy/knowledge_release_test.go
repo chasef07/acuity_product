@@ -2,7 +2,6 @@ package deploy_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,11 +9,14 @@ import (
 	"github.com/oasdiff/yaml3"
 )
 
-func TestKnowledgePublicationIsIndependentOfRelease(t *testing.T) {
+func TestNoWorkflowPublishesKnowledge(t *testing.T) {
 	root := filepath.Dir(releaseDeployDirectory(t))
-	read := func(name string) map[string]any {
-		t.Helper()
-		raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", name))
+	workflows, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.y*ml"))
+	if err != nil || len(workflows) == 0 {
+		t.Fatalf("workflows: %v, %v", workflows, err)
+	}
+	for _, path := range workflows {
+		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -22,197 +24,9 @@ func TestKnowledgePublicationIsIndependentOfRelease(t *testing.T) {
 		if err := yaml.Unmarshal(raw, &workflow); err != nil {
 			t.Fatal(err)
 		}
-		return workflow
-	}
-	release := read("release.yml")
-	jobs := release["jobs"].(map[string]any)
-	for name, value := range jobs {
-		job := value.(map[string]any)
-		if name == "knowledge" || job["uses"] == "./.github/workflows/knowledge.yml" {
-			t.Fatal("knowledge publication must not determine application release status")
+		if jobs, _ := workflow["jobs"].(map[string]any); jobs["knowledge"] != nil || strings.Contains(string(raw), "knowledge-import") || strings.Contains(string(raw), "knowledge/offices") {
+			t.Fatalf("%s publishes knowledge; each office's active database revision is its only source", filepath.Base(path))
 		}
-	}
-	knowledge := read("knowledge.yml")
-	knowledgeJobs := knowledge["jobs"].(map[string]any)
-	plan := knowledgeJobs["plan"].(map[string]any)
-	if plan["if"] != "github.ref == 'refs/heads/main' && github.event_name != 'pull_request'" {
-		t.Fatal("knowledge publication must only be planned on main, never for pull requests")
-	}
-	publish := knowledgeJobs["publish"].(map[string]any)
-	if publish["if"] != "needs.plan.outputs.publish == 'true'" {
-		t.Fatal("knowledge publication must follow the publication plan")
-	}
-	needs, _ := publish["needs"].([]any)
-	if len(needs) != 2 || needs[0] != "validate" || needs[1] != "plan" {
-		t.Fatalf("knowledge publication must wait for validation and the plan: %v", needs)
-	}
-	steps := publish["steps"].([]any)
-	checkout := steps[0].(map[string]any)
-	if checkout["with"].(map[string]any)["ref"] != "${{ github.sha }}" {
-		t.Fatal("publisher must check out the selected commit")
-	}
-	foundCredentials := false
-	for _, value := range steps {
-		step := value.(map[string]any)
-		if step["name"] == "Publish and verify office knowledge" {
-			env := step["env"].(map[string]any)
-			foundCredentials = env["KNOWLEDGE_SERVICE_TOKEN_SECRETS"] == "${{ vars.KNOWLEDGE_SERVICE_TOKEN_SECRETS }}"
-		}
-	}
-	if !foundCredentials {
-		t.Fatal("publisher must receive practice-scoped verification secret mappings")
-	}
-}
-
-func TestKnowledgePublicationFreshness(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(releaseDeployDirectory(t)), ".github/workflows/knowledge.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var workflow map[string]any
-	if err := yaml.Unmarshal(raw, &workflow); err != nil {
-		t.Fatal(err)
-	}
-	steps := workflow["jobs"].(map[string]any)["publish"].(map[string]any)["steps"].([]any)
-	var guard string
-	for _, value := range steps {
-		step := value.(map[string]any)
-		script, _ := step["run"].(string)
-		if env, ok := step["env"].(map[string]any); ok && env["KNOWLEDGE_COMMIT"] != nil && strings.Contains(script, "git ") {
-			guard = script
-		}
-	}
-	if guard == "" {
-		t.Fatal("publication freshness guard is missing")
-	}
-	for _, scenario := range []struct {
-		name, changedPath string
-		wantSuccess       bool
-	}{
-		{"current release", "", true},
-		{"unrelated merge during deployment", "web/example.txt", true},
-		{"newer office knowledge", "knowledge/offices/alpha.yaml", false},
-		{"newer retrieval expectations", "knowledge/evals/alpha.json", false},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			remote, checkout := t.TempDir(), filepath.Join(t.TempDir(), "checkout")
-			git := func(directory string, args ...string) string {
-				t.Helper()
-				cmd := exec.Command("git", args...)
-				cmd.Dir = directory
-				output, err := cmd.CombinedOutput()
-				if err != nil {
-					t.Fatalf("git %v: %v\n%s", args, err, output)
-				}
-				return strings.TrimSpace(string(output))
-			}
-			write := func(path string) {
-				t.Helper()
-				path = filepath.Join(remote, path)
-				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte("synthetic knowledge\n"), 0644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			git(remote, "init", "-b", "main")
-			git(remote, "config", "user.email", "test@example.com")
-			git(remote, "config", "user.name", "Synthetic Test")
-			write("knowledge/offices/original.yaml")
-			git(remote, "add", ".")
-			git(remote, "commit", "-m", "Released knowledge")
-			release := git(remote, "rev-parse", "HEAD")
-			git(remote, "clone", "--depth=1", "file://"+remote, checkout)
-			git(checkout, "checkout", "--detach", release)
-			if scenario.changedPath != "" {
-				write(scenario.changedPath)
-				git(remote, "add", ".")
-				git(remote, "commit", "-m", "Merge during deployment")
-			}
-			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", guard)
-			cmd.Dir = checkout
-			cmd.Env = append(os.Environ(), "KNOWLEDGE_COMMIT="+release)
-			output, err := cmd.CombinedOutput()
-			if (err == nil) != scenario.wantSuccess {
-				t.Fatalf("publication guard: %v; want success=%t\n%s", err, scenario.wantSuccess, output)
-			}
-			if got := git(checkout, "rev-parse", "HEAD"); got != release {
-				t.Fatalf("guard changed released checkout to %s", got)
-			}
-		})
-	}
-}
-
-func TestKnowledgePublicationPlan(t *testing.T) {
-	script := filepath.Join(filepath.Dir(releaseDeployDirectory(t)), "scripts", "knowledge-plan.sh")
-	for _, scenario := range []struct {
-		name, event string
-		changed     []string
-		noBefore    bool
-		want        string
-	}{
-		{name: "manual dispatch", event: "workflow_dispatch", want: "true"},
-		{name: "office content merge", event: "push", changed: []string{"knowledge/offices/alpha.yaml"}, want: "true"},
-		{name: "retrieval expectation merge", event: "push", changed: []string{"knowledge/evals/alpha.json"}, want: "true"},
-		{name: "knowledge documentation only", event: "push", changed: []string{"knowledge/README.md"}, want: "false"},
-		{name: "unrelated merge", event: "push", changed: []string{"web/example.txt"}, want: "false"},
-		{name: "content with backend code awaits deployment", event: "push", changed: []string{"knowledge/offices/alpha.yaml", "backend/internal/knowledge/retrieval.go"}, want: "false"},
-		{name: "content with module change awaits deployment", event: "push", changed: []string{"knowledge/offices/alpha.yaml", "go.mod"}, want: "false"},
-		{name: "first push", event: "push", noBefore: true, want: "true"},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			repository := t.TempDir()
-			git := func(args ...string) string {
-				t.Helper()
-				cmd := exec.Command("git", args...)
-				cmd.Dir = repository
-				output, err := cmd.CombinedOutput()
-				if err != nil {
-					t.Fatalf("git %v: %v\n%s", args, err, output)
-				}
-				return strings.TrimSpace(string(output))
-			}
-			write := func(path string) {
-				t.Helper()
-				path = filepath.Join(repository, path)
-				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte("synthetic change\n"), 0644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			git("init", "-b", "main")
-			git("config", "user.email", "test@example.com")
-			git("config", "user.name", "Synthetic Test")
-			write("knowledge/offices/original.yaml")
-			git("add", ".")
-			git("commit", "-m", "Published knowledge")
-			before := git("rev-parse", "HEAD")
-			for _, path := range scenario.changed {
-				write(path)
-			}
-			git("add", ".")
-			git("commit", "--allow-empty", "-m", "Merge")
-			if scenario.noBefore {
-				before = "0000000000000000000000000000000000000000"
-			}
-			outputFile := filepath.Join(t.TempDir(), "output")
-			cmd := exec.Command("bash", script)
-			cmd.Dir = repository
-			cmd.Env = append(os.Environ(), "EVENT_NAME="+scenario.event, "BEFORE_SHA="+before, "HEAD_SHA="+git("rev-parse", "HEAD"), "GITHUB_OUTPUT="+outputFile)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("plan: %v\n%s", err, output)
-			}
-			got, err := os.ReadFile(outputFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.TrimSpace(string(got)) != "publish="+scenario.want {
-				t.Fatalf("plan output %q, want publish=%s", got, scenario.want)
-			}
-		})
 	}
 }
 

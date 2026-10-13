@@ -257,7 +257,7 @@ func (m *Module) StartOutboundCall(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := m.access.LockOperationalActor(ctx, tx, command.Identity); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingAccessError(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		SELECT pg_advisory_xact_lock(hashtextextended($1, 0) # hashtextextended($2, 1))
@@ -302,7 +302,7 @@ func (m *Module) StartOutboundCall(
 	if _, err := m.access.LockMutationAuthorization(
 		ctx, tx, command.Identity, practiceID, locationID,
 	); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingAccessError(err)
 	}
 	var leaseReady bool
 	if err := tx.QueryRow(ctx, `
@@ -534,7 +534,7 @@ func (m *Module) ConfirmOutboundMedia(
 	}
 	if _, err := m.access.LockMutationAuthorization(ctx, tx, command.Identity,
 		practiceID, locationID); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingAccessError(err)
 	}
 	var staffLegID, staffControlID, staffSession, staffState string
 	var answered bool

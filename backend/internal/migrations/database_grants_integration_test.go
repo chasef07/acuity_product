@@ -327,6 +327,10 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 		"acuity_worker": {
 			`SELECT user_subject FROM access_operational_users WHERE false`,
 			`SELECT email FROM access_platform_operators WHERE false`,
+			`SELECT practice_id::text, phone
+				 FROM work_recovery_reconciliation_queue
+				 WHERE false
+				 FOR UPDATE SKIP LOCKED`,
 			`SELECT EXISTS (
 				SELECT 1 FROM human_calling_timeline
 				WHERE call_id = gen_random_uuid()
@@ -611,9 +615,16 @@ func expectedTablePrivileges() map[string]bool {
 
 	grant("acuity_portal", "SELECT", "ai_interaction_issues")
 	grant("acuity_portal", "INSERT", "ai_interaction_issues")
+	for _, role := range []string{"acuity_portal", "acuity_worker"} {
+		grant(role, "SELECT", "ai_interaction_scorecard_answers")
+		grant(role, "INSERT", "ai_interaction_scorecard_answers")
+		grant(role, "DELETE", "ai_interaction_scorecard_answers")
+	}
 	grant("acuity_portal", "SELECT", "ai_manual_tags", "ai_interaction_manual_tags")
 	grant("acuity_portal", "INSERT", "ai_manual_tags", "ai_interaction_manual_tags")
 	grant("acuity_portal", "DELETE", "ai_interaction_manual_tags")
+	grant("acuity_portal", "SELECT", "ai_call_review_assignments", "ai_call_reviews", "ai_call_review_pools")
+	grant("acuity_portal", "INSERT", "ai_call_review_assignments", "ai_call_reviews", "ai_call_review_pools")
 
 	grant("acuity_portal", "SELECT", "work_text_replies")
 	grant("acuity_portal", "INSERT", "work_text_replies")
@@ -649,6 +660,7 @@ func expectedTablePrivileges() map[string]bool {
 		"knowledge_corpora",
 		"knowledge_revisions",
 		"knowledge_passages",
+		"knowledge_retrieval_observations",
 		"messaging_attachments",
 		"messaging_location_configurations",
 		"messaging_messages",
@@ -675,7 +687,10 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_softphone_leases",
 		"human_calling_staff_transfers",
 		"human_calling_timeline",
+		"knowledge_corpora",
+		"knowledge_passages",
 		"knowledge_retrieval_observations",
+		"knowledge_revisions",
 		"messaging_attachments",
 		"messaging_messages",
 		"messaging_provider_commands",
@@ -742,6 +757,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_task_acknowledgements",
 		"work_task_activities",
 		"work_task_interactions",
+		"work_recovery_reconciliation_queue",
 		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
@@ -781,6 +797,7 @@ func expectedTablePrivileges() map[string]bool {
 		"acuity_worker",
 		"DELETE",
 		"messaging_attachments",
+		"work_recovery_reconciliation_queue",
 	)
 
 	for _, relation := range []string{"user", "session", "account", "verification", "jwks"} {
@@ -817,6 +834,12 @@ func expectedColumnPrivileges() map[string]bool {
 	)
 	grant(
 		"acuity_worker",
+		"public.work_recovery_reconciliation_queue",
+		"UPDATE",
+		"enqueued_at",
+	)
+	grant(
+		"acuity_worker",
 		"public.human_calling_rejected_provider_legs",
 		"SELECT",
 		"call_control_id",
@@ -841,6 +864,9 @@ func expectedColumnPrivileges() map[string]bool {
 		"reviewed_by",
 		"reviewed_at",
 	)
+	grant("acuity_portal", "public.ai_call_review_assignments", "UPDATE", "note", "question_idea", "completed_at")
+	grant("acuity_portal", "public.ai_call_reviews", "UPDATE", "answer", "note")
+	grant("acuity_portal", "public.knowledge_corpora", "UPDATE", "revision_id")
 	grant(
 		"acuity_portal",
 		"public.ai_interaction_receipts",

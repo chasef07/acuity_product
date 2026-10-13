@@ -3,8 +3,6 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"math"
 	"net/http"
@@ -438,72 +436,6 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	}
 	_ = deniedDetail.Body.Close()
 
-	t.Run("manual tags persist, deduplicate, filter and enforce operator access", func(t *testing.T) {
-		tagURL := server.URL + "/v1/operator/ai-interactions/" + richID + "/manual-tags"
-		for _, method := range []string{http.MethodGet, http.MethodPut} {
-			var body []byte
-			if method == http.MethodPut {
-				body = []byte(`{"name":"Good recovery","applied":true}`)
-			}
-			denied := request(t, server.Client(), method, tagURL, "admin-token", body)
-			if denied.StatusCode != http.StatusForbidden {
-				t.Fatalf("non-operator tags: %d %s", denied.StatusCode, readBody(t, denied))
-			}
-			denied.Body.Close()
-		}
-		mutate := func(id, name string, applied bool) api.OperatorAICallTags {
-			t.Helper()
-			body, _ := json.Marshal(map[string]any{"name": name, "applied": applied})
-			response := request(t, server.Client(), http.MethodPut, server.URL+"/v1/operator/ai-interactions/"+id+"/manual-tags", "operator-token", body)
-			if response.StatusCode != http.StatusOK {
-				t.Fatalf("save tags: %d %s", response.StatusCode, readBody(t, response))
-			}
-			var tags api.OperatorAICallTags
-			decode(t, response, &tags)
-			return tags
-		}
-		mutate(richID, "  Good   recovery  ", true)
-		tags := mutate(richID, "good recovery", true)
-		if len(tags.Available) != 1 || len(tags.Selected) != 1 || tags.Selected[0] != "Good recovery" {
-			t.Fatalf("duplicate tags: %+v", tags)
-		}
-		mutate(richID, "Needs review", true)
-		tags = mutate(escalatedID, "GOOD RECOVERY", true)
-		if len(tags.Available) != 2 || len(tags.Selected) != 1 {
-			t.Fatalf("shared catalog: %+v", tags)
-		}
-		body, _ := json.Marshal(map[string]any{"practiceId": practiceID, "range": "7d", "manualTag": "Good recovery", "limit": 1})
-		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "operator-token", body)
-		if response.StatusCode != http.StatusOK {
-			t.Fatalf("filtered calls: %s", readBody(t, response))
-		}
-		var page api.OperatorAIAnalyticsPage
-		decode(t, response, &page)
-		if page.Summary.TotalCalls != 2 || len(page.Calls) != 1 || page.Calls[0].ManualTags == nil || page.NextCursor == "" {
-			t.Fatalf("filtered page: %+v", page)
-		}
-		body, _ = json.Marshal(map[string]any{"practiceId": practiceID, "range": "7d", "manualTag": "Needs review", "cursor": page.NextCursor})
-		mismatch := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "operator-token", body)
-		if mismatch.StatusCode != http.StatusBadRequest {
-			t.Fatalf("cursor crossed filters: %d", mismatch.StatusCode)
-		}
-		mismatch.Body.Close()
-		tags = mutate(richID, "good recovery", false)
-		if len(tags.Selected) != 1 || tags.Selected[0] != "Needs review" || len(tags.Available) != 2 {
-			t.Fatalf("remove lost unrelated tag/catalog: %+v", tags)
-		}
-		response = request(t, server.Client(), http.MethodGet, tagURL, "operator-token", nil)
-		decode(t, response, &tags)
-		if len(tags.Selected) != 1 || tags.Selected[0] != "Needs review" {
-			t.Fatalf("tags not durable: %+v", tags)
-		}
-		invalid := request(t, server.Client(), http.MethodPut, tagURL, "operator-token", []byte(`{"name":"   ","applied":true}`))
-		if invalid.StatusCode != http.StatusBadRequest {
-			t.Fatalf("blank tag accepted: %d", invalid.StatusCode)
-		}
-		invalid.Body.Close()
-	})
-
 	largeReport, _ := json.Marshal(map[string]any{
 		"items": []any{map[string]any{"type": "message", "content": strings.Repeat("Synthetic conversation content. ", 5000)}},
 		"usage": json.RawMessage(usage),
@@ -632,97 +564,4 @@ func nullJSON(encoded []byte, value map[string]any) any {
 		return nil
 	}
 	return json.RawMessage(encoded)
-}
-
-func TestNeedsReviewAnalyticsFiltersBeforePagination(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	operator := access.Identity{
-		Subject:       "operator-ai-analytics-subject",
-		Email:         "operator-ai-analytics@acuity.test",
-		EmailVerified: true,
-	}
-	admin := access.Identity{
-		Subject:       "admin-ai-analytics-subject",
-		Email:         "admin-ai-analytics@acuity.test",
-		EmailVerified: true,
-	}
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
-		Environment:       "test",
-		RequestedBy:       "operator-ai-analytics-test",
-		PlatformOperators: []string{operator.Email},
-		Practices: []access.PracticeProvision{{
-			Key:  "operator-ai-practice",
-			Name: "Operator AI Practice",
-			Locations: []access.LocationProvision{
-				{Key: "north", Name: "North Office"},
-				{Key: "south", Name: "South Office"},
-			},
-			AccessGrants: []access.AccessGrantProvision{{
-				Key:           "admin",
-				Email:         admin.Email,
-				Role:          access.RoleAdmin,
-				LocationScope: access.LocationScopeAll,
-			}},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("provision operator AI analytics fixture: %v", err)
-	}
-	testaccess.Activate(t, accessModule, operator)
-	testaccess.Activate(t, accessModule, admin)
-
-	var practiceID, northID, southID string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT
-			practice.id::text,
-			max(location.id::text) FILTER (WHERE location.provisioning_key = 'north'),
-			max(location.id::text) FILTER (WHERE location.provisioning_key = 'south')
-		FROM access_practices practice
-		JOIN access_locations location ON location.practice_id = practice.id
-		WHERE practice.provisioning_key = 'operator-ai-practice'
-		GROUP BY practice.id
-	`).Scan(&practiceID, &northID, &southID); err != nil {
-		t.Fatalf("read operator AI analytics scope: %v", err)
-	}
-
-	module := interaction.New(pool, accessModule, func() time.Time { return now })
-	for i := 0; i < 60; i++ {
-		score := 0.9
-		if i == 52 || i == 58 {
-			score = 0.4
-		}
-		evaluation := map[string]any{"status": "incomplete", "evaluatorVersion": "typesafe-scorecard-v3", "results": map[string]any{"request_understood": map[string]any{"answers": map[string]any{"request_understood": map[string]any{"type": "noul", "noul": score}}}}}
-		insertOperatorAIInteraction(t, pool, operatorAIInteractionFixture{
-			ID: fmt.Sprintf("20000000-0000-0000-0000-%012d", i), PracticeID: practiceID, LocationID: northID,
-			AppointmentOutcome: "INDETERMINATE",
-			SourceCall:         fmt.Sprintf("review-%d", i), Phone: "+15555550101", StartedAt: now.Add(-time.Duration(i+1) * time.Minute), EndedAt: now.Add(-time.Duration(i+1)*time.Minute + time.Second), Status: "COMPLETED", Closeout: map[string]any{"evaluation": evaluation},
-		})
-	}
-	command := interaction.QueryAnalyticsCommand{Identity: operator, PracticeID: practiceID, LocationID: northID, Range: interaction.AnalyticsRange7Days, Limit: 1, NeedsReviewOnly: true}
-	first, err := module.QueryAnalytics(context.Background(), command)
-	if err != nil || len(first.Calls) != 1 || first.Calls[0].SourceCallID != "review-52" || first.NextCursor == "" {
-		t.Fatalf("first filtered page: %+v err=%v", first, err)
-	}
-	command.Cursor = first.NextCursor
-	second, err := module.QueryAnalytics(context.Background(), command)
-	if err != nil || len(second.Calls) != 1 || second.Calls[0].SourceCallID != "review-58" || second.NextCursor != "" {
-		t.Fatalf("second filtered page: %+v err=%v", second, err)
-	}
-	command.NeedsReviewOnly = false
-	if _, err := module.QueryAnalytics(context.Background(), command); !errors.Is(err, interaction.ErrInvalidInput) {
-		t.Fatalf("cursor crossed review filter: %v", err)
-	}
-	command.Cursor = ""
-	command.NeedsReviewOnly = true
-	command.LocationID = southID
-	empty, err := module.QueryAnalytics(context.Background(), command)
-	if err != nil || len(empty.Calls) != 0 || empty.NextCursor != "" {
-		t.Fatalf("office scope leaked: %+v err=%v", empty, err)
-	}
-	command.Identity = admin
-	if _, err := module.QueryAnalytics(context.Background(), command); !errors.Is(err, interaction.ErrDenied) {
-		t.Fatalf("nonoperator review access: %v", err)
-	}
 }

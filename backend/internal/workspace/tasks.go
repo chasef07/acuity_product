@@ -69,18 +69,22 @@ func (m *Module) QueryTasks(
 		return work.TaskPage{}, err
 	}
 
-	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering, command.Grouped),
+	search, err := resolveTaskSearch(ctx, tx, command.PracticeID, locationIDs, command.Search)
+	if err != nil {
+		return work.TaskPage{}, err
+	}
+	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering, command.Grouped, search), search.arguments(
 		command.PracticeID,
 		locationIDs,
-		command.Search,
-		normalizedDigits(command.Search),
+		search.pattern,
+		search.digits,
 		cursor.Present,
 		cursor.OrderedAt,
 		cursor.ID,
 		cursor.Urgency.Rank(),
 		limit+1,
 		command.Responsibility, strings.ToLower(command.Identity.Email), command.Category, command.Kind,
-	)
+	)...)
 	if err != nil {
 		return work.TaskPage{}, fmt.Errorf("query Tasks: %w", err)
 	}
@@ -100,7 +104,7 @@ func (m *Module) QueryTasks(
 	rows.Close()
 	var counts *work.TaskFolderCounts
 	if command.IncludeCounts == nil || *command.IncludeCounts {
-		value, err := queryTaskFolderCounts(ctx, tx, command, locationIDs)
+		value, err := queryTaskFolderCounts(ctx, tx, command, locationIDs, search)
 		if err != nil {
 			return work.TaskPage{}, err
 		}
@@ -257,35 +261,98 @@ const taskMatchSource = `
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id`
 
-const taskSearchFilter = `
-		AND (
-			$3 = ''
-				OR strpos(lower(task.title), lower($3)) > 0
-				OR strpos(lower(COALESCE(task.caller_name, '')), lower($3)) > 0
-				OR strpos(lower(location.name), lower($3)) > 0
-				OR strpos(lower(COALESCE(task.category, '')), lower($3)) > 0
-				OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
-		)`
+type taskSearch struct {
+	pattern     string
+	digits      string
+	locationIDs []string
+}
 
-var taskQueryFilter = `
+var taskSearchEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+func resolveTaskSearch(
+	ctx context.Context,
+	tx pgx.Tx,
+	practiceID string,
+	locationIDs []string,
+	text string,
+) (taskSearch, error) {
+	if text == "" {
+		return taskSearch{}, nil
+	}
+	search := taskSearch{pattern: "%" + taskSearchEscaper.Replace(text) + "%"}
+	if digits := normalizedDigits(text); digits != "" {
+		search.digits = "%" + digits + "%"
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(array_agg(location.id::text), '{}')
+		FROM access_locations location
+		WHERE location.practice_id = $1
+			AND location.id = ANY($2::uuid[])
+			AND lower(location.name) LIKE lower($3)
+	`, practiceID, locationIDs, search.pattern).Scan(&search.locationIDs); err != nil {
+		return taskSearch{}, fmt.Errorf("search Task Locations: %w", err)
+	}
+	return search, nil
+}
+
+func (search taskSearch) arguments(arguments ...any) []any {
+	if search.pattern == "" {
+		return arguments
+	}
+	arguments = append([]any{pgx.QueryExecModeCacheDescribe}, arguments...)
+	if len(search.locationIDs) == 0 {
+		return arguments
+	}
+	return append(arguments, search.locationIDs)
+}
+
+func (search taskSearch) filter(locations string) string {
+	if search.pattern == "" {
+		return `
+		AND $3::text = '' AND $4::text = ''`
+	}
+	text := `
+			lower(task.title) LIKE lower($3)
+			OR lower(task.caller_name) LIKE lower($3)
+			OR lower(task.category) LIKE lower($3)`
+	if len(search.locationIDs) > 0 {
+		text += `
+			OR task.location_id = ANY(` + locations + `::uuid[])`
+	}
+	if search.digits == "" {
+		return `
+		AND $4::text = ''
+		AND (` + text + `
+		)`
+	}
+	return `
+		AND (` + text + `
+			OR task.phone_digits LIKE $4
+		)`
+}
+
+func taskQueryFilter(search taskSearch) string {
+	return `
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter("$10", "$11") + `
  AND ($12::text = '' OR task.category=$12)
  AND ($13::text <> 'texts' OR ` + taskHasRecentTextAttention + `)
  AND ($13::text = '' OR ($13='texts' AND ` + work.TaskIsTextReviewSQL + `) OR ($13='calls' AND ` + work.TaskIsCallRecoverySQL + `)
  OR ($13='appointments' AND ` + taskIsSpringHillReview + `)
- OR ($13='follow_up' AND ` + work.TaskIsFollowUpSQL + `))` + taskSearchFilter
+ OR ($13='follow_up' AND ` + work.TaskIsFollowUpSQL + `))` + search.filter("$14")
+}
 
-func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool) string {
+func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool, search taskSearch) string {
 	window, order := taskPageWindow(state, ordering)
-	candidates := taskMatchSource + taskQueryFilter
+	filter := taskQueryFilter(search)
+	candidates := taskMatchSource + filter
 	if grouped && state == work.TaskOpen {
 		candidates = `
 	FROM (
 		SELECT task.*, row_number() OVER (
 			PARTITION BY task.practice_id, task.location_id, task.phone, task.category, task.origin
 			ORDER BY ` + order + `
-		) AS member_rank` + taskMatchSource + taskQueryFilter + `
+		) AS member_rank` + taskMatchSource + filter + `
 			AND task.state = 'OPEN'
 	) task
 	WHERE task.member_rank = 1`
@@ -489,6 +556,7 @@ func queryTaskFolderCounts(
 	tx pgx.Tx,
 	command QueryTasksCommand,
 	locationIDs []string,
+	search taskSearch,
 ) (work.TaskFolderCounts, error) {
 	var counts work.TaskFolderCounts
 	err := tx.QueryRow(ctx, `
@@ -501,7 +569,7 @@ func queryTaskFolderCounts(
 				`+taskHasRecentTextAttention+` AS recent_text_attention,
 				`+taskIsSpringHillReview+` AS spring_hill_review`+taskMatchSource+`
 			WHERE task.practice_id = $1
-				AND task.location_id = ANY($2::uuid[])`+taskSearchFilter+`
+				AND task.location_id = ANY($2::uuid[])`+search.filter("$9")+`
 				AND task.state = $5`+taskResponsibilityFilter("$6", "$7")+`
 		)
 		SELECT
@@ -520,7 +588,7 @@ func queryTaskFolderCounts(
 			count(*) FILTER (WHERE call_recovery),
 			count(*) FILTER (WHERE spring_hill_review)
 		FROM scoped
-	`, command.PracticeID, locationIDs, command.Search, normalizedDigits(command.Search), command.State, command.Responsibility, strings.ToLower(command.Identity.Email), command.Kind).Scan(
+	`, search.arguments(command.PracticeID, locationIDs, search.pattern, search.digits, command.State, command.Responsibility, strings.ToLower(command.Identity.Email), command.Kind)...).Scan(
 		&counts.Tasks,
 		&counts.Categories.Billing,
 		&counts.Categories.Appointments,

@@ -19,7 +19,10 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, ErrDenied
 	}
 	discovery, err := m.access.DiscoverActor(ctx, identity)
-	if err != nil || !hasOperationalCallingAccess(discovery) {
+	if err != nil {
+		return SoftphoneState{}, callingAccessError(err)
+	}
+	if !hasOperationalCallingAccess(discovery) {
 		return SoftphoneState{}, ErrDenied
 	}
 	now := m.now()
@@ -30,7 +33,7 @@ func (m *Module) AcquireSoftphone(
 	defer func() { _ = tx.Rollback(ctx) }()
 	practiceIDs, err := m.access.LockOperationalActor(ctx, tx, identity)
 	if err != nil {
-		return SoftphoneState{}, ErrDenied
+		return SoftphoneState{}, callingAccessError(err)
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT leg.state
@@ -197,7 +200,7 @@ func (m *Module) SetReadiness(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := m.access.LockOperationalActor(ctx, tx, command.Identity); err != nil {
-		return SoftphoneState{}, ErrDenied
+		return SoftphoneState{}, callingAccessError(err)
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT call.id
@@ -231,13 +234,13 @@ func (m *Module) SetReadiness(
 		FOR UPDATE
 	`, command.Identity.Subject, command.SessionID, now).Scan(&ownsLease)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return SoftphoneState{}, ErrDenied
+		return SoftphoneState{}, ErrConflict
 	}
 	if err != nil {
 		return SoftphoneState{}, fmt.Errorf("lock calling readiness lease: %w", err)
 	}
 	if !ownsLease {
-		return SoftphoneState{}, ErrDenied
+		return SoftphoneState{}, ErrConflict
 	}
 
 	var state SoftphoneState
@@ -272,7 +275,7 @@ func (m *Module) SetReadiness(
 		&state.SessionID, &state.LeaseExpiresAt, &state.Available,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return SoftphoneState{}, ErrDenied
+		return SoftphoneState{}, ErrConflict
 	}
 	if err != nil {
 		return SoftphoneState{}, fmt.Errorf("update calling readiness: %w", err)

@@ -94,7 +94,7 @@ type Server struct {
 	workspace       *workspace.Module
 	serviceAuth     ServiceAuthenticator
 	observer        observability.Observer
-	analyticsActive atomic.Bool
+	analyticsActive atomic.Int32
 }
 
 type serverDependencies struct {
@@ -617,14 +617,12 @@ func (server *Server) QueryOperatorAIAnalytics(
 	page, err := server.interactions.QueryAnalytics(
 		ctx,
 		interaction.QueryAnalyticsCommand{
-			Identity:        identity,
-			ManualTag:       stringValue(body.ManualTag),
-			NeedsReviewOnly: body.NeedsReviewOnly != nil && *body.NeedsReviewOnly,
-			PracticeID:      body.PracticeId.String(),
-			LocationID:      uuidString(body.LocationId),
-			Range:           interaction.AnalyticsRange(body.Range),
-			Cursor:          stringValue(body.Cursor),
-			Limit:           intValue(body.Limit),
+			Identity:   identity,
+			PracticeID: body.PracticeId.String(),
+			LocationID: uuidString(body.LocationId),
+			Range:      interaction.AnalyticsRange(body.Range),
+			Cursor:     stringValue(body.Cursor),
+			Limit:      intValue(body.Limit),
 		},
 	)
 	if err != nil {
@@ -2244,12 +2242,16 @@ func (server *Server) writeError(
 	message string,
 	retryable bool,
 ) {
+	server.writeJSON(w, status, errorEnvelope(r, code, message, retryable))
+}
+
+func errorEnvelope(r *http.Request, code, message string, retryable bool) api.ErrorEnvelope {
 	var envelope api.ErrorEnvelope
 	envelope.Error.Code = code
 	envelope.Error.Message = message
 	envelope.Error.CorrelationId = correlationID(r.Context())
 	envelope.Error.Retryable = retryable
-	server.writeJSON(w, status, envelope)
+	return envelope
 }
 
 func (server *Server) writeJSON(w http.ResponseWriter, status int, value any) {
@@ -3377,9 +3379,8 @@ func operatorAIAnalyticsPageResponse(
 	page interaction.AnalyticsPage,
 ) (api.OperatorAIAnalyticsPage, error) {
 	response := api.OperatorAIAnalyticsPage{
-		AvailableTags: &page.AvailableTags,
-		Calls:         make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
-		NextCursor:    page.NextCursor,
+		Calls:      make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
+		NextCursor: page.NextCursor,
 	}
 	if page.Summary != nil {
 		pendingIssues, err := operatorAICallIssuesResponse(page.PendingIssues)
@@ -3422,7 +3423,6 @@ func operatorAIAnalyticsPageResponse(
 		}
 		response.Calls = append(response.Calls, api.OperatorAICallAnalytics{
 			Id:                  id,
-			ManualTags:          &call.ManualTags,
 			ReviewReasons:       &call.ReviewReasons,
 			LocationId:          locationID,
 			LocationName:        call.LocationName,
@@ -3485,6 +3485,15 @@ func operatorAIInteractionAnalyticsResponse(
 		P50TotalLatencyMs:     detail.P50TotalLatencyMs,
 		Timeline:              make([]api.OperatorAITimelineItem, 0, len(detail.Timeline)),
 		ToolExecutions:        make([]api.OperatorAIToolExecution, 0, len(detail.ToolExecutions)),
+		Scorecard:             make([]api.AgentCallVerdict, 0, len(detail.Scorecard)),
+	}
+	for _, verdict := range detail.Scorecard {
+		response.Scorecard = append(response.Scorecard, api.AgentCallVerdict{
+			Question: verdict.Question,
+			Code:     verdict.Code,
+			Prompt:   verdict.Prompt,
+			Answer:   api.AgentCallVerdictAnswer(verdict.Answer),
+		})
 	}
 	for _, item := range detail.Timeline {
 		payload := item.Payload

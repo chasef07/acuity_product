@@ -113,6 +113,13 @@ var (
 	ErrProviderCapabilityMissing = errors.New("provider capability is unavailable")
 )
 
+func callingAccessError(err error) error {
+	if errors.Is(err, access.ErrDenied) {
+		return ErrDenied
+	}
+	return fmt.Errorf("check calling access: %w", err)
+}
+
 type providerRecordingFailure struct {
 	OccurredAt time.Time
 }

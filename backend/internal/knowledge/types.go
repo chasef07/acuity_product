@@ -23,9 +23,9 @@ type Embedder interface {
 	Embed(context.Context, []string, TaskType) ([][]float32, error)
 }
 type Config struct {
-	MinSimilarity   float64
-	MaxPassages     int
-	ProviderTimeout time.Duration
+	MinSimilarity          float64
+	MaxPassages            int
+	SearchEmbeddingTimeout time.Duration
 }
 type Module struct {
 	db       postgres.Database
@@ -50,10 +50,10 @@ func New(db postgres.Database, accessModule *access.Module, embedder Embedder, c
 	if config.MaxPassages == 0 {
 		config.MaxPassages = 4
 	}
-	if config.ProviderTimeout == 0 {
-		config.ProviderTimeout = 8 * time.Second
+	if config.SearchEmbeddingTimeout == 0 {
+		config.SearchEmbeddingTimeout = 8 * time.Second
 	}
-	if config.MaxPassages < 1 || config.MaxPassages > 8 || config.MinSimilarity < 0 || config.MinSimilarity > 1 || config.ProviderTimeout <= 0 {
+	if config.MaxPassages < 1 || config.MaxPassages > 8 || config.MinSimilarity < 0 || config.MinSimilarity > 1 || config.SearchEmbeddingTimeout <= 0 {
 		return nil, ErrInvalidInput
 	}
 	return &Module{db: db, access: accessModule, embedder: embedder, config: config}, nil
@@ -80,6 +80,7 @@ type Revision struct {
 	ContentHash string    `json:"contentHash"`
 	Model       string    `json:"model"`
 	Dimensions  int       `json:"dimensions"`
+	Version     int       `json:"version"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
 type Passage struct {

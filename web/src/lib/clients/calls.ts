@@ -53,18 +53,22 @@ export type RecoverySource = {
 }
 
 export function useRecoverySource(
-  task: Pick<Task, "id" | "version" | "callId">,
+  task: Pick<Task, "id" | "version" | "callId" | "interactions" | "relatedInteractionCount">,
   revision: number,
 ): RecoverySource {
   const taskKey = `${task.id}:${task.version}:${task.callId ?? ""}:${revision}`
+  const loaded = task.relatedInteractionCount > 0 &&
+    task.interactions.length === task.relatedInteractionCount
   const detail = usePortalQuery(
-    taskKey,
+    loaded ? null : taskKey,
     (transport) => readTask({ ...transport, path: { taskId: task.id } }),
     { keepPrevious: true },
   )
-  const interactions = detail.status === "loading" ? [] : (detail.data?.interactions ?? [])
+  const interactions = loaded
+    ? task.interactions
+    : detail.status === "loading" ? [] : (detail.data?.interactions ?? [])
   const callID =
-    detail.status === "ready" && !detail.refreshing
+    loaded || (detail.status === "ready" && !detail.refreshing)
       ? (newestRecoveryInteraction(interactions)?.callId ?? task.callId)
       : undefined
   const call = usePortalQuery(
@@ -74,7 +78,7 @@ export function useRecoverySource(
   )
   const shownCall = call.status === "loading" ? undefined : call.data
   const failure =
-    detail.status === "failed"
+    !loaded && detail.status === "failed"
       ? detail.failure
       : call.status === "failed"
         ? call.failure

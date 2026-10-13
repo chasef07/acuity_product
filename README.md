@@ -25,8 +25,9 @@ that connects them.
   and flag a call with a durable note. Acuity Platform Operators review these in
   Manage my agent using the Flagged calls filter within the selected Practice.
   Flags preserve the original report; they do not create patient Tasks or send notifications.
-  Manage my agent also shows, read-only, the knowledge and insurance list Abita uses
-  at each authorized Location.
+  Manage my agent also lets staff edit the knowledge Abita uses at each authorized
+  Location, see its version history, and restore an earlier version, and shows,
+  read-only, the insurance list.
 - **AI evidence:** preserve AI Interactions, transcripts, and receipt-backed
   appointment outcomes without treating an automated claim as proof of success.
 
@@ -122,11 +123,11 @@ also rejects comments in hand-written Go; only tool directives such as
 Knowledge uses Access for Practice and office authorization, a Google Vertex AI
 adapter for embeddings, and PostgreSQL/pgvector for passages and immutable revisions.
 Embedding requests run outside database transactions; the Agent has read-only access.
-Reviewed office facts live in [`knowledge/offices/`](knowledge/offices/). The
-[Knowledge workflow](knowledge/README.md) validates edits and publishes complete
-office revisions from Git. Search combines semantic and text matching, preserving
+Each office's active database revision is its only knowledge source; staff
+publish complete office revisions through the Portal backend, as described in the
+[Knowledge workflow](knowledge/README.md). Search combines semantic and text matching, preserving
 complete facts and restrictions while limiting the evidence returned to the Agent.
-Staff read a Location's current revision, in import order and without embeddings,
+Staff read a Location's current revision, in saved order and without embeddings,
 through its single Abita Office Route.
 
 The browser/backend contract is [`api/openapi.yaml`](api/openapi.yaml).
@@ -179,7 +180,11 @@ containing data you need.** Backend tests require a name ending in `_test`;
 browser tests require `_e2e`.
 
 These examples assume local PostgreSQL accepts your current OS user on
-`127.0.0.1`. Adjust the connection settings for your local installation. Create
+`127.0.0.1` and has the pgvector extension installed; without it, migrations
+stop at `0066_office_knowledge`. Homebrew's `pgvector` installs only for
+`postgresql@17` and newer, so run tests on `postgresql@17` or CI's
+`pgvector/pgvector:0.8.5-pg16-bookworm` image.
+Adjust the connection settings for your local installation. Create
 the databases once, then set the URLs in the shell where you run the tests.
 
 ```sh

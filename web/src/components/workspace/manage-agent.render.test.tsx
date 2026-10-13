@@ -6,15 +6,21 @@ import { JSDOM } from "jsdom"
 
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { InsuranceList } from "./insurance-list.tsx"
+import { KnowledgeHistory } from "./knowledge-base.tsx"
 import { ManageAgent } from "./manage-agent.tsx"
-import { clearAccessToken } from "../../lib/auth-client.ts"
+import { authClient, clearAccessToken } from "../../lib/auth-client.ts"
 import type {
   InsuranceCoverage,
   InsurancePlanRule,
   InsurancePlansQuery,
+  KnowledgePublication,
+  KnowledgeRevisionHistoryEntry,
+  KnowledgeRevisionSummary,
   Location,
   LocationKnowledge,
+  LocationKnowledgeHistory,
   LocationKnowledgeQuery,
+  LocationKnowledgeRevisionQuery,
 } from "../../lib/api/generated/types.gen.ts"
 
 const locations: Location[] = [
@@ -46,7 +52,7 @@ test("Manage agent shows the selected page at full width without its own navigat
   const page = harness(t)
   for (const [selected, heading] of [["transcripts", "Transcripts"], ["knowledge", "Knowledge base"], ["insurance", "Insurance list"]] as const) {
     await page.render(
-      <ManageAgent practiceID="practice-1" locationScopeID="" locations={locations} page={selected} />,
+      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID="" locations={locations} page={selected} />,
     )
     assert.equal(page.host.querySelector("h1")?.textContent, heading)
     assert.equal(page.host.querySelector("nav"), null)
@@ -158,7 +164,7 @@ test("knowledge shows its import date and collapsed sections that keep line brea
   const page = harness(t)
   page.knowledge = {
     locationId: locations[0].id,
-    revision: { id: "revision-1", createdAt: "2026-09-30T15:00:00Z" },
+    revision: { id: "revision-1", version: 1, createdAt: "2026-09-30T15:00:00Z" },
     sections: [
       { id: "hours", title: "Office hours", text: "Monday to Friday\n8am to 5pm" },
       { id: "parking", title: "Parking", text: "Synthetic garage on site." },
@@ -182,6 +188,45 @@ test("knowledge shows its import date and collapsed sections that keep line brea
   await page.unmount()
 })
 
+test("knowledge search filters sections by title and text, opens matches, and says when nothing matches", async (t) => {
+  const page = harness(t)
+  page.knowledge = {
+    locationId: locations[0].id,
+    sections: [
+      { id: "hours", title: "Office hours", text: "Monday to Friday\n8am to 5pm" },
+      { id: "fax", title: "Office fax number", text: "Synthetic fax: (000) 555-0100." },
+      { id: "languages", title: "Languages spoken", text: "Doctors speak Español and English." },
+    ],
+  }
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  const search = page.host.querySelector<HTMLInputElement>("input[type='search']")
+  assert.ok(search)
+  assert.equal(search.getAttribute("aria-label"), "Search knowledge")
+  const count = page.host.querySelector("[aria-live='polite']")
+  assert.equal(count?.textContent, "")
+
+  await page.type(search, "FAX")
+  assert.equal(page.host.querySelector("[aria-live='polite']"), count)
+  assert.equal(count?.textContent, "1 of 3 entries")
+  assert.deepEqual(page.rowTitles(), ["Office fax number"])
+  assert.equal(page.panel(page.button(/^Office fax number$/)).open, true)
+  assert.match(page.text(), /1 of 3 entries/)
+
+  await page.type(search, "espanol monday")
+  assert.deepEqual(page.rowTitles(), [])
+  assert.match(page.text(), /No entries match “espanol monday”\./)
+
+  await page.type(search, "espanol")
+  assert.deepEqual(page.rowTitles(), ["Languages spoken"])
+
+  await page.type(search, "")
+  assert.deepEqual(page.rowTitles(), ["Office hours", "Office fax number", "Languages spoken"])
+  assert.equal(page.panel(page.button(/^Office hours$/)).open, false)
+  assert.doesNotMatch(page.text(), /of 3 entries/)
+  await page.unmount()
+})
+
 test("knowledge without an import and unavailable knowledge say so", async (t) => {
   const page = harness(t)
   page.knowledge = { locationId: locations[0].id, sections: [] }
@@ -198,19 +243,432 @@ test("knowledge without an import and unavailable knowledge say so", async (t) =
   await page.unmount()
 })
 
-function insuranceList(locationScopeID = "") {
-  return <ManageAgent practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" />
+const syntheticKnowledge: LocationKnowledge = {
+  locationId: locations[0].id,
+  revision: { id: "00000000-0000-4000-8000-0000000000a1", version: 3, createdAt: "2026-09-30T15:00:00Z" },
+  sections: [
+    { id: "hours", title: "Office hours", text: "Monday to Friday\n8am to 5pm" },
+    { id: "parking", title: "Parking", text: "Synthetic garage on site." },
+  ],
 }
 
-function knowledgeBase(locationScopeID = "") {
-  return <ManageAgent practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" />
+test("editing an entry and publishing with a reason sends the full list and shows the new revision", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  assert.equal(page.maybeButton("Publish"), undefined)
+
+  await page.rowAction("Office hours", "Edit")
+  await page.fill(page.field("Text"), "Monday to Friday\n8am to 5:30pm")
+  assert.equal(page.button(/^Publish$/).disabled, true)
+  await page.fill(page.field("Why are you changing this?"), "   ")
+  assert.equal(page.button(/^Publish$/).disabled, true)
+  await page.fill(page.field("Why are you changing this?"), "Office closes later on weekdays")
+  assert.equal(page.button(/^Publish$/).disabled, false)
+
+  page.publishResult = { id: "00000000-0000-4000-8000-0000000000a2", version: 4, createdAt: "2026-10-12T18:30:00Z" }
+  page.afterPublish = {
+    ...syntheticKnowledge,
+    revision: page.publishResult,
+    sections: [{ ...syntheticKnowledge.sections[0], text: "Monday to Friday\n8am to 5:30pm" }, syntheticKnowledge.sections[1]],
+  }
+  let release!: () => void
+  page.publishGate = new Promise((resolve) => { release = resolve })
+  await page.click("Publish")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+  assert.equal(page.maybeButton("Publishing…")!.closest("fieldset")?.disabled, true)
+  assert.equal(page.field("Text").closest("fieldset")?.disabled, true)
+  release()
+  await waitFor(() => page.knowledgeRequests.length === 2 && /Office hours/.test(page.text()))
+  const [publication] = page.publishRequests
+  assert.match(publication.revisionId, /^[0-9a-f-]{36}$/)
+  assert.deepEqual({ ...publication, revisionId: "" }, {
+    practiceId: "practice-1",
+    locationId: locations[0].id,
+    revisionId: "",
+    expectedRevisionId: syntheticKnowledge.revision!.id,
+    reason: "Office closes later on weekdays",
+    sections: [
+      { id: "hours", title: "Office hours", text: "Monday to Friday\n8am to 5:30pm" },
+      { id: "parking", title: "Parking", text: "Synthetic garage on site." },
+    ],
+  })
+  assert.equal(page.host.querySelector("time")?.getAttribute("dateTime"), "2026-10-12T18:30:00Z")
+  assert.match(page.host.querySelector("header")?.textContent ?? "", /Version 4/)
+  await act(async () => page.button(/^Office hours$/).click())
+  assert.match(page.text(), /8am to 5:30pm/)
+  assert.equal(page.maybeButton("Publish"), undefined)
+  await page.unmount()
+})
+
+test("adding an entry gives it an ID from its title and removing an entry leaves it out", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Parking", "Remove")
+  assert.deepEqual(page.rowTitles(), ["Office hours"])
+  await page.click("Add entry")
+  await page.fill(page.field("Title"), "Café & valet parking")
+  await page.fill(page.field("Text"), "Synthetic valet at the front door.")
+  await page.fill(page.field("Why are you changing this?"), "Garage closed")
+  page.publishResult = { id: "00000000-0000-4000-8000-0000000000a3", version: 4, createdAt: "2026-10-12T18:30:00Z" }
+  await page.click("Publish")
+  await waitFor(() => page.publishRequests.length === 1 && page.knowledgeRequests.length === 2)
+  assert.deepEqual(page.publishRequests[0].sections, [
+    { id: "hours", title: "Office hours", text: "Monday to Friday\n8am to 5pm" },
+    { id: "cafe-valet-parking", title: "Café & valet parking", text: "Synthetic valet at the front door." },
+  ])
+  await page.unmount()
+})
+
+test("a rejected, conflicting, or failed publish says why and keeps the unpublished changes", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Office hours", "Edit")
+  await page.fill(page.field("Text"), "**Monday** to Friday")
+  await page.fill(page.field("Why are you changing this?"), "Bold the days")
+
+  page.publishStatus = 400
+  page.publishError = { code: "INVALID_KNOWLEDGE_ENTRY", message: "Entry \"hours\" uses markdown formatting; write plain text.", correlationId: "synthetic", retryable: false, entryId: "hours" }
+  await page.click("Publish")
+  await waitFor(() => page.alert() !== "")
+  const hours = page.button(/^Office hours$/).closest("li")!
+  assert.equal(hours.querySelector("[role='alert']")?.textContent, "Entry \"hours\" uses markdown formatting; write plain text.")
+  const rejected = page.field("Text")
+  await page.fill(rejected, "**Monday** to Friday, closed weekends")
+  assert.equal(page.field("Text"), rejected)
+  assert.equal(page.alert(), "")
+  await page.fill(rejected, "**Monday** to Friday")
+
+  for (const [status, error, message] of [
+    [409, { code: "KNOWLEDGE_CHANGED", message: "Someone else changed this office's knowledge. Reload to see their changes.", correlationId: "synthetic", retryable: false }, "Someone else changed this office's knowledge. Reload to see their changes."],
+    [503, { code: "UNAVAILABLE", message: "Not published. Nothing changed. Try again.", correlationId: "synthetic", retryable: true }, "Not published. Nothing changed. Try again."],
+    [503, undefined, "Not published. Nothing changed. Try again."],
+  ] as const) {
+    page.publishStatus = status
+    page.publishError = error
+    await page.click("Publish")
+    await waitFor(() => page.alert() === message)
+    assert.equal(page.field("Text").value, "**Monday** to Friday")
+    assert.equal(page.field("Why are you changing this?").value, "Bold the days")
+  }
+  assert.equal(page.publishRequests.length, 4)
+  assert.equal(new Set(page.publishRequests.map((request) => request.revisionId)).size, 1)
+  assert.equal(page.knowledgeRequests.length, 1)
+
+  await page.click("Discard changes")
+  await waitFor(() => page.knowledgeRequests.length === 2 && /Office hours/.test(page.text()))
+  assert.equal(page.maybeButton("Publish"), undefined)
+  await page.unmount()
+})
+
+test("unpublished changes survive leaving the page and the browser asks before unloading them", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  assert.equal(page.unload(), false)
+  await page.rowAction("Parking", "Remove")
+  await page.fill(page.field("Why are you changing this?"), "Garage closed")
+  assert.equal(page.unload(), true)
+
+  await page.render(insuranceList())
+  await waitFor(() => page.groups().length === 3)
+  assert.equal(page.unload(), true)
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  assert.deepEqual(page.rowTitles(), ["Office hours"])
+  assert.equal(page.field("Why are you changing this?").value, "Garage closed")
+
+  await page.click("Discard changes")
+  await waitFor(() => page.rowTitles().length === 2)
+  assert.equal(page.unload(), false)
+
+  await page.rowAction("Parking", "Remove")
+  assert.equal(page.unload(), true)
+  await page.render(insuranceList())
+  await authClient.signOut({ fetchOptions: { baseURL: "http://localhost/api/auth", customFetchImpl: async () => Response.json({ success: true }) } })
+  assert.equal(page.unload(), false)
+  await page.render(knowledgeBase(), "after sign-out")
+  await waitFor(() => page.rowTitles().length === 2)
+  assert.equal(page.maybeButton("Publish"), undefined)
+  await page.unmount()
+})
+
+test("a publish still running after leaving and returning stays locked, then shows the new revision", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Office hours", "Edit")
+  await page.fill(page.field("Text"), "Closes at six")
+  await page.fill(page.field("Why are you changing this?"), "Later closing")
+  page.publishResult = { id: "00000000-0000-4000-8000-0000000000a3", version: 4, createdAt: "2026-10-12T19:00:00Z" }
+  page.afterPublish = { ...syntheticKnowledge, revision: page.publishResult, sections: [{ ...syntheticKnowledge.sections[0], text: "Closes at six" }, syntheticKnowledge.sections[1]] }
+  let release!: () => void
+  page.publishGate = new Promise((resolve) => { release = resolve })
+  await page.click("Publish")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+
+  await page.render(insuranceList())
+  await waitFor(() => page.groups().length === 3)
+  await page.render(knowledgeBase(), "returned")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+  assert.equal(page.maybeButton("Publishing…")!.closest("fieldset")?.disabled, true)
+
+  release()
+  await waitFor(() => page.maybeButton("Publishing…") === undefined && page.host.querySelector("time")?.getAttribute("dateTime") === "2026-10-12T19:00:00Z")
+  assert.equal(page.maybeButton("Publish"), undefined)
+  assert.equal(page.unload(), false)
+  await act(async () => page.button(/^Office hours$/).click())
+  assert.match(page.text(), /Closes at six/)
+  await page.unmount()
+})
+
+test("a publish that fails after leaving and returning says why and keeps the changes", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Office hours", "Edit")
+  await page.fill(page.field("Text"), "Closes at six")
+  await page.fill(page.field("Why are you changing this?"), "Later closing")
+  page.publishStatus = 409
+  page.publishError = { code: "KNOWLEDGE_CHANGED", message: "Someone else changed this office's knowledge. Reload to see their changes.", correlationId: "synthetic", retryable: false }
+  let release!: () => void
+  page.publishGate = new Promise((resolve) => { release = resolve })
+  await page.click("Publish")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+
+  await page.render(insuranceList())
+  await waitFor(() => page.groups().length === 3)
+  await page.render(knowledgeBase(), "returned")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+  release()
+  await waitFor(() => page.alert() === "Someone else changed this office's knowledge. Reload to see their changes.")
+  assert.equal(page.field("Why are you changing this?").value, "Later closing")
+  assert.equal(page.button(/^Publish$/).disabled, false)
+  await page.click("Discard changes")
+  await page.unmount()
+})
+
+test("a rejected entry is shown open beside its message after leaving and returning", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Office hours", "Edit")
+  await page.fill(page.field("Text"), "**Closes** at six")
+  await page.fill(page.field("Why are you changing this?"), "Later closing")
+  page.publishStatus = 400
+  page.publishError = { code: "INVALID_KNOWLEDGE_ENTRY", message: "Entry \"hours\" uses markdown formatting; write plain text.", correlationId: "synthetic", retryable: false, entryId: "hours" }
+  let release!: () => void
+  page.publishGate = new Promise((resolve) => { release = resolve })
+  await page.click("Publish")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+
+  await page.render(insuranceList())
+  await waitFor(() => page.groups().length === 3)
+  await page.render(knowledgeBase(), "returned")
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+  release()
+  await waitFor(() => page.maybeButton("Publishing…") === undefined)
+  const hours = page.button(/^Office hours$/)
+  assert.equal(hours.getAttribute("aria-expanded"), "true")
+  assert.equal(hours.closest("li")!.querySelector("[role='alert']")?.textContent, "Entry \"hours\" uses markdown formatting; write plain text.")
+  await page.click("Discard changes")
+  await page.unmount()
+})
+
+test("unpublished changes belong to the person who made them", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase("", "staff-a"))
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Parking", "Remove")
+  await page.fill(page.field("Why are you changing this?"), "Garage closed")
+
+  await page.render(knowledgeBase("", "staff-b"), "someone else")
+  await waitFor(() => page.rowTitles().length === 2)
+  assert.equal(page.maybeButton("Publish"), undefined)
+
+  await page.render(knowledgeBase("", "staff-a"), "back again")
+  await waitFor(() => page.rowTitles().length === 1)
+  assert.equal(page.field("Why are you changing this?").value, "Garage closed")
+  await page.click("Discard changes")
+  await page.unmount()
+})
+
+const versionOne: LocationKnowledge = {
+  locationId: locations[0].id,
+  revision: { id: "00000000-0000-4000-8000-0000000000b1", version: 1, createdAt: "2026-09-01T15:00:00Z" },
+  sections: [
+    { id: "hours", title: "Office hours", text: "Monday to Friday\n8am to 4pm" },
+    { id: "fax", title: "Fax", text: "Synthetic fax 555-0100." },
+  ],
+}
+const versionTwo: LocationKnowledge = {
+  locationId: locations[0].id,
+  revision: { id: "00000000-0000-4000-8000-0000000000b2", version: 2, createdAt: "2026-09-15T15:00:00Z" },
+  sections: [versionOne.sections[0], syntheticKnowledge.sections[1]],
+}
+
+function historyEntry(knowledge: LocationKnowledge, change: Partial<KnowledgeRevisionHistoryEntry>): KnowledgeRevisionHistoryEntry {
+  return { ...knowledge.revision!, author: "Unknown user", provenance: "portal", reason: "", active: false, agentSearchCount: 0, ...change }
+}
+
+const syntheticHistory: LocationKnowledgeHistory = {
+  locationId: locations[0].id,
+  revisions: [
+    historyEntry(syntheticKnowledge, { author: "staff@abita.test", reason: "Office closes later", active: true, previousRevisionId: versionTwo.revision!.id, lastAgentSearchAt: "2026-10-01T16:00:00Z", agentSearchCount: 4 }),
+    historyEntry(versionTwo, { author: "operator@acuity.test", reason: "Add parking", previousRevisionId: versionOne.revision!.id }),
+    historyEntry(versionOne, { provenance: "git:abc123", reason: "initial import", lastAgentSearchAt: "2026-09-10T16:00:00Z", agentSearchCount: 1 }),
+  ],
+}
+
+function withHistory(page: ReturnType<typeof harness>) {
+  page.knowledge = syntheticKnowledge
+  page.history = syntheticHistory
+  page.revisions = { [syntheticKnowledge.revision!.id]: syntheticKnowledge, [versionTwo.revision!.id]: versionTwo, [versionOne.revision!.id]: versionOne }
+}
+
+async function openHistory(page: ReturnType<typeof harness>, onRestored = () => {}) {
+  await page.render(<KnowledgeHistory practiceID="practice-1" locationID={locations[0].id} onRestored={onRestored} />)
+  await waitFor(() => page.historyRows().length === page.history.revisions.length)
+}
+
+async function selectVersion(page: ReturnType<typeof harness>, version: number) {
+  const back = page.maybeButton("Back to history")
+  if (back) await act(async () => back.click())
+  const row = Array.from(page.host.querySelectorAll<HTMLButtonElement>("li button")).find((item) => item.textContent?.startsWith(`Version ${version}`))
+  assert.ok(row, `Version ${version}`)
+  await act(async () => row.click())
+}
+
+test("the header shows when the active version was published, its number, and a History button", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  const header = page.host.querySelector("header")!
+  assert.match(header.textContent ?? "", /Updated .+ · Version 3History$/)
+  assert.ok(Array.from(header.querySelectorAll("button")).some((button) => button.textContent === "History"))
+  await page.unmount()
+})
+
+test("History lists every revision newest first with its author, reason, and agent use", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  await openHistory(page)
+  assert.deepEqual(page.historyRequests, [{ practiceId: "practice-1", locationId: locations[0].id }])
+  const rows = page.historyRows()
+  assert.match(rows[0], /^Version 3Active.*staff@abita\.test.*Office closes later.*Last used by the agent: .+ · 4 searches$/)
+  assert.match(rows[1], /^Version 2.*operator@acuity\.test.*Add parking.*Not used by the agent yet$/)
+  assert.doesNotMatch(rows[1], /Active/)
+  assert.match(rows[2], /^Version 1.*Unknown user.*initial import.*Last used by the agent: .+ · 1 search$/)
+  await page.unmount()
+})
+
+test("selecting a revision shows the entries added, removed, and changed since the version before it", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  await openHistory(page)
+
+  await selectVersion(page, 2)
+  await waitFor(() => /Added/.test(page.text()))
+  assert.deepEqual(page.revisionRequests.map((request) => request.revisionId).sort(), [versionOne.revision!.id, versionTwo.revision!.id])
+  assert.match(page.text(), /Compared with version 1/)
+  assert.match(page.text(), /Added.*Parking.*Synthetic garage on site\./)
+  assert.match(page.text(), /Removed.*Fax.*Synthetic fax 555-0100\./)
+  assert.doesNotMatch(page.text(), /Changed/)
+
+  await selectVersion(page, 3)
+  await waitFor(() => /Changed/.test(page.text()))
+  assert.match(page.text(), /Changed.*Office hours.*Before[\s\S]*8am to 4pm.*After[\s\S]*8am to 5pm/)
+  assert.doesNotMatch(page.text(), /Added|Removed/)
+  assert.equal(page.maybeButton("Restore this version"), undefined)
+
+  await selectVersion(page, 1)
+  await waitFor(() => /Fax/.test(page.text()))
+  assert.match(page.text(), /First version.*Added.*Office hours[\s\S]*Fax/)
+  await page.unmount()
+})
+
+test("restoring a past revision publishes its entries as a new version with a reason", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  let restoredCount = 0
+  await openHistory(page, () => restoredCount++)
+  await selectVersion(page, 1)
+  await waitFor(() => page.maybeButton("Restore this version") !== undefined)
+  await page.click("Restore this version")
+  assert.equal(page.maybeButton("Restore")!.disabled, true)
+  await page.fill(page.field("Why restore this version?"), "Undo the parking change")
+  assert.equal(page.maybeButton("Restore")!.disabled, false)
+
+  const restored = { id: "00000000-0000-4000-8000-0000000000c4", version: 4, createdAt: "2026-10-12T20:00:00Z" }
+  page.publishResult = restored
+  page.afterPublishHistory = {
+    ...syntheticHistory,
+    revisions: [
+      historyEntry({ ...versionOne, revision: restored }, { author: "staff@abita.test", reason: "Undo the parking change", active: true, previousRevisionId: syntheticKnowledge.revision!.id }),
+      ...syntheticHistory.revisions.map((row) => ({ ...row, active: false })),
+    ],
+  }
+  await page.click("Restore")
+  await waitFor(() => page.historyRows().length === 4)
+  const [publication] = page.publishRequests
+  assert.match(publication.revisionId, /^[0-9a-f-]{36}$/)
+  assert.deepEqual({ ...publication, revisionId: "" }, {
+    practiceId: "practice-1",
+    locationId: locations[0].id,
+    revisionId: "",
+    expectedRevisionId: syntheticKnowledge.revision!.id,
+    reason: "Undo the parking change",
+    sections: versionOne.sections,
+  })
+  assert.equal(restoredCount, 1)
+  assert.match(page.historyRows()[0], /^Version 4Active.*Undo the parking change/)
+  await page.unmount()
+})
+
+test("a restore against a stale active revision says so and changes nothing", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  let restoredCount = 0
+  await openHistory(page, () => restoredCount++)
+  await selectVersion(page, 1)
+  await waitFor(() => page.maybeButton("Restore this version") !== undefined)
+  await page.click("Restore this version")
+  await page.fill(page.field("Why restore this version?"), "Undo the parking change")
+  page.publishStatus = 409
+  page.publishError = { code: "KNOWLEDGE_CHANGED", message: "Someone else changed this office's knowledge. Reload to see their changes.", correlationId: "synthetic", retryable: false }
+  await page.click("Restore")
+  await waitFor(() => page.text().includes("Someone else changed this office's knowledge. Reload to see their changes."))
+  assert.equal(page.publishRequests.length, 1)
+  assert.equal(page.historyRequests.length, 1)
+  assert.equal(restoredCount, 0)
+  assert.equal(page.field("Why restore this version?").value, "Undo the parking change")
+  await page.unmount()
+})
+
+function insuranceList(locationScopeID = "") {
+  return <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" />
+}
+
+function knowledgeBase(locationScopeID = "", actorSubject = "staff-a") {
+  return <ManageAgent actorSubject={actorSubject} practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" />
 }
 
 function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {
   return { names: [], allowedProviders: [], requirements: [], acceptedAt: [], ...change }
 }
 
-type Envelope = { code: string; message: string; correlationId: string; retryable: boolean }
+type Envelope = { code: string; message: string; correlationId: string; retryable: boolean; entryId?: string }
 
 function harness(t: TestContext) {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", {
@@ -250,6 +708,18 @@ function harness(t: TestContext) {
     knowledgeStatus: 200,
     knowledgeError: undefined as Envelope | undefined,
     knowledge: { locationId: "", sections: [] } as LocationKnowledge,
+    publishRequests: [] as KnowledgePublication[],
+    publishStatus: 200,
+    publishError: undefined as Envelope | undefined,
+    publishResult: { id: "", version: 1, createdAt: "" } as KnowledgeRevisionSummary,
+    afterPublish: undefined as LocationKnowledge | undefined,
+    historyRequests: [] as LocationKnowledgeQuery[],
+    history: { locationId: "", revisions: [] } as LocationKnowledgeHistory,
+    afterPublishHistory: undefined as LocationKnowledgeHistory | undefined,
+    revisionRequests: [] as LocationKnowledgeRevisionQuery[],
+    revisions: {} as Record<string, LocationKnowledge>,
+    historyRows: () => Array.from(host.querySelectorAll("li"), (row) => row.textContent ?? ""),
+    publishGate: Promise.resolve(),
     render: (element: ReactNode, key = "first") =>
       act(async () => root.render(<SidebarProvider key={key}>{element}</SidebarProvider>)),
     unmount: () => act(async () => root.unmount()),
@@ -260,10 +730,47 @@ function harness(t: TestContext) {
       return { open: !panel.hasAttribute("hidden"), text: panel.textContent ?? "" }
     },
     alert: () => host.querySelector("[role='alert']")?.textContent ?? "",
+    type: (input: HTMLInputElement, value: string) =>
+      act(async () => {
+        Object.assign(input, { attachEvent() {}, detachEvent() {} })
+        input.focus()
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value)
+        input.dispatchEvent(new window.KeyboardEvent("keyup", { bubbles: true }))
+      }),
+    rowTitles: () => Array.from(host.querySelectorAll("li > button"), (row) => row.textContent ?? ""),
     button: (name: RegExp) => {
       const button = Array.from(host.querySelectorAll("button")).find((item) => name.test(item.textContent ?? ""))
       assert.ok(button, String(name))
       return button
+    },
+    maybeButton: (name: string) =>
+      Array.from(host.querySelectorAll("button")).find((item) => item.textContent === name),
+    field: (label: string) => {
+      const field = Array.from(host.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")).find(
+        (item) => item.labels?.[0]?.textContent === label,
+      )
+      assert.ok(field, label)
+      return field
+    },
+    fill: (field: HTMLInputElement | HTMLTextAreaElement, value: string) =>
+      act(async () => {
+        const prototype = field instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+        Object.assign(field, { attachEvent() {}, detachEvent() {} })
+        field.focus()
+        Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(field, value)
+        field.dispatchEvent(new window.KeyboardEvent("keyup", { bubbles: true }))
+      }),
+    unload: () => {
+      const event = new window.Event("beforeunload", { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    },
+    rowAction: async (title: string, name: string) => {
+      const row = page.button(new RegExp(`^${title}$`))
+      if (row.getAttribute("aria-expanded") === "false") await act(async () => row.click())
+      const button = Array.from(row.closest("li")!.querySelectorAll("button")).find((item) => item.textContent === name)
+      assert.ok(button, `${title}: ${name}`)
+      await act(async () => button.click())
     },
     click: async (name: string) => {
       const button = Array.from(host.querySelectorAll("button")).find((item) => item.textContent === name)
@@ -298,6 +805,23 @@ function harness(t: TestContext) {
       page.knowledgeRequests.push(body)
       if (page.knowledgeStatus !== 200) return failure(page.knowledgeStatus, page.knowledgeError)
       return Response.json(page.knowledge)
+    }
+    if (url.pathname === "/v1/knowledge/revisions/query") {
+      page.historyRequests.push((await request.json()) as LocationKnowledgeQuery)
+      return Response.json(page.history)
+    }
+    if (url.pathname === "/v1/knowledge/revisions/read") {
+      const body = (await request.json()) as LocationKnowledgeRevisionQuery
+      page.revisionRequests.push(body)
+      return Response.json(page.revisions[body.revisionId])
+    }
+    if (url.pathname === "/v1/knowledge/revisions") {
+      page.publishRequests.push((await request.json()) as KnowledgePublication)
+      await page.publishGate
+      if (page.publishStatus !== 200) return failure(page.publishStatus, page.publishError)
+      if (page.afterPublish) page.knowledge = page.afterPublish
+      if (page.afterPublishHistory) page.history = page.afterPublishHistory
+      return Response.json(page.publishResult)
     }
     assert.equal(url.pathname, "/v1/agent-calls/query")
     return Response.json({ calls: [], nextCursor: "" })

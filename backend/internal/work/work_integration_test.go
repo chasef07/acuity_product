@@ -383,6 +383,23 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 			err,
 		)
 	}
+	caseDifferingDuplicate := command
+	caseDifferingDuplicate.IdempotencyKey = "staff_task_case_differing_new_key"
+	caseDifferingDuplicate.CallerName = "jane doe"
+	caseDiffering, caseDifferingStatus, err := module.CreateAITask(
+		context.Background(),
+		caseDifferingDuplicate,
+	)
+	if err != nil ||
+		caseDifferingStatus != work.TaskDuplicate ||
+		caseDiffering.ID != first.ID {
+		t.Fatalf(
+			"case-differing AI Task duplicate = %#v, status = %q, err = %v",
+			caseDiffering,
+			caseDifferingStatus,
+			err,
+		)
+	}
 
 	task, err := module.ReadTask(context.Background(), identity, first.ID)
 	if err != nil {

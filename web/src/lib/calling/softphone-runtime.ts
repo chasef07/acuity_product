@@ -1417,7 +1417,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           if (stopped) return
           if (generation !== readinessGeneration) continue
           publish({ pending: { ...snapshot.pending, availability: false } })
-          await setRequestFailure(error, "temporary-request", "readiness")
+          const failure = await setRequestFailure(
+            error,
+            "temporary-request",
+            "readiness",
+          )
+          if (failure.kind === "conflict") void signalRefresh()
         }
       }
     })()

@@ -27,10 +27,21 @@ func validateSections(sections []Section) error {
 	}
 	seen := map[string]bool{}
 	for index, section := range sections {
-		if !sectionID.MatchString(section.ID) || seen[section.ID] || strings.TrimSpace(section.Title) == "" || utf8.RuneCountInString(section.Title) > 200 || strings.TrimSpace(section.Text) == "" || utf8.RuneCountInString(section.Text) > 6000 {
-			return fmt.Errorf("section %d needs a unique safe ID, nonempty title (up to 200 characters), and complete text (up to 6000 characters): %w", index+1, ErrInvalidInput)
+		var rule string
+		switch {
+		case !sectionID.MatchString(section.ID):
+			rule = fmt.Sprintf("at position %d needs an ID of up to 100 letters, numbers, dots, dashes, or underscores", index+1)
+		case seen[section.ID]:
+			rule = "is used twice"
+		case strings.TrimSpace(section.Title) == "" || utf8.RuneCountInString(section.Title) > 200:
+			rule = "needs a title of 1 to 200 characters"
+		case strings.TrimSpace(section.Text) == "" || utf8.RuneCountInString(section.Text) > 6000:
+			rule = "needs text of 1 to 6000 characters"
+		default:
+			seen[section.ID] = true
+			continue
 		}
-		seen[section.ID] = true
+		return &EntryError{EntryID: section.ID, Rule: rule}
 	}
 	return nil
 }
@@ -58,7 +69,7 @@ func ValidateImport(cmd ImportCommand) error {
 			return ErrInvalidInput
 		}
 	}
-	if !sectionID.MatchString(cmd.OfficeKey) || strings.TrimSpace(cmd.Provenance) == "" || len(cmd.Provenance) > 4000 || strings.TrimSpace(cmd.Reason) == "" || len(cmd.Reason) > 2000 || strings.TrimSpace(cmd.ActorSubject) == "" || len(cmd.ActorSubject) > 320 {
+	if !sectionID.MatchString(cmd.OfficeKey) || strings.TrimSpace(cmd.Provenance) == "" || len(cmd.Provenance) > 4000 || strings.TrimSpace(cmd.Reason) == "" || utf8.RuneCountInString(cmd.Reason) > 2000 || strings.TrimSpace(cmd.ActorSubject) == "" || len(cmd.ActorSubject) > 320 {
 		return ErrInvalidInput
 	}
 	if err := validateSections(cmd.Sections); err != nil {
@@ -68,8 +79,21 @@ func ValidateImport(cmd ImportCommand) error {
 }
 
 func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision, error) {
+	return m.replaceCorpus(ctx, cmd, nil)
+}
+
+func (m *Module) replaceCorpus(ctx context.Context, cmd ImportCommand, authorize func(context.Context, pgx.Tx) error) (Revision, error) {
 	if err := ValidateImport(cmd); err != nil {
 		return Revision{}, err
+	}
+	practiceKey, err := m.access.ReadPracticeKey(ctx, cmd.PracticeID)
+	if err != nil {
+		return Revision{}, err
+	}
+	if practiceKey == abitaPracticeKey {
+		if err := validateAbitaStandard(cmd.Sections); err != nil {
+			return Revision{}, err
+		}
 	}
 	hash := hashSections(cmd.Sections)
 	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
@@ -94,12 +118,10 @@ func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision
 		return Revision{}, err
 	}
 	defer tx.Rollback(ctx)
-	var route string
-	if err = tx.QueryRow(ctx, `SELECT office_key FROM access_abita_office_locations WHERE practice_id=$1 AND office_key=$2 FOR SHARE`, cmd.PracticeID, cmd.OfficeKey).Scan(&route); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = access.ErrDenied
+	if authorize != nil {
+		if err = authorize(ctx, tx); err != nil {
+			return Revision{}, err
 		}
-		return Revision{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_corpora(practice_id,office_key) VALUES($1,$2) ON CONFLICT DO NOTHING`, cmd.PracticeID, cmd.OfficeKey); err != nil {
 		return Revision{}, err
@@ -131,41 +153,67 @@ func (m *Module) ReplaceCorpus(ctx context.Context, cmd ImportCommand) (Revision
 	if tag.RowsAffected() != 1 {
 		return Revision{}, ErrConflict
 	}
+	if rev.Version, err = revisionVersion(ctx, tx, cmd.PracticeID, cmd.OfficeKey, cmd.ID); err != nil {
+		return Revision{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return Revision{}, err
 	}
 	return rev, nil
 }
-func (m *Module) RecordSectionOrder(ctx context.Context, cmd ImportCommand, revisionID string) error {
-	if uuid.Validate(cmd.PracticeID) != nil || uuid.Validate(revisionID) != nil {
-		return ErrInvalidInput
+
+const officeRevisions = `
+	SELECT r.*, row_number() OVER (ORDER BY r.created_at, r.id) AS version
+	FROM knowledge_revisions r
+	WHERE r.practice_id = $1 AND r.office_key = $2`
+
+func revisionVersion(ctx context.Context, tx pgx.Tx, practiceID, officeKey, revisionID string) (int, error) {
+	var version int
+	err := tx.QueryRow(ctx, `SELECT version FROM (`+officeRevisions+`) r WHERE r.id = $3`, practiceID, officeKey, revisionID).Scan(&version)
+	return version, err
+}
+
+func (m *Module) ReadRevision(ctx context.Context, practiceID, officeKey, revisionID string) (string, []Section, error) {
+	if uuid.Validate(practiceID) != nil || (revisionID != "" && uuid.Validate(revisionID) != nil) {
+		return "", nil, ErrInvalidInput
 	}
-	if err := validateSections(cmd.Sections); err != nil {
-		return err
-	}
-	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
+	revision, sections, err := m.readRevision(ctx, practiceID, officeKey, revisionID)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var current *string
-	if err := tx.QueryRow(ctx, `SELECT revision_id::text FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2 FOR UPDATE`, cmd.PracticeID, cmd.OfficeKey).Scan(&current); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrConflict
+	if revision == nil {
+		return "", nil, fmt.Errorf("no such revision for office %q: %w", officeKey, ErrInvalidInput)
+	}
+	return revision.ID, sections, nil
+}
+
+func (m *Module) readRevision(ctx context.Context, practiceID, officeKey, revisionID string) (*RevisionSummary, []Section, error) {
+	rows, err := m.db.Query(ctx, `
+		SELECT r.id::text, r.version, r.created_at, p.section_id, p.title, p.text
+		FROM (`+officeRevisions+`) r
+		JOIN knowledge_passages p ON p.revision_id = r.id
+		WHERE r.id = COALESCE($3::uuid, (SELECT revision_id FROM knowledge_corpora WHERE practice_id = $1 AND office_key = $2))
+		ORDER BY p.position NULLS LAST, p.section_id
+	`, practiceID, officeKey, optionalID(revisionID))
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var revision *RevisionSummary
+	sections := []Section{}
+	for rows.Next() {
+		var summary RevisionSummary
+		var section Section
+		if err := rows.Scan(&summary.ID, &summary.Version, &summary.CreatedAt, &section.ID, &section.Title, &section.Text); err != nil {
+			return nil, nil, err
 		}
-		return err
+		revision = &summary
+		sections = append(sections, section)
 	}
-	if current == nil || *current != revisionID {
-		return ErrConflict
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
 	}
-	ids := make([]string, len(cmd.Sections))
-	for i, section := range cmd.Sections {
-		ids[i] = section.ID
-	}
-	if _, err := tx.Exec(ctx, `UPDATE knowledge_passages p SET position=o.ordinal-1 FROM unnest($2::text[]) WITH ORDINALITY AS o(section_id,ordinal) WHERE p.revision_id=$1 AND p.section_id=o.section_id`, revisionID, ids); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return revision, sections, nil
 }
 
 func (m *Module) inspectImport(ctx context.Context, tx pgx.Tx, cmd ImportCommand, hash string) (Revision, bool, error) {
@@ -190,7 +238,8 @@ func (m *Module) inspectImport(ctx context.Context, tx pgx.Tx, cmd ImportCommand
 		if current == nil || *current != cmd.ID || practice != cmd.PracticeID || office != cmd.OfficeKey || rev.ContentHash != hash || provenance != cmd.Provenance || reason != cmd.Reason || actor != cmd.ActorSubject || prior != cmd.ExpectedRevisionID {
 			return Revision{}, false, ErrConflict
 		}
-		return rev, true, nil
+		rev.Version, err = revisionVersion(ctx, tx, cmd.PracticeID, cmd.OfficeKey, cmd.ID)
+		return rev, err == nil, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Revision{}, false, err
@@ -209,11 +258,9 @@ func (m *Module) embed(ctx context.Context, texts []string, task TaskType) ([]st
 	if m.embedder == nil {
 		return nil, errProviderNotConfigured
 	}
-	providerCtx, cancel := context.WithTimeout(ctx, m.config.ProviderTimeout)
-	defer cancel()
-	vectors, err := m.embedder.Embed(providerCtx, texts, task)
-	if providerCtx.Err() != nil {
-		return nil, providerCtx.Err()
+	vectors, err := m.embedder.Embed(ctx, texts, task)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 	if err != nil {
 		var classified *ProviderFailure
@@ -272,7 +319,9 @@ func (m *Module) Search(ctx context.Context, identity access.ServiceIdentity, of
 	if initial == nil {
 		return empty, ErrUnavailable
 	}
-	vectors, err := m.embed(ctx, []string{query}, RetrievalQuery)
+	embeddingCtx, cancel := context.WithTimeout(ctx, m.config.SearchEmbeddingTimeout)
+	defer cancel()
+	vectors, err := m.embed(embeddingCtx, []string{query}, RetrievalQuery)
 	if err != nil {
 		return empty, err
 	}
