@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.34.0](https://github.com/chasef07/acuity_product/compare/v1.33.0...v1.34.0) (2026-10-13)
+
+
+### Features
+
+* **knowledge:** show office knowledge history and restore an earlier version ([#456](https://github.com/chasef07/acuity_product/issues/456)) ([74858e4](https://github.com/chasef07/acuity_product/commit/74858e42186069830d67563d289da1e2b48fb4d8))
+
+
+### Bug Fixes
+
+* **tasks:** match AI task caller names case-insensitively ([#455](https://github.com/chasef07/acuity_product/issues/455)) ([9c0fa8f](https://github.com/chasef07/acuity_product/commit/9c0fa8fab4899bae4948845e7cb3be2bc3182c28))
+* **tasks:** preserve authorization infrastructure errors ([#451](https://github.com/chasef07/acuity_product/issues/451)) ([8b8c929](https://github.com/chasef07/acuity_product/commit/8b8c929d814547baf733eac9bd09bb18654cbe31))
+* **web:** reconnect stalled realtime streams ([#452](https://github.com/chasef07/acuity_product/issues/452)) ([eb050d9](https://github.com/chasef07/acuity_product/commit/eb050d9b298103858aec79776115e7e82fdb28ee))
+
 ## [1.33.0](https://github.com/chasef07/acuity_product/compare/v1.32.0...v1.33.0) (2026-10-12)
 
 
