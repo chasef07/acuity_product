@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.0](https://github.com/chasef07/acuity_product/compare/v1.34.1...v1.35.0) (2026-10-13)
+
+
+### Features
+
+* **scorecard:** v7 judge questions, per-caller booking conversion, code checks, and 4 PM ET review days ([#459](https://github.com/chasef07/acuity_product/issues/459)) ([c65b777](https://github.com/chasef07/acuity_product/commit/c65b77767cc86ac070f03a5afca43b19d940a692))
+
 ## [1.34.1](https://github.com/chasef07/acuity_product/compare/v1.34.0...v1.34.1) (2026-10-13)
 
 
