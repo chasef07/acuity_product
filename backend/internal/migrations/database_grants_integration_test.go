@@ -294,7 +294,8 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 				received_at,
 				signature_timestamp,
 				raw_body,
-				next_attempt_at
+				next_attempt_at,
+				call_session_id
 			)
 			VALUES (
 				'grant-contract-event',
@@ -303,7 +304,8 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 				now(),
 				1,
 				'{}'::bytea,
-				now()
+				now(),
+				'grant-contract-session'
 			)
 			ON CONFLICT (event_id) DO NOTHING
 			RETURNING event_id`,
@@ -1182,6 +1184,7 @@ func expectedColumnPrivileges() map[string]bool {
 		"signature_timestamp",
 		"raw_body",
 		"next_attempt_at",
+		"call_session_id",
 	)
 	grant(
 		"acuity_provider",

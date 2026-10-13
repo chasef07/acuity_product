@@ -39,11 +39,43 @@ func TestRunnerDoesNotStartLaneWorkAfterCancellation(t *testing.T) {
 	}
 }
 
-func TestRunnerBoundsReceiptDrainBeforeYielding(t *testing.T) {
+func TestRunnerDrainsReceiptBacklogAcrossFullBatchesThenWaits(t *testing.T) {
 	work := &hotReceiptWork{
 		controlledWork: newControlledWork(),
-		projected:      make(chan struct{}, 4),
+		projected:      make(chan struct{}, 8),
 	}
+	work.remaining.Store(7)
+	runner := newReceiptRunner(t, work, 1)
+	stop := runReceiptRunner(t, runner)
+	defer stop()
+
+	for range 7 {
+		waitForSignal(t, work.projected, "receipt in backlog drain")
+	}
+	time.Sleep(25 * time.Millisecond)
+	if calls := work.calls.Load(); calls != 8 {
+		t.Fatalf("receipt claims=%d, want 7 projections and one empty claim before the idle wait", calls)
+	}
+}
+
+func TestRunnerProcessesReceiptsConcurrentlyAcrossWorkers(t *testing.T) {
+	work := &hotReceiptWork{
+		controlledWork: newControlledWork(),
+		projected:      make(chan struct{}, 2),
+		release:        make(chan struct{}),
+	}
+	work.remaining.Store(2)
+	runner := newReceiptRunner(t, work, 2)
+	stop := runReceiptRunner(t, runner)
+	defer stop()
+
+	waitForSignal(t, work.projected, "first concurrent receipt")
+	waitForSignal(t, work.projected, "second concurrent receipt")
+	close(work.release)
+}
+
+func newReceiptRunner(t *testing.T, work CallingWork, receiptWorkers int) *Runner {
+	t.Helper()
 	runner, err := New(Config{
 		WorkInterval:                  time.Hour,
 		WorkTimeout:                   time.Second,
@@ -52,6 +84,7 @@ func TestRunnerBoundsReceiptDrainBeforeYielding(t *testing.T) {
 		HealthInterval:                time.Hour,
 		HealthTimeout:                 time.Second,
 		ReceiptBatchSize:              3,
+		ReceiptWorkers:                receiptWorkers,
 		RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize:      1,
 		CommandWorkers:                2,
@@ -59,29 +92,26 @@ func TestRunnerBoundsReceiptDrainBeforeYielding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
+	return runner
+}
 
+func runReceiptRunner(t *testing.T, runner *Runner) func() {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan error, 1)
 	go func() {
 		runDone <- runner.Run(ctx)
 	}()
-	for range 3 {
-		waitForSignal(t, work.projected, "receipt in bounded drain")
-	}
-	select {
-	case <-work.projected:
-		t.Fatal("receipt lane exceeded its drain bound before yielding")
-	case <-time.After(25 * time.Millisecond):
-	}
-
-	cancel()
-	select {
-	case err := <-runDone:
-		if err != nil {
-			t.Fatalf("run worker: %v", err)
+	return func() {
+		cancel()
+		select {
+		case err := <-runDone:
+			if err != nil {
+				t.Fatalf("run worker: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("worker runner did not stop after cancellation")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("worker runner did not stop after cancellation")
 	}
 }
 
@@ -356,10 +386,24 @@ func (work *controlledWork) ProcessNextReceipt(context.Context) (bool, error) {
 type hotReceiptWork struct {
 	*controlledWork
 	projected chan struct{}
+	release   chan struct{}
+	remaining atomic.Int64
+	calls     atomic.Int64
 }
 
-func (work *hotReceiptWork) ProcessNextReceipt(context.Context) (bool, error) {
+func (work *hotReceiptWork) ProcessNextReceipt(ctx context.Context) (bool, error) {
+	work.calls.Add(1)
+	if work.remaining.Add(-1) < 0 {
+		return false, nil
+	}
 	work.projected <- struct{}{}
+	if work.release != nil {
+		select {
+		case <-work.release:
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
 	return true, nil
 }
 
