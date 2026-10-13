@@ -160,6 +160,42 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 		"unavailable_depth", float64(1))
 }
 
+func TestCallingChangeReportLogsBoundedDiscovery(t *testing.T) {
+	var output bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimePortalAPI,
+		"portal-api-00042-abc",
+		slog.New(slog.NewJSONHandler(&output, nil)),
+	)
+
+	observability.Record(observer, observability.CallingChangeReported(""))
+	if output.Len() != 0 {
+		t.Fatalf("empty change report logged: %s", output.String())
+	}
+	observability.Record(observer, observability.CallingChangeReported(
+		"discovery=missed;hints=covered;tab=hidden;offer=ringing",
+	))
+	missed := findMetric(t, entries(t, output.String()), "acuity_call_center_calling_change")
+	if missed["discovery"] != "missed" || missed["hints"] != "covered" ||
+		missed["tab"] != "hidden" || missed["offer"] != "ringing" {
+		t.Fatalf("missed change metric = %#v", missed)
+	}
+
+	output.Reset()
+	observability.Record(observer, observability.CallingChangeReported(
+		"discovery=call-123;hints=leg-456;offer",
+	))
+	if strings.Contains(output.String(), "call-123") ||
+		strings.Contains(output.String(), "leg-456") {
+		t.Fatalf("change metric echoed client input: %s", output.String())
+	}
+	bounded := findMetric(t, entries(t, output.String()), "acuity_call_center_calling_change")
+	if bounded["discovery"] != "other" || bounded["hints"] != "other" ||
+		bounded["tab"] != "other" || bounded["offer"] != "other" {
+		t.Fatalf("bounded change metric = %#v", bounded)
+	}
+}
+
 func TestLoggerOmitsSuccessfulDatabaseWorkAndPreservesFailuresAndCapacity(t *testing.T) {
 	var output bytes.Buffer
 	observer := observability.NewLogger(

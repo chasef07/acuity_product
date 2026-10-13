@@ -2,14 +2,17 @@ package httpapi_test
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
@@ -261,6 +264,117 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 			http.StatusForbidden,
 			readBody(t, revoked),
 		)
+	}
+}
+
+func TestCallingStateLogsTheBrowserCallingChangeReport(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.October, 13, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	identity := access.Identity{
+		Subject:       "calling-change-report-staff",
+		Email:         "staff@calling-change-report.test",
+		EmailVerified: true,
+	}
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "calling-change-report-test",
+		PlatformOperators: []string{"operator@calling-change-report.test"},
+		Practices: []access.PracticeProvision{{
+			Key:       "calling-change-report",
+			Name:      "Calling Change Report",
+			Locations: []access.LocationProvision{{Key: "main", Name: "Main"}},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:           "staff",
+				Email:         identity.Email,
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision calling change report fixture: %v", err)
+	}
+	testaccess.Activate(t, accessModule, identity)
+	var metrics synchronizedBuffer
+	handler, err := newPortalHandlerWithCalling(
+		t,
+		httpapi.Config{
+			AllowedOrigins: []string{"http://localhost:3000"},
+			AcquireTimeout: 500 * time.Millisecond,
+			Observer: observability.NewLogger(
+				observability.RuntimePortalAPI,
+				"calling-change-report-test",
+				slog.New(slog.NewJSONHandler(&metrics, nil)),
+			),
+		},
+		pool,
+		accessModule,
+		staticAuthenticator{"change-report-token": identity},
+		humancalling.New(
+			pool,
+			accessModule,
+			httpCallingProvider{},
+			humancalling.Config{},
+			func() time.Time { return now },
+		),
+	)
+	if err != nil {
+		t.Fatalf("create calling change report handler: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	preflight, err := http.NewRequest(http.MethodOptions, server.URL+"/v1/calling/state", nil)
+	if err != nil {
+		t.Fatalf("create Calling state preflight: %v", err)
+	}
+	preflight.Header.Set("Origin", "http://localhost:3000")
+	preflight.Header.Set("Access-Control-Request-Headers", "authorization,if-none-match,x-calling-change")
+	allowed, err := server.Client().Do(preflight)
+	if err != nil {
+		t.Fatalf("send Calling state preflight: %v", err)
+	}
+	_ = allowed.Body.Close()
+	if !strings.Contains(allowed.Header.Get("Access-Control-Allow-Headers"), "X-Calling-Change") {
+		t.Fatalf("preflight allowed headers = %q", allowed.Header.Get("Access-Control-Allow-Headers"))
+	}
+
+	for _, report := range []string{
+		"discovery=missed;hints=covered;tab=hidden;offer=ringing",
+		"",
+	} {
+		read, err := http.NewRequest(http.MethodGet, server.URL+"/v1/calling/state", nil)
+		if err != nil {
+			t.Fatalf("create Calling state read: %v", err)
+		}
+		read.Header.Set("Authorization", "Bearer change-report-token")
+		if report != "" {
+			read.Header.Set("X-Calling-Change", report)
+		}
+		response, err := server.Client().Do(read)
+		if err != nil {
+			t.Fatalf("read Calling state: %v", err)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("Calling state status = %d, body = %s", response.StatusCode, readBody(t, response))
+		}
+		_ = response.Body.Close()
+	}
+
+	logged := metrics.String()
+	if count := strings.Count(logged, `"metric":"acuity_call_center_calling_change"`); count != 1 {
+		t.Fatalf("calling change metrics = %d, want 1: %s", count, logged)
+	}
+	for _, field := range []string{
+		`"discovery":"missed"`,
+		`"hints":"covered"`,
+		`"tab":"hidden"`,
+		`"offer":"ringing"`,
+		`"runtime_role":"portal-api"`,
+	} {
+		if !strings.Contains(logged, field) {
+			t.Fatalf("calling change metric omitted %s: %s", field, logged)
+		}
 	}
 }
 
