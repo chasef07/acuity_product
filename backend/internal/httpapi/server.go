@@ -784,6 +784,10 @@ func (server *Server) GetCallingState(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	observability.Record(
+		server.observer,
+		observability.CallingChangeReported(r.Header.Get("X-Calling-Change")),
+	)
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	state, notModified, err := server.calling.ReadCallingStateConditionally(
@@ -2274,7 +2278,7 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 		if origin := r.Header.Get("Origin"); slices.Contains(server.config.AllowedOrigins, origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match, X-Correlation-ID")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match, X-Calling-Change, X-Correlation-ID")
 			w.Header().Set("Access-Control-Expose-Headers", "ETag")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			if r.Method == http.MethodOptions {

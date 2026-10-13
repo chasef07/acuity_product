@@ -15,6 +15,7 @@ import {
   type CallingHintSignal,
   type CallingHintSource,
 } from "./calling-hints.ts"
+import { createCallingChangeMetric } from "./calling-change-metric.ts"
 import type {
   CallingMediaAdapter,
   IncomingMediaLeg,
@@ -132,7 +133,10 @@ export interface SoftphoneBackend {
     input: { sessionID: string },
     signal?: AbortSignal,
   ): Promise<string>
-  readState(input: { etag?: string }, signal?: AbortSignal): Promise<StateRead>
+  readState(
+    input: { etag?: string; changeReport?: string },
+    signal?: AbortSignal,
+  ): Promise<StateRead>
   readCall(callID: string, signal?: AbortSignal): Promise<CallingCall>
   confirmMedia(input: {
     callID: string
@@ -299,6 +303,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   const clock = options.clock ?? defaultClock
   const visibility = options.visibility ?? browserVisibility
   const callingHints = options.callingHints ?? browserCallingHints
+  const callingChanges = createCallingChangeMetric()
   const heartbeatDelayMilliseconds = heartbeatDelay(options.sessionID)
   const listeners = new Set<() => void>()
   const incomingMedia = new Map<string, IncomingMediaLeg>()
@@ -910,10 +915,19 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     callingHintPending = false
     lastRefreshStartedAt = clock.now
     expireOffers()
+    const changeRead = callingChanges.beginRead(clock.now, {
+      hidden: visibility.isHidden(),
+      covered: callingHints.covers(callingPracticeIDs),
+    })
+    let stateRead = false
     try {
       const result = await backendRequest((signal) =>
-        options.backend.readState({ etag }, signal),
+        options.backend.readState(
+          { etag, changeReport: changeRead.report },
+          signal,
+        ),
       )
+      stateRead = true
       if (result.etag) etag = result.etag
       if (stopped || generation !== lifecycleGeneration) return
       if (result.status === "not-modified") {
@@ -929,6 +943,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         return
       }
       const state = result.state
+      callingChanges.observe(changeRead, state)
       callingPracticeIDs = state.callingPracticeIds
       const authoritativeLease = leaseForSession(
         state.softphone,
@@ -1189,6 +1204,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       clearRefreshFailure(generation)
       temporaryFailures = 0
     } catch (error) {
+      if (!stateRead) callingChanges.readFailed(changeRead)
       if (stopped || generation !== lifecycleGeneration) return
       temporaryFailures += 1
       await setRequestFailure(error, "temporary-request", "refresh")
@@ -1269,6 +1285,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
 
   function handleCallingHint(signal: CallingHintSignal) {
     if (stopped) return
+    callingChanges.signal(signal, clock.now)
     if (signal === "disconnected") {
       advanceRefresh(currentRefreshDelay())
       return
@@ -2242,6 +2259,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         unsubscribeCallingHints = undefined
         callingHintPending = false
         callingPracticeIDs = undefined
+        callingChanges.reset()
         lastRefreshStartedAt = Number.NEGATIVE_INFINITY
         await releaseLocalMedia()
         publish({

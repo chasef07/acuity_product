@@ -4885,6 +4885,38 @@ test("hidden idle tabs still refresh on calling hints", async () => {
   await fixture.runtime.stop()
 })
 
+test("state reads report calling changes the poll found without a hint as missed", async () => {
+  const fixture = callingHintFixture(callingState({ softphone: lease({ owner: true }) }))
+  fixture.hints.setCoverage("practice-1")
+  await fixture.runtime.start()
+  const missed = "discovery=missed;hints=covered;tab=visible;offer=none"
+  const hinted = "discovery=hint;hints=covered;tab=visible;offer=none"
+
+  fixture.backend.state = {
+    ...fixture.backend.state,
+    voicemail: stateCall("call-1", "leg-1", 1),
+  }
+  fixture.backend.etag = '"state-2"'
+  await fixture.clock.settle(20_000)
+  assert.deepEqual(fixture.changeReports, [missed])
+
+  fixture.backend.state = { ...fixture.backend.state, voicemail: undefined }
+  fixture.backend.etag = '"state-3"'
+  await fixture.clock.settle(1_000)
+  fixture.hints.publish()
+  await fixture.clock.settle(10_000)
+  assert.deepEqual(fixture.changeReports, [missed, hinted])
+
+  fixture.backend.state = {
+    ...fixture.backend.state,
+    softphone: lease({ owner: true, leaseExpiresAt: "2026-08-27T00:02:00Z" }),
+  }
+  fixture.backend.etag = '"state-4"'
+  await fixture.clock.settle(20_000)
+  assert.deepEqual(fixture.changeReports, [missed, hinted])
+  await fixture.runtime.stop()
+})
+
 function callingHintFixture(
   state: CallingState,
   visibility: { isHidden(): boolean; subscribe(listener: () => void): () => void } = visible(),
@@ -4899,6 +4931,7 @@ function callingHintFixture(
     backend: DeterministicBackend
     hints: typeof hints
     reads: number[]
+    changeReports: string[]
     gate?: Promise<void>
     runtime: ReturnType<typeof createSoftphoneRuntime>
   } = {
@@ -4906,6 +4939,7 @@ function callingHintFixture(
     backend,
     hints,
     reads: [],
+    changeReports: [],
     runtime: createSoftphoneRuntime({
       sessionID: "session-1",
       backend,
@@ -4918,6 +4952,7 @@ function callingHintFixture(
   }
   backend.readStateHandler = async (input) => {
     fixture.reads.push(clock.now)
+    if (input.changeReport) fixture.changeReports.push(input.changeReport)
     if (fixture.gate) await fixture.gate
     if (input.etag === backend.etag) {
       return { status: "not-modified" as const, etag: backend.etag }
@@ -4952,7 +4987,7 @@ class DeterministicBackend implements SoftphoneBackend {
     signal?: AbortSignal,
   ) => Promise<SoftphoneState> | SoftphoneState
   readStateHandler?: (
-    input: { etag?: string },
+    input: { etag?: string; changeReport?: string },
     signal?: AbortSignal,
   ) => ReturnType<SoftphoneBackend["readState"]>
   readCallHandler?: SoftphoneBackend["readCall"]
@@ -4992,7 +5027,7 @@ class DeterministicBackend implements SoftphoneBackend {
     return "media-credential"
   }
 
-  async readState(input: { etag?: string }, signal?: AbortSignal) {
+  async readState(input: { etag?: string; changeReport?: string }, signal?: AbortSignal) {
     if (this.readStateHandler) return this.readStateHandler(input, signal)
     this.reads.push({ etag: input.etag, at: this.now })
     return { status: "modified" as const, state: this.state, etag: this.etag }

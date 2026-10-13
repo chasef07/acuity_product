@@ -3,6 +3,7 @@ package observability
 import (
 	"log/slog"
 	"regexp"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -359,6 +360,22 @@ func SSEListenerDisconnected() Event {
 
 func SSEListenerReconnectFailed() Event {
 	return event("acuity_call_center_sse_listener", "state", "reconnect_failed")
+}
+
+func CallingChangeReported(report string) Event {
+	if report == "" {
+		return Event{}
+	}
+	values := map[string]string{}
+	for _, part := range strings.SplitN(report, ";", 5) {
+		key, value, _ := strings.Cut(part, "=")
+		values[key] = value
+	}
+	return event("acuity_call_center_calling_change",
+		"discovery", bounded(values["discovery"], "hint", "late_hint", "missed"),
+		"hints", bounded(values["hints"], "covered", "uncovered"),
+		"tab", bounded(values["tab"], "visible", "hidden"),
+		"offer", bounded(values["offer"], "ringing", "none"))
 }
 
 func StaffAnswered(outcome StaffAnswerOutcome) Event {

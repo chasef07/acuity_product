@@ -84,7 +84,10 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       const client = await authenticatedClient()
       const result = await getCallingState({
         client,
-        headers: input.etag ? { "If-None-Match": input.etag } : undefined,
+        headers: {
+          ...(input.etag ? { "If-None-Match": input.etag } : {}),
+          ...(input.changeReport ? { "X-Calling-Change": input.changeReport } : {}),
+        },
         signal,
       }).catch(networkFailure)
       const etag = result.response?.headers.get("ETag") ?? undefined
