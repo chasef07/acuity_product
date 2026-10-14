@@ -155,21 +155,16 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 	if page.Counts.Tasks != len(payloads) {
 		t.Fatalf("underlying Tasks: %d, want %d", page.Counts.Tasks, len(payloads))
 	}
-	var optical []api.Task
-	for _, row := range page.Items {
-		if row.GroupMembers == nil {
-			continue
-		}
-		for _, member := range *row.GroupMembers {
-			if member.Category != nil && *member.Category == "optical" {
-				optical = append(optical, member)
-			}
+	var optical api.Task
+	for _, task := range page.Items {
+		if task.Category != nil && *task.Category == "optical" {
+			optical = task
 		}
 	}
-	if len(optical) < 2 {
+	if optical.GroupMembers == nil || len(*optical.GroupMembers) < 2 {
 		t.Fatal("shared-number Optical requests were not preserved")
 	}
-	target := optical[0]
+	target := (*optical.GroupMembers)[0]
 	move, _ := json.Marshal(map[string]any{"expectedVersion": target.Version, "category": "medication"})
 	response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/"+target.Id.String()+"/category", "staff-token", move)
 	if response.StatusCode != 200 {

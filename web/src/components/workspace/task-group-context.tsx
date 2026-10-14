@@ -21,17 +21,16 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
   const [pending, setPending] = useState(false)
   const [resolved, setResolved] = useState(false)
   const [error, setError] = useState("")
-  const callerName = reviewed.find((member) => member.callerName)?.callerName
   const originalIDs = new Set(group.groupMembers?.map((member) => member.id) ?? [group.id])
-  const currentRow = taskRows.find((row) =>
-    originalIDs.has(row.id) || row.groupMembers?.some((member) => originalIDs.has(member.id)))
+  const currentRow = taskRows.find((row) => row.category === group.category &&
+    (originalIDs.has(row.id) || row.groupMembers?.some((member) => originalIDs.has(member.id))))
   const currentMembers = currentRow ? currentRow.groupMembers ?? [currentRow] : []
   const stale = reviewed.length !== currentMembers.length || reviewed.some((old) =>
     !currentMembers.some((current) => current.id === old.id && current.version === old.version))
 
   function updated(member: Task) {
     setReviewed((items) => items.flatMap((item) => item.id !== member.id ? [item]
-      : member.state === "OPEN" ? [member] : []))
+      : member.state === "OPEN" && member.category === group.category ? [member] : []))
     onUpdated(member, member.state === "COMPLETED")
   }
 
@@ -60,8 +59,8 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
   return (
     <section aria-label="Related Tasks" className="flex h-full min-h-0 flex-1 flex-col overflow-hidden px-5 py-5">
       <header className="shrink-0 pb-4 pr-8">
-        <h2 className="text-lg font-semibold leading-snug tracking-[-0.015em]">{callerName ?? formatUSPhone(group.phone)}</h2>
-        <p className="mt-1.5 text-xs text-muted-foreground">{callerName && `${formatUSPhone(group.phone)} · `}{group.locationName}</p>
+        <h2 className="text-lg font-semibold leading-snug tracking-[-0.015em]">{taskGroupLabel(group.category)}</h2>
+        <p className="mt-1.5 text-xs text-muted-foreground">{formatUSPhone(group.phone)} · {group.locationName}</p>
         <p className="mt-2 text-xs font-medium">{resolved ? "Group resolved" : `${reviewed.length} related Tasks`}</p>
       </header>
       {resolved ? (
@@ -78,7 +77,7 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
               <div>
                 <h3 className="text-sm font-semibold leading-5">{member.title}</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {member.callerName ?? "Caller name not provided"}{member.category && ` · ${taskGroupLabel(member.category)}`} · {new Date(member.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  {member.callerName ?? "Caller name not provided"} · {new Date(member.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                   {member.urgency === "high_priority" && <span className="font-medium text-destructive"> · High priority</span>}
                 </p>
               </div>

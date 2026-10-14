@@ -58,13 +58,13 @@ func (m *Module) CompleteTaskGroup(ctx context.Context, command CompleteTaskGrou
 		if task.PracticeID != anchor.PracticeID || task.LocationID != anchor.LocationID {
 			return Task{}, ErrDenied
 		}
-		if task.State != TaskOpen || task.Version != expected[id] || task.Phone != anchor.Phone {
+		if task.State != TaskOpen || task.Version != expected[id] || task.Phone != anchor.Phone || task.Category != anchor.Category || task.Origin != anchor.Origin {
 			return Task{}, ErrConflict
 		}
 		tasks = append(tasks, task)
 	}
 	var currentIDs []string
-	err = tx.QueryRow(ctx, `SELECT array_agg(id::text ORDER BY id::text) FROM work_tasks WHERE practice_id=$1 AND location_id=$2 AND phone=$3 AND state='OPEN'`, anchor.PracticeID, anchor.LocationID, anchor.Phone).Scan(&currentIDs)
+	err = tx.QueryRow(ctx, `SELECT array_agg(id::text ORDER BY id::text) FROM work_tasks WHERE practice_id=$1 AND location_id=$2 AND phone=$3 AND category IS NOT DISTINCT FROM $4::text AND state='OPEN' AND origin=$5`, anchor.PracticeID, anchor.LocationID, anchor.Phone, nullIfEmpty(string(anchor.Category)), anchor.Origin).Scan(&currentIDs)
 	if err != nil {
 		return Task{}, err
 	}

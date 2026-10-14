@@ -350,7 +350,7 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool
 		candidates = `
 	FROM (
 		SELECT task.*, row_number() OVER (
-			PARTITION BY task.practice_id, task.location_id, task.phone
+			PARTITION BY task.practice_id, task.location_id, task.phone, task.category, task.origin
 			ORDER BY ` + order + `
 		) AS member_rank` + taskMatchSource + filter + `
 			AND task.state = 'OPEN'

@@ -22,6 +22,8 @@ func loadGroupMembers(ctx context.Context, tx pgx.Tx, groups []work.Task) error 
  FROM work_tasks task`+taskProjectionJoins+`
  JOIN work_tasks anchor ON anchor.practice_id=task.practice_id
  AND anchor.location_id=task.location_id AND anchor.phone=task.phone
+ AND anchor.category IS NOT DISTINCT FROM task.category
+ AND anchor.origin=task.origin
  WHERE anchor.id=ANY($1::uuid[]) AND task.state='OPEN'
  ORDER BY task.created_at,task.id`, ids)
 	if err != nil {

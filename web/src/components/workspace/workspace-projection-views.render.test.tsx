@@ -9,7 +9,6 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
 import { TaskCallContext } from "./task-call-context.tsx"
-import { TaskGroupContext } from "./task-group-context.tsx"
 import { WorkspaceRail } from "./workspace-rail.tsx"
 import { clearAccessToken } from "../../lib/auth-client.ts"
 import type {
@@ -368,20 +367,6 @@ test("an AI Task shows the missed handoff call attached to it", () => {
   )
   assert.match(panel(task), /aria-label="Call recovery source"/)
   assert.doesNotMatch(panel({ ...task, relatedInteractionCount: 0, interactions: [] }), /Call recovery source/)
-})
-
-test("a caller's group spans categories and Task kinds", () => {
-  const ai: Task = { ...projectedTask(), id: "task-ai", origin: "ABITA_AI", category: "medication", callerName: "Synthetic Caller" }
-  const missed: Task = { ...projectedTask(), id: "task-missed", origin: "MISSED_CALL_RECOVERY", title: "Return missed call" }
-  const group: Task = { ...missed, groupMembers: [missed, ai] }
-  const html = renderToStaticMarkup(
-    <TaskGroupContext group={group} taskRows={[{ ...ai, groupMembers: [missed, ai] }]} canMutate onSelect={() => {}} onUpdated={() => {}} />,
-  )
-  assert.match(html, /<h2[^>]*>Synthetic Caller<\/h2>/)
-  assert.match(html, /2 related Tasks/)
-  assert.match(html, /Return missed call/)
-  assert.match(html, /Synthetic Caller · Clinical, medication &amp; pharmacy/)
-  assert.doesNotMatch(html, /Requests changed/, "a row led by another kind of Task is still this group")
 })
 
 test("completing a Task keeps Next task in place and holds Reopen until the change settles", async () => {
