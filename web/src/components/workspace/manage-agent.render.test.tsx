@@ -302,6 +302,39 @@ test("editing an entry and publishing with a reason sends the full list and show
   await page.unmount()
 })
 
+test("several edits wait beside the search bar, outside the scrolling list, and publish together", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  await page.render(knowledgeBase())
+  await waitFor(() => /Office hours/.test(page.text()))
+  await page.rowAction("Office hours", "Edit")
+  await page.fill(page.field("Text"), "Closes at six")
+  await page.rowAction("Office hours", "Done")
+  assert.match(page.text(), /1 unpublished change(?!s)/)
+  await page.rowAction("Parking", "Edit")
+  await page.fill(page.field("Text"), "Synthetic valet only.")
+  await page.click("Add entry")
+  await page.fill(page.field("Title"), "Fax")
+  await page.fill(page.field("Text"), "Synthetic fax 555-0100.")
+  assert.match(page.text(), /3 unpublished changes/)
+
+  const publish = page.button(/^Publish$/)
+  const search = page.host.querySelector("input[type='search']")!
+  assert.equal(publish.closest(".overflow-auto"), null)
+  assert.equal(publish.closest("fieldset")?.parentElement, search.closest("[data-slot='input-group']")?.parentElement)
+
+  await page.fill(page.field("Why are you changing this?"), "New hours, valet, and fax")
+  page.publishResult = { id: "00000000-0000-4000-8000-0000000000a4", version: 4, createdAt: "2026-10-12T18:30:00Z" }
+  await page.click("Publish")
+  await waitFor(() => page.publishRequests.length === 1 && page.knowledgeRequests.length === 2)
+  assert.deepEqual(page.publishRequests[0].sections, [
+    { id: "hours", title: "Office hours", text: "Closes at six" },
+    { id: "parking", title: "Parking", text: "Synthetic valet only." },
+    { id: "fax", title: "Fax", text: "Synthetic fax 555-0100." },
+  ])
+  await page.unmount()
+})
+
 test("adding an entry gives it an ID from its title and removing an entry leaves it out", async (t) => {
   const page = harness(t)
   page.knowledge = syntheticKnowledge
@@ -336,6 +369,7 @@ test("a rejected, conflicting, or failed publish says why and keeps the unpublis
   page.publishError = { code: "INVALID_KNOWLEDGE_ENTRY", message: "Entry \"hours\" uses markdown formatting; write plain text.", correlationId: "synthetic", retryable: false, entryId: "hours" }
   await page.click("Publish")
   await waitFor(() => page.alert() !== "")
+  assert.equal(page.alert(), "Not published. Fix “Office hours” below.")
   const hours = page.button(/^Office hours$/).closest("li")!
   assert.equal(hours.querySelector("[role='alert']")?.textContent, "Entry \"hours\" uses markdown formatting; write plain text.")
   const rejected = page.field("Text")
