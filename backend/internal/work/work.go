@@ -353,6 +353,9 @@ func (m *Module) EnsureCallFollowUp(
 	`, task.ID, task.CreatedBy.Subject, task.CreatedBy.Email, task.CreatedAt); err != nil {
 		return Task{}, fmt.Errorf("append Task creation Activity: %w", err)
 	}
+	if err := m.absorbOpenRecoveryTasks(ctx, tx, task); err != nil {
+		return Task{}, err
+	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
 		return Task{}, err
 	}
@@ -466,6 +469,9 @@ func (m *Module) EnsureMessageFollowUp(
 	); err != nil {
 		return Task{}, "", err
 	}
+	if err := m.absorbOpenRecoveryTasks(ctx, tx, task); err != nil {
+		return Task{}, "", err
+	}
 	if _, err := m.access.RecordWorkspaceChange(
 		ctx,
 		tx,
@@ -520,15 +526,34 @@ func (m *Module) EnsureRecoveryTask(
 	}
 
 	var taskID string
+	var taskOrigin TaskOrigin
 	err := tx.QueryRow(ctx, `
-		SELECT task.id::text
+		SELECT task.id::text, task.origin
 		FROM work_task_interactions interaction
 		JOIN work_tasks task ON task.id = interaction.task_id
 		WHERE interaction.call_id = $1
 		FOR UPDATE OF task
-	`, command.CallID).Scan(&taskID)
+	`, command.CallID).Scan(&taskID, &taskOrigin)
 	inserted := false
 	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `
+			SELECT task.id::text, task.origin
+			FROM work_tasks task
+			WHERE task.practice_id = $1
+				AND task.location_id = $2
+				AND task.phone = $3
+				AND task.state = 'OPEN'
+				AND `+TaskIsFollowUpSQL+`
+			ORDER BY task.created_at DESC, task.id DESC
+			LIMIT 1
+			FOR UPDATE
+		`, command.PracticeID, command.LocationID, command.Phone).Scan(&taskID, &taskOrigin)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, fmt.Errorf("load caller's open Task: %w", err)
+		}
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		taskOrigin = origin
 		err = tx.QueryRow(ctx, `
 			INSERT INTO work_tasks (
 				practice_id,
@@ -615,7 +640,8 @@ func (m *Module) EnsureRecoveryTask(
 	}
 	taskChanged := inserted
 	if !inserted {
-		upgradeToVoicemail := command.Outcome == RecoveryOutcomeVoicemail
+		upgradeToVoicemail := command.Outcome == RecoveryOutcomeVoicemail &&
+			taskOrigin.isCallRecovery()
 		updated, err := tx.Exec(ctx, `
 			UPDATE work_tasks
 			SET
@@ -647,8 +673,8 @@ func (m *Module) EnsureRecoveryTask(
 	if task.PracticeID != command.PracticeID ||
 		task.LocationID != command.LocationID ||
 		task.Phone != command.Phone ||
-		(task.Origin != TaskOriginVoicemail &&
-			task.Origin != TaskOriginMissedCall) {
+		task.Origin == TaskOriginAppointmentReview ||
+		task.Origin == TaskOriginInboundMessageReview {
 		return Task{}, ErrConflict
 	}
 	if inserted || interactionInserted {
@@ -661,7 +687,7 @@ func (m *Module) EnsureRecoveryTask(
 			tx,
 			task,
 			activityKind,
-			task.CreatedBy,
+			ActorSnapshot{Kind: access.ActorService, Subject: "human-calling"},
 			command.OccurredAt,
 			nil,
 		); err != nil {
@@ -760,6 +786,61 @@ func (m *Module) ResolveRecoveryTasks(
 		return 0, err
 	}
 	return completed, nil
+}
+
+func (origin TaskOrigin) isCallRecovery() bool {
+	return origin == TaskOriginMissedCall || origin == TaskOriginVoicemail
+}
+
+func (m *Module) absorbOpenRecoveryTasks(
+	ctx context.Context,
+	tx pgx.Tx,
+	task Task,
+) error {
+	if err := lockRecoveryPhone(ctx, tx, task.PracticeID, task.Phone); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		WITH absorbed AS (
+			UPDATE work_tasks task
+			SET
+				state = 'COMPLETED',
+				completed_by_kind = 'SERVICE',
+				completed_by_subject = 'work-recovery-resolution',
+				completed_by_email = NULL,
+				completed_at = $5,
+				version = task.version + 1,
+				updated_at = GREATEST(task.updated_at, $5)
+			WHERE task.practice_id = $1
+				AND task.location_id = $2
+				AND task.phone = $3
+				AND task.state = 'OPEN'
+				AND `+TaskIsCallRecoverySQL+`
+			RETURNING task.id, task.version
+		), moved AS (
+			UPDATE work_task_interactions interaction
+			SET task_id = $4
+			FROM absorbed
+			WHERE interaction.task_id = absorbed.id
+		)
+		INSERT INTO work_task_activities (
+			task_id,
+			task_version,
+			kind,
+			actor_kind,
+			actor_subject,
+			actor_email,
+			occurred_at,
+			details
+		)
+		SELECT id, version, 'TASK_AUTO_COMPLETED_DUPLICATE', 'SERVICE',
+			'work-recovery-resolution', NULL, $5,
+			jsonb_build_object('taskId', $4::text)
+		FROM absorbed
+	`, task.PracticeID, task.LocationID, task.Phone, task.ID, task.CreatedAt); err != nil {
+		return fmt.Errorf("absorb open recovery Tasks: %w", err)
+	}
+	return nil
 }
 
 func lockRecoveryPhone(
@@ -1253,6 +1334,9 @@ func (m *Module) CreateAITask(
 		return Task{}, "", err
 	}
 	if err := appendActivity(ctx, tx, task, "TASK_CREATED", task.CreatedBy, createdAt, nil); err != nil {
+		return Task{}, "", err
+	}
+	if err := m.absorbOpenRecoveryTasks(ctx, tx, task); err != nil {
 		return Task{}, "", err
 	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {

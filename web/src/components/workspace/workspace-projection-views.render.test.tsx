@@ -346,6 +346,34 @@ test("the Task panel credits the callback caller and flags an open Task only wit
   assert.match(panel(review), /Completed by the team/)
 })
 
+test("an AI Task shows the missed handoff call attached to it", () => {
+  const task: Task = {
+    ...projectedTask(),
+    origin: "ABITA_AI",
+    relatedInteractionCount: 1,
+    interactions: [{ callId: "call-1", type: "VOICEMAIL", occurredAt: "2026-08-30T12:01:00Z" }],
+  }
+  const panel = (value: Task) => renderToStaticMarkup(
+    <TaskCallContext
+      task={value}
+      activeCall={undefined}
+      view="task"
+      canMutate
+      historyHint={0}
+      taskCallError=""
+      onTaskUpdated={() => {}}
+      onReturnToCall={() => {}}
+    />,
+  )
+  assert.match(panel(task), /aria-label="Call recovery source"/)
+  assert.doesNotMatch(panel({ ...task, relatedInteractionCount: 0, interactions: [] }), /Call recovery source/)
+  assert.doesNotMatch(
+    panel({ ...task, origin: "HUMAN_CALL_FOLLOW_UP", callId: "call-1" }),
+    /Call recovery source/,
+    "a follow-up's own call is not an attached missed call",
+  )
+})
+
 test("completing a Task keeps Next task in place and holds Reopen until the change settles", async () => {
   const dom = installDOM()
   const host = document.createElement("div")
