@@ -899,9 +899,6 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	return m.discoverActor(ctx, identity, true)
 }
 
-// DiscoverActorReadOnly resolves an already established actor without claiming
-// provisioned grants. Platform operator candidates may still be bound by
-// resolvePlatformOperator, but ordinary members avoid the sign-in locking path.
 func (m *Module) DiscoverActorReadOnly(ctx context.Context, identity Identity) (Discovery, error) {
 	return m.discoverActor(ctx, identity, false)
 }
