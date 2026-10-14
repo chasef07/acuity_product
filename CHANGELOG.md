@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.38.0](https://github.com/chasef07/acuity_product/compare/v1.37.0...v1.38.0) (2026-10-14)
+
+
+### Features
+
+* **knowledge:** keep Publish beside search and show how many edits it sends ([#472](https://github.com/chasef07/acuity_product/issues/472)) ([7d1f495](https://github.com/chasef07/acuity_product/commit/7d1f4955916761967900d4f764d7c261bb1afabc))
+* **tasks:** keep one open item per caller across Tasks and Missed Calls ([#471](https://github.com/chasef07/acuity_product/issues/471)) ([06bb4b3](https://github.com/chasef07/acuity_product/commit/06bb4b33fc81afe5b49eaf14624362d3d988e5c5))
+
 ## [1.37.0](https://github.com/chasef07/acuity_product/compare/v1.36.0...v1.37.0) (2026-10-13)
 
 
