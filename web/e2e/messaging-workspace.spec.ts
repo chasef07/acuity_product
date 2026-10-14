@@ -218,7 +218,7 @@ test("rail hover details and the message composer preserve compact context", asy
   await page.keyboard.press("Escape")
   await expect(page.locator('[data-slot="sidebar-inner"]')).toHaveCSS(
     "background-color",
-    "rgb(250, 250, 250)",
+    "rgb(255, 255, 255)",
   )
 
   await createAIStaffTask(

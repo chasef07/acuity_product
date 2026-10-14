@@ -47,13 +47,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Table,
@@ -113,18 +106,7 @@ export function OperatorAnalytics({
   locationScopeID: string
   locations: Location[]
 }) {
-  const scopeKey = `${practiceID}:${locationScopeID}`
-  const [officeSelection, setOfficeSelection] = useState({
-    key: scopeKey,
-    value: locationScopeID || "all",
-  })
-  const office =
-    officeSelection.key === scopeKey
-      ? officeSelection.value
-      : locationScopeID || "all"
-  const setOffice = (value: string) =>
-    setOfficeSelection({ key: scopeKey, value })
-  const locationID = office === "all" ? "" : office
+  const locationID = locationScopeID
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("24h")
   const [tab, setTab] = useState<AnalyticsTab>("calls")
   const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
@@ -172,13 +154,6 @@ export function OperatorAnalytics({
     }))
   }
 
-  const offices = [
-    { value: "all", label: "All offices" },
-    ...locations.map((location) => ({
-      value: location.id,
-      label: location.name,
-    })),
-  ]
   return (
     <section
       aria-label="AI call analytics"
@@ -190,24 +165,6 @@ export function OperatorAnalytics({
         periodLabel={reviewView ? "Daily call review and golden set" : ranges.find((item) => item.value === range)!.label}
         controls={reviewView ? null : (
           <>
-            <Select
-              value={office}
-              items={offices}
-              onValueChange={(value) => {
-                if (value !== null) setOffice(value)
-              }}
-            >
-              <SelectTrigger aria-label="Office">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {offices.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <ToggleGroup
               variant="segmented"
               spacing={1}

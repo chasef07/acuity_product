@@ -261,7 +261,7 @@ test("a Location without the coverage, a 503 and no access each read once", asyn
   const page = harness(t)
   page.plansFor = () => []
   await page.render(insuranceList())
-  await waitFor(() => /No medical plans are on this Location's insurance list\./.test(page.text()))
+  await waitFor(() => /No medical plans are on this office's insurance list\./.test(page.text()))
 
   page.plansStatus = 503
   page.plansError = { code: "UNAVAILABLE", message: "Insurance rules aren't available for this Location.", correlationId: "synthetic", retryable: false }
@@ -328,7 +328,7 @@ test("knowledge without an import and unavailable knowledge say so", async (t) =
   const page = harness(t)
   page.knowledge = { locationId: locations[0].id, sections: [] }
   await page.render(knowledgeBase())
-  await waitFor(() => /No knowledge has been imported for this Location yet\./.test(page.text()))
+  await waitFor(() => /No knowledge has been imported for this office yet\./.test(page.text()))
   assert.doesNotMatch(page.text(), /Updated/)
 
   page.knowledgeStatus = 503

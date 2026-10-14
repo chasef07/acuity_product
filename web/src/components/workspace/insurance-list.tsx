@@ -65,7 +65,7 @@ export function InsuranceList({
         onRetry={plans.retry}
         missingLocation={!props.locationID}
         isEmpty={(data) => data.plans.length === 0}
-        emptyTitle={`No ${coverageLabel.toLowerCase()} plans are on this Location's insurance list.`}
+        emptyTitle={`No ${coverageLabel.toLowerCase()} plans are on this office's insurance list.`}
         emptyDescription="Choose another office or visit coverage."
       >
         {(data) => (

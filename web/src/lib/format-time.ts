@@ -1,3 +1,5 @@
+import type { AiAppointmentFacts } from "./api/generated/types.gen.ts"
+
 export function formatTimestamp(value: string, now = new Date()) {
   if (Number.isNaN(new Date(value).getTime())) return "Unknown time"
   return `${formatDate(value, now)}, ${formatClockTime(value)}`
@@ -34,4 +36,27 @@ export function sameLocalDay(left: Date, right: Date) {
     left.getMonth() === right.getMonth() &&
     left.getDate() === right.getDate()
   )
+}
+
+export function formatAppointmentDateTime(facts: AiAppointmentFacts) {
+  if (facts.startDatetime) {
+    const value = new Date(facts.startDatetime)
+    if (!Number.isNaN(value.getTime())) {
+      return new Intl.DateTimeFormat(undefined, {
+        dateStyle: "long",
+        timeStyle: "short",
+      }).format(value)
+    }
+  }
+  if (!facts.appointmentDate) return facts.appointmentTime
+  const match = facts.appointmentDate.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(facts.appointmentDate)
+  const dateLabel = Number.isNaN(date.getTime())
+    ? facts.appointmentDate
+    : new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(date)
+  return facts.appointmentTime
+    ? `${dateLabel} · ${facts.appointmentTime}`
+    : dateLabel
 }

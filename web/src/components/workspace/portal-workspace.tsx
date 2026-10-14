@@ -60,6 +60,7 @@ import {
 import type { NumberHistory } from "@/lib/workspace-history"
 import {
   createWorkspaceProjection,
+  isWorkView,
   type WorkspaceProjectionIntent,
 } from "@/lib/workspace-projection"
 import {
@@ -337,7 +338,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           onIntent={sendIntent}
           availabilityControl={
             <CallingRailControl
-              workActive={view === "none" || view === "engagement"}
+              workActive={isWorkView(view)}
               onOpenWork={() => sendIntent({ type: "select-work" })}
             />
           }

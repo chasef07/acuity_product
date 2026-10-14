@@ -14,8 +14,6 @@ import {
   Building2Icon,
   CheckIcon,
   ChevronDownIcon,
-  FolderIcon,
-  FolderOpenIcon,
   HouseIcon,
   ListFilterIcon,
   MessageSquareTextIcon,
@@ -71,11 +69,12 @@ import type { Task, TaskFolderCounts } from "@/lib/api/generated/types.gen"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { taskGroups } from "@/lib/task-groups"
-import type {
-  ManageAgentPage,
-  WorkspaceProjectionIntent,
-  WorkspaceProjectionState,
-  WorkspaceRailSection,
+import {
+  isWorkView,
+  type ManageAgentPage,
+  type WorkspaceProjectionIntent,
+  type WorkspaceProjectionState,
+  type WorkspaceRailSection,
 } from "@/lib/workspace-projection"
 import {
   taskCountForCategory,
@@ -202,7 +201,7 @@ export function WorkspaceRail({
   const completed = projection.completedTasks
   const view = projection.selection.view
   const manageAgent = view === "manage-agent"
-  const workView = view === "none" || view === "engagement"
+  const workView = isWorkView(view)
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (
@@ -281,7 +280,7 @@ export function WorkspaceRail({
 
   return (
     <>
-      <Sidebar collapsible="offcanvas" className="absolute h-full [&_[data-slot=sidebar-inner]]:bg-canvas">
+      <Sidebar variant="floating" collapsible="offcanvas" className="absolute h-full [&_[data-slot=sidebar-inner]]:rounded-xl [&_[data-slot=sidebar-inner]]:bg-background">
         <SidebarHeader className="gap-3 p-3 pb-2">
           <div className="flex items-center gap-2 px-1">
             <AcuityMark className="size-7 shrink-0" />
@@ -519,8 +518,6 @@ function AttentionGroup({
   onToggle: () => void
   children: React.ReactNode
 }) {
-  const FolderStateIcon = expanded ? FolderOpenIcon : FolderIcon
-
   return (
     <Collapsible
       open={expanded}
@@ -538,16 +535,19 @@ function AttentionGroup({
             />
           }
         >
-          <FolderStateIcon
-            aria-hidden="true"
-            className="size-4 shrink-0 text-[var(--sidebar-icon-color)] group-hover/disclosure:text-sidebar-foreground"
-          />
           <span className="truncate">{title}</span>
           {count !== undefined && (
-            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+            <span className="text-xs tabular-nums text-muted-foreground">
               {count}
             </span>
           )}
+          <ChevronDownIcon
+            aria-hidden="true"
+            className={cn(
+              "ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
+              !expanded && "-rotate-90",
+            )}
+          />
         </CollapsibleTrigger>
       </div>
       <CollapsibleContent>
@@ -590,11 +590,10 @@ function CompletedGroup({
           }
         >
           <span className="truncate">{title}</span>
-          <span aria-hidden="true" className="h-px flex-1 bg-sidebar-border" />
           <ChevronDownIcon
             aria-hidden="true"
             className={cn(
-              "size-3 shrink-0 transition-transform",
+              "ml-auto size-3.5 shrink-0 transition-transform motion-reduce:transition-none",
               !expanded && "-rotate-90",
             )}
           />

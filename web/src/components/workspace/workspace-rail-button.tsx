@@ -48,7 +48,7 @@ export function CallingRailControl({
   if (!callingEnabled) {
     return (
       <RailButton
-        label={`Calls: ${failure!.title}`}
+        label="Calls"
         shortLabel="Calls"
         tooltip={attention}
         attention={attention}

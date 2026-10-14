@@ -186,11 +186,9 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       .getByRole("button", { name: "AI diagnostics", exact: true })
       .click()
     const diagnostics = page.getByRole("region", { name: "AI call analytics" })
-    await diagnostics
-      .getByRole("combobox", { name: "Office", exact: true })
-      .click()
+    await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
-      .getByRole("option", { name: "Fixture Location 6", exact: true })
+      .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
     await diagnostics.getByRole("button", { name: "Last 7 days", exact: true }).click()
     const flaggedCall = diagnostics.getByRole("row").filter({ hasText: "Possible unsupported claim" })
@@ -449,11 +447,9 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       fullPage: true,
       animations: "disabled",
     })
-    await diagnostics
-      .getByRole("combobox", { name: "Office", exact: true })
-      .click()
+    await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
-      .getByRole("option", { name: "Fixture Location 5", exact: true })
+      .getByRole("button", { name: "Fixture Location 5", exact: true })
       .click()
     await expect(
       diagnostics.getByText("No tool executions in this range."),
@@ -523,11 +519,9 @@ test("historical tool failures reveal and focus their technical evidence", async
       .getByRole("button", { name: "AI diagnostics", exact: true })
       .click()
     const diagnostics = page.getByRole("region", { name: "AI call analytics" })
-    await diagnostics
-      .getByRole("combobox", { name: "Office", exact: true })
-      .click()
+    await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
-      .getByRole("option", { name: "Fixture Location 6", exact: true })
+      .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
     await diagnostics
       .getByRole("button", { name: "Tools", exact: true })

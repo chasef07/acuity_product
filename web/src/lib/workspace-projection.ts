@@ -39,6 +39,10 @@ export type WorkspaceConnectionState =
 export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics" | "manage-agent"
 export type WorkspaceContextView = "task" | "call" | "ai-call"
 export type ManageAgentPage = "home" | "transcripts" | "knowledge" | "insurance"
+
+export function isWorkView(view: WorkspaceView) {
+  return view === "none" || view === "engagement"
+}
 export type WorkspaceRailSection = "tasks" | "calls" | "appointments" | "texts" | "completed"
 
 export type WorkspaceRailState = {

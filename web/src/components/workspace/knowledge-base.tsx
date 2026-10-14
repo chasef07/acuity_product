@@ -154,7 +154,7 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
         onRetry={knowledge.retry}
         missingLocation={!props.locationID}
         isEmpty={(data) => data.sections.length === 0}
-        emptyTitle="No knowledge has been imported for this Location yet."
+        emptyTitle="No knowledge has been imported for this office yet."
         emptyDescription="Abita answers office questions from this knowledge once it is imported."
       >
         {(data) => (
