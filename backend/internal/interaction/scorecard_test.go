@@ -283,12 +283,6 @@ func agentTranscript(t *testing.T, said ...string) json.RawMessage {
 	return raw
 }
 
-func TestKnowledgeAnsweredIsAFactNotAFailure(t *testing.T) {
-	if scorecardQuestionByKey["knowledge_answered"].Failure {
-		t.Fatal("A3 office_question_answered is the failure question for knowledge gaps; K1 must not double-flag")
-	}
-}
-
 func TestKnowledgeAnsweredCheck(t *testing.T) {
 	search := func(query, output string) syntheticTool {
 		return syntheticTool{"search_office_knowledge", `{"query":"` + query + `"}`, output}
@@ -377,6 +371,9 @@ func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 		if !seen[key] {
 			t.Errorf("catalog is missing %s", key)
 		}
+	}
+	if scorecardQuestionByKey["knowledge_answered"].Failure {
+		t.Error("A3 office_question_answered is the failure question for knowledge gaps; K1 must not double-flag")
 	}
 }
 

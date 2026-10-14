@@ -13,7 +13,7 @@ import {
 
 const base = { id: "item", occurredAt: "2026-08-13T12:00:00Z" } as const
 
-test("history presents activity oldest to newest without mutating the API page", () => {
+test("history presents activity oldest to newest, keeps the latest copy of an overlapping item, and does not mutate the API page", () => {
   const items = [
     { ...base, id: "newest", occurredAt: "2026-08-16T12:00:00Z" },
     { ...base, id: "oldest", occurredAt: "2026-08-14T08:00:00Z" },
@@ -26,6 +26,10 @@ test("history presents activity oldest to newest without mutating the API page",
     "newest",
   ])
   assert.deepEqual(items.map((item) => item.id), ["newest", "oldest", "middle"])
+
+  const earlier = { ...base, type: "CALL_HISTORY", entries: [] } as ConversationTimelineItem
+  const updated = { ...earlier, entries: [{ ...base, type: "TASK" }] } as ConversationTimelineItem
+  assert.deepEqual(presentTimeline([earlier, updated]), [updated])
 })
 
 test("conversation date labels keep recent boundaries subtle and readable", () => {
@@ -37,13 +41,6 @@ test("conversation date labels keep recent boundaries subtle and readable", () =
     conversationDateLabel("2026-08-13T08:00:00", now),
     /Aug 13/,
   )
-})
-
-
-test("overlapping history pages replace a call with its latest complete evidence", () => {
-  const earlier = { ...base, type: "CALL_HISTORY", entries: [] } as ConversationTimelineItem
-  const updated = { ...earlier, entries: [{ ...base, type: "TASK" }] } as ConversationTimelineItem
-  assert.deepEqual(presentTimeline([earlier, updated]), [updated])
 })
 
 test("call summary preserves booking and failed transfer without claiming staff connection", () => {

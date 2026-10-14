@@ -76,37 +76,45 @@ func TestHybridSearchNamesAndIrrelevantQueries(t *testing.T) {
 	}
 }
 
-func TestRelevanceSelectionCoversMultipartWithoutFiller(t *testing.T) {
-	candidates := []searchCandidate{
-		{Passage: Passage{SectionID: "optician"}, queryCoverage: 1, lexical: .8, matchedTerms: []string{"sherry", "optician"}, titleTerms: []string{"sherry", "optician"}},
-		{Passage: Passage{SectionID: "glasses"}, queryCoverage: 1, lexical: .3, matchedTerms: []string{"avail"}},
-		{Passage: Passage{SectionID: "walk-ins"}, queryCoverage: 1, lexical: .5, matchedTerms: []string{"need", "appoint", "adjust"}},
-	}
-	got := relevantPassages(candidates, 4)
-	if len(got) != 2 || got[0].SectionID != "walk-ins" || got[1].SectionID != "optician" {
-		t.Fatalf("must cover both needs without unrelated availability: %+v", got)
-	}
-	got = relevantPassages([]searchCandidate{
-		{Passage: Passage{SectionID: "optician-hours"}, queryCoverage: 1, lexical: .02, matchedTerms: []string{"hour"}, titleTerms: []string{"hour"}},
-		{Passage: Passage{SectionID: "office-hours"}, queryCoverage: 1, lexical: .05, matchedTerms: []string{"hour"}, titleTerms: []string{"hour"}},
-	}, 4)
-	if len(got) != 1 || got[0].SectionID != "office-hours" {
-		t.Fatalf("generic hours needs strongest topic match, not vector-only first: %+v", got)
-	}
-	got = relevantPassages([]searchCandidate{{Passage: Passage{SectionID: "semantic-answer"}}, {Passage: Passage{SectionID: "weaker"}}}, 4)
-	if len(got) != 2 || got[0].SectionID != "semantic-answer" {
-		t.Fatalf("semantic-only query must preserve bounded evidence until relevance is calibrated: %+v", got)
-	}
-}
-
-func TestRelevanceSelectionPrefersTopicsToIncidentalMentions(t *testing.T) {
-	got := relevantPassages([]searchCandidate{
-		{Passage: Passage{SectionID: "records-policy"}, queryCoverage: 1, lexical: .8, matchedTerms: []string{"address", "fax"}},
-		{Passage: Passage{SectionID: "address"}, queryCoverage: 1, lexical: .4, matchedTerms: []string{"address"}, titleTerms: []string{"address"}},
-		{Passage: Passage{SectionID: "fax"}, queryCoverage: 1, lexical: .3, matchedTerms: []string{"fax"}, titleTerms: []string{"fax"}},
-	}, 4)
-	if len(got) != 2 || got[0].SectionID != "address" || got[1].SectionID != "fax" {
-		t.Fatalf("address and fax must not be replaced by a records policy mentioning both: %+v", got)
+func TestRelevanceSelectionChoosesTopicsWithoutFiller(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		candidates []searchCandidate
+		want       []string
+	}{
+		{"multipart needs without unrelated availability", []searchCandidate{
+			{Passage: Passage{SectionID: "optician"}, queryCoverage: 1, lexical: .8, matchedTerms: []string{"sherry", "optician"}, titleTerms: []string{"sherry", "optician"}},
+			{Passage: Passage{SectionID: "glasses"}, queryCoverage: 1, lexical: .3, matchedTerms: []string{"avail"}},
+			{Passage: Passage{SectionID: "walk-ins"}, queryCoverage: 1, lexical: .5, matchedTerms: []string{"need", "appoint", "adjust"}},
+		}, []string{"walk-ins", "optician"}},
+		{"generic hours takes the strongest topic match", []searchCandidate{
+			{Passage: Passage{SectionID: "optician-hours"}, queryCoverage: 1, lexical: .02, matchedTerms: []string{"hour"}, titleTerms: []string{"hour"}},
+			{Passage: Passage{SectionID: "office-hours"}, queryCoverage: 1, lexical: .05, matchedTerms: []string{"hour"}, titleTerms: []string{"hour"}},
+		}, []string{"office-hours"}},
+		{"semantic-only query keeps bounded evidence", []searchCandidate{{Passage: Passage{SectionID: "semantic-answer"}}, {Passage: Passage{SectionID: "weaker"}}}, []string{"semantic-answer", "weaker"}},
+		{"topics beat a policy mentioning both", []searchCandidate{
+			{Passage: Passage{SectionID: "records-policy"}, queryCoverage: 1, lexical: .8, matchedTerms: []string{"address", "fax"}},
+			{Passage: Passage{SectionID: "address"}, queryCoverage: 1, lexical: .4, matchedTerms: []string{"address"}, titleTerms: []string{"address"}},
+			{Passage: Passage{SectionID: "fax"}, queryCoverage: 1, lexical: .3, matchedTerms: []string{"fax"}, titleTerms: []string{"fax"}},
+		}, []string{"address", "fax"}},
+		{"closer top-ranked entry adding an uncovered term stays", []searchCandidate{
+			{Passage: Passage{SectionID: "hours", Title: "Office hours"}, similarity: .7, queryCoverage: 1, lexical: .1, matchedTerms: []string{"lunch"}},
+			{Passage: Passage{SectionID: "optical", Title: "Optical and glasses"}, similarity: .6, queryCoverage: 1, lexical: .3, matchedTerms: []string{"close", "offic"}},
+		}, []string{"optical", "hours"}},
+		{"top-ranked entry without a semantic advantage is filler", []searchCandidate{
+			{Passage: Passage{SectionID: "hours", Title: "Office hours"}, similarity: .6, queryCoverage: 1, lexical: .1, matchedTerms: []string{"lunch"}},
+			{Passage: Passage{SectionID: "optical", Title: "Optical and glasses"}, similarity: .6, queryCoverage: 1, lexical: .3, matchedTerms: []string{"close", "offic"}},
+		}, []string{"optical"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ids := []string{}
+			for _, passage := range relevantPassages(tc.candidates, 4) {
+				ids = append(ids, passage.SectionID)
+			}
+			if !slices.Equal(ids, tc.want) {
+				t.Fatalf("got %v want %v", ids, tc.want)
+			}
+		})
 	}
 }
 
@@ -124,23 +132,6 @@ func TestRelevanceSelectionIgnoresHyphenatedTitleCollisions(t *testing.T) {
 	}, 4)
 	if len(got) != 1 || got[0].SectionID != "self-pay" {
 		t.Fatalf("hyphenated title without a standalone rival must still match: %+v", got)
-	}
-}
-
-func TestRelevanceSelectionKeepsTopRankedTopicBehindBroadEntry(t *testing.T) {
-	got := relevantPassages([]searchCandidate{
-		{Passage: Passage{SectionID: "hours", Title: "Office hours"}, similarity: .7, queryCoverage: 1, lexical: .1, matchedTerms: []string{"lunch"}},
-		{Passage: Passage{SectionID: "optical", Title: "Optical and glasses"}, similarity: .6, queryCoverage: 1, lexical: .3, matchedTerms: []string{"close", "offic"}},
-	}, 4)
-	if len(got) != 2 || got[0].SectionID != "optical" || got[1].SectionID != "hours" {
-		t.Fatalf("closer top-ranked entry adding an uncovered term must not be dropped for a broader entry: %+v", got)
-	}
-	got = relevantPassages([]searchCandidate{
-		{Passage: Passage{SectionID: "hours", Title: "Office hours"}, similarity: .6, queryCoverage: 1, lexical: .1, matchedTerms: []string{"lunch"}},
-		{Passage: Passage{SectionID: "optical", Title: "Optical and glasses"}, similarity: .6, queryCoverage: 1, lexical: .3, matchedTerms: []string{"close", "offic"}},
-	}, 4)
-	if len(got) != 1 || got[0].SectionID != "optical" {
-		t.Fatalf("top-ranked entry without a semantic advantage must not be added as filler: %+v", got)
 	}
 }
 

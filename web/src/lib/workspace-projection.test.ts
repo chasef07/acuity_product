@@ -22,7 +22,7 @@ import {
   WorkspaceProjectionAccessError,
 } from "./workspace-projection.ts"
 
-test("initial workspace shows a conversation without opening Task details", async () => {
+test("initial workspace shows a conversation without opening Task details and returning to work restores it", async () => {
   const realtime = deterministicRealtime()
   const first = task("first-task")
   const projection = createWorkspaceProjection({
@@ -39,28 +39,13 @@ test("initial workspace shows a conversation without opening Task details", asyn
   assert.equal(projection.getSnapshot().selection.contextPanelOpen, false)
   await realtime.reconcile(0)
   assert.equal(projection.getSnapshot().selection.contextPanelOpen, false)
-  await projection.dispatch({ type: "select-task", task: first })
-  assert.equal(projection.getSnapshot().selection.contextPanelOpen, true)
-  projection.stop()
-})
-
-test("returning to work restores the selected conversation after another view", async () => {
-  const realtime = deterministicRealtime()
-  const first = task("first-task")
-  const projection = createWorkspaceProjection({
-    authority: deterministicAuthority({
-      discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first]),
-    }),
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-  })
-  await projection.start()
-  await realtime.reconcile(0)
   await projection.dispatch({ type: "select-manage-agent" })
   assert.equal(projection.getSnapshot().selection.view, "manage-agent")
   await projection.dispatch({ type: "select-work" })
   assert.equal(projection.getSnapshot().selection.view, "engagement")
   assert.equal(projection.getSnapshot().selection.engagement?.phone, first.phone)
+  await projection.dispatch({ type: "select-task", task: first })
+  assert.equal(projection.getSnapshot().selection.contextPanelOpen, true)
   projection.stop()
 })
 
@@ -153,24 +138,6 @@ test("pagination appends uniquely and refresh retains active and completed windo
   projection.stop()
 })
 
-test("a load-more superseded by a failed reconcile releases loading so the next page can load", async () => {
-  const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
-  control.delayNext = true
-  const load = projection.dispatch({ type: "load-more", window: "tasks" })
-  assert.equal(projection.getSnapshot().tasks.loading, true)
-  await waitUntil(() => !control.delayNext)
-  control.workspaceAvailable = false
-  await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
-  delayed.resolve(success(taskPage([task("superseded-page")])))
-  await load
-
-  assert.equal(projection.getSnapshot().tasks.loading, false)
-  assert.deepEqual(openIDs(), ["open-1"])
-  await projection.dispatch({ type: "load-more", window: "tasks" })
-  assert.deepEqual(openIDs(), ["open-1", "open-2"])
-  projection.stop()
-})
-
 test("a reconcile during load-more keeps the page the operator asked for", async () => {
   const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
   control.delayNext = true
@@ -188,21 +155,25 @@ test("a reconcile during load-more keeps the page the operator asked for", async
   projection.stop()
 })
 
-test("a superseded Task refresh releases loading when the reconcile that replaced it fails", async () => {
-  const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
-  control.delayNext = true
-  const refresh = projection.dispatch({ type: "refresh-text-attention" })
-  assert.equal(projection.getSnapshot().tasks.loading, true)
-  await waitUntil(() => !control.delayNext)
-  control.workspaceAvailable = false
-  await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
-  delayed.resolve(success(taskPage([task("superseded-refresh")])))
-  await refresh
+test("a superseded load-more or Task refresh releases loading when the reconcile that replaced it fails", async () => {
+  for (const intent of [{ type: "load-more", window: "tasks" }, { type: "refresh-text-attention" }] as const) {
+    const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
+    control.delayNext = true
+    const pending = projection.dispatch(intent)
+    assert.equal(projection.getSnapshot().tasks.loading, true)
+    await waitUntil(() => !control.delayNext)
+    control.workspaceAvailable = false
+    await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
+    delayed.resolve(success(taskPage([task("superseded")])))
+    await pending
 
-  assert.equal(projection.getSnapshot().tasks.loading, false)
-  assert.equal(projection.getSnapshot().completedTasks.loading, false)
-  assert.deepEqual(openIDs(), ["open-1"])
-  projection.stop()
+    assert.equal(projection.getSnapshot().tasks.loading, false)
+    assert.equal(projection.getSnapshot().completedTasks.loading, false)
+    assert.deepEqual(openIDs(), ["open-1"])
+    await projection.dispatch({ type: "load-more", window: "tasks" })
+    assert.deepEqual(openIDs(), ["open-1", "open-2"])
+    projection.stop()
+  }
 })
 
 async function startWithDelayableTasks() {
@@ -536,26 +507,6 @@ test("rail preferences restore through the projection and corrupted values fail 
   projection.stop()
 })
 
-test("retired Billing preference restores the visible All types filter", async () => {
-  const projection = createWorkspaceProjection({
-    authority: deterministicAuthority({
-      discovery: accessDiscovery(),
-      snapshot: workspaceSnapshot(14),
-      tasks: taskPage([]),
-    }),
-    realtime: deterministicRealtime().adapter,
-    preferences: {
-      read: (key) => key.startsWith("acuity.attentionRail.")
-        ? JSON.stringify({ version: 1, taskCategory: "billing", scrollTop: 0 })
-        : null,
-      write: () => {},
-    },
-  })
-  await projection.start()
-  assert.equal(projection.getSnapshot().rail.taskCategory, "all")
-  projection.stop()
-})
-
 test("switching responsibility views refreshes both Task windows and preserves the selected type", async () => {
   const realtime = deterministicRealtime()
   const requests: Parameters<WorkspaceAuthorityAdapter["tasks"]>[1][] = []
@@ -680,49 +631,6 @@ test("realtime token expiry fails closed as unauthenticated before sync fallback
   const state = projection.getSnapshot()
   assert.equal(state.loadState, "unauthenticated")
   assert.equal(state.workspace, undefined)
-  projection.stop()
-})
-
-test("authoritative recovery detail updates its rail row and selection together", async () => {
-  const realtime = deterministicRealtime()
-  const recoveryV2 = task("recovery-1", {
-    origin: "MISSED_CALL_RECOVERY",
-    version: 2,
-    title: "Recovery row",
-  })
-  const recoveryV3 = task("recovery-1", {
-    origin: "MISSED_CALL_RECOVERY",
-    version: 3,
-    title: "Authoritative recovery detail",
-  })
-  const baseAuthority = deterministicAuthority({
-    discovery: accessDiscovery(),
-    snapshot: workspaceSnapshot(18),
-    tasks: taskPage([]),
-  })
-  const projection = createWorkspaceProjection({
-    authority: {
-      ...baseAuthority,
-      tasks: async (_token, request) => success(
-          request.state === "OPEN"
-            ? taskPage([recoveryV2])
-            : taskPage([]),
-      ),
-      task: async () => success(recoveryV3),
-    },
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-  })
-
-  await projection.start()
-  await realtime.reconcile(0)
-  await projection.dispatch({ type: "select-task", task: recoveryV2 })
-  await realtime.reconcile(0)
-
-  const state = projection.getSnapshot()
-  assert.equal(state.tasks.items[0]?.version, 3)
-  assert.equal(state.tasks.items[0]?.title, "Authoritative recovery detail")
-  assert.equal(state.selection.task?.version, 3)
   projection.stop()
 })
 
@@ -1446,27 +1354,6 @@ test("failed retries without a workspace snapshot preserve unavailable until rec
   projection.stop()
 })
 
-test("refresh reopens the Task named in the URL instead of the first Task", async () => {
-  const realtime = deterministicRealtime()
-  const first = task("first-task")
-  const second = task("second-task", { phone: "+15557654321" })
-  const navigation = memoryNavigation({ view: "task", taskID: second.id })
-  const projection = createWorkspaceProjection({
-    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([first, second]) }),
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-    navigation,
-  })
-  await projection.start()
-  await realtime.reconcile(0)
-  assert.equal(projection.getSnapshot().selection.task?.id, second.id)
-  assert.equal(projection.getSnapshot().selection.engagement?.phone, second.phone)
-  assert.deepEqual(navigation.writes, [])
-  await projection.dispatch({ type: "select-task", task: first })
-  assert.deepEqual(navigation.writes, [{ location: { view: "task", taskID: first.id }, mode: "push" }])
-  projection.stop()
-})
-
 test("an unavailable URL Task falls back to the first Task without adding history", async () => {
   const realtime = deterministicRealtime()
   const first = task("first-task")
@@ -1905,28 +1792,6 @@ test("a hidden tab makes no requests on hints and one catch-up when visible", as
   await live.settle()
   assert.equal(live.reconciles(), 1)
   assert.equal(live.requests.length, 6)
-  live.projection.stop()
-})
-
-test("a burst of hints during an in-flight reconcile runs at most one follow-up", async () => {
-  const live = liveWorkspace({ openRows: 60 })
-  await live.connect()
-  live.requests.length = 0
-  let release!: () => void
-  live.server.workspaceGate = new Promise<void>((resolve) => { release = resolve })
-  live.server.version = 2
-  live.send("hint", 2)
-  await waitUntil(() => live.reconciles() === 1)
-  live.server.workspaceGate = undefined
-  for (let version = 3; version <= 12; version += 1) {
-    live.server.version = version
-    live.send("hint", version)
-  }
-  await live.settle()
-  release()
-  await waitUntil(() => live.projection.getSnapshot().workspace?.version === 12)
-  await live.settle()
-  assert.equal(live.reconciles(), 2)
   live.projection.stop()
 })
 

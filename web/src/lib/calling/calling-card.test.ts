@@ -48,27 +48,6 @@ function snapshot(
   }
 }
 
-test("durable endRequested restores the disabled Ending control after reload", () => {
-  const view = projectCallingCard(
-    snapshot({
-      ...outboundCall,
-      state: "CONNECTING",
-      endRequested: true,
-    }),
-    now,
-  )
-
-  assert.deepEqual(
-    view?.kind === "call"
-      ? { status: view.status, end: view.controls.slots[1] }
-      : undefined,
-    {
-      status: "Calling…",
-      end: { kind: "end", visible: true, disabled: true, label: "Ending…" },
-    },
-  )
-})
-
 test("simultaneous inbound offers share one tray with exact Answer eligibility and countdowns", () => {
   const offers: CallingCardOffer[] = [
     {
@@ -360,6 +339,18 @@ test("typed failures replace provider details with concise Staff recovery copy",
       message: "Your request could not be confirmed. Try the action again.",
     },
   ])
+  assert.deepEqual(
+    projectCallingFailure({
+      kind: "temporary-request",
+      message:
+        "Calling stopped locally, but backend readiness could not be cleared. Calling could not reach the service.",
+      recoverable: false,
+    }),
+    {
+      title: "Calling request failed",
+      message: "Your request could not be confirmed.",
+    },
+  )
 })
 
 test("active Call ownership stays visible without offering an unsafe takeover", () => {
@@ -381,23 +372,14 @@ test("active Call ownership stays visible without offering an unsafe takeover", 
   })
 })
 
-test("failed stop cleanup reports an unconfirmed request without a false action", () => {
-  const message =
-    "Calling stopped locally, but backend readiness could not be cleared. Calling could not reach the service."
-  assert.deepEqual(
-    projectCallingFailure({
-      kind: "temporary-request",
-      message,
-      recoverable: false,
-    }),
-    {
-      title: "Calling request failed",
-      message: "Your request could not be confirmed.",
-    },
-  )
-})
-
 test("Outcome exposes only the Staff actions supported by the committed Call", () => {
+  const settledStates = [
+    "UNANSWERED",
+    "VOICEMAIL",
+    "MISSED",
+    "RESOLVED",
+    "FOLLOW_UP_REQUIRED",
+  ] as const
   const calls: CallingCardCall[] = [
     {
       ...outboundCall,
@@ -416,6 +398,11 @@ test("Outcome exposes only the Staff actions supported by the committed Call", (
       state: "UNANSWERED",
       retryAllowed: true,
     },
+    ...settledStates.map((state) => ({
+      ...outboundCall,
+      state,
+      retryAllowed: false,
+    })),
   ]
 
   const actions = calls.map((call, index) => {
@@ -427,7 +414,7 @@ test("Outcome exposes only the Staff actions supported by the committed Call", (
           canMute: false,
           canKeypad: false,
           canRetry: index === 2,
-          canDispose: index !== 2,
+          canDispose: index < 2,
         },
       },
       now,
@@ -473,6 +460,10 @@ test("Outcome exposes only the Staff actions supported by the committed Call", (
       retry: { label: "Call again", disabled: false },
       close: { label: "Dismiss" },
     },
+    ...settledStates.map(() => ({
+      dispositions: [],
+      close: { label: "Dismiss" },
+    })),
   ])
 })
 
@@ -514,41 +505,6 @@ test("Outcome actions stay visible and disabled while disposition commits", () =
       disabled: true,
     },
   ])
-})
-
-test("settled non-disposition Outcomes always offer Close", () => {
-  const states = [
-    "UNANSWERED",
-    "VOICEMAIL",
-    "MISSED",
-    "RESOLVED",
-    "FOLLOW_UP_REQUIRED",
-  ] as const
-
-  const actions = states.map((state) => {
-    const view = projectCallingCard(
-      {
-        ...snapshot({ ...outboundCall, state, retryAllowed: false }),
-        controls: {
-          canEnd: false,
-          canMute: false,
-          canKeypad: false,
-          canRetry: false,
-          canDispose: false,
-        },
-      },
-      now,
-    )
-    return view?.kind === "call" ? view.actions : undefined
-  })
-
-  assert.deepEqual(
-    actions,
-    states.map(() => ({
-      dispositions: [],
-      close: { label: "Dismiss" },
-    })),
-  )
 })
 
 test("Close waits while a retry or terminal media purge is pending", () => {

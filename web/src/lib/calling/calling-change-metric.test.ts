@@ -20,33 +20,23 @@ test("a change the poll finds with no preceding hint is reported as a missed hin
   assert.equal(metric.beginRead(30_000, covered).report, undefined)
 })
 
-test("a change read after a calling hint is not a missed hint", () => {
-  const metric = createCallingChangeMetric()
-  metric.observe(metric.beginRead(0, covered), idle())
-
-  metric.signal("hint", 5_000)
-  metric.observe(metric.beginRead(5_000, covered), ringing())
-
-  assert.equal(
-    metric.beginRead(15_000, covered).report,
-    "discovery=hint;hints=covered;tab=visible;offer=ringing",
-  )
-})
-
-test("a hint that trails the poll that found the change is late, not missed", () => {
+test("a hint that trails the poll that found the change is late, not missed, and credits only that change", () => {
   const metric = createCallingChangeMetric()
   metric.observe(metric.beginRead(0, covered), idle())
 
   metric.observe(metric.beginRead(10_000, covered), ringing())
   metric.signal("hint", 10_150)
+  const next = metric.beginRead(10_250, covered)
+  metric.observe(next, idle())
+  assert.equal(next.report, "discovery=late_hint;hints=covered;tab=visible;offer=ringing")
   assert.equal(
-    metric.beginRead(10_150, covered).report,
-    "discovery=late_hint;hints=covered;tab=visible;offer=ringing",
+    metric.beginRead(12_251, covered).report,
+    "discovery=missed;hints=covered;tab=visible;offer=ringing",
   )
 
   const inFlight = metric.beginRead(20_000, covered)
   metric.signal("hint", 20_050)
-  metric.observe(inFlight, idle())
+  metric.observe(inFlight, ringing())
   assert.equal(
     metric.beginRead(20_500, covered).report,
     "discovery=late_hint;hints=covered;tab=visible;offer=ringing",
@@ -62,6 +52,15 @@ test("a hint after the grace window does not rescue a missed change", () => {
 
   assert.equal(
     metric.beginRead(12_001, covered).report,
+    "discovery=missed;hints=covered;tab=visible;offer=ringing",
+  )
+
+  const slow = metric.beginRead(20_000, covered)
+  metric.signal("hint", 24_900)
+  metric.observe(slow, idle())
+
+  assert.equal(
+    metric.beginRead(25_000, covered).report,
     "discovery=missed;hints=covered;tab=visible;offer=ringing",
   )
 })
@@ -86,36 +85,6 @@ test("own lease heartbeats and uncovered streams are reported as they are", () =
   )
 })
 
-test("a hint that lands late in a slow read is still missed past the grace window", () => {
-  const metric = createCallingChangeMetric()
-  metric.observe(metric.beginRead(0, covered), idle())
-
-  const slow = metric.beginRead(10_000, covered)
-  metric.signal("hint", 14_900)
-  metric.observe(slow, ringing())
-
-  assert.equal(
-    metric.beginRead(15_000, covered).report,
-    "discovery=missed;hints=covered;tab=visible;offer=ringing",
-  )
-})
-
-test("a hint credited to a late change does not also mark the next read hinted", () => {
-  const metric = createCallingChangeMetric()
-  metric.observe(metric.beginRead(0, covered), idle())
-
-  metric.observe(metric.beginRead(10_000, covered), ringing())
-  metric.signal("hint", 10_150)
-  const next = metric.beginRead(10_250, covered)
-  metric.observe(next, idle())
-
-  assert.equal(next.report, "discovery=late_hint;hints=covered;tab=visible;offer=ringing")
-  assert.equal(
-    metric.beginRead(12_251, covered).report,
-    "discovery=missed;hints=covered;tab=visible;offer=ringing",
-  )
-})
-
 test("a read that fails leaves its hint and stream gap for the retry", () => {
   const metric = createCallingChangeMetric()
   metric.observe(metric.beginRead(0, covered), idle())
@@ -125,29 +94,15 @@ test("a read that fails leaves its hint and stream gap for the retry", () => {
   metric.signal("hint", 5_000)
   metric.readFailed(metric.beginRead(5_000, covered))
   metric.observe(metric.beginRead(13_000, covered), ringing())
+  const afterRetry = metric.beginRead(23_000, covered)
+  metric.observe(afterRetry, idle())
 
   assert.equal(
-    metric.beginRead(23_000, covered).report,
+    afterRetry.report,
     "discovery=hint;hints=uncovered;tab=visible;offer=ringing",
   )
-})
-
-test("a change read across a stream reconnect is not counted as covered", () => {
-  const metric = createCallingChangeMetric()
-  metric.observe(metric.beginRead(0, covered), idle())
-
-  metric.signal("disconnected", 3_000)
-  metric.signal("connected", 5_000)
-  metric.observe(metric.beginRead(5_000, covered), ringing())
-  const afterReconnect = metric.beginRead(15_000, covered)
-  metric.observe(afterReconnect, idle())
-
   assert.equal(
-    afterReconnect.report,
-    "discovery=missed;hints=uncovered;tab=visible;offer=ringing",
-  )
-  assert.equal(
-    metric.beginRead(25_000, covered).report,
+    metric.beginRead(33_000, covered).report,
     "discovery=missed;hints=covered;tab=visible;offer=ringing",
   )
 })

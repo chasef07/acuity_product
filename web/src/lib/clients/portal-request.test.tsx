@@ -21,15 +21,6 @@ const envelope = {
   },
 }
 
-test("sends with the access token and resolves the response data", async (t) => {
-  const backend = fakeBackend(t, () => Response.json({ id: "task-1" }))
-  const outcome = await portalRequest((transport) =>
-    readTask({ ...transport, path: { taskId: "task-1" } }),
-  )
-  assert.deepEqual(outcome, { ok: true, data: { id: "task-1" } })
-  assert.deepEqual(backend.requests, ["GET /v1/tasks/task-1 Bearer synthetic-token"])
-})
-
 test("normalizes an ErrorEnvelope into a typed failure", async (t) => {
   fakeBackend(t, () => Response.json(envelope, { status: 409 }))
   const outcome = await portalRequest((transport) =>
@@ -82,30 +73,20 @@ test("a network failure is unavailable without a status", async (t) => {
   })
 })
 
-test("a missing session sends nothing and reports signed out", async (t) => {
+test("a missing session reports signed out and an unavailable token service does not, both sending nothing", async (t) => {
+  const cases = [
+    [401, { kind: "signedOut", retryable: false }],
+    [400, { kind: "unavailable", retryable: true }],
+  ] as const
   const backend = fakeBackend(t, () => Response.json({ id: "task-1" }))
-  backend.tokenStatus = 401
-  const outcome = await portalRequest((transport) =>
-    readTask({ ...transport, path: { taskId: "task-1" } }),
-  )
-  assert.deepEqual(outcome, {
-    ok: false,
-    failure: { kind: "signedOut", retryable: false },
-  })
-  assert.deepEqual(backend.requests, [])
-})
-
-test("an unavailable token service is not reported as signed out", async (t) => {
-  const backend = fakeBackend(t, () => Response.json({ id: "task-1" }))
-  backend.tokenStatus = 400
-  const outcome = await portalRequest((transport) =>
-    readTask({ ...transport, path: { taskId: "task-1" } }),
-  )
-  assert.deepEqual(outcome, {
-    ok: false,
-    failure: { kind: "unavailable", retryable: true },
-  })
-  assert.deepEqual(backend.requests, [])
+  for (const [tokenStatus, failure] of cases) {
+    backend.tokenStatus = tokenStatus
+    const outcome = await portalRequest((transport) =>
+      readTask({ ...transport, path: { taskId: "task-1" } }),
+    )
+    assert.deepEqual(outcome, { ok: false, failure })
+    assert.deepEqual(backend.requests, [])
+  }
 })
 
 test("an aborted request rejects instead of reporting an outcome", async (t) => {

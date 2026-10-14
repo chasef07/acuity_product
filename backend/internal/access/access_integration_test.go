@@ -295,7 +295,7 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 		}
 		switch routeLocation {
 		case "office-1":
-			locations[0].AbitaOfficeKeys = []string{"spring-hill"}
+			locations[0].AbitaOfficeKeys = []string{"spring-hill", "hollywood"}
 		case "office-2":
 			locations[1].AbitaOfficeKeys = []string{"spring-hill"}
 		}
@@ -330,7 +330,7 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 		LocationScope: access.LocationScopeAll,
 		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
 	}
-	authorize := func() (access.ServiceAuthorization, error) {
+	authorize := func(officeKey string) (access.ServiceAuthorization, error) {
 		t.Helper()
 		tx, err := pool.Begin(context.Background())
 		if err != nil {
@@ -341,11 +341,11 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 			context.Background(),
 			tx,
 			service,
-			"spring-hill",
+			officeKey,
 			access.ServiceCapabilityCreateTask,
 		)
 	}
-	first, err := authorize()
+	first, err := authorize("spring-hill")
 	if err != nil {
 		t.Fatalf("authorize first Abita route: %v", err)
 	}
@@ -364,9 +364,13 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 			firstLocationID,
 		)
 	}
+	sharedRoute, err := authorize("hollywood")
+	if err != nil || sharedRoute.LocationID != firstLocationID {
+		t.Fatalf("second Abita office on the same Location = %q, %v; want %q", sharedRoute.LocationID, err, firstLocationID)
+	}
 
 	provision("office-2")
-	second, err := authorize()
+	second, err := authorize("spring-hill")
 	if err != nil {
 		t.Fatalf("authorize moved Abita route: %v", err)
 	}
@@ -375,74 +379,8 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 	}
 
 	provision("")
-	if _, err := authorize(); !errors.Is(err, access.ErrDenied) {
+	if _, err := authorize("spring-hill"); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("removed Abita route error = %v, want denied", err)
-	}
-}
-
-func TestProvisioningRoutesMultipleOfficesToOneOperationalLocation(t *testing.T) {
-	pool := testdb.Open(t)
-	module := access.New(pool, func() time.Time {
-		return time.Date(2026, time.August, 7, 12, 0, 0, 0, time.UTC)
-	})
-
-	if _, err := module.Provision(context.Background(), access.Provisioning{
-		Environment: "test",
-		RequestedBy: "operational-location-test",
-		Practices: []access.PracticeProvision{{
-			Key:  "abita-eye-group",
-			Name: "Abita Eye Group",
-			Locations: []access.LocationProvision{{
-				Key:             "south-florida-medical",
-				Name:            "South Florida Medical",
-				AbitaOfficeKeys: []string{"hollywood", "sweetwater"},
-			}},
-		}},
-	}); err != nil {
-		t.Fatalf("provision operational Location: %v", err)
-	}
-
-	var practiceID string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT id::text FROM access_practices
-		WHERE provisioning_key = 'abita-eye-group'
-	`).Scan(&practiceID); err != nil {
-		t.Fatalf("load Practice: %v", err)
-	}
-	service := access.ServiceIdentity{
-		Subject:       "abita-route-test",
-		PracticeID:    practiceID,
-		LocationScope: access.LocationScopeAll,
-		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
-	}
-	resolve := func(officeKey string) access.ServiceAuthorization {
-		t.Helper()
-		tx, err := pool.Begin(context.Background())
-		if err != nil {
-			t.Fatalf("begin service authorization: %v", err)
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		authorization, err := module.LockServiceAuthorization(
-			context.Background(),
-			tx,
-			service,
-			officeKey,
-			access.ServiceCapabilityCreateTask,
-		)
-		if err != nil {
-			t.Fatalf("authorize office %q: %v", officeKey, err)
-		}
-		return authorization
-	}
-
-	hollywood := resolve("hollywood")
-	sweetwater := resolve("sweetwater")
-	if hollywood.LocationID != sweetwater.LocationID {
-		t.Fatalf(
-			"South Florida office routes diverged: Hollywood %q, Sweetwater %q",
-			hollywood.LocationID,
-			sweetwater.LocationID,
-		)
 	}
 }
 

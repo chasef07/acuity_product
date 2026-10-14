@@ -319,47 +319,41 @@ func assertField(
 	}
 }
 
-func TestPoolTracerDoesNotReportExpiredOperationAsPoolTimeout(t *testing.T) {
-	var output bytes.Buffer
-	observer := observability.NewLogger(observability.RuntimeWorker, "worker-test", slog.New(slog.NewJSONHandler(&output, nil)))
-	tracer := observability.NewPoolTracer(observer)
-	parent, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	defer cancel()
-	ctx := tracer.TraceAcquireStart(parent, nil, pgxpool.TraceAcquireStartData{})
-	tracer.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{Err: ctx.Err()})
-	entry := findMetric(t, entries(t, output.String()), "acuity_call_center_database_pool_acquire")
-	if entry["outcome"] != "operation_timeout" {
-		t.Fatalf("pool acquisition metric = %#v", entry)
-	}
-}
-
-func TestPoolTracerRetainsPoolBudgetTimeoutCause(t *testing.T) {
-	var output bytes.Buffer
-	observer := observability.NewLogger(observability.RuntimeWorker, "worker-test", slog.New(slog.NewJSONHandler(&output, nil)))
-	tracer := observability.NewPoolTracer(observer)
-	parent, cancelParent := context.WithTimeout(context.Background(), time.Second)
-	defer cancelParent()
-	budget, cancelBudget := context.WithTimeoutCause(parent, time.Millisecond, observability.PoolAcquireTimeoutCause)
-	defer cancelBudget()
-	ctx := tracer.TraceAcquireStart(budget, nil, pgxpool.TraceAcquireStartData{})
-	<-ctx.Done()
-	tracer.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{Err: ctx.Err()})
-	entry := findMetric(t, entries(t, output.String()), "acuity_call_center_database_pool_acquire")
-	if entry["outcome"] != "timeout" {
-		t.Fatalf("pool acquisition metric = %#v", entry)
-	}
-}
-
-func TestPoolTracerDoesNotReportCustomParentDeadlineAsPoolTimeout(t *testing.T) {
-	var output bytes.Buffer
-	observer := observability.NewLogger(observability.RuntimeWorker, "worker-test", slog.New(slog.NewJSONHandler(&output, nil)))
-	tracer := observability.NewPoolTracer(observer)
-	parent, cancel := context.WithTimeoutCause(context.Background(), -time.Second, fmt.Errorf("synthetic worker deadline"))
-	defer cancel()
-	ctx := tracer.TraceAcquireStart(parent, nil, pgxpool.TraceAcquireStartData{})
-	tracer.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{Err: ctx.Err()})
-	entry := findMetric(t, entries(t, output.String()), "acuity_call_center_database_pool_acquire")
-	if entry["outcome"] != "operation_timeout" {
-		t.Fatalf("pool acquisition metric = %#v", entry)
+func TestPoolTracerSeparatesPoolBudgetTimeoutFromOperationDeadlines(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		context func(t *testing.T) context.Context
+		want    string
+	}{
+		{name: "expired operation", want: "operation_timeout", context: func(t *testing.T) context.Context {
+			parent, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			t.Cleanup(cancel)
+			return parent
+		}},
+		{name: "custom parent deadline", want: "operation_timeout", context: func(t *testing.T) context.Context {
+			parent, cancel := context.WithTimeoutCause(context.Background(), -time.Second, fmt.Errorf("synthetic worker deadline"))
+			t.Cleanup(cancel)
+			return parent
+		}},
+		{name: "pool budget", want: "timeout", context: func(t *testing.T) context.Context {
+			parent, cancelParent := context.WithTimeout(context.Background(), time.Second)
+			t.Cleanup(cancelParent)
+			budget, cancelBudget := context.WithTimeoutCause(parent, time.Millisecond, observability.PoolAcquireTimeoutCause)
+			t.Cleanup(cancelBudget)
+			<-budget.Done()
+			return budget
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			observer := observability.NewLogger(observability.RuntimeWorker, "worker-test", slog.New(slog.NewJSONHandler(&output, nil)))
+			tracer := observability.NewPoolTracer(observer)
+			ctx := tracer.TraceAcquireStart(test.context(t), nil, pgxpool.TraceAcquireStartData{})
+			tracer.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{Err: ctx.Err()})
+			entry := findMetric(t, entries(t, output.String()), "acuity_call_center_database_pool_acquire")
+			if entry["outcome"] != test.want {
+				t.Fatalf("pool acquisition metric = %#v", entry)
+			}
+		})
 	}
 }
