@@ -2,12 +2,14 @@ package migrations_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -81,6 +83,72 @@ func TestPortalCanLockServiceVoiceAuthorization(t *testing.T) {
 			authorization.LocationID,
 			locationID,
 		)
+	}
+}
+
+// The work integration tests run as the database owner, so only a test that
+// runs the real create path as acuity_portal can see a missing grant.
+func TestPortalCreatesAITask(t *testing.T) {
+	pool := testdb.Open(t)
+	createDatabaseRoles(t, pool)
+	applyDatabaseGrants(t, pool)
+
+	ctx := context.Background()
+	var practiceID string
+	if err := pool.QueryRow(ctx, `
+		WITH practice AS (
+			INSERT INTO access_practices (provisioning_key, name)
+			VALUES ('ai-task-grant', 'AI Task Grant')
+			RETURNING id
+		), location AS (
+			INSERT INTO access_locations (practice_id, provisioning_key, name)
+			SELECT id, 'main', 'Main' FROM practice
+			RETURNING practice_id, id
+		)
+		INSERT INTO access_abita_office_locations (practice_id, office_key, location_id)
+		SELECT practice_id, 'main', id FROM location
+		RETURNING practice_id::text
+	`).Scan(&practiceID); err != nil {
+		t.Fatalf("seed AI Task office: %v", err)
+	}
+
+	config, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("parse portal database config: %v", err)
+	}
+	config.AfterConnect = func(ctx context.Context, connection *pgx.Conn) error {
+		_, err := connection.Exec(ctx, "SET ROLE acuity_portal")
+		return err
+	}
+	portalPool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("open portal pool: %v", err)
+	}
+	t.Cleanup(portalPool.Close)
+	now := time.Date(2026, time.October, 14, 13, 40, 0, 0, time.UTC)
+	module := work.New(
+		portalPool,
+		access.New(portalPool, func() time.Time { return now }),
+		func() time.Time { return now },
+	)
+	if _, _, err := module.CreateAITask(ctx, work.CreateAITaskCommand{
+		Service: access.ServiceIdentity{
+			Subject:       "abita-agent",
+			PracticeID:    practiceID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+		},
+		OfficeKey:      "main",
+		OfficePhone:    "+17275550112",
+		SourceCallID:   "ai-task-grant-call",
+		IdempotencyKey: "ai-task-grant-call",
+		Phone:          "+17275550111",
+		Summary:        "Caller asked for a callback.",
+		Message:        "Caller asked the office to call back about an appointment.",
+		Category:       work.TaskCategoryAppointments,
+		Urgency:        work.TaskUrgencyNormal,
+	}); err != nil {
+		t.Fatalf("create AI Task as acuity_portal: %v", err)
 	}
 }
 
@@ -869,6 +937,7 @@ func expectedColumnPrivileges() map[string]bool {
 	grant("acuity_portal", "public.ai_call_review_assignments", "UPDATE", "note", "question_idea", "completed_at")
 	grant("acuity_portal", "public.ai_call_reviews", "UPDATE", "answer", "note")
 	grant("acuity_portal", "public.knowledge_corpora", "UPDATE", "revision_id")
+	grant("acuity_portal", "public.work_task_interactions", "UPDATE", "task_id")
 	grant(
 		"acuity_portal",
 		"public.ai_interaction_receipts",
