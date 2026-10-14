@@ -86,8 +86,6 @@ func TestPortalCanLockServiceVoiceAuthorization(t *testing.T) {
 	}
 }
 
-// The work integration tests run as the database owner, so only a test that
-// runs the real create path as acuity_portal can see a missing grant.
 func TestPortalCreatesAITask(t *testing.T) {
 	pool := testdb.Open(t)
 	createDatabaseRoles(t, pool)
