@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
+import type { AgentCall } from "../src/lib/api/generated/types.gen"
 import { openAgentPage, signInAs } from "./support"
 
 test("staff flag a call and Acuity reviews it", async ({
@@ -262,7 +263,7 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
   page,
 }, testInfo) => {
   const ids = [randomUUID(), randomUUID(), randomUUID()]
-  const calls = ids.map((id, index) => ({
+  const calls = ids.map((id, index): AgentCall => ({
     id,
     phone: `+1555555010${index}`,
     startedAt: new Date(Date.now() - index * 60_000).toISOString(),

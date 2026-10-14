@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto"
 import { expect, test, type Route } from "@playwright/test"
+import type { AgentCall } from "../src/lib/api/generated/types.gen"
 import { openAgentPage, signInAs } from "./support"
 
 test("changing call filters cancels old pages without unlocking the current page", async ({ page }) => {
-  const call = (phone: string) => ({
+  const call = (phone: string): AgentCall => ({
     id: randomUUID(),
     phone,
     startedAt: new Date().toISOString(),
