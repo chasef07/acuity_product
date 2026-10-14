@@ -936,6 +936,38 @@ test("failed explicit recovery closes backend availability before media teardown
   assert.equal(runtime.getSnapshot().failure?.kind, "technical-readiness")
 })
 
+test("explicit recovery restores availability when media becomes ready after connect", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    availabilityIntent: true,
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  assert.equal(backend.lease.available, true)
+
+  media.emitAudioIssue()
+  media.emitReadyOnConnect = false
+  await runtime.recover()
+
+  assert.equal(runtime.getSnapshot().readiness.mediaState, "registering")
+  assert.equal(backend.readinessWrites.at(-1)?.available, false)
+  assert.equal(backend.lease.available, false)
+
+  media.emitState("ready")
+  await eventually(() =>
+    assert.equal(backend.readinessWrites.at(-1)?.available, true),
+  )
+  assert.equal(backend.lease.available, true)
+})
+
 test("explicit recovery preserves media when backend availability cannot close", async () => {
   const backend = new DeterministicBackend()
   backend.lease = lease({ owner: true })
@@ -5127,6 +5159,7 @@ class DeterministicBackend implements SoftphoneBackend {
 class DeterministicMedia implements CallingMediaAdapter {
   connects = 0
   disconnects = 0
+  emitReadyOnConnect = true
   connectDeferred?: ReturnType<typeof deferred<void>>
   disconnectDeferred?: ReturnType<typeof deferred<void>>
   connectError?: Error
@@ -5148,7 +5181,7 @@ class DeterministicMedia implements CallingMediaAdapter {
     this.callbacks = callbacks
     if (this.connectDeferred) await this.connectDeferred.promise
     if (this.connectError) throw this.connectError
-    callbacks.onState("ready")
+    if (this.emitReadyOnConnect) callbacks.onState("ready")
   }
 
   async disconnect() {
