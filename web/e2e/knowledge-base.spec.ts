@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { expect, test } from "@playwright/test"
 import { signInAs } from "./support"
 
-test("staff edit an office knowledge entry, publish it with a reason, and see the new text", async ({ page }, testInfo) => {
+test("staff edit two office knowledge entries, publish both at once from beside the search bar, and see the new text", async ({ page }, testInfo) => {
   const loaded = { id: randomUUID(), version: 1, createdAt: "2026-09-30T15:00:00Z" }
   const published = { id: randomUUID(), version: 2, createdAt: "2026-10-12T18:30:00Z" }
   let knowledge = {
@@ -32,9 +32,16 @@ test("staff edit an office knowledge entry, publish it with a reason, and see th
   await hours.getByRole("button", { name: "Office hours", exact: true }).click()
   await hours.getByRole("button", { name: "Edit", exact: true }).click()
   await hours.getByLabel("Text", { exact: true }).fill("Monday to Friday, 8am to 5:30pm.")
+  await hours.getByRole("button", { name: "Done", exact: true }).click()
+  const parking = page.getByRole("listitem").filter({ hasText: "Parking" })
+  await parking.getByRole("button", { name: "Parking", exact: true }).click()
+  await parking.getByRole("button", { name: "Edit", exact: true }).click()
+  await parking.getByLabel("Text", { exact: true }).fill("Synthetic valet only.")
+  await expect(page.getByText("2 unpublished changes")).toBeVisible()
   const publish = page.getByRole("button", { name: "Publish", exact: true })
+  await expect(publish).toBeInViewport()
   await expect(publish).toBeDisabled()
-  await page.getByLabel("Why are you changing this?").fill("Office closes later on weekdays")
+  await page.getByLabel("Why are you changing this?").fill("Later weekday hours and valet parking")
   await expect(publish).toBeEnabled()
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("knowledge-unpublished.png") })
   await publish.click()
@@ -48,10 +55,10 @@ test("staff edit an office knowledge entry, publish it with a reason, and see th
   expect(publications).toEqual([
     expect.objectContaining({
       expectedRevisionId: loaded.id,
-      reason: "Office closes later on weekdays",
+      reason: "Later weekday hours and valet parking",
       sections: [
         { id: "hours", title: "Office hours", text: "Monday to Friday, 8am to 5:30pm." },
-        { id: "parking", title: "Parking", text: "Synthetic garage on site." },
+        { id: "parking", title: "Parking", text: "Synthetic valet only." },
       ],
     }),
   ])

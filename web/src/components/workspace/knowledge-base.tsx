@@ -67,6 +67,29 @@ function changed(draft: Draft) {
   )
 }
 
+function changeCount(draft: Draft) {
+  const sections = publishedSections(draft.entries)
+  const base = new Map(draft.base.sections.map((section) => [section.id, section]))
+  const kept = new Set(sections.map((section) => section.id))
+  const addedOrEdited = sections.filter((section) => {
+    const previous = base.get(section.id)
+    return !previous || previous.title !== section.title || previous.text !== section.text
+  })
+  return addedOrEdited.length + draft.base.sections.filter((section) => !kept.has(section.id)).length
+}
+
+function saveDraft(key: string, next: Draft) {
+  const idle: Draft = { ...next, publish: { status: "idle" } }
+  writeKnowledgeDraft(key, changed(idle) || idle.reason.trim() ? idle : undefined)
+}
+
+function rejectedEntry(draft: Draft) {
+  if (draft.publish.status !== "failed" || draft.publish.failure.kind !== "rejected") return undefined
+  const { entryId } = draft.publish.failure
+  const sections = publishedSections(draft.entries)
+  return draft.entries.find((_, index) => sections[index].id === entryId)
+}
+
 export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & { actorSubject: string }) {
   const knowledge = useLocationKnowledge(props)
   const revision = knowledge.status === "ready" ? knowledge.data.revision : undefined
@@ -74,6 +97,7 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
   const [historyOpen, setHistoryOpen] = useState(false)
   const words = fold(search).split(/\s+/).filter(Boolean)
   const draftKey = knowledgeDraftKey(actorSubject, props.practiceID, props.locationID)
+  const draft = useSyncExternalStore(subscribeKnowledgeDrafts, () => readKnowledgeDraft(draftKey), () => undefined)
 
   return (
     <AgentPage
@@ -121,6 +145,15 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
               onChange={(event) => setSearch(event.target.value)}
             />
           </InputGroup>
+          {draft && (
+            <PublishBar
+              draftKey={draftKey}
+              draft={draft}
+              practiceID={props.practiceID}
+              locationID={props.locationID}
+              onDiscard={knowledge.retry}
+            />
+          )}
         </>
       }
     >
@@ -138,8 +171,7 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
           <KnowledgeEditor
             key={draftKey}
             draftKey={draftKey}
-            practiceID={props.practiceID}
-            locationID={props.locationID}
+            stored={draft}
             loaded={data}
             search={search}
             words={words}
@@ -153,16 +185,14 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
 
 function KnowledgeEditor({
   draftKey,
-  practiceID,
-  locationID,
+  stored,
   loaded,
   search,
   words,
   onReload,
 }: {
   draftKey: string
-  practiceID: string
-  locationID: string
+  stored: Draft | undefined
   loaded: LocationKnowledge
   search: string
   words: string[]
@@ -177,38 +207,28 @@ function KnowledgeEditor({
     }),
     [loaded],
   )
-  const stored = useSyncExternalStore(subscribeKnowledgeDrafts, () => readKnowledgeDraft(draftKey), () => undefined)
   const draft = stored ?? fresh
   const [editing, setEditing] = useState("")
   const [revealed, setRevealed] = useState({ key: "", count: 0 })
   const wasPublishing = useRef(draft.publish.status === "publishing")
-  const reasonID = useId()
 
   useEffect(() => {
     if (wasPublishing.current && !stored) onReload()
     wasPublishing.current = stored?.publish.status === "publishing"
   }, [stored, onReload])
 
-  function update(next: Draft) {
-    const idle: Draft = { ...next, publish: { status: "idle" } }
-    writeKnowledgeDraft(draftKey, changed(idle) || idle.reason.trim() ? idle : undefined)
-  }
-
   function updateEntry(key: string, change: Partial<KnowledgeSection>) {
-    update({ ...draft, entries: draft.entries.map((entry) => (entry.key === key ? { ...entry, ...change } : entry)) })
+    saveDraft(draftKey, { ...draft, entries: draft.entries.map((entry) => (entry.key === key ? { ...entry, ...change } : entry)) })
   }
 
   function add() {
     const key = crypto.randomUUID()
     setEditing(key)
-    update({ ...draft, entries: [...draft.entries, { key, id: "", title: "", text: "" }] })
+    saveDraft(draftKey, { ...draft, entries: [...draft.entries, { key, id: "", title: "", text: "" }] })
   }
 
-  const unpublished = changed(draft)
-  const sections = publishedSections(draft.entries)
   const failure = draft.publish.status === "failed" ? draft.publish.failure : undefined
-  const entryFailure = failure?.kind === "rejected" ? failure.entryId : undefined
-  const failedEntry = draft.entries.find((_, index) => entryFailure !== undefined && sections[index].id === entryFailure)
+  const failedEntry = rejectedEntry(draft)
   const [seenFailure, setSeenFailure] = useState(failure)
   if (failure !== seenFailure) {
     setSeenFailure(failure)
@@ -219,33 +239,6 @@ function KnowledgeEditor({
   }
   const shown = draft.entries.filter((entry) => entry.key === editing || matches(entry, words))
   const publishing = draft.publish.status === "publishing"
-  const failureBesideEntry = failedEntry !== undefined && shown.includes(failedEntry)
-
-  async function submit() {
-    const publication = {
-      practiceId: practiceID,
-      locationId: locationID,
-      expectedRevisionId: draft.base.revision?.id,
-      reason: draft.reason.trim(),
-      sections,
-    }
-    const payload = JSON.stringify(publication)
-    const attempt = draft.attempt?.payload === payload ? draft.attempt : { payload, revisionID: crypto.randomUUID() }
-    const sent: Draft = { ...draft, publish: { status: "publishing" }, attempt }
-    writeKnowledgeDraft(draftKey, sent)
-    const outcome = await publishLocationKnowledge({ ...publication, revisionId: attempt.revisionID })
-    const current = readKnowledgeDraft(draftKey) === sent
-    if (!outcome.ok) {
-      if (current) writeKnowledgeDraft(draftKey, { ...sent, publish: { status: "failed", failure: outcome.failure } })
-      return
-    }
-    if (current) writeKnowledgeDraft(draftKey, undefined)
-  }
-
-  function discard() {
-    writeKnowledgeDraft(draftKey, undefined)
-    onReload()
-  }
 
   return (
     <fieldset disabled={publishing} className="flex min-w-0 flex-col gap-4">
@@ -256,37 +249,6 @@ function KnowledgeEditor({
             : `No entries match “${search.trim()}”.`
           : null}
       </p>
-      {(unpublished || draft.reason) && (
-        <div className="flex flex-col gap-3 rounded-lg border bg-card p-3">
-          <p className="text-sm font-medium">Unpublished changes</p>
-          <label htmlFor={reasonID} className="text-sm">
-            Why are you changing this?
-          </label>
-          <Input
-            id={reasonID}
-            value={draft.reason}
-            maxLength={2000}
-            onChange={(event) => update({ ...draft, reason: event.target.value })}
-          />
-          {failure && !failureBesideEntry && (
-            <Alert variant="destructive">
-              <AlertTitle>{publishFailureMessage(failure)}</AlertTitle>
-            </Alert>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              disabled={!unpublished || !draft.reason.trim()}
-              onClick={() => void submit()}
-            >
-              {publishing && <Spinner data-icon="inline-start" />}
-              {publishing ? "Publishing…" : "Publish"}
-            </Button>
-            <Button variant="ghost" onClick={discard}>
-              Discard changes
-            </Button>
-          </div>
-        </div>
-      )}
       {shown.length > 0 && (
         <ul key={words.join(" ")} className="divide-y overflow-hidden rounded-lg border bg-card">
           {shown.map((entry) => (
@@ -319,7 +281,7 @@ function KnowledgeEditor({
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => update({ ...draft, entries: draft.entries.filter((item) => item.key !== entry.key) })}
+                    onClick={() => saveDraft(draftKey, { ...draft, entries: draft.entries.filter((item) => item.key !== entry.key) })}
                   >
                     Remove
                   </Button>
@@ -333,6 +295,90 @@ function KnowledgeEditor({
         <PlusIcon data-icon="inline-start" />
         Add entry
       </Button>
+    </fieldset>
+  )
+}
+
+function PublishBar({
+  draftKey,
+  draft,
+  practiceID,
+  locationID,
+  onDiscard,
+}: {
+  draftKey: string
+  draft: Draft
+  practiceID: string
+  locationID: string
+  onDiscard: () => void
+}) {
+  const reasonID = useId()
+  const count = changeCount(draft)
+  const publishing = draft.publish.status === "publishing"
+  const failure = draft.publish.status === "failed" ? draft.publish.failure : undefined
+  const failedEntry = rejectedEntry(draft)
+
+  async function submit() {
+    const publication = {
+      practiceId: practiceID,
+      locationId: locationID,
+      expectedRevisionId: draft.base.revision?.id,
+      reason: draft.reason.trim(),
+      sections: publishedSections(draft.entries),
+    }
+    const payload = JSON.stringify(publication)
+    const attempt = draft.attempt?.payload === payload ? draft.attempt : { payload, revisionID: crypto.randomUUID() }
+    const sent: Draft = { ...draft, publish: { status: "publishing" }, attempt }
+    writeKnowledgeDraft(draftKey, sent)
+    const outcome = await publishLocationKnowledge({ ...publication, revisionId: attempt.revisionID })
+    const current = readKnowledgeDraft(draftKey) === sent
+    if (!outcome.ok) {
+      if (current) writeKnowledgeDraft(draftKey, { ...sent, publish: { status: "failed", failure: outcome.failure } })
+      return
+    }
+    if (current) writeKnowledgeDraft(draftKey, undefined)
+  }
+
+  function discard() {
+    writeKnowledgeDraft(draftKey, undefined)
+    onDiscard()
+  }
+
+  return (
+    <fieldset
+      disabled={publishing}
+      className="flex min-w-0 flex-1 basis-xl flex-wrap items-center gap-2 rounded-lg border border-primary bg-primary/5 p-2"
+    >
+      {count > 0 && (
+        <p className="shrink-0 text-sm font-medium">
+          {count} unpublished {count === 1 ? "change" : "changes"}
+        </p>
+      )}
+      <label htmlFor={reasonID} className="sr-only">
+        Why are you changing this?
+      </label>
+      <Input
+        id={reasonID}
+        className="min-w-40 flex-1 bg-background"
+        placeholder="Why are you changing this?"
+        value={draft.reason}
+        maxLength={2000}
+        onChange={(event) => saveDraft(draftKey, { ...draft, reason: event.target.value })}
+      />
+      <Button variant="ghost" onClick={discard}>
+        Discard changes
+      </Button>
+      <Button disabled={!changed(draft) || !draft.reason.trim()} onClick={() => void submit()}>
+        {publishing && <Spinner data-icon="inline-start" />}
+        {publishing ? "Publishing…" : "Publish"}
+      </Button>
+      {failure && (
+        <Alert variant="destructive" className="basis-full">
+          <AlertTitle>
+            {failedEntry ? `Not published. Fix “${failedEntry.title || "Untitled entry"}” below.` : publishFailureMessage(failure)}
+          </AlertTitle>
+        </Alert>
+      )}
     </fieldset>
   )
 }
