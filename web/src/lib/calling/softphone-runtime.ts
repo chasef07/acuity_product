@@ -2760,9 +2760,11 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         if (!(await commitReadiness(false, true))) return
         await releaseLocalMedia()
         await connectMedia()
-        if (snapshot.readiness.mediaState === "ready") {
+        if (snapshot.readiness.mediaState !== "unavailable") {
           readinessFailClosed = false
-          await commitReadiness()
+          if (snapshot.readiness.mediaState === "ready") {
+            await commitReadiness()
+          }
         }
       }
       await signalRefresh()
