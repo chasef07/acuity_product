@@ -58,19 +58,6 @@ test("partial scorecard preserves completed scores and exposes failures and miss
   assert.match(html, /No valid score was recorded/)
 })
 
-test("invalid or failed scorecard answers cannot appear as valid scores", () => {
-  for (const value of [null, "0.9", -0.1, 1.1, NaN, Infinity]) {
-    const html = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecard, results: {
-      request_understood: { answers: { request_understood: { type: "noul", noul: value } } },
-    } }} />)
-    assert.doesNotMatch(html, / \/ 1</)
-    assert.match(html, /No valid score was recorded/)
-  }
-  const failed = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecard, errors: { request_understood: { cause: "TimeoutError" } } }} />)
-  assert.equal(failed.match(/0.85 \/ 1/g)?.length, 3)
-  assert.match(failed, /Judge failed: TimeoutError/)
-})
-
 const scorecardV2 = {
   ...scorecard,
   evaluatorVersion: "typesafe-scorecard-v2",
@@ -80,27 +67,7 @@ const scorecardV2 = {
   },
 }
 
-test("date and time check distinguishes inapplicability from missing or failed evaluation", () => {
-  const evaluation = {
-    ...scorecardV2,
-    results: {
-      ...scorecardV2.results,
-      appointment_datetime_correct: { status: "not_applicable", reason: "no_appointment_action_result" },
-    },
-  }
-  const html = renderToStaticMarkup(<CallEvaluation evaluation={evaluation} />)
-  assert.match(html, /Appointment date and time correct<\/dt><dd[^>]*>Not applicable/)
-  assert.match(html, /No booking, rescheduling, or cancellation tool returned a result/)
-  assert.doesNotMatch(html, /No valid score was recorded/)
-  assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, 4)
-  const failed = renderToStaticMarkup(<CallEvaluation evaluation={{
-    ...evaluation, errors: { appointment_datetime_correct: { cause: "TimeoutError" } },
-  }} />)
-  assert.match(failed, /Judge failed: TimeoutError/)
-  assert.doesNotMatch(failed, />Not applicable</)
-})
-
-test("v2 renders five checks including low responsiveness without inverting the score", () => {
+test("v2 renders five checks including low responsiveness without inverting the score and an inapplicable date check unless it failed", () => {
   const html = renderToStaticMarkup(<CallEvaluation evaluation={scorecardV2} />)
   assert.match(html, /Conversation responsive<\/dt><dd[^>]*>0.05 \/ 1/)
   assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, 5)
@@ -111,24 +78,24 @@ test("v2 renders five checks including low responsiveness without inverting the 
   assert.match(html, /not measured silence or its technical cause/)
   assert.match(html, /&quot;noul&quot;: 0.05/)
   assert.match(html, /total_tokens/)
-})
 
-test("partial v2 preserves responsiveness and sentiment alongside failed and missing checks", () => {
-  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
-    ...scorecardV2, status: "incomplete", reason: "judge_errors",
+  const inapplicable = {
+    ...scorecardV2,
     results: {
-      conversation_responsive: scorecardV2.results.conversation_responsive,
-      expressed_sentiment: scorecard.results.expressed_sentiment,
+      ...scorecardV2.results,
+      appointment_datetime_correct: { status: "not_applicable", reason: "no_appointment_action_result" },
     },
-    errors: { office_rules_grounded: { cause: "HTTPStatusError", httpStatus: 503, attempts: 2 } },
+  }
+  const notApplicable = renderToStaticMarkup(<CallEvaluation evaluation={inapplicable} />)
+  assert.match(notApplicable, /Appointment date and time correct<\/dt><dd[^>]*>Not applicable/)
+  assert.match(notApplicable, /No booking, rescheduling, or cancellation tool returned a result/)
+  assert.doesNotMatch(notApplicable, /No valid score was recorded/)
+  assert.equal(notApplicable.match(/ \/ 1<\/dd>/g)?.length, 4)
+  const failed = renderToStaticMarkup(<CallEvaluation evaluation={{
+    ...inapplicable, errors: { appointment_datetime_correct: { cause: "TimeoutError" } },
   }} />)
-  assert.match(html, /0.05 \/ 1/)
-  assert.match(html, /2.50 \/ 4/)
-  assert.match(html, /Evaluation incomplete: judge errors/)
-  assert.match(html, /Judge failed: HTTPStatusError/)
-  assert.match(html, /HTTP 503/)
-  assert.match(html, /Attempts: 2/)
-  assert.equal(html.match(/No valid score was recorded/g)?.length, 3)
+  assert.match(failed, /Judge failed: TimeoutError/)
+  assert.doesNotMatch(failed, />Not applicable</)
 })
 
 test("v2 responsiveness preserves unavailable and judge error states", () => {

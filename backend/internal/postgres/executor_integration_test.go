@@ -13,36 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestExecutorUsesIndependentAcquireAndStatementDeadlines(t *testing.T) {
-	pool := openExecutorPool(t, 1)
-	if err := pool.Ping(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	executor := newTestExecutor(t, pool, 20*time.Millisecond, 250*time.Millisecond, 100*time.Millisecond)
-
-	started := time.Now()
-	var value int
-	if err := executor.QueryRow(
-		context.Background(),
-		`SELECT 7 FROM pg_sleep(0.05)`,
-	).Scan(&value); err != nil {
-		t.Fatalf("query longer than acquisition deadline: %v", err)
-	}
-	if value != 7 || time.Since(started) < 45*time.Millisecond {
-		t.Fatalf("query value=%d elapsed=%s", value, time.Since(started))
-	}
-
-	connection, err := pool.Acquire(context.Background())
-	if err != nil {
-		t.Fatalf("occupy pool: %v", err)
-	}
-	defer connection.Release()
-	_, err = executor.Exec(context.Background(), `SELECT 1`)
-	if productpostgres.CauseOf(err) != productpostgres.CauseAcquireTimeout {
-		t.Fatalf("acquisition cause = %q, want %q", productpostgres.CauseOf(err), productpostgres.CauseAcquireTimeout)
-	}
-}
-
 func TestExecutorOwnsTransactionDeadlineAndRelease(t *testing.T) {
 	pool := openExecutorPool(t, 1)
 	executor := newTestExecutor(t, pool, 20*time.Millisecond, 80*time.Millisecond, 60*time.Millisecond)

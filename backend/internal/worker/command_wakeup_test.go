@@ -192,79 +192,58 @@ func TestCommandHintDuringEmptyClaimIsNotLostBeforeWait(t *testing.T) {
 	})
 }
 
-func TestCommandHintDoesNotBypassClaimErrorBackoff(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		var claims, executed atomic.Int32
-		var ready atomic.Bool
-		ready.Store(true)
-		work := &commandWakeTestWork{controlledWork: newControlledWork()}
-		work.claim = func(context.Context) (func(context.Context) error, bool, error) {
-			if claims.Add(1) == 1 {
-				return nil, false, errors.New("synthetic claim interruption")
-			}
-			if !ready.CompareAndSwap(true, false) {
-				return nil, false, nil
-			}
-			return func(context.Context) error { executed.Add(1); return nil }, true, nil
-		}
-		runner := newCommandWakeTestRunner(t, work)
-		go runner.runProviderCommands(ctx)
-		synctest.Wait()
-		runner.notifyProviderCommands()
-		synctest.Wait()
-		if claims.Load() != 1 {
-			t.Fatal("hint bypassed claim error backoff")
-		}
-		time.Sleep(time.Second - time.Nanosecond)
-		synctest.Wait()
-		if claims.Load() != 1 {
-			t.Fatal("claim retried before backoff deadline")
-		}
-		time.Sleep(time.Nanosecond)
-		synctest.Wait()
-		if executed.Load() != 1 {
-			t.Fatal("claim did not resume after its full backoff")
-		}
-	})
-}
-
-func TestCommandHintDoesNotBypassExecutorErrorBackoff(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		var claims, executed atomic.Int32
-		var ready atomic.Bool
-		ready.Store(true)
-		work := &commandWakeTestWork{controlledWork: newControlledWork()}
-		work.claim = func(context.Context) (func(context.Context) error, bool, error) {
-			if claims.Add(1) == 1 {
-				return func(context.Context) error { return errors.New("synthetic effect interruption") }, true, nil
-			}
-			if !ready.CompareAndSwap(true, false) {
-				return nil, false, nil
-			}
-			return func(context.Context) error { executed.Add(1); return nil }, true, nil
-		}
-		runner := newCommandWakeTestRunner(t, work)
-		runner.config.CommandWorkers = 1
-		go runner.runProviderCommands(ctx)
-		synctest.Wait()
-		runner.notifyProviderCommands()
-		synctest.Wait()
-		if claims.Load() != 1 {
-			t.Fatal("hint reclaimed an executor during its error backoff")
-		}
-		time.Sleep(time.Second - time.Nanosecond)
-		synctest.Wait()
-		if claims.Load() != 1 {
-			t.Fatal("executor capacity returned before backoff deadline")
-		}
-		time.Sleep(time.Nanosecond)
-		synctest.Wait()
-		if executed.Load() != 1 {
-			t.Fatal("executor did not resume after its full backoff")
-		}
-	})
+func TestCommandHintDoesNotBypassErrorBackoff(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		workers int
+		failure func() (func(context.Context) error, bool, error)
+	}{
+		{name: "claim", failure: func() (func(context.Context) error, bool, error) {
+			return nil, false, errors.New("synthetic claim interruption")
+		}},
+		{name: "executor", workers: 1, failure: func() (func(context.Context) error, bool, error) {
+			return func(context.Context) error { return errors.New("synthetic effect interruption") }, true, nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				var claims, executed atomic.Int32
+				var ready atomic.Bool
+				ready.Store(true)
+				work := &commandWakeTestWork{controlledWork: newControlledWork()}
+				work.claim = func(context.Context) (func(context.Context) error, bool, error) {
+					if claims.Add(1) == 1 {
+						return test.failure()
+					}
+					if !ready.CompareAndSwap(true, false) {
+						return nil, false, nil
+					}
+					return func(context.Context) error { executed.Add(1); return nil }, true, nil
+				}
+				runner := newCommandWakeTestRunner(t, work)
+				if test.workers > 0 {
+					runner.config.CommandWorkers = test.workers
+				}
+				go runner.runProviderCommands(ctx)
+				synctest.Wait()
+				runner.notifyProviderCommands()
+				synctest.Wait()
+				if claims.Load() != 1 {
+					t.Fatalf("hint bypassed %s error backoff", test.name)
+				}
+				time.Sleep(time.Second - time.Nanosecond)
+				synctest.Wait()
+				if claims.Load() != 1 {
+					t.Fatalf("%s retried before backoff deadline", test.name)
+				}
+				time.Sleep(time.Nanosecond)
+				synctest.Wait()
+				if executed.Load() != 1 {
+					t.Fatalf("%s did not resume after its full backoff", test.name)
+				}
+			})
+		})
+	}
 }

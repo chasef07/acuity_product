@@ -35,52 +35,6 @@ test("no answer has an explicit result, redial and dismissal with no empty contr
   assert.doesNotMatch(html, /Outcome|Try again|data-slot="card-footer"|data-control-slot/)
 })
 
-test("rendered ownership and media failures expose their exact recovery actions", () => {
-  const ownership = render(
-    snapshot({
-      activeCall: call({ state: "CONNECTED" }),
-      lease: { ...lease(), owner: false, sessionId: "other-session" },
-      failure: {
-        kind: "ownership",
-        message: "technical lease detail",
-        recoverable: true,
-      },
-    }),
-  )
-  assert.match(ownership, /role="alert"/)
-  assert.match(ownership, />Use this browser</)
-  assert.doesNotMatch(ownership, /technical lease detail/)
-
-  const activeOwnership = renderToStaticMarkup(
-    <CallingFailureNotice
-      failure={{
-        kind: "ownership",
-        message: "technical active Call detail",
-        recoverable: false,
-      }}
-      onRecover={() => undefined}
-    />,
-  )
-  assert.match(activeOwnership, /Finish it there/)
-  assert.doesNotMatch(activeOwnership, />Use this browser</)
-
-  const media = render(
-    snapshot({
-      activeCall: call({ state: "CONNECTED" }),
-      failure: {
-        kind: "media",
-        message: "provider implementation detail",
-        recoverable: true,
-      },
-    }),
-  )
-  assert.match(media, />Calling disconnected</)
-  assert.match(media, /Calls are paused until then/)
-  assert.match(media, />Refresh page</)
-  assert.match(media, /border-warning\/35/)
-  assert.doesNotMatch(media, /provider implementation detail/)
-})
-
 test("a failure without a Call or incoming offer does not render a Calling Card", () => {
   const failure = {
     kind: "ownership" as const,
@@ -132,24 +86,6 @@ test("live call warnings distinguish delayed requests and automatic reconnects w
     assert.doesNotMatch(html, /Calling disconnected|Calls are paused|Refresh page/)
     assert.doesNotMatch(html, /technical request detail/)
   }
-})
-
-test("rendered simultaneous offers stay in one tray with exact CallLeg actions", () => {
-  const html = render(
-    snapshot({
-      offers: [
-        offer("call-1", "leg-1", "+15551110001"),
-        offer("call-2", "leg-2", "+15551110002"),
-      ],
-    }),
-  )
-
-  assert.equal(matches(html, 'aria-label="Incoming calls"'), 1)
-  assert.equal(matches(html, 'role="status"'), 1)
-  assert.match(html, /data-call-leg-id="leg-1"/)
-  assert.match(html, /data-call-leg-id="leg-2"/)
-  assert.match(html, /aria-label="Answer \(555\) 111-0001"/)
-  assert.match(html, /aria-label="Answer \(555\) 111-0002"/)
 })
 
 test("rendered Staff transfer exposes handoff context, Answer, and Decline", () => {

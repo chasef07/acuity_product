@@ -100,20 +100,13 @@ func TestOfficeKeysTranslateToMiddlewareOffices(t *testing.T) {
 	for key, office := range map[string]string{"sweetwater-optical": "sweetwater", "sweetwater": "sweetwater", "hollywood": "hollywood", "north-miami-beach-optical": "north_miami_beach_optical", "spring-hill": "spring_hill"} {
 		server, calls := fakeMiddleware(t, http.StatusOK, `[]`)
 		module := newModule(t, fakeRoutes{key: key}, server.URL, nil)
-		if _, err := module.Plans(context.Background(), query(insurance.RoutineVision)); err != nil {
-			t.Fatalf("%s plans: %v", key, err)
+		page, err := module.Plans(context.Background(), query(insurance.RoutineVision))
+		if err != nil || page.Plans == nil || len(page.Plans) != 0 {
+			t.Fatalf("%s empty page = %#v, %v", key, page, err)
 		}
 		if len(*calls) != 1 || (*calls)[0].query != "coverage=routine_vision&office="+office {
 			t.Fatalf("%s middleware calls = %#v, want office %s", key, *calls, office)
 		}
-	}
-}
-
-func TestEmptyPlanListIsAnEmptyPage(t *testing.T) {
-	server, _ := fakeMiddleware(t, http.StatusOK, `[]`)
-	page, err := newModule(t, fakeRoutes{key: "spring-hill"}, server.URL, nil).Plans(context.Background(), query(insurance.RoutineVision))
-	if err != nil || page.Plans == nil || len(page.Plans) != 0 {
-		t.Fatalf("empty page = %#v, %v", page, err)
 	}
 }
 

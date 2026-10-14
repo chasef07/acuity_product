@@ -2,6 +2,7 @@ package testdb
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -85,7 +86,9 @@ func open(t *testing.T, last string) *pgxpool.Pool {
 		lock.Release()
 	})
 
-	if _, err := lock.Exec(ctx, `
+	migrationContext, cancelMigration := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelMigration()
+	if _, err := lock.Exec(migrationContext, `
 		DROP SCHEMA IF EXISTS auth CASCADE;
 		DROP SCHEMA public CASCADE;
 		CREATE SCHEMA public
@@ -94,12 +97,31 @@ func open(t *testing.T, last string) *pgxpool.Pool {
 	}
 	var migrationErr error
 	if last == "" {
-		migrationErr = migrations.Apply(ctx, pool)
+		migrationErr = migrations.Apply(migrationContext, pool)
 	} else {
-		migrationErr = migrations.ApplyThrough(ctx, pool, last)
+		migrationErr = migrations.ApplyThrough(migrationContext, pool, last)
 	}
 	if migrationErr != nil {
-		t.Fatalf("apply migrations: %v", migrationErr)
+		t.Fatalf("apply migrations: %v; open transactions: %s", migrationErr, openTransactions(lock))
 	}
 	return pool
+}
+
+func openTransactions(lock *pgxpool.Conn) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var sessions string
+	if err := lock.QueryRow(ctx, `
+		SELECT COALESCE(string_agg(
+			format('pid=%s state=%s since=%s query=%s', pid, state, xact_start, left(query, 120)),
+			'; '
+		), 'none')
+		FROM pg_stat_activity
+		WHERE datname = current_database()
+			AND pid <> pg_backend_pid()
+			AND xact_start IS NOT NULL
+	`).Scan(&sessions); err != nil {
+		return fmt.Sprintf("unavailable: %v", err)
+	}
+	return sessions
 }

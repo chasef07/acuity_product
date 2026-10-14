@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestTaskSearchUsesTrigramIndexes(t *testing.T) {
+func TestTaskQueriesUseSearchAndLocationIndexes(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
 	const practiceID = "10000000-0000-0000-0000-000000000001"
@@ -41,6 +42,28 @@ func TestTaskSearchUsesTrigramIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	explain := func(tx pgx.Tx, sql string, args ...any) map[string]any {
+		t.Helper()
+		var raw []byte
+		if err := tx.QueryRow(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sql, args...).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var plans []map[string]any
+		if err := json.Unmarshal(raw, &plans); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("query over 20,000 Tasks: %.3fms", plans[0]["Execution Time"])
+		return plans[0]["Plan"].(map[string]any)
+	}
+	var inspect func(map[string]any, func(map[string]any))
+	inspect = func(node map[string]any, visit func(map[string]any)) {
+		visit(node)
+		children, _ := node["Plans"].([]any)
+		for _, child := range children {
+			inspect(child.(map[string]any), visit)
+		}
+	}
+
 	for _, test := range []struct {
 		search   string
 		ordering work.TaskOrdering
@@ -59,37 +82,42 @@ func TestTaskSearchUsesTrigramIndexes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var raw []byte
-		if err := tx.QueryRow(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+taskQuerySQL(work.TaskOpen, test.ordering, false, search), search.arguments(
+		plan := explain(tx, taskQuerySQL(work.TaskOpen, test.ordering, false, search), search.arguments(
 			practiceID, locationIDs, search.pattern, search.digits, false, time.Now(), "", 1, 51,
 			"all", "synthetic@staff.test", "", "",
-		)...).Scan(&raw); err != nil {
-			t.Fatal(err)
-		}
+		)...)
 		_ = tx.Rollback(ctx)
-		var plans []map[string]any
-		if err := json.Unmarshal(raw, &plans); err != nil {
-			t.Fatal(err)
-		}
-		plan := plans[0]["Plan"].(map[string]any)
 		indexes := map[string]bool{}
-		var inspect func(map[string]any)
-		inspect = func(node map[string]any) {
+		inspect(plan, func(node map[string]any) {
 			if name, ok := node["Index Name"].(string); ok {
 				indexes[name] = true
 			}
-			children, _ := node["Plans"].([]any)
-			for _, child := range children {
-				inspect(child.(map[string]any))
-			}
-		}
-		inspect(plan)
+		})
 		if !indexes[test.index] {
 			t.Errorf("search %q did not use %s: indexes %v", test.search, test.index, indexes)
 		}
 		if plan["Actual Rows"] != test.rows {
 			t.Errorf("search %q returned %v rows, want %v", test.search, plan["Actual Rows"], test.rows)
 		}
-		t.Logf("search %q over 20,000 Tasks: %.3fms using %v", test.search, plans[0]["Execution Time"], indexes)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	plan := explain(tx, taskQuerySQL(work.TaskOpen, work.TaskOrderingRecent, false, taskSearch{}),
+		practiceID, locationIDs[:1], "", "", false, time.Now(), "", 1, 51, "all", "synthetic@staff.test", "", "")
+	var scoped bool
+	inspect(plan, func(node map[string]any) {
+		if condition, ok := node["Index Cond"].(string); ok && strings.Contains(condition, "location_id") {
+			scoped = true
+		}
+	})
+	if !scoped {
+		t.Fatalf("Task query failed to constrain an index by Location: %+v", plan)
+	}
+	if plan["Actual Rows"] != float64(51) {
+		t.Fatalf("Location-filtered Task query returned %v rows, want 51", plan["Actual Rows"])
 	}
 }

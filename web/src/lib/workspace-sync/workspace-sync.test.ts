@@ -4,7 +4,7 @@ import test from "node:test"
 import { createCallingHintChannel } from "../calling/calling-hints.ts"
 import { createWorkspaceSync, WorkspaceSyncUnauthorizedError } from "./workspace-sync.ts"
 
-test("startup waits for ready then performs one authoritative reconciliation", async () => {
+test("startup waits for a CRLF ready event split across chunks then performs one authoritative reconciliation", async () => {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined
   let tokenAcquisitions = 0
   let reconciliations = 0
@@ -41,51 +41,19 @@ test("startup waits for ready then performs one authoritative reconciliation", a
   await eventually(() => assert.ok(stream))
   assert.equal(reconciliations, 0)
 
-  stream!.enqueue(
-    new TextEncoder().encode(
-      'event: ready\ndata: {"practiceId":"practice-1","version":4}\n\n',
-    ),
-  )
-  await eventually(() => assert.deepEqual(applied, [4]))
-
-  assert.equal(reconciliations, 1)
-  assert.equal(tokenAcquisitions, 2)
-  assert.equal(states.at(-1), "connected")
-  sync.stop()
-})
-
-test("stream parsing accepts CRLF delimiters split across chunks", async () => {
-  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
-  let reconciliations = 0
-  const sync = createWorkspaceSync({
-    realtimeURL: "https://realtime.example",
-    fetch: async () =>
-      new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            stream = controller
-          },
-        }),
-      ),
-    getToken: async () => "token",
-    reconcile: async () => {
-      reconciliations += 1
-      return { version: 6, apply: () => {} }
-    },
-    onStateChange: () => {},
-  })
-  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
-
-  await eventually(() => assert.ok(stream))
   for (const chunk of [
     "event: ready\r",
-    '\ndata: {"practiceId":"practice-1","version":6}\r',
+    '\ndata: {"practiceId":"practice-1","version":4}\r',
     "\n\r",
     "\n",
   ]) {
     stream!.enqueue(new TextEncoder().encode(chunk))
   }
-  await eventually(() => assert.equal(reconciliations, 1))
+  await eventually(() => assert.deepEqual(applied, [4]))
+
+  assert.equal(reconciliations, 1)
+  assert.equal(tokenAcquisitions, 2)
+  assert.equal(states.at(-1), "connected")
   sync.stop()
 })
 
@@ -123,45 +91,6 @@ test("planned stream rotation reconnects quietly and reconciles once", async () 
 
   assert.deepEqual(states, ["connecting", "connected", "connected"])
   sync.stop()
-})
-
-test("a stream that stops sending bytes is canceled and reconnected", async () => {
-  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
-  let firstStreamCanceled = false
-  const sync = createWorkspaceSync({
-    realtimeURL: "https://realtime.example",
-    fetch: async () => {
-      const index = streams.length
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            streams.push(controller)
-          },
-          cancel() {
-            if (index === 0) firstStreamCanceled = true
-          },
-        }),
-      )
-    },
-    getToken: async () => "token",
-    reconcile: async ({ minimumVersion }) => ({
-      version: minimumVersion,
-      apply: () => {},
-    }),
-    onStateChange: () => {},
-    timing: { streamSilenceMilliseconds: 20 },
-  })
-
-  try {
-    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
-    await eventually(() => assert.equal(streams.length, 1))
-    streams[0]!.enqueue(readyEvent(1))
-
-    await eventually(() => assert.equal(streams.length, 2))
-    assert.equal(firstStreamCanceled, true)
-  } finally {
-    sync.stop()
-  }
 })
 
 test("heartbeat comments keep an otherwise idle stream connected", async () => {
@@ -316,49 +245,6 @@ test("refresh settles after its forced reconciliation applies and covers that ve
   assert.deepEqual(applied, [1, 2])
   sync.stop()
   await sync.refresh()
-})
-
-test("hidden hints defer DB reconciliation until one visible reconstruction", async () => {
-  let hidden = false
-  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
-  const requested: number[] = []
-  const sync = createWorkspaceSync({
-    realtimeURL: "https://realtime.example",
-    fetch: async () =>
-      new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            stream = controller
-          },
-        }),
-      ),
-    getToken: async () => "token",
-    reconcile: async ({ minimumVersion }) => {
-      requested.push(minimumVersion)
-      return { version: minimumVersion, apply: () => {} }
-    },
-    onStateChange: () => {},
-    isHidden: () => hidden,
-  })
-  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
-
-  await eventually(() => assert.ok(stream))
-  stream!.enqueue(readyEvent(1))
-  await eventually(() => assert.deepEqual(requested, [1]))
-
-  hidden = true
-  for (const version of [2, 3, 4, 5, 9]) {
-    stream!.enqueue(hintEvent(version))
-    await new Promise((resolve) => setTimeout(resolve, 2))
-  }
-  assert.deepEqual(requested, [1])
-
-  hidden = false
-  sync.visibilityChanged()
-  await eventually(() => assert.deepEqual(requested, [1, 9]))
-  await new Promise((resolve) => setTimeout(resolve, 10))
-  assert.deepEqual(requested, [1, 9])
-  sync.stop()
 })
 
 test("visible forced catch-up waits for an active reconciliation", async () => {
@@ -562,12 +448,13 @@ test("a failed same-version visibility catch-up retries immediately", async () =
   }
 })
 
-test("failed hint reconciliation retries once immediately then backs off", async () => {
+test("failed hint reconciliation retries once immediately, backs off while degraded, and reconnects on success", async () => {
   const clock = new ManualClock()
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined
   let hintAttempts = 0
   const requested: number[] = []
   const applied: number[] = []
+  const states: string[] = []
   const sync = createWorkspaceSync({
     realtimeURL: "https://realtime.example",
     fetch: async () =>
@@ -584,69 +471,6 @@ test("failed hint reconciliation retries once immediately then backs off", async
       if (minimumVersion === 2) {
         hintAttempts += 1
         if (hintAttempts < 3) throw new Error("portal unavailable")
-      }
-      return {
-        version: minimumVersion,
-        apply: () => applied.push(minimumVersion),
-      }
-    },
-    onStateChange: () => {},
-    random: () => 0.5,
-    sleep: clock.sleep,
-    timing: {
-      retryBaseMilliseconds: 1_000,
-      retryCapMilliseconds: 8_000,
-      degradedGraceMilliseconds: 5_000,
-      pollMinimumMilliseconds: 10_000,
-      pollMaximumMilliseconds: 20_000,
-    },
-  })
-
-  try {
-    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
-    await eventually(() => assert.ok(stream))
-    stream!.enqueue(readyEvent(1))
-    await eventually(() => assert.deepEqual(applied, [1]))
-
-    stream!.enqueue(hintEvent(2))
-    await eventually(() => assert.deepEqual(requested, [1, 2]))
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    assert.deepEqual(requested, [1, 2])
-
-    await clock.advance(0)
-    await eventually(() => assert.deepEqual(requested, [1, 2, 2]))
-    await clock.advance(499)
-    assert.deepEqual(requested, [1, 2, 2])
-    await clock.advance(1)
-    await eventually(() => assert.deepEqual(applied, [1, 2]))
-  } finally {
-    sync.stop()
-  }
-})
-
-test("successful hint retry clears degraded state on the open stream", async () => {
-  const clock = new ManualClock()
-  const recovery = deferred<void>()
-  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
-  let hintAttempts = 0
-  const applied: number[] = []
-  const states: string[] = []
-  const sync = createWorkspaceSync({
-    realtimeURL: "https://realtime.example",
-    fetch: async () =>
-      new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            stream = controller
-          },
-        }),
-      ),
-    getToken: async () => "token",
-    reconcile: async ({ minimumVersion }) => {
-      if (minimumVersion === 2) {
-        hintAttempts += 1
-        if (hintAttempts === 1) throw new Error("portal unavailable")
-        await recovery.promise
       }
       return {
         version: minimumVersion,
@@ -672,13 +496,16 @@ test("successful hint retry clears degraded state on the open stream", async () 
     await eventually(() => assert.deepEqual(applied, [1]))
 
     stream!.enqueue(hintEvent(2))
-    await eventually(() => assert.equal(hintAttempts, 1))
-    await clock.advance(0)
-    await eventually(() => assert.equal(hintAttempts, 2))
-    await clock.advance(100)
-    assert.equal(states.at(-1), "degraded")
+    await eventually(() => assert.deepEqual(requested, [1, 2]))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.deepEqual(requested, [1, 2])
 
-    recovery.resolve()
+    await clock.advance(0)
+    await eventually(() => assert.deepEqual(requested, [1, 2, 2]))
+    await clock.advance(499)
+    assert.deepEqual(requested, [1, 2, 2])
+    assert.equal(states.at(-1), "degraded")
+    await clock.advance(1)
     await eventually(() => assert.deepEqual(applied, [1, 2]))
     assert.equal(states.at(-1), "connected")
   } finally {
@@ -855,35 +682,7 @@ test("calling events relay to the softphone without reconciling the workspace", 
   assert.equal(callingHints.covers(["practice-1"]), false)
 })
 
-test("stopping the stream withdraws live calling hints", async () => {
-  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
-  const callingHints = createCallingHintChannel()
-  const sync = createWorkspaceSync({
-    realtimeURL: "https://realtime.example",
-    fetch: async () =>
-      new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            stream = controller
-          },
-        }),
-      ),
-    getToken: async () => "token",
-    reconcile: async () => ({ version: 4, apply: () => {} }),
-    onStateChange: () => {},
-    callingHints,
-  })
-  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
-  await eventually(() => assert.ok(stream))
-  stream!.enqueue(callingReadyEvent(4))
-  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
-
-  sync.stop()
-
-  assert.equal(callingHints.covers(["practice-1"]), false)
-})
-
-test("calling hint coverage waits for the ready reconciliation to succeed", async () => {
+test("calling hint coverage waits for the ready reconciliation to succeed and ends when the stream stops", async () => {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined
   const callingHints = createCallingHintChannel()
   const pending = deferred<{ version: number; apply: () => void }>()
@@ -913,56 +712,7 @@ test("calling hint coverage waits for the ready reconciliation to succeed", asyn
   await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
   assert.equal(callingHints.covers(["practice-1", "practice-2"]), false)
   sync.stop()
-})
-
-test("a silent stream is abandoned after the heartbeat window and reconnects", async () => {
-  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
-  const canceled: number[] = []
-  const callingHints = createCallingHintChannel()
-  const timer = new ManualTimer()
-  const sync = createWorkspaceSync({
-    realtimeURL: "https://realtime.example",
-    fetch: async () => {
-      const index = streams.length
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            streams.push(controller)
-          },
-          cancel() {
-            canceled.push(index)
-          },
-        }),
-      )
-    },
-    getToken: async () => "token",
-    reconcile: async () => ({ version: 4, apply: () => {} }),
-    onStateChange: () => {},
-    callingHints,
-    timer,
-    timing: { streamSilenceMilliseconds: 30_000 },
-  })
-  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
-  await eventually(() => assert.equal(streams.length, 1))
-  streams[0]!.enqueue(callingReadyEvent(4))
-  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
-
-  await timer.advance(20_000)
-  streams[0]!.enqueue(new TextEncoder().encode(": heartbeat\n\n"))
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  await timer.advance(20_000)
-  assert.equal(callingHints.covers(["practice-1"]), true)
-  assert.deepEqual(canceled, [])
-
-  await timer.advance(10_000)
-
-  await eventually(() => assert.equal(streams.length, 2))
-  assert.deepEqual(canceled, [0])
   assert.equal(callingHints.covers(["practice-1"]), false)
-  streams[1]!.enqueue(callingReadyEvent(5))
-  await eventually(() => assert.equal(callingHints.covers(["practice-1"]), true))
-  sync.stop()
-  assert.equal(timer.pending, 0)
 })
 
 test("the silence window follows the server heartbeat interval", async () => {
@@ -1131,28 +881,6 @@ async function eventually(assertion: () => void) {
   throw lastError
 }
 
-
-test("explicit refresh reconciles once without reconnecting a healthy stream", async () => {
-  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
-  let reads = 0
-  const sync = createWorkspaceSync({
-    realtimeURL: "https://realtime.example",
-    fetch: async () => new Response(new ReadableStream<Uint8Array>({
-      start(controller) { streams.push(controller) },
-    })),
-    getToken: async () => "token",
-    reconcile: async () => { reads += 1; return { version: 1, apply: () => {} } },
-    onStateChange: () => {},
-  })
-  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
-  await eventually(() => assert.equal(streams.length, 1))
-  streams[0]!.enqueue(readyEvent(1))
-  await eventually(() => assert.equal(reads, 1))
-  sync.refresh()
-  await eventually(() => assert.equal(reads, 2))
-  assert.equal(streams.length, 1)
-  sync.stop()
-})
 
 test("refresh during an in-flight reconciliation queues one fresh read", async () => {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined

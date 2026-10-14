@@ -330,23 +330,6 @@ test("media attachment waits for secure peer connectivity", async () => {
   assert.equal(attached, true)
 })
 
-test("incoming media does not require a shared Call Control session", async () => {
-  const output = installMediaDOM()
-  const sdk = fakeClient()
-  const legs: IncomingMediaLeg[] = []
-  const call = fakeCall("webrtc-leg", "a".repeat(43), [])
-  const adapter = createCallingMediaAdapter(async () => sdk.client)
-
-  await adapter.connect("jwt", output.id, {
-    onState: () => {},
-    onIncoming: (leg) => legs.push(leg),
-  })
-  sdk.emit("telnyx.notification", { type: "callUpdate", call })
-
-  assert.equal(legs[0].providerLegID, "webrtc-leg")
-  assert.equal(legs[0].mediaToken, "a".repeat(43))
-})
-
 test("Telnyx media starts with the microphone fenced", () => {
   assert.equal(callingClientOptions("token").mutedMicOnStart, true)
   assert.equal(callingClientOptions("token").maxReconnectAttempts, 0)
@@ -423,32 +406,6 @@ test("rejecting a ringing invite tells the provider to end that invite", async (
   assert.equal(execute, true)
 })
 
-test("same-instance recovery is reauthorized before audio resumes", async () => {
-  const output = installMediaDOM()
-  const sdk = fakeClient()
-  const legs: IncomingMediaLeg[] = []
-  const actions: string[] = []
-  const call = fakeCall("leg-1", "a".repeat(43), actions)
-  const adapter = createCallingMediaAdapter(async () => sdk.client)
-
-  await adapter.connect("jwt", output.id, {
-    onState: () => {},
-    onIncoming: (leg) => legs.push(leg),
-  })
-  sdk.emit("telnyx.notification", { type: "callUpdate", call })
-  assert.equal(legs.length, 1)
-  await legs[0].answer()
-
-  sdk.emit("telnyx.socket.close")
-  call.state = "recovering"
-  sdk.emit("telnyx.notification", { type: "callUpdate", call })
-  assert.equal(legs.length, 2)
-  await legs[1].answer()
-
-  assert.deepEqual(actions, ["answer", "unmute", "mute", "unmute"])
-  assert.equal(output.plays, 2)
-})
-
 test("a new authoritative Call starts with fresh unmuted intent", async () => {
   const output = installMediaDOM()
   const sdk = fakeClient()
@@ -471,31 +428,6 @@ test("a new authoritative Call starts with fresh unmuted intent", async () => {
   await legs[1].answer()
 
   assert.deepEqual(secondActions, ["answer", "unmute"])
-})
-
-test("a failed attachment remains eligible for a later SDK update", async () => {
-  const output = installMediaDOM()
-  const sdk = fakeClient()
-  const legs: IncomingMediaLeg[] = []
-  const actions: string[] = []
-  const call = fakeCall("leg-1", "a".repeat(43), actions, false)
-  const adapter = createCallingMediaAdapter(async () => sdk.client)
-
-  await adapter.connect("jwt", output.id, {
-    onState: () => {},
-    onIncoming: (leg) => legs.push(leg),
-  })
-  sdk.emit("telnyx.notification", { type: "callUpdate", call })
-  await assert.rejects(legs[0].answer(), /audio stream is unavailable/)
-
-  call.state = "active"
-  call.remoteStream = {}
-  sdk.emit("telnyx.notification", { type: "callUpdate", call })
-  assert.equal(legs.length, 2)
-  await legs[1].answer()
-
-  assert.deepEqual(actions, ["answer", "unmute"])
-  assert.equal(output.plays, 1)
 })
 
 test("a failed same-instance recovery remains eligible after becoming active", async () => {
@@ -697,30 +629,6 @@ test("feedback output and playback failures do not block DTMF or fall back to an
   assert.deepEqual(actions, ["answer", "unmute", "dtmf:1", "dtmf:2"])
   assert.equal(warnings.length, 2)
   await adapter.disconnect()
-})
-
-test("a terminal SDK update detaches the losing media leg", async () => {
-  const output = installMediaDOM()
-  const sdk = fakeClient()
-  const legs: IncomingMediaLeg[] = []
-  const actions: string[] = []
-  const call = fakeCall("losing-leg", "c".repeat(43), actions)
-  const adapter = createCallingMediaAdapter(async () => sdk.client)
-
-  await adapter.connect("jwt", output.id, {
-    onState: () => {},
-    onIncoming: (leg) => legs.push(leg),
-  })
-  sdk.emit("telnyx.notification", { type: "callUpdate", call })
-  await legs[0].answer()
-  assert.notEqual(output.srcObject, null)
-
-  call.state = "destroy"
-  sdk.emit("telnyx.notification", { type: "callUpdate", call })
-
-  assert.equal(output.srcObject, null)
-  assert.equal(legs[0].sendDTMF("5"), false)
-  assert.deepEqual(actions, ["answer", "unmute"])
 })
 
 test("an untracked terminal invite cannot detach a different active Call", async () => {

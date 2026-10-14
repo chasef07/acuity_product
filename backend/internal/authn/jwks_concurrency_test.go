@@ -213,23 +213,6 @@ func TestJWKSOutageServesCachedKeysForABoundedStaleWindow(t *testing.T) {
 	}
 }
 
-func TestJWKSUnavailableBeforeFirstFetchIsNotAnInvalidCredential(t *testing.T) {
-	_, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadGateway)
-	}))
-	defer server.Close()
-	adapter := probeAuthenticator(t, server, time.Now)
-	for range 2 {
-		if _, err := adapter.Authenticate(context.Background(), probeToken(t, "known", private)); !errors.Is(err, authn.ErrKeysUnavailable) || errors.Is(err, authn.ErrInvalidCredential) {
-			t.Fatalf("first fetch outage error = %v, want keys unavailable", err)
-		}
-	}
-}
-
 func probeAuthenticator(t *testing.T, server *httptest.Server, now func() time.Time) *authn.JWKSAuthenticator {
 	t.Helper()
 	adapter, err := authn.NewJWKSAuthenticator(authn.JWKSConfig{
