@@ -896,6 +896,21 @@ func (m *Module) LockOperationalActor(
 }
 
 func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discovery, error) {
+	return m.discoverActor(ctx, identity, true)
+}
+
+// DiscoverActorReadOnly resolves an already established actor without claiming
+// provisioned grants. Platform operator candidates may still be bound by
+// resolvePlatformOperator, but ordinary members avoid the sign-in locking path.
+func (m *Module) DiscoverActorReadOnly(ctx context.Context, identity Identity) (Discovery, error) {
+	return m.discoverActor(ctx, identity, false)
+}
+
+func (m *Module) discoverActor(
+	ctx context.Context,
+	identity Identity,
+	signIn bool,
+) (Discovery, error) {
 	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" {
 		return Discovery{}, ErrDenied
 	}
@@ -905,7 +920,12 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	var isOperator bool
+	if signIn {
+		_, isOperator, err = bindPlatformOperator(ctx, tx, identity)
+	} else {
+		_, isOperator, err = resolvePlatformOperator(ctx, tx, identity)
+	}
 	if err != nil {
 		return Discovery{}, err
 	}
@@ -913,7 +933,7 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	if isOperator {
 		auditActorType = "PLATFORM_OPERATOR"
 	}
-	if !isOperator {
+	if signIn && !isOperator {
 		if err := m.activateProvisionedEmail(ctx, tx, identity, m.now(), auditActorType); err != nil {
 			return Discovery{}, err
 		}

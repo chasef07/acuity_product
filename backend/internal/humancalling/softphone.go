@@ -18,7 +18,7 @@ func (m *Module) AcquireSoftphone(
 	if sessionID == "" || identity.Subject == "" || !identity.EmailVerified {
 		return SoftphoneState{}, ErrDenied
 	}
-	discovery, err := m.access.DiscoverActor(ctx, identity)
+	discovery, err := m.access.DiscoverActorReadOnly(ctx, identity)
 	if err != nil {
 		return SoftphoneState{}, callingAccessError(err)
 	}
