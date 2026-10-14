@@ -33,7 +33,6 @@ import {
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  CallingAvailabilityControl,
   CallingDock,
   CallingFailureStatus,
 } from "@/components/workspace/calling-dock"
@@ -41,9 +40,11 @@ import { AIInteractionContext } from "@/components/workspace/ai-interaction-cont
 import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
 import { TaskCallContext, TaskCallAction } from "@/components/workspace/task-call-context"
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
+import { CallingRailControl } from "@/components/workspace/workspace-rail-button"
 import { WorkspaceBand, WorkspaceBandContext, workspaceBand } from "@/components/workspace/workspace-band"
 import { WorkspaceRail } from "@/components/workspace/workspace-rail"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
+import { WorkEmptyState } from "@/components/workspace/work-empty-state"
 import type {
   AccessDiscovery,
   CallingCall,
@@ -334,7 +335,12 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
         <WorkspaceNavRail
           projection={state}
           onIntent={sendIntent}
-          availabilityControl={<CallingAvailabilityControl />}
+          availabilityControl={
+            <CallingRailControl
+              workActive={view === "none" || view === "engagement"}
+              onOpenWork={() => sendIntent({ type: "select-work" })}
+            />
+          }
         />
         <div className={workspaceColumn}>
         <WorkspaceBand ref={setBand} />
@@ -368,10 +374,9 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           >
             {view === "analytics" && canViewPracticeAnalytics(discovery, state.scope.practiceID) ? (
               <PracticeAnalytics
-                key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
+                key={state.scope.practiceID}
                 practiceID={state.scope.practiceID}
                 locationScopeID={state.scope.locationScopeID}
-                locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
               />
             ) : view === "manage-agent" ? (
               <ManageAgent
@@ -476,7 +481,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   >
                     <PanelRightCloseIcon />
                   </Button>
-                  <div className="flex min-h-0 flex-1">
+                  <div className="flex min-h-0 w-full flex-1 lg:w-72 lg:flex-none">
                     {contextView === "ai-call" ? (
                       <AIInteractionContext
                         detail={state.selection.aiInteraction}
@@ -522,7 +527,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                 </aside>
               </div>
             ) : (
-              <section aria-label="No number selected" className="min-h-0 flex-1" />
+              <WorkEmptyState projection={state} />
             )}
           </SidebarInset>
         </div>

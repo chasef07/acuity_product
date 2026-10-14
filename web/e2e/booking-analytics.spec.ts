@@ -128,11 +128,11 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       page.getByRole("button", { name: "AI diagnostics", exact: true }),
     ).toHaveCount(0)
-    await page.getByRole("button", { name: "7 days", exact: true }).click()
-    await page.getByRole("combobox", { name: "Office", exact: true }).click()
+    await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
-      .getByRole("option", { name: "Fixture Location 6", exact: true })
+      .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
+    await page.getByRole("button", { name: "7 days", exact: true }).click()
     const performance = page.getByRole("region", {
       name: "Booking performance",
       exact: true,

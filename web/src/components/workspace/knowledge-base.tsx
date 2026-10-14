@@ -31,7 +31,6 @@ import {
   AgentPage,
   AgentQueryBody,
   DisclosureRow,
-  LocationSelect,
   type AgentLocationProps,
 } from "./manage-agent-page"
 
@@ -102,59 +101,49 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
   return (
     <AgentPage
       title="Knowledge base"
-      action={
-        <>
-          {revision && (
-            <div className="flex flex-wrap items-center justify-end gap-3">
-              <p className="text-sm text-muted-foreground">
-                Updated <time dateTime={revision.createdAt}>{revisionTime(revision.createdAt)}</time> · Version{" "}
-                {revision.version}
-              </p>
-              <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
-                <HistoryIcon data-icon="inline-start" />
-                History
-              </Button>
-            </div>
-          )}
-          <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
-            <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
-              <SheetHeader className="border-b px-5 py-4">
-                <SheetTitle>History</SheetTitle>
-                <SheetDescription>
-                  Every published version of this office&apos;s knowledge. Restoring publishes an earlier version as a new one.
-                </SheetDescription>
-              </SheetHeader>
-              <KnowledgeHistory practiceID={props.practiceID} locationID={props.locationID} onRestored={knowledge.retry} />
-            </SheetContent>
-          </Sheet>
-        </>
+      detail={
+        revision && (
+          <>
+            Updated <time dateTime={revision.createdAt}>{revisionTime(revision.createdAt)}</time> · Version{" "}
+            {revision.version}
+          </>
+        )
+      }
+      actions={
+        revision && (
+          <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
+            <HistoryIcon data-icon="inline-start" />
+            History
+          </Button>
+        )
       }
       controls={
-        <>
-          <LocationSelect {...props} />
-          <InputGroup className="w-full sm:w-72">
-            <InputGroupAddon>
-              <SearchIcon />
-            </InputGroupAddon>
-            <InputGroupInput
-              type="search"
-              aria-label="Search knowledge"
-              autoComplete="off"
-              placeholder="Search knowledge"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </InputGroup>
-          {draft && (
-            <PublishBar
-              draftKey={draftKey}
-              draft={draft}
-              practiceID={props.practiceID}
-              locationID={props.locationID}
-              onDiscard={knowledge.retry}
-            />
-          )}
-        </>
+        props.locationID ? (
+          <>
+            <InputGroup className="w-full sm:w-72">
+              <InputGroupAddon>
+                <SearchIcon />
+              </InputGroupAddon>
+              <InputGroupInput
+                type="search"
+                aria-label="Search knowledge"
+                autoComplete="off"
+                placeholder="Search knowledge"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </InputGroup>
+            {draft && (
+              <PublishBar
+                draftKey={draftKey}
+                draft={draft}
+                practiceID={props.practiceID}
+                locationID={props.locationID}
+                onDiscard={knowledge.retry}
+              />
+            )}
+          </>
+        ) : null
       }
     >
       <AgentQueryBody
@@ -179,6 +168,17 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
           />
         )}
       </AgentQueryBody>
+      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+        <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+          <SheetHeader className="border-b px-5 py-4">
+            <SheetTitle>History</SheetTitle>
+            <SheetDescription>
+              Every published version of this office&apos;s knowledge. Restoring publishes an earlier version as a new one.
+            </SheetDescription>
+          </SheetHeader>
+          <KnowledgeHistory practiceID={props.practiceID} locationID={props.locationID} onRestored={knowledge.retry} />
+        </SheetContent>
+      </Sheet>
     </AgentPage>
   )
 }

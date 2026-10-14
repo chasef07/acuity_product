@@ -264,7 +264,7 @@ function TaskWorkspace({
         </div>
       ) : (
         <div className="flex items-start gap-1 pr-8">
-          <h2 className="min-w-0 flex-1 text-lg font-semibold leading-snug tracking-[-0.015em]">
+          <h2 className="min-w-0 flex-1 text-base font-medium leading-snug">
             {task.title}
           </h2>
           {task.state === "OPEN" && canMutate && (
@@ -671,7 +671,7 @@ function CallWorkspace({
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="px-5 py-5 pr-12">
-        <h2 className="text-lg font-semibold tracking-[-0.015em]">
+        <h2 className="text-base font-medium leading-snug">
           {callContextTitle(call.state)}
         </h2>
         {contactName && <p className="mt-3 font-medium">{contactName}</p>}

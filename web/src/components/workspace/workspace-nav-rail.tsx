@@ -28,11 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useSidebar } from "@/components/ui/sidebar"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { RailButton } from "@/components/workspace/workspace-rail-button"
 import { workspaceFolders } from "@/components/workspace/workspace-rail"
 import { authClient } from "@/lib/auth-client"
 import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
@@ -75,12 +71,12 @@ export function WorkspaceNavRail({
   return (
     <nav
       aria-label="Workspace"
-      className="sticky top-0 flex h-svh w-16 shrink-0 flex-col items-center gap-3 py-3 md:pt-10 md:pb-2"
+      className="sticky top-0 flex h-svh w-16 shrink-0 flex-col items-center gap-2 py-3 md:pt-10 md:pb-2"
     >
       <RailButton
         label="Home"
         active={view === "manage-agent"}
-        expanded={view === "manage-agent" && panelOpen}
+        aria-expanded={view === "manage-agent" && panelOpen}
         onClick={() =>
           view === "manage-agent" && projection.selection.agentPage !== "home"
             ? onIntent({ type: "select-manage-agent", page: "home" })
@@ -90,9 +86,9 @@ export function WorkspaceNavRail({
       </RailButton>
       <RailButton
         label="Work"
-        hint={`${openCount} open`}
+        tooltip={`Work · ${openCount} open`}
         active={workActive}
-        expanded={workActive && panelOpen}
+        aria-expanded={workActive && panelOpen}
         onClick={() => selectWithSidebar(workActive, { type: "select-work" })}
       >
         <InboxIcon />
@@ -109,6 +105,7 @@ export function WorkspaceNavRail({
       {discovery.platformOperator && (
         <RailButton
           label="AI diagnostics"
+          shortLabel="Diagnostics"
           active={view === "operator-analytics"}
           onClick={() => onIntent({ type: "select-operator-analytics" })}
         >
@@ -124,45 +121,6 @@ export function WorkspaceNavRail({
         />
       </div>
     </nav>
-  )
-}
-
-function RailButton({
-  label,
-  hint,
-  active,
-  expanded,
-  onClick,
-  children,
-}: {
-  label: string
-  hint?: string
-  active: boolean
-  expanded?: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={label}
-            aria-current={active ? "page" : undefined}
-            aria-expanded={expanded}
-            data-active={active}
-            className="size-11 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs [&_svg]:stroke-[1.75]"
-            onClick={onClick}
-          />
-        }
-      >
-        {children}
-      </TooltipTrigger>
-      <TooltipContent side="right">{hint ? `${label} · ${hint}` : label}</TooltipContent>
-    </Tooltip>
   )
 }
 

@@ -304,10 +304,10 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     ).toBeInViewport()
     await expect(
       callSheet.getByLabel("Caller message").first(),
-    ).toHaveAttribute("data-align", "end")
+    ).toHaveAttribute("data-align", "start")
     await expect(callSheet.getByLabel("Agent message").first()).toHaveAttribute(
       "data-align",
-      "start",
+      "end",
     )
     await expect(
       callSheet

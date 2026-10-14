@@ -210,6 +210,7 @@ test("rail hover details and the message composer preserve compact context", asy
   await appearanceButton.click()
   await expect(page.getByRole("button", { name: "System", exact: true })).toBeVisible()
   await page.screenshot({
+    animations: "disabled",
     path: testInfo.outputPath("appearance-menu.png"),
     fullPage: true,
   })

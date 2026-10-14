@@ -6,7 +6,6 @@ import { CheckCircle2Icon, ArrowUpRightIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { Task } from "@/lib/api/generated/types.gen"
 import { completeTask, completeTaskGroup } from "@/lib/clients/tasks"
-import { formatUSPhone } from "@/lib/phone"
 import { taskGroupLabel } from "@/lib/task-groups"
 import { TaskMetadata } from "./task-metadata"
 
@@ -59,9 +58,8 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
   return (
     <section aria-label="Related Tasks" className="flex h-full min-h-0 flex-1 flex-col overflow-hidden px-5 py-5">
       <header className="shrink-0 pb-4 pr-8">
-        <h2 className="text-lg font-semibold leading-snug tracking-[-0.015em]">{taskGroupLabel(group.category)}</h2>
-        <p className="mt-1.5 text-xs text-muted-foreground">{formatUSPhone(group.phone)} · {group.locationName}</p>
-        <p className="mt-2 text-xs font-medium">{resolved ? "Group resolved" : `${reviewed.length} related Tasks`}</p>
+        <h2 className="text-base font-medium leading-snug">{taskGroupLabel(group.category)}</h2>
+        <p className="mt-1.5 text-xs text-muted-foreground">{resolved ? "Group resolved" : `${reviewed.length} related Tasks`} · {group.locationName}</p>
       </header>
       {resolved ? (
         <p role="status" className="flex items-center gap-2 border-t pt-4 text-sm"><CheckCircle2Icon className="size-4 text-success" /> All requests resolved.</p>

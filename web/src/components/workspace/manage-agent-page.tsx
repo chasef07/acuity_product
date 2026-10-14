@@ -25,38 +25,35 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { Location } from "@/lib/api/generated/types.gen"
 import type { PortalFailure, PortalQuery } from "@/lib/clients/portal-request"
+import { WorkspacePageHeader } from "./workspace-band"
 
 export type AgentLocationProps = {
   practiceID: string
-  locations: Location[]
   locationID: string
-  onLocation: (locationID: string) => void
 }
 
 export function AgentPage({
   title,
-  action,
+  detail,
+  actions,
   controls,
   children,
 }: {
   title: string
-  action?: ReactNode
+  detail?: ReactNode
+  actions?: ReactNode
   controls: ReactNode
   children: ReactNode
 }) {
   const titleID = useId()
   return (
     <section aria-labelledby={titleID} className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <header className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-6 sm:px-6">
-        <h1 id={titleID} className="flex-1 text-2xl font-semibold tracking-tight">
-          {title}
-        </h1>
-        {action}
-      </header>
-      <div className="flex flex-wrap items-center gap-2 px-4 pb-5 pt-2 sm:px-6">{controls}</div>
-      <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 sm:px-6">{children}</div>
+      <WorkspacePageHeader titleID={titleID} title={title} detail={detail}>
+        {actions}
+      </WorkspacePageHeader>
+      <div className="flex flex-wrap items-center gap-2 px-4 pt-4 empty:hidden sm:px-6">{controls}</div>
+      <div className="min-h-0 flex-1 overflow-auto px-4 pt-4 pb-6 sm:px-6">{children}</div>
     </section>
   )
 }
@@ -94,17 +91,6 @@ export function OptionSelect<V extends string>({
   )
 }
 
-export function LocationSelect({ locations, locationID, onLocation }: AgentLocationProps) {
-  return locationID ? (
-    <OptionSelect
-      label="Location"
-      value={locationID}
-      items={locations.map((location) => ({ value: location.id, label: location.name }))}
-      onChange={onLocation}
-    />
-  ) : null
-}
-
 export function AgentQueryBody<T>({
   query,
   subject,
@@ -126,14 +112,7 @@ export function AgentQueryBody<T>({
   emptyDescription: string
   children: (data: T) => ReactNode
 }) {
-  if (missingLocation) {
-    return (
-      <AgentEmpty
-        title="No Location available"
-        description="This page shows one authorized Location at a time."
-      />
-    )
-  }
+  if (missingLocation) return <ChooseOffice />
   if (query.status === "loading") {
     return (
       <div role="status" aria-label={`Loading ${subject}`} className="flex flex-col gap-3 py-2">
@@ -168,6 +147,15 @@ function failureMessage(failure: PortalFailure, subject: string, unavailable: st
   if (failure.kind === "unauthorized") return `You don't have access to this Location's ${subject}.`
   if (failure.kind === "unavailable") return failure.message ?? unavailable
   return `The ${subject} could not be loaded.`
+}
+
+export function ChooseOffice() {
+  return (
+    <AgentEmpty
+      title="Choose an office"
+      description="This shows one office at a time. Choose an office in the sidebar's office picker."
+    />
+  )
 }
 
 function AgentEmpty({ title, description }: { title: string; description: string }) {

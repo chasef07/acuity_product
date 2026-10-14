@@ -22,6 +22,7 @@ import type {
   AgentCall,
   AgentCallIssue,
   AgentCallIssueReason,
+  AgentCallMessage,
   AgentCallVerdict,
 } from "@/lib/api/generated/types.gen"
 import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
@@ -382,52 +383,52 @@ function CallContent({
               )
             )}
             <h2 className="text-sm font-medium">Transcript</h2>
-            {detail.messages.length ? (
-              detail.messages.map((message, index) => {
-                const align = message.speaker === "Agent" ? "start" : "end"
-                return (
-                  <Message key={index} align={align}>
-                    <MessageContent>
-                      <MessageHeader>{message.speaker}</MessageHeader>
-                      <Bubble
-                        align={align}
-                        variant={align === "start" ? "muted" : "outline"}
-                      >
-                        <BubbleContent className="whitespace-pre-wrap">
-                          {message.text}
-                        </BubbleContent>
-                      </Bubble>
-                      <MessageFooter>
-                        <time dateTime={message.occurredAt}>
-                          {new Date(message.occurredAt).toLocaleTimeString(
-                            undefined,
-                            {
-                              hour: "numeric",
-                              minute: "2-digit",
-                              second: "2-digit",
-                            },
-                          )}
-                        </time>
-                      </MessageFooter>
-                    </MessageContent>
-                  </Message>
-                )
-              })
-            ) : (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>No transcript available</EmptyTitle>
-                  <EmptyDescription>
-                    No conversation was recorded for this call.
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            )}
+            <CallTranscript messages={detail.messages} />
           </div>
         </div>
       )}
     </>
   )
+}
+
+export function CallTranscript({ messages }: { messages: AgentCallMessage[] }) {
+  if (!messages.length) {
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>No transcript available</EmptyTitle>
+          <EmptyDescription>
+            No conversation was recorded for this call.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  }
+  return messages.map((message, index) => {
+    const agent = message.speaker === "Agent"
+    const align = agent ? "end" : "start"
+    return (
+      <Message key={index} align={align}>
+        <MessageContent>
+          <MessageHeader>{message.speaker}</MessageHeader>
+          <Bubble align={align} variant={agent ? "muted" : "outline"}>
+            <BubbleContent className="whitespace-pre-wrap">
+              {message.text}
+            </BubbleContent>
+          </Bubble>
+          <MessageFooter>
+            <time dateTime={message.occurredAt}>
+              {new Date(message.occurredAt).toLocaleTimeString(undefined, {
+                hour: "numeric",
+                minute: "2-digit",
+                second: "2-digit",
+              })}
+            </time>
+          </MessageFooter>
+        </MessageContent>
+      </Message>
+    )
+  })
 }
 
 const sentimentLabels = ["Very negative", "Negative", "Neutral or mixed", "Positive", "Very positive"]

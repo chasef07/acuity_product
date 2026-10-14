@@ -32,7 +32,7 @@ test("collapsing Task details preserves the Task in the outbound Call request", 
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await prepareBrowser(page.context())
   await signInAs(page, "secondary@abita.test", "Fixture Secondary Staff")
-  await expect(page.getByRole("switch", { name: "Availability" })).toBeChecked({ timeout: 40_000 })
+  await expect(page.getByRole("switch", { name: "Receive calls" })).toBeChecked({ timeout: 40_000 })
   const key = `collapsed-task-callback-${Date.now()}`
   const title = `Collapsed Task callback ${key}`
   const created = await page.request.post(`${portalURL}/v1/tasks`, {
@@ -85,7 +85,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
     await expect(page.getByTestId("mounted-workspace")).toBeVisible()
     await expect(
-      page.getByRole("switch", { name: "Availability" }),
+      page.getByRole("switch", { name: "Receive calls" }),
     ).toBeChecked({ timeout: 40_000 })
     const scope = await database.query<{ practice_id: string; location_id: string }>(
       `SELECT practice.id::text AS practice_id, location.id::text AS location_id
@@ -135,7 +135,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       await expect(activeCall).toHaveCount(0, { timeout: 30_000 })
       await expect(callCenter(page)).toHaveCount(0, { timeout: 30_000 })
       await expect(
-        page.getByRole("switch", { name: "Availability" }),
+        page.getByRole("switch", { name: "Receive calls" }),
       ).toBeChecked()
 
       if (attempt === "first") {
@@ -165,7 +165,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       )
       await expect(activeCall).toHaveCount(0, { timeout: 30_000 })
       await expect(
-        page.getByRole("switch", { name: "Availability" }),
+        page.getByRole("switch", { name: "Receive calls" }),
       ).toBeChecked()
 
       const recordingStartedAt = recording.sent_at
@@ -207,7 +207,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
         })
         .toBe(1)
       if (attempt === "second") {
-        const availability = page.getByRole("switch", { name: "Availability" })
+        const availability = page.getByRole("switch", { name: "Receive calls" })
         if (!(await availability.isChecked())) await availability.click()
         await expect(availability).toBeChecked()
         await page.waitForTimeout(2_500)
@@ -651,7 +651,7 @@ async function startAndEndOutboundWhileVoicemail(
     .click()
   await expect(callCenter(page)).toHaveCount(0)
   await expect(
-    page.getByRole("switch", { name: "Availability" }),
+    page.getByRole("switch", { name: "Receive calls" }),
   ).toBeChecked()
 }
 

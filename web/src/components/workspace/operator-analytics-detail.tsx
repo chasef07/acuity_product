@@ -520,13 +520,13 @@ export function TimelineItem({
         className="rounded-md data-[diagnostic-selected]:ring-2 data-[diagnostic-selected]:ring-ring data-[diagnostic-selected]:ring-offset-4"
       >
         <Message
-          align={agent ? "start" : "end"}
+          align={agent ? "end" : "start"}
           aria-label={`${agent ? "Agent" : "Caller"} message`}
         >
           <MessageContent>
             <MessageHeader>{agent ? "Acuity" : "Caller"}</MessageHeader>
             <Bubble
-              align={agent ? "start" : "end"}
+              align={agent ? "end" : "start"}
               variant={agent ? "muted" : "outline"}
             >
               <BubbleContent className="whitespace-pre-wrap">

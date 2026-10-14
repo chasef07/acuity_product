@@ -16,7 +16,7 @@ import { useLocationKnowledge } from "@/lib/clients/location-knowledge"
 import { formatUSPhone } from "@/lib/phone"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 import { AgentCallPanel } from "./agent-call-panel"
-import { AgentQueryBody, LocationSelect, type AgentLocationProps } from "./manage-agent-page"
+import { AgentQueryBody, ChooseOffice, type AgentLocationProps } from "./manage-agent-page"
 
 const capabilities = [
   { icon: BookOpenIcon, label: "Answer office questions", detail: "From the knowledge base" },
@@ -27,8 +27,9 @@ const capabilities = [
 ]
 
 export function AgentHome({
+  practiceID,
+  locationID,
   onPage,
-  ...location
 }: AgentLocationProps & { onPage: (page: ManageAgentPage) => void }) {
   const titleID = useId()
   return (
@@ -39,16 +40,15 @@ export function AgentHome({
           <h1 id={titleID} className="text-2xl font-semibold tracking-tight">
             Acuity
           </h1>
-          <KnowledgeVersion practiceID={location.practiceID} locationID={location.locationID} />
+          <KnowledgeVersion practiceID={practiceID} locationID={locationID} />
         </div>
-        {location.locations.length > 1 && <LocationSelect {...location} />}
       </header>
       <div className="grid gap-10 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <NeedsKnowledge
-          practiceID={location.practiceID}
-          locationID={location.locationID}
-          onAddKnowledge={() => onPage("knowledge")}
-        />
+        {locationID ? (
+          <NeedsKnowledge practiceID={practiceID} locationID={locationID} onAddKnowledge={() => onPage("knowledge")} />
+        ) : (
+          <ChooseOffice />
+        )}
         <Capabilities />
       </div>
     </section>
@@ -72,7 +72,7 @@ function KnowledgeVersion({ practiceID, locationID }: { practiceID: string; loca
             </>
           : revision
             ? <>
-                <span className="font-mono">v{revision.version}</span> · published{" "}
+                Version {revision.version} · published{" "}
                 {new Date(revision.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
               </>
             : "No knowledge published yet"}
@@ -131,7 +131,6 @@ function NeedsKnowledge({
         subject="calls"
         unavailable="Calls aren't available right now."
         onRetry={() => setRevision((value) => value + 1)}
-        missingLocation={!locationID}
         isEmpty={(data) => data.calls.length === 0}
         emptyTitle="Nothing needs knowledge"
         emptyDescription="No unanswered office questions in the last 7 days."

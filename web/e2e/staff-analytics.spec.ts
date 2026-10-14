@@ -90,12 +90,12 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       )
     }
     await page.getByRole("button", { name: "Analytics", exact: true }).click()
+    await page.getByRole("button", { name: "Workspace selector" }).click()
+    await page
+      .getByRole("button", { name: "Fixture Location 6", exact: true })
+      .click()
     await page.getByRole("button", { name: "Staff", exact: true }).click()
     await page.getByRole("button", { name: "7 days", exact: true }).click()
-    await page.getByRole("combobox", { name: "Office", exact: true }).click()
-    await page
-      .getByRole("option", { name: "Fixture Location 6", exact: true })
-      .click()
     await expect(
       page.getByRole("status", {
         name: "Median task completion time",
