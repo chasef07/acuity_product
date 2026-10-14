@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.1](https://github.com/chasef07/acuity_product/compare/v1.38.0...v1.38.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **work:** grant portal UPDATE on task interactions so new Tasks can be created ([#478](https://github.com/chasef07/acuity_product/issues/478)) ([594c10b](https://github.com/chasef07/acuity_product/commit/594c10bdf03256cc74f7ff3b9e7df6b00672d611))
+
 ## [1.38.0](https://github.com/chasef07/acuity_product/compare/v1.37.0...v1.38.0) (2026-10-14)
 
 
