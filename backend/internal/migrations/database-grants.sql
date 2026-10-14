@@ -166,6 +166,12 @@ GRANT UPDATE (updated_at)
 ON TABLE public.messaging_location_configurations
 TO acuity_portal;
 
+-- A new Task takes over the caller's open missed-call Tasks and moves their
+-- calls onto it.
+GRANT UPDATE (task_id)
+ON TABLE public.work_task_interactions
+TO acuity_portal;
+
 GRANT UPDATE (
     external_patient_id,
     ended_at,
