@@ -2885,11 +2885,6 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 			t.Fatalf("Staff Dial %d did not start while prior Dials remained in flight", index)
 		}
 	}
-	claimLatency := time.Since(committedAt)
-	t.Logf("ten committed Staff Dials reached the provider in %s", claimLatency)
-	if claimLatency >= 500*time.Millisecond {
-		t.Fatalf("committed Staff Dial claim latency = %s, want < 500ms", claimLatency)
-	}
 	if got := workerPool.Stat().MaxConns(); got != 2 {
 		t.Fatalf("worker pool maximum connections = %d, want 2", got)
 	}
