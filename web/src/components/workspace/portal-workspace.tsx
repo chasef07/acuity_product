@@ -30,6 +30,7 @@ import {
 import {
   SidebarInset,
   SidebarProvider,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -559,6 +560,7 @@ function WorkspaceSelector({
   onSelect: (practiceID: string, locationID: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const { isMobile, setOpenMobile } = useSidebar()
   const practice =
     discovery.practices.find((item) => item.id === practiceID) ??
     discovery.practices[0]
@@ -572,6 +574,7 @@ function WorkspaceSelector({
   function select(nextPracticeID: string, nextLocationID: string) {
     onSelect(nextPracticeID, nextLocationID)
     setOpen(false)
+    if (isMobile) setOpenMobile(false)
   }
 
   return (

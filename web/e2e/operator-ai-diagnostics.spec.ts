@@ -447,10 +447,12 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       fullPage: true,
       animations: "disabled",
     })
+    await page.getByRole("button", { name: "AI diagnostics", exact: true }).click()
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 5", exact: true })
       .click()
+    await diagnostics.getByRole("button", { name: "Tools", exact: true }).click()
     await expect(
       diagnostics.getByText("No tool executions in this range."),
     ).toBeVisible()

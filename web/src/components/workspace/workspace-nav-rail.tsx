@@ -98,7 +98,8 @@ export function WorkspaceNavRail({
         <RailButton
           label="Analytics"
           active={view === "analytics"}
-          onClick={() => onIntent({ type: "select-analytics" })}
+          aria-expanded={view === "analytics" && panelOpen}
+          onClick={() => selectWithSidebar(view === "analytics", { type: "select-analytics" })}
         >
           <ChartNoAxesCombinedIcon />
         </RailButton>
@@ -108,7 +109,8 @@ export function WorkspaceNavRail({
           label="AI diagnostics"
           shortLabel="Diagnostics"
           active={view === "operator-analytics"}
-          onClick={() => onIntent({ type: "select-operator-analytics" })}
+          aria-expanded={view === "operator-analytics" && panelOpen}
+          onClick={() => selectWithSidebar(view === "operator-analytics", { type: "select-operator-analytics" })}
         >
           <ActivityIcon />
         </RailButton>
