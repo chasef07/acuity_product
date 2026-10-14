@@ -461,10 +461,10 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   data-testid="context-panel"
                   inert={!contextPanelOpen}
                   className={cn(
-                    "absolute top-20 right-3 flex h-fit max-h-[calc(100%-5.75rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:h-auto lg:max-h-none lg:max-w-none lg:shrink-0 lg:self-stretch lg:rounded-none lg:border-y-0 lg:border-r-0 lg:bg-background lg:shadow-none",
+                    "absolute top-20 right-3 flex h-fit max-h-[calc(100%-5.75rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:h-auto lg:max-h-none lg:max-w-none lg:shrink-0 lg:self-stretch lg:rounded-xl lg:bg-background lg:shadow-sm",
                     contextView === "task" && state.selection.taskGroup && "h-[calc(100%-5.75rem)] lg:h-auto",
                     contextPanelOpen
-                      ? "translate-x-0 opacity-100 lg:w-72"
+                      ? "translate-x-0 opacity-100 lg:my-2 lg:mr-2 lg:w-72"
                       : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:w-0",
                   )}
                   onTransitionEnd={(event) => {
