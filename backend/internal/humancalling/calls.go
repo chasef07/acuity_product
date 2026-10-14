@@ -667,7 +667,7 @@ func (m *Module) ReadOperatorTimeline(
 	if m.access == nil || callID == "" {
 		return OperatorTimeline{}, ErrDenied
 	}
-	discovery, err := m.access.DiscoverActor(ctx, identity)
+	discovery, err := m.access.DiscoverActorReadOnly(ctx, identity)
 	if err != nil || !discovery.PlatformOperator {
 		return OperatorTimeline{}, ErrDenied
 	}

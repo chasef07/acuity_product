@@ -100,7 +100,7 @@ func (m *Module) ReadCallingStateConditionally(
 	if identity.Subject == "" || !identity.EmailVerified {
 		return CallingState{}, false, ErrDenied
 	}
-	discovery, err := m.access.DiscoverActor(ctx, identity)
+	discovery, err := m.access.DiscoverActorReadOnly(ctx, identity)
 	if err != nil {
 		return CallingState{}, false, callingAccessError(err)
 	}

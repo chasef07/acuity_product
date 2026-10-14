@@ -1388,6 +1388,24 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 	}
 
 	recorder.reset()
+	readOnlyDiscovery, err := recordedModule.DiscoverActorReadOnly(ctx, member)
+	if err != nil {
+		t.Fatalf("read-only member discovery: %v", err)
+	}
+	if len(readOnlyDiscovery.Practices) != 3 {
+		t.Fatalf("read-only member Practices = %d, want 3", len(readOnlyDiscovery.Practices))
+	}
+	if got := recorder.countContaining("pg_advisory_xact_lock"); got != 0 {
+		t.Fatalf("read-only member advisory locks = %d, want 0", got)
+	}
+	if got := recorder.countContaining("FOR UPDATE"); got != 0 {
+		t.Fatalf("read-only member FOR UPDATE statements = %d, want 0", got)
+	}
+	if got := recorder.count(); got != 3 {
+		t.Fatalf("read-only member discovery statements = %d, want 3", got)
+	}
+
+	recorder.reset()
 	operatorDiscovery, err := recordedModule.DiscoverActor(ctx, operator)
 	if err != nil {
 		t.Fatalf("discover operator with set queries: %v", err)
