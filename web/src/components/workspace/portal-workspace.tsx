@@ -41,7 +41,7 @@ import { AIInteractionContext } from "@/components/workspace/ai-interaction-cont
 import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
 import { TaskCallContext, TaskCallAction } from "@/components/workspace/task-call-context"
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
-import { WorkspaceRail } from "@/components/workspace/workspace-rail"
+import { manageAgentPages, WorkspaceRail } from "@/components/workspace/workspace-rail"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type {
   AccessDiscovery,
@@ -59,6 +59,7 @@ import type { NumberHistory } from "@/lib/workspace-history"
 import {
   createWorkspaceProjection,
   type WorkspaceProjectionIntent,
+  type WorkspaceProjectionState,
 } from "@/lib/workspace-projection"
 import {
   createWorkspaceAuthorityAdapter,
@@ -334,6 +335,8 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           onIntent={sendIntent}
           availabilityControl={<CallingAvailabilityControl />}
         />
+        <div className={workspaceColumn}>
+          <WorkspaceTitle>{workspaceTitle(state.selection)}</WorkspaceTitle>
         <div data-testid="workspace-panel" className={cn("relative overflow-hidden", workspacePanel)}>
           <WorkspaceRail
             projection={state}
@@ -521,6 +524,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
             )}
           </SidebarInset>
         </div>
+        </div>
       </>
     )
   })
@@ -647,18 +651,35 @@ function WorkspaceSelector({
   )
 }
 
-const workspacePanel = "flex h-svh min-w-0 flex-1 bg-background md:mt-4 md:mb-2 md:mr-2 md:h-[calc(100svh-1.5rem)] md:rounded-xl md:border md:border-sidebar-border md:shadow-xs"
+const workspaceColumn = "flex h-svh min-w-0 flex-1 flex-col"
+const workspacePanel = "flex min-h-0 min-w-0 flex-1 bg-background md:mb-2 md:mr-2 md:rounded-xl md:border md:border-sidebar-border md:shadow-xs"
+
+function WorkspaceTitle({ children }: { children?: ReactNode }) {
+  return <p className="hidden h-10 shrink-0 items-center px-3 text-sm font-medium md:flex">{children}</p>
+}
+
+function workspaceTitle(selection: WorkspaceProjectionState["selection"]) {
+  if (selection.view === "manage-agent") {
+    return manageAgentPages.find((page) => page.value === selection.agentPage)?.label
+  }
+  if (selection.view === "analytics") return "Analytics"
+  if (selection.view === "operator-analytics") return "AI diagnostics"
+  return "Work"
+}
 
 function WorkspaceLoading() {
   return (
     <div className="flex min-h-svh w-full bg-sidebar" aria-busy="true">
       <div className="w-16 shrink-0" />
-      <main data-testid="workspace-panel" className={cn("items-center justify-center", workspacePanel)}>
-        <div role="status" className="animate-pulse text-muted-foreground motion-reduce:animate-none">
-          <AcuityMark className="size-12" />
-          <span className="sr-only">Loading Acuity workspace</span>
-        </div>
-      </main>
+      <div className={workspaceColumn}>
+        <WorkspaceTitle />
+        <main data-testid="workspace-panel" className={cn("items-center justify-center", workspacePanel)}>
+          <div role="status" className="animate-pulse text-muted-foreground motion-reduce:animate-none">
+            <AcuityMark className="size-12" />
+            <span className="sr-only">Loading Acuity workspace</span>
+          </div>
+        </main>
+      </div>
     </div>
   )
 }

@@ -82,7 +82,7 @@ import {
   type TaskCategoryFilter,
 } from "@/lib/workspace-triage"
 
-const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
+export const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
   { value: "home", label: "Home", icon: HouseIcon },
   { value: "transcripts", label: "Transcripts", icon: MessageSquareTextIcon },
   { value: "knowledge", label: "Knowledge base", icon: BookOpenIcon },
