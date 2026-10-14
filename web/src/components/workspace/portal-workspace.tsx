@@ -481,7 +481,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   >
                     <PanelRightCloseIcon />
                   </Button>
-                  <div className="flex min-h-0 w-full flex-1 lg:w-72 lg:flex-none">
+                  <div className="flex min-h-0 w-full flex-1 lg:w-72">
                     {contextView === "ai-call" ? (
                       <AIInteractionContext
                         detail={state.selection.aiInteraction}

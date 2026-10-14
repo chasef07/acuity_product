@@ -558,6 +558,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     await operatorPage
       .getByRole("button", { name: selectedLocation.name, exact: true })
       .click()
+    await operatorPage.getByRole("navigation", { name: "Workspace" }).getByRole("button", { name: "Work", exact: true }).click()
     await expectNoOpenTasks(operatorPage)
     await operatorPage.getByRole("button", { name: "AI diagnostics" }).click()
     await expect
