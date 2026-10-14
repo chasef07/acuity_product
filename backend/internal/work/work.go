@@ -224,13 +224,14 @@ type EnsureMessageFollowUpCommand struct {
 }
 
 type EnsureRecoveryTaskCommand struct {
-	CallID     string
-	PracticeID string
-	LocationID string
-	Phone      string
-	CallerName string
-	Outcome    RecoveryOutcome
-	OccurredAt time.Time
+	CallID       string
+	SourceCallID string
+	PracticeID   string
+	LocationID   string
+	Phone        string
+	CallerName   string
+	Outcome      RecoveryOutcome
+	OccurredAt   time.Time
 }
 
 type ResolveRecoveryTasksCommand struct {
@@ -520,15 +521,37 @@ func (m *Module) EnsureRecoveryTask(
 	}
 
 	var taskID string
+	var taskOrigin TaskOrigin
 	err := tx.QueryRow(ctx, `
-		SELECT task.id::text
+		SELECT task.id::text, task.origin
 		FROM work_task_interactions interaction
 		JOIN work_tasks task ON task.id = interaction.task_id
 		WHERE interaction.call_id = $1
 		FOR UPDATE OF task
-	`, command.CallID).Scan(&taskID)
+	`, command.CallID).Scan(&taskID, &taskOrigin)
 	inserted := false
+	if errors.Is(err, pgx.ErrNoRows) && command.SourceCallID != "" {
+		taskOrigin = TaskOriginAbitaAI
+		err = tx.QueryRow(ctx, `
+			SELECT id::text
+			FROM work_tasks
+			WHERE practice_id = $1
+				AND location_id = $2
+				AND phone = $3
+				AND source_call_id = $4
+				AND origin = 'ABITA_AI'
+				AND state = 'OPEN'
+			ORDER BY created_at, id
+			LIMIT 1
+			FOR UPDATE
+		`, command.PracticeID, command.LocationID, command.Phone,
+			command.SourceCallID).Scan(&taskID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, fmt.Errorf("load AI Task for missed handoff: %w", err)
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
+		taskOrigin = origin
 		err = tx.QueryRow(ctx, `
 			INSERT INTO work_tasks (
 				practice_id,
@@ -615,7 +638,8 @@ func (m *Module) EnsureRecoveryTask(
 	}
 	taskChanged := inserted
 	if !inserted {
-		upgradeToVoicemail := command.Outcome == RecoveryOutcomeVoicemail
+		upgradeToVoicemail := command.Outcome == RecoveryOutcomeVoicemail &&
+			taskOrigin != TaskOriginAbitaAI
 		updated, err := tx.Exec(ctx, `
 			UPDATE work_tasks
 			SET
@@ -648,7 +672,9 @@ func (m *Module) EnsureRecoveryTask(
 		task.LocationID != command.LocationID ||
 		task.Phone != command.Phone ||
 		(task.Origin != TaskOriginVoicemail &&
-			task.Origin != TaskOriginMissedCall) {
+			task.Origin != TaskOriginMissedCall &&
+			(task.Origin != TaskOriginAbitaAI ||
+				task.SourceCallID != command.SourceCallID)) {
 		return Task{}, ErrConflict
 	}
 	if inserted || interactionInserted {
@@ -661,7 +687,7 @@ func (m *Module) EnsureRecoveryTask(
 			tx,
 			task,
 			activityKind,
-			task.CreatedBy,
+			ActorSnapshot{Kind: access.ActorService, Subject: "human-calling"},
 			command.OccurredAt,
 			nil,
 		); err != nil {

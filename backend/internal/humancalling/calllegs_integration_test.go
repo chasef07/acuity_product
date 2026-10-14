@@ -5569,6 +5569,69 @@ func TestFailedVoicemailGreetingCreatesMissedCallWithoutRecording(t *testing.T) 
 	}
 }
 
+func TestMissedHandoffAttachesToTheAITaskFromTheSameCall(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 17, 15, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "ai-task-staff-control", CallLegID: "ai-task-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "missed-after-ai-task", provider, 1,
+	)
+	var aiTaskID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO work_tasks (
+			practice_id, location_id, phone, title, state, origin, urgency, category,
+			created_by_kind, created_by_subject, created_at, updated_at,
+			source_call_id, source_message, ai_idempotency_key, ai_input_fingerprint
+		)
+		SELECT practice_id, location_id, phone, 'Refill request', 'OPEN', 'ABITA_AI',
+			'normal', 'medication', 'SERVICE', 'abita-synthetic', $1, $1,
+			source_call_id, 'Caller asked for a refill.', 'refill', sha256('refill')
+		FROM human_calling_handoffs
+		RETURNING id::text
+	`, now).Scan(&aiTaskID); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "ai-task-ring-completed", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(20 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	speak := provider.last(humancalling.CommandSpeakVoicemail)
+	speakState, _ := speak.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "ai-task-greeting-ended", Type: humancalling.FactSpeakEnded,
+		OccurredAt: now.Add(21 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: speakState, PlaybackStatus: "call_hangup",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	var voicemailTaskID, interactionTaskID string
+	var recoveryTasks int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT voicemail.task_id::text, interaction.task_id::text,
+			(SELECT count(*) FROM work_tasks
+				WHERE origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY'))
+		FROM human_calling_voicemails voicemail
+		JOIN work_task_interactions interaction ON interaction.call_id = voicemail.call_id
+	`).Scan(&voicemailTaskID, &interactionTaskID, &recoveryTasks); err != nil {
+		t.Fatal(err)
+	}
+	if voicemailTaskID != aiTaskID || interactionTaskID != aiTaskID || recoveryTasks != 0 {
+		t.Fatalf("missed handoff went to Task %s / %s with %d recovery Tasks; want AI Task %s and none",
+			voicemailTaskID, interactionTaskID, recoveryTasks, aiTaskID)
+	}
+}
+
 func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *testing.T) {
 	pool := testdb.Open(t)
 	createdAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)

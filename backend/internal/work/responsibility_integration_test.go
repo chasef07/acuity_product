@@ -93,7 +93,7 @@ func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) 
 	}
 }
 
-func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
+func TestRelatedTaskGroupsSpanTaskKindsForOneCaller(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Now().UTC()
 	a := access.New(pool, func() time.Time { return now })
@@ -114,69 +114,67 @@ func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	ai, _, err := m.CreateAITask(ctx, work.CreateAITaskCommand{Service: access.ServiceIdentity{Subject: "group-agent", PracticeID: auth.Practice.ID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}}, OfficeKey: "spring-hill", OfficePhone: "+12025550100", SourceCallID: "other-ai-call", IdempotencyKey: "billing", Phone: ordinary.Phone, Summary: "Billing question", Message: "Synthetic billing follow-up", Category: work.TaskCategoryBilling, Urgency: work.TaskUrgencyNormal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := createTask(t, pool, m, auth, auth.Locations[1].ID, ordinary.Phone, "Same caller at another office", now.Add(2*time.Second))
+	members := map[string]work.Task{ordinary.ID: ordinary, recovery.ID: recovery, ai.ID: ai}
 	reads := workspace.New(pool, a)
 	for _, kind := range []string{"", "follow_up", "calls"} {
-		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Kind: kind})
+		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Kind: kind, LocationID: auth.Locations[0].ID})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := 1
-		if kind == "" {
-			want = 2
+		if len(page.Items) != 1 || len(page.Items[0].GroupMembers) != len(members) {
+			t.Fatalf("kind %q: got %+v, want one group of %d", kind, page.Items, len(members))
 		}
-		if len(page.Items) != want {
-			t.Errorf("kind %q: got %d groups, want %d", kind, len(page.Items), want)
-		}
-		for _, row := range page.Items {
-			if len(row.GroupMembers) != 1 || row.GroupMembers[0].ID != row.ID {
-				t.Errorf("kind %q mixed ordinary and recovery members", kind)
+		for _, member := range page.Items[0].GroupMembers {
+			if _, ok := members[member.ID]; !ok {
+				t.Fatalf("kind %q grouped an unrelated Task %s", kind, member.ID)
 			}
 		}
 	}
+	all, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true})
+	if err != nil || len(all.Items) != 2 {
+		t.Fatalf("each office keeps its own group: %+v %v", all.Items, err)
+	}
 	for _, ordering := range []work.TaskOrdering{work.TaskOrderingTime, work.TaskOrderingPriority, work.TaskOrderingRecent} {
-		command := workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Ordering: ordering, Limit: 1}
-		seen := map[string]bool{}
-		for {
-			page, err := reads.QueryTasks(ctx, command)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(page.Items) != 1 || len(page.Items[0].GroupMembers) != 1 {
-				t.Fatalf("%s lost paginated group membership: %+v", ordering, page)
-			}
-			member := page.Items[0].GroupMembers[0]
+		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Ordering: ordering, LocationID: auth.Locations[0].ID, Limit: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Items) != 1 || len(page.Items[0].GroupMembers) != len(members) || page.NextCursor != "" {
+			t.Fatalf("%s split one caller across pages: %+v", ordering, page)
+		}
+		for _, member := range page.Items[0].GroupMembers {
 			wantInteractions := 0
 			if member.ID == recovery.ID {
 				wantInteractions = 1
 			}
-			if seen[member.ID] || member.RelatedInteractionCount != wantInteractions {
-				t.Fatalf("%s repeated a group or lost its source count: %+v", ordering, member)
+			if member.RelatedInteractionCount != wantInteractions {
+				t.Fatalf("%s lost source count: %+v", ordering, member)
 			}
-			seen[member.ID] = true
-			detail, err := reads.ReadTask(ctx, identity, member.ID)
-			if err != nil || len(detail.Interactions) != wantInteractions || detail.RelatedInteractionCount != member.RelatedInteractionCount || detail.CallID != member.CallID {
-				t.Fatalf("%s lost source detail: %+v, %v", ordering, detail, err)
-			}
-			if page.NextCursor == "" {
-				break
-			}
-			command.Cursor = page.NextCursor
-		}
-		if !seen[ordinary.ID] || !seen[recovery.ID] {
-			t.Fatalf("%s skipped a group: %+v", ordering, seen)
 		}
 	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}})
+	reviewed := []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: reviewed})
 	if !errors.Is(err, work.ErrConflict) {
-		t.Fatalf("mixed group resolution should conflict: %v", err)
+		t.Fatalf("resolving without the unseen AI Task should conflict: %v", err)
 	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}}})
-	if err != nil {
+	reviewed = append(reviewed, work.ReviewedTask{ID: ai.ID, ExpectedVersion: ai.Version})
+	if _, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: reviewed}); err != nil {
 		t.Fatal(err)
 	}
-	remaining, err := m.ReadTask(ctx, identity, recovery.ID)
-	if err != nil || remaining.State != work.TaskOpen || remaining.Version != recovery.Version {
-		t.Fatalf("ordinary group resolution changed recovery: %v", err)
+	for id := range members {
+		task, err := m.ReadTask(ctx, identity, id)
+		if err != nil || task.State != work.TaskCompleted {
+			t.Fatalf("group member %s not completed: %v", id, err)
+		}
+	}
+	remaining, err := m.ReadTask(ctx, identity, other.ID)
+	if err != nil || remaining.State != work.TaskOpen {
+		t.Fatalf("another office's Task changed: %v", err)
 	}
 }
 
