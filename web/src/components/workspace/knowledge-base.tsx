@@ -19,6 +19,7 @@ import {
   useLocationKnowledgeRevision,
 } from "@/lib/clients/location-knowledge"
 import type { PortalFailure, PortalQuery } from "@/lib/clients/portal-request"
+import { formatTimestamp } from "@/lib/format-time"
 import {
   knowledgeDraftKey,
   readKnowledgeDraft,
@@ -104,7 +105,7 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
       detail={
         revision && (
           <>
-            Updated <time dateTime={revision.createdAt}>{revisionTime(revision.createdAt)}</time> · Version{" "}
+            Updated <time dateTime={revision.createdAt}>{formatTimestamp(revision.createdAt)}</time> · Version{" "}
             {revision.version}
           </>
         )
@@ -410,16 +411,6 @@ function publishFailureMessage(failure: PortalFailure) {
   return failure.message ?? "Not published. Nothing changed. Try again."
 }
 
-function revisionTime(value: string) {
-  return new Date(value).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  })
-}
-
 export function KnowledgeHistory({
   practiceID,
   locationID,
@@ -495,12 +486,12 @@ function RevisionSummary({ row }: { row: KnowledgeRevisionHistoryEntry }) {
         {row.active && <Badge variant="secondary">Active</Badge>}
       </span>
       <span className="text-muted-foreground">
-        {row.author} · <time dateTime={row.createdAt}>{revisionTime(row.createdAt)}</time>
+        {row.author} · <time dateTime={row.createdAt}>{formatTimestamp(row.createdAt)}</time>
       </span>
       <span>{row.reason}</span>
       <span className="text-xs text-muted-foreground">
         {row.lastAgentSearchAt
-          ? `Last used by the agent: ${revisionTime(row.lastAgentSearchAt)} · ${row.agentSearchCount} ${row.agentSearchCount === 1 ? "search" : "searches"}`
+          ? `Last used by the agent: ${formatTimestamp(row.lastAgentSearchAt)} · ${row.agentSearchCount} ${row.agentSearchCount === 1 ? "search" : "searches"}`
           : "Not used by the agent yet"}
       </span>
     </>

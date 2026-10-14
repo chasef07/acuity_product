@@ -4,7 +4,6 @@ import type { ConversationTimelineItem, Task } from "./api/generated/types.gen.t
 import {
   callbackCompletionLabel,
   callHistoryPresentation,
-  conversationDateLabel,
   linkedTaskLabel,
   openTaskCallbackNotice,
   presentTimeline,
@@ -30,17 +29,6 @@ test("history presents activity oldest to newest, keeps the latest copy of an ov
   const earlier = { ...base, type: "CALL_HISTORY", entries: [] } as ConversationTimelineItem
   const updated = { ...earlier, entries: [{ ...base, type: "TASK" }] } as ConversationTimelineItem
   assert.deepEqual(presentTimeline([earlier, updated]), [updated])
-})
-
-test("conversation date labels keep recent boundaries subtle and readable", () => {
-  const now = new Date("2026-08-16T12:00:00")
-
-  assert.equal(conversationDateLabel("2026-08-16T08:00:00", now), "Today")
-  assert.equal(conversationDateLabel("2026-08-15T08:00:00", now), "Yesterday")
-  assert.match(
-    conversationDateLabel("2026-08-13T08:00:00", now),
-    /Aug 13/,
-  )
 })
 
 test("call summary preserves booking and failed transfer without claiming staff connection", () => {
@@ -114,7 +102,7 @@ test("a callback-attempt completion credits the caller only with its exact Activ
 test("an open Task names a later callback attempt only when that call is loaded", () => {
   assert.equal(
     openTaskCallbackNotice([unansweredCallback, callbackCompletion], followUp, at),
-    "caller@example.test called this number at 13:55 (no answer). This Task is still open.",
+    "caller@example.test called this number (no answer) · 13:55. This Task is still open.",
   )
   assert.equal(openTaskCallbackNotice([callbackCompletion], followUp, at), undefined)
   assert.equal(openTaskCallbackNotice([unansweredCallback], { ...followUp, createdAt: "2026-09-08T14:00:00Z" }, at), undefined)
@@ -128,7 +116,7 @@ test("an open Task names a later callback attempt only when that call is loaded"
   delete unattributed.entries![0]!.call!.placedByEmail
   assert.equal(
     openTaskCallbackNotice([unattributed], followUp, at),
-    "This number was called at 13:55 (no answer). This Task is still open.",
+    "This number was called (no answer) · 13:55. This Task is still open.",
   )
 })
 

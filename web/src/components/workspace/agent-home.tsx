@@ -13,6 +13,7 @@ import { AnimatedAcuityMark } from "@/components/animated-acuity-mark"
 import { Button } from "@/components/ui/button"
 import { useAgentCalls } from "@/lib/clients/agent-calls"
 import { useLocationKnowledge } from "@/lib/clients/location-knowledge"
+import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 import { AgentCallPanel } from "./agent-call-panel"
@@ -73,7 +74,7 @@ function KnowledgeVersion({ practiceID, locationID }: { practiceID: string; loca
           : revision
             ? <>
                 Version {revision.version} · published{" "}
-                {new Date(revision.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                {formatTimestamp(revision.createdAt)}
               </>
             : "No knowledge published yet"}
     </p>
@@ -146,7 +147,7 @@ function NeedsKnowledge({
                       : "An office question went unanswered"}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {new Date(call.startedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                    {formatTimestamp(call.startedAt)}
                     {" · "}
                     {formatUSPhone(call.phone)}
                   </p>

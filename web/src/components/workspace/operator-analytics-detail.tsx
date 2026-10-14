@@ -53,7 +53,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { useAiCallEvidence } from "@/lib/clients/agent-calls"
 import { useScorecardQuestions } from "@/lib/clients/call-review"
-import { formatMediumDateTime } from "@/lib/format"
+import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
 export function OperatorAnalyticsDetailSheet({
@@ -195,7 +195,7 @@ function OperatorAnalyticsDetailView({
           {detail.locationName}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {formatMediumDateTime(detail.startedAt)} ·{" "}
+          {formatTimestamp(detail.startedAt)} ·{" "}
           {formatDuration(detail.startedAt, detail.endedAt)}
         </p>
         {detail.summary ? (

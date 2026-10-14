@@ -26,6 +26,7 @@ import type {
   AgentCallVerdict,
 } from "@/lib/api/generated/types.gen"
 import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
+import { formatClockTime, formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import {
@@ -233,7 +234,7 @@ function CallContent({
         </div>
         <SheetDescription>
           {detail
-            ? `${new Date(detail.call.startedAt).toLocaleString()} · ${detail.locationName}`
+            ? `${formatTimestamp(detail.call.startedAt)} · ${detail.locationName}`
             : "Conversation with your agent"}
         </SheetDescription>
         {detail && (
@@ -291,7 +292,7 @@ function CallContent({
                   )}
                   <p>
                     Saved for Acuity review ·{" "}
-                    {new Date(detail.issue.createdAt).toLocaleString()}
+                    {formatTimestamp(detail.issue.createdAt)}
                   </p>
                 </AlertDescription>
               </Alert>
@@ -418,11 +419,7 @@ export function CallTranscript({ messages }: { messages: AgentCallMessage[] }) {
           </Bubble>
           <MessageFooter>
             <time dateTime={message.occurredAt}>
-              {new Date(message.occurredAt).toLocaleTimeString(undefined, {
-                hour: "numeric",
-                minute: "2-digit",
-                second: "2-digit",
-              })}
+              {formatClockTime(message.occurredAt)}
             </time>
           </MessageFooter>
         </MessageContent>

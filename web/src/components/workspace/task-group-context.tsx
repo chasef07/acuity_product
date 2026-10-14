@@ -6,6 +6,7 @@ import { CheckCircle2Icon, ArrowUpRightIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { Task } from "@/lib/api/generated/types.gen"
 import { completeTask, completeTaskGroup } from "@/lib/clients/tasks"
+import { formatTimestamp } from "@/lib/format-time"
 import { taskGroupLabel } from "@/lib/task-groups"
 import { TaskMetadata } from "./task-metadata"
 
@@ -75,7 +76,7 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
               <div>
                 <h3 className="text-sm font-semibold leading-5">{member.title}</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {member.callerName ?? "Caller name not provided"} · {new Date(member.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  {member.callerName ?? "Caller name not provided"} · {formatTimestamp(member.createdAt)}
                   {member.urgency === "high_priority" && <span className="font-medium text-destructive"> · High priority</span>}
                 </p>
               </div>

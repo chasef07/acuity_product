@@ -11,7 +11,8 @@ import {
   aiCallTimelinePresentation,
   appointmentOutcomeTitle,
 } from "@/lib/ai-interactions"
-import { formatElapsedSeconds, formatMediumDateTime } from "@/lib/format"
+import { formatElapsedSeconds } from "@/lib/format"
+import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 
 export function AIInteractionContext({
@@ -92,7 +93,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
         <dl className="mt-3 flex flex-col gap-3 text-sm">
           <DetailValue
             label="Started"
-            value={formatMediumDateTime(detail.startedAt)}
+            value={formatTimestamp(detail.startedAt)}
           />
           <DetailValue
             label="Call length"

@@ -101,12 +101,12 @@ import {
 } from "@/lib/clients/engagement"
 import { completeTask, reopenTask } from "@/lib/clients/tasks"
 import { formatElapsedSeconds } from "@/lib/format"
+import { formatClockTime, formatDate } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import type { EngagementSummary } from "@/lib/workspace-projection"
 import {
   callHistoryPresentation,
-  conversationDateLabel,
   linkedTaskLabel,
   type NumberHistory,
   presentTimeline,
@@ -515,7 +515,7 @@ function MessageConversation({
                       )) && (
                       <Marker variant="separator" className="my-2">
                         <MarkerContent>
-                          {conversationDateLabel(item.occurredAt)}
+                          {formatDate(item.occurredAt)}
                         </MarkerContent>
                       </Marker>
                     )}
@@ -660,7 +660,7 @@ function TimelineEntry({
             detail !== title && detail !== "No appointment action recorded",
           ),
           ...presentation.tasks.map((task) => linkedTaskLabel(task, selectedTaskID)),
-          formatTime(item.occurredAt),
+          formatClockTime(item.occurredAt),
         ]}
         actionLabel={primary?.aiInteraction ? "View AI call" : primary?.call?.outcome === "VOICEMAIL" ? "View voicemail" : "View call"}
         onOpen={primary?.aiInteraction && onAIInteractionOpen
@@ -711,7 +711,7 @@ function TimelineEntry({
           item.call.locationId !== contextLocationID
             ? item.call.locationName
             : "",
-          formatTime(item.occurredAt),
+          formatClockTime(item.occurredAt),
         ]}
         actionLabel={
           item.call.outcome === "VOICEMAIL" ? "View voicemail" : "View call"
@@ -735,7 +735,7 @@ function TimelineEntry({
           interaction.locationId !== contextLocationID
             ? interaction.locationName
             : "",
-          formatTime(item.occurredAt),
+          formatClockTime(item.occurredAt),
         ]}
         actionLabel="View AI call"
         onOpen={
@@ -757,7 +757,7 @@ function TimelineEntry({
           taskActivityDetail(item, selectedTaskID),
           item.taskActivity === "CATEGORY_CHANGED" ? `${String(item.taskActivityDetails?.oldCategory ?? "Uncategorized")} → ${String(item.taskActivityDetails?.newCategory ?? "Uncategorized")}` : "",
           task.locationId !== contextLocationID ? task.locationName : "",
-          formatTime(item.occurredAt),
+          formatClockTime(item.occurredAt),
         ]}
         actionLabel="View task"
         onOpen={onTaskOpen ? () => onTaskOpen(task) : undefined}
@@ -867,7 +867,7 @@ function MessageEntry({
         </Bubble>
         <MessageFooter className={cn("flex-wrap gap-x-2 gap-y-1 tabular-nums", !message.safeFailureCode && message.delivery !== "Failed" && message.delivery !== "Status unknown" && actionClassName)}>
           <time dateTime={message.createdAt}>
-            {formatTime(message.createdAt)}
+            {formatClockTime(message.createdAt)}
           </time>
           {showLocation && (
             <>
@@ -1543,13 +1543,6 @@ function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
     label: "Inbound call",
     detail: [sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
   }
-}
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value))
 }
 
 function useCopyState() {

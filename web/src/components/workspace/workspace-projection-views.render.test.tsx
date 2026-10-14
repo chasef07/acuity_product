@@ -420,7 +420,7 @@ test("the Task panel credits the callback caller and flags an open Task only wit
     />,
   )
   const open = panel(selected, history)
-  assert.match(open, /caller@example\.test called this number at .+ \(no answer\)\. This Task is still open\./)
+  assert.match(open, /caller@example\.test called this number \(no answer\) · .+\. This Task is still open\./)
   assert.ok(open.indexOf("This Task is still open.") < open.indexOf("Complete &amp; next"))
   assert.doesNotMatch(panel(selected), /still open/)
   assert.doesNotMatch(panel(selected, history.filter((item) => item.type !== "CALL_HISTORY")), /still open/)

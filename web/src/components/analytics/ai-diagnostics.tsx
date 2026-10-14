@@ -17,6 +17,7 @@ import type {
   OperatorAiDiagnosticExample,
   OperatorAiToolDiagnostics,
 } from "@/lib/api/generated/types.gen"
+import { formatTimestamp } from "@/lib/format-time"
 import styles from "./ai-diagnostics.module.css"
 import {
   VersionLane,
@@ -72,12 +73,7 @@ function Evidence({
               <div>
                 <strong>{latencyLabel(sample.durationMs)}</strong>
                 <span>
-                  {new Date(sample.startedAt).toLocaleString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
+                  {formatTimestamp(sample.startedAt)}
                 </span>
               </div>
               <div>

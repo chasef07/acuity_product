@@ -29,6 +29,7 @@ import type {
   Location,
 } from "@/lib/api/generated/types.gen"
 import { useAgentCalls } from "@/lib/clients/agent-calls"
+import { formatClockTime, formatDate, formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 
@@ -195,19 +196,13 @@ function AgentTranscripts({
                           event.stopPropagation()
                           setSelectedID(call.id)
                         }}
-                        aria-label={`Open call from ${formatUSPhone(call.phone)} at ${new Date(call.startedAt).toLocaleString()}`}
+                        aria-label={`Open call from ${formatUSPhone(call.phone)} at ${formatTimestamp(call.startedAt)}`}
                       >
                         <span className="block">
-                          {new Date(call.startedAt).toLocaleDateString(
-                            undefined,
-                            { month: "short", day: "numeric" },
-                          )}
+                          {formatDate(call.startedAt)}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {new Date(call.startedAt).toLocaleTimeString(
-                            undefined,
-                            { hour: "numeric", minute: "2-digit" },
-                          )}
+                          {formatClockTime(call.startedAt)}
                         </span>
                       </Button>
                     </TableCell>

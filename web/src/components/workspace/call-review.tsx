@@ -69,7 +69,7 @@ import {
   useReviewQueue,
   useScorecardQuestions,
 } from "@/lib/clients/call-review"
-import { formatShortDateTime } from "@/lib/format"
+import { formatTimestamp } from "@/lib/format-time"
 import { latestReviewDay } from "@/lib/review-day"
 
 const silenceSeconds = 8
@@ -247,7 +247,7 @@ function QueueRow({
     <button
       type="button"
       aria-current={active || undefined}
-      aria-label={`Call ${position}, ${call.locationName}, ${formatShortDateTime(call.startedAt)}, ${state}${call.overlap ? ", shared" : ""}`}
+      aria-label={`Call ${position}, ${call.locationName}, ${formatTimestamp(call.startedAt)}, ${state}${call.overlap ? ", shared" : ""}`}
       onClick={onSelect}
       className="flex w-full items-start gap-2.5 border-l-2 border-transparent px-4 py-2 text-left outline-none transition-colors hover:bg-muted focus-visible:bg-muted aria-[current]:border-foreground aria-[current]:bg-muted"
     >
@@ -262,7 +262,7 @@ function QueueRow({
           #{position} · {call.locationName}
         </span>
         <span className="block text-[0.6875rem] text-muted-foreground tabular-nums">
-          {formatShortDateTime(call.startedAt)} · {formatDuration(call.durationSeconds)}
+          {formatTimestamp(call.startedAt)} · {formatDuration(call.durationSeconds)}
         </span>
         <span className="mt-1 flex flex-wrap gap-1">
           {call.overlap && <Badge variant="outline">Shared</Badge>}
@@ -294,7 +294,7 @@ function ReviewCall({
         <header className="border-b px-5 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">
-              #{position} · {call.locationName} · {formatShortDateTime(call.startedAt)} · {formatDuration(call.durationSeconds)}
+              #{position} · {call.locationName} · {formatTimestamp(call.startedAt)} · {formatDuration(call.durationSeconds)}
             </h2>
             <nav aria-label="Call navigation" className="flex gap-1">
               <Button size="icon-sm" variant="ghost" aria-label="Previous call" disabled={!onPrevious} onClick={onPrevious}>
@@ -603,7 +603,7 @@ function JudgeAccuracyView({
                   }}
                 >
                   <span className="min-w-0">
-                    <span className="block font-medium">{formatShortDateTime(call.startedAt)} · {call.locationName}</span>
+                    <span className="block font-medium">{formatTimestamp(call.startedAt)} · {call.locationName}</span>
                     <span className="block truncate text-xs text-muted-foreground">{call.reviewers.join(", ")}</span>
                   </span>
                   <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
@@ -643,7 +643,7 @@ function JudgeAccuracyView({
                         onOpenCall(item.interactionId)
                       }}
                     >
-                      {formatShortDateTime(item.startedAt)}
+                      {formatTimestamp(item.startedAt)}
                     </button>
                     <span className="block text-[0.6875rem] text-muted-foreground">{item.locationName} · {item.reviewerEmail}</span>
                   </TableCell>
@@ -667,7 +667,7 @@ function JudgeAccuracyView({
               <li key={`${item.interactionId}:${item.question}`} className="flex flex-wrap items-start justify-between gap-3 py-2.5">
                 <button type="button" className="text-left text-xs" onClick={() => onOpenCall(item.interactionId)}>
                   <span className="font-medium">{label(item.question)}</span>
-                  <span className="block text-muted-foreground">{formatShortDateTime(item.startedAt)} · {item.locationName}</span>
+                  <span className="block text-muted-foreground">{formatTimestamp(item.startedAt)} · {item.locationName}</span>
                 </button>
                 <span className="flex flex-wrap gap-2 text-xs">
                   {item.answers.map((answer) => (

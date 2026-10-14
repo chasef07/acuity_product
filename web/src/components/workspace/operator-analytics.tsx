@@ -79,7 +79,7 @@ import {
   type AiCallLedger,
   useAiCallAnalytics,
 } from "@/lib/clients/agent-calls"
-import { formatShortDateTime } from "@/lib/format"
+import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
 type AnalyticsNextPageState = AiCallLedger["nextPage"]
@@ -551,13 +551,13 @@ function CallLedger({
                     <button
                       type="button"
                       className="rounded-sm text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                      aria-label={`Open analytics for call from ${formatShortDateTime(call.startedAt)}`}
+                      aria-label={`Open analytics for call from ${formatTimestamp(call.startedAt)}`}
                       onClick={(event) => {
                         event.stopPropagation()
                         onSelect(call.id)
                       }}
                     >
-                      {formatShortDateTime(call.startedAt)}
+                      {formatTimestamp(call.startedAt)}
                     </button>
                   </TableCell>
                   <TableCell className="tabular-nums">
@@ -590,7 +590,7 @@ function CallLedger({
           <button
             key={call.id}
             type="button"
-            aria-label={`Open analytics for call from ${formatShortDateTime(call.startedAt)}`}
+            aria-label={`Open analytics for call from ${formatTimestamp(call.startedAt)}`}
             className={`rounded-xl border p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/40 ${call.reviewReasons?.length ? "border-destructive/25 bg-destructive/5 hover:bg-destructive/10" : "bg-card hover:bg-muted"}`}
             onClick={() => onSelect(call.id)}
           >
@@ -598,7 +598,7 @@ function CallLedger({
               <div className="min-w-0">
                 <p className="text-sm font-semibold tabular-nums">{formatUSPhoneDigits(call.phone)}</p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {formatShortDateTime(call.startedAt)} · {call.locationName}
+                  {formatTimestamp(call.startedAt)} · {call.locationName}
                 </p>
               </div>
               <ArrowRightIcon
