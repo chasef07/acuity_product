@@ -367,6 +367,11 @@ test("an AI Task shows the missed handoff call attached to it", () => {
   )
   assert.match(panel(task), /aria-label="Call recovery source"/)
   assert.doesNotMatch(panel({ ...task, relatedInteractionCount: 0, interactions: [] }), /Call recovery source/)
+  assert.doesNotMatch(
+    panel({ ...task, origin: "HUMAN_CALL_FOLLOW_UP", callId: "call-1" }),
+    /Call recovery source/,
+    "a follow-up's own call is not an attached missed call",
+  )
 })
 
 test("completing a Task keeps Next task in place and holds Reopen until the change settles", async () => {

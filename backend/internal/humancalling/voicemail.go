@@ -488,15 +488,14 @@ func (m *Module) ensureRecoveryOutcome(
 	if m.work == nil {
 		return "", ErrInvalidInput
 	}
-	var practiceID, locationID, phone, callerName, sourceCallID string
+	var practiceID, locationID, phone, callerName string
 	if err := tx.QueryRow(ctx, `
 		SELECT call.practice_id::text, call.location_id::text,
-			COALESCE(call.caller_phone, ''), COALESCE(handoff.display_name, ''),
-			COALESCE(handoff.source_call_id, '')
+			COALESCE(call.caller_phone, ''), COALESCE(handoff.display_name, '')
 		FROM human_calling_calls call
 		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 		WHERE call.id = $1 FOR UPDATE OF call
-	`, callID).Scan(&practiceID, &locationID, &phone, &callerName, &sourceCallID); err != nil {
+	`, callID).Scan(&practiceID, &locationID, &phone, &callerName); err != nil {
 		return "", fmt.Errorf("lock recovery Call: %w", err)
 	}
 	workOutcome := work.RecoveryOutcomeMissedCall
@@ -504,7 +503,7 @@ func (m *Module) ensureRecoveryOutcome(
 		workOutcome = work.RecoveryOutcomeVoicemail
 	}
 	task, err := m.work.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
-		CallID: callID, SourceCallID: sourceCallID, PracticeID: practiceID, LocationID: locationID,
+		CallID: callID, PracticeID: practiceID, LocationID: locationID,
 		Phone: phone, CallerName: callerName, Outcome: workOutcome,
 		OccurredAt: fact.OccurredAt,
 	})

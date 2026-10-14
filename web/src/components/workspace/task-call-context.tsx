@@ -347,7 +347,7 @@ function TaskWorkspace({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      {(recovery || task.relatedInteractionCount > 0) && (
+      {(recovery || task.relatedInteractionCount > (task.callId ? 1 : 0)) && (
         <RecoveryTaskSource task={task} revision={historyHint} onUpdated={onTaskUpdated} />
       )}
       <details className="group mt-4 border-t pt-4">

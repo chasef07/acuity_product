@@ -93,7 +93,7 @@ func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) 
 	}
 }
 
-func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
+func TestRelatedTaskGroupsKeepCallersSeparate(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Now().UTC()
 	a := access.New(pool, func() time.Time { return now })
@@ -101,12 +101,13 @@ func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
 	m := work.New(pool, a, func() time.Time { return now })
 	ctx := context.Background()
 	ordinary := ensureCallFollowUp(t, pool, m, work.EnsureCallFollowUpCommand{CallID: insertCall(t, pool, auth, now), PracticeID: auth.Practice.ID, LocationID: auth.Locations[0].ID, Phone: "+15555550100", Reason: "Synthetic administrative follow-up", Creator: auth.Actor})
-	callID := insertCall(t, pool, auth, now.Add(time.Second))
+	otherCaller := "+15555550101"
+	callID := insertCallAt(t, pool, auth, ordinary.LocationID, otherCaller, "Other caller", now.Add(time.Second))
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovery, err := m.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{CallID: callID, PracticeID: auth.Practice.ID, LocationID: ordinary.LocationID, Phone: ordinary.Phone, Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now.Add(time.Second)})
+	recovery, err := m.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{CallID: callID, PracticeID: auth.Practice.ID, LocationID: ordinary.LocationID, Phone: otherCaller, Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now.Add(time.Second)})
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
@@ -129,7 +130,7 @@ func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
 		}
 		for _, row := range page.Items {
 			if len(row.GroupMembers) != 1 || row.GroupMembers[0].ID != row.ID {
-				t.Errorf("kind %q mixed ordinary and recovery members", kind)
+				t.Errorf("kind %q mixed two callers", kind)
 			}
 		}
 	}
@@ -168,7 +169,7 @@ func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
 	}
 	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}})
 	if !errors.Is(err, work.ErrConflict) {
-		t.Fatalf("mixed group resolution should conflict: %v", err)
+		t.Fatalf("resolving two callers as one group should fail: %v", err)
 	}
 	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}}})
 	if err != nil {

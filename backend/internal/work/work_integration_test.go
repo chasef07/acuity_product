@@ -160,7 +160,7 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	}
 }
 
-func TestEnsureRecoveryTaskAttachesToOpenAITaskFromSameAICall(t *testing.T) {
+func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.October, 14, 9, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
@@ -210,10 +210,10 @@ func TestEnsureRecoveryTaskAttachesToOpenAITaskFromSameAICall(t *testing.T) {
 		return task
 	}
 
+	aiTask := createAITask("earlier-ai-call")
 	handoffCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill", now)
-	aiTask := createAITask("source-" + handoffCallID)
 	attached := ensureRecovery(work.EnsureRecoveryTaskCommand{
-		CallID: handoffCallID, SourceCallID: "source-" + handoffCallID,
+		CallID:     handoffCallID,
 		PracticeID: authorization.Practice.ID, LocationID: locationID,
 		Phone: phone, Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: now,
 	})
@@ -232,10 +232,10 @@ func TestEnsureRecoveryTaskAttachesToOpenAITaskFromSameAICall(t *testing.T) {
 		t.Fatal(err)
 	}
 	if recoveryTasks != 0 {
-		t.Fatalf("recovery Tasks = %d, want 0 when the AI already made a Task", recoveryTasks)
+		t.Fatalf("recovery Tasks = %d, want 0 while the caller has an open Task", recoveryTasks)
 	}
 	replayed := ensureRecovery(work.EnsureRecoveryTaskCommand{
-		CallID: handoffCallID, SourceCallID: "source-" + handoffCallID,
+		CallID:     handoffCallID,
 		PracticeID: authorization.Practice.ID, LocationID: locationID,
 		Phone: phone, Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: now,
 	})
@@ -250,19 +250,103 @@ func TestEnsureRecoveryTaskAttachesToOpenAITaskFromSameAICall(t *testing.T) {
 
 	now = now.Add(time.Hour)
 	laterCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill again", now)
-	completedAITask := createAITask("source-" + laterCallID)
+	completedAITask, err := module.ReadTask(ctx, identity, aiTask.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
 		Identity: identity, TaskID: completedAITask.ID, ExpectedVersion: completedAITask.Version,
 	}); err != nil {
 		t.Fatalf("complete AI Task: %v", err)
 	}
 	recovery := ensureRecovery(work.EnsureRecoveryTaskCommand{
-		CallID: laterCallID, SourceCallID: "source-" + laterCallID,
+		CallID:     laterCallID,
 		PracticeID: authorization.Practice.ID, LocationID: locationID,
 		Phone: phone, Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now,
 	})
 	if recovery.Origin != work.TaskOriginMissedCall || recovery.ID == completedAITask.ID {
 		t.Fatalf("missed call after completed AI Task = %#v, want a new recovery Task", recovery)
+	}
+}
+
+func TestNewTaskAbsorbsTheCallersOpenMissedCall(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.October, 14, 9, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	ctx := context.Background()
+	phone := "+15555550100"
+	missed := func(locationID string) work.Task {
+		t.Helper()
+		callID := insertCallAt(t, pool, authorization, locationID, phone, "Missed", now)
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		task, err := module.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
+			CallID: callID, PracticeID: authorization.Practice.ID, LocationID: locationID,
+			Phone: phone, Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: now,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+	springHill := missed(authorization.Locations[0].ID)
+	springHillCallID := springHill.CallID
+	otherOffice := missed(authorization.Locations[1].ID)
+	now = now.Add(time.Minute)
+	aiTask, _, err := module.CreateAITask(ctx, work.CreateAITaskCommand{
+		Service: access.ServiceIdentity{
+			Subject: "abita-synthetic", PracticeID: authorization.Practice.ID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+		},
+		OfficeKey: "spring-hill", OfficePhone: "+17275919997", SourceCallID: "callback-ai-call",
+		IdempotencyKey: "callback-task", Phone: phone, Summary: "Caller needs a refill.",
+		Message:  "Caller asked the office to refill eye drops.",
+		Category: work.TaskCategoryMedication, Urgency: work.TaskUrgencyNormal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	absorbed, err := module.ReadTask(ctx, identity, springHill.ID)
+	if err != nil || absorbed.State != work.TaskCompleted || absorbed.CompletedBy == nil ||
+		absorbed.CompletedBy.Kind != access.ActorService {
+		t.Fatalf("Spring Hill voicemail Task = %#v, %v; want completed by the service", absorbed, err)
+	}
+	read, err := module.ReadTask(ctx, identity, aiTask.ID)
+	if err != nil || len(read.Interactions) != 1 || read.Interactions[0].CallID != springHillCallID {
+		t.Fatalf("AI Task interactions = %#v, %v; want the missed call", read.Interactions, err)
+	}
+	var activity string
+	if err := pool.QueryRow(ctx, `
+		SELECT kind || ':' || (details->>'taskId') FROM work_task_activities
+		WHERE task_id = $1 ORDER BY task_version DESC LIMIT 1
+	`, springHill.ID).Scan(&activity); err != nil || activity != "TASK_AUTO_COMPLETED_DUPLICATE:"+aiTask.ID {
+		t.Fatalf("absorbed activity = %q, %v", activity, err)
+	}
+	untouched, err := module.ReadTask(ctx, identity, otherOffice.ID)
+	if err != nil || untouched.State != work.TaskOpen || len(untouched.Interactions) != 1 {
+		t.Fatalf("another office's voicemail changed: %#v, %v", untouched, err)
+	}
+	followUp := ensureCallFollowUp(t, pool, module, work.EnsureCallFollowUpCommand{
+		CallID:     insertCallAt(t, pool, authorization, authorization.Locations[1].ID, phone, "Call back", now),
+		PracticeID: authorization.Practice.ID, LocationID: authorization.Locations[1].ID,
+		Phone: phone, Reason: "Call back about refill", Creator: authorization.Actor,
+	})
+	untouched, err = module.ReadTask(ctx, identity, otherOffice.ID)
+	if err != nil || untouched.State != work.TaskCompleted {
+		t.Fatalf("staff follow-up did not absorb the voicemail: %#v, %v", untouched, err)
+	}
+	read, err = module.ReadTask(ctx, identity, followUp.ID)
+	if err != nil || len(read.Interactions) != 1 {
+		t.Fatalf("staff follow-up interactions = %#v, %v", read.Interactions, err)
 	}
 }
 
