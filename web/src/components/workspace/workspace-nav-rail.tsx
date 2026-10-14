@@ -8,10 +8,10 @@ import {
   ActivityIcon,
   ChartNoAxesCombinedIcon,
   HouseIcon,
+  InboxIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
-  SparklesIcon,
   SunIcon,
 } from "lucide-react"
 
@@ -79,20 +79,23 @@ export function WorkspaceNavRail({
     >
       <RailButton
         label="Home"
+        active={view === "manage-agent"}
+        expanded={view === "manage-agent" && panelOpen}
+        onClick={() =>
+          view === "manage-agent" && projection.selection.agentPage !== "home"
+            ? onIntent({ type: "select-manage-agent", page: "home" })
+            : selectWithSidebar(view === "manage-agent", { type: "select-manage-agent", page: "home" })}
+      >
+        <HouseIcon />
+      </RailButton>
+      <RailButton
+        label="Work"
         hint={`${openCount} open`}
         active={workActive}
         expanded={workActive && panelOpen}
         onClick={() => selectWithSidebar(workActive, { type: "select-work" })}
       >
-        <HouseIcon />
-      </RailButton>
-      <RailButton
-        label="Manage agent"
-        active={view === "manage-agent"}
-        expanded={view === "manage-agent" && panelOpen}
-        onClick={() => selectWithSidebar(view === "manage-agent", { type: "select-manage-agent" })}
-      >
-        <SparklesIcon />
+        <InboxIcon />
       </RailButton>
       {canViewPracticeAnalytics(discovery, projection.scope.practiceID) && (
         <RailButton

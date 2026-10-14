@@ -1,5 +1,7 @@
 import type { ComponentProps } from "react"
 
+import { acuityMarkDots } from "@/lib/acuity-mark-motion"
+
 function AcuityMark(props: ComponentProps<"svg">) {
   return (
     <svg
@@ -9,13 +11,9 @@ function AcuityMark(props: ComponentProps<"svg">) {
       focusable="false"
       {...props}
     >
-      <circle cx="16" cy="7" r="2.75" />
-      <circle cx="8" cy="11.5" r="2.75" />
-      <circle cx="24" cy="11.5" r="2.75" />
-      <circle cx="16" cy="16" r="2.75" />
-      <circle cx="8" cy="20.5" r="2.75" />
-      <circle cx="24" cy="20.5" r="2.75" />
-      <circle cx="16" cy="25" r="2.75" />
+      {acuityMarkDots.map(([x, y]) => (
+        <circle key={`${x},${y}`} cx={x} cy={y} r="2.75" />
+      ))}
     </svg>
   )
 }

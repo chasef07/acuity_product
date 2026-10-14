@@ -31,6 +31,7 @@ export function useAgentCalls({
   range,
   phone,
   flaggedOnly,
+  needsKnowledgeOnly = false,
   revision,
 }: {
   practiceID: string
@@ -38,10 +39,11 @@ export function useAgentCalls({
   range: OperatorAiAnalyticsRange
   phone: string
   flaggedOnly: boolean
+  needsKnowledgeOnly?: boolean
   revision: number
 }) {
   return useCallPages<AgentCallsPage>(
-    JSON.stringify([practiceID, locationID, range, phone, flaggedOnly, revision]),
+    JSON.stringify([practiceID, locationID, range, phone, flaggedOnly, needsKnowledgeOnly, revision]),
     true,
     (transport, cursor) =>
       queryAgentCalls({
@@ -52,6 +54,7 @@ export function useAgentCalls({
           range,
           phone,
           flaggedOnly,
+          needsKnowledgeOnly,
           limit: 50,
           cursor,
         },

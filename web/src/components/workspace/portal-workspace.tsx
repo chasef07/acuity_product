@@ -334,7 +334,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           onIntent={sendIntent}
           availabilityControl={<CallingAvailabilityControl />}
         />
-        <div className="relative flex h-svh min-w-0 flex-1 overflow-hidden bg-background md:my-2 md:mr-2 md:h-[calc(100svh-1rem)] md:rounded-xl md:border md:border-sidebar-border md:shadow-xs">
+        <div data-testid="workspace-panel" className={cn("relative overflow-hidden", workspacePanel)}>
           <WorkspaceRail
             projection={state}
             onIntent={sendIntent}
@@ -376,6 +376,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                 locationScopeID={state.scope.locationScopeID}
                 locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
                 page={state.selection.agentPage}
+                onPage={(page) => sendIntent({ type: "select-manage-agent", page })}
               />
             ) : view === "operator-analytics" && discovery.platformOperator ? (
               <OperatorAnalytics
@@ -646,15 +647,13 @@ function WorkspaceSelector({
   )
 }
 
+const workspacePanel = "flex h-svh min-w-0 flex-1 bg-background md:my-2 md:mr-2 md:h-[calc(100svh-1rem)] md:rounded-xl md:border md:border-sidebar-border md:shadow-xs"
+
 function WorkspaceLoading() {
   return (
-    <div className="flex min-h-svh w-full" aria-busy="true">
-      <aside className="hidden w-64 border-r p-4 md:block">
-        <Skeleton className="h-9 w-40" />
-        <Skeleton className="mt-5 h-8 w-full" />
-        <Skeleton className="mt-3 h-64 w-full" />
-      </aside>
-      <main className="flex flex-1 items-center justify-center">
+    <div className="flex min-h-svh w-full bg-sidebar" aria-busy="true">
+      <div className="w-16 shrink-0" />
+      <main data-testid="workspace-panel" className={cn("items-center justify-center", workspacePanel)}>
         <div role="status" className="animate-pulse text-muted-foreground motion-reduce:animate-none">
           <AcuityMark className="size-12" />
           <span className="sr-only">Loading Acuity workspace</span>

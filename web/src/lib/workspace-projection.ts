@@ -38,7 +38,7 @@ export type WorkspaceConnectionState =
 
 export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics" | "manage-agent"
 export type WorkspaceContextView = "task" | "call" | "ai-call"
-export type ManageAgentPage = "transcripts" | "knowledge" | "insurance"
+export type ManageAgentPage = "home" | "transcripts" | "knowledge" | "insurance"
 export type WorkspaceRailSection = "tasks" | "calls" | "appointments" | "texts" | "completed"
 
 export type WorkspaceRailState = {
@@ -330,7 +330,7 @@ export function createWorkspaceProjection({
     replaceNavigation = false
     const location = selectedWorkspaceLocation(next.selection)
     const search = workspaceLocationSearch(location)
-    if (location.view === "none" || search === navigationSearch) return
+    if (search === navigationSearch || (location.view === "work" && navigationSearch.startsWith("?task="))) return
     navigationSearch = search
     navigation.write(location, mode)
   }
@@ -671,7 +671,7 @@ export function createWorkspaceProjection({
       if (!failIfAccessLost(result)) failClosed("unavailable")
       return
     }
-    const requested = navigation?.read() ?? { view: "none" }
+    const requested = navigation?.read() ?? { view: "work" }
     navigationGeneration += 1
     navigationSearch = workspaceLocationSearch(requested)
     replaceNavigation = true
@@ -769,8 +769,23 @@ export function createWorkspaceProjection({
   }
 
   function selectLocation(location: WorkspaceLocation) {
-    if (location.view === "task" || location.view === "none") return
-    selectPageView(location.view, location.view === "manage-agent" ? (location.page ?? "transcripts") : undefined)
+    if (location.view === "task") return
+    if (location.view === "work") {
+      selectWork()
+      return
+    }
+    selectPageView(location.view, location.view === "manage-agent" ? (location.page ?? "home") : undefined)
+  }
+
+  function selectWork() {
+    const first = !state.selection.engagement && state.loadState === "ready" && !state.tasks.error
+      ? state.tasks.items[0]
+      : undefined
+    if (first) {
+      selectEngagement(taskEngagement(first), first)
+      return
+    }
+    patch(current => ({ ...current, selection: { ...current.selection, view: current.selection.engagement ? "engagement" : "none" } }))
   }
 
   function selectPageView(view: WorkspacePageView, agentPage?: ManageAgentPage) {
@@ -823,7 +838,7 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "select-work") {
-      patch(current => ({ ...current, selection: { ...current.selection, view: current.selection.engagement ? "engagement" : "none" } }))
+      selectWork()
       return
     }
     if (intent.type === "select-manage-agent") {
@@ -1749,7 +1764,7 @@ function initialState(): WorkspaceProjectionState {
       aiInteractionLoading: false,
       aiInteractionError: "",
       view: "none",
-      agentPage: "transcripts",
+      agentPage: "home",
       contextView: "task",
       contextPanelOpen: false,
     },

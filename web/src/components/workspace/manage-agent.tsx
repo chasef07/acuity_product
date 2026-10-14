@@ -19,6 +19,7 @@ import {
   AppointmentActions,
   callDuration,
 } from "./agent-call-panel"
+import { AgentHome } from "./agent-home"
 import { InsuranceList } from "./insurance-list"
 import { KnowledgeBase } from "./knowledge-base"
 import { AgentPage, AgentQueryBody, OptionSelect } from "./manage-agent-page"
@@ -43,12 +44,14 @@ export function ManageAgent({
   locationScopeID,
   locations,
   page,
+  onPage,
 }: {
   actorSubject: string
   practiceID: string
   locationScopeID: string
   locations: Location[]
   page: ManageAgentPage
+  onPage: (page: ManageAgentPage) => void
 }) {
   const [locationID, setLocationID] = useState(() =>
     locations.some((location) => location.id === locationScopeID)
@@ -59,7 +62,9 @@ export function ManageAgent({
   const location = { practiceID, locations, locationID, onLocation: setLocationID }
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-canvas">
-      {page === "knowledge" ? (
+      {page === "home" ? (
+        <AgentHome {...location} onPage={onPage} />
+      ) : page === "knowledge" ? (
         <KnowledgeBase {...location} actorSubject={actorSubject} />
       ) : page === "insurance" ? (
         <InsuranceList {...location} coverage={coverage} onCoverage={setCoverage} />

@@ -16,6 +16,7 @@ import {
   ChevronDownIcon,
   FolderIcon,
   FolderOpenIcon,
+  HouseIcon,
   ListFilterIcon,
   MessageSquareTextIcon,
   PhoneIcon,
@@ -82,6 +83,7 @@ import {
 } from "@/lib/workspace-triage"
 
 const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
+  { value: "home", label: "Home", icon: HouseIcon },
   { value: "transcripts", label: "Transcripts", icon: MessageSquareTextIcon },
   { value: "knowledge", label: "Knowledge base", icon: BookOpenIcon },
   { value: "insurance", label: "Insurance list", icon: ShieldCheckIcon },

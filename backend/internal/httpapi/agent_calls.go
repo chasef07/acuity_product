@@ -24,6 +24,7 @@ func (server *Server) QueryAgentCalls(w http.ResponseWriter, r *http.Request) {
 	page, err := server.interactions.QueryAgentCalls(ctx, interaction.QueryAgentCallsCommand{
 		QueryAnalyticsCommand: interaction.QueryAnalyticsCommand{Identity: identity, PracticeID: body.PracticeId.String(), LocationID: uuidString(body.LocationId), Range: interaction.AnalyticsRange(body.Range), Cursor: stringValue(body.Cursor), Limit: intValue(body.Limit)},
 		Phone:                 stringValue(body.Phone), FlaggedOnly: body.FlaggedOnly != nil && *body.FlaggedOnly,
+		NeedsKnowledgeOnly: body.NeedsKnowledgeOnly != nil && *body.NeedsKnowledgeOnly,
 	})
 	if err != nil {
 		server.writeInteractionError(w, r, err)

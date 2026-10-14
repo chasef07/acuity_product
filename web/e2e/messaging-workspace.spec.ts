@@ -14,7 +14,7 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await page.setViewportSize({ width: 390, height: 844 })
   await signInAs(page, "admin@abita.test", "Fixture Admin")
-  await page.getByRole("button", { name: "Home", exact: true }).click()
+  await page.getByRole("button", { name: "Work", exact: true }).click()
 
   let releaseTimeline = () => {}
   const timelineGate = new Promise<void>((resolve) => {

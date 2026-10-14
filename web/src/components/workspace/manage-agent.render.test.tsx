@@ -10,6 +10,8 @@ import { KnowledgeHistory } from "./knowledge-base.tsx"
 import { ManageAgent } from "./manage-agent.tsx"
 import { authClient, clearAccessToken } from "../../lib/auth-client.ts"
 import type {
+  AgentCallsPage,
+  AgentCallsQuery,
   InsuranceCoverage,
   InsurancePlanRule,
   InsurancePlansQuery,
@@ -52,12 +54,40 @@ test("Manage agent shows the selected page at full width without its own navigat
   const page = harness(t)
   for (const [selected, heading] of [["transcripts", "Transcripts"], ["knowledge", "Knowledge base"], ["insurance", "Insurance list"]] as const) {
     await page.render(
-      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID="" locations={locations} page={selected} />,
+      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID="" locations={locations} page={selected} onPage={() => {}} />,
     )
     assert.equal(page.host.querySelector("h1")?.textContent, heading)
     assert.equal(page.host.querySelector("nav"), null)
   }
   await waitFor(() => page.plansRequests.length === 1 && page.knowledgeRequests.length === 1)
+  await page.unmount()
+})
+
+test("Home shows Acuity, its knowledge version, what it can do, and the calls the judge says need knowledge", async (t) => {
+  const page = harness(t)
+  page.knowledge = { locationId: locations[0].id, sections: [], revision: { id: "revision-14", version: 14, createdAt: "2026-10-12T14:00:00Z" } }
+  page.agentCalls = {
+    calls: [
+      { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: ["Saturday hours", "parking"] },
+      { id: "call-2", phone: "+15555550112", startedAt: "2026-10-13T14:00:00Z", appointmentActions: [], transferred: true, issueFlagged: false, knowledgeGaps: [] },
+    ],
+    nextCursor: "",
+  }
+  const pages: string[] = []
+  await page.render(
+    <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID="" locations={locations} page="home" onPage={(next) => pages.push(next)} />,
+  )
+  await waitFor(() => page.text().includes("“Saturday hours” · “parking”"))
+  assert.equal(page.host.querySelector("h1")?.textContent, "Acuity")
+  assert.match(page.text(), /v14 · published/)
+  assert.match(page.text(), /An office question went unanswered/)
+  assert.match(page.text(), /What Acuity can do/)
+  assert.deepEqual(page.agentCallsRequests.map(({ locationId, range, needsKnowledgeOnly }) => ({ locationId, range, needsKnowledgeOnly })), [
+    { locationId: locations[0].id, range: "7d", needsKnowledgeOnly: true },
+  ])
+  const add = Array.from(page.host.querySelectorAll("button")).find((button) => button.textContent === "Add to knowledge")
+  await act(async () => add!.click())
+  assert.deepEqual(pages, ["knowledge"])
   await page.unmount()
 })
 
@@ -630,11 +660,11 @@ test("a restore against a stale active revision says so and changes nothing", as
 })
 
 function insuranceList(locationScopeID = "") {
-  return <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" />
+  return <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" onPage={() => {}} />
 }
 
 function knowledgeBase(locationScopeID = "", actorSubject = "staff-a") {
-  return <ManageAgent actorSubject={actorSubject} practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" />
+  return <ManageAgent actorSubject={actorSubject} practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" onPage={() => {}} />
 }
 
 function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {
@@ -660,6 +690,8 @@ function harness(t: TestContext) {
       value: dom.window.getComputedStyle.bind(dom.window),
     },
     IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+    requestAnimationFrame: { configurable: true, value: () => 0 },
+    cancelAnimationFrame: { configurable: true, value: () => {} },
   })
   Object.defineProperty(dom.window, "matchMedia", {
     configurable: true,
@@ -691,6 +723,8 @@ function harness(t: TestContext) {
     afterPublishHistory: undefined as LocationKnowledgeHistory | undefined,
     revisionRequests: [] as LocationKnowledgeRevisionQuery[],
     revisions: {} as Record<string, LocationKnowledge>,
+    agentCallsRequests: [] as AgentCallsQuery[],
+    agentCalls: { calls: [], nextCursor: "" } as AgentCallsPage,
     historyRows: () => Array.from(host.querySelectorAll("li"), (row) => row.textContent ?? ""),
     publishGate: Promise.resolve(),
     render: (element: ReactNode, key = "first") =>
@@ -797,7 +831,8 @@ function harness(t: TestContext) {
       return Response.json(page.publishResult)
     }
     assert.equal(url.pathname, "/v1/agent-calls/query")
-    return Response.json({ calls: [], nextCursor: "" })
+    page.agentCallsRequests.push((await request.json()) as AgentCallsQuery)
+    return Response.json(page.agentCalls)
   })
   return page
 }

@@ -687,6 +687,10 @@ export type AgentCallsQuery = {
     range: OperatorAiAnalyticsRange;
     phone?: string;
     flaggedOnly?: boolean;
+    /**
+     * Only calls where the judge found the caller asked an office question that office knowledge could not answer.
+     */
+    needsKnowledgeOnly?: boolean;
     cursor?: string;
     limit?: number;
 };
@@ -699,6 +703,10 @@ export type AgentCall = {
     appointmentActions: Array<AiAppointmentAction>;
     transferred: boolean;
     issueFlagged: boolean;
+    /**
+     * Office knowledge searches during the call that found no answer.
+     */
+    knowledgeGaps: Array<string>;
 };
 
 export type AgentCallsPage = {

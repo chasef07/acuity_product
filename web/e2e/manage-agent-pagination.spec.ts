@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { expect, test, type Route } from "@playwright/test"
-import { signInAs } from "./support"
+import { openAgentPage, signInAs } from "./support"
 
 test("changing call filters cancels old pages without unlocking the current page", async ({ page }) => {
   const call = (phone: string) => ({
@@ -10,6 +10,7 @@ test("changing call filters cancels old pages without unlocking the current page
     appointmentActions: [],
     transferred: false,
     issueFlagged: false,
+    knowledgeGaps: [],
   })
   const first = call("+15555550101")
   const stale = call("+15555550102")
@@ -21,6 +22,7 @@ test("changing call filters cancels old pages without unlocking the current page
   let allLoads = 0
   await page.route("**/v1/agent-calls/query", async (route) => {
     const body = route.request().postDataJSON()
+    if (body.needsKnowledgeOnly) return route.fulfill({ json: { calls: [], nextCursor: "" } })
     if (body.cursor) {
       pageRequests.push(body.cursor)
       pending.set(body.cursor, route)
@@ -33,7 +35,7 @@ test("changing call filters cancels old pages without unlocking the current page
     } })
   })
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
-  await page.getByRole("button", { name: "Manage agent", exact: true }).click()
+  await openAgentPage(page, "Transcripts")
   const more = page.getByRole("button", { name: "Load more calls", exact: true })
   const loading = page.getByRole("button", { name: /Loading…$/ })
   const filter = page.getByRole("button", { name: "Flagged calls", exact: true })
