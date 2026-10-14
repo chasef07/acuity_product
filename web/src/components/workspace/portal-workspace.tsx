@@ -647,7 +647,7 @@ function WorkspaceSelector({
   )
 }
 
-const workspacePanel = "flex h-svh min-w-0 flex-1 bg-background md:my-2 md:mr-2 md:h-[calc(100svh-1rem)] md:rounded-xl md:border md:border-sidebar-border md:shadow-xs"
+const workspacePanel = "flex h-svh min-w-0 flex-1 bg-background md:mt-4 md:mb-2 md:mr-2 md:h-[calc(100svh-1.5rem)] md:rounded-xl md:border md:border-sidebar-border md:shadow-xs"
 
 function WorkspaceLoading() {
   return (
