@@ -331,6 +331,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	}
 
 	const sharedGreeting = "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923."
+	const southFloridaGreeting = "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly."
 	const demoGreeting = "Thank you for calling Acuity Demo. Please leave a message after the tone."
 	type greetingConfiguration struct {
 		Practice string
@@ -369,10 +370,10 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	}
 	wantGreetings := []greetingConfiguration{
 		{Practice: "abita-eye-group", Location: "crystal-river", Greeting: sharedGreeting},
-		{Practice: "abita-eye-group", Location: "hollywood", Greeting: sharedGreeting},
-		{Practice: "abita-eye-group", Location: "north-miami-beach-optical", Greeting: sharedGreeting},
+		{Practice: "abita-eye-group", Location: "hollywood", Greeting: southFloridaGreeting},
+		{Practice: "abita-eye-group", Location: "north-miami-beach-optical", Greeting: southFloridaGreeting},
 		{Practice: "abita-eye-group", Location: "spring-hill", Greeting: sharedGreeting},
-		{Practice: "abita-eye-group", Location: "sweetwater", Greeting: sharedGreeting},
+		{Practice: "abita-eye-group", Location: "sweetwater", Greeting: southFloridaGreeting},
 		{Practice: "acuity-demo", Location: "demo-484", Greeting: demoGreeting},
 		{Practice: "acuity-demo", Location: "new-tampa-demo", Greeting: "Please leave a message after the beep."},
 		{Practice: "acuity-demo", Location: "ophthalmology-demo", Greeting: "Please leave a message after the beep."},
