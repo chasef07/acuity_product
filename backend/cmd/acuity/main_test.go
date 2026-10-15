@@ -332,16 +332,18 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 
 	const sharedGreeting = "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923."
 	const southFloridaGreeting = "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly."
+	const southFloridaAfterHoursGreeting = southFloridaGreeting + " If this is an emergency, please call 305-741-0830."
 	const demoGreeting = "Thank you for calling Acuity Demo. Please leave a message after the tone."
 	type greetingConfiguration struct {
-		Practice string
-		Location string
-		Greeting string
+		Practice   string
+		Location   string
+		Greeting   string
+		AfterHours string
 	}
 	greetings := []greetingConfiguration{}
 	rows, err = pool.Query(context.Background(), `
 		SELECT practice.provisioning_key, location.provisioning_key,
-			voice.voicemail_greeting
+			voice.voicemail_greeting, COALESCE(voice.after_hours_voicemail_greeting, '')
 		FROM human_calling_location_voice_numbers voice
 		JOIN access_practices practice ON practice.id = voice.practice_id
 		JOIN access_locations location
@@ -360,6 +362,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 			&configured.Practice,
 			&configured.Location,
 			&configured.Greeting,
+			&configured.AfterHours,
 		); err != nil {
 			t.Fatalf("scan voicemail greeting: %v", err)
 		}
@@ -370,10 +373,10 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	}
 	wantGreetings := []greetingConfiguration{
 		{Practice: "abita-eye-group", Location: "crystal-river", Greeting: sharedGreeting},
-		{Practice: "abita-eye-group", Location: "hollywood", Greeting: southFloridaGreeting},
+		{Practice: "abita-eye-group", Location: "hollywood", Greeting: southFloridaGreeting, AfterHours: southFloridaAfterHoursGreeting},
 		{Practice: "abita-eye-group", Location: "north-miami-beach-optical", Greeting: southFloridaGreeting},
 		{Practice: "abita-eye-group", Location: "spring-hill", Greeting: sharedGreeting},
-		{Practice: "abita-eye-group", Location: "sweetwater", Greeting: southFloridaGreeting},
+		{Practice: "abita-eye-group", Location: "sweetwater", Greeting: southFloridaGreeting, AfterHours: southFloridaAfterHoursGreeting},
 		{Practice: "acuity-demo", Location: "demo-484", Greeting: demoGreeting},
 		{Practice: "acuity-demo", Location: "new-tampa-demo", Greeting: "Please leave a message after the beep."},
 		{Practice: "acuity-demo", Location: "ophthalmology-demo", Greeting: "Please leave a message after the beep."},

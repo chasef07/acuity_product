@@ -48,11 +48,12 @@ type ConfirmOutboundMediaCommand struct {
 }
 
 type LocationVoiceProvision struct {
-	PracticeKey       string
-	LocationKey       string
-	Number            string
-	Enabled           bool
-	VoicemailGreeting string
+	PracticeKey                 string
+	LocationKey                 string
+	Number                      string
+	Enabled                     bool
+	VoicemailGreeting           string
+	AfterHoursVoicemailGreeting string
 }
 
 type OutboundVoiceFallbackProvision struct {
@@ -132,9 +133,11 @@ func (m *Module) ProvisionLocationVoicesInTx(
 		if provision.VoicemailGreeting == "" {
 			provision.VoicemailGreeting = defaultVoicemailGreeting
 		}
+		provision.AfterHoursVoicemailGreeting = strings.TrimSpace(provision.AfterHoursVoicemailGreeting)
 		if provision.PracticeKey == "" || provision.LocationKey == "" ||
 			!validUSNumber(provision.Number) ||
-			utf8.RuneCountInString(provision.VoicemailGreeting) > 2000 {
+			utf8.RuneCountInString(provision.VoicemailGreeting) > 2000 ||
+			utf8.RuneCountInString(provision.AfterHoursVoicemailGreeting) > 2000 {
 			return ErrInvalidInput
 		}
 		var practiceID, locationID string
@@ -157,14 +160,16 @@ func (m *Module) ProvisionLocationVoicesInTx(
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO human_calling_location_voice_numbers (
-				practice_id, location_id, phone, enabled, voicemail_greeting
-			) VALUES ($1, $2, $3, $4, $5)
+				practice_id, location_id, phone, enabled, voicemail_greeting,
+				after_hours_voicemail_greeting
+			) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''))
 			ON CONFLICT (practice_id, location_id, phone) DO UPDATE SET
 				enabled = EXCLUDED.enabled,
 				voicemail_greeting = EXCLUDED.voicemail_greeting,
+				after_hours_voicemail_greeting = EXCLUDED.after_hours_voicemail_greeting,
 				updated_at = now()
 		`, practiceID, locationID, provision.Number, provision.Enabled,
-			provision.VoicemailGreeting); err != nil {
+			provision.VoicemailGreeting, provision.AfterHoursVoicemailGreeting); err != nil {
 			return fmt.Errorf("provision Location voice number: %w", err)
 		}
 	}

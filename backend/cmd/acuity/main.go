@@ -554,7 +554,7 @@ func runMigrate(
 				})
 			}
 			if location.VoiceNumber == "" {
-				if location.VoicemailGreeting != "" {
+				if location.VoicemailGreeting != "" || location.AfterHoursVoicemailGreeting != "" {
 					return fmt.Errorf(
 						"location %q has a voicemail greeting without a voice number",
 						location.Key,
@@ -569,11 +569,12 @@ func runMigrate(
 			voiceLocations = append(
 				voiceLocations,
 				humancalling.LocationVoiceProvision{
-					PracticeKey:       practice.Key,
-					LocationKey:       location.Key,
-					Number:            location.VoiceNumber,
-					Enabled:           enabled,
-					VoicemailGreeting: location.VoicemailGreeting,
+					PracticeKey:                 practice.Key,
+					LocationKey:                 location.Key,
+					Number:                      location.VoiceNumber,
+					Enabled:                     enabled,
+					VoicemailGreeting:           location.VoicemailGreeting,
+					AfterHoursVoicemailGreeting: location.AfterHoursVoicemailGreeting,
 				},
 			)
 		}
