@@ -174,9 +174,7 @@ public media and webhook bases. Production rollout must verify cross-runtime
 attachment visibility, bucket IAM, retention/backup policy, and signed URL
 expiry before traffic shifts.
 
-See `production-runbook.md` for the deployment, restore rehearsal, rollback,
-and live acceptance sequence, and `production-cost-estimate.md` for the
-rate-card model.
+See `production-cost-estimate.md` for the rate-card model.
 
 Remaining release gates are live Cloud Run/Cloud SQL load and latency, measured
 Florida-to-`us-east1` portal/call-control latency, Cloud SQL backup/PITR restore,

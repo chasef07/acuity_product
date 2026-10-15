@@ -304,8 +304,6 @@ reverse database migrations.
 Use the maintained operational sources instead of copying capacity or recovery
 settings into this README:
 
-- [Production runbook](deploy/production-runbook.md): release gates, live
-  acceptance, rollback, and restore procedures.
 - [Runtime contract](deploy/production-runtime-contract.json) and its
   [explanation](deploy/production-runtime-contract.md): resource sizes, scaling,
   connection budgets, and database recovery settings.
@@ -334,6 +332,5 @@ deploy/              Runtime contracts, release automation, and operational cont
 ```
 
 Before changing behavior, read the relevant issue with all its comments.
-GitHub Issues own committed product work. Follow
-[web/AGENTS.md](web/AGENTS.md) for frontend changes. Use synthetic, PHI-free data
+GitHub Issues own committed product work. Use synthetic, PHI-free data
 in tests and evidence, and state what remains unverified when handing off work.
