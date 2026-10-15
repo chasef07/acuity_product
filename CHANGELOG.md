@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.38.2](https://github.com/chasef07/acuity_product/compare/v1.38.1...v1.38.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **calling:** classify late bridged and ringtone facts after hangup as obsolete ([#483](https://github.com/chasef07/acuity_product/issues/483)) ([8842908](https://github.com/chasef07/acuity_product/commit/8842908cc7341adc702cba29d2f0f2f2db828d0f))
+* **calling:** reclaim this browser's own softphone lease after it lapses during sleep ([#484](https://github.com/chasef07/acuity_product/issues/484)) ([3b08414](https://github.com/chasef07/acuity_product/commit/3b084145e62a6f1b9615ed0bd55fc1c955fa0eab))
+
 ## [1.38.1](https://github.com/chasef07/acuity_product/compare/v1.38.0...v1.38.1) (2026-10-14)
 
 
