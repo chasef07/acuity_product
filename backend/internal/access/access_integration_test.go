@@ -384,6 +384,115 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 	}
 }
 
+func TestServiceLocationAuthorizationEntryPoints(t *testing.T) {
+	pool := testdb.Open(t)
+	module := access.New(pool, nil)
+	if _, err := module.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "service-location-authorization-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "service-authorization-practice",
+			Name: "Service Authorization Practice",
+			Locations: []access.LocationProvision{{
+				Key:             "known-location",
+				Name:            "Known Location",
+				AbitaOfficeKeys: []string{"known-office"},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision service authorization fixture: %v", err)
+	}
+
+	var practiceID, locationID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT practice.id::text, location.id::text
+		FROM access_practices practice
+		JOIN access_locations location ON location.practice_id = practice.id
+		WHERE practice.provisioning_key = 'service-authorization-practice'
+			AND location.provisioning_key = 'known-location'
+	`).Scan(&practiceID, &locationID); err != nil {
+		t.Fatalf("load service authorization fixture: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_location_voice_numbers (
+			practice_id, location_id, phone, enabled
+		)
+		VALUES ($1, $2, '+12025550123', true)
+	`, practiceID, locationID); err != nil {
+		t.Fatalf("provision service voice number: %v", err)
+	}
+
+	identity := access.ServiceIdentity{
+		Subject:       "service-authorization-test",
+		PracticeID:    practiceID,
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+	}
+	type authorizeLocation func(access.ServiceIdentity, string) (access.ServiceAuthorization, error)
+	entryPoints := map[string]struct {
+		knownKey   string
+		unknownKey string
+		authorize  authorizeLocation
+	}{
+		"office key": {
+			knownKey:   "known-office",
+			unknownKey: "unknown-office",
+			authorize: func(identity access.ServiceIdentity, key string) (access.ServiceAuthorization, error) {
+				tx, err := pool.Begin(context.Background())
+				if err != nil {
+					return access.ServiceAuthorization{}, err
+				}
+				defer func() { _ = tx.Rollback(context.Background()) }()
+				return module.LockServiceAuthorization(context.Background(), tx, identity, key, access.ServiceCapabilityCreateTask)
+			},
+		},
+		"voice number": {
+			knownKey:   "+12025550123",
+			unknownKey: "+12025550124",
+			authorize: func(identity access.ServiceIdentity, key string) (access.ServiceAuthorization, error) {
+				tx, err := pool.Begin(context.Background())
+				if err != nil {
+					return access.ServiceAuthorization{}, err
+				}
+				defer func() { _ = tx.Rollback(context.Background()) }()
+				return module.LockServiceVoiceAuthorization(context.Background(), tx, identity, key, access.ServiceCapabilityCreateTask)
+			},
+		},
+	}
+	for name, entryPoint := range entryPoints {
+		t.Run(name, func(t *testing.T) {
+			got, err := entryPoint.authorize(identity, entryPoint.knownKey)
+			if err != nil {
+				t.Fatalf("authorize known key: %v", err)
+			}
+			if got.Actor.Subject != identity.Subject || got.Actor.Type != string(access.ActorService) ||
+				got.PracticeID != practiceID || got.LocationID != locationID {
+				t.Fatalf("authorization = %#v, want service actor for Practice %q and Location %q", got, practiceID, locationID)
+			}
+
+			withoutCapability := identity
+			withoutCapability.Capabilities = nil
+			selectedScope := identity
+			selectedScope.LocationScope = access.LocationScopeSelected
+			for denialName, denial := range map[string]struct {
+				identity access.ServiceIdentity
+				key      string
+			}{
+				"missing capability": {identity: withoutCapability, key: entryPoint.knownKey},
+				"selected scope":     {identity: selectedScope, key: entryPoint.knownKey},
+				"empty key":          {identity: identity, key: "  "},
+				"unknown key":        {identity: identity, key: entryPoint.unknownKey},
+			} {
+				t.Run(denialName, func(t *testing.T) {
+					if _, err := entryPoint.authorize(denial.identity, denial.key); !errors.Is(err, access.ErrDenied) {
+						t.Fatalf("authorization error = %v, want ErrDenied", err)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestProvisioningRequireEmptyAccessStateRejectsExistingConfiguration(t *testing.T) {
 	pool := testdb.Open(t)
 	module := access.New(pool, nil)

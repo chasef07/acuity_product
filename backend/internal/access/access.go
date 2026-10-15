@@ -726,6 +726,37 @@ func resolveAuthorization(
 	return authorization, nil
 }
 
+const lockServiceOfficeLocationQuery = `
+	SELECT route.location_id::text
+	FROM access_abita_office_locations route
+	JOIN access_locations location
+		ON location.practice_id = route.practice_id
+		AND location.id = route.location_id
+	WHERE route.practice_id = $1
+		AND route.office_key = $2
+	FOR SHARE OF location
+`
+
+const lockServiceVoiceLocationQuery = `
+	SELECT voice.location_id::text
+	FROM human_calling_location_voice_numbers voice
+	JOIN access_locations location
+		ON location.practice_id = voice.practice_id
+		AND location.id = voice.location_id
+	WHERE voice.practice_id = $1
+		AND voice.phone = $2
+		AND voice.enabled
+		AND NOT EXISTS (
+			SELECT 1
+			FROM human_calling_location_voice_numbers duplicate
+			WHERE duplicate.practice_id = voice.practice_id
+				AND duplicate.phone = voice.phone
+				AND duplicate.enabled
+				AND duplicate.location_id <> voice.location_id
+		)
+	FOR SHARE OF location
+`
+
 func (m *Module) LockServiceAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -733,42 +764,7 @@ func (m *Module) LockServiceAuthorization(
 	officeKey string,
 	capability ServiceCapability,
 ) (ServiceAuthorization, error) {
-	officeKey = strings.TrimSpace(officeKey)
-	if tx == nil ||
-		strings.TrimSpace(identity.Subject) == "" ||
-		strings.TrimSpace(identity.PracticeID) == "" ||
-		identity.LocationScope != LocationScopeAll ||
-		officeKey == "" ||
-		!identity.Allows(capability) {
-		return ServiceAuthorization{}, ErrDenied
-	}
-	var locationID string
-	if err := tx.QueryRow(ctx, `
-		SELECT route.location_id::text
-		FROM access_abita_office_locations route
-		JOIN access_locations location
-			ON location.practice_id = route.practice_id
-			AND location.id = route.location_id
-		WHERE route.practice_id = $1
-			AND route.office_key = $2
-		FOR SHARE OF location
-	`, identity.PracticeID, officeKey).Scan(&locationID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ServiceAuthorization{}, ErrDenied
-		}
-		return ServiceAuthorization{}, fmt.Errorf(
-			"lock service Location authorization: %w",
-			err,
-		)
-	}
-	return ServiceAuthorization{
-		Actor: Actor{
-			Subject: identity.Subject,
-			Type:    string(ActorService),
-		},
-		PracticeID: identity.PracticeID,
-		LocationID: locationID,
-	}, nil
+	return lockServiceLocation(ctx, tx, identity, capability, officeKey, lockServiceOfficeLocationQuery, "lock service Location authorization")
 }
 
 func (m *Module) LockServiceVoiceAuthorization(
@@ -778,42 +774,33 @@ func (m *Module) LockServiceVoiceAuthorization(
 	phone string,
 	capability ServiceCapability,
 ) (ServiceAuthorization, error) {
-	phone = strings.TrimSpace(phone)
+	return lockServiceLocation(ctx, tx, identity, capability, phone, lockServiceVoiceLocationQuery, "lock service voice Location authorization")
+}
+
+func lockServiceLocation(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity ServiceIdentity,
+	capability ServiceCapability,
+	key string,
+	query string,
+	label string,
+) (ServiceAuthorization, error) {
+	key = strings.TrimSpace(key)
 	if tx == nil ||
 		strings.TrimSpace(identity.Subject) == "" ||
 		strings.TrimSpace(identity.PracticeID) == "" ||
 		identity.LocationScope != LocationScopeAll ||
-		phone == "" ||
+		key == "" ||
 		!identity.Allows(capability) {
 		return ServiceAuthorization{}, ErrDenied
 	}
 	var locationID string
-	if err := tx.QueryRow(ctx, `
-		SELECT voice.location_id::text
-		FROM human_calling_location_voice_numbers voice
-		JOIN access_locations location
-			ON location.practice_id = voice.practice_id
-			AND location.id = voice.location_id
-		WHERE voice.practice_id = $1
-			AND voice.phone = $2
-			AND voice.enabled
-			AND NOT EXISTS (
-				SELECT 1
-				FROM human_calling_location_voice_numbers duplicate
-				WHERE duplicate.practice_id = voice.practice_id
-					AND duplicate.phone = voice.phone
-					AND duplicate.enabled
-					AND duplicate.location_id <> voice.location_id
-			)
-		FOR SHARE OF location
-	`, identity.PracticeID, phone).Scan(&locationID); err != nil {
+	if err := tx.QueryRow(ctx, query, identity.PracticeID, key).Scan(&locationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceAuthorization{}, ErrDenied
 		}
-		return ServiceAuthorization{}, fmt.Errorf(
-			"lock service voice Location authorization: %w",
-			err,
-		)
+		return ServiceAuthorization{}, fmt.Errorf("%s: %w", label, err)
 	}
 	return ServiceAuthorization{
 		Actor: Actor{
