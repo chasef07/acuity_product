@@ -52,7 +52,7 @@ func (m *Module) RecoverQuarantinedRingtone(
 	state, hasState := parseCallLegClientState(fact.ClientState)
 	if err != nil || !supported || !hasState || fact.EventID != eventID || state.CallID != callID ||
 		fact.Type != FactPlaybackEnded || fact.PlaybackStatus != "call_hangup" || state.Role != "STAFF" ||
-		(state.Kind != "cleanup" && state.Kind != callLegClientStateStaffHangup) {
+		!hangupClientState(state.Kind) {
 		return ErrConflict
 	}
 	var terminal bool

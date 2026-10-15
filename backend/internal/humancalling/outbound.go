@@ -777,7 +777,7 @@ func (m *Module) applyOutboundDestinationFact(
 func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) error {
 	state, ok := parseCallLegClientState(fact.ClientState)
 	if !ok || state.Role != "DESTINATION" ||
-		(state.Kind != "bridge" && state.Kind != "dial") {
+		(state.Kind != "bridge" && state.Kind != "dial" && !hangupClientState(state.Kind)) {
 		return ErrConflict
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -950,9 +950,10 @@ func (m *Module) applyOutboundRingtoneFact(
 	fact ProviderFact,
 	state callLegClientState,
 ) error {
+	hangupRequested := hangupClientState(state.Kind)
 	if fact.Type != FactPlaybackStarted &&
-		(fact.Type != FactPlaybackEnded ||
-			(fact.PlaybackStatus != "completed" && fact.PlaybackStatus != "call_hangup")) {
+		(fact.Type != FactPlaybackEnded || (!hangupRequested &&
+			fact.PlaybackStatus != "completed" && fact.PlaybackStatus != "call_hangup")) {
 		return ErrConflict
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -969,6 +970,10 @@ func (m *Module) applyOutboundRingtoneFact(
 	}
 	if err := requireOutboundRingtoneFact(ctx, tx, fact, state); err != nil {
 		return err
+	}
+	if hangupRequested &&
+		(fact.Type != FactPlaybackEnded || fact.PlaybackStatus != "call_hangup") {
+		return errTerminalOrObsoleteProviderFact
 	}
 	return tx.Commit(ctx)
 }
@@ -1003,8 +1008,7 @@ func requireOutboundRingtoneFact(ctx context.Context, tx pgx.Tx, fact ProviderFa
 				AND bridge.state IN ('SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
 		)
 	`, state.CallID, state.CallLegID, fact.CallControlID, fact.CallLegID,
-		fact.CallSessionID, fact.ClientState,
-		fact.Type == FactPlaybackEnded && fact.PlaybackStatus == "call_hangup").Scan(&expected); err != nil {
+		fact.CallSessionID, fact.ClientState, hangupClientState(state.Kind)).Scan(&expected); err != nil {
 		return fmt.Errorf("validate outbound ringtone fact: %w", err)
 	}
 	if !expected {
