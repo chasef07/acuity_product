@@ -26,6 +26,10 @@ type callLegClientState struct {
 
 const callLegClientStateStaffHangup = "staff_hangup"
 
+func hangupClientState(kind string) bool {
+	return kind == "cleanup" || kind == callLegClientStateStaffHangup
+}
+
 func encodeCallLegClientState(
 	callID string,
 	callLegID string,
