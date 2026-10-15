@@ -322,6 +322,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   let callingHintPending = false
   let callingPracticeIDs: string[] | undefined
   let heartbeatTimer: number | undefined
+  let leaseReclaim: Promise<void> | undefined
   let refreshInFlight: Promise<void> | undefined
   let refreshQueued = false
   let stopped = true
@@ -940,6 +941,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         rejectExpiredUnmatchedMedia(correlatedMediaTokens())
         clearRefreshFailure(generation)
         temporaryFailures = 0
+        reclaimLapsedLease(generation)
         return
       }
       const state = result.state
@@ -955,6 +957,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       rememberAuthoritativeRingingMedia(lease.owner, state.ringing)
       const ownershipAcquired = snapshot.lease?.owner !== true && lease.owner
       const ownershipLost = snapshot.lease?.owner && !lease.owner
+      const ownLeaseLapsed = leaseLapsedForSession(lease, options.sessionID)
       const authoritativeCallID =
         state.bridged?.callId || lease.activeCallId
       let expectedCallID =
@@ -1143,7 +1146,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           : persistMediaCorrelation(undefined),
         failure: accessBlocked
           ? snapshot.failure
-          : !lease.owner
+          : !lease.owner && !ownLeaseLapsed
           ? ownershipFailure(lease, ownershipLost)
           : snapshot.failure?.kind === "ownership"
             ? undefined
@@ -1151,6 +1154,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       })
       syncAttention(offers)
       if (ownershipLost || ownershipMoved) await releaseLocalMedia()
+      reclaimLapsedLease(generation)
       if (ownershipMoved && !stopped && lease.owner) void connectMedia()
       const pendingID = lease.owner
         ? lease.pendingOutcomeCallId || state.disposition?.callId
@@ -2128,6 +2132,21 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     if (leg) await rejectSafely(leg)
   }
 
+  function reclaimLapsedLease(generation: number) {
+    if (
+      stopped ||
+      generation !== lifecycleGeneration ||
+      leaseReclaim ||
+      !snapshot.lease ||
+      !leaseLapsedForSession(snapshot.lease, options.sessionID)
+    ) {
+      return
+    }
+    leaseReclaim = takeOver(false).finally(() => {
+      leaseReclaim = undefined
+    })
+  }
+
   async function signalRefresh() {
     if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
     refreshTimer = undefined
@@ -2135,7 +2154,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     scheduleRefresh()
   }
 
-  async function takeOver() {
+  async function takeOver(takeover = true) {
     if (accessBlocked) return
     if (!snapshot.lease?.owner && snapshot.lease?.activeCallId) {
       publish({ failure: ownershipFailure(snapshot.lease) })
@@ -2147,7 +2166,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           options.backend.acquireLease(
             {
               sessionID: options.sessionID,
-              takeover: true,
+              takeover,
             },
             signal,
           ),
@@ -2963,6 +2982,10 @@ function newestObservedCall(
       !newest || candidate.version > newest.version ? candidate : newest,
     undefined,
   )
+}
+
+function leaseLapsedForSession(lease: SoftphoneState, sessionID: string) {
+  return !lease.owner && lease.sessionId === sessionID && !lease.activeCallId
 }
 
 function leaseForSession(lease: SoftphoneState, sessionID: string): SoftphoneState {
