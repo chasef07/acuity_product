@@ -2628,7 +2628,7 @@ test("a lost lease on readiness offers recovery instead of an access block", asy
   assert.equal(media.connects, 1)
 
   backend.writeReadinessHandler = () => {
-    backend.lease = lease({ owner: false })
+    backend.lease = lease({ sessionId: "other-session", owner: false })
     backend.state = callingState({ softphone: backend.lease })
     throw new SoftphoneAdapterError(
       "conflict",
@@ -2636,6 +2636,7 @@ test("a lost lease on readiness offers recovery instead of an access block", asy
     )
   }
   const writesBeforeConflict = backend.readinessWrites.length
+  const leaseRequestsBeforeConflict = backend.leaseRequests.length
   while (
     clock.now < 4_000 &&
     backend.readinessWrites.length === writesBeforeConflict
@@ -2651,6 +2652,7 @@ test("a lost lease on readiness offers recovery instead of an access block", asy
   assert.equal(failure.recoverable, true)
   assert.equal(projectCallingFailure(failure).action?.kind, "recover")
   assert.equal(runtime.getSnapshot().lease?.owner, false)
+  assert.equal(backend.leaseRequests.length, leaseRequestsBeforeConflict)
 
   backend.writeReadinessHandler = undefined
   backend.acquireLeaseHandler = async () => {
@@ -2664,6 +2666,107 @@ test("a lost lease on readiness offers recovery instead of an access block", asy
   assert.equal(runtime.getSnapshot().lease?.owner, true)
   assert.equal(runtime.getSnapshot().failure, undefined)
   assert.equal(media.connects, 2)
+})
+
+test("this browser reclaims its own lease that expired while asleep", async () => {
+  const clock = new ManualClock()
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    availabilityIntent: true,
+    clock,
+    visibility: visible(),
+  })
+  await runtime.start()
+  assert.equal(media.connects, 1)
+  const leaseRequests = backend.leaseRequests.length
+
+  backend.writeReadinessHandler = () => {
+    backend.lease = lease({ owner: false })
+    backend.state = callingState({ softphone: backend.lease })
+    throw new SoftphoneAdapterError(
+      "conflict",
+      "Calling ownership moved to another browser.",
+    )
+  }
+  backend.acquireLeaseHandler = async (input) => {
+    backend.writeReadinessHandler = undefined
+    backend.lease = lease({ sessionId: input.sessionID, owner: true })
+    backend.state = callingState({ softphone: backend.lease })
+    return backend.lease
+  }
+  await clock.advance(4_000)
+
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().lease?.owner, true),
+  )
+  assert.deepEqual(backend.leaseRequests.slice(leaseRequests), [
+    { sessionID: "session-1", takeover: false },
+  ])
+  await eventually(() => assert.equal(media.connects, 2))
+  assert.equal(runtime.getSnapshot().failure, undefined)
+})
+
+test("a failed reclaim of this browser's lapsed lease retries on the next refresh", async () => {
+  const clock = new ManualClock()
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    availabilityIntent: true,
+    clock,
+    visibility: visible(),
+  })
+  await runtime.start()
+  const leaseRequests = backend.leaseRequests.length
+
+  backend.writeReadinessHandler = () => {
+    backend.lease = lease({ owner: false })
+    backend.state = callingState({ softphone: backend.lease })
+    throw new SoftphoneAdapterError(
+      "conflict",
+      "Calling ownership moved to another browser.",
+    )
+  }
+  let reclaimAttempts = 0
+  backend.acquireLeaseHandler = async (input) => {
+    reclaimAttempts += 1
+    if (reclaimAttempts === 1) {
+      throw new SoftphoneAdapterError(
+        "temporary-request",
+        "Calling could not reach the service.",
+        true,
+      )
+    }
+    backend.writeReadinessHandler = undefined
+    backend.lease = lease({ sessionId: input.sessionID, owner: true })
+    backend.state = callingState({ softphone: backend.lease })
+    return backend.lease
+  }
+  await clock.settle(4_000)
+  assert.equal(reclaimAttempts, 1)
+  assert.equal(runtime.getSnapshot().lease?.owner, false)
+  assert.equal(runtime.getSnapshot().failure?.kind, "temporary-request")
+
+  backend.readStateHandler = async () => ({ status: "not-modified" as const })
+  await clock.settle(15_000)
+
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+  assert.deepEqual(backend.leaseRequests.slice(leaseRequests), [
+    { sessionID: "session-1", takeover: false },
+    { sessionID: "session-1", takeover: false },
+  ])
+  assert.equal(runtime.getSnapshot().failure, undefined)
 })
 
 test("another session's active lease never becomes local ownership on refresh", async () => {
