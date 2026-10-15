@@ -96,16 +96,17 @@ type PracticeProvision struct {
 }
 
 type LocationProvision struct {
-	Key                string
-	Name               string
-	AbitaOfficeKeys    []string
-	MessagingSender    string
-	MessagingProfileID string
-	MessagingActive    *bool
-	VoiceNumber        string
-	VoiceEnabled       *bool
-	VoicemailGreeting  string
-	InboundRingEmails  []string
+	Key                         string
+	Name                        string
+	AbitaOfficeKeys             []string
+	MessagingSender             string
+	MessagingProfileID          string
+	MessagingActive             *bool
+	VoiceNumber                 string
+	VoiceEnabled                *bool
+	VoicemailGreeting           string
+	AfterHoursVoicemailGreeting string
+	InboundRingEmails           []string
 }
 
 type AccessGrantProvision struct {

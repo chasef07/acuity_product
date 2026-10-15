@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/work"
@@ -39,6 +40,28 @@ const (
 	defaultVoicemailGreeting         = "Please leave a message after the beep."
 	voicemailRecordingStartTolerance = 5 * time.Second
 )
+
+var afterHoursZone = func() *time.Location {
+	zone, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		panic(err)
+	}
+	return zone
+}()
+
+const (
+	officeOpensMinute  = 9 * 60
+	officeClosesMinute = 16*60 + 30
+)
+
+func isAfterHours(at time.Time) bool {
+	local := at.In(afterHoursZone)
+	if local.Weekday() == time.Saturday || local.Weekday() == time.Sunday {
+		return true
+	}
+	minute := local.Hour()*60 + local.Minute()
+	return minute < officeOpensMinute || minute >= officeClosesMinute
+}
 
 type Voicemail struct {
 	Outcome         RecoveryOutcome

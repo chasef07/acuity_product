@@ -224,16 +224,20 @@ func (m *Module) startCallLegVoicemail(
 		return err
 	}
 	var greeting string
+	var afterHoursGreeting *string
 	if err := tx.QueryRow(ctx, `
-		SELECT voicemail_greeting
+		SELECT voicemail_greeting, after_hours_voicemail_greeting
 		FROM human_calling_location_voice_numbers
 		WHERE practice_id = $1 AND location_id = $2 AND enabled
 		ORDER BY created_at, id
 		LIMIT 1
-	`, practiceID, locationID).Scan(&greeting); errors.Is(err, pgx.ErrNoRows) {
+	`, practiceID, locationID).Scan(&greeting, &afterHoursGreeting); errors.Is(err, pgx.ErrNoRows) {
 		greeting = defaultVoicemailGreeting
 	} else if err != nil {
 		return fmt.Errorf("load Location voicemail greeting: %w", err)
+	}
+	if afterHoursGreeting != nil && isAfterHours(m.now()) {
+		greeting = *afterHoursGreeting
 	}
 	_, err := m.insertCallLegCommand(
 		ctx, tx, callID, callerLegID, "", "", CommandSpeakVoicemail,
