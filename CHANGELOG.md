@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.0](https://github.com/chasef07/acuity_product/compare/v1.38.2...v1.39.0) (2026-10-15)
+
+
+### Features
+
+* **calling:** South Florida after-hours voicemail emergency number, drop Tampa on-call number ([#486](https://github.com/chasef07/acuity_product/issues/486)) ([2b5eae9](https://github.com/chasef07/acuity_product/commit/2b5eae937a85f43946e79f5c609c2a15a0872e87))
+
 ## [1.38.2](https://github.com/chasef07/acuity_product/compare/v1.38.1...v1.38.2) (2026-10-15)
 
 
