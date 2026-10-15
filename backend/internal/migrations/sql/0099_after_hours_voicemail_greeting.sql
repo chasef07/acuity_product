@@ -1,5 +1,5 @@
--- A Location may play a different voicemail greeting from 6 PM to 8 AM
--- Eastern. NULL keeps the daytime greeting at all hours.
+-- A Location may play a different voicemail greeting outside weekdays
+-- 9 AM to 4:30 PM Eastern. NULL keeps the daytime greeting at all hours.
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '30s';
 

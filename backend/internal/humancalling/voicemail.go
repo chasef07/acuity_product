@@ -50,13 +50,17 @@ var afterHoursZone = func() *time.Location {
 }()
 
 const (
-	afterHoursStartHour = 18
-	afterHoursEndHour   = 8
+	officeOpensMinute  = 9 * 60
+	officeClosesMinute = 16*60 + 30
 )
 
 func isAfterHours(at time.Time) bool {
-	hour := at.In(afterHoursZone).Hour()
-	return hour >= afterHoursStartHour || hour < afterHoursEndHour
+	local := at.In(afterHoursZone)
+	if local.Weekday() == time.Saturday || local.Weekday() == time.Sunday {
+		return true
+	}
+	minute := local.Hour()*60 + local.Minute()
+	return minute < officeOpensMinute || minute >= officeClosesMinute
 }
 
 type Voicemail struct {

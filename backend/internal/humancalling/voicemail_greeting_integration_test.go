@@ -8,7 +8,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 )
 
-func TestVoicemailGreetingSwitchesToAfterHoursGreetingFromSixPMToEightAMEastern(t *testing.T) {
+func TestVoicemailGreetingPlaysAfterHoursGreetingOutsideWeekdayNineToFourThirtyEastern(t *testing.T) {
 	const day = "Please leave a message."
 	const afterHours = "Please leave a message. If this is an emergency, please call 305-741-0830."
 	for _, test := range []struct {
@@ -17,12 +17,16 @@ func TestVoicemailGreetingSwitchesToAfterHoursGreetingFromSixPMToEightAMEastern(
 		afterHours string
 		want       string
 	}{
-		{"weekday afternoon", time.Date(2026, time.October, 15, 21, 59, 0, 0, time.UTC), afterHours, day},
-		{"six PM", time.Date(2026, time.October, 15, 22, 0, 0, 0, time.UTC), afterHours, afterHours},
-		{"before eight AM", time.Date(2026, time.October, 16, 11, 59, 0, 0, time.UTC), afterHours, afterHours},
-		{"eight AM", time.Date(2026, time.October, 16, 12, 0, 0, 0, time.UTC), afterHours, day},
-		{"winter evening", time.Date(2026, time.December, 15, 23, 0, 0, 0, time.UTC), afterHours, afterHours},
+		{"Thursday 4:29 PM", time.Date(2026, time.October, 15, 20, 29, 0, 0, time.UTC), afterHours, day},
+		{"Thursday 4:30 PM", time.Date(2026, time.October, 15, 20, 30, 0, 0, time.UTC), afterHours, afterHours},
+		{"Friday 8:59 AM", time.Date(2026, time.October, 16, 12, 59, 0, 0, time.UTC), afterHours, afterHours},
+		{"Friday 9:00 AM", time.Date(2026, time.October, 16, 13, 0, 0, 0, time.UTC), afterHours, day},
+		{"Tuesday 5 PM EST", time.Date(2026, time.December, 15, 22, 0, 0, 0, time.UTC), afterHours, afterHours},
+		{"Tuesday 9:30 AM EST", time.Date(2026, time.December, 15, 14, 30, 0, 0, time.UTC), afterHours, day},
+		{"Saturday noon", time.Date(2026, time.October, 17, 16, 0, 0, 0, time.UTC), afterHours, afterHours},
+		{"Sunday noon", time.Date(2026, time.October, 18, 16, 0, 0, 0, time.UTC), afterHours, afterHours},
 		{"evening without after-hours greeting", time.Date(2026, time.October, 15, 23, 0, 0, 0, time.UTC), "", day},
+		{"Saturday without after-hours greeting", time.Date(2026, time.October, 17, 16, 0, 0, 0, time.UTC), "", day},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
