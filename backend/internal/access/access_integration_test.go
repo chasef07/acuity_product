@@ -1303,6 +1303,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 	if err != nil {
 		t.Fatalf("begin recorded mutation authorization: %v", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	authorization, err := recordedModule.LockMutationAuthorization(
 		ctx, tx, identity, practice.ID, allowedLocationID,
 	)
@@ -1312,11 +1313,11 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 	if authorization.ActiveLocation == nil || authorization.ActiveLocation.ID != allowedLocationID {
 		t.Fatalf("active Location = %#v", authorization.ActiveLocation)
 	}
-	if got := recorder.countContaining("WHERE user_subject = $1 AND email = $2"); got != 1 {
-		t.Fatalf("fast Platform Operator resolutions = %d, want 1", got)
+	if got := recorder.countContaining("FROM access_platform_operators"); got != 1 {
+		t.Fatalf("Platform Operator resolutions = %d, want 1", got)
 	}
-	if got := recorder.countContaining("WHERE user_subject = $1 OR email = $2"); got != 1 {
-		t.Fatalf("locked Platform Operator resolutions = %d, want 1", got)
+	if got := recorder.countContaining("pg_advisory_xact_lock"); got != 0 {
+		t.Fatalf("Platform Operator identity locks = %d, want 0", got)
 	}
 	if got := recorder.countContaining("FOR SHARE OF m"); got != 1 {
 		t.Fatalf("Membership authorization locks = %d, want 1", got)
@@ -1448,8 +1449,8 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 	if got := recorder.countContaining("FOR UPDATE"); got != 0 {
 		t.Fatalf("read-only member FOR UPDATE statements = %d, want 0", got)
 	}
-	if got := recorder.count(); got != 3 {
-		t.Fatalf("read-only member discovery statements = %d, want 3", got)
+	if got := recorder.count(); got != 2 {
+		t.Fatalf("read-only member discovery statements = %d, want 2", got)
 	}
 
 	recorder.reset()
@@ -1464,6 +1465,12 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 		if len(practice.Locations) != 2 {
 			t.Fatalf("operator Practice %q Locations = %d, want 2", practice.Name, len(practice.Locations))
 		}
+	}
+	if got := recorder.countContaining("FROM access_platform_operators"); got != 1 {
+		t.Fatalf("bound Platform Operator resolutions = %d, want 1", got)
+	}
+	if got := recorder.countContaining("pg_advisory_xact_lock"); got != 0 {
+		t.Fatalf("bound Platform Operator identity locks = %d, want 0", got)
 	}
 	if got := recorder.countContaining("FROM access_practices"); got != 1 {
 		t.Fatalf("operator Practice set queries = %d, want 1", got)

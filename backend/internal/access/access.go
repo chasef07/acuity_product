@@ -905,11 +905,9 @@ func (m *Module) discoverActor(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var isOperator bool
-	if signIn {
+	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
+	if err == nil && signIn && !isOperator {
 		_, isOperator, err = bindPlatformOperator(ctx, tx, identity)
-	} else {
-		_, isOperator, err = resolvePlatformOperator(ctx, tx, identity)
 	}
 	if err != nil {
 		return Discovery{}, err
@@ -1476,31 +1474,22 @@ func resolvePlatformOperator(
 ) (string, bool, error) {
 	email := normalizeEmail(identity.Email)
 	var operatorID string
+	var bound bool
 	err := tx.QueryRow(ctx, `
-		SELECT id::text
+		SELECT id::text, COALESCE(user_subject = $1 AND email = $2, false) AS bound
 		FROM access_platform_operators
-		WHERE user_subject = $1 AND email = $2
-	`, identity.Subject, email).Scan(&operatorID)
+		WHERE user_subject = $1 OR email = $2
+	`, identity.Subject, email).Scan(&operatorID, &bound)
 	if err == nil {
-		return operatorID, true, nil
+		if bound {
+			return operatorID, true, nil
+		}
+		return bindPlatformOperator(ctx, tx, identity)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", false, fmt.Errorf("resolve bound Platform Operator: %w", err)
+		return "", false, fmt.Errorf("resolve Platform Operator: %w", err)
 	}
-	var candidateExists bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM access_platform_operators
-			WHERE user_subject = $1 OR email = $2
-		)
-	`, identity.Subject, email).Scan(&candidateExists); err != nil {
-		return "", false, fmt.Errorf("check Platform Operator candidate: %w", err)
-	}
-	if !candidateExists {
-		return "", false, nil
-	}
-	return bindPlatformOperator(ctx, tx, identity)
+	return "", false, nil
 }
 
 func bindPlatformOperator(
@@ -1510,18 +1499,6 @@ func bindPlatformOperator(
 ) (string, bool, error) {
 	email := normalizeEmail(identity.Email)
 	var operatorID string
-	err := tx.QueryRow(ctx, `
-		SELECT id::text
-		FROM access_platform_operators
-		WHERE user_subject = $1 AND email = $2
-	`, identity.Subject, email).Scan(&operatorID)
-	if err == nil {
-		return operatorID, true, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", false, fmt.Errorf("resolve bound Platform Operator: %w", err)
-	}
-
 	if err := lockPlatformOperatorIdentity(ctx, tx, identity); err != nil {
 		return "", false, err
 	}
