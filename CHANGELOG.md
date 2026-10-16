@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.0](https://github.com/chasef07/acuity_product/compare/v1.39.1...v1.40.0) (2026-10-16)
+
+
+### Features
+
+* **portal:** open on the agent Home, move tasks to Work, and stop the loading flash ([#477](https://github.com/chasef07/acuity_product/issues/477)) ([49fe22b](https://github.com/chasef07/acuity_product/commit/49fe22baabb4302659cea8eed8cbb806779a2266))
+
 ## [1.39.1](https://github.com/chasef07/acuity_product/compare/v1.39.0...v1.39.1) (2026-10-16)
 
 
