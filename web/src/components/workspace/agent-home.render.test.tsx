@@ -57,6 +57,7 @@ test("Home exposes a failed next page, retains loaded calls, and clears the erro
     dom.window.close()
   })
   await act(async () => root.render(<AgentHome practiceID="practice-1" locationID="office-1" onPage={() => {}} />))
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Knowledge base"]')!.click())
   const button = Array.from(host.querySelectorAll("button")).find((item) => item.textContent === "Load more calls")
   assert.ok(button)
   await act(async () => button.click())

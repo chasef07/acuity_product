@@ -1,15 +1,15 @@
 "use client"
 
-import { useId, useState } from "react"
+import { useId, useRef, useState } from "react"
 import {
   ArrowRightLeftIcon,
   BookOpenIcon,
   CalendarCheckIcon,
   ShieldCheckIcon,
   UserSearchIcon,
+  XIcon,
 } from "lucide-react"
 
-import { AnimatedAcuityMark } from "@/components/animated-acuity-mark"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { useAgentCalls } from "@/lib/clients/agent-calls"
@@ -18,9 +18,10 @@ import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 import { AgentCallPanel } from "./agent-call-panel"
+import { AgentHomeMap, agentAreas, type AgentArea } from "./agent-home-map"
 import { AgentQueryBody, ChooseOffice, type AgentLocationProps } from "./manage-agent-page"
 
-const capabilities = [
+const tools = [
   { icon: BookOpenIcon, label: "Answer office questions", detail: "From the knowledge base" },
   { icon: UserSearchIcon, label: "Find the caller's patient record" },
   { icon: CalendarCheckIcon, label: "Book, reschedule, and cancel appointments" },
@@ -34,24 +35,59 @@ export function AgentHome({
   onPage,
 }: AgentLocationProps & { onPage: (page: ManageAgentPage) => void }) {
   const titleID = useId()
+  const detailsID = useId()
+  const details = useRef<HTMLDivElement>(null)
+  const [selected, setSelected] = useState<AgentArea>()
+  const area = agentAreas.find((item) => item.id === selected)
+
+  function selectArea(next: AgentArea) {
+    setSelected(next)
+    requestAnimationFrame(() => details.current?.scrollIntoView({ block: "nearest" }))
+  }
+
+  function closeDetails() {
+    setSelected(undefined)
+    document.getElementById(`${detailsID}-${selected}`)?.focus()
+  }
+
   return (
-    <section aria-labelledby={titleID} className="min-h-0 flex-1 overflow-auto">
-      <header className="flex flex-wrap items-center gap-4 px-4 pt-8 sm:px-6">
-        <AnimatedAcuityMark className="size-14 shrink-0" />
-        <div className="min-w-0 flex-1">
-          <h1 id={titleID} className="text-2xl font-semibold tracking-tight">
-            Acuity
-          </h1>
-          <KnowledgeVersion practiceID={practiceID} locationID={locationID} />
-        </div>
+    <section aria-labelledby={titleID} className="@container min-h-0 flex-1 overflow-auto">
+      <header className="px-4 pt-8 sm:px-6">
+        <h1 id={titleID} className="text-2xl font-semibold tracking-tight">Your agent</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          The knowledge, insurance guidance, and tools behind every call.
+        </p>
       </header>
-      <div className="grid gap-10 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        {locationID ? (
-          <NeedsKnowledge practiceID={practiceID} locationID={locationID} onAddKnowledge={() => onPage("knowledge")} />
-        ) : (
-          <ChooseOffice />
+      <div className="px-4 py-10 sm:px-6 @[36rem]:py-16">
+        <AgentHomeMap selected={selected} detailsID={detailsID} disabled={!locationID} onSelect={selectArea} />
+      </div>
+      {!locationID && <ChooseOffice />}
+      <div id={detailsID} ref={details}>
+        {area && locationID && (
+          <section aria-label="Agent details" className="border-t px-4 py-6 sm:px-6">
+            <header className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">{area.title}</h2>
+                {selected === "knowledge" && <KnowledgeVersion practiceID={practiceID} locationID={locationID} />}
+              </div>
+              <Button variant="ghost" size="sm" onClick={closeDetails}>
+                <XIcon aria-hidden="true" />
+                Close details
+              </Button>
+            </header>
+            {selected === "knowledge" ? (
+              <>
+                <Button variant="outline" className="mb-8" onClick={() => onPage("knowledge")}>Open knowledge base</Button>
+                <NeedsKnowledge practiceID={practiceID} locationID={locationID} onAddKnowledge={() => onPage("knowledge")} />
+              </>
+            ) : selected === "insurance" ? (
+              <>
+                <p className="mb-4 text-sm text-muted-foreground">Review accepted plans, referrals, and requirements for medical and routine vision coverage.</p>
+                <Button variant="outline" onClick={() => onPage("insurance")}>Open insurance list</Button>
+              </>
+            ) : <AgentTools />}
+          </section>
         )}
-        <Capabilities />
       </div>
     </section>
   )
@@ -208,26 +244,20 @@ function NeedsKnowledge({
   )
 }
 
-function Capabilities() {
-  const titleID = useId()
+function AgentTools() {
   return (
-    <section aria-labelledby={titleID} className="min-w-0">
-      <h2 id={titleID} className="mb-4 text-lg font-semibold tracking-tight">
-        What Acuity can do
-      </h2>
-      <ul className="border-t">
-        {capabilities.map((capability) => (
-          <li key={capability.label} className="flex items-center gap-3 border-b py-3">
-            <capability.icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium">{capability.label}</span>
-              {capability.detail && (
-                <span className="block text-xs text-muted-foreground">{capability.detail}</span>
-              )}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <ul aria-label="Agent tools" className="border-t">
+      {tools.map((tool) => (
+        <li key={tool.label} className="flex items-center gap-3 border-b py-3">
+          <tool.icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium">{tool.label}</span>
+            {tool.detail && (
+              <span className="block text-xs text-muted-foreground">{tool.detail}</span>
+            )}
+          </span>
+        </li>
+      ))}
+    </ul>
   )
 }

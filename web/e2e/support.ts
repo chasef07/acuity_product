@@ -12,5 +12,5 @@ export async function signInAs(page: Page, email: string, name: string, path = "
 
 export async function openAgentPage(page: Page, name: string) {
   await page.getByRole("navigation", { name: "Workspace" }).getByRole("button", { name: "Home", exact: true }).click()
-  await page.getByRole("button", { name, exact: true }).click()
+  await page.getByRole("navigation", { name: "Manage agent" }).getByRole("button", { name, exact: true }).click()
 }

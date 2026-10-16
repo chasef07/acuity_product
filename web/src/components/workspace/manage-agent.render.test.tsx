@@ -64,7 +64,7 @@ test("Manage agent shows the selected page at full width without its own navigat
   await page.unmount()
 })
 
-test("Home shows Acuity, its knowledge version, what it can do, and the calls the judge says need knowledge", async (t) => {
+test("Home connects Acuity to knowledge, insurance, and tools, with unanswered questions under knowledge", async (t) => {
   const page = harness(t)
   page.knowledge = { locationId: locations[0].id, sections: [], revision: { id: "revision-14", version: 14, createdAt: "2026-10-12T14:00:00Z" } }
   page.agentCalls = {
@@ -78,17 +78,32 @@ test("Home shows Acuity, its knowledge version, what it can do, and the calls th
   await page.render(
     <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={(next) => pages.push(next)} />,
   )
+  assert.equal(page.host.querySelector("h1")?.textContent, "Your agent")
+  const connections = page.host.querySelector('[aria-label="Agent connections"]')
+  assert.ok(connections)
+  assert.deepEqual(Array.from(connections.querySelectorAll("button"), (button) => button.getAttribute("aria-label")), ["Knowledge base", "Insurance", "Tools"])
+  assert.equal(connections.querySelectorAll('svg[aria-label="Acuity"] circle').length, 7)
+  assert.doesNotMatch(page.text(), /What Acuity can do|Transfer policy|Emergency policy/)
+  assert.deepEqual(page.agentCallsRequests, [])
+  await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => page.text().includes("“Saturday hours” · “parking”") && /Version 14 · published/.test(page.text()))
-  assert.equal(page.host.querySelector("h1")?.textContent, "Acuity")
   assert.doesNotMatch(page.text(), /v14/)
   assert.match(page.text(), /An office question went unanswered/)
-  assert.match(page.text(), /What Acuity can do/)
   assert.deepEqual(page.agentCallsRequests.map(({ locationId, range, needsKnowledgeOnly }) => ({ locationId, range, needsKnowledgeOnly })), [
     { locationId: locations[0].id, range: "7d", needsKnowledgeOnly: true },
   ])
   const add = Array.from(page.host.querySelectorAll("button")).find((button) => button.textContent === "Add to knowledge")
   await act(async () => add!.click())
   assert.deepEqual(pages, ["knowledge"])
+  await page.click("Open knowledge base")
+  await act(async () => page.button(/^Insurance/).click())
+  await page.click("Open insurance list")
+  assert.deepEqual(pages, ["knowledge", "knowledge", "insurance"])
+  await act(async () => page.button(/^Tools/).click())
+  assert.match(page.text(), /Find the caller's patient record/)
+  assert.match(page.text(), /Book, reschedule, and cancel appointments/)
+  await page.click("Close details")
+  assert.equal(page.host.querySelector('[aria-label="Agent details"]'), null)
   await page.unmount()
 })
 
@@ -105,6 +120,7 @@ test("pages that show one Location use the sidebar's office, or the only office,
         <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={offices} page={selected} onPage={() => {}} />,
         `${index}:${selected}`,
       )
+      if (selected === "home") await act(async () => page.button(/^Knowledge base/).click())
       await waitFor(() =>
         selected === "insurance"
           ? page.plansRequests.at(-1)?.locationId === expected && page.groups().length === 3
@@ -130,6 +146,10 @@ test("with all offices in scope and several offices, one-Location pages ask for 
     assert.match(page.text(), /Choose an office.*Choose an office in the sidebar's office picker\./)
     assert.equal(page.host.querySelector("[role='combobox']"), null)
     assert.equal(page.host.querySelector("input[type='search']"), null)
+    if (selected === "home") {
+      const connections = page.host.querySelector('[role="group"][aria-label="Agent connections"]')!
+      assert.equal(connections.querySelectorAll("button:disabled").length, 3)
+    }
   }
   assert.equal(page.host.querySelector("h1")?.textContent, "Insurance list")
   assert.deepEqual([page.knowledgeRequests, page.plansRequests, page.agentCallsRequests], [[], [], []])
@@ -188,9 +208,10 @@ test("each page puts its title and page actions in the gray band and keeps its f
   assert.ok(page.host.querySelector("[role='combobox'][aria-label='Visit coverage']"))
 
   await inBand("home")
+  await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => /Version 3 · published/.test(page.text()))
   assert.equal(band.textContent, "")
-  assert.equal(page.host.querySelector("h1")?.textContent, "Acuity")
+  assert.equal(page.host.querySelector("h1")?.textContent, "Your agent")
   await page.unmount()
   band.remove()
 })

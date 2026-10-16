@@ -44,7 +44,8 @@ for (const navigation of ["list", "panel"] as const) {
       }))
     }
     await signInAs(page, "selected@abita.test", "Synthetic Staff", "/workspace")
-    await expect(page.getByRole("heading", { level: 1, name: "Acuity" })).toBeVisible()
+    await expect(page.getByRole("heading", { level: 1, name: "Your agent" })).toBeVisible()
+    await page.getByRole("group", { name: "Agent connections" }).getByRole("button", { name: "Knowledge base", exact: true }).click()
     await expect(page.getByText("“Saturday opening hours”", { exact: true })).toBeVisible()
     if (navigation === "panel") await page.getByRole("button", { name: "Open call", exact: true }).click()
     const surface = navigation === "panel" ? page.getByRole("dialog") : page.getByRole("region", { name: "Needs knowledge" })

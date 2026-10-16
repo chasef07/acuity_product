@@ -432,8 +432,8 @@ test("the workspace opens on Home, where calls the judge says need knowledge lea
       [id, scope.practice_id],
     )
     await signInAs(page, "selected@abita.test", "Synthetic Staff", "/workspace")
-    await expect(page.getByRole("heading", { level: 1, name: "Acuity" })).toBeVisible()
-    await expect(page.getByText("What Acuity can do")).toBeVisible()
+    await expect(page.getByRole("heading", { level: 1, name: "Your agent" })).toBeVisible()
+    await page.getByRole("group", { name: "Agent connections" }).getByRole("button", { name: "Knowledge base", exact: true }).click()
     const gap = page.getByRole("listitem").filter({ hasText: "“Saturday parking”" })
     await expect(gap).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath("agent-home.png"), animations: "disabled", fullPage: true })
