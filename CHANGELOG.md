@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.1](https://github.com/chasef07/acuity_product/compare/v1.39.0...v1.39.1) (2026-10-16)
+
+
+### Performance Improvements
+
+* **access:** resolve Platform Operator status with one lookup ([#489](https://github.com/chasef07/acuity_product/issues/489)) ([8c7fe24](https://github.com/chasef07/acuity_product/commit/8c7fe246bc01754aca963499c0f81431db303864))
+
 ## [1.39.0](https://github.com/chasef07/acuity_product/compare/v1.38.2...v1.39.0) (2026-10-15)
 
 
