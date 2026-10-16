@@ -907,7 +907,6 @@ func (m *Module) discoverActor(
 
 	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
 	if err == nil && signIn && !isOperator {
-		// Wait for concurrent operator provisioning before claiming an AccessGrant.
 		_, isOperator, err = bindPlatformOperator(ctx, tx, identity)
 	}
 	if err != nil {
