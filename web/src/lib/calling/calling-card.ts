@@ -1,22 +1,9 @@
+import type { CallingCall } from "../api/generated/types.gen.ts"
+import { isSettledCallState } from "./call-state.ts"
 import { formatUSPhone } from "../phone.ts"
 
-export type CallingCardCall = {
+export type CallingCardCall = Pick<CallingCall, "direction" | "entryPoint" | "state"> & {
   id: string
-  direction: "INBOUND" | "OUTBOUND"
-  entryPoint: "AI_HANDOFF" | "TASK" | "STANDALONE"
-  state:
-    | "PREPARING"
-    | "RINGING"
-    | "CONNECTING"
-    | "CONNECTED"
-    | "VOICEMAIL_GREETING"
-    | "VOICEMAIL_RECORDING"
-    | "UNANSWERED"
-    | "VOICEMAIL"
-    | "MISSED"
-    | "NEEDS_DISPOSITION"
-    | "RESOLVED"
-    | "FOLLOW_UP_REQUIRED"
   displayName: string
   phone: string
   locationName: string
@@ -253,7 +240,7 @@ export function projectCallingCard(
   }
 
   const ending =
-    !isOutcomeState(call.state) &&
+    !isSettledCallState(call.state) &&
     (snapshot.endingCallID === call.id || call.endRequested)
 
   const activeTransfer = snapshot.staffTransfers.find(
@@ -266,7 +253,7 @@ export function projectCallingCard(
     shell: "calling-card",
     kind: "call",
     callId: call.id,
-    phase: isOutcomeState(call.state)
+    phase: isSettledCallState(call.state)
       ? "ended"
       : call.state === "CONNECTED" ? "connected" : "calling",
     status: callStatus(call),
@@ -524,17 +511,6 @@ function callStatus(call: CallingCardCall) {
     case "FOLLOW_UP_REQUIRED": return "Call ended"
     default: return call.direction === "OUTBOUND" ? "Calling…" : "Connecting…"
   }
-}
-
-function isOutcomeState(state: CallingCardCall["state"]) {
-  return [
-    "NEEDS_DISPOSITION",
-    "UNANSWERED",
-    "VOICEMAIL",
-    "MISSED",
-    "RESOLVED",
-    "FOLLOW_UP_REQUIRED",
-  ].includes(state)
 }
 
 function elapsedTime(connectedAt: string | undefined, now: number) {

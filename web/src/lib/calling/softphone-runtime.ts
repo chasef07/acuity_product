@@ -1,3 +1,4 @@
+import { isSettledCallState } from "./call-state.ts"
 import type {
   CallingCall,
   CallingDispositionRequest,
@@ -2956,17 +2957,7 @@ function derive(
 }
 
 function callSettled(call: Pick<CallingCall, "state"> | undefined) {
-  return Boolean(
-    call &&
-      [
-        "UNANSWERED",
-        "VOICEMAIL",
-        "MISSED",
-        "NEEDS_DISPOSITION",
-        "RESOLVED",
-        "FOLLOW_UP_REQUIRED",
-      ].includes(call.state),
-  )
+  return Boolean(call && isSettledCallState(call.state))
 }
 
 function newestObservedCall(
