@@ -1303,6 +1303,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 	if err != nil {
 		t.Fatalf("begin recorded mutation authorization: %v", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	authorization, err := recordedModule.LockMutationAuthorization(
 		ctx, tx, identity, practice.ID, allowedLocationID,
 	)
@@ -1448,8 +1449,8 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 	if got := recorder.countContaining("FOR UPDATE"); got != 0 {
 		t.Fatalf("read-only member FOR UPDATE statements = %d, want 0", got)
 	}
-	if got := recorder.count(); got != 3 {
-		t.Fatalf("read-only member discovery statements = %d, want 3", got)
+	if got := recorder.count(); got != 2 {
+		t.Fatalf("read-only member discovery statements = %d, want 2", got)
 	}
 
 	recorder.reset()

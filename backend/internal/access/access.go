@@ -905,11 +905,10 @@ func (m *Module) discoverActor(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var isOperator bool
-	if signIn {
+	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
+	if err == nil && signIn && !isOperator {
+		// Wait for concurrent operator provisioning before claiming an AccessGrant.
 		_, isOperator, err = bindPlatformOperator(ctx, tx, identity)
-	} else {
-		_, isOperator, err = resolvePlatformOperator(ctx, tx, identity)
 	}
 	if err != nil {
 		return Discovery{}, err
