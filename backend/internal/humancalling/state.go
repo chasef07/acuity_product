@@ -13,6 +13,32 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const voicemailCandidatePredicate = `(
+	call.terminal_outcome = 'VOICEMAIL'
+	OR (
+		call.terminal_outcome IS NULL
+		AND EXISTS (
+			SELECT 1 FROM human_calling_provider_commands voicemail
+			WHERE voicemail.call_id = call.id
+				AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
+				AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
+		)
+	)
+)`
+
+const ringingStaffLegStates = `'PENDING', 'DIALING', 'RINGING', 'ANSWERED', 'BRIDGE_PENDING'`
+const activeStaffLegStates = ringingStaffLegStates + `, 'BRIDGED'`
+
+func callingScopeLocationFilter(scopeAlias, resourceAlias string) string {
+	return `(` + scopeAlias + `.location_scope = 'ALL'
+		OR EXISTS (
+			SELECT 1 FROM access_membership_locations allowed
+			WHERE allowed.membership_id = ` + scopeAlias + `.membership_id
+				AND allowed.location_id = ` + resourceAlias + `.location_id
+		)
+	)`
+}
+
 type CallingState struct {
 	Softphone   SoftphoneState
 	Ringing     []RingingCallLeg
@@ -204,21 +230,14 @@ func (m *Module) readCallingState(
 		) ring ON true
 		WHERE leg.role = 'STAFF'
 			AND leg.staff_subject = $1
-			AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'ANSWERED', 'BRIDGE_PENDING')
+			AND leg.state IN (`+ringingStaffLegStates+`)
 			AND (transfer.id IS NOT NULL OR ring.sent_at IS NOT NULL)
 			AND (
 				call.direction = 'OUTBOUND'
 				OR operational_scope.role = 'STAFF'
 				OR operational_scope.role IS NULL
 			)
-			AND (
-				operational_scope.location_scope = 'ALL'
-				OR EXISTS (
-					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = operational_scope.membership_id
-						AND allowed.location_id = call.location_id
-				)
-			)
+			AND `+callingScopeLocationFilter("operational_scope", "call")+`
 		ORDER BY leg.created_at, leg.id
 	`, staffSubject, m.config.RingWindowDuration.String())
 	if err != nil {
@@ -273,14 +292,7 @@ func (m *Module) readCallingState(
 			AND calling_scope.user_subject = $1
 		WHERE (transfer.requested_by_subject = $1 OR transfer.recipient_subject = $1)
 			AND transfer.state IN ('REQUESTED', 'ACCEPTED')
-			AND (
-				calling_scope.location_scope = 'ALL'
-				OR EXISTS (
-					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = calling_scope.membership_id
-						AND allowed.location_id = transfer.location_id
-				)
-			)
+			AND `+callingScopeLocationFilter("calling_scope", "transfer")+`
 		ORDER BY transfer.created_at, transfer.id
 	`, staffSubject)
 	if err != nil {
@@ -334,14 +346,7 @@ func (m *Module) readStaffStateCall(
 				OR operational_scope.role = 'STAFF'
 				OR operational_scope.role IS NULL
 			)
-			AND (
-				operational_scope.location_scope = 'ALL'
-				OR EXISTS (
-					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = operational_scope.membership_id
-						AND allowed.location_id = call.location_id
-				)
-			)
+			AND ` + callingScopeLocationFilter("operational_scope", "call") + `
 			AND (` + predicate + `)
 		ORDER BY call.updated_at DESC, call.id
 		LIMIT 1
@@ -388,27 +393,9 @@ func (m *Module) readScopedVoicemailState(
 		JOIN access_calling_scopes calling_scope
 			ON calling_scope.practice_id = call.practice_id
 			AND calling_scope.user_subject = $1
-		WHERE (
-				call.terminal_outcome = 'VOICEMAIL'
-				OR (
-					call.terminal_outcome IS NULL
-					AND EXISTS (
-						SELECT 1 FROM human_calling_provider_commands voicemail
-						WHERE voicemail.call_id = call.id
-							AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
-							AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
-					)
-				)
-			)
+		WHERE `+voicemailCandidatePredicate+`
 			AND call.disposition_at IS NULL
-			AND (
-				calling_scope.location_scope = 'ALL'
-				OR EXISTS (
-					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = calling_scope.membership_id
-						AND allowed.location_id = call.location_id
-				)
-			)
+			AND `+callingScopeLocationFilter("calling_scope", "call")+`
 		ORDER BY call.updated_at DESC, call.id
 		LIMIT 1
 	`, staffSubject).Scan(
@@ -458,31 +445,8 @@ func (m *Module) readCallingStateETag(
 			WHERE call.practice_id = ANY($2::uuid[])
 				AND call.location_id = ANY($3::uuid[])
 				AND call.disposition_at IS NULL
-				AND (
-					call.terminal_outcome = 'VOICEMAIL'
-					OR (
-						call.terminal_outcome IS NULL
-						AND EXISTS (
-							SELECT 1
-							FROM human_calling_provider_commands voicemail
-							WHERE voicemail.call_id = call.id
-								AND voicemail.action IN (
-									'SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING'
-								)
-								AND voicemail.state IN (
-									'PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED'
-								)
-						)
-					)
-				)
-				AND (
-					calling_scope.location_scope = 'ALL'
-					OR EXISTS (
-						SELECT 1 FROM access_membership_locations allowed
-						WHERE allowed.membership_id = calling_scope.membership_id
-							AND allowed.location_id = call.location_id
-					)
-				)
+				AND `+voicemailCandidatePredicate+`
+				AND `+callingScopeLocationFilter("calling_scope", "call")+`
 			ORDER BY call.updated_at DESC, call.id
 			LIMIT 1
 			)
@@ -492,8 +456,7 @@ func (m *Module) readCallingStateETag(
 			WHERE own_leg.role = 'STAFF'
 				AND own_leg.staff_subject = $1
 				AND (
-					own_leg.state IN ('PENDING', 'DIALING', 'RINGING', 'ANSWERED',
-						'BRIDGE_PENDING', 'BRIDGED')
+					own_leg.state IN (`+activeStaffLegStates+`)
 					OR (own_leg.state = 'ENDING' AND own_leg.answered_at IS NOT NULL)
 				)
 			UNION
