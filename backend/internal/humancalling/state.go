@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// These fragments use the fixed aliases in the Calling state queries.
 const voicemailCandidatePredicate = `(
 	call.terminal_outcome = 'VOICEMAIL'
 	OR (
@@ -30,7 +29,6 @@ const voicemailCandidatePredicate = `(
 const ringingStaffLegStates = `'PENDING', 'DIALING', 'RINGING', 'ANSWERED', 'BRIDGE_PENDING'`
 const activeStaffLegStates = ringingStaffLegStates + `, 'BRIDGED'`
 
-// Aliases are fixed by the caller, never taken from request input.
 func callingScopeLocationFilter(scopeAlias, resourceAlias string) string {
 	return `(` + scopeAlias + `.location_scope = 'ALL'
 		OR EXISTS (
