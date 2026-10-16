@@ -830,6 +830,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_tasks",
 	)
 	grant("acuity_worker", "INSERT",
+		"ai_interaction_classifications",
 		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_call_recordings",
@@ -850,6 +851,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_tasks",
 	)
 	grant("acuity_worker", "UPDATE",
+		"ai_interaction_classifications",
 		"access_practices",
 		"human_calling_call_legs",
 		"human_calling_calls",
@@ -878,6 +880,7 @@ func expectedTablePrivileges() map[string]bool {
 			grant(role, privilege, "messaging_attachment_cleanup")
 		}
 	}
+	grant("acuity_worker", "SELECT", "ai_interaction_classifications")
 	return result
 }
 
@@ -1313,6 +1316,7 @@ func expectedColumnPrivileges() map[string]bool {
 		grant(role, "public.messaging_attachments", "UPDATE", "storage_token")
 	}
 	grant("acuity_portal", "public.messaging_attachments", "UPDATE", "object_key")
+	grant("acuity_portal", "public.ai_interaction_classifications", "SELECT", "interaction_id", "intent", "outcome", "status")
 	return result
 }
 

@@ -26,6 +26,8 @@ const (
 )
 
 type QueryAnalyticsCommand struct {
+	Intent     string
+	Outcome    string
 	Identity   access.Identity
 	PracticeID string
 	LocationID string
@@ -71,6 +73,9 @@ type AnalyticsSummary struct {
 }
 
 type AnalyticsCall struct {
+	Intent              *string
+	Outcome             *string
+	LabelingStatus      *string
 	ReviewReasons       []string
 	ID                  string
 	LocationID          string
@@ -138,6 +143,9 @@ type ToolExecution struct {
 }
 
 type OperatorAnalyticsDetail struct {
+	Intent            *string
+	Outcome           *string
+	LabelingStatus    *string
 	Interaction       Interaction
 	Issue             *OperatorCallIssue
 	P50SttMs          *int
@@ -150,6 +158,8 @@ type OperatorAnalyticsDetail struct {
 }
 
 type analyticsCursor struct {
+	Intent     string         `json:"intent,omitempty"`
+	Outcome    string         `json:"outcome,omitempty"`
 	Through    time.Time      `json:"through"`
 	Range      AnalyticsRange `json:"range"`
 	PracticeID string         `json:"practiceId"`
@@ -174,7 +184,7 @@ func (m *Module) QueryAnalytics(
 ) (AnalyticsPage, error) {
 	normalizeAnalyticsCommand(&command)
 	duration, ok := analyticsRangeDuration(command.Range)
-	if !ok || command.Limit < 1 || command.Limit > 100 {
+	if !ok || command.Limit < 1 || command.Limit > 100 || !validCallLabelFilters(command) {
 		return AnalyticsPage{}, ErrInvalidInput
 	}
 	to := m.now().UTC().Truncate(time.Microsecond)
@@ -429,8 +439,10 @@ func queryAnalyticsCalls(
 			interaction.analytics_evidence -> 'transcript',
 			interaction.analytics_evidence -> 'closeout',
 			interaction.transcript IS NOT NULL,
-			interaction.closeout_payload -> 'evaluation'
+			interaction.closeout_payload -> 'evaluation',
+			classification.intent, classification.outcome, classification.status
 		FROM ai_interactions interaction
+		LEFT JOIN ai_interaction_classifications classification ON classification.interaction_id = interaction.id
 		JOIN access_locations location
 			ON location.practice_id = interaction.practice_id
 			AND location.id = interaction.location_id
@@ -442,9 +454,11 @@ func queryAnalyticsCalls(
 				$5::timestamptz IS NULL OR
 				(interaction.started_at, interaction.id) < ($5, $6::uuid)
 			)
+			AND ($8 = '' OR classification.intent = $8)
+			AND ($9 = '' OR classification.outcome = $9)
 		ORDER BY interaction.started_at DESC, interaction.id DESC
 		LIMIT $7
-	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, scanLimit)
+	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, scanLimit, command.Intent, command.Outcome)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query operator AI analytics page: %w", err)
 	}
@@ -468,6 +482,7 @@ func queryAnalyticsCalls(
 			&projection.closeoutPayload,
 			&projection.call.TranscriptAvailable,
 			&evaluation,
+			&projection.call.Intent, &projection.call.Outcome, &projection.call.LabelingStatus,
 		); err != nil {
 			return nil, nil, fmt.Errorf("scan operator AI analytics page: %w", err)
 		}
@@ -516,6 +531,10 @@ func (m *Module) ReadOperatorAnalytics(
 	if err != nil {
 		return OperatorAnalyticsDetail{}, fmt.Errorf("read operator AI call issue: %w", err)
 	}
+	labels, err := readCallLabelProjection(ctx, tx, interactionID)
+	if err != nil {
+		return OperatorAnalyticsDetail{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return OperatorAnalyticsDetail{}, fmt.Errorf("commit operator AI analytics detail: %w", err)
 	}
@@ -530,6 +549,9 @@ func (m *Module) ReadOperatorAnalytics(
 	}
 	_ = json.Unmarshal(stored.CloseoutPayload, &closeout)
 	return OperatorAnalyticsDetail{
+		Intent:            labels.Intent,
+		Outcome:           labels.Outcome,
+		LabelingStatus:    labels.LabelingStatus,
 		Interaction:       stored,
 		Issue:             issue,
 		P50SttMs:          medianMilliseconds(samples.stt),
@@ -550,6 +572,8 @@ func normalizeAnalyticsCommand(command *QueryAnalyticsCommand) {
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	command.Cursor = strings.TrimSpace(command.Cursor)
+	command.Intent = strings.TrimSpace(command.Intent)
+	command.Outcome = strings.TrimSpace(command.Outcome)
 	if command.Limit == 0 {
 		command.Limit = 50
 	}
@@ -625,6 +649,8 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 
 func newAnalyticsCursor(command QueryAnalyticsCommand, startedAt time.Time, id string, through time.Time) analyticsCursor {
 	return analyticsCursor{
+		Intent:     command.Intent,
+		Outcome:    command.Outcome,
 		Through:    through,
 		Range:      command.Range,
 		PracticeID: command.PracticeID,
@@ -648,7 +674,7 @@ func decodeCursor(command QueryAnalyticsCommand, target any, cursor *analyticsCu
 		return false
 	}
 	duration, _ := analyticsRangeDuration(command.Range)
-	return cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
+	return cursor.Intent == command.Intent && cursor.Outcome == command.Outcome && cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
 		!cursor.StartedAt.IsZero() && !cursor.Through.IsZero() && !cursor.Through.After(now) &&
 		!cursor.StartedAt.After(cursor.Through) && !cursor.StartedAt.Before(cursor.Through.Add(-duration)) &&
 		validUUID(cursor.ID)

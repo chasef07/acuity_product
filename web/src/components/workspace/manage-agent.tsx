@@ -23,6 +23,7 @@ import { AgentHome } from "./agent-home"
 import { InsuranceList } from "./insurance-list"
 import { KnowledgeBase } from "./knowledge-base"
 import { AgentPage, AgentQueryBody, OptionSelect } from "./manage-agent-page"
+import { CallLabel, CallLabelFilters, type IntentFilter, type OutcomeFilter } from "./call-labels"
 import type {
   AgentCallsQuery,
   InsuranceCoverage,
@@ -85,6 +86,8 @@ function AgentTranscripts({
   const [phoneInput, setPhoneInput] = useState("")
   const [phone, setPhone] = useState("")
   const [flaggedOnly, setFlaggedOnly] = useState(false)
+  const [intent, setIntent] = useState<IntentFilter>("all")
+  const [outcome, setOutcome] = useState<OutcomeFilter>("all")
   const [version, setVersion] = useState(0)
   const [selectedID, setSelectedID] = useState("")
   const current = useAgentCalls({
@@ -93,6 +96,8 @@ function AgentTranscripts({
     range,
     phone,
     flaggedOnly,
+    intent: intent === "all" ? undefined : intent,
+    outcome: outcome === "all" ? undefined : outcome,
     revision: version,
   })
   const calls = current.status === "ready" ? current.data.calls : []
@@ -149,6 +154,7 @@ function AgentTranscripts({
             className="w-full sm:w-56"
           />
           <OptionSelect label="Date range" value={range} items={ranges} onChange={setRange} />
+          <CallLabelFilters intent={intent} outcome={outcome} onIntent={setIntent} onOutcome={setOutcome} />
           <Button
             variant={flaggedOnly ? "secondary" : "ghost"}
             aria-pressed={flaggedOnly}
@@ -167,15 +173,17 @@ function AgentTranscripts({
         onRetry={() => setVersion((value) => value + 1)}
         isEmpty={(data) => data.calls.length === 0}
         emptyTitle={flaggedOnly ? "No flagged calls" : "No calls found"}
-        emptyDescription="Try another date range, office, or phone number."
+        emptyDescription="Try another date range, office, phone number, intent, or outcome."
       >
         {() => (
-          <div className="max-w-3xl">
+          <div className="max-w-5xl">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-40">Date / time</TableHead>
                   <TableHead className="w-44">Phone number</TableHead>
+                  <TableHead>Intent</TableHead>
+                  <TableHead>Outcome</TableHead>
                   <TableHead>Appointment action</TableHead>
                   <TableHead className="w-24 text-right">Duration</TableHead>
                   <TableHead className="w-28 text-right">Transferred</TableHead>
@@ -216,6 +224,12 @@ function AgentTranscripts({
                           />
                         )}
                       </span>
+                    </TableCell>
+                    <TableCell>
+                      <CallLabel call={call} kind="intent" />
+                    </TableCell>
+                    <TableCell>
+                      <CallLabel call={call} kind="outcome" />
                     </TableCell>
                     <TableCell>
                       <AppointmentActions call={call} />

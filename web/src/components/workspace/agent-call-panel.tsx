@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/message"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Badge } from "@/components/ui/badge"
+import { CallLabels } from "./call-labels"
 
 const actions = {
   BOOKED: "Booked",
@@ -237,6 +238,9 @@ function CallContent({
             ? `${formatTimestamp(detail.call.startedAt)} · ${detail.locationName}`
             : "Conversation with your agent"}
         </SheetDescription>
+        {detail && (
+          <CallLabels call={detail.call} />
+        )}
         {detail && (
           <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
             <AppointmentActions call={detail.call} />

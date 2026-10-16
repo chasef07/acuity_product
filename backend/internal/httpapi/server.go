@@ -623,6 +623,8 @@ func (server *Server) QueryOperatorAIAnalytics(
 			Range:      interaction.AnalyticsRange(body.Range),
 			Cursor:     stringValue(body.Cursor),
 			Limit:      intValue(body.Limit),
+			Intent:     stringValue(body.Intent),
+			Outcome:    stringValue(body.Outcome),
 		},
 	)
 	if err != nil {
@@ -3258,11 +3260,11 @@ func operatorTimelineResponse(
 	return response, nil
 }
 
-func stringValue(value *string) string {
+func stringValue[T ~string](value *T) string {
 	if value == nil {
 		return ""
 	}
-	return *value
+	return string(*value)
 }
 
 func stringPointer(value string) *string {
@@ -3426,6 +3428,9 @@ func operatorAIAnalyticsPageResponse(
 			return api.OperatorAIAnalyticsPage{}, err
 		}
 		response.Calls = append(response.Calls, api.OperatorAICallAnalytics{
+			Intent:              (*api.CallIntent)(call.Intent),
+			Outcome:             (*api.CallOutcome)(call.Outcome),
+			LabelingStatus:      (*api.CallLabelingStatus)(call.LabelingStatus),
 			Id:                  id,
 			ReviewReasons:       &call.ReviewReasons,
 			LocationId:          locationID,
@@ -3460,6 +3465,9 @@ func operatorAIInteractionAnalyticsResponse(
 	var closeout map[string]json.RawMessage
 	_ = json.Unmarshal(detail.Interaction.CloseoutPayload, &closeout)
 	response := api.OperatorAIInteractionAnalytics{
+		Intent:                (*api.CallIntent)(detail.Intent),
+		Outcome:               (*api.CallOutcome)(detail.Outcome),
+		LabelingStatus:        (*api.CallLabelingStatus)(detail.LabelingStatus),
 		Evaluation:            jsonMap(closeout["evaluation"]),
 		Id:                    base.Id,
 		PracticeId:            base.PracticeId,

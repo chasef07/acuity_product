@@ -60,6 +60,7 @@ import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-an
 import { PendingCallIssues } from "@/components/workspace/call-issue-review"
 import { CallReviewWorkspace } from "@/components/workspace/call-review"
 import { BookingConversionKpi, ImprovementTrend } from "@/components/workspace/scorecard-overview"
+import { CallLabel, CallLabelFilters, CallLabels, type IntentFilter, type OutcomeFilter } from "./call-labels"
 import type {
   OperatorAiCallIssue,
   OperatorAiAnalyticsRange,
@@ -109,19 +110,23 @@ export function OperatorAnalytics({
   const locationID = locationScopeID
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("24h")
   const [tab, setTab] = useState<AnalyticsTab>("calls")
+  const [intent, setIntent] = useState<IntentFilter>("all")
+  const [outcome, setOutcome] = useState<OutcomeFilter>("all")
   const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
   const costView = tab === "cost"
   const reviewView = tab === "review"
   const [requestVersion, setRequestVersion] = useState(0)
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
-  const requestKey = `${practiceID}:${locationID}:${range}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${intent}:${outcome}:${requestVersion}`
   const currentRequest = useAiCallAnalytics({
     practiceID,
     locationID,
     range,
     revision: requestVersion,
     enabled: !costView && !reviewView,
+    intent: tab === "calls" && intent !== "all" ? intent : undefined,
+    outcome: tab === "calls" && outcome !== "all" ? outcome : undefined,
   })
   const nextPageState = currentRequest.nextPage
 
@@ -186,6 +191,7 @@ export function OperatorAnalytics({
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
+            {tab === "calls" && <CallLabelFilters intent={intent} outcome={outcome} onIntent={setIntent} onOutcome={setOutcome} />}
           </>
         )}
         tabs={<AnalyticsTabs tab={tab} onChange={setTab} />}
@@ -301,7 +307,7 @@ function AnalyticsReady({
             </EmptyMedia>
             <EmptyTitle>No AI calls in this range</EmptyTitle>
             <EmptyDescription>
-              Change the time range or workspace office to review another slice
+              Change the time range, workspace office, intent, or outcome to review another slice
               of call evidence.
             </EmptyDescription>
           </EmptyHeader>
@@ -491,6 +497,8 @@ function CallLedger({
                 <TableHead>Date / time</TableHead>
                 <TableHead>Caller</TableHead>
                 <TableHead>Office</TableHead>
+                <TableHead>Intent</TableHead>
+                <TableHead>Outcome</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead>Actions</TableHead>
                 <TableHead>Tool errors</TableHead>
@@ -522,6 +530,8 @@ function CallLedger({
                     <ReviewReasons reasons={call.reviewReasons} />
                   </TableCell>
                   <TableCell>{call.locationName}</TableCell>
+                  <TableCell><CallLabel call={call} kind="intent" /></TableCell>
+                  <TableCell><CallLabel call={call} kind="outcome" /></TableCell>
                   <TableCell className="tabular-nums">
                     {formatDuration(call.durationSeconds)}
                   </TableCell>
@@ -564,6 +574,7 @@ function CallLedger({
               />
             </div>
             <ReviewReasons reasons={call.reviewReasons} />
+            <div className="mt-3"><CallLabels call={call} /></div>
             <dl className="mt-4 grid grid-cols-2 gap-3 border-y py-3">
               <CompactValue label="Duration" value={formatDuration(call.durationSeconds)} />
               <CompactValue

@@ -227,6 +227,35 @@ single persistent-stack launcher; use the role configuration in
 required environment variables. The Go process reads exported environment
 variables, not `.env` files.
 
+The `worker` uses `OPENROUTER_API_KEY` for the two post-call choice judges
+(primary intent and outcome), through OpenRouter Decisions with ZDR required.
+Export it only in the worker process's environment; do not commit its value.
+New closeouts are queued after migration `0100`; historical calls are not
+automatically sent for inference. A transfer stays pending until its scoped
+provider call and legs finish. Existing quality judges remain independent.
+
+Missing keys, provider failures, and malformed responses persist as `failed`
+labeling, with at most three automatic attempts. Empty conversations are
+`skipped`; voicemail without reviewed content retains its intent but withholds
+the outcome. `skipped` and `failed` describe labeling status, not call outcomes.
+A greeting followed by caller disconnect is `other` / `abandoned`; abandonment
+describes the call ending and does not by itself prove an agent failure.
+Fixed-choice model accuracy on ambiguous or nonservice calls still needs human
+review against a labeled sample.
+Inspect `ai_interaction_classifications.error_code` using authorized database
+access. After fixing the cause, retry a deliberately selected call with:
+
+```sql
+UPDATE ai_interaction_classifications
+SET status='pending', attempts=0, error_code=NULL, claim_token=NULL,
+    lease_expires_at=NULL, next_attempt_at=now(), updated_at=now()
+WHERE interaction_id = '<reviewed-interaction-uuid>';
+```
+
+A deliberate historical sample can be queued by inserting its reviewed
+interaction IDs into `ai_interaction_classifications(interaction_id)` with
+`ON CONFLICT DO NOTHING`. No automatic all-history backfill runs.
+
 `portal-api` reads insurance rules from the AdvancedMD middleware when
 `MIDDLEWARE_BASE_URL` and `MIDDLEWARE_API_SECRET` are both set; set neither to
 leave the insurance plans endpoint returning 503 Unavailable.

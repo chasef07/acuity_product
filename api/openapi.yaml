@@ -3725,11 +3725,25 @@ components:
           type: string
         startDatetime:
           type: string
+    CallIntent:
+      type: string
+      enum: [new_patient_booking, existing_patient_booking, reschedule_appointment, cancel_appointment, appointment_information, office_information, insurance_question, billing_question, prescription_or_refill, records_or_forms, glasses_or_contacts, returning_call, speak_to_staff, other]
+    CallOutcome:
+      type: string
+      enum: [resolved, transferred, abandoned]
+    CallLabelingStatus:
+      type: string
+      enum: [pending, processing, complete, failed, skipped]
+      x-enum-varnames: [CallLabelingPending, CallLabelingProcessing, CallLabelingComplete, CallLabelingFailed, CallLabelingSkipped]
     AgentCallsQuery:
       type: object
       additionalProperties: false
       required: [practiceId, range]
       properties:
+        intent:
+          $ref: "#/components/schemas/CallIntent"
+        outcome:
+          $ref: "#/components/schemas/CallOutcome"
         practiceId:
           type: string
           format: uuid
@@ -3757,6 +3771,12 @@ components:
       additionalProperties: false
       required: [id, phone, startedAt, appointmentActions, transferred, issueFlagged, knowledgeGaps]
       properties:
+        intent:
+          $ref: "#/components/schemas/CallIntent"
+        outcome:
+          $ref: "#/components/schemas/CallOutcome"
+        labelingStatus:
+          $ref: "#/components/schemas/CallLabelingStatus"
         id:
           type: string
           format: uuid
@@ -4630,6 +4650,10 @@ components:
       additionalProperties: false
       required: [practiceId, range]
       properties:
+        intent:
+          $ref: "#/components/schemas/CallIntent"
+        outcome:
+          $ref: "#/components/schemas/CallOutcome"
         needsReviewOnly:
           type: boolean
           deprecated: true
@@ -4974,6 +4998,12 @@ components:
         - transferred
         - transcriptAvailable
       properties:
+        intent:
+          $ref: "#/components/schemas/CallIntent"
+        outcome:
+          $ref: "#/components/schemas/CallOutcome"
+        labelingStatus:
+          $ref: "#/components/schemas/CallLabelingStatus"
         reviewReasons: {type: array, items: {type: string}}
         id:
           type: string
@@ -5026,7 +5056,7 @@ components:
         transcriptAvailable:
           type: boolean
     OperatorAIAnalyticsPage:
-      description: The first page includes a fresh range summary. Cursor continuations return calls only within the initial reporting window; refresh without a cursor to obtain a new summary and window.
+      description: The first page includes a fresh practice, location and range summary. Intent and outcome filters apply only to the calls table, not the summary or pending issues. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
       type: object
       additionalProperties: false
       required: [calls, nextCursor]
@@ -5172,6 +5202,12 @@ components:
         - toolExecutions
         - scorecard
       properties:
+        intent:
+          $ref: "#/components/schemas/CallIntent"
+        outcome:
+          $ref: "#/components/schemas/CallOutcome"
+        labelingStatus:
+          $ref: "#/components/schemas/CallLabelingStatus"
         issue: {$ref: "#/components/schemas/OperatorAICallIssue"}
         scorecard:
           type: array

@@ -37,6 +37,10 @@ type InteractionWork interface {
 	ProcessNextReceipt(context.Context) (bool, error)
 }
 
+type ClassificationWork interface {
+	ProcessNextClassification(context.Context) (bool, error)
+}
+
 type Dependency interface {
 	Ping(context.Context) error
 }
@@ -61,14 +65,15 @@ type Config struct {
 }
 
 type Runner struct {
-	config       Config
-	work         CallingWork
-	messages     MessagingWork
-	interactions InteractionWork
-	dependency   Dependency
-	jitter       func(time.Duration) time.Duration
-	wait         func(context.Context, time.Duration) bool
-	commandReady chan struct{}
+	config          Config
+	work            CallingWork
+	messages        MessagingWork
+	interactions    InteractionWork
+	classifications ClassificationWork
+	dependency      Dependency
+	jitter          func(time.Duration) time.Duration
+	wait            func(context.Context, time.Duration) bool
+	commandReady    chan struct{}
 }
 
 func New(
@@ -77,9 +82,13 @@ func New(
 	messages MessagingWork,
 	interactions InteractionWork,
 	dependency Dependency,
+	classifications ...ClassificationWork,
 ) (*Runner, error) {
 	if work == nil || messages == nil || interactions == nil || dependency == nil {
 		return nil, fmt.Errorf("worker dependencies are required")
+	}
+	if len(classifications) > 1 || (len(classifications) == 1 && classifications[0] == nil) {
+		return nil, fmt.Errorf("one classification worker is required when configured")
 	}
 	if config.WorkInterval <= 0 ||
 		config.WorkTimeout <= 0 ||
@@ -126,7 +135,7 @@ func New(
 	if config.MetricInterval < 0 || config.MetricTimeout < 0 {
 		return nil, fmt.Errorf("positive worker metric limits are required")
 	}
-	return &Runner{
+	runner := &Runner{
 		config:       config,
 		work:         work,
 		messages:     messages,
@@ -135,12 +144,23 @@ func New(
 		jitter:       equalJitter,
 		wait:         wait,
 		commandReady: make(chan struct{}, 1),
-	}, nil
+	}
+	if len(classifications) == 1 {
+		runner.classifications = classifications[0]
+	}
+	return runner, nil
 }
 
 func (runner *Runner) Run(ctx context.Context) error {
 	var lanes sync.WaitGroup
 	lanes.Add(10)
+	if runner.classifications != nil {
+		lanes.Add(1)
+		go func() {
+			defer lanes.Done()
+			runner.runQueueLaneWithLimits(ctx, 1, "ai_call_classification_failed", runner.classifications.ProcessNextClassification, runner.config.IdleBackoffMax, false, 30*time.Second)
+		}()
+	}
 	go func() {
 		defer lanes.Done()
 		runner.runCallingReceipts(ctx)
@@ -406,6 +426,14 @@ func (runner *Runner) runQueueLaneWithIdleMaximum(
 	idleMaximum time.Duration,
 	continueAfterFullBatch bool,
 ) {
+	runner.runQueueLaneWithLimits(ctx, batchSize, failureEvent, process, idleMaximum, continueAfterFullBatch, runner.config.WorkTimeout)
+}
+
+func (runner *Runner) runQueueLaneWithLimits(
+	ctx context.Context, batchSize int, failureEvent string,
+	process func(context.Context) (bool, error), idleMaximum time.Duration,
+	continueAfterFullBatch bool, workTimeout time.Duration,
+) {
 	backoff := newFailureBackoff(
 		runner.config.ErrorBackoffMin,
 		runner.config.ErrorBackoffMax,
@@ -420,7 +448,7 @@ func (runner *Runner) runQueueLaneWithIdleMaximum(
 		for range batchSize {
 			processed, err := runBoolWork(
 				ctx,
-				runner.config.WorkTimeout,
+				workTimeout,
 				process,
 			)
 			if err != nil {

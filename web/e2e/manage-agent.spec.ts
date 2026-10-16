@@ -67,6 +67,8 @@ test("staff flag a call and Acuity reviews it", async ({
     await expect(page.getByRole("columnheader")).toHaveText([
       "Date / time",
       "Phone number",
+      "Intent",
+      "Outcome",
       "Appointment action",
       "Duration",
       "Transferred",
