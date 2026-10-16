@@ -118,7 +118,9 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
    AND (NOT $8 OR issue.interaction_id IS NOT NULL)
    AND (NOT $9 OR EXISTS (
     SELECT 1 FROM ai_interaction_scorecard_answers judged
-    WHERE judged.interaction_id = i.id AND judged.question = 'office_question_answered' AND NOT judged.answer))
+    WHERE judged.interaction_id = i.id AND NOT judged.answer AND (
+     (judged.scorecard_version = 'typesafe-scorecard-v8' AND judged.question = 'knowledge_available') OR
+     (judged.scorecard_version <> 'typesafe-scorecard-v8' AND judged.question = 'office_question_answered'))))
   ORDER BY i.started_at DESC, i.id DESC LIMIT $10
  `, command.PracticeID, locations, through.Add(-duration), through, startedAt, id, phone, command.FlaggedOnly, command.NeedsKnowledgeOnly, command.Limit+1)
 	if err != nil {
@@ -281,14 +283,18 @@ func knowledgeGapQueries(detail json.RawMessage) []string {
 
 func agentCallScorecard(evaluation json.RawMessage) []AgentCallVerdict {
 	verdicts := map[string]string{}
-	for _, answer := range judgeAnswers(evaluation) {
+	jury, valid := readJury(evaluation)
+	if !valid {
+		return []AgentCallVerdict{}
+	}
+	for _, answer := range juryAnswers(jury, juryQuestions(jury.Version)) {
 		verdicts[answer.Question] = "no"
 		if answer.Answer {
 			verdicts[answer.Question] = "yes"
 		}
 	}
 	scorecard := []AgentCallVerdict{}
-	for _, question := range ScorecardQuestions {
+	for _, question := range ScorecardQuestionsForVersion(jury.Version) {
 		if verdict, found := verdicts[question.Key]; found {
 			scorecard = append(scorecard, AgentCallVerdict{Question: question.Key, Code: question.Code, Prompt: question.Prompt, Answer: verdict})
 		}

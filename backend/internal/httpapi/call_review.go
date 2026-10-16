@@ -8,11 +8,20 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-func (server *Server) GetOperatorScorecardQuestions(w http.ResponseWriter, r *http.Request) {
+func (server *Server) GetOperatorScorecardQuestions(w http.ResponseWriter, r *http.Request, params api.GetOperatorScorecardQuestionsParams) {
 	if _, ok := server.portalIdentity(w, r); !ok {
 		return
 	}
-	server.writeJSON(w, http.StatusOK, map[string]any{"questions": interaction.ScorecardQuestions})
+	version := ""
+	if params.Version != nil {
+		version = string(*params.Version)
+	}
+	questions := interaction.ScorecardQuestionsForVersion(version)
+	if questions == nil {
+		server.writeInteractionError(w, r, interaction.ErrInvalidInput)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, map[string]any{"questions": questions})
 }
 
 func (server *Server) OpenOperatorCallReviewQueue(w http.ResponseWriter, r *http.Request) {

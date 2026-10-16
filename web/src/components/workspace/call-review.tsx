@@ -133,7 +133,7 @@ export function CallReviewWorkspace({
         </div>
       </div>
       {view === "queue" ? (
-        <ReviewQueue key={`${practiceID}:${date}`} practiceID={practiceID} date={date} catalog={catalog} />
+        <ReviewQueue key={`${practiceID}:${date}`} practiceID={practiceID} date={date} />
       ) : (
         <JudgeAccuracyView practiceID={practiceID} catalog={catalog} onOpenCall={onOpenCall} />
       )}
@@ -142,7 +142,7 @@ export function CallReviewWorkspace({
 }
 
 
-function ReviewQueue({ practiceID, date, catalog }: { practiceID: string; date: string; catalog: QuestionCatalog }) {
+function ReviewQueue({ practiceID, date }: { practiceID: string; date: string }) {
   const [revision, setRevision] = useState(0)
   const queue = useReviewQueue(practiceID, date, revision)
   const [selected, setSelected] = useState("")
@@ -218,7 +218,6 @@ function ReviewQueue({ practiceID, date, catalog }: { practiceID: string; date: 
           key={selectedCall.interactionId}
           call={selectedCall}
           position={index + 1}
-          catalog={catalog}
           onPrevious={index > 0 ? () => setSelected(calls[index - 1].interactionId) : undefined}
           onNext={index < calls.length - 1 ? () => setSelected(calls[index + 1].interactionId) : undefined}
           onSaved={() => {
@@ -275,19 +274,19 @@ function QueueRow({
 function ReviewCall({
   call,
   position,
-  catalog,
   onPrevious,
   onNext,
   onSaved,
 }: {
   call: OperatorCallReviewQueueCall
   position: number
-  catalog: QuestionCatalog
   onPrevious?: () => void
   onNext?: () => void
   onSaved: () => void
 }) {
   const review = useCallReview(call.interactionId)
+  const definitions = useScorecardQuestions(review.status === "ready" ? review.data.version : undefined)
+  const callCatalog = definitions.status === "ready" ? new Map(definitions.data.questions.map((question) => [question.key, question])) : undefined
   return (
     <>
       <section aria-label="Call transcript" className="flex min-h-0 flex-col border-b lg:border-r lg:border-b-0">
@@ -305,11 +304,11 @@ function ReviewCall({
               </Button>
             </nav>
           </div>
-          {review.status === "ready" && review.data.facts.length > 0 && (
+          {review.status === "ready" && callCatalog && review.data.facts.length > 0 && (
             <ul aria-label="Code-check facts" className="mt-2 flex flex-wrap gap-1.5">
               {review.data.facts.map((fact) => (
                 <li key={fact.question}>
-                  <FactChip question={catalog.get(fact.question)} answer={fact.answer} detail={fact.detail} />
+                  <FactChip question={callCatalog.get(fact.question)} answer={fact.answer} detail={fact.detail} />
                 </li>
               ))}
             </ul>
@@ -334,10 +333,12 @@ function ReviewCall({
             </Alert>
           </div>
         )}
-        {review.status === "ready" && (
+        {review.status === "ready" && definitions.status === "loading" && <p className="p-4 text-sm">Loading scorecard questions…</p>}
+        {review.status === "ready" && definitions.status === "failed" && <div className="p-4"><p>Scorecard questions unavailable.</p><Button size="sm" variant="outline" onClick={definitions.retry}>Retry</Button></div>}
+        {review.status === "ready" && callCatalog && (
           <ScorecardPanel
             review={review.data}
-            catalog={catalog}
+            catalog={callCatalog}
             onSaved={onSaved}
             onNext={onNext}
           />
@@ -457,6 +458,9 @@ function JudgeAccuracyView({
   const accuracy = useJudgeAccuracy(practiceID)
   const [picked, setPicked] = useState("")
   const [goldenOpen, setGoldenOpen] = useState(false)
+  const versions = accuracy.status === "ready" ? Array.from(new Set(accuracy.data.rows.map((row) => row.judgeVersion))).sort((left, right) => (left === accuracy.data.currentJudgeVersion ? -1 : right === accuracy.data.currentJudgeVersion ? 1 : left.localeCompare(right))) : []
+  const version = versions.includes(picked) ? picked : versions[0] ?? ""
+  const definitions = useScorecardQuestions(version)
   if (accuracy.status === "loading") return <Skeleton className="h-72 rounded-xl" />
   if (accuracy.status === "failed") {
     return (
@@ -471,12 +475,11 @@ function JudgeAccuracyView({
   }
   const data = accuracy.data
   const current = data.currentJudgeVersion
-  const versions = Array.from(new Set(data.rows.map((row) => row.judgeVersion))).sort((left, right) => (left === current ? -1 : right === current ? 1 : left.localeCompare(right)))
-  const version = versions.includes(picked) ? picked : versions[0] ?? ""
   const rows = data.rows.filter((row) => row.judgeVersion === version)
   const disagreements = data.judgeDisagreements.filter((item) => item.judgeVersion === version)
+  const selectedCatalog = definitions.status === "ready" ? new Map(definitions.data.questions.map((question) => [question.key, question])) : version === current ? catalog : new Map()
   const label = (key: string) => {
-    const question = catalog.get(key)
+    const question = selectedCatalog.get(key)
     return question ? `${question.code} ${question.label}` : key
   }
   return (

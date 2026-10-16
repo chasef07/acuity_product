@@ -37,8 +37,14 @@ const scorecardChecks = [
 const verdictLabels: Record<AgentCallVerdict["answer"], string> = { yes: "Yes", no: "No" }
 const notApplicableReasons: Record<string, string> = {
   no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
+  no_appointment_action: "No booking, rescheduling, or cancellation was attempted.",
   no_availability_result: "No availability search returned a result.",
   no_insurance_check: "No insurance check returned a result.",
+}
+
+const unknownReasons: Record<string, string> = {
+  no_office_knowledge_result: "No usable office knowledge result was recorded; knowledge availability could not be assessed.",
+  no_confirmed_appointment_action: "An appointment action was attempted, but no confirmed result established the appointment date and time.",
 }
 
 function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
@@ -115,28 +121,29 @@ function JuryScorecard({ evaluation, verdicts, questions }: { evaluation: Record
         const result = record(results[name])
         const failed = Object.hasOwn(errors, name)
         const notApplicable = result.status === "not_applicable"
-        const verdict = answers.get(name)
+        const unknown = result.status === "unknown"
+        const verdict = !unknown && !notApplicable ? answers.get(name) : undefined
         const flagged = verdict === "no" && catalog.get(name)?.failure === true
         const votes = record(failed ? record(errors[name]).votes : result.votes)
         const jurorErrors = record(failed ? record(errors[name]).errors : result.errors)
         return <div key={name} className="py-3 text-xs">
           <div className="flex items-start justify-between gap-3">
             <dt>{catalog.get(name)?.prompt ?? title(name)}</dt>
-            <dd className={`shrink-0 font-medium ${flagged ? "text-destructive" : ""}`}>{notApplicable ? "Not applicable" : verdict ? verdictLabels[verdict] : "No verdict"}</dd>
+            <dd className={`shrink-0 font-medium ${flagged ? "text-destructive" : ""}`}>{unknown ? "Unknown" : notApplicable ? "Not applicable" : verdict ? verdictLabels[verdict] : "No verdict"}</dd>
           </div>
-          {notApplicable ? <dd className="mt-1 text-muted-foreground">{notApplicableReasons[String(result.reason)] ?? title(String(result.reason))}</dd> : <dd className="mt-1 flex flex-wrap gap-x-3 text-muted-foreground">
+          {unknown ? <dd className="mt-1 text-muted-foreground">{unknownReasons[String(result.reason)] ?? title(String(result.reason))}</dd> : notApplicable ? <dd className="mt-1 text-muted-foreground">{notApplicableReasons[String(result.reason)] ?? title(String(result.reason))}</dd> : <dd className="mt-1 flex flex-wrap gap-x-3 text-muted-foreground">
             {jurors.map((juror) => <span key={juror}>{jurorName(juror)}: {Object.hasOwn(jurorErrors, juror) ? `failed (${String(jurorErrors[juror])})` : typeof votes[juror] === "number" ? percent(votes[juror]) : "no answer"}</span>)}
             {failed && <span className="text-destructive">No quorum</span>}
           </dd>}
         </div>
       })}
-      <div className="py-3 text-xs">
+      {evaluation.evaluatorVersion !== "typesafe-scorecard-v8" && <div className="py-3 text-xs">
         <div className="flex items-start justify-between gap-3">
           <dt>Caller sentiment</dt>
           <dd className="shrink-0">{score === undefined ? "Unavailable" : `${evaluationScales.expressed_sentiment[Math.round(score)]} · ${score.toFixed(1)} / 4`}</dd>
         </div>
         <dd className="mt-1 text-muted-foreground">Shown for context, not graded.</dd>
-      </div>
+      </div>}
     </dl>
   </>
 }
@@ -158,7 +165,7 @@ export function CallEvaluation({ evaluation, verdicts = [], questions = [] }: { 
           ))}
         </dl>
         {typeof evaluation.reason === "string" && <p className="mt-3 text-xs">{evaluation.status === "incomplete" ? "Evaluation incomplete" : "Evaluation unavailable"}: {title(evaluation.reason)}</p>}
-        {evaluation.evaluatorVersion === "typesafe-scorecard-v6" || evaluation.evaluatorVersion === "typesafe-scorecard-v7" ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
+        {evaluation.evaluatorVersion === "typesafe-scorecard-v6" || evaluation.evaluatorVersion === "typesafe-scorecard-v7" || evaluation.evaluatorVersion === "typesafe-scorecard-v8" ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
         {!currentVersion && <p className="mt-3 text-xs text-muted-foreground">This evaluator version is shown as recorded. Automatic red highlights apply only to typesafe-trace-v4.</p>}
         {Object.entries(results).map(([group, raw]) => {
           const result = record(raw)

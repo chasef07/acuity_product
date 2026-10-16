@@ -37,7 +37,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		for name, value := range noul {
 			results[name] = map[string]any{"verdict": value > scorecardNoAtOrBelow, "probability": value, "votes": map[string]any{"typesafe-ai/jev": value}, "errors": map[string]any{}}
 		}
-		return map[string]any{"evaluator": "jury", "evaluatorVersion": ScorecardJudgeVersion, "jurors": []string{"typesafe-ai/jev"}, "status": "complete", "results": results}
+		return map[string]any{"evaluator": "jury", "evaluatorVersion": legacyJudgeVersion, "jurors": []string{"typesafe-ai/jev"}, "status": "complete", "results": results}
 	}
 	insert := func(index int, seconds int, tools []syntheticTool, judged map[string]float64) string {
 		t.Helper()
@@ -234,17 +234,8 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 	if accuracy.ReviewedCalls != 2 || falseAlarms != 1 || accuracy.GoldenAnswers != 18 || accuracy.CurrentJudgeVersion != ScorecardJudgeVersion {
 		t.Fatalf("accuracy lists the false alarm: %+v", accuracy)
 	}
-	if len(accuracy.Days) != 1 || accuracy.Days[0].Date != "2026-10-06" || accuracy.Week != accuracy.Days[0].GoldenSetCounts || accuracy.Week.JudgeNo < accuracy.Week.FalseAlarms {
-		t.Fatalf("golden set by review day: %+v week=%+v", accuracy.Days, accuracy.Week)
-	}
-	endedAlarms := -1
-	for _, question := range accuracy.Days[0].Questions {
-		if question.Question == "ended_while_caller_active" {
-			endedAlarms = question.FalseAlarms
-		}
-	}
-	if endedAlarms != 1 {
-		t.Fatalf("the E1 false alarm is counted on its day: %+v", accuracy.Days[0].Questions)
+	if len(accuracy.Days) != 0 || accuracy.Week != (GoldenSetCounts{}) {
+		t.Fatalf("historical v7 reviews must not count as current v8 golden evidence: %+v", accuracy)
 	}
 	if len(accuracy.ReviewerDisagreements) != 1 || accuracy.ReviewerDisagreements[0].Question != "office_question_answered" {
 		t.Fatalf("reviewer disagreements: %+v", accuracy.ReviewerDisagreements)

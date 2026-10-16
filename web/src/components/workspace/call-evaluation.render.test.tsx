@@ -218,3 +218,12 @@ for (const version of ["typesafe-scorecard-v6", "typesafe-scorecard-v7"]) test(`
   assert.match(html, /No availability search returned a result/)
   assert.match(html, /Negative · 1.2 \/ 4/)
 })
+
+test("v8 shows unknown knowledge separately from failures and omits removed sentiment", () => {
+ const question = (key: string, prompt: string) => ({ key, prompt, code: "", label: "", source: "judge" as const, question: "", yes: "", no: "", failure: true })
+ const html = renderToStaticMarkup(<CallEvaluation questions={[question("knowledge_available", "Did returned knowledge contain the answer?"), question("transfer_policy_followed", "Was transfer policy followed?")]} verdicts={[{question: "transfer_policy_followed", code: "T1", prompt: "", answer: "no"}]} evaluation={{evaluatorVersion: "typesafe-scorecard-v8", evaluator:"jury", status:"complete", jurors:["a","b","c"], results:{knowledge_available:{status:"unknown",reason:"no_office_knowledge_result"}, transfer_policy_followed:{verdict:false, probability:0.2,votes:{a:0.1,b:0.2,c:0.3},errors:{}}}}} />)
+ assert.match(html, /Was transfer policy followed\?<\/dt><dd class="shrink-0 font-medium text-destructive">No/)
+ assert.match(html, />Unknown<\/dd>/)
+ assert.match(html, /No usable office knowledge result was recorded/)
+ assert.doesNotMatch(html, /Caller sentiment|Automatic red highlights|knowledge available/)
+})
