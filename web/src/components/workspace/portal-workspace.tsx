@@ -42,7 +42,6 @@ import { EngagementWorkspace } from "@/components/workspace/engagement-workspace
 import { TaskCallContext, TaskCallAction } from "@/components/workspace/task-call-context"
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
 import { CallingRailControl } from "@/components/workspace/workspace-rail-button"
-import { WorkspaceBand, WorkspaceBandContext, workspaceBand } from "@/components/workspace/workspace-band"
 import { WorkspaceRail } from "@/components/workspace/workspace-rail"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import { WorkEmptyState } from "@/components/workspace/work-empty-state"
@@ -99,7 +98,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
   const router = useRouter()
   const session = authClient.useSession()
   const sessionID = session.data?.session.id
-  const [band, setBand] = useState<HTMLDivElement | null>(null)
   const [projection] = useState(() =>
     createWorkspaceProjection({
       authority: createWorkspaceAuthorityAdapter(),
@@ -345,8 +343,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           }
         />
         <div className={workspaceColumn}>
-        <WorkspaceBand ref={setBand} />
-        <WorkspaceBandContext value={band}>
         <div data-testid="workspace-panel" className={cn("relative overflow-hidden", workspacePanel)}>
           <WorkspaceRail
             projection={state}
@@ -533,7 +529,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
             )}
           </SidebarInset>
         </div>
-        </WorkspaceBandContext>
         </div>
       </>
     )
@@ -664,14 +659,13 @@ function WorkspaceSelector({
 }
 
 const workspaceColumn = "flex h-svh min-w-0 flex-1 flex-col"
-const workspacePanel = "flex min-h-0 min-w-0 flex-1 bg-background md:mb-2 md:mr-2 md:rounded-xl md:border md:border-sidebar-border md:shadow-xs"
+const workspacePanel = "flex min-h-0 min-w-0 flex-1 bg-background md:my-2 md:mr-2 md:rounded-xl md:border md:border-sidebar-border md:shadow-xs"
 
 function WorkspaceLoading() {
   return (
     <div className="flex min-h-svh w-full bg-sidebar" aria-busy="true">
       <div className="w-16 shrink-0" />
       <div className={workspaceColumn}>
-        <div className={workspaceBand} />
         <main data-testid="workspace-panel" className={cn("items-center justify-center", workspacePanel)}>
           <div role="status" className="animate-pulse text-muted-foreground motion-reduce:animate-none">
             <AcuityMark className="size-12" />

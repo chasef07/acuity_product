@@ -45,7 +45,7 @@ function heading(markup: string) {
   return /<h2 class="([^"]*)">([^<]*)<\/h2>/.exec(markup)
 }
 
-test("the Task panel heading fits the narrow column and leaves the number to the band", () => {
+test("the Task panel heading fits the narrow column and leaves the number to the conversation header", () => {
   const markup = panel({})
   const [, classes, text] = heading(markup) ?? []
   assert.equal(text, "Review booked appointment")

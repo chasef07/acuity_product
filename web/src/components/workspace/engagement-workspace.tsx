@@ -113,7 +113,6 @@ import {
   sameConversationDate,
   taskActivityDetail,
 } from "@/lib/workspace-history"
-import { InWorkspaceBand } from "./workspace-band"
 
 const maximumMessageLength = 1_600
 const maximumAttachmentBytes = 600 * 1_024
@@ -204,8 +203,7 @@ export function EngagementWorkspaceView({
   } = calling
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <InWorkspaceBand>
-      <header className="group/conversation-header relative flex h-16 min-w-0 flex-1 shrink-0 items-center gap-3 px-4 sm:h-13 sm:px-6 md:h-10">
+      <header className="group/conversation-header relative flex h-16 min-w-0 shrink-0 items-center gap-3 px-4 sm:h-13 sm:px-6">
         <div className="flex min-w-0 items-center gap-1">
           <div className="flex min-w-0 flex-col sm:flex-row sm:items-center sm:gap-2">
             <span className="truncate text-xs text-muted-foreground sm:text-base md:text-sm">
@@ -314,7 +312,6 @@ export function EngagementWorkspaceView({
           </p>
         )}
       </header>
-      </InWorkspaceBand>
       <MessageConversation
         timelineSource={{
           kind: "engagement",

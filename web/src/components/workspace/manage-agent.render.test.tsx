@@ -8,7 +8,6 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { InsuranceList } from "./insurance-list.tsx"
 import { KnowledgeHistory } from "./knowledge-base.tsx"
 import { ManageAgent } from "./manage-agent.tsx"
-import { WorkspaceBandContext } from "./workspace-band.tsx"
 import { authClient, clearAccessToken } from "../../lib/auth-client.ts"
 import type {
   AgentCallsPage,
@@ -170,50 +169,42 @@ test("Transcripts follow the sidebar's office, including all offices, without an
   await page.unmount()
 })
 
-test("each page puts its title and page actions in the gray band and keeps its filters at the top of the panel", async (t) => {
+test("each page keeps its title, actions, and filters inside the panel", async (t) => {
   const page = harness(t)
   page.knowledge = syntheticKnowledge
   page.agentCalls = {
     calls: [{ id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }],
     nextCursor: "",
   }
-  const band = document.createElement("div")
-  document.body.append(band)
-  const inBand = (selected: "home" | "transcripts" | "knowledge" | "insurance") =>
+  const showPage = (selected: "home" | "transcripts" | "knowledge" | "insurance") =>
     page.render(
-      <WorkspaceBandContext value={band}>
-        <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page={selected} onPage={() => {}} />
-      </WorkspaceBandContext>,
+      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page={selected} onPage={() => {}} />,
       selected,
     )
 
-  await inBand("transcripts")
-  await waitFor(() => band.textContent === "Transcripts1 call")
-  assert.equal(band.querySelector("h1")?.textContent, "Transcripts")
-  assert.ok(band.querySelector("button[aria-label='Refresh calls']"))
-  assert.equal(page.host.querySelector("h1"), null)
+  await showPage("transcripts")
+  await waitFor(() => page.host.querySelector("header")?.textContent === "Transcripts1 call")
+  assert.equal(page.host.querySelector("h1")?.textContent, "Transcripts")
+  assert.ok(page.host.querySelector("header button[aria-label='Refresh calls']"))
   assert.ok(page.host.querySelector("input[aria-label='Search phone number']"))
   assert.ok(page.host.querySelector("[role='combobox'][aria-label='Date range']"))
-  assert.equal(page.host.querySelector("section")?.getAttribute("aria-labelledby"), band.querySelector("h1")?.id)
+  assert.equal(page.host.querySelector("section")?.getAttribute("aria-labelledby"), page.host.querySelector("h1")?.id)
 
-  await inBand("knowledge")
+  await showPage("knowledge")
   await waitFor(() => /Office hours/.test(page.text()))
-  assert.match(band.textContent ?? "", /^Knowledge baseUpdated .+ · Version 3History$/)
+  assert.match(page.host.querySelector("header")?.textContent ?? "", /^Knowledge baseUpdated .+ · Version 3History$/)
   assert.ok(page.host.querySelector("input[type='search']"))
-  assert.equal(page.host.querySelector("header"), null)
 
-  await inBand("insurance")
+  await showPage("insurance")
   await waitFor(() => page.groups().length === 3)
-  assert.equal(band.textContent, "Insurance list")
+  assert.equal(page.host.querySelector("header")?.textContent, "Insurance list")
   assert.ok(page.host.querySelector("[role='combobox'][aria-label='Visit coverage']"))
 
-  await inBand("home")
+  await showPage("home")
   await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => /Version 3 · published/.test(page.text()))
-  assert.equal(band.textContent, "")
   assert.equal(page.host.querySelector("h1")?.textContent, "Your agent")
   await page.unmount()
-  band.remove()
 })
 
 test("insurance plans are grouped by result, sorted by name, summarized in one row, expand in place, and collapse by group", async (t) => {

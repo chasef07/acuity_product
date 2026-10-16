@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { WorkspacePageHeader } from "@/components/workspace/workspace-band"
+import { WorkspacePageHeader } from "@/components/workspace/workspace-page-header"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { formatDay, type BookingMetric } from "@/lib/booking-analytics"
 import styles from "./booking-overview.module.css"

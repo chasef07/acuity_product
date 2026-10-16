@@ -628,6 +628,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   const headerTop = await inboxHeading.evaluate(
     (element) => element.closest("header")?.getBoundingClientRect().top,
   )
+  expect(await inboxHeading.evaluate((element) => Boolean(element.closest('[data-testid="workspace-panel"]')))).toBe(true)
   await timeline.evaluate((element) => {
     element.scrollTop = element.scrollHeight
   })

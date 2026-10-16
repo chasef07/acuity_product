@@ -196,6 +196,7 @@ test("the workspace keeps one frame from loading to loaded", async ({ page }, te
   await expect(page.locator('[aria-busy="true"]')).toBeVisible()
   let loading = await frame()
   await expect.poll(async () => (loading = await frame()).panel).not.toBe("")
+  expect(loading.box[1]).toBe(8)
   await page.screenshot({ path: testInfo.outputPath("workspace-loading.png") })
   release()
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)

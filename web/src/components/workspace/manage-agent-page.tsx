@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { PortalFailure, PortalQuery } from "@/lib/clients/portal-request"
-import { WorkspacePageHeader } from "./workspace-band"
+import { WorkspacePageHeader } from "./workspace-page-header"
 
 export type AgentLocationProps = {
   practiceID: string

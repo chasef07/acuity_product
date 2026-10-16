@@ -72,7 +72,7 @@ export function WorkspaceNavRail({
   return (
     <nav
       aria-label="Workspace"
-      className="sticky top-0 flex h-svh w-16 shrink-0 flex-col items-center gap-2 py-3 md:pt-10 md:pb-2"
+      className="sticky top-0 flex h-svh w-16 shrink-0 flex-col items-center gap-2 py-3 md:py-2"
     >
       <RailButton
         label="Home"
