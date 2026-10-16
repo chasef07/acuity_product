@@ -106,7 +106,7 @@ test("Home connects Acuity to knowledge, insurance, and tools, with unanswered q
   await page.unmount()
 })
 
-test("pages that show one Location use the sidebar's office, or the only office, and never offer their own Location picker", async (t) => {
+test("pages that show one Location use the workspace's office, or the only office, and never offer their own Location picker", async (t) => {
   const page = harness(t)
   page.knowledge = { locationId: locations[1].id, sections: [], revision: { id: "revision-2", version: 2, createdAt: "2026-10-12T14:00:00Z" } }
   const scopes = [
@@ -134,7 +134,7 @@ test("pages that show one Location use the sidebar's office, or the only office,
   await page.unmount()
 })
 
-test("with all offices in scope and several offices, one-Location pages ask for an office from the sidebar and load nothing", async (t) => {
+test("with all offices in scope and several offices, one-Location pages ask for an office and load nothing", async (t) => {
   const page = harness(t)
   for (const selected of ["home", "knowledge", "insurance"] as const) {
     await page.render(
@@ -142,12 +142,16 @@ test("with all offices in scope and several offices, one-Location pages ask for 
       selected,
     )
     await act(async () => new Promise((resolve) => setTimeout(resolve, 30)))
-    assert.match(page.text(), /Choose an office.*Choose an office in the sidebar's office picker\./)
     assert.equal(page.host.querySelector("[role='combobox']"), null)
     assert.equal(page.host.querySelector("input[type='search']"), null)
     if (selected === "home") {
       const connections = page.host.querySelector('[role="group"][aria-label="Agent connections"]')!
-      assert.equal(connections.querySelectorAll("button:disabled").length, 3)
+      assert.equal(connections.querySelectorAll("button:disabled").length, 0)
+      assert.doesNotMatch(page.text(), /Choose an office/)
+      await act(async () => page.button(/^Knowledge base/).click())
+      assert.match(page.text(), /Open knowledge base/)
+    } else {
+      assert.match(page.text(), /Choose an office.*Choose an office using the office picker above\./)
     }
   }
   assert.equal(page.host.querySelector("h1")?.textContent, "Insurance list")
@@ -155,7 +159,7 @@ test("with all offices in scope and several offices, one-Location pages ask for 
   await page.unmount()
 })
 
-test("Transcripts follow the sidebar's office, including all offices, without an Office picker", async (t) => {
+test("Transcripts follow the workspace's office, including all offices, without a page-level Office picker", async (t) => {
   const page = harness(t)
   for (const locationScopeID of ["", locations[1].id]) {
     await page.render(

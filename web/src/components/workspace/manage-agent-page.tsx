@@ -153,7 +153,7 @@ export function ChooseOffice() {
   return (
     <AgentEmpty
       title="Choose an office"
-      description="This shows one office at a time. Choose an office in the sidebar's office picker."
+      description="This shows one office at a time. Choose an office using the office picker above."
     />
   )
 }

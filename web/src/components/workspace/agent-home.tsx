@@ -19,7 +19,7 @@ import { formatUSPhone } from "@/lib/phone"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 import { AgentCallPanel } from "./agent-call-panel"
 import { AgentHomeMap, agentAreas, type AgentArea } from "./agent-home-map"
-import { AgentQueryBody, ChooseOffice, type AgentLocationProps } from "./manage-agent-page"
+import { AgentQueryBody, type AgentLocationProps } from "./manage-agent-page"
 
 const tools = [
   { icon: BookOpenIcon, label: "Answer office questions", detail: "From the knowledge base" },
@@ -59,16 +59,15 @@ export function AgentHome({
         </p>
       </header>
       <div className="px-4 py-10 sm:px-6 @[36rem]:py-16">
-        <AgentHomeMap selected={selected} detailsID={detailsID} disabled={!locationID} onSelect={selectArea} />
+        <AgentHomeMap selected={selected} detailsID={detailsID} onSelect={selectArea} />
       </div>
-      {!locationID && <ChooseOffice />}
       <div id={detailsID} ref={details}>
-        {area && locationID && (
+        {area && (
           <section aria-label="Agent details" className="border-t px-4 py-6 sm:px-6">
             <header className="mb-5 flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">{area.title}</h2>
-                {selected === "knowledge" && <KnowledgeVersion practiceID={practiceID} locationID={locationID} />}
+                {selected === "knowledge" && locationID && <KnowledgeVersion practiceID={practiceID} locationID={locationID} />}
               </div>
               <Button variant="ghost" size="sm" onClick={closeDetails}>
                 <XIcon aria-hidden="true" />
@@ -78,7 +77,7 @@ export function AgentHome({
             {selected === "knowledge" ? (
               <>
                 <Button variant="outline" className="mb-8" onClick={() => onPage("knowledge")}>Open knowledge base</Button>
-                <NeedsKnowledge practiceID={practiceID} locationID={locationID} onAddKnowledge={() => onPage("knowledge")} />
+                {locationID && <NeedsKnowledge practiceID={practiceID} locationID={locationID} onAddKnowledge={() => onPage("knowledge")} />}
               </>
             ) : selected === "insurance" ? (
               <>

@@ -49,7 +49,6 @@ export function CallingRailControl({
     return (
       <RailButton
         label="Calls"
-        shortLabel="Calls"
         tooltip={attention}
         attention={attention}
         onClick={() => {
@@ -65,7 +64,6 @@ export function CallingRailControl({
   return (
     <RailButton
       label="Receive calls"
-      shortLabel="Calls"
       tooltip={attention ? `${state} · ${attention}` : state}
       attention={attention}
       role="switch"
@@ -81,7 +79,6 @@ export function CallingRailControl({
 
 export function RailButton({
   label,
-  shortLabel,
   tooltip,
   active = false,
   attention,
@@ -89,7 +86,6 @@ export function RailButton({
   ...props
 }: Omit<ComponentProps<typeof Button>, "children"> & {
   label: string
-  shortLabel?: string
   tooltip?: string
   active?: boolean
   attention?: string
@@ -107,7 +103,7 @@ export function RailButton({
             aria-current={active && props.role !== "switch" ? "page" : undefined}
             aria-describedby={attention ? attentionID : undefined}
             data-active={active}
-            className="group/rail h-auto w-14 flex-col gap-1 px-0 py-0 text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-[active=true]:text-foreground dark:hover:bg-transparent"
+            className="group/rail size-11 p-0 text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-[active=true]:text-foreground dark:hover:bg-transparent"
             {...props}
           />
         }
@@ -121,7 +117,6 @@ export function RailButton({
             <span aria-hidden="true" className="absolute top-1 right-1 size-2 rounded-full bg-warning ring-2 ring-sidebar" />
           )}
         </span>
-        <span className="max-w-full truncate text-[10px] leading-3 font-medium">{shortLabel ?? label}</span>
         {attention && <span id={attentionID} className="sr-only">{attention}</span>}
       </TooltipTrigger>
       <TooltipContent side="right">{tooltip ?? label}</TooltipContent>

@@ -12,6 +12,7 @@ import { TaskCallContext } from "./task-call-context.tsx"
 import { WorkEmptyState } from "./work-empty-state.tsx"
 import { RailButton } from "./workspace-rail-button.tsx"
 import { WorkspaceRail } from "./workspace-rail.tsx"
+import { WorkspaceTopBar } from "./workspace-page-header.tsx"
 import { clearAccessToken } from "../../lib/auth-client.ts"
 import type {
   AiInteractionDetail,
@@ -132,7 +133,8 @@ test("the sidebar shows Manage agent pages in place of Tasks only while Manage a
   assert.equal(document.getElementById(nav.getAttribute("aria-labelledby") ?? "")?.textContent, "Manage agent")
   assert.deepEqual(Array.from(nav.querySelectorAll("button"), (button) => button.textContent), ["Home", "Transcripts", "Knowledge base", "Insurance list"])
   assert.equal(nav.querySelector("[aria-current='page']")?.textContent, "Insurance list")
-  assert.match(host.textContent ?? "", /Acuity Health.*Workspace selector/)
+  assert.match(host.textContent ?? "", /Acuity Health/)
+  assert.doesNotMatch(host.textContent ?? "", /Workspace selector/)
   assert.doesNotMatch(host.textContent ?? "", /Calling status/)
   assert.equal(host.querySelector("input[aria-label='Search tasks, names, or phone']"), null)
   assert.equal(host.querySelector("[aria-label='Workspace folders']"), null)
@@ -196,15 +198,28 @@ test("Work without a selected task names whether the inbox is clear or waiting f
   assert.doesNotMatch(loading, /Inbox clear/)
 })
 
-test("rail buttons show a visible label under each icon and keep their accessible names", () => {
-  for (const [label, shortLabel, visible] of [["Home", undefined, "Home"], ["AI diagnostics", "Diagnostics", "Diagnostics"]] as const) {
+test("breadcrumbs mark only the current page and only offer navigation when a destination exists", () => {
+  for (const props of [
+    { section: "Home" },
+    { section: "Home", page: "Knowledge base", onSection: () => {} },
+    { section: "Work", page: "Review appointment" },
+  ]) {
+    const html = renderToStaticMarkup(<WorkspaceTopBar {...props} />)
+    assert.equal(html.match(/aria-current="page"/g)?.length, 1)
+    assert.equal(html.includes("<button"), Boolean(props.onSection))
+    assert.match(html, new RegExp(`aria-current="page"[^>]*>${props.page ?? props.section}<`))
+  }
+})
+
+test("rail buttons are icon-only and keep their accessible names", () => {
+  for (const label of ["Home", "AI diagnostics"]) {
     const html = renderToStaticMarkup(
-      <RailButton label={label} shortLabel={shortLabel} active={label === "Home"} onClick={() => {}}>
+      <RailButton label={label} active={label === "Home"} onClick={() => {}}>
         <svg />
       </RailButton>,
     )
     assert.match(html, new RegExp(`aria-label="${label}"`))
-    assert.match(html, new RegExp(`<span class="[^"]*text-\\[10px\\][^"]*">${visible}</span>`))
+    assert.doesNotMatch(html, /text-\[10px\]/)
     assert.equal(/aria-current="page"/.test(html), label === "Home")
     assert.doesNotMatch(html, /aria-describedby/)
   }
@@ -214,7 +229,6 @@ test("the calling rail control names its warning dot", () => {
   const html = renderToStaticMarkup(
     <RailButton
       label="Receive calls"
-      shortLabel="Calls"
       role="switch"
       aria-checked
       attention="Calling is open elsewhere. Fix it from Work."
@@ -227,7 +241,7 @@ test("the calling rail control names its warning dot", () => {
   assert.ok(describedBy)
   assert.match(html, new RegExp(`id="${describedBy}"[^>]*>Calling is open elsewhere\\. Fix it from Work\\.<`))
   assert.match(html, /role="switch"/)
-  assert.match(html, />Calls</)
+  assert.doesNotMatch(html, />Calls</)
   assert.doesNotMatch(html, /aria-current/)
 })
 

@@ -42,7 +42,8 @@ import { EngagementWorkspace } from "@/components/workspace/engagement-workspace
 import { TaskCallContext, TaskCallAction } from "@/components/workspace/task-call-context"
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
 import { CallingRailControl } from "@/components/workspace/workspace-rail-button"
-import { WorkspaceRail } from "@/components/workspace/workspace-rail"
+import { WorkspaceRail, manageAgentPages } from "@/components/workspace/workspace-rail"
+import { WorkspaceTopBar } from "@/components/workspace/workspace-page-header"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import { WorkEmptyState } from "@/components/workspace/work-empty-state"
 import type {
@@ -330,6 +331,21 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       }
       void projection.dispatch(intent)
     }
+    const locationControl = (
+      <WorkspaceSelector
+        discovery={discovery}
+        practiceID={state.scope.practiceID}
+        locationScopeID={state.scope.locationScopeID}
+        disabled={callingOccupied}
+        onSelect={(practiceID, locationScopeID) =>
+          void projection.dispatch({ type: "select-scope", practiceID, locationScopeID })
+        }
+      />
+    )
+    const section = view === "manage-agent" ? "Home" : view === "analytics" ? "Analytics" : view === "operator-analytics" ? "AI diagnostics" : "Work"
+    const page = view === "manage-agent" && state.selection.agentPage !== "home"
+      ? manageAgentPages.find((item) => item.value === state.selection.agentPage)?.label
+      : isWorkView(view) ? selectedTask?.title : undefined
     return (
       <>
         <WorkspaceNavRail
@@ -343,26 +359,20 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           }
         />
         <div className={workspaceColumn}>
-        <div data-testid="workspace-panel" className={cn("relative overflow-hidden", workspacePanel)}>
+        <div data-testid="workspace-panel" className={cn("relative flex-col overflow-hidden", workspacePanel)}>
+          <WorkspaceTopBar
+            section={section}
+            page={page}
+            onSection={view === "manage-agent" ? () => sendIntent({ type: "select-manage-agent", page: "home" }) : undefined}
+          >
+            {view === "manage-agent" && state.selection.agentPage !== "home" && locationControl}
+          </WorkspaceTopBar>
+          <div className="relative flex min-h-0 flex-1 overflow-clip">
           <WorkspaceRail
             projection={state}
             onIntent={sendIntent}
             callingStatus={<CallingFailureStatus />}
-            locationControl={
-              <WorkspaceSelector
-                discovery={discovery}
-                practiceID={state.scope.practiceID}
-                locationScopeID={state.scope.locationScopeID}
-                disabled={callingOccupied}
-                onSelect={(practiceID, locationScopeID) =>
-                  void projection.dispatch({
-                    type: "select-scope",
-                    practiceID,
-                    locationScopeID,
-                  })
-                }
-              />
-            }
+            locationControl={locationControl}
           />
           <SidebarInset
             data-testid="mounted-workspace"
@@ -528,6 +538,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
               <WorkEmptyState projection={state} />
             )}
           </SidebarInset>
+          </div>
         </div>
         </div>
       </>

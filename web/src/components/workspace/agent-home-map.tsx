@@ -37,12 +37,10 @@ export const agentAreas = [
 export function AgentHomeMap({
   selected,
   detailsID,
-  disabled,
   onSelect,
 }: {
   selected?: AgentArea
   detailsID: string
-  disabled: boolean
   onSelect: (area: AgentArea) => void
 }) {
   return (
@@ -77,10 +75,9 @@ export function AgentHomeMap({
           aria-label={area.title}
           aria-expanded={selected === area.id}
           aria-controls={detailsID}
-          disabled={disabled}
           onClick={() => onSelect(area.id)}
           className={cn(
-            "relative z-10 min-w-0 rounded-xl border bg-background p-5 text-left transition-colors hover:border-muted-foreground hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none @[36rem]:min-h-32",
+            "relative z-10 min-w-0 rounded-xl border bg-background p-5 text-left transition-colors hover:border-muted-foreground hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none motion-reduce:transition-none @[36rem]:min-h-32",
             selected === area.id && "border-foreground bg-muted/30",
             area.position,
           )}
@@ -94,12 +91,11 @@ export function AgentHomeMap({
         </button>
       ))}
       <div className="relative z-10 order-first flex flex-col items-center py-6 @[36rem]:col-start-2 @[36rem]:row-start-1 @[36rem]:row-span-2 @[36rem]:self-center @[36rem]:py-0">
-        <div className="flex size-32 items-center justify-center rounded-full border bg-background ring-8 ring-background">
+        <div className="flex size-32 items-center justify-center bg-background">
           <AnimatedAcuityMark className="size-20" />
         </div>
         <div className="mt-5 text-center @[36rem]:absolute @[36rem]:top-full @[36rem]:w-44">
           <h2 className="text-2xl font-semibold tracking-tight">Acuity</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Your office’s AI agent</p>
         </div>
       </div>
     </div>

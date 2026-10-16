@@ -72,8 +72,9 @@ export function WorkspaceNavRail({
   return (
     <nav
       aria-label="Workspace"
-      className="sticky top-0 flex h-svh w-16 shrink-0 flex-col items-center gap-2 py-3 md:py-2"
+      className="sticky top-0 flex h-svh w-16 shrink-0 flex-col items-center gap-3 py-3 md:py-2"
     >
+      <div aria-hidden="true" className="hidden h-12 shrink-0 md:block" />
       <RailButton
         label="Home"
         active={view === "manage-agent"}
@@ -107,7 +108,6 @@ export function WorkspaceNavRail({
       {discovery.platformOperator && (
         <RailButton
           label="AI diagnostics"
-          shortLabel="Diagnostics"
           active={view === "operator-analytics"}
           aria-expanded={view === "operator-analytics" && panelOpen}
           onClick={() => selectWithSidebar(view === "operator-analytics", { type: "select-operator-analytics" })}

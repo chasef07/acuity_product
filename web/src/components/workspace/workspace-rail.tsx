@@ -83,7 +83,7 @@ import {
   type TaskCategoryFilter,
 } from "@/lib/workspace-triage"
 
-const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
+export const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
   { value: "home", label: "Home", icon: HouseIcon },
   { value: "transcripts", label: "Transcripts", icon: MessageSquareTextIcon },
   { value: "knowledge", label: "Knowledge base", icon: BookOpenIcon },
@@ -283,12 +283,12 @@ export function WorkspaceRail({
   return (
     <>
       <Sidebar collapsible="offcanvas" className="absolute h-full [&_[data-slot=sidebar-inner]]:bg-canvas">
-        <SidebarHeader className="gap-3 p-3 pb-2">
+        <SidebarHeader className={cn("gap-3 p-3 pb-2", view === "manage-agent" && "px-4 pt-5 pb-4")}>
           <div className="flex items-center gap-2 px-1">
             <AcuityMark className="size-7 shrink-0" />
             <span className="text-base font-semibold tracking-tight">Acuity Health</span>
           </div>
-          {locationControl}
+          {view !== "manage-agent" && locationControl}
           {workView && <div className="flex items-start gap-2">
             <form className="min-w-0 flex-1"
               onSubmit={(event) => {
@@ -484,13 +484,13 @@ function ManageAgentNavigation({
         Manage agent
       </p>
       <SidebarGroupContent>
-        <SidebarMenu className="gap-0.5">
+        <SidebarMenu className="gap-1">
           {manageAgentPages.map((item) => (
             <SidebarMenuItem key={item.value}>
               <SidebarMenuButton
                 isActive={page === item.value}
                 aria-current={page === item.value ? "page" : undefined}
-                className="h-8 px-2.5"
+                className="h-9 rounded-lg px-2.5"
                 onClick={() => {
                   onPage(item.value)
                   if (isMobile) setOpenMobile(false)

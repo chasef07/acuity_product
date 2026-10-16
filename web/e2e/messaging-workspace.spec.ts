@@ -642,6 +642,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   const scrollToLatest = page.getByRole("button", { name: "Scroll to end" })
   await expect(scrollToLatest).toBeVisible()
   await scrollToLatest.click({ timeout: 10_000 })
+  expect(await page.getByTestId("workspace-panel").evaluate((element) => element.scrollTop)).toBe(0)
   await expect
     .poll(() => timeline.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0)
