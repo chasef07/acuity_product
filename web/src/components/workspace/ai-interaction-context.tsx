@@ -11,7 +11,8 @@ import {
   aiCallTimelinePresentation,
   appointmentOutcomeTitle,
 } from "@/lib/ai-interactions"
-import { formatElapsedSeconds, formatMediumDateTime } from "@/lib/format"
+import { formatElapsedSeconds } from "@/lib/format"
+import { formatAppointmentDateTime, formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 
 export function AIInteractionContext({
@@ -92,7 +93,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
         <dl className="mt-3 flex flex-col gap-3 text-sm">
           <DetailValue
             label="Started"
-            value={formatMediumDateTime(detail.startedAt)}
+            value={formatTimestamp(detail.startedAt)}
           />
           <DetailValue
             label="Call length"
@@ -225,29 +226,6 @@ function visitLabel(facts: AiAppointmentFacts) {
   if (facts.careLane === "medical_md") return "Medical"
   if (facts.careLane === "routine_od") return "Routine vision"
   return "—"
-}
-
-function formatAppointmentDateTime(facts: AiAppointmentFacts) {
-  if (facts.startDatetime) {
-    const value = new Date(facts.startDatetime)
-    if (!Number.isNaN(value.getTime())) {
-      return new Intl.DateTimeFormat(undefined, {
-        dateStyle: "long",
-        timeStyle: "short",
-      }).format(value)
-    }
-  }
-  if (!facts.appointmentDate) return facts.appointmentTime
-  const match = facts.appointmentDate.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  const date = match
-    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
-    : new Date(facts.appointmentDate)
-  const dateLabel = Number.isNaN(date.getTime())
-    ? facts.appointmentDate
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(date)
-  return facts.appointmentTime
-    ? `${dateLabel} · ${facts.appointmentTime}`
-    : dateLabel
 }
 
 function formatDuration(startedAt: string, endedAt?: string) {

@@ -16,6 +16,7 @@ import {
   ChevronDownIcon,
   FolderIcon,
   FolderOpenIcon,
+  HouseIcon,
   ListFilterIcon,
   MessageSquareTextIcon,
   PhoneIcon,
@@ -70,18 +71,20 @@ import type { Task, TaskFolderCounts } from "@/lib/api/generated/types.gen"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { taskGroups } from "@/lib/task-groups"
-import type {
-  ManageAgentPage,
-  WorkspaceProjectionIntent,
-  WorkspaceProjectionState,
-  WorkspaceRailSection,
+import {
+  isWorkView,
+  type ManageAgentPage,
+  type WorkspaceProjectionIntent,
+  type WorkspaceProjectionState,
+  type WorkspaceRailSection,
 } from "@/lib/workspace-projection"
 import {
   taskCountForCategory,
   type TaskCategoryFilter,
 } from "@/lib/workspace-triage"
 
-const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
+export const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
+  { value: "home", label: "Home", icon: HouseIcon },
   { value: "transcripts", label: "Transcripts", icon: MessageSquareTextIcon },
   { value: "knowledge", label: "Knowledge base", icon: BookOpenIcon },
   { value: "insurance", label: "Insurance list", icon: ShieldCheckIcon },
@@ -198,7 +201,9 @@ export function WorkspaceRail({
   const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
   const folders = workspaceFolders(projection)
   const completed = projection.completedTasks
-  const manageAgent = projection.selection.view === "manage-agent"
+  const view = projection.selection.view
+  const manageAgent = view === "manage-agent"
+  const workView = isWorkView(view)
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (
@@ -227,7 +232,7 @@ export function WorkspaceRail({
       scrollContainer.current?.scrollTo({ top: projection.rail.scrollTop })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [projection.rail.scrollTop, railStateKey, manageAgent])
+  }, [projection.rail.scrollTop, railStateKey, workView])
 
   function toggle(section: WorkspaceRailSection) {
     onIntent({ type: "toggle-rail-section", section })
@@ -278,13 +283,13 @@ export function WorkspaceRail({
   return (
     <>
       <Sidebar collapsible="offcanvas" className="absolute h-full [&_[data-slot=sidebar-inner]]:bg-canvas">
-        <SidebarHeader className="gap-3 p-3 pb-2">
+        <SidebarHeader className={cn("gap-3 p-3 pb-2", view === "manage-agent" && "px-4 pt-5 pb-4")}>
           <div className="flex items-center gap-2 px-1">
             <AcuityMark className="size-7 shrink-0" />
             <span className="text-base font-semibold tracking-tight">Acuity Health</span>
           </div>
-          {locationControl}
-          {!manageAgent && <div className="flex items-start gap-2">
+          {view !== "manage-agent" && locationControl}
+          {workView && <div className="flex items-start gap-2">
             <form className="min-w-0 flex-1"
               onSubmit={(event) => {
                 event.preventDefault()
@@ -337,7 +342,7 @@ export function WorkspaceRail({
               onPage={(page) => onIntent({ type: "select-manage-agent", page })}
             />
           </SidebarContent>
-        ) : (
+        ) : workView && (
         <SidebarContent
           ref={scrollContainer}
           className="gap-2 overflow-y-auto px-2 py-2"
@@ -351,9 +356,10 @@ export function WorkspaceRail({
                 count={folder.count}
                 expanded={expanded.includes(folder.section)}
                 onToggle={() => toggle(folder.section)}
-                action={
-                  folder.section === "tasks" ? (
-                    <>
+              >
+                {folder.section === "tasks" ? (
+                  <>
+                    <SidebarMenuItem className="flex items-center gap-1 pb-1">
                       <TaskResponsibilityToggle
                         responsibility={projection.rail.taskResponsibility ?? "mine"}
                         onChange={(responsibility) =>
@@ -368,12 +374,7 @@ export function WorkspaceRail({
                         counts={taskCounts}
                         onCategoryChange={selectTaskCategory}
                       />
-                    </>
-                  ) : undefined
-                }
-              >
-                {folder.section === "tasks" ? (
-                  <>
+                    </SidebarMenuItem>
                     <TaskCategoryChip
                       category={taskCategory}
                       onClear={() => selectTaskCategory("all")}
@@ -460,7 +461,9 @@ export function WorkspaceRail({
           </div>
         </SidebarContent>
         )}
-        <SidebarFooter className="border-t border-sidebar-border p-2 empty:hidden">{callingStatus}</SidebarFooter>
+        {workView && (
+          <SidebarFooter className="border-t border-sidebar-border p-2 empty:hidden">{callingStatus}</SidebarFooter>
+        )}
       </Sidebar>
     </>
   )
@@ -481,13 +484,13 @@ function ManageAgentNavigation({
         Manage agent
       </p>
       <SidebarGroupContent>
-        <SidebarMenu className="gap-0.5">
+        <SidebarMenu className="gap-1">
           {manageAgentPages.map((item) => (
             <SidebarMenuItem key={item.value}>
               <SidebarMenuButton
                 isActive={page === item.value}
                 aria-current={page === item.value ? "page" : undefined}
-                className="h-8 px-2.5"
+                className="h-9 rounded-lg px-2.5"
                 onClick={() => {
                   onPage(item.value)
                   if (isMobile) setOpenMobile(false)
@@ -509,14 +512,12 @@ function AttentionGroup({
   count,
   expanded,
   onToggle,
-  action,
   children,
 }: {
   title: string
   count?: number
   expanded: boolean
   onToggle: () => void
-  action?: React.ReactNode
   children: React.ReactNode
 }) {
   const FolderStateIcon = expanded ? FolderOpenIcon : FolderIcon
@@ -549,7 +550,6 @@ function AttentionGroup({
             </span>
           )}
         </CollapsibleTrigger>
-        {action}
       </div>
       <CollapsibleContent>
         <SidebarGroupContent>
@@ -625,16 +625,17 @@ function TaskResponsibilityToggle({
       variant="segmented"
       size="sm"
       spacing={0}
+      className="flex-1"
       value={[responsibility]}
       onValueChange={(values) => {
         const value = values[0]
         if (value === "mine" || value === "all") onChange(value)
       }}
     >
-      <ToggleGroupItem value="mine" aria-label="Show My Tasks" className="h-5 px-1.5 text-[11px] data-pressed:bg-background data-pressed:shadow-xs">
+      <ToggleGroupItem value="mine" aria-label="Show My Tasks" className="h-7 flex-1 text-xs data-pressed:bg-background data-pressed:shadow-xs">
         Mine
       </ToggleGroupItem>
-      <ToggleGroupItem value="all" aria-label="Show All Tasks" className="h-5 px-1.5 text-[11px] data-pressed:bg-background data-pressed:shadow-xs">
+      <ToggleGroupItem value="all" aria-label="Show All Tasks" className="h-7 flex-1 text-xs data-pressed:bg-background data-pressed:shadow-xs">
         All
       </ToggleGroupItem>
     </ToggleGroup>
@@ -669,7 +670,7 @@ function TaskCategoryMenu({
             size="sm"
             aria-label={`Filter ${viewLabel}${category === "all" ? "" : ` · ${taskCategoryLabel(category)}`}`}
             title="Filter by type"
-            className={cn("size-7 shrink-0 p-0 text-muted-foreground", category !== "all" && "text-foreground")}
+            className={cn("size-8 shrink-0 p-0 text-muted-foreground", category !== "all" && "text-foreground")}
           />
         }
       >

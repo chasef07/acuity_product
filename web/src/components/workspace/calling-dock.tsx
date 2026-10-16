@@ -10,20 +10,11 @@ import {
   useState,
   useSyncExternalStore,
 } from "react"
-import { PhoneIcon, PhoneOffIcon } from "lucide-react"
 
 import {
   CallingCard,
   CallingFailureNotice,
 } from "@/components/workspace/calling-card"
-import { Button } from "@/components/ui/button"
-import { useSidebar } from "@/components/ui/sidebar"
-import { Spinner } from "@/components/ui/spinner"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import type {
   CallingCall,
   CallingDispositionResult,
@@ -43,7 +34,6 @@ import {
   type SoftphoneRuntime,
   type SoftphoneRuntimeSnapshot,
 } from "@/lib/calling/softphone-runtime"
-import { cn } from "@/lib/utils"
 
 type CallingDockProps = {
   children: (
@@ -94,62 +84,6 @@ export function useCallingNavigation() {
     throw new Error("Calling navigation must be rendered inside CallingDock.")
   }
   return context
-}
-
-const railButtonClass = "relative size-11 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground [&_svg]:stroke-[1.75]"
-
-export function CallingAvailabilityControl() {
-  const { isMobile, setOpen, setOpenMobile } = useSidebar()
-  const {
-    activeCall,
-    availabilityPending,
-    available,
-    callingFailure,
-    ownsSoftphone,
-    callingEnabled,
-    setAvailability,
-  } = useCallingNavigation()
-  if (!callingEnabled && !callingFailure) return null
-  const state = availabilityPending
-    ? "Updating availability"
-    : available
-      ? "Receiving calls"
-      : "Not receiving calls"
-  const label = callingFailure ? `${state} · Calling needs attention` : state
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          callingEnabled ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              role="switch"
-              aria-label="Availability"
-              aria-checked={available}
-              disabled={availabilityPending || (Boolean(activeCall) && ownsSoftphone)}
-              className={cn(railButtonClass, available && "text-foreground")}
-              onClick={() => setAvailability(!available)}
-            />
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Calling needs attention"
-              className={railButtonClass}
-              onClick={() => (isMobile ? setOpenMobile(true) : setOpen(true))}
-            />
-          )
-        }
-      >
-        {availabilityPending ? <Spinner /> : available ? <PhoneIcon /> : <PhoneOffIcon />}
-        {callingFailure && <span aria-hidden="true" className="absolute top-1.5 right-1.5 size-2 rounded-full bg-warning ring-2 ring-sidebar" />}
-      </TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
-    </Tooltip>
-  )
 }
 
 export function CallingFailureStatus() {

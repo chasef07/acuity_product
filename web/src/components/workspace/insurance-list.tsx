@@ -10,7 +10,6 @@ import {
   AgentPage,
   AgentQueryBody,
   DisclosureRow,
-  LocationSelect,
   OptionSelect,
   type AgentLocationProps,
 } from "./manage-agent-page"
@@ -49,17 +48,14 @@ export function InsuranceList({
     <AgentPage
       title="Insurance list"
       controls={
-        props.locationID && (
-          <>
-            <LocationSelect {...props} />
-            <OptionSelect
-              label="Visit coverage"
-              value={coverage}
-              items={coverages}
-              onChange={onCoverage}
-            />
-          </>
-        )
+        props.locationID ? (
+          <OptionSelect
+            label="Visit coverage"
+            value={coverage}
+            items={coverages}
+            onChange={onCoverage}
+          />
+        ) : null
       }
     >
       <AgentQueryBody
@@ -69,8 +65,8 @@ export function InsuranceList({
         onRetry={plans.retry}
         missingLocation={!props.locationID}
         isEmpty={(data) => data.plans.length === 0}
-        emptyTitle={`No ${coverageLabel.toLowerCase()} plans are on this Location's insurance list.`}
-        emptyDescription="Choose another Location or visit coverage."
+        emptyTitle={`No ${coverageLabel.toLowerCase()} plans are on this office's insurance list.`}
+        emptyDescription="Choose another office or visit coverage."
       >
         {(data) => (
           <div className="flex flex-col gap-4">

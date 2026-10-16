@@ -3735,6 +3735,9 @@ components:
           maxLength: 32
         flaggedOnly:
           type: boolean
+        needsKnowledgeOnly:
+          type: boolean
+          description: Only calls where the judge found the caller asked an office question that office knowledge could not answer.
         cursor:
           type: string
         limit:
@@ -3744,7 +3747,7 @@ components:
     AgentCall:
       type: object
       additionalProperties: false
-      required: [id, phone, startedAt, appointmentActions, transferred, issueFlagged]
+      required: [id, phone, startedAt, appointmentActions, transferred, issueFlagged, knowledgeGaps]
       properties:
         id:
           type: string
@@ -3765,6 +3768,11 @@ components:
           type: boolean
         issueFlagged:
           type: boolean
+        knowledgeGaps:
+          type: array
+          description: Office knowledge searches during the call that found no answer.
+          items:
+            type: string
     AgentCallsPage:
       type: object
       additionalProperties: false

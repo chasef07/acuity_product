@@ -118,11 +118,11 @@ test("sidebar folders open independently and remember their state", async ({ pag
   await texts.click()
   await expect(texts).toHaveAttribute("aria-expanded", "false")
   await expect(tasks).toHaveAttribute("aria-expanded", "true")
-  await page.getByRole("button", { name: "Home", exact: true }).click()
+  await page.getByRole("button", { name: "Work", exact: true }).click()
   await expect(page.locator('[data-slot="sidebar"]')).toHaveAttribute("data-state", "collapsed")
   await page.reload()
   await expect(page.locator('[data-slot="sidebar"]')).toHaveAttribute("data-state", "collapsed")
-  await page.getByRole("button", { name: "Home", exact: true }).click()
+  await page.getByRole("button", { name: "Work", exact: true }).click()
   await expect(tasks).toBeVisible()
 })
 
@@ -168,4 +168,38 @@ test("appointment review folder is Spring Hill only and does not inflate My Task
   await page.getByRole("button", { name: "Fixture Location 3", exact: true }).click()
   await expect(page.getByRole("button", { name: /^Appointments/ })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^Tasks/ })).toHaveText("Tasks0")
+})
+
+test("the workspace keeps one frame from loading to loaded", async ({ page }, testInfo) => {
+  test.skip(!process.env.E2E_PROVISIONING_OUTPUT, "E2E fixture required")
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route(/\/v1\/workspace(\?|$)/, async (route) => {
+    await gate
+    await route.continue()
+  })
+  await signInAs(page, "selected@abita.test", "Synthetic Staff")
+  const panel = page.getByTestId("workspace-panel")
+  const frame = () =>
+    panel.evaluate((element) => {
+      let ground = element.parentElement
+      while (ground && getComputedStyle(ground).backgroundColor === "rgba(0, 0, 0, 0)") ground = ground.parentElement
+      const box = element.getBoundingClientRect()
+      return {
+        box: [box.x, box.y, box.width, box.height].map(Math.round),
+        panel: getComputedStyle(element).backgroundColor,
+        ground: ground ? getComputedStyle(ground).backgroundColor : "",
+      }
+    })
+  await expect(page.locator('[aria-busy="true"]')).toBeVisible()
+  let loading = await frame()
+  await expect.poll(async () => (loading = await frame()).panel).not.toBe("")
+  expect(loading.box[1]).toBe(8)
+  await page.screenshot({ path: testInfo.outputPath("workspace-loading.png") })
+  release()
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath("workspace-loaded.png") })
+  expect(await frame()).toEqual(loading)
 })

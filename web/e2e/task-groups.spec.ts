@@ -37,7 +37,7 @@ test("staff review grouped requests, correct one group, and preserve completed r
   await expect(group.getByRole("article")).toHaveCount(0)
   await page.mouse.move(700, 50)
   await expect(panel.getByRole("button", { name: /^Complete all \d+ requests$/ })).toBeInViewport()
-  await page.screenshot({path:testInfo.outputPath("grouped-tasks.png"),fullPage:true})
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("grouped-tasks.png"), fullPage: true })
   const medication = panel.getByRole("article", { name: "Task: Group request medication" })
   await expect(medication.getByLabel("Move to group")).toHaveCount(0)
   await medication.getByRole("button", { name: "Move task", exact: true }).click()

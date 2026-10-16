@@ -53,7 +53,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { useAiCallEvidence } from "@/lib/clients/agent-calls"
 import { useScorecardQuestions } from "@/lib/clients/call-review"
-import { formatMediumDateTime } from "@/lib/format"
+import { formatAppointmentDateTime, formatTimestamp } from "@/lib/format-time"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
 export function OperatorAnalyticsDetailSheet({
@@ -195,7 +195,7 @@ function OperatorAnalyticsDetailView({
           {detail.locationName}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {formatMediumDateTime(detail.startedAt)} ·{" "}
+          {formatTimestamp(detail.startedAt)} ·{" "}
           {formatDuration(detail.startedAt, detail.endedAt)}
         </p>
         {detail.summary ? (
@@ -520,13 +520,13 @@ export function TimelineItem({
         className="rounded-md data-[diagnostic-selected]:ring-2 data-[diagnostic-selected]:ring-ring data-[diagnostic-selected]:ring-offset-4"
       >
         <Message
-          align={agent ? "start" : "end"}
+          align={agent ? "end" : "start"}
           aria-label={`${agent ? "Agent" : "Caller"} message`}
         >
           <MessageContent>
             <MessageHeader>{agent ? "Acuity" : "Caller"}</MessageHeader>
             <Bubble
-              align={agent ? "start" : "end"}
+              align={agent ? "end" : "start"}
               variant={agent ? "muted" : "outline"}
             >
               <BubbleContent className="whitespace-pre-wrap">
@@ -761,29 +761,6 @@ function visitLabel(facts: AiAppointmentFacts) {
   if (facts.careLane === "medical_md") return "Medical"
   if (facts.careLane === "routine_od") return "Routine vision"
   return "—"
-}
-
-function formatAppointmentDateTime(facts: AiAppointmentFacts) {
-  if (facts.startDatetime) {
-    const value = new Date(facts.startDatetime)
-    if (!Number.isNaN(value.getTime())) {
-      return new Intl.DateTimeFormat(undefined, {
-        dateStyle: "long",
-        timeStyle: "short",
-      }).format(value)
-    }
-  }
-  if (!facts.appointmentDate) return facts.appointmentTime
-  const match = facts.appointmentDate.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  const date = match
-    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
-    : new Date(facts.appointmentDate)
-  const dateLabel = Number.isNaN(date.getTime())
-    ? facts.appointmentDate
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(date)
-  return facts.appointmentTime
-    ? `${dateLabel} · ${facts.appointmentTime}`
-    : dateLabel
 }
 
 export function formatOffset(value: string, startedAt: string): string {

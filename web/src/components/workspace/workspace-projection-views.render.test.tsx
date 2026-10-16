@@ -9,7 +9,10 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
 import { TaskCallContext } from "./task-call-context.tsx"
+import { WorkEmptyState } from "./work-empty-state.tsx"
+import { RailButton } from "./workspace-rail-button.tsx"
 import { WorkspaceRail } from "./workspace-rail.tsx"
+import { WorkspaceTopBar } from "./workspace-page-header.tsx"
 import { clearAccessToken } from "../../lib/auth-client.ts"
 import type {
   AiInteractionDetail,
@@ -128,10 +131,11 @@ test("the sidebar shows Manage agent pages in place of Tasks only while Manage a
   const nav = host.querySelector("nav")
   assert.ok(nav)
   assert.equal(document.getElementById(nav.getAttribute("aria-labelledby") ?? "")?.textContent, "Manage agent")
-  assert.deepEqual(Array.from(nav.querySelectorAll("button"), (button) => button.textContent), ["Transcripts", "Knowledge base", "Insurance list"])
+  assert.deepEqual(Array.from(nav.querySelectorAll("button"), (button) => button.textContent), ["Home", "Transcripts", "Knowledge base", "Insurance list"])
   assert.equal(nav.querySelector("[aria-current='page']")?.textContent, "Insurance list")
-  assert.match(host.textContent ?? "", /Acuity Health.*Workspace selector/)
-  assert.match(host.textContent ?? "", /Calling status/)
+  assert.match(host.textContent ?? "", /Acuity Health/)
+  assert.doesNotMatch(host.textContent ?? "", /Workspace selector/)
+  assert.doesNotMatch(host.textContent ?? "", /Calling status/)
   assert.equal(host.querySelector("input[aria-label='Search tasks, names, or phone']"), null)
   assert.equal(host.querySelector("[aria-label='Workspace folders']"), null)
   assert.doesNotMatch(host.textContent ?? "", /Recently completed|Projected follow-up/)
@@ -144,8 +148,101 @@ test("the sidebar shows Manage agent pages in place of Tasks only while Manage a
   assert.ok(host.querySelector("input[aria-label='Search tasks, names, or phone']"))
   assert.ok(host.querySelector("[aria-label='Workspace folders']"))
   assert.match(host.textContent ?? "", /Recently completed/)
+  assert.match(host.textContent ?? "", /Calling status/)
   await act(async () => root.unmount())
   dom.window.close()
+})
+
+test("analytics sidebars keep the brand and office picker and drop Work folders, search, and calling status", () => {
+  const projection = projectedWorkspace(projectedTask())
+  for (const view of ["analytics", "operator-analytics"] as const) {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <WorkspaceRail
+          projection={{ ...projection, selection: { ...projection.selection, view } }}
+          locationControl={<button type="button">Workspace selector</button>}
+          callingStatus={<p>Calling status</p>}
+          onIntent={() => {}}
+        />
+      </SidebarProvider>,
+    )
+    assert.match(html, /Acuity Health/)
+    assert.match(html, /Workspace selector/)
+    assert.doesNotMatch(html, /Search tasks, names, or phone|Workspace folders|Recently completed|Projected follow-up|Calling status/)
+  }
+})
+
+test("the Tasks folder keeps its header to the title and count and gives Mine and All a full-width row", () => {
+  const html = renderToStaticMarkup(
+    <SidebarProvider>
+      <WorkspaceRail projection={projectedWorkspace(projectedTask())} onIntent={() => {}} />
+    </SidebarProvider>,
+  )
+  const trigger = html.match(/<button[^>]*aria-expanded="true"[^>]*>(.*?)<\/button>/)?.[1] ?? ""
+  assert.doesNotMatch(trigger, /Mine|Filter/)
+  const mine = html.match(/<button[^>]*aria-label="Show My Tasks"[^>]*>/)?.[0] ?? ""
+  assert.match(mine, /\bh-7\b/)
+  assert.match(mine, /\bflex-1\b/)
+})
+
+test("Work without a selected task names whether the inbox is clear or waiting for a choice", () => {
+  const projection = projectedWorkspace(projectedTask())
+  const none = { ...projection.selection, view: "none" as const, task: undefined, engagement: undefined }
+  const emptyCounts = { ...projection.tasks.counts, tasks: 0, categories: { ...projection.tasks.counts.categories, other: 0 } }
+  const waiting = renderToStaticMarkup(<WorkEmptyState projection={{ ...projection, selection: none }} />)
+  assert.match(waiting, /Select a task/)
+  assert.doesNotMatch(waiting, /Inbox clear/)
+  const clear = renderToStaticMarkup(<WorkEmptyState projection={{ ...projection, selection: none, tasks: { ...projection.tasks, items: [], counts: emptyCounts } }} />)
+  assert.match(clear, /Inbox clear/)
+  const loading = renderToStaticMarkup(<WorkEmptyState projection={{ ...projection, selection: none, tasks: { ...projection.tasks, items: [], loading: true, counts: emptyCounts } }} />)
+  assert.doesNotMatch(loading, /Inbox clear/)
+})
+
+test("breadcrumbs mark only the current page and only offer navigation when a destination exists", () => {
+  for (const props of [
+    { section: "Home" },
+    { section: "Home", page: "Knowledge base", onSection: () => {} },
+    { section: "Work", page: "Review appointment" },
+  ]) {
+    const html = renderToStaticMarkup(<WorkspaceTopBar {...props} />)
+    assert.equal(html.match(/aria-current="page"/g)?.length, 1)
+    assert.equal(html.includes("<button"), Boolean(props.onSection))
+    assert.match(html, new RegExp(`aria-current="page"[^>]*>${props.page ?? props.section}<`))
+  }
+})
+
+test("rail buttons are icon-only and keep their accessible names", () => {
+  for (const label of ["Home", "AI diagnostics"]) {
+    const html = renderToStaticMarkup(
+      <RailButton label={label} active={label === "Home"} onClick={() => {}}>
+        <svg />
+      </RailButton>,
+    )
+    assert.match(html, new RegExp(`aria-label="${label}"`))
+    assert.doesNotMatch(html, /text-\[10px\]/)
+    assert.equal(/aria-current="page"/.test(html), label === "Home")
+    assert.doesNotMatch(html, /aria-describedby/)
+  }
+})
+
+test("the calling rail control names its warning dot", () => {
+  const html = renderToStaticMarkup(
+    <RailButton
+      label="Receive calls"
+      role="switch"
+      aria-checked
+      attention="Calling is open elsewhere. Fix it from Work."
+      onClick={() => {}}
+    >
+      <svg />
+    </RailButton>,
+  )
+  const describedBy = html.match(/aria-describedby="([^"]+)"/)?.[1]
+  assert.ok(describedBy)
+  assert.match(html, new RegExp(`id="${describedBy}"[^>]*>Calling is open elsewhere\\. Fix it from Work\\.<`))
+  assert.match(html, /role="switch"/)
+  assert.doesNotMatch(html, />Calls</)
+  assert.doesNotMatch(html, /aria-current/)
 })
 
 test("opening AI appointment evidence never clears shared work", async () => {
@@ -337,7 +434,7 @@ test("the Task panel credits the callback caller and flags an open Task only wit
     />,
   )
   const open = panel(selected, history)
-  assert.match(open, /caller@example\.test called this number at .+ \(no answer\)\. This Task is still open\./)
+  assert.match(open, /caller@example\.test called this number \(no answer\) · .+\. This Task is still open\./)
   assert.ok(open.indexOf("This Task is still open.") < open.indexOf("Complete &amp; next"))
   assert.doesNotMatch(panel(selected), /still open/)
   assert.doesNotMatch(panel(selected, history.filter((item) => item.type !== "CALL_HISTORY")), /still open/)

@@ -19,6 +19,7 @@ import {
   AppointmentActions,
   callDuration,
 } from "./agent-call-panel"
+import { AgentHome } from "./agent-home"
 import { InsuranceList } from "./insurance-list"
 import { KnowledgeBase } from "./knowledge-base"
 import { AgentPage, AgentQueryBody, OptionSelect } from "./manage-agent-page"
@@ -28,6 +29,7 @@ import type {
   Location,
 } from "@/lib/api/generated/types.gen"
 import { useAgentCalls } from "@/lib/clients/agent-calls"
+import { formatClockTime, formatDate, formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 
@@ -43,32 +45,30 @@ export function ManageAgent({
   locationScopeID,
   locations,
   page,
+  onPage,
 }: {
   actorSubject: string
   practiceID: string
   locationScopeID: string
   locations: Location[]
   page: ManageAgentPage
+  onPage: (page: ManageAgentPage) => void
 }) {
-  const [locationID, setLocationID] = useState(() =>
-    locations.some((location) => location.id === locationScopeID)
-      ? locationScopeID
-      : (locations[0]?.id ?? ""),
-  )
   const [coverage, setCoverage] = useState<InsuranceCoverage>("medical")
-  const location = { practiceID, locations, locationID, onLocation: setLocationID }
+  const location = {
+    practiceID,
+    locationID: locationScopeID || (locations.length === 1 ? locations[0].id : ""),
+  }
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-canvas">
-      {page === "knowledge" ? (
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
+      {page === "home" ? (
+        <AgentHome {...location} onPage={onPage} />
+      ) : page === "knowledge" ? (
         <KnowledgeBase {...location} actorSubject={actorSubject} />
       ) : page === "insurance" ? (
         <InsuranceList {...location} coverage={coverage} onCoverage={setCoverage} />
       ) : (
-        <AgentTranscripts
-          practiceID={practiceID}
-          locationScopeID={locationScopeID}
-          locations={locations}
-        />
+        <AgentTranscripts practiceID={practiceID} locationScopeID={locationScopeID} />
       )}
     </div>
   )
@@ -77,13 +77,10 @@ export function ManageAgent({
 function AgentTranscripts({
   practiceID,
   locationScopeID,
-  locations,
 }: {
   practiceID: string
   locationScopeID: string
-  locations: Location[]
 }) {
-  const [office, setOffice] = useState(locationScopeID || "all")
   const [range, setRange] = useState<AgentCallsQuery["range"]>("24h")
   const [phoneInput, setPhoneInput] = useState("")
   const [phone, setPhone] = useState("")
@@ -92,7 +89,7 @@ function AgentTranscripts({
   const [selectedID, setSelectedID] = useState("")
   const current = useAgentCalls({
     practiceID,
-    locationID: office === "all" ? "" : office,
+    locationID: locationScopeID,
     range,
     phone,
     flaggedOnly,
@@ -105,13 +102,6 @@ function AgentTranscripts({
   const moreError = current.moreFailure
     ? "More calls could not be loaded. Try again."
     : undefined
-  const offices = [
-    { value: "all", label: "All offices" },
-    ...locations.map((location) => ({
-      value: location.id,
-      label: location.name,
-    })),
-  ]
 
   useEffect(() => {
     const timeout = setTimeout(() => setPhone(phoneInput), 300)
@@ -130,10 +120,18 @@ function AgentTranscripts({
   return (
     <AgentPage
       title="Transcripts"
-      action={
+      detail={
+        current.status === "ready" && (
+          <span role="status" className="tabular-nums">
+            {calls.length}
+            {nextCursor ? "+" : ""} {calls.length === 1 && !nextCursor ? "call" : "calls"}
+          </span>
+        )
+      }
+      actions={
         <Button
           variant="ghost"
-          size="icon"
+          size="icon-sm"
           aria-label="Refresh calls"
           onClick={() => setVersion((value) => value + 1)}
         >
@@ -150,7 +148,6 @@ function AgentTranscripts({
             maxLength={32}
             className="w-full sm:w-56"
           />
-          <OptionSelect label="Office" value={office} items={offices} onChange={setOffice} />
           <OptionSelect label="Date range" value={range} items={ranges} onChange={setRange} />
           <Button
             variant={flaggedOnly ? "secondary" : "ghost"}
@@ -160,12 +157,6 @@ function AgentTranscripts({
             <FlagIcon data-icon="inline-start" />
             Flagged calls
           </Button>
-          {current.status === "ready" && (
-            <p role="status" className="ml-auto text-sm tabular-nums text-muted-foreground">
-              {calls.length}
-              {nextCursor ? "+" : ""} {calls.length === 1 && !nextCursor ? "call" : "calls"}
-            </p>
-          )}
         </>
       }
     >
@@ -179,12 +170,12 @@ function AgentTranscripts({
         emptyDescription="Try another date range, office, or phone number."
       >
         {() => (
-          <>
+          <div className="max-w-3xl">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-40">Date / time</TableHead>
-                  <TableHead className="w-56">Phone number</TableHead>
+                  <TableHead className="w-44">Phone number</TableHead>
                   <TableHead>Appointment action</TableHead>
                   <TableHead className="w-24 text-right">Duration</TableHead>
                   <TableHead className="w-28 text-right">Transferred</TableHead>
@@ -205,19 +196,13 @@ function AgentTranscripts({
                           event.stopPropagation()
                           setSelectedID(call.id)
                         }}
-                        aria-label={`Open call from ${formatUSPhone(call.phone)} at ${new Date(call.startedAt).toLocaleString()}`}
+                        aria-label={`Open call from ${formatUSPhone(call.phone)} at ${formatTimestamp(call.startedAt)}`}
                       >
                         <span className="block">
-                          {new Date(call.startedAt).toLocaleDateString(
-                            undefined,
-                            { month: "short", day: "numeric" },
-                          )}
+                          {formatDate(call.startedAt)}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {new Date(call.startedAt).toLocaleTimeString(
-                            undefined,
-                            { hour: "numeric", minute: "2-digit" },
-                          )}
+                          {formatClockTime(call.startedAt)}
                         </span>
                       </Button>
                     </TableCell>
@@ -275,7 +260,7 @@ function AgentTranscripts({
                 </Button>
               </div>
             )}
-          </>
+          </div>
         )}
       </AgentQueryBody>
       <AgentCallPanel

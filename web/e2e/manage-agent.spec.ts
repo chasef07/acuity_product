@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { signInAs } from "./support"
+import type { AgentCall } from "../src/lib/api/generated/types.gen"
+import { openAgentPage, signInAs } from "./support"
 
 test("staff flag a call and Acuity reviews it", async ({
   page,
@@ -62,9 +63,7 @@ test("staff flag a call and Acuity reviews it", async ({
       ],
     )
     await signInAs(page, "selected@abita.test", "Synthetic Staff")
-    await page
-      .getByRole("button", { name: "Manage agent", exact: true })
-      .click()
+    await openAgentPage(page, "Transcripts")
     await expect(page.getByRole("columnheader")).toHaveText([
       "Date / time",
       "Phone number",
@@ -163,9 +162,6 @@ test("staff flag a call and Acuity reviews it", async ({
     })
     await page.reload()
     await page
-      .getByRole("button", { name: "Manage agent", exact: true })
-      .click()
-    await page
       .getByRole("textbox", { name: "Search phone number" })
       .fill("5555550876")
     await page
@@ -199,9 +195,7 @@ test("staff flag a call and Acuity reviews it", async ({
     await page.keyboard.press("Escape")
     await page.setViewportSize({ width: 1280, height: 720 })
     await signInAs(page, "founder@acuity.test", "Synthetic Acuity Operator")
-    await page
-      .getByRole("button", { name: "Manage agent", exact: true })
-      .click()
+    await openAgentPage(page, "Transcripts")
     await page
       .getByRole("textbox", { name: "Search phone number" })
       .fill("5555550876")
@@ -269,7 +263,7 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
   page,
 }, testInfo) => {
   const ids = [randomUUID(), randomUUID(), randomUUID()]
-  const calls = ids.map((id, index) => ({
+  const calls = ids.map((id, index): AgentCall => ({
     id,
     phone: `+1555555010${index}`,
     startedAt: new Date(Date.now() - index * 60_000).toISOString(),
@@ -277,6 +271,7 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
     appointmentActions: [],
     transferred: false,
     issueFlagged: false,
+    knowledgeGaps: [],
   }))
   let failNextPage = true
   let firstCallReported = false
@@ -315,9 +310,7 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
     )
   }
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
-  await page
-    .getByRole("button", { name: "Manage agent", exact: true })
-    .click()
+  await openAgentPage(page, "Transcripts")
   await page
     .getByRole("textbox", { name: "Search phone number" })
     .fill("555555010")
@@ -409,4 +402,47 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
       .filter({ hasText: "(555) 555-0100" })
       .getByLabel("Issue flagged"),
   ).toBeVisible()
+})
+
+test("the workspace opens on Home, where calls the judge says need knowledge lead to the knowledge base", async ({
+  page,
+}, testInfo) => {
+  const databaseURL = process.env.E2E_DATABASE_URL
+  test.skip(!databaseURL, "E2E_DATABASE_URL is required")
+  if (!new URL(databaseURL!).pathname.endsWith("_e2e"))
+    throw new Error("Disposable E2E database required")
+  const client = new Client({ connectionString: databaseURL })
+  await client.connect()
+  const id = randomUUID()
+  try {
+    const {
+      rows: [scope],
+    } = await client.query(
+      "SELECT l.id, l.practice_id FROM access_locations l JOIN access_practices p ON p.id=l.practice_id WHERE p.provisioning_key='abita-eye-group' AND l.provisioning_key='fixture-location-1'",
+    )
+    await client.query(
+      `INSERT INTO ai_interactions (id,service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript,closeout_payload)
+      VALUES ($1,'agent-home-e2e',$2,$3,$1::uuid::text,'+15555550877','+17275550101',now()-interval '1 hour',now()-interval '58 minutes','COMPLETED',3,'{"items":[]}','{}')`,
+      [id, scope.practice_id, scope.id],
+    )
+    await client.query(
+      `INSERT INTO ai_interaction_scorecard_answers (interaction_id,practice_id,question,source,answer,scorecard_version,judge_model,detail,computed_at)
+      VALUES ($1,$2,'office_question_answered','judge',false,'e2e','synthetic-judge',NULL,now()),
+             ($1,$2,'knowledge_answered','code',false,'e2e',NULL,'{"queries":["Saturday parking"]}',now())`,
+      [id, scope.practice_id],
+    )
+    await signInAs(page, "selected@abita.test", "Synthetic Staff", "/workspace")
+    await expect(page.getByRole("heading", { level: 1, name: "Your agent" })).toBeVisible()
+    await page.getByRole("group", { name: "Agent connections" }).getByRole("button", { name: "Knowledge base", exact: true }).click()
+    const gap = page.getByRole("listitem").filter({ hasText: "“Saturday parking”" })
+    await expect(gap).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath("agent-home.png"), animations: "disabled", fullPage: true })
+    await gap.getByRole("button", { name: "Add to knowledge", exact: true }).click()
+    await expect(page.getByRole("heading", { level: 1, name: "Knowledge base" })).toBeVisible()
+    await page.getByRole("navigation", { name: "Workspace" }).getByRole("button", { name: /^Work/ }).click()
+    await expect(page).toHaveURL(/\?view=work|\?task=/)
+  } finally {
+    await client.query("DELETE FROM ai_interactions WHERE id=$1", [id])
+    await client.end()
+  }
 })

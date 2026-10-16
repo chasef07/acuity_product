@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { expect, test } from "@playwright/test"
-import { signInAs } from "./support"
+import { openAgentPage, signInAs } from "./support"
 
 test("staff edit two office knowledge entries, publish both at once from beside the search bar, and see the new text", async ({ page }, testInfo) => {
   const loaded = { id: randomUUID(), version: 1, createdAt: "2026-09-30T15:00:00Z" }
@@ -26,8 +26,7 @@ test("staff edit two office knowledge entries, publish both at once from beside 
   page.on("pageerror", (error) => errors.push(error.message))
 
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
-  await page.getByRole("button", { name: "Manage agent", exact: true }).click()
-  await page.getByRole("button", { name: "Knowledge base", exact: true }).click()
+  await openAgentPage(page, "Knowledge base")
   const hours = page.getByRole("listitem").filter({ hasText: "Office hours" })
   await hours.getByRole("button", { name: "Office hours", exact: true }).click()
   await hours.getByRole("button", { name: "Edit", exact: true }).click()
@@ -109,8 +108,7 @@ test("staff open History, restore an earlier version with a reason, and see it a
   page.on("pageerror", (error) => errors.push(error.message))
 
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
-  await page.getByRole("button", { name: "Manage agent", exact: true }).click()
-  await page.getByRole("button", { name: "Knowledge base", exact: true }).click()
+  await openAgentPage(page, "Knowledge base")
   await expect(page.getByText("· Version 2")).toBeVisible()
   await page.getByRole("button", { name: "History", exact: true }).click()
   const panel = page.getByRole("dialog", { name: "History" })

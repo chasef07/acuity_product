@@ -10,6 +10,8 @@ import { KnowledgeHistory } from "./knowledge-base.tsx"
 import { ManageAgent } from "./manage-agent.tsx"
 import { authClient, clearAccessToken } from "../../lib/auth-client.ts"
 import type {
+  AgentCallsPage,
+  AgentCallsQuery,
   InsuranceCoverage,
   InsurancePlanRule,
   InsurancePlansQuery,
@@ -52,12 +54,160 @@ test("Manage agent shows the selected page at full width without its own navigat
   const page = harness(t)
   for (const [selected, heading] of [["transcripts", "Transcripts"], ["knowledge", "Knowledge base"], ["insurance", "Insurance list"]] as const) {
     await page.render(
-      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID="" locations={locations} page={selected} />,
+      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page={selected} onPage={() => {}} />,
     )
     assert.equal(page.host.querySelector("h1")?.textContent, heading)
     assert.equal(page.host.querySelector("nav"), null)
   }
   await waitFor(() => page.plansRequests.length === 1 && page.knowledgeRequests.length === 1)
+  await page.unmount()
+})
+
+test("Home connects Acuity to knowledge, insurance, and tools, with unanswered questions under knowledge", async (t) => {
+  const page = harness(t)
+  page.knowledge = { locationId: locations[0].id, sections: [], revision: { id: "revision-14", version: 14, createdAt: "2026-10-12T14:00:00Z" } }
+  page.agentCalls = {
+    calls: [
+      { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: ["Saturday hours", "parking"] },
+      { id: "call-2", phone: "+15555550112", startedAt: "2026-10-13T14:00:00Z", appointmentActions: [], transferred: true, issueFlagged: false, knowledgeGaps: [] },
+    ],
+    nextCursor: "",
+  }
+  const pages: string[] = []
+  await page.render(
+    <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={(next) => pages.push(next)} />,
+  )
+  assert.equal(page.host.querySelector("h1")?.textContent, "Your agent")
+  const connections = page.host.querySelector('[aria-label="Agent connections"]')
+  assert.ok(connections)
+  assert.deepEqual(Array.from(connections.querySelectorAll("button"), (button) => button.getAttribute("aria-label")), ["Knowledge base", "Insurance", "Tools"])
+  assert.equal(connections.querySelectorAll('svg[aria-label="Acuity"] circle').length, 7)
+  assert.doesNotMatch(page.text(), /What Acuity can do|Transfer policy|Emergency policy/)
+  assert.deepEqual(page.agentCallsRequests, [])
+  await act(async () => page.button(/^Knowledge base/).click())
+  await waitFor(() => page.text().includes("“Saturday hours” · “parking”") && /Version 14 · published/.test(page.text()))
+  assert.doesNotMatch(page.text(), /v14/)
+  assert.match(page.text(), /An office question went unanswered/)
+  assert.deepEqual(page.agentCallsRequests.map(({ locationId, range, needsKnowledgeOnly }) => ({ locationId, range, needsKnowledgeOnly })), [
+    { locationId: locations[0].id, range: "7d", needsKnowledgeOnly: true },
+  ])
+  const add = Array.from(page.host.querySelectorAll("button")).find((button) => button.textContent === "Add to knowledge")
+  await act(async () => add!.click())
+  assert.deepEqual(pages, ["knowledge"])
+  await page.click("Open knowledge base")
+  await act(async () => page.button(/^Insurance/).click())
+  await page.click("Open insurance list")
+  assert.deepEqual(pages, ["knowledge", "knowledge", "insurance"])
+  await act(async () => page.button(/^Tools/).click())
+  assert.match(page.text(), /Find the caller's patient record/)
+  assert.match(page.text(), /Book, reschedule, and cancel appointments/)
+  await page.click("Close details")
+  assert.equal(page.host.querySelector('[aria-label="Agent details"]'), null)
+  await page.unmount()
+})
+
+test("pages that show one Location use the workspace's office, or the only office, and never offer their own Location picker", async (t) => {
+  const page = harness(t)
+  page.knowledge = { locationId: locations[1].id, sections: [], revision: { id: "revision-2", version: 2, createdAt: "2026-10-12T14:00:00Z" } }
+  const scopes = [
+    { locationScopeID: locations[1].id, offices: locations, expected: locations[1].id },
+    { locationScopeID: "", offices: [locations[0]], expected: locations[0].id },
+  ]
+  for (const [index, { locationScopeID, offices, expected }] of scopes.entries()) {
+    for (const selected of ["home", "knowledge", "insurance"] as const) {
+      await page.render(
+        <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={offices} page={selected} onPage={() => {}} />,
+        `${index}:${selected}`,
+      )
+      if (selected === "home") await act(async () => page.button(/^Knowledge base/).click())
+      await waitFor(() =>
+        selected === "insurance"
+          ? page.plansRequests.at(-1)?.locationId === expected && page.groups().length === 3
+          : page.knowledgeRequests.at(-1)?.locationId === expected && /Version 2/.test(page.text()),
+      )
+      assert.equal(page.host.querySelector("[role='combobox'][aria-label='Location']"), null)
+      assert.equal(page.host.querySelector("[role='combobox'][aria-label='Office']"), null)
+      assert.doesNotMatch(page.text(), /Choose an office/)
+    }
+    assert.equal(page.agentCallsRequests.at(-1)?.locationId, expected)
+  }
+  await page.unmount()
+})
+
+test("with all offices in scope and several offices, one-Location pages ask for an office and load nothing", async (t) => {
+  const page = harness(t)
+  for (const selected of ["home", "knowledge", "insurance"] as const) {
+    await page.render(
+      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID="" locations={locations} page={selected} onPage={() => {}} />,
+      selected,
+    )
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 30)))
+    assert.equal(page.host.querySelector("[role='combobox']"), null)
+    assert.equal(page.host.querySelector("input[type='search']"), null)
+    if (selected === "home") {
+      const connections = page.host.querySelector('[role="group"][aria-label="Agent connections"]')!
+      assert.equal(connections.querySelectorAll("button:disabled").length, 0)
+      assert.doesNotMatch(page.text(), /Choose an office/)
+      await act(async () => page.button(/^Knowledge base/).click())
+      assert.match(page.text(), /Open knowledge base/)
+    } else {
+      assert.match(page.text(), /Choose an office.*Choose an office using the office picker above\./)
+    }
+  }
+  assert.equal(page.host.querySelector("h1")?.textContent, "Insurance list")
+  assert.deepEqual([page.knowledgeRequests, page.plansRequests, page.agentCallsRequests], [[], [], []])
+  await page.unmount()
+})
+
+test("Transcripts follow the workspace's office, including all offices, without a page-level Office picker", async (t) => {
+  const page = harness(t)
+  for (const locationScopeID of ["", locations[1].id]) {
+    await page.render(
+      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="transcripts" onPage={() => {}} />,
+      locationScopeID,
+    )
+    await waitFor(() => page.agentCallsRequests.length === (locationScopeID ? 2 : 1))
+    assert.equal(page.host.querySelector("[role='combobox'][aria-label='Office']"), null)
+  }
+  assert.deepEqual(page.agentCallsRequests.map((request) => request.locationId), [undefined, locations[1].id])
+  await page.unmount()
+})
+
+test("each page keeps its title, actions, and filters inside the panel", async (t) => {
+  const page = harness(t)
+  page.knowledge = syntheticKnowledge
+  page.agentCalls = {
+    calls: [{ id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }],
+    nextCursor: "",
+  }
+  const showPage = (selected: "home" | "transcripts" | "knowledge" | "insurance") =>
+    page.render(
+      <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page={selected} onPage={() => {}} />,
+      selected,
+    )
+
+  await showPage("transcripts")
+  await waitFor(() => page.host.querySelector("header")?.textContent === "Transcripts1 call")
+  assert.equal(page.host.querySelector("h1")?.textContent, "Transcripts")
+  assert.ok(page.host.querySelector("header button[aria-label='Refresh calls']"))
+  assert.ok(page.host.querySelector("input[aria-label='Search phone number']"))
+  assert.ok(page.host.querySelector("[role='combobox'][aria-label='Date range']"))
+  assert.equal(page.host.querySelector("section")?.getAttribute("aria-labelledby"), page.host.querySelector("h1")?.id)
+
+  await showPage("knowledge")
+  await waitFor(() => /Office hours/.test(page.text()))
+  assert.match(page.host.querySelector("header")?.textContent ?? "", /^Knowledge baseUpdated .+ · Version 3History$/)
+  assert.ok(page.host.querySelector("input[type='search']"))
+
+  await showPage("insurance")
+  await waitFor(() => page.groups().length === 3)
+  assert.equal(page.host.querySelector("header")?.textContent, "Insurance list")
+  assert.ok(page.host.querySelector("[role='combobox'][aria-label='Visit coverage']"))
+
+  await showPage("home")
+  await act(async () => page.button(/^Knowledge base/).click())
+  await waitFor(() => /Version 3 · published/.test(page.text()))
+  assert.equal(page.host.querySelector("h1")?.textContent, "Your agent")
   await page.unmount()
 })
 
@@ -73,7 +223,7 @@ test("insurance plans are grouped by result, sorted by name, summarized in one r
     { title: "Staff confirms2", expanded: "true", rows: ["Demo Advantage HMOPrior auth, PCP referral, Staff verifiesDEM03", "Pending Plan HMOPending on the sheetPEN01"] },
     { title: "Not accepted2", expanded: "true", rows: ["Sample Medicaid MMASweetwater takes itSMP02", "Zeta Discount CardSelf-pay rates apply"] },
   ])
-  assert.match(page.host.querySelector("[role='combobox'][aria-label='Location']")?.textContent ?? "", /^Sweetwater/)
+  assert.equal(page.host.querySelector("[role='combobox'][aria-label='Location']"), null)
   assert.match(page.host.querySelector("[role='combobox'][aria-label='Visit coverage']")?.textContent ?? "", /^Medical/)
   assert.equal(Array.from(page.host.querySelectorAll("input")).filter((input) => input.getAttribute("aria-hidden") !== "true").length, 0)
   const row = page.button(/^Example Choice PPO/)
@@ -103,9 +253,7 @@ test("changing Location or coverage sends exactly one new request with the new v
     page.render(
       <InsuranceList
         practiceID="practice-1"
-        locations={locations}
         locationID={locationID}
-        onLocation={() => {}}
         coverage={coverage}
         onCoverage={() => {}}
       />,
@@ -129,7 +277,7 @@ test("a Location without the coverage, a 503 and no access each read once", asyn
   const page = harness(t)
   page.plansFor = () => []
   await page.render(insuranceList())
-  await waitFor(() => /No medical plans are on this Location's insurance list\./.test(page.text()))
+  await waitFor(() => /No medical plans are on this office's insurance list\./.test(page.text()))
 
   page.plansStatus = 503
   page.plansError = { code: "UNAVAILABLE", message: "Insurance rules aren't available for this Location.", correlationId: "synthetic", retryable: false }
@@ -196,7 +344,7 @@ test("knowledge without an import and unavailable knowledge say so", async (t) =
   const page = harness(t)
   page.knowledge = { locationId: locations[0].id, sections: [] }
   await page.render(knowledgeBase())
-  await waitFor(() => /No knowledge has been imported for this Location yet\./.test(page.text()))
+  await waitFor(() => /No knowledge has been imported for this office yet\./.test(page.text()))
   assert.doesNotMatch(page.text(), /Updated/)
 
   page.knowledgeStatus = 503
@@ -455,16 +603,16 @@ test("a publish that fails after leaving and returning says why, keeps the chang
 test("unpublished changes belong to the person who made them", async (t) => {
   const page = harness(t)
   page.knowledge = syntheticKnowledge
-  await page.render(knowledgeBase("", "staff-a"))
+  await page.render(knowledgeBase(locations[0].id, "staff-a"))
   await waitFor(() => /Office hours/.test(page.text()))
   await page.rowAction("Parking", "Remove")
   await page.fill(page.field("Why are you changing this?"), "Garage closed")
 
-  await page.render(knowledgeBase("", "staff-b"), "someone else")
+  await page.render(knowledgeBase(locations[0].id, "staff-b"), "someone else")
   await waitFor(() => page.rowTitles().length === 2)
   assert.equal(page.maybeButton("Publish"), undefined)
 
-  await page.render(knowledgeBase("", "staff-a"), "back again")
+  await page.render(knowledgeBase(locations[0].id, "staff-a"), "back again")
   await waitFor(() => page.rowTitles().length === 1)
   assert.equal(page.field("Why are you changing this?").value, "Garage closed")
   await page.click("Discard changes")
@@ -629,12 +777,12 @@ test("a restore against a stale active revision says so and changes nothing", as
   await page.unmount()
 })
 
-function insuranceList(locationScopeID = "") {
-  return <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" />
+function insuranceList(locationScopeID = locations[0].id) {
+  return <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" onPage={() => {}} />
 }
 
-function knowledgeBase(locationScopeID = "", actorSubject = "staff-a") {
-  return <ManageAgent actorSubject={actorSubject} practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" />
+function knowledgeBase(locationScopeID = locations[0].id, actorSubject = "staff-a") {
+  return <ManageAgent actorSubject={actorSubject} practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" onPage={() => {}} />
 }
 
 function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {
@@ -660,6 +808,8 @@ function harness(t: TestContext) {
       value: dom.window.getComputedStyle.bind(dom.window),
     },
     IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+    requestAnimationFrame: { configurable: true, value: () => 0 },
+    cancelAnimationFrame: { configurable: true, value: () => {} },
   })
   Object.defineProperty(dom.window, "matchMedia", {
     configurable: true,
@@ -691,6 +841,8 @@ function harness(t: TestContext) {
     afterPublishHistory: undefined as LocationKnowledgeHistory | undefined,
     revisionRequests: [] as LocationKnowledgeRevisionQuery[],
     revisions: {} as Record<string, LocationKnowledge>,
+    agentCallsRequests: [] as AgentCallsQuery[],
+    agentCalls: { calls: [], nextCursor: "" } as AgentCallsPage,
     historyRows: () => Array.from(host.querySelectorAll("li"), (row) => row.textContent ?? ""),
     publishGate: Promise.resolve(),
     render: (element: ReactNode, key = "first") =>
@@ -797,7 +949,8 @@ function harness(t: TestContext) {
       return Response.json(page.publishResult)
     }
     assert.equal(url.pathname, "/v1/agent-calls/query")
-    return Response.json({ calls: [], nextCursor: "" })
+    page.agentCallsRequests.push((await request.json()) as AgentCallsQuery)
+    return Response.json(page.agentCalls)
   })
   return page
 }

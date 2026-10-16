@@ -8,10 +8,10 @@ import {
   ActivityIcon,
   ChartNoAxesCombinedIcon,
   HouseIcon,
+  InboxIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
-  SparklesIcon,
   SunIcon,
 } from "lucide-react"
 
@@ -28,17 +28,14 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useSidebar } from "@/components/ui/sidebar"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { RailButton } from "@/components/workspace/workspace-rail-button"
 import { workspaceFolders } from "@/components/workspace/workspace-rail"
 import { authClient } from "@/lib/auth-client"
 import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
-import type {
-  WorkspaceProjectionIntent,
-  WorkspaceProjectionState,
+import {
+  isWorkView,
+  type WorkspaceProjectionIntent,
+  type WorkspaceProjectionState,
 } from "@/lib/workspace-projection"
 
 const practiceLogos: Record<string, string> = {
@@ -57,7 +54,7 @@ export function WorkspaceNavRail({
   const { isMobile, open, openMobile, setOpen, setOpenMobile, toggleSidebar } = useSidebar()
   const discovery = projection.discovery!
   const view = projection.selection.view
-  const workActive = view === "engagement" || view === "none"
+  const workActive = isWorkView(view)
   const panelOpen = isMobile ? openMobile : open
   const openCount = workspaceFolders(projection).reduce((total, folder) => total + folder.count, 0)
   const practiceName = discovery.practices.find((practice) => practice.id === projection.scope.practiceID)?.name
@@ -75,30 +72,35 @@ export function WorkspaceNavRail({
   return (
     <nav
       aria-label="Workspace"
-      className="sticky top-0 flex h-svh w-16 shrink-0 flex-col items-center gap-3 py-3"
+      className="sticky top-0 flex h-svh w-16 shrink-0 flex-col items-center gap-3 py-3 md:py-2"
     >
+      <div aria-hidden="true" className="hidden h-12 shrink-0 md:block" />
       <RailButton
         label="Home"
-        hint={`${openCount} open`}
-        active={workActive}
-        expanded={workActive && panelOpen}
-        onClick={() => selectWithSidebar(workActive, { type: "select-work" })}
+        active={view === "manage-agent"}
+        aria-expanded={view === "manage-agent" && panelOpen}
+        onClick={() =>
+          view === "manage-agent" && projection.selection.agentPage !== "home"
+            ? onIntent({ type: "select-manage-agent", page: "home" })
+            : selectWithSidebar(view === "manage-agent", { type: "select-manage-agent", page: "home" })}
       >
         <HouseIcon />
       </RailButton>
       <RailButton
-        label="Manage agent"
-        active={view === "manage-agent"}
-        expanded={view === "manage-agent" && panelOpen}
-        onClick={() => selectWithSidebar(view === "manage-agent", { type: "select-manage-agent" })}
+        label="Work"
+        tooltip={`Work · ${openCount} open`}
+        active={workActive}
+        aria-expanded={workActive && panelOpen}
+        onClick={() => selectWithSidebar(workActive, { type: "select-work" })}
       >
-        <SparklesIcon />
+        <InboxIcon />
       </RailButton>
       {canViewPracticeAnalytics(discovery, projection.scope.practiceID) && (
         <RailButton
           label="Analytics"
           active={view === "analytics"}
-          onClick={() => onIntent({ type: "select-analytics" })}
+          aria-expanded={view === "analytics" && panelOpen}
+          onClick={() => selectWithSidebar(view === "analytics", { type: "select-analytics" })}
         >
           <ChartNoAxesCombinedIcon />
         </RailButton>
@@ -107,7 +109,8 @@ export function WorkspaceNavRail({
         <RailButton
           label="AI diagnostics"
           active={view === "operator-analytics"}
-          onClick={() => onIntent({ type: "select-operator-analytics" })}
+          aria-expanded={view === "operator-analytics" && panelOpen}
+          onClick={() => selectWithSidebar(view === "operator-analytics", { type: "select-operator-analytics" })}
         >
           <ActivityIcon />
         </RailButton>
@@ -121,45 +124,6 @@ export function WorkspaceNavRail({
         />
       </div>
     </nav>
-  )
-}
-
-function RailButton({
-  label,
-  hint,
-  active,
-  expanded,
-  onClick,
-  children,
-}: {
-  label: string
-  hint?: string
-  active: boolean
-  expanded?: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={label}
-            aria-current={active ? "page" : undefined}
-            aria-expanded={expanded}
-            data-active={active}
-            className="size-11 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs [&_svg]:stroke-[1.75]"
-            onClick={onClick}
-          />
-        }
-      >
-        {children}
-      </TooltipTrigger>
-      <TooltipContent side="right">{hint ? `${label} · ${hint}` : label}</TooltipContent>
-    </Tooltip>
   )
 }
 

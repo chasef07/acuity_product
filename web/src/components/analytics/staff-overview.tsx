@@ -134,6 +134,10 @@ const columns: Array<{ key: SortKey; label: string }> = [
   { key: "tasksCompleted", label: "Tasks completed" },
 ]
 
+const stickyEdge = "sticky left-0 z-10 shadow-[inset_-1px_0_0_var(--border)]"
+const stickyHead = `${stickyEdge} bg-[color-mix(in_oklab,var(--muted)_70%,var(--card))]`
+const stickyCell = `${stickyEdge} bg-card group-hover:bg-[color-mix(in_oklab,var(--muted)_50%,var(--card))]`
+
 export function StaffOverview({ report }: { report: StaffAnalytics }) {
   const reducedMotion = useReducedMotion()
   const [metric, setMetric] = useState<"completed" | "duration">("completed")
@@ -300,7 +304,7 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
                   <TableHead
                     key={column.key}
                     className={
-                      column.key === "email" ? undefined : "text-right"
+                      column.key === "email" ? stickyHead : "text-right"
                     }
                     aria-sort={
                       active
@@ -334,10 +338,12 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
           </TableHeader>
           <TableBody>
             {accounts.map((account) => (
-              <TableRow key={account.id}>
-                <TableCell>
-                  <div>{account.email}</div>
-                  <div className="text-xs text-muted-foreground">
+              <TableRow key={account.id} className="group">
+                <TableCell className={stickyCell}>
+                  <div className="max-w-40 truncate sm:max-w-64" title={account.email}>
+                    {account.email}
+                  </div>
+                  <div className="max-w-40 truncate text-xs text-muted-foreground sm:max-w-64">
                     {account.role === "ADMIN"
                       ? "Admin"
                       : account.role === "STAFF"
@@ -353,8 +359,8 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
                 <PhoneCells metrics={account} />
               </TableRow>
             ))}
-            <TableRow>
-              <TableCell>
+            <TableRow className="group">
+              <TableCell className={stickyCell}>
                 <strong>Total</strong>
               </TableCell>
               <PhoneCells metrics={report.total} />

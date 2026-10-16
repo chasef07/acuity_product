@@ -260,7 +260,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
   await installControlledReconnectBackoff(secondCustomerContext)
   const secondCustomerPage = await secondCustomerContext.newPage()
   await abortFirstRealtimeRequest(secondCustomerPage)
-  await secondCustomerPage.goto("/workspace")
+  await secondCustomerPage.goto("/workspace?view=work")
   await expectNoOpenTasks(secondCustomerPage)
   await expect(
     secondCustomerPage.locator('[data-testid="mounted-workspace"][data-connection="connected"]'),
@@ -558,6 +558,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     await operatorPage
       .getByRole("button", { name: selectedLocation.name, exact: true })
       .click()
+    await operatorPage.getByRole("navigation", { name: "Workspace" }).getByRole("button", { name: "Work", exact: true }).click()
     await expectNoOpenTasks(operatorPage)
     await operatorPage.getByRole("button", { name: "AI diagnostics" }).click()
     await expect
@@ -604,7 +605,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
   })
 
   await test.step("persisted theme and explicit browser states", async () => {
-    await page.goto("/workspace")
+    await page.goto("/workspace?view=work")
     await expectNoOpenTasks(page)
     const appearanceButton = page.getByRole("button", { name: "Account menu" })
     const systemThemeOption = page.getByRole("button", {
@@ -678,7 +679,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       viewport: { width: 1280, height: 800 },
     })
     const coarsePage = await coarseContext.newPage()
-    await coarsePage.goto("/workspace")
+    await coarsePage.goto("/workspace?view=work")
     await expectNoOpenTasks(coarsePage)
     await expect(
       coarsePage.getByRole("button", { name: "Workspace selector" }),

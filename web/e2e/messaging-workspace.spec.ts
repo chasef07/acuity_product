@@ -14,7 +14,7 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await page.setViewportSize({ width: 390, height: 844 })
   await signInAs(page, "admin@abita.test", "Fixture Admin")
-  await page.getByRole("button", { name: "Home", exact: true }).click()
+  await page.getByRole("button", { name: "Work", exact: true }).click()
 
   let releaseTimeline = () => {}
   const timelineGate = new Promise<void>((resolve) => {
@@ -210,6 +210,7 @@ test("rail hover details and the message composer preserve compact context", asy
   await appearanceButton.click()
   await expect(page.getByRole("button", { name: "System", exact: true })).toBeVisible()
   await page.screenshot({
+    animations: "disabled",
     path: testInfo.outputPath("appearance-menu.png"),
     fullPage: true,
   })
@@ -627,6 +628,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   const headerTop = await inboxHeading.evaluate(
     (element) => element.closest("header")?.getBoundingClientRect().top,
   )
+  expect(await inboxHeading.evaluate((element) => Boolean(element.closest('[data-testid="workspace-panel"]')))).toBe(true)
   await timeline.evaluate((element) => {
     element.scrollTop = element.scrollHeight
   })
@@ -640,6 +642,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   const scrollToLatest = page.getByRole("button", { name: "Scroll to end" })
   await expect(scrollToLatest).toBeVisible()
   await scrollToLatest.click({ timeout: 10_000 })
+  expect(await page.getByTestId("workspace-panel").evaluate((element) => element.scrollTop)).toBe(0)
   await expect
     .poll(() => timeline.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0)

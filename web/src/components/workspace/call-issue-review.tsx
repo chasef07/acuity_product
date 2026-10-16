@@ -6,6 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import type { OperatorAiCallIssue, OperatorAiCallIssueOutcome } from "@/lib/api/generated/types.gen"
 import { reviewCallIssue } from "@/lib/clients/agent-calls"
+import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import { issueReasons } from "./agent-call-panel"
 
@@ -13,12 +14,6 @@ const outcomes: { value: OperatorAiCallIssueOutcome; label: string }[] = [
   { value: "CONFIRMED", label: "Real issue" },
   { value: "NOT_AN_ISSUE", label: "Not an issue" },
 ]
-
-function formatIssueTime(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "Unknown time"
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date)
-}
 
 export function PendingCallIssues({ issues, onSelect }: {
   issues: OperatorAiCallIssue[]
@@ -35,7 +30,7 @@ export function PendingCallIssues({ issues, onSelect }: {
             <li key={issue.interactionId} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <span>
                 <span className="font-medium text-foreground">{formatUSPhone(issue.phone)}</span>
-                {" · "}{issueReasons[issue.reason]} · Flagged by {issue.reportedBy} · {formatIssueTime(issue.reportedAt)}
+                {" · "}{issueReasons[issue.reason]} · Flagged by {issue.reportedBy} · {formatTimestamp(issue.reportedAt)}
               </span>
               <Button size="xs" variant="outline" aria-label={`Review call from ${formatUSPhone(issue.phone)}`} onClick={() => onSelect(issue.interactionId)}>
                 Review
@@ -79,7 +74,7 @@ export function CallIssueReview({ interactionID, initialIssue, onChange }: {
         <FlagIcon aria-hidden="true" />
         <AlertTitle>Flagged by {issue.reportedBy}</AlertTitle>
         <AlertDescription>
-          <p>{issueReasons[issue.reason]} · {formatIssueTime(issue.reportedAt)}</p>
+          <p>{issueReasons[issue.reason]} · {formatTimestamp(issue.reportedAt)}</p>
           {issue.note && <p className="whitespace-pre-wrap text-foreground">{issue.note}</p>}
           <div className="mt-2 flex flex-wrap gap-2">
             {outcomes.map((outcome) => {
@@ -93,7 +88,7 @@ export function CallIssueReview({ interactionID, initialIssue, onChange }: {
             })}
           </div>
           {issue.review && (
-            <p className="text-xs">Reviewed by {issue.review.reviewedBy} · {formatIssueTime(issue.review.reviewedAt)}</p>
+            <p className="text-xs">Reviewed by {issue.review.reviewedBy} · {formatTimestamp(issue.review.reviewedAt)}</p>
           )}
           {error && <p className="text-destructive">{error}</p>}
         </AlertDescription>

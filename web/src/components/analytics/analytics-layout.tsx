@@ -1,15 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { ChevronRightIcon } from "lucide-react"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { WorkspacePageHeader } from "@/components/workspace/workspace-page-header"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { formatDay, type BookingMetric } from "@/lib/booking-analytics"
 import styles from "./booking-overview.module.css"
@@ -33,13 +25,7 @@ export function AnalyticsFrame({
 }) {
   return (
     <div className={styles.dashboard}>
-      <header className={styles.header}>
-        <div className={styles.breadcrumb}>
-          <span>{section}</span>
-          <ChevronRightIcon size={13} />
-          <h1>{title}</h1>
-        </div>
-      </header>
+      <WorkspacePageHeader section={section} title={title} />
       <main className={styles.content}>
         <div className={styles.toolbar}>
           <div className={styles.periodLabel}>{periodLabel}</div>
@@ -89,9 +75,6 @@ export function AnalyticsLayout({
   setMetric,
   period,
   setPeriod,
-  office,
-  setOffice,
-  offices,
   from,
   through,
   children,
@@ -100,9 +83,6 @@ export function AnalyticsLayout({
   setMetric: (value: AnalyticsTab) => void
   period: number
   setPeriod: (value: number) => void
-  office: string
-  setOffice: (value: string) => void
-  offices: Array<{ value: string; label: string }>
   from?: string
   through?: string
   children: ReactNode
@@ -122,44 +102,22 @@ export function AnalyticsLayout({
         )
       }
       controls={
-        <>
-          <Select
-            value={office}
-            onValueChange={(value) => {
-              if (value !== null) setOffice(value)
-            }}
-            items={offices}
-          >
-            <SelectTrigger aria-label="Office">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {offices.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <ToggleGroup
-            variant="segmented"
-            spacing={1}
-            value={[String(period)]}
-            onValueChange={(values) => {
-              const value = Number(values[0])
-              if ([7, 30, 90].includes(value)) setPeriod(value)
-            }}
-            aria-label="Reporting period"
-          >
-            {[7, 30, 90].map((value) => (
-              <ToggleGroupItem key={value} value={String(value)}>
-                {value} days
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        </>
+        <ToggleGroup
+          variant="segmented"
+          spacing={1}
+          value={[String(period)]}
+          onValueChange={(values) => {
+            const value = Number(values[0])
+            if ([7, 30, 90].includes(value)) setPeriod(value)
+          }}
+          aria-label="Reporting period"
+        >
+          {[7, 30, 90].map((value) => (
+            <ToggleGroupItem key={value} value={String(value)}>
+              {value} days
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       }
       tabs={<AnalyticsSwitch metric={metric} onChange={setMetric} />}
     >

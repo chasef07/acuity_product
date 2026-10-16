@@ -833,7 +833,7 @@ test("booking analytics is Admin-only and operator diagnostics remain separate",
     }
     await projection.dispatch({ type: "select-manage-agent" })
     assert.equal(projection.getSnapshot().selection.view, "manage-agent")
-    assert.equal(projection.getSnapshot().selection.agentPage, "transcripts")
+    assert.equal(projection.getSnapshot().selection.agentPage, "home")
     await projection.dispatch({ type: "select-manage-agent", page: "insurance" })
     await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
     assert.equal(projection.getSnapshot().selection.view, "manage-agent")
@@ -1445,6 +1445,49 @@ test("back and forward restore the Task or page view in the URL", async () => {
   projection.stop()
 })
 
+test("the agent Home is the landing page and Work keeps its own URL", async () => {
+  const realtime = deterministicRealtime()
+  const navigation = memoryNavigation({ view: "manage-agent" })
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([task("first-task")]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.view, "manage-agent")
+  assert.equal(projection.getSnapshot().selection.agentPage, "home")
+  assert.equal(projection.getSnapshot().selection.task, undefined)
+  assert.deepEqual(navigation.writes, [])
+  await projection.dispatch({ type: "select-work" })
+  assert.equal(projection.getSnapshot().selection.view, "engagement")
+  assert.equal(projection.getSnapshot().selection.task?.id, "first-task")
+  assert.deepEqual(navigation.writes, [{ location: { view: "task", taskID: "first-task" }, mode: "push" }])
+  projection.stop()
+})
+
+test("Work with no Tasks has its own URL", async () => {
+  const realtime = deterministicRealtime()
+  const navigation = memoryNavigation({ view: "manage-agent" })
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    navigation,
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-work" })
+  assert.equal(projection.getSnapshot().selection.view, "none")
+  assert.deepEqual(navigation.writes, [{ location: { view: "work" }, mode: "push" }])
+  await projection.dispatch({ type: "select-manage-agent" })
+  navigation.go({ view: "work" })
+  await projection.dispatch({ type: "navigation-changed" })
+  assert.equal(projection.getSnapshot().selection.view, "none")
+  projection.stop()
+})
+
 test("Manage agent pages are kept in the URL and restored by refresh and back", async () => {
   const realtime = deterministicRealtime()
   const navigation = memoryNavigation({ view: "manage-agent", page: "knowledge" })
@@ -1464,7 +1507,7 @@ test("Manage agent pages are kept in the URL and restored by refresh and back", 
   await projection.dispatch({ type: "select-manage-agent", page: "transcripts" })
   assert.deepEqual(navigation.writes, [
     { location: { view: "manage-agent", page: "insurance" }, mode: "push" },
-    { location: { view: "manage-agent" }, mode: "push" },
+    { location: { view: "manage-agent", page: "transcripts" }, mode: "push" },
   ])
   navigation.go({ view: "manage-agent", page: "insurance" })
   await projection.dispatch({ type: "navigation-changed" })
@@ -1475,7 +1518,7 @@ test("Manage agent pages are kept in the URL and restored by refresh and back", 
   assert.equal(projection.getSnapshot().selection.agentPage, "insurance")
   navigation.go({ view: "manage-agent" })
   await projection.dispatch({ type: "navigation-changed" })
-  assert.equal(projection.getSnapshot().selection.agentPage, "transcripts")
+  assert.equal(projection.getSnapshot().selection.agentPage, "home")
   assert.equal(navigation.writes.length, 2)
   projection.stop()
 })
@@ -1633,7 +1676,7 @@ test("back during a real sync reconciliation reloads the unchanged scope", async
   assert.equal(workspaceReads, 2)
 })
 
-function memoryNavigation(initial: WorkspaceLocation = { view: "none" }) {
+function memoryNavigation(initial: WorkspaceLocation = { view: "work" }) {
   let current = initial
   const writes: Array<{ location: WorkspaceLocation; mode: "push" | "replace" }> = []
   return {

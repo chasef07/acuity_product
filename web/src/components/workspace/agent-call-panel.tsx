@@ -22,9 +22,11 @@ import type {
   AgentCall,
   AgentCallIssue,
   AgentCallIssueReason,
+  AgentCallMessage,
   AgentCallVerdict,
 } from "@/lib/api/generated/types.gen"
 import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
+import { formatClockTime, formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import {
@@ -232,7 +234,7 @@ function CallContent({
         </div>
         <SheetDescription>
           {detail
-            ? `${new Date(detail.call.startedAt).toLocaleString()} · ${detail.locationName}`
+            ? `${formatTimestamp(detail.call.startedAt)} · ${detail.locationName}`
             : "Conversation with your agent"}
         </SheetDescription>
         {detail && (
@@ -290,7 +292,7 @@ function CallContent({
                   )}
                   <p>
                     Saved for Acuity review ·{" "}
-                    {new Date(detail.issue.createdAt).toLocaleString()}
+                    {formatTimestamp(detail.issue.createdAt)}
                   </p>
                 </AlertDescription>
               </Alert>
@@ -382,52 +384,48 @@ function CallContent({
               )
             )}
             <h2 className="text-sm font-medium">Transcript</h2>
-            {detail.messages.length ? (
-              detail.messages.map((message, index) => {
-                const align = message.speaker === "Agent" ? "start" : "end"
-                return (
-                  <Message key={index} align={align}>
-                    <MessageContent>
-                      <MessageHeader>{message.speaker}</MessageHeader>
-                      <Bubble
-                        align={align}
-                        variant={align === "start" ? "muted" : "outline"}
-                      >
-                        <BubbleContent className="whitespace-pre-wrap">
-                          {message.text}
-                        </BubbleContent>
-                      </Bubble>
-                      <MessageFooter>
-                        <time dateTime={message.occurredAt}>
-                          {new Date(message.occurredAt).toLocaleTimeString(
-                            undefined,
-                            {
-                              hour: "numeric",
-                              minute: "2-digit",
-                              second: "2-digit",
-                            },
-                          )}
-                        </time>
-                      </MessageFooter>
-                    </MessageContent>
-                  </Message>
-                )
-              })
-            ) : (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>No transcript available</EmptyTitle>
-                  <EmptyDescription>
-                    No conversation was recorded for this call.
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            )}
+            <CallTranscript messages={detail.messages} />
           </div>
         </div>
       )}
     </>
   )
+}
+
+export function CallTranscript({ messages }: { messages: AgentCallMessage[] }) {
+  if (!messages.length) {
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>No transcript available</EmptyTitle>
+          <EmptyDescription>
+            No conversation was recorded for this call.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  }
+  return messages.map((message, index) => {
+    const agent = message.speaker === "Agent"
+    const align = agent ? "end" : "start"
+    return (
+      <Message key={index} align={align}>
+        <MessageContent>
+          <MessageHeader>{message.speaker}</MessageHeader>
+          <Bubble align={align} variant={agent ? "muted" : "outline"}>
+            <BubbleContent className="whitespace-pre-wrap">
+              {message.text}
+            </BubbleContent>
+          </Bubble>
+          <MessageFooter>
+            <time dateTime={message.occurredAt}>
+              {formatClockTime(message.occurredAt)}
+            </time>
+          </MessageFooter>
+        </MessageContent>
+      </Message>
+    )
+  })
 }
 
 const sentimentLabels = ["Very negative", "Negative", "Neutral or mixed", "Positive", "Very positive"]

@@ -30,10 +30,10 @@ import {
 import {
   SidebarInset,
   SidebarProvider,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  CallingAvailabilityControl,
   CallingDock,
   CallingFailureStatus,
 } from "@/components/workspace/calling-dock"
@@ -41,8 +41,11 @@ import { AIInteractionContext } from "@/components/workspace/ai-interaction-cont
 import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
 import { TaskCallContext, TaskCallAction } from "@/components/workspace/task-call-context"
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
-import { WorkspaceRail } from "@/components/workspace/workspace-rail"
+import { CallingRailControl } from "@/components/workspace/workspace-rail-button"
+import { WorkspaceRail, manageAgentPages } from "@/components/workspace/workspace-rail"
+import { WorkspaceTopBar } from "@/components/workspace/workspace-page-header"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
+import { WorkEmptyState } from "@/components/workspace/work-empty-state"
 import type {
   AccessDiscovery,
   CallingCall,
@@ -58,6 +61,7 @@ import {
 import type { NumberHistory } from "@/lib/workspace-history"
 import {
   createWorkspaceProjection,
+  isWorkView,
   type WorkspaceProjectionIntent,
 } from "@/lib/workspace-projection"
 import {
@@ -327,33 +331,48 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       }
       void projection.dispatch(intent)
     }
+    const locationControl = (
+      <WorkspaceSelector
+        discovery={discovery}
+        practiceID={state.scope.practiceID}
+        locationScopeID={state.scope.locationScopeID}
+        disabled={callingOccupied}
+        onSelect={(practiceID, locationScopeID) =>
+          void projection.dispatch({ type: "select-scope", practiceID, locationScopeID })
+        }
+      />
+    )
+    const section = view === "manage-agent" ? "Home" : view === "analytics" ? "Analytics" : view === "operator-analytics" ? "AI diagnostics" : "Work"
+    const page = view === "manage-agent" && state.selection.agentPage !== "home"
+      ? manageAgentPages.find((item) => item.value === state.selection.agentPage)?.label
+      : isWorkView(view) ? selectedTask?.title : undefined
     return (
       <>
         <WorkspaceNavRail
           projection={state}
           onIntent={sendIntent}
-          availabilityControl={<CallingAvailabilityControl />}
+          availabilityControl={
+            <CallingRailControl
+              workActive={isWorkView(view)}
+              onOpenWork={() => sendIntent({ type: "select-work" })}
+            />
+          }
         />
-        <div className="relative flex h-svh min-w-0 flex-1 overflow-hidden bg-background md:my-2 md:mr-2 md:h-[calc(100svh-1rem)] md:rounded-xl md:border md:border-sidebar-border md:shadow-xs">
+        <div className={workspaceColumn}>
+        <div data-testid="workspace-panel" className={cn("relative flex-col overflow-hidden", workspacePanel)}>
+          <WorkspaceTopBar
+            section={section}
+            page={page}
+            onSection={view === "manage-agent" ? () => sendIntent({ type: "select-manage-agent", page: "home" }) : undefined}
+          >
+            {view === "manage-agent" && state.selection.agentPage !== "home" && locationControl}
+          </WorkspaceTopBar>
+          <div className="relative flex min-h-0 flex-1 overflow-clip">
           <WorkspaceRail
             projection={state}
             onIntent={sendIntent}
             callingStatus={<CallingFailureStatus />}
-            locationControl={
-              <WorkspaceSelector
-                discovery={discovery}
-                practiceID={state.scope.practiceID}
-                locationScopeID={state.scope.locationScopeID}
-                disabled={callingOccupied}
-                onSelect={(practiceID, locationScopeID) =>
-                  void projection.dispatch({
-                    type: "select-scope",
-                    practiceID,
-                    locationScopeID,
-                  })
-                }
-              />
-            }
+            locationControl={locationControl}
           />
           <SidebarInset
             data-testid="mounted-workspace"
@@ -363,10 +382,9 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           >
             {view === "analytics" && canViewPracticeAnalytics(discovery, state.scope.practiceID) ? (
               <PracticeAnalytics
-                key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
+                key={state.scope.practiceID}
                 practiceID={state.scope.practiceID}
                 locationScopeID={state.scope.locationScopeID}
-                locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
               />
             ) : view === "manage-agent" ? (
               <ManageAgent
@@ -376,6 +394,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                 locationScopeID={state.scope.locationScopeID}
                 locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
                 page={state.selection.agentPage}
+                onPage={(page) => sendIntent({ type: "select-manage-agent", page })}
               />
             ) : view === "operator-analytics" && discovery.platformOperator ? (
               <OperatorAnalytics
@@ -448,10 +467,10 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   data-testid="context-panel"
                   inert={!contextPanelOpen}
                   className={cn(
-                    "absolute top-20 right-3 flex h-fit max-h-[calc(100%-5.75rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:h-auto lg:max-h-none lg:max-w-none lg:shrink-0 lg:self-stretch lg:rounded-none lg:border-y-0 lg:border-r-0 lg:bg-background lg:shadow-none",
+                    "absolute top-20 right-3 flex h-fit max-h-[calc(100%-5.75rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:h-auto lg:max-h-none lg:max-w-none lg:shrink-0 lg:self-stretch lg:rounded-xl lg:bg-background lg:shadow-sm",
                     contextView === "task" && state.selection.taskGroup && "h-[calc(100%-5.75rem)] lg:h-auto",
                     contextPanelOpen
-                      ? "translate-x-0 opacity-100 lg:w-72"
+                      ? "translate-x-0 opacity-100 lg:my-2 lg:mr-2 lg:w-72"
                       : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:w-0",
                   )}
                   onTransitionEnd={(event) => {
@@ -470,7 +489,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   >
                     <PanelRightCloseIcon />
                   </Button>
-                  <div className="flex min-h-0 flex-1">
+                  <div className="flex min-h-0 w-full flex-1 lg:w-72">
                     {contextView === "ai-call" ? (
                       <AIInteractionContext
                         detail={state.selection.aiInteraction}
@@ -516,9 +535,11 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                 </aside>
               </div>
             ) : (
-              <section aria-label="No number selected" className="min-h-0 flex-1" />
+              <WorkEmptyState projection={state} />
             )}
           </SidebarInset>
+          </div>
+        </div>
         </div>
       </>
     )
@@ -545,6 +566,7 @@ function WorkspaceSelector({
   onSelect: (practiceID: string, locationID: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const { isMobile, setOpenMobile } = useSidebar()
   const practice =
     discovery.practices.find((item) => item.id === practiceID) ??
     discovery.practices[0]
@@ -558,6 +580,7 @@ function WorkspaceSelector({
   function select(nextPracticeID: string, nextLocationID: string) {
     onSelect(nextPracticeID, nextLocationID)
     setOpen(false)
+    if (isMobile) setOpenMobile(false)
   }
 
   return (
@@ -646,20 +669,21 @@ function WorkspaceSelector({
   )
 }
 
+const workspaceColumn = "flex h-svh min-w-0 flex-1 flex-col"
+const workspacePanel = "flex min-h-0 min-w-0 flex-1 bg-background md:my-2 md:mr-2 md:rounded-xl md:border md:border-sidebar-border md:shadow-xs"
+
 function WorkspaceLoading() {
   return (
-    <div className="flex min-h-svh w-full" aria-busy="true">
-      <aside className="hidden w-64 border-r p-4 md:block">
-        <Skeleton className="h-9 w-40" />
-        <Skeleton className="mt-5 h-8 w-full" />
-        <Skeleton className="mt-3 h-64 w-full" />
-      </aside>
-      <main className="flex flex-1 items-center justify-center">
-        <div role="status" className="animate-pulse text-muted-foreground motion-reduce:animate-none">
-          <AcuityMark className="size-12" />
-          <span className="sr-only">Loading Acuity workspace</span>
-        </div>
-      </main>
+    <div className="flex min-h-svh w-full bg-sidebar" aria-busy="true">
+      <div className="w-16 shrink-0" />
+      <div className={workspaceColumn}>
+        <main data-testid="workspace-panel" className={cn("items-center justify-center", workspacePanel)}>
+          <div role="status" className="animate-pulse text-muted-foreground motion-reduce:animate-none">
+            <AcuityMark className="size-12" />
+            <span className="sr-only">Loading Acuity workspace</span>
+          </div>
+        </main>
+      </div>
     </div>
   )
 }

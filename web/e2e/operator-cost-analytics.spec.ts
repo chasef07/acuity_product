@@ -44,13 +44,11 @@ test("Platform Operator sees recorded costs and incomplete usage", async ({
       .getByRole("button", { name: "AI diagnostics", exact: true })
       .click()
     const diagnostics = page.getByRole("region", { name: "AI call analytics" })
-    await diagnostics.getByRole("button", { name: "Cost", exact: true }).click()
-    await diagnostics
-      .getByRole("combobox", { name: "Office", exact: true })
-      .click()
+    await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
-      .getByRole("option", { name: "Fixture Location 6", exact: true })
+      .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
+    await diagnostics.getByRole("button", { name: "Cost", exact: true }).click()
     await diagnostics.getByRole("button", { name: "Last 7 days", exact: true }).click()
 
     const overview = diagnostics.getByRole("region", {

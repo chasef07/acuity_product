@@ -31,7 +31,7 @@ import {
   useTaskCallEligibility,
 } from "@/lib/clients/calls"
 import { completeTask, readTask, renameTask, reopenTask } from "@/lib/clients/tasks"
-import { formatShortDateTime } from "@/lib/format"
+import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
@@ -225,7 +225,7 @@ function TaskWorkspace({
     task.origin === "MISSED_CALL_RECOVERY"
   const completion = callbackCompletionLabel(numberHistory, task) ??
     `Completed by ${task.completedBy?.email ?? "the team"}`
-  const callbackNotice = openTaskCallbackNotice(numberHistory, task, formatShortDateTime)
+  const callbackNotice = openTaskCallbackNotice(numberHistory, task, formatTimestamp)
 
   return (
     <section
@@ -264,7 +264,7 @@ function TaskWorkspace({
         </div>
       ) : (
         <div className="flex items-start gap-1 pr-8">
-          <h2 className="min-w-0 flex-1 text-lg font-semibold leading-snug tracking-[-0.015em]">
+          <h2 className="min-w-0 flex-1 text-base font-medium leading-snug">
             {task.title}
           </h2>
           {task.state === "OPEN" && canMutate && (
@@ -294,7 +294,7 @@ function TaskWorkspace({
           {task.sourceMessage}
         </p>
       )}
-      {task.state === "COMPLETED" && <p role="status" className="mt-3 text-sm text-muted-foreground">{completion}{task.completedAt ? ` · ${formatShortDateTime(task.completedAt)}` : ""}. <span className="block mt-1 text-xs">Completed for everyone with access.</span></p>}
+      {task.state === "COMPLETED" && <p role="status" className="mt-3 text-sm text-muted-foreground">{completion}{task.completedAt ? ` · ${formatTimestamp(task.completedAt)}` : ""}. <span className="block mt-1 text-xs">Completed for everyone with access.</span></p>}
       {needsReview && <div role="status" className="mt-3 rounded-md border p-3 text-sm">
         This Task changed. Review the latest activity before completing it.
         <Button size="sm" variant="outline" className="mt-2" onClick={() => setReviewedVersion(task.version)}>Review latest</Button>
@@ -361,7 +361,7 @@ function TaskWorkspace({
           )}
           <Metadata
             label="Created"
-            value={`${formatShortDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
+            value={`${formatTimestamp(task.createdAt)} · ${actorLabel(task.createdBy)}`}
           />
           {task.automaticAcknowledgement && (
             <Metadata
@@ -371,11 +371,11 @@ function TaskWorkspace({
               )}
             />
           )}
-          <Metadata label="Last changed" value={formatShortDateTime(task.updatedAt)} />
+          <Metadata label="Last changed" value={formatTimestamp(task.updatedAt)} />
           <Metadata
             label="Completed"
             value={
-              task.completedAt ? formatShortDateTime(task.completedAt) : "Not completed"
+              task.completedAt ? formatTimestamp(task.completedAt) : "Not completed"
             }
           />
         </div>
@@ -439,7 +439,7 @@ function RecoveryTaskSource({
               <li key={interaction.callId}>
                 {interaction.type === "VOICEMAIL" ? "Voicemail" : "Missed call"}
                 {" · "}
-                {formatShortDateTime(interaction.occurredAt)}
+                {formatTimestamp(interaction.occurredAt)}
               </li>
             ))}
           </ul>
@@ -671,7 +671,7 @@ function CallWorkspace({
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="px-5 py-5 pr-12">
-        <h2 className="text-lg font-semibold tracking-[-0.015em]">
+        <h2 className="text-base font-medium leading-snug">
           {callContextTitle(call.state)}
         </h2>
         {contactName && <p className="mt-3 font-medium">{contactName}</p>}
@@ -701,7 +701,7 @@ function CallWorkspace({
           <Metadata label="Direction" value={formatDirection(call.direction)} />
           <Metadata label="Started from" value={formatEntryPoint(call.entryPoint)} />
           {call.connectedAt && (
-            <Metadata label="Connected" value={formatShortDateTime(call.connectedAt)} />
+            <Metadata label="Connected" value={formatTimestamp(call.connectedAt)} />
           )}
         </div>
       </details>

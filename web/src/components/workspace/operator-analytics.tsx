@@ -47,13 +47,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Table,
@@ -79,7 +72,7 @@ import {
   type AiCallLedger,
   useAiCallAnalytics,
 } from "@/lib/clients/agent-calls"
-import { formatShortDateTime } from "@/lib/format"
+import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
 type AnalyticsNextPageState = AiCallLedger["nextPage"]
@@ -113,18 +106,7 @@ export function OperatorAnalytics({
   locationScopeID: string
   locations: Location[]
 }) {
-  const scopeKey = `${practiceID}:${locationScopeID}`
-  const [officeSelection, setOfficeSelection] = useState({
-    key: scopeKey,
-    value: locationScopeID || "all",
-  })
-  const office =
-    officeSelection.key === scopeKey
-      ? officeSelection.value
-      : locationScopeID || "all"
-  const setOffice = (value: string) =>
-    setOfficeSelection({ key: scopeKey, value })
-  const locationID = office === "all" ? "" : office
+  const locationID = locationScopeID
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("24h")
   const [tab, setTab] = useState<AnalyticsTab>("calls")
   const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
@@ -172,13 +154,6 @@ export function OperatorAnalytics({
     }))
   }
 
-  const offices = [
-    { value: "all", label: "All offices" },
-    ...locations.map((location) => ({
-      value: location.id,
-      label: location.name,
-    })),
-  ]
   return (
     <section
       aria-label="AI call analytics"
@@ -190,24 +165,6 @@ export function OperatorAnalytics({
         periodLabel={reviewView ? "Daily call review and golden set" : ranges.find((item) => item.value === range)!.label}
         controls={reviewView ? null : (
           <>
-            <Select
-              value={office}
-              items={offices}
-              onValueChange={(value) => {
-                if (value !== null) setOffice(value)
-              }}
-            >
-              <SelectTrigger aria-label="Office">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {offices.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <ToggleGroup
               variant="segmented"
               spacing={1}
@@ -551,13 +508,13 @@ function CallLedger({
                     <button
                       type="button"
                       className="rounded-sm text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                      aria-label={`Open analytics for call from ${formatShortDateTime(call.startedAt)}`}
+                      aria-label={`Open analytics for call from ${formatTimestamp(call.startedAt)}`}
                       onClick={(event) => {
                         event.stopPropagation()
                         onSelect(call.id)
                       }}
                     >
-                      {formatShortDateTime(call.startedAt)}
+                      {formatTimestamp(call.startedAt)}
                     </button>
                   </TableCell>
                   <TableCell className="tabular-nums">
@@ -590,7 +547,7 @@ function CallLedger({
           <button
             key={call.id}
             type="button"
-            aria-label={`Open analytics for call from ${formatShortDateTime(call.startedAt)}`}
+            aria-label={`Open analytics for call from ${formatTimestamp(call.startedAt)}`}
             className={`rounded-xl border p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/40 ${call.reviewReasons?.length ? "border-destructive/25 bg-destructive/5 hover:bg-destructive/10" : "bg-card hover:bg-muted"}`}
             onClick={() => onSelect(call.id)}
           >
@@ -598,7 +555,7 @@ function CallLedger({
               <div className="min-w-0">
                 <p className="text-sm font-semibold tabular-nums">{formatUSPhoneDigits(call.phone)}</p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {formatShortDateTime(call.startedAt)} · {call.locationName}
+                  {formatTimestamp(call.startedAt)} · {call.locationName}
                 </p>
               </div>
               <ArrowRightIcon

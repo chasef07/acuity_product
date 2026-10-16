@@ -7,6 +7,7 @@ import type {
   OperatorAiVersionChange,
   OperatorAiVersionDimension,
 } from "@/lib/api/generated/types.gen"
+import { formatTimestamp } from "@/lib/format-time"
 import styles from "./ai-diagnostics.module.css"
 
 export type VersionSelection = Record<OperatorAiVersionDimension, boolean>
@@ -123,7 +124,7 @@ export function VersionLane({
         const detail = group.changes
           .map(
             (change, i) =>
-              `${labels[i]} (was ${change.previousVersion.slice(0, change.dimension === "knowledge" ? 8 : undefined)}) · most calls this day, first ${new Date(change.firstSeenAt).toLocaleString()}`,
+              `${labels[i]} (was ${change.previousVersion.slice(0, change.dimension === "knowledge" ? 8 : undefined)}) · most calls this day, first ${formatTimestamp(change.firstSeenAt)}`,
           )
           .join("\n")
         return (

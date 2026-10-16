@@ -1,5 +1,6 @@
 import type { ConversationTimelineItem, Task } from "@/lib/api/generated/types.gen"
 import { appointmentOutcomeTitle } from "./ai-interactions.ts"
+import { sameLocalDay } from "./format-time.ts"
 import { newestFirst, oldestFirst } from "./workspace-ordering.ts"
 
 export function presentTimeline(items: ConversationTimelineItem[]) {
@@ -217,35 +218,12 @@ export function openTaskCallbackNotice(
     (value) => value.startedAt,
   )[0]
   if (!call) return undefined
-  const attempt = `at ${formatTime(call.startedAt)} (${endedCallOutcomes[call.outcome]})`
+  const attempt = `(${endedCallOutcomes[call.outcome]}) · ${formatTime(call.startedAt)}`
   return call.placedByEmail
     ? `${call.placedByEmail} called this number ${attempt}. This Task is still open.`
     : `This number was called ${attempt}. This Task is still open.`
 }
 
-export function conversationDateLabel(value: string, now = new Date()) {
-  const date = new Date(value)
-  if (sameLocalDate(date, now)) return "Today"
-
-  const yesterday = new Date(now)
-  yesterday.setDate(yesterday.getDate() - 1)
-  if (sameLocalDate(date, yesterday)) return "Yesterday"
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
-  }).format(date)
-}
-
 export function sameConversationDate(left: string, right: string) {
-  return sameLocalDate(new Date(left), new Date(right))
-}
-
-function sameLocalDate(left: Date, right: Date) {
-  return (
-    left.getFullYear() === right.getFullYear() &&
-    left.getMonth() === right.getMonth() &&
-    left.getDate() === right.getDate()
-  )
+  return sameLocalDay(new Date(left), new Date(right))
 }
