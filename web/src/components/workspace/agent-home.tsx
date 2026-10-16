@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 
 import { AnimatedAcuityMark } from "@/components/animated-acuity-mark"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { useAgentCalls } from "@/lib/clients/agent-calls"
 import { useLocationKnowledge } from "@/lib/clients/location-knowledge"
@@ -105,6 +106,9 @@ function NeedsKnowledge({
   const calls = current.status === "ready" ? current.data.calls : []
   const nextCursor = current.status === "ready" ? current.data.nextCursor : ""
   const selectedIndex = calls.findIndex((call) => call.id === selectedID)
+  const moreError = current.moreFailure
+    ? "More calls could not be loaded. Try again."
+    : undefined
 
   async function loadNext(from: string) {
     const next = await current.loadMore()
@@ -165,6 +169,12 @@ function NeedsKnowledge({
           </ul>
         )}
       </AgentQueryBody>
+      {moreError && (
+        <Alert variant="destructive" className="mt-4">
+          <AlertTitle>More calls unavailable</AlertTitle>
+          <AlertDescription>{moreError}</AlertDescription>
+        </Alert>
+      )}
       {nextCursor && (
         <Button variant="outline" className="mt-4" disabled={current.loadingMore} onClick={() => void current.loadMore()}>
           {current.loadingMore ? "Loading…" : "Load more calls"}
@@ -176,6 +186,7 @@ function NeedsKnowledge({
         loadedCount={calls.length}
         hasMore={Boolean(nextCursor)}
         loadingNext={current.loadingMore}
+        navigationError={moreError}
         onPrevious={selectedIndex > 0 ? () => setSelectedID(calls[selectedIndex - 1].id) : undefined}
         onNext={
           selectedIndex >= 0 && (selectedIndex < calls.length - 1 || nextCursor)
