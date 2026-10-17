@@ -507,32 +507,6 @@ type controlledInteractionWork struct {
 	processed chan struct{}
 }
 
-type controlledClassificationWork struct{ processed chan struct{} }
-
-func (work *controlledClassificationWork) ProcessNextClassification(context.Context) (bool, error) {
-	select {
-	case work.processed <- struct{}{}:
-		return true, nil
-	default:
-		return false, nil
-	}
-}
-
-func TestRunnerRunsClassificationAlongsideReceipts(t *testing.T) {
-	labels := &controlledClassificationWork{processed: make(chan struct{}, 1)}
-	runner, err := New(Config{
-		WorkInterval: time.Hour, WorkTimeout: time.Second, CredentialInterval: time.Hour, CredentialTimeout: time.Second,
-		HealthInterval: time.Hour, HealthTimeout: time.Second, ReceiptBatchSize: 1, RecoveryAndMessagingBatchSize: 1,
-		ProviderCommandBatchSize: 1, CommandWorkers: 1,
-	}, newControlledWork(), &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{}, labels)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stop := runReceiptRunner(t, runner)
-	defer stop()
-	waitForSignal(t, labels.processed, "call classification")
-}
-
 func (work *controlledInteractionWork) ProcessNextReceipt(context.Context) (bool, error) {
 	select {
 	case work.processed <- struct{}{}:

@@ -55,15 +55,9 @@ for name in \
   WEB_IMAGE \
   IMAGE_TAG \
   DEPLOYMENT_ID \
-  USABLE_DATABASE_CONNECTIONS \
-  OPENROUTER_API_KEY_SECRET; do
+  USABLE_DATABASE_CONNECTIONS; do
   require_value "$name"
 done
-
-if [[ ! "$OPENROUTER_API_KEY_SECRET" =~ ^[A-Za-z0-9_-]{1,255}$ ]]; then
-  echo "OPENROUTER_API_KEY_SECRET must be a Secret Manager secret name." >&2
-  exit 1
-fi
 
 if [[ ! "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]]; then
   echo "IMAGE_TAG must be a full 40-character Git commit SHA." >&2
@@ -575,7 +569,6 @@ stage_worker() {
     --memory 512Mi \
     --instances "$instances" \
     --update-env-vars "$worker_environment" \
-    --update-secrets "OPENROUTER_API_KEY=${OPENROUTER_API_KEY_SECRET}:latest" \
     --quiet
   worker_image="$(
     gcloud run worker-pools revisions describe "$worker_revision" \

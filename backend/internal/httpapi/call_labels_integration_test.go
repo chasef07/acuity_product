@@ -35,7 +35,7 @@ func TestCallLabelsHTTPFiltersAndPublicProjection(t *testing.T) {
 	if err := pool.QueryRow(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage) VALUES('agent',$1,$2,'labels-http','+15555550111','+15555550100',now()-interval '1 minute',now(),'COMPLETED',3) RETURNING id::text`, practice, location).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_classifications(interaction_id,intent,outcome,status,raw_judgments,error_code) VALUES($1,'office_information','resolved','complete','{"private-label-evidence":"do not expose"}','private-error')`, id); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET closeout_payload='{"evaluation":{"classification":{"version":"call-labels-v1","model":"typesafe/jev-1.14","status":"complete","intent":"office_information","outcome":"resolved","answers":{"private-label-evidence":"do not expose"},"reason":"private-error"}}}' WHERE id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
 	handler, err := newPortalHandler(t, httpapi.Config{AcquireTimeout: time.Second}, pool, am, staticAuthenticator{"staff": staff, "operator": operator})

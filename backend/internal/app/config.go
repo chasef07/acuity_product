@@ -42,7 +42,6 @@ type Config struct {
 	KnowledgeGoogleProject  string
 	KnowledgeGoogleLocation string
 	Middleware              MiddlewareConfig
-	OpenRouterAPIKey        string
 }
 
 type MiddlewareConfig struct {
@@ -158,9 +157,6 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	}
 	if config.KnowledgeGoogleLocation == "" {
 		config.KnowledgeGoogleLocation = "us-east1"
-	}
-	if role == RoleWorker {
-		config.OpenRouterAPIKey = strings.TrimSpace(getenv("OPENROUTER_API_KEY"))
 	}
 
 	if role == RolePortalAPI || role == RoleProviderIngress || role == RoleRealtime {

@@ -902,7 +902,6 @@ func releaseEnvironment() []string {
 		"DEPLOYMENT_ID=release-1234",
 		"CALLLEG_SCHEMA_CUTOVER_COMPLETE=true",
 		"USABLE_DATABASE_CONNECTIONS=36",
-		"OPENROUTER_API_KEY_SECRET=openrouter-api-key",
 	}
 }
 
