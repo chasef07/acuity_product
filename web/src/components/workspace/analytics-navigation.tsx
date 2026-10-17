@@ -1,12 +1,16 @@
 "use client"
 
 import {
+  CalendarCheck2Icon,
   ChartNoAxesCombinedIcon,
+  Clock3Icon,
   CoinsIcon,
   ListChecksIcon,
   PhoneIcon,
   ShieldCheckIcon,
+  UsersIcon,
   WrenchIcon,
+  type LucideIcon,
 } from "lucide-react"
 
 import {
@@ -28,22 +32,33 @@ export const controlCenterPages: Array<{ value: ControlCenterPage; label: string
   { value: "review", label: "Review", icon: ListChecksIcon },
 ]
 
-export function ControlCenterNavigation({
+export type PracticeAnalyticsPage = "bookings" | "conversion" | "duration" | "staff"
+
+export const practiceAnalyticsPages: Array<{ value: PracticeAnalyticsPage; label: string; icon: typeof CalendarCheck2Icon }> = [
+  { value: "bookings", label: "Bookings", icon: CalendarCheck2Icon },
+  { value: "conversion", label: "Conversion", icon: ChartNoAxesCombinedIcon },
+  { value: "duration", label: "Duration", icon: Clock3Icon },
+  { value: "staff", label: "Staff", icon: UsersIcon },
+]
+
+export function AnalyticsNavigation<Page extends string>({
+  label,
+  pages,
   page,
   onPage,
 }: {
-  page: ControlCenterPage
-  onPage: (page: ControlCenterPage) => void
+  label: string
+  pages: Array<{ value: Page; label: string; icon: LucideIcon }>
+  page: Page
+  onPage: (page: Page) => void
 }) {
   const { isMobile, setOpenMobile } = useSidebar()
   return (
-    <nav aria-label="Control Center" className="flex w-full min-w-0 flex-col">
-      <p className="flex h-8 items-center px-2.5 text-xs font-medium text-muted-foreground">
-        Control Center
-      </p>
+    <nav aria-label={label} className="flex w-full min-w-0 flex-col">
+      <p className="flex h-8 items-center px-2.5 text-xs font-medium text-muted-foreground">{label}</p>
       <SidebarGroupContent>
         <SidebarMenu className="gap-1">
-          {controlCenterPages.map((item) => (
+          {pages.map((item) => (
             <SidebarMenuItem key={item.value}>
               <SidebarMenuButton
                 isActive={page === item.value}

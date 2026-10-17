@@ -65,8 +65,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { ReviewFolder } from "./review-folder"
-import { ControlCenterNavigation, type ControlCenterPage } from "./control-center-navigation"
-import { PracticeAnalyticsNavigation, type PracticeAnalyticsPage } from "./practice-analytics-navigation"
+import { AnalyticsNavigation, controlCenterPages, practiceAnalyticsPages, type ControlCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { Task, TaskFolderCounts } from "@/lib/api/generated/types.gen"
 import { formatUSPhone } from "@/lib/phone"
@@ -353,11 +352,11 @@ export function WorkspaceRail({
           </SidebarContent>
         ) : view === "operator-analytics" && onControlCenterPage ? (
           <SidebarContent className="overflow-y-auto px-2 py-2">
-            <ControlCenterNavigation page={controlCenterPage} onPage={onControlCenterPage} />
+            <AnalyticsNavigation label="Control Center" pages={controlCenterPages} page={controlCenterPage} onPage={onControlCenterPage} />
           </SidebarContent>
         ) : view === "analytics" && onAnalyticsPage ? (
           <SidebarContent className="overflow-y-auto px-2 py-2">
-            <PracticeAnalyticsNavigation page={analyticsPage} onPage={onAnalyticsPage} />
+            <AnalyticsNavigation label="Analytics" pages={practiceAnalyticsPages} page={analyticsPage} onPage={onAnalyticsPage} />
           </SidebarContent>
         ) : workView && (
         <SidebarContent

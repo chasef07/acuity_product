@@ -111,3 +111,24 @@ test("revealed judges include failures outside human question gates and preserve
   assert.match(inapplicable, /All applicable checks passed/)
   assert.doesNotMatch(inapplicable, /1 failed check/)
 })
+
+test("blind reviews require explicit inapplicability and complete evaluation evidence for a pass", () => {
+  const questions = ["call_ended_correctly", "appointment_datetime_correct"].map((key) => ({ key, code: key, label: key, prompt: key, source: "judge" as const, question: "", yes: "", no: "", failure: true }))
+  const render = (evaluation: Record<string, unknown>) => renderToStaticMarkup(<ScorecardPanel
+    review={{ ...review, questions: ["call_ended_correctly"], answers: [{ question: "call_ended_correctly", answer: true, note: "" }] }}
+    catalog={new Map(questions.map((question) => [question.key, question]))} evidenceReady onSaved={() => {}}
+    evaluation={evaluation}
+  />)
+  for (const evaluation of [
+    { status: "complete", results: {} },
+    { status: "incomplete", errors: { appointment_datetime_correct: { reason: "quorum" } } },
+    { status: "complete", results: { appointment_datetime_correct: { status: "not_applicable" } }, errors: { appointment_datetime_correct: { reason: "quorum" } } },
+    { status: "incomplete", results: { appointment_datetime_correct: { status: "not_applicable" } } },
+  ]) {
+    const html = render(evaluation)
+    assert.match(html, /Checks incomplete/, JSON.stringify(evaluation))
+    assert.doesNotMatch(html, /All applicable checks passed|Judge Fail|Judge Pass|Agrees|Disagrees/)
+  }
+  const applicable = render({ status: "complete", results: { call_ended_correctly: { verdict: false }, appointment_datetime_correct: { status: "not_applicable" } } })
+  assert.match(applicable, /All applicable checks passed/)
+})

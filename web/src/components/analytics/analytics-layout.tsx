@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react"
 import { OptionSelect } from "@/components/workspace/manage-agent-page"
-import { practiceAnalyticsPages, type PracticeAnalyticsPage } from "@/components/workspace/practice-analytics-navigation"
+import { practiceAnalyticsPages, type PracticeAnalyticsPage } from "@/components/workspace/analytics-navigation"
 import { formatDay } from "@/lib/booking-analytics"
 import styles from "./booking-overview.module.css"
 

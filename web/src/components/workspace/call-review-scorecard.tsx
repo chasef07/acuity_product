@@ -68,7 +68,7 @@ export function ScorecardPanel({
         ? checkState(result, answer, question.failure, Object.hasOwn(errors, question.key))
         : applicable.includes(question.key)
           ? checkState({}, answer, question.failure)
-          : checkState(rawResult ? result : { status: evidenceReady ? "not_applicable" : "unknown" }, undefined, question.failure),
+          : checkState(result, undefined, question.failure, Object.hasOwn(errors, question.key)),
     }
   })
 
@@ -113,7 +113,7 @@ export function ScorecardPanel({
           </p>
         </div>
         <p className="mt-2 text-xs font-medium text-muted-foreground">{revealed ? "Judge results · Your answers below remain editable" : "Your review · Judge results stay hidden until you save"}</p>
-        <ScorecardFlow call={call} checks={checks} complete={(revealed || complete) && evidenceReady && applicable.every((key) => catalog.has(key))}>
+        <ScorecardFlow call={call} checks={checks} complete={(revealed || complete) && evidenceReady && evaluation?.status !== "incomplete" && applicable.every((key) => catalog.has(key))}>
         <ol className="divide-y px-3">
           {applicable.map((key) => {
             const question = catalog.get(key)

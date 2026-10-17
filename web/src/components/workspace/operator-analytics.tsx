@@ -16,7 +16,7 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { WorkspacePageHeader } from "@/components/workspace/workspace-page-header"
-import { controlCenterPages, type ControlCenterPage } from "./control-center-navigation"
+import { controlCenterPages, type ControlCenterPage } from "./analytics-navigation"
 import {
   DiagnosticsCallTrends,
   DiagnosticsTools,
