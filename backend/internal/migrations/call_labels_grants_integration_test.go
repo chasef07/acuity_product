@@ -31,19 +31,19 @@ func TestCallLabelsRuntimeGrantsKeepJudgeEvidencePrivate(t *testing.T) {
 			}
 			var id string
 			if err := tx.QueryRow(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,closeout_payload)
- VALUES('agent',$1,$2,$3,'+15555550101','+15555550102',now(),now(),'COMPLETED',3,'{}') RETURNING id::text`, practice, location, role).Scan(&id); err != nil {
+ VALUES('agent',$1,$2,$3,'+15555550101','+15555550102',now(),now(),'COMPLETED',3,'{"evaluation":{"classification":{"version":"call-labels-v1","model":"typesafe/jev-1.14","status":"complete","intent":"office_information","outcome":"resolved","answers":{"private":true}}}}') RETURNING id::text`, practice, location, role).Scan(&id); err != nil {
 				t.Fatal(err)
 			}
 			var status string
-			if err := tx.QueryRow(ctx, `SELECT status FROM ai_interaction_classifications WHERE interaction_id=$1`, id).Scan(&status); err != nil || status != "pending" {
-				t.Fatalf("trigger queue=%s %v", status, err)
+			if err := tx.QueryRow(ctx, `SELECT status FROM ai_interaction_classifications WHERE interaction_id=$1`, id).Scan(&status); err != nil || status != "complete" {
+				t.Fatalf("supplied labels=%s %v", status, err)
 			}
-			var canReadRaw, canWrite bool
-			if err := tx.QueryRow(ctx, `SELECT has_column_privilege(current_user,'ai_interaction_classifications','raw_judgments','SELECT'),has_column_privilege(current_user,'ai_interaction_classifications','outcome','UPDATE')`).Scan(&canReadRaw, &canWrite); err != nil {
+			var canReadRaw, canWrite, canInsert, canExecute bool
+			if err := tx.QueryRow(ctx, `SELECT has_column_privilege(current_user,'ai_interaction_classifications','raw_judgments','SELECT'),has_column_privilege(current_user,'ai_interaction_classifications','outcome','UPDATE'),has_table_privilege(current_user,'ai_interaction_classifications','INSERT'),has_function_privilege(current_user,'project_ai_call_classification()','EXECUTE')`).Scan(&canReadRaw, &canWrite, &canInsert, &canExecute); err != nil {
 				t.Fatal(err)
 			}
-			if canReadRaw != (role == "acuity_worker") || canWrite != (role == "acuity_worker") {
-				t.Fatalf("raw=%v write=%v", canReadRaw, canWrite)
+			if canReadRaw || canWrite || canInsert || canExecute {
+				t.Fatalf("raw=%v write=%v insert=%v execute=%v", canReadRaw, canWrite, canInsert, canExecute)
 			}
 		})
 	}

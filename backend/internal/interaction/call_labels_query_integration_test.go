@@ -37,7 +37,7 @@ func TestCallLabelsQueriesFilterBeforePaginationAndPreserveScope(t *testing.T) {
 			t.Fatal(err)
 		}
 		if intent != "" {
-			if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_classifications(interaction_id,intent,outcome,status) VALUES($1,$2,$3,'complete')`, id, intent, outcome); err != nil {
+			if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET closeout_payload=jsonb_build_object('evaluation',jsonb_build_object('classification',jsonb_build_object('version','call-labels-v1','model','typesafe/jev-1.14','status','complete','intent',$2::text,'outcome',$3::text))) WHERE id=$1`, id, intent, outcome); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -188,7 +188,7 @@ func TestAnalyticsJudgeFailuresFilterBeforePagination(t *testing.T) {
 		if err := pool.QueryRow(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage) VALUES('agent',$1,$2,$3,'+15555550111','+15555550100',$4,$5,'COMPLETED',3) RETURNING id::text`, practice, location, source, now.Add(-time.Duration(minutes)*time.Minute), now).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_classifications(interaction_id,intent,outcome,status) VALUES($1,$2,$3,'complete')`, id, intent, outcome); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET closeout_payload=jsonb_build_object('evaluation',jsonb_build_object('classification',jsonb_build_object('version','call-labels-v1','model','typesafe/jev-1.14','status','complete','intent',$2::text,'outcome',$3::text))) WHERE id=$1`, id, intent, outcome); err != nil {
 			t.Fatal(err)
 		}
 		if question != "" {

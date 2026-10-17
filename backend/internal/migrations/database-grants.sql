@@ -642,7 +642,6 @@ GRANT SELECT, INSERT ON ai_call_reviews TO acuity_portal;
 GRANT UPDATE (answer, note) ON ai_call_reviews TO acuity_portal;
 GRANT SELECT, INSERT ON ai_call_review_pools TO acuity_portal;
 
--- Only the worker runs the labeling judges. Portal reads their public labels.
+-- Ingestion projects supplied labels; runtime roles only read the public projection.
 GRANT SELECT (interaction_id, intent, outcome, status)
-ON public.ai_interaction_classifications TO acuity_portal;
-GRANT SELECT, INSERT, UPDATE ON public.ai_interaction_classifications TO acuity_worker;
+ON public.ai_interaction_classifications TO acuity_portal, acuity_worker;

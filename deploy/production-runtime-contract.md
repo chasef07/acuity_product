@@ -158,14 +158,10 @@ MESSAGING_ATTACHMENT_BUCKET_LOCATION=us-east1 \
 The command also rejects a Cloud SQL connection name or Messaging attachment
 bucket location outside `us-east1`.
 
-The worker requires `OPENROUTER_API_KEY` for post-call intent and outcome
-classification. Set the GitHub repository variable `OPENROUTER_API_KEY_SECRET`
-to the existing Secret Manager secret name, and grant the worker service account
-access to that secret before rollout. The release workflow passes this name
-through Cloud Build's `_OPENROUTER_API_KEY_SECRET` substitution; deployment binds
-its `latest` version only to the worker. Direct release and reference commands
-require the same secret-name input. Missing or malformed names stop deployment
-before cloud access. The API key value stays in Secret Manager.
+S2S owns call judging and supplies intent/outcome labels in the closeout payload.
+Product stores and displays those results; its runtimes and deployment do not
+require an OpenRouter credential. Calls without label results remain unlabeled,
+and incomplete or invalid supplied results remain visibly unavailable.
 
 The automated release performs a second, live readback after every revision is
 promoted and its smoke checks pass. It compares each request service's

@@ -3466,11 +3466,15 @@ func operatorAIInteractionAnalyticsResponse(
 	}
 	var closeout map[string]json.RawMessage
 	_ = json.Unmarshal(detail.Interaction.CloseoutPayload, &closeout)
+	evaluation := jsonMap(closeout["evaluation"])
+	if evaluation != nil {
+		delete(*evaluation, "classification")
+	}
 	response := api.OperatorAIInteractionAnalytics{
 		Intent:                (*api.CallIntent)(detail.Intent),
 		Outcome:               (*api.CallOutcome)(detail.Outcome),
 		LabelingStatus:        (*api.CallLabelingStatus)(detail.LabelingStatus),
-		Evaluation:            jsonMap(closeout["evaluation"]),
+		Evaluation:            evaluation,
 		Id:                    base.Id,
 		PracticeId:            base.PracticeId,
 		LocationId:            base.LocationId,

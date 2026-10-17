@@ -37,10 +37,6 @@ type InteractionWork interface {
 	ProcessNextReceipt(context.Context) (bool, error)
 }
 
-type ClassificationWork interface {
-	ProcessNextClassification(context.Context) (bool, error)
-}
-
 type Dependency interface {
 	Ping(context.Context) error
 }
@@ -65,15 +61,14 @@ type Config struct {
 }
 
 type Runner struct {
-	config          Config
-	work            CallingWork
-	messages        MessagingWork
-	interactions    InteractionWork
-	classifications ClassificationWork
-	dependency      Dependency
-	jitter          func(time.Duration) time.Duration
-	wait            func(context.Context, time.Duration) bool
-	commandReady    chan struct{}
+	config       Config
+	work         CallingWork
+	messages     MessagingWork
+	interactions InteractionWork
+	dependency   Dependency
+	jitter       func(time.Duration) time.Duration
+	wait         func(context.Context, time.Duration) bool
+	commandReady chan struct{}
 }
 
 func New(
@@ -82,13 +77,9 @@ func New(
 	messages MessagingWork,
 	interactions InteractionWork,
 	dependency Dependency,
-	classifications ...ClassificationWork,
 ) (*Runner, error) {
 	if work == nil || messages == nil || interactions == nil || dependency == nil {
 		return nil, fmt.Errorf("worker dependencies are required")
-	}
-	if len(classifications) > 1 || (len(classifications) == 1 && classifications[0] == nil) {
-		return nil, fmt.Errorf("one classification worker is required when configured")
 	}
 	if config.WorkInterval <= 0 ||
 		config.WorkTimeout <= 0 ||
@@ -145,22 +136,13 @@ func New(
 		wait:         wait,
 		commandReady: make(chan struct{}, 1),
 	}
-	if len(classifications) == 1 {
-		runner.classifications = classifications[0]
-	}
 	return runner, nil
 }
 
 func (runner *Runner) Run(ctx context.Context) error {
 	var lanes sync.WaitGroup
 	lanes.Add(10)
-	if runner.classifications != nil {
-		lanes.Add(1)
-		go func() {
-			defer lanes.Done()
-			runner.runQueueLaneWithLimits(ctx, 1, "ai_call_classification_failed", runner.classifications.ProcessNextClassification, runner.config.IdleBackoffMax, false, 30*time.Second)
-		}()
-	}
+
 	go func() {
 		defer lanes.Done()
 		runner.runCallingReceipts(ctx)
