@@ -1,7 +1,6 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { WorkspacePageHeader } from "@/components/workspace/workspace-page-header"
 import { OptionSelect } from "@/components/workspace/manage-agent-page"
 import { practiceAnalyticsPages, type PracticeAnalyticsPage } from "@/components/workspace/practice-analytics-navigation"
 import { formatDay } from "@/lib/booking-analytics"
@@ -28,7 +27,7 @@ export function AnalyticsLayout({
 }) {
   return (
     <div className={styles.dashboard}>
-      <WorkspacePageHeader section="Analytics" title={practiceAnalyticsPages.find((item) => item.value === metric)!.label} />
+      <h1 className="sr-only">{practiceAnalyticsPages.find((item) => item.value === metric)!.label}</h1>
       <main className={styles.content}>
         <div className={styles.toolbar}>
           <div className={styles.periodLabel}>

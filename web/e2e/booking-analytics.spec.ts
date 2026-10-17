@@ -123,7 +123,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await signInAs(page, "admin@abita.test", "Fixture Admin")
     await page.getByRole("button", { name: "Analytics", exact: true }).click()
     await expect(
-      page.getByRole("heading", { name: "Bookings", exact: true, level: 1 }),
+      page.getByRole("navigation", { name: "Current location", exact: true }).getByText("Bookings", { exact: true }),
     ).toBeVisible()
     await expect(
       page.getByRole("button", { name: "Control Center", exact: true }),
@@ -252,7 +252,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await page.setViewportSize({ width: 390, height: 844 })
     await selectAnalyticsPage(page, "Conversion")
     await expect(page.getByRole("navigation", { name: "Analytics", exact: true })).toBeHidden()
-    await expect(page.getByRole("heading", { name: "Conversion", exact: true, level: 1 })).toBeVisible()
+    await expect(page.getByRole("navigation", { name: "Current location", exact: true }).getByText("Conversion", { exact: true })).toBeVisible()
     await expect(page.getByRole("combobox", { name: "Date range", exact: true })).toContainText("Last 30 days")
     await expect(page.getByRole("combobox", { name: "Date range", exact: true })).toBeInViewport()
     await page.screenshot({ path: testInfo.outputPath("admin-analytics-mobile.png"), fullPage: true })

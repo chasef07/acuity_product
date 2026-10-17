@@ -44,7 +44,7 @@ import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
 import { CallingRailControl } from "@/components/workspace/workspace-rail-button"
 import { WorkspaceRail, manageAgentPages } from "@/components/workspace/workspace-rail"
 import type { ControlCenterPage } from "@/components/workspace/control-center-navigation"
-import type { PracticeAnalyticsPage } from "@/components/workspace/practice-analytics-navigation"
+import { practiceAnalyticsPages, type PracticeAnalyticsPage } from "@/components/workspace/practice-analytics-navigation"
 import { WorkspaceTopBar } from "@/components/workspace/workspace-page-header"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import { WorkEmptyState } from "@/components/workspace/work-empty-state"
@@ -349,6 +349,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
     const section = view === "manage-agent" ? "Home" : view === "analytics" ? "Analytics" : view === "operator-analytics" ? "Control Center" : "Work"
     const page = view === "manage-agent" && state.selection.agentPage !== "home"
       ? manageAgentPages.find((item) => item.value === state.selection.agentPage)?.label
+      : view === "analytics" ? practiceAnalyticsPages.find((item) => item.value === analyticsPage)?.label
       : isWorkView(view) ? selectedTask?.title : undefined
     return (
       <>
