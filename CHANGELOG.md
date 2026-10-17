@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.0](https://github.com/chasef07/acuity_product/compare/v1.40.0...v1.41.0) (2026-10-17)
+
+
+### Features
+
+* **scorecard:** support six failure judges ([#495](https://github.com/chasef07/acuity_product/issues/495)) ([533872a](https://github.com/chasef07/acuity_product/commit/533872a41fe8d32651db98904e81536beb94d49e))
+
 ## [1.40.0](https://github.com/chasef07/acuity_product/compare/v1.39.1...v1.40.0) (2026-10-16)
 
 
