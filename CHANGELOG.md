@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.1](https://github.com/chasef07/acuity_product/compare/v1.42.0...v1.42.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* keep call judging in S2S and remove Product inference ([252e4dc](https://github.com/chasef07/acuity_product/commit/252e4dc8020d131beb7fc7d1084dd1ca8c9636e6))
+
 ## [1.42.0](https://github.com/chasef07/acuity_product/compare/v1.41.0...v1.42.0) (2026-10-17)
 
 
