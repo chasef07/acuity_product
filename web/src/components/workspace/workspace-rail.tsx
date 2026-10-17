@@ -18,7 +18,6 @@ import {
   FolderOpenIcon,
   HouseIcon,
   ListFilterIcon,
-  MessageSquareTextIcon,
   PhoneIcon,
   SearchIcon,
   ShieldCheckIcon,
@@ -66,6 +65,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { ReviewFolder } from "./review-folder"
+import { ControlCenterNavigation, type ControlCenterPage } from "./control-center-navigation"
+import { PracticeAnalyticsNavigation, type PracticeAnalyticsPage } from "./practice-analytics-navigation"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { Task, TaskFolderCounts } from "@/lib/api/generated/types.gen"
 import { formatUSPhone } from "@/lib/phone"
@@ -85,7 +86,7 @@ import {
 
 export const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
   { value: "home", label: "Home", icon: HouseIcon },
-  { value: "transcripts", label: "Transcripts", icon: MessageSquareTextIcon },
+  { value: "transcripts", label: "Calls", icon: PhoneIcon },
   { value: "knowledge", label: "Knowledge base", icon: BookOpenIcon },
   { value: "insurance", label: "Insurance list", icon: ShieldCheckIcon },
 ]
@@ -108,6 +109,10 @@ const taskCategoryOptions: Array<{ value: TaskCategoryFilter; label: string }> =
 
 type WorkspaceRailProps = {
   projection: WorkspaceProjectionState
+  controlCenterPage?: ControlCenterPage
+  onControlCenterPage?: (page: ControlCenterPage) => void
+  analyticsPage?: PracticeAnalyticsPage
+  onAnalyticsPage?: (page: PracticeAnalyticsPage) => void
   callingStatus?: ReactNode
   locationControl?: ReactNode
   onIntent: (intent: WorkspaceProjectionIntent) => void
@@ -161,6 +166,10 @@ function currentPractice(projection: WorkspaceProjectionState) {
 
 export function WorkspaceRail({
   projection,
+  controlCenterPage = "calls",
+  onControlCenterPage,
+  analyticsPage = "bookings",
+  onAnalyticsPage,
   locationControl,
   callingStatus,
   onIntent,
@@ -283,12 +292,12 @@ export function WorkspaceRail({
   return (
     <>
       <Sidebar collapsible="offcanvas" className="absolute h-full [&_[data-slot=sidebar-inner]]:bg-canvas">
-        <SidebarHeader className={cn("gap-3 p-3 pb-2", view === "manage-agent" && "px-4 pt-5 pb-4")}>
+        <SidebarHeader className="gap-3 px-4 pt-5 pb-4">
           <div className="flex items-center gap-2 px-1">
             <AcuityMark className="size-7 shrink-0" />
             <span className="text-base font-semibold tracking-tight">Acuity Health</span>
           </div>
-          {view !== "manage-agent" && locationControl}
+          {locationControl}
           {workView && <div className="flex items-start gap-2">
             <form className="min-w-0 flex-1"
               onSubmit={(event) => {
@@ -341,6 +350,14 @@ export function WorkspaceRail({
               page={projection.selection.agentPage}
               onPage={(page) => onIntent({ type: "select-manage-agent", page })}
             />
+          </SidebarContent>
+        ) : view === "operator-analytics" && onControlCenterPage ? (
+          <SidebarContent className="overflow-y-auto px-2 py-2">
+            <ControlCenterNavigation page={controlCenterPage} onPage={onControlCenterPage} />
+          </SidebarContent>
+        ) : view === "analytics" && onAnalyticsPage ? (
+          <SidebarContent className="overflow-y-auto px-2 py-2">
+            <PracticeAnalyticsNavigation page={analyticsPage} onPage={onAnalyticsPage} />
           </SidebarContent>
         ) : workView && (
         <SidebarContent
@@ -490,7 +507,7 @@ function ManageAgentNavigation({
               <SidebarMenuButton
                 isActive={page === item.value}
                 aria-current={page === item.value ? "page" : undefined}
-                className="h-9 rounded-lg px-2.5"
+                className="h-9 rounded-lg px-2.5 font-medium text-sidebar-foreground/90 [&>svg]:text-sidebar-foreground/90"
                 onClick={() => {
                   onPage(item.value)
                   if (isMobile) setOpenMobile(false)

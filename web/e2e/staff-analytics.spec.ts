@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { signInAs } from "./support"
+import { selectAnalyticsPage, signInAs } from "./support"
 
 test("Staff analytics measures connected phone time and the 48-hour task goal", async ({
   page,
@@ -94,8 +94,9 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
     await page
       .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
-    await page.getByRole("button", { name: "Staff", exact: true }).click()
-    await page.getByRole("button", { name: "7 days", exact: true }).click()
+    await selectAnalyticsPage(page, "Staff")
+    await page.getByRole("combobox", { name: "Date range", exact: true }).click()
+    await page.getByRole("option", { name: "Last 7 days", exact: true }).click()
     await expect(
       page.getByRole("status", {
         name: "Median task completion time",
@@ -149,7 +150,7 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
     await performance.getByRole("button", { name: "Tasks completed", exact: true }).click()
     await expect(
       page.getByRole("button", { name: "Staff", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true")
+    ).toHaveAttribute("aria-current", "page")
     const requestsBeforeSort = analyticsRequests
     await accounts
       .getByRole("button", { name: "Sort by inbound calls", exact: true })
@@ -228,7 +229,8 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       "UPDATE human_calling_call_legs SET state='ENDING',ended_at=NULL WHERE call_id=$1",
       [calls[0]],
     )
-    await page.getByRole("button", { name: "30 days", exact: true }).click()
+    await page.getByRole("combobox", { name: "Date range", exact: true }).click()
+    await page.getByRole("option", { name: "Last 30 days", exact: true }).click()
     await expect(
       accounts
         .getByRole("row")
@@ -238,7 +240,7 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       "selected@abita.testStaff", "2— avg/call", "15m 00s avg/call",
       "—", "5m", "3", "2",
     ])
-    await page.getByRole("button", { name: "Bookings", exact: true }).click()
+    await selectAnalyticsPage(page, "Bookings")
     await expect(
       page.getByRole("region", { name: "Booking performance", exact: true }),
     ).toBeVisible()

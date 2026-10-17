@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { CheckIcon, FlagIcon, RefreshCwIcon } from "lucide-react"
+import { CheckIcon, FlagIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { Spinner } from "@/components/ui/spinner"
@@ -47,12 +47,14 @@ export function ManageAgent({
   locations,
   page,
   onPage,
+  revision = 0,
 }: {
   actorSubject: string
   practiceID: string
   locationScopeID: string
   locations: Location[]
   page: ManageAgentPage
+  revision?: number
   onPage: (page: ManageAgentPage) => void
 }) {
   const [coverage, setCoverage] = useState<InsuranceCoverage>("medical")
@@ -69,18 +71,20 @@ export function ManageAgent({
       ) : page === "insurance" ? (
         <InsuranceList {...location} coverage={coverage} onCoverage={setCoverage} />
       ) : (
-        <AgentTranscripts practiceID={practiceID} locationScopeID={locationScopeID} />
+        <AgentCalls practiceID={practiceID} locationScopeID={locationScopeID} revision={revision} />
       )}
     </div>
   )
 }
 
-function AgentTranscripts({
+function AgentCalls({
   practiceID,
   locationScopeID,
+  revision,
 }: {
   practiceID: string
   locationScopeID: string
+  revision: number
 }) {
   const [range, setRange] = useState<AgentCallsQuery["range"]>("24h")
   const [phoneInput, setPhoneInput] = useState("")
@@ -98,7 +102,7 @@ function AgentTranscripts({
     flaggedOnly,
     intent: intent === "all" ? undefined : intent,
     outcome: outcome === "all" ? undefined : outcome,
-    revision: version,
+    revision: revision + version,
   })
   const calls = current.status === "ready" ? current.data.calls : []
   const nextCursor = current.status === "ready" ? current.data.nextCursor : ""
@@ -124,7 +128,7 @@ function AgentTranscripts({
 
   return (
     <AgentPage
-      title="Transcripts"
+      title="Calls"
       detail={
         current.status === "ready" && (
           <span role="status" className="tabular-nums">
@@ -132,16 +136,6 @@ function AgentTranscripts({
             {nextCursor ? "+" : ""} {calls.length === 1 && !nextCursor ? "call" : "calls"}
           </span>
         )
-      }
-      actions={
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Refresh calls"
-          onClick={() => setVersion((value) => value + 1)}
-        >
-          <RefreshCwIcon />
-        </Button>
       }
       controls={
         <>
@@ -176,7 +170,7 @@ function AgentTranscripts({
         emptyDescription="Try another date range, office, phone number, intent, or outcome."
       >
         {() => (
-          <div className="max-w-5xl">
+          <div className="w-full">
             <Table>
               <TableHeader>
                 <TableRow>

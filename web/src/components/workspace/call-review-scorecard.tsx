@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
+import { ScorecardFlow, checkLabels, type FlowCall } from "./scorecard-flow"
+import { checkState } from "@/lib/scorecard-flow"
 import type {
   OperatorCallReview,
   OperatorScorecardQuestion,
@@ -18,11 +20,17 @@ export function ScorecardPanel({
   catalog,
   onSaved,
   onNext,
+  call,
+  evaluation,
+  evidenceReady = false,
 }: {
   review: OperatorCallReview
   catalog: Map<string, OperatorScorecardQuestion>
   onSaved: () => void
   onNext?: () => void
+  call?: FlowCall
+  evaluation?: Record<string, unknown>
+  evidenceReady?: boolean
 }) {
   const [shown, setShown] = useState(review)
   const [answers, setAnswers] = useState<Record<string, boolean>>(
@@ -44,6 +52,25 @@ export function ScorecardPanel({
   const saved = new Map(shown.answers.map((answer) => [answer.question, answer]))
   const changed = note.trim() !== shown.note || questionIdea.trim() !== shown.questionIdea ||
     applicable.some((key) => answers[key] !== saved.get(key)?.answer || (notes[key] ?? "").trim() !== (saved.get(key)?.note ?? ""))
+  const rawResults = evaluation?.results
+  const results = rawResults && typeof rawResults === "object" && !Array.isArray(rawResults) ? rawResults as Record<string, unknown> : {}
+  const rawErrors = evaluation?.errors
+  const errors = rawErrors && typeof rawErrors === "object" && !Array.isArray(rawErrors) ? rawErrors as Record<string, unknown> : {}
+  const checks = [...catalog.values()].filter((question) => question.source === "judge").map((question) => {
+    const value = revealed ? judge.get(question.key)?.answer : answers[question.key]
+    const rawResult = results[question.key]
+    const result = rawResult && typeof rawResult === "object" && !Array.isArray(rawResult) ? rawResult as Record<string, unknown> : {}
+    const answer = value === undefined ? undefined : value ? "yes" : "no"
+    return {
+      key: question.key,
+      label: question.label || question.prompt,
+      state: revealed
+        ? checkState(result, answer, question.failure, Object.hasOwn(errors, question.key))
+        : applicable.includes(question.key)
+          ? checkState({}, answer, question.failure)
+          : checkState(rawResult ? result : { status: evidenceReady ? "not_applicable" : "unknown" }, undefined, question.failure),
+    }
+  })
 
   function answer(question: string, value: boolean) {
     setAnswers((current) => ({ ...current, [question]: value }))
@@ -85,7 +112,9 @@ export function ScorecardPanel({
             {revealed ? "Judge revealed" : `${applicable.filter((key) => answers[key] !== undefined).length} of ${applicable.length} answered`}
           </p>
         </div>
-        <ol className="mt-1 divide-y">
+        <p className="mt-2 text-xs font-medium text-muted-foreground">{revealed ? "Judge results · Your answers below remain editable" : "Your review · Judge results stay hidden until you save"}</p>
+        <ScorecardFlow call={call} checks={checks} complete={(revealed || complete) && evidenceReady && applicable.every((key) => catalog.has(key))}>
+        <ol className="divide-y px-3">
           {applicable.map((key) => {
             const question = catalog.get(key)
             const value = answers[key]
@@ -98,14 +127,14 @@ export function ScorecardPanel({
                 </p>
                 <div className="flex items-center gap-1.5">
                   <div role="group" aria-label={`${question?.code ?? key} answer`} className="flex gap-1">
-                    <Button size="xs" className="h-7 w-14" variant={value === true ? "default" : "outline"} aria-pressed={value === true} onClick={() => answer(key, true)}>
-                      Yes
+                    <Button size="xs" className={`h-7 w-14 ${value === true && question?.failure ? "bg-success text-white hover:bg-success/90" : ""}`} variant={value === true ? "default" : "outline"} aria-pressed={value === true} onClick={() => answer(key, true)}>
+                      {question?.failure ? "Pass" : "Yes"}
                     </Button>
                     <Button size="xs" className="h-7 w-14" variant={value === false ? "destructive" : "outline"} aria-pressed={value === false} onClick={() => answer(key, false)}>
-                      No
+                      {question?.failure ? "Fail" : "No"}
                     </Button>
                   </div>
-                  {revealed && <JudgeLine human={value} judged={judge.get(key)} />}
+                  {revealed && <JudgeLine human={value} judged={judge.get(key)} failure={question?.failure} />}
                   {!noteOpen && (
                     <Button size="icon-xs" variant="ghost" className={revealed ? "" : "ml-auto"} aria-label={`Add a note to ${question?.code ?? key}`} title="Add note" onClick={() => setOpenNotes((current) => ({ ...current, [key]: true }))}>
                       <NotebookPenIcon aria-hidden="true" />
@@ -125,6 +154,8 @@ export function ScorecardPanel({
             )
           })}
         </ol>
+        {checks.filter((check) => !applicable.includes(check.key)).map((check) => <div key={check.key} className="flex items-start justify-between gap-3 border-t px-3 py-3 text-xs text-muted-foreground"><span>{check.label}</span><span className="shrink-0">{checkLabels[check.state]}</span></div>)}
+        </ScorecardFlow>
         <div className="border-t pt-3">
           <label htmlFor="review-note" className="text-xs font-medium">Call note</label>
           <Textarea
@@ -170,9 +201,11 @@ export function ScorecardPanel({
 function JudgeLine({
   human,
   judged,
+  failure,
 }: {
   human?: boolean
   judged?: { answer: boolean; probability?: number }
+  failure?: boolean
 }) {
   if (!judged) {
     return <span className="ml-auto text-[0.6875rem] text-muted-foreground">Judge: no answer</span>
@@ -181,7 +214,7 @@ function JudgeLine({
   const detail = judged.probability?.toFixed(2) ?? ""
   return (
     <span className="ml-auto flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground" title={detail}>
-      Judge {judged.answer ? "Yes" : "No"}
+      Judge {failure ? judged.answer ? "Pass" : "Fail" : judged.answer ? "Yes" : "No"}
       <Badge variant={agrees ? "secondary" : "destructive"}>{agrees ? "Agrees" : "Disagrees"}</Badge>
     </span>
   )

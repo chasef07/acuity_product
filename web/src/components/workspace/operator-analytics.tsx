@@ -15,7 +15,8 @@ import {
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AnalyticsFrame } from "@/components/analytics/analytics-layout"
+import { WorkspacePageHeader } from "@/components/workspace/workspace-page-header"
+import { controlCenterPages, type ControlCenterPage } from "./control-center-navigation"
 import {
   DiagnosticsCallTrends,
   DiagnosticsTools,
@@ -47,7 +48,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { OptionSelect } from "./manage-agent-page"
 import {
   Table,
   TableBody,
@@ -61,6 +62,7 @@ import { PendingCallIssues } from "@/components/workspace/call-issue-review"
 import { CallReviewWorkspace } from "@/components/workspace/call-review"
 import { BookingConversionKpi, ImprovementTrend } from "@/components/workspace/scorecard-overview"
 import { CallLabel, CallLabelFilters, CallLabels, type IntentFilter, type OutcomeFilter } from "./call-labels"
+import { CallFailureFilter } from "./call-failure-filter"
 import type {
   OperatorAiCallIssue,
   OperatorAiAnalyticsRange,
@@ -77,56 +79,52 @@ import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
 type AnalyticsNextPageState = AiCallLedger["nextPage"]
-type AnalyticsTab = "overview" | "cost" | "quality" | "tools" | "calls" | "review"
-
-const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
-  { value: "calls", label: "Calls" },
-  { value: "review", label: "Review" },
-  { value: "overview", label: "Overview" },
-  { value: "cost", label: "Cost" },
-  { value: "quality", label: "Quality" },
-  { value: "tools", label: "Tools" },
-]
+type AnalyticsTab = ControlCenterPage
 
 const ranges: Array<{
   value: OperatorAiAnalyticsRange
   label: string
-  short: string
 }> = [
-  { value: "24h", label: "Last 24 hours", short: "24 hours" },
-  { value: "7d", label: "Last 7 days", short: "7 days" },
-  { value: "30d", label: "Last 30 days", short: "30 days" },
+  { value: "24h", label: "Last 24 hours" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
 ]
 
 export function OperatorAnalytics({
+  tab,
+  revision = 0,
   practiceID,
   locationScopeID,
   locations,
 }: {
+  tab: AnalyticsTab
+  revision?: number
   practiceID: string
   locationScopeID: string
   locations: Location[]
 }) {
   const locationID = locationScopeID
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("24h")
-  const [tab, setTab] = useState<AnalyticsTab>("calls")
   const [intent, setIntent] = useState<IntentFilter>("all")
   const [outcome, setOutcome] = useState<OutcomeFilter>("all")
+  const [judgeFlag, setJudgeFlag] = useState("any")
   const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
   const costView = tab === "cost"
   const reviewView = tab === "review"
   const [requestVersion, setRequestVersion] = useState(0)
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
-  const requestKey = `${practiceID}:${locationID}:${range}:${intent}:${outcome}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${intent}:${outcome}:${judgeFlag}:${revision}:${requestVersion}`
   const currentRequest = useAiCallAnalytics({
     practiceID,
     locationID,
     range,
-    revision: requestVersion,
+    revision: revision + requestVersion,
     enabled: !costView && !reviewView,
     intent: tab === "calls" && intent !== "all" ? intent : undefined,
     outcome: tab === "calls" && outcome !== "all" ? outcome : undefined,
+    failuresOnly: tab === "calls" && judgeFlag !== "all" ? true : undefined,
+    failingJudge: tab === "calls" && judgeFlag !== "all" && judgeFlag !== "any" ? judgeFlag : undefined,
   })
   const nextPageState = currentRequest.nextPage
 
@@ -161,41 +159,22 @@ export function OperatorAnalytics({
 
   return (
     <section
-      aria-label="AI call analytics"
+      aria-label="Control Center"
       className="flex min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <AnalyticsFrame
-        section="AI diagnostics"
-        title={analyticsTabs.find((item) => item.value === tab)!.label}
-        periodLabel={reviewView ? "Daily call review and golden set" : ranges.find((item) => item.value === range)!.label}
-        controls={reviewView ? null : (
-          <>
-            <ToggleGroup
-              variant="segmented"
-              spacing={1}
-              value={[range]}
-              aria-label="Analytics range"
-              onValueChange={(values) => {
-                const value = values[0]
-                if (ranges.some((item) => item.value === value))
-                  setRange(value as OperatorAiAnalyticsRange)
-              }}
-            >
-              {ranges.map((item) => (
-                <ToggleGroupItem
-                  key={item.value}
-                  value={item.value}
-                  aria-label={item.label}
-                >
-                  {item.short}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-            {tab === "calls" && <CallLabelFilters intent={intent} outcome={outcome} onIntent={setIntent} onOutcome={setOutcome} />}
-          </>
-        )}
-        tabs={<AnalyticsTabs tab={tab} onChange={setTab} />}
-      >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-background">
+        <WorkspacePageHeader section="Control Center" title={controlCenterPages.find((item) => item.value === tab)!.label} />
+        <main className="mx-auto w-full max-w-[1320px] p-4 sm:p-6">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+            <p className="text-[13px] font-medium">{reviewView ? "Daily call review and golden set" : ranges.find((item) => item.value === range)!.label}</p>
+            {!reviewView && <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <OptionSelect label="Date range" value={range} items={ranges} onChange={setRange} />
+            {tab === "calls" && <>
+              <CallFailureFilter value={judgeFlag} onChange={setJudgeFlag} />
+              <CallLabelFilters intent={intent} outcome={outcome} onIntent={setIntent} onOutcome={setOutcome} />
+            </>}
+            </div>}
+          </div>
         {reviewView ? (
           <CallReviewWorkspace key={practiceID} practiceID={practiceID} onOpenCall={(id) => selectCall(id)} />
         ) : costView ? (
@@ -248,7 +227,8 @@ export function OperatorAnalytics({
             )}
           </>
         )}
-      </AnalyticsFrame>
+        </main>
+      </div>
       <OperatorAnalyticsDetailSheet
         interactionID={selectedCall.id}
         focus={selectedCall.focus}
@@ -305,9 +285,9 @@ function AnalyticsReady({
             <EmptyMedia variant="icon">
               <InboxIcon aria-hidden="true" />
             </EmptyMedia>
-            <EmptyTitle>No AI calls in this range</EmptyTitle>
+            <EmptyTitle>No calls match these filters</EmptyTitle>
             <EmptyDescription>
-              Change the time range, workspace office, intent, or outcome to review another slice
+              Change judge flags, intent, outcome, time range, or workspace office to review another slice
               of call evidence.
             </EmptyDescription>
           </EmptyHeader>
@@ -324,36 +304,6 @@ function AnalyticsReady({
         />
       ) : null}
     </>
-  )
-}
-
-function AnalyticsTabs({
-  tab,
-  onChange,
-}: {
-  tab: AnalyticsTab
-  onChange: (tab: AnalyticsTab) => void
-}) {
-  return (
-    <div className="max-w-full overflow-x-auto">
-      <ToggleGroup
-        variant="segmented"
-        spacing={1}
-        value={[tab]}
-        aria-label="AI diagnostics view"
-        onValueChange={(values) => {
-          const value = values[0]
-          if (analyticsTabs.some((item) => item.value === value))
-            onChange(value as AnalyticsTab)
-        }}
-      >
-        {analyticsTabs.map((item) => (
-          <ToggleGroupItem key={item.value} value={item.value}>
-            {item.label}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-    </div>
   )
 }
 
@@ -481,11 +431,11 @@ function CallLedger({
             Call ledger
           </p>
           <h2 id="call-ledger-title" className="mt-0.5 text-sm font-semibold">
-            AI calls
+            Calls
           </h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          {calls.length.toLocaleString()} shown{totalCalls !== undefined && <> · {totalCalls.toLocaleString()} total</>}
+          {calls.length.toLocaleString()} shown{totalCalls !== undefined && <> · {totalCalls.toLocaleString()} calls in range</>}
           · {range}
         </p>
       </div>
@@ -629,7 +579,7 @@ function ReviewReasons({ reasons }: { reasons?: string[] }) {
 
 function AnalyticsLoading() {
   return (
-    <div role="status" aria-label="Loading AI call analytics" aria-busy="true">
+    <div role="status" aria-label="Loading Control Center" aria-busy="true">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {Array.from({ length: 4 }, (_, index) => (
           <Card key={index} size="sm">

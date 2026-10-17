@@ -1,3 +1,5 @@
+import { ScorecardFlow, checkLabels, type FlowCall } from "./scorecard-flow"
+import { checkState } from "@/lib/scorecard-flow"
 import { Badge } from "@/components/ui/badge"
 import type { AgentCallVerdict, OperatorScorecardQuestion } from "@/lib/api/generated/types.gen"
 
@@ -103,7 +105,7 @@ function jurorName(model: string): string {
   return model.split("/").pop() ?? model
 }
 
-function JuryScorecard({ evaluation, verdicts, questions }: { evaluation: Record<string, unknown>; verdicts: AgentCallVerdict[]; questions: OperatorScorecardQuestion[] }) {
+function JuryScorecard({ evaluation, verdicts, questions, call }: { evaluation: Record<string, unknown>; verdicts: AgentCallVerdict[]; questions: OperatorScorecardQuestion[]; call?: FlowCall }) {
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
   const jurors = Array.isArray(evaluation.jurors) ? evaluation.jurors.map(String) : []
@@ -111,25 +113,32 @@ function JuryScorecard({ evaluation, verdicts, questions }: { evaluation: Record
   const answers = new Map(verdicts.map((verdict) => [verdict.question, verdict.answer]))
   const order = questions.map((question) => question.key)
   const rank = (name: string) => (order.includes(name) ? order.indexOf(name) : order.length)
-  const names = [...new Set([...Object.keys(results), ...Object.keys(errors)])].filter((name) => name !== "expressed_sentiment").sort((left, right) => rank(left) - rank(right))
+  const names = [...new Set([...questions.filter((question) => question.source === "judge").map((question) => question.key), ...Object.keys(results), ...Object.keys(errors)])].filter((name) => name !== "expressed_sentiment").sort((left, right) => rank(left) - rank(right))
+  const checks = names.map((key) => ({
+    key,
+    label: catalog.get(key)?.label || catalog.get(key)?.prompt || title(key),
+    state: checkState(record(results[key]), answers.get(key), catalog.get(key)?.failure, Object.hasOwn(errors, key)),
+  }))
   const sentiment = record(results.expressed_sentiment)
   const score = typeof sentiment.score === "number" && sentiment.score >= 0 && sentiment.score <= 4 ? sentiment.score : undefined
   return <>
-    <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer.</p>
-    <dl className="mt-3 divide-y rounded-lg border px-3">
-      {names.map((name) => {
+    {evaluation.evaluatorVersion !== "typesafe-scorecard-v8" && <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer.</p>}
+    <ScorecardFlow call={call} checks={checks} complete={evaluation.status === "complete" && questions.length > 0}>
+    {evaluation.evaluatorVersion === "typesafe-scorecard-v8" && <p className="px-3 pt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer.</p>}
+    <dl className="divide-y px-3">
+      {checks.map(({ key: name, state }) => {
         const result = record(results[name])
         const failed = Object.hasOwn(errors, name)
-        const notApplicable = result.status === "not_applicable"
-        const unknown = result.status === "unknown"
-        const verdict = !unknown && !notApplicable ? answers.get(name) : undefined
-        const flagged = verdict === "no" && catalog.get(name)?.failure === true
+        const notApplicable = !failed && result.status === "not_applicable"
+        const unknown = !failed && result.status === "unknown"
+        const verdict = !failed && !unknown && !notApplicable ? answers.get(name) : undefined
+        const flagged = state === "fail"
         const votes = record(failed ? record(errors[name]).votes : result.votes)
         const jurorErrors = record(failed ? record(errors[name]).errors : result.errors)
         return <div key={name} className="py-3 text-xs">
           <div className="flex items-start justify-between gap-3">
             <dt>{catalog.get(name)?.prompt ?? title(name)}</dt>
-            <dd className={`shrink-0 font-medium ${flagged ? "text-destructive" : ""}`}>{unknown ? "Unknown" : notApplicable ? "Not applicable" : verdict ? verdictLabels[verdict] : "No verdict"}</dd>
+            <dd className={`shrink-0 font-medium ${flagged ? "text-destructive" : state === "pass" && evaluation.evaluatorVersion === "typesafe-scorecard-v8" ? "text-success" : ""}`}>{unknown ? "Unknown" : notApplicable ? "Not applicable" : verdict ? evaluation.evaluatorVersion === "typesafe-scorecard-v8" && catalog.get(name)?.failure ? checkLabels[state] : verdictLabels[verdict] : "No verdict"}</dd>
           </div>
           {unknown ? <dd className="mt-1 text-muted-foreground">{unknownReasons[String(result.reason)] ?? title(String(result.reason))}</dd> : notApplicable ? <dd className="mt-1 text-muted-foreground">{notApplicableReasons[String(result.reason)] ?? title(String(result.reason))}</dd> : <dd className="mt-1 flex flex-wrap gap-x-3 text-muted-foreground">
             {jurors.map((juror) => <span key={juror}>{jurorName(juror)}: {Object.hasOwn(jurorErrors, juror) ? `failed (${String(jurorErrors[juror])})` : typeof votes[juror] === "number" ? percent(votes[juror]) : "no answer"}</span>)}
@@ -145,10 +154,11 @@ function JuryScorecard({ evaluation, verdicts, questions }: { evaluation: Record
         <dd className="mt-1 text-muted-foreground">Shown for context, not graded.</dd>
       </div>}
     </dl>
+    </ScorecardFlow>
   </>
 }
 
-export function CallEvaluation({ evaluation, verdicts = [], questions = [] }: { evaluation?: Record<string, unknown>; verdicts?: AgentCallVerdict[]; questions?: OperatorScorecardQuestion[] }) {
+export function CallEvaluation({ evaluation, verdicts = [], questions = [], call }: { evaluation?: Record<string, unknown>; verdicts?: AgentCallVerdict[]; questions?: OperatorScorecardQuestion[]; call?: FlowCall }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
   const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3" || evaluation?.evaluatorVersion === "typesafe-scorecard-v4" || evaluation?.evaluatorVersion === "typesafe-scorecard-v5"
@@ -159,13 +169,13 @@ export function CallEvaluation({ evaluation, verdicts = [], questions = [] }: { 
         <Badge variant="outline">{typeof evaluation?.status === "string" ? title(evaluation.status) : "Not evaluated"}</Badge>
       </div>
       {!evaluation ? <p className="mt-2 text-xs text-muted-foreground">No evaluation was recorded for this call.</p> : <>
-        <dl className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+        {evaluation.evaluatorVersion !== "typesafe-scorecard-v8" && <dl className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
           {[["Evaluator", evaluation.evaluator], ...(evaluation.model ? [["Model", evaluation.model]] : []), ["Version", evaluation.evaluatorVersion], ["Evaluated at", evaluation.evaluatedAt]].map(([label, value]) => (
             <div key={String(label)} className="min-w-0"><dt className="text-muted-foreground">{String(label)}</dt><dd className="break-words">{typeof value === "string" ? value : "Unavailable"}</dd></div>
           ))}
-        </dl>
+        </dl>}
         {typeof evaluation.reason === "string" && <p className="mt-3 text-xs">{evaluation.status === "incomplete" ? "Evaluation incomplete" : "Evaluation unavailable"}: {title(evaluation.reason)}</p>}
-        {evaluation.evaluatorVersion === "typesafe-scorecard-v6" || evaluation.evaluatorVersion === "typesafe-scorecard-v7" || evaluation.evaluatorVersion === "typesafe-scorecard-v8" ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
+        {evaluation.evaluatorVersion === "typesafe-scorecard-v6" || evaluation.evaluatorVersion === "typesafe-scorecard-v7" || evaluation.evaluatorVersion === "typesafe-scorecard-v8" ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} call={call} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
         {!currentVersion && <p className="mt-3 text-xs text-muted-foreground">This evaluator version is shown as recorded. Automatic red highlights apply only to typesafe-trace-v4.</p>}
         {Object.entries(results).map(([group, raw]) => {
           const result = record(raw)

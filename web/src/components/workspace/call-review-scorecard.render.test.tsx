@@ -60,3 +60,54 @@ test("a saved review shows agreement and stays editable", () => {
   assert.doesNotMatch(html, /aria-pressed="false"[^>]*disabled=""/)
   assert.doesNotMatch(html, /readonly=""/i)
 })
+
+test("human flow uses its own answers and preserves excluded unknown checks without revealing the judge", () => {
+  const questions = ["transfer_policy_followed", "knowledge_available", "appointment_datetime_correct"].map((key) => ({ key, code: key, label: key, prompt: key, source: "judge" as const, question: "", yes: "", no: "", failure: true }))
+  const render = (answer: boolean, unknown: boolean) => renderToStaticMarkup(<ScorecardPanel
+    review={{ ...review, questions: ["transfer_policy_followed"], answers: [{ question: "transfer_policy_followed", answer, note: "" }] }}
+    catalog={new Map(questions.map((question) => [question.key, question]))} onSaved={() => {}}
+    call={{ intent: "speak_to_staff", outcome: "transferred" }} evidenceReady
+    evaluation={{ results: { knowledge_available: { status: unknown ? "unknown" : "not_applicable" }, appointment_datetime_correct: { status: "not_applicable" }, transfer_policy_followed: { verdict: false } } }}
+  />)
+  const incomplete = render(true, true)
+  assert.match(incomplete, /Speak to staff/)
+  assert.match(incomplete, /Transferred/)
+  assert.match(incomplete, />Pass<|>Pass\s*</)
+  assert.match(incomplete, /Checks incomplete/)
+  assert.doesNotMatch(incomplete, /All applicable checks passed|Judge Fail|Judge Pass|Agrees|Disagrees/)
+  assert.match(render(true, false), /All applicable checks passed/)
+  assert.match(render(false, true), /1 failed check/)
+})
+
+test("revealing the judge exposes failures above collapsed details even when the reviewer passed the call", () => {
+  const question = { key: "transfer_policy_followed", code: "T1", label: "Transfer policy followed", prompt: "Transfer policy?", source: "judge" as const, question: "", yes: "", no: "", failure: true }
+  const html = renderToStaticMarkup(<ScorecardPanel
+    review={{ ...review, submitted: true, questions: [question.key], answers: [{ question: question.key, answer: true, note: "" }], judge: [{ question: question.key, answer: false, version: "typesafe-scorecard-v8" }] }}
+    catalog={new Map([[question.key, question]])} evidenceReady onSaved={() => {}}
+  />)
+  const summary = html.slice(0, html.indexOf("<details"))
+  assert.match(summary, /Judge results/)
+  assert.match(summary, /1 failed check/)
+  assert.match(summary, /Transfer policy followed/)
+  assert.doesNotMatch(summary, /All applicable checks passed/)
+})
+
+test("revealed judges include failures outside human question gates and preserve unavailable evidence", () => {
+  const questions = ["call_ended_correctly", "appointment_datetime_correct"].map((key) => ({ key, code: key, label: key, prompt: key, source: "judge" as const, question: "", yes: "", no: "", failure: true }))
+  const render = (result: Record<string, unknown>, errors = {}) => renderToStaticMarkup(<ScorecardPanel
+    review={{ ...review, submitted: true, questions: ["call_ended_correctly"], answers: [{ question: "call_ended_correctly", answer: true, note: "" }], judge: questions.map((question) => ({ question: question.key, answer: question.key === "call_ended_correctly", version: "typesafe-scorecard-v8" })) }}
+    catalog={new Map(questions.map((question) => [question.key, question]))} evidenceReady onSaved={() => {}}
+    evaluation={{ results: { call_ended_correctly: { verdict: true }, appointment_datetime_correct: result }, errors }}
+  />)
+  const failed = render({ verdict: false })
+  assert.match(failed.slice(0, failed.indexOf("<details")), /1 failed check/)
+  assert.match(failed, /appointment_datetime_correct<\/span><span class="shrink-0">Failed/)
+  assert.equal((failed.match(/role="group"/g) ?? []).length, 1)
+  for (const html of [render({ status: "unknown" }), render({ verdict: false }, { appointment_datetime_correct: { reason: "quorum" } })]) {
+    assert.match(html, /Checks incomplete/)
+    assert.doesNotMatch(html, /1 failed check|All applicable checks passed/)
+  }
+  const inapplicable = render({ status: "not_applicable", verdict: false })
+  assert.match(inapplicable, /All applicable checks passed/)
+  assert.doesNotMatch(inapplicable, /1 failed check/)
+})

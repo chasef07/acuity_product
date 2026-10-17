@@ -36,7 +36,7 @@ test("changing call filters cancels old pages without unlocking the current page
     } })
   })
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
-  await openAgentPage(page, "Transcripts")
+  await openAgentPage(page, "Calls")
   const more = page.getByRole("button", { name: "Load more calls", exact: true })
   const loading = page.getByRole("button", { name: /Loading…$/ })
   const filter = page.getByRole("button", { name: "Flagged calls", exact: true })

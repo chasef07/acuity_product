@@ -4,7 +4,7 @@ import { createServer } from "node:net"
 
 import { expect, test, type BrowserContext, type Page } from "@playwright/test"
 
-import { signInAs } from "./support"
+import { selectControlCenterPage, signInAs } from "./support"
 
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 const portalURL =
@@ -228,7 +228,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     await expect(workspaceSelector).toHaveAttribute("title", /All offices/)
     await expect(page.locator('[data-testid="mounted-workspace"][data-connection="connected"]')).toBeVisible()
     await expect(page.getByRole("button", { name: "Analytics", exact: true })).toBeVisible()
-    await expect(page.getByRole("button", { name: "AI diagnostics", exact: true })).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Control Center", exact: true })).toHaveCount(0)
   })
 
   await test.step("cross-Location expansion is denied without protected data", async () => {
@@ -457,13 +457,13 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
         }),
     )
 
-    const analytics = operatorPage.getByRole("button", { name: "AI diagnostics" })
+    const analytics = operatorPage.getByRole("button", { name: "Control Center" })
     await expect(analytics).toBeVisible()
     await analytics.click()
     const analyticsRegion = operatorPage.getByRole("region", {
-      name: "AI call analytics",
+      name: "Control Center",
     })
-    await analyticsRegion.getByRole("button", { name: "Overview", exact: true }).click()
+    await selectControlCenterPage(operatorPage, "Overview")
     await expect(analyticsRegion.getByText("Total calls")).toBeVisible()
     await expect(analyticsRegion.getByRole("region", { name: "Call volume over time", exact: true }).getByRole("strong")).toHaveText("42")
     await expect(analyticsRegion.getByText("Booked", { exact: true })).toBeVisible()
@@ -485,9 +485,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       path: testInfo.outputPath("operator-analytics-overview.png"),
       fullPage: true,
     })
-    await analyticsRegion
-      .getByRole("button", { name: "Quality", exact: true })
-      .click()
+    await selectControlCenterPage(operatorPage, "Quality")
     await expect(analyticsRegion.getByText("6 of 40 evaluated calls · 2 not evaluated")).toBeVisible()
     await expect(analyticsRegion.getByText("5,700 tokens", { exact: true })).toBeVisible()
     await expect(analyticsRegion.getByText("2.25 / 4", { exact: true })).toBeVisible()
@@ -507,15 +505,13 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       fullPage: true,
     })
 
-    await analyticsRegion
-      .getByRole("button", { name: "Tools", exact: true })
-      .click()
+    await selectControlCenterPage(operatorPage, "Tools")
     await expect(analyticsRegion.getByText("Tool executions", { exact: true })).toBeVisible()
     await expect(analyticsRegion.getByRole("region", { name: "Tool execution summary" }).getByText("31", { exact: true })).toBeVisible()
 
-    await analyticsRegion
-      .getByRole("button", { name: "Calls", exact: true })
-      .click()
+    await selectControlCenterPage(operatorPage, "Calls")
+    await analyticsRegion.getByRole("combobox", { name: "Judge flags", exact: true }).click()
+    await operatorPage.getByRole("option", { name: "All calls", exact: true }).click()
     const callerPhone = analyticsRegion.getByText("(985) 555-0142").first()
     await expect(callerPhone).toBeVisible()
     await expect
@@ -544,11 +540,13 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       analyticsRegion.getByRole("button", { name: "Load more calls" }),
     ).toHaveCount(0)
 
-    await analyticsRegion.getByRole("button", { name: "Tools", exact: true }).click()
+    await selectControlCenterPage(operatorPage, "Tools")
     await expect(analyticsRegion.getByRole("region", { name: "Tool execution summary" }).getByText("31", { exact: true })).toBeVisible()
-    await analyticsRegion.getByRole("button", { name: "Calls", exact: true }).click()
+    await selectControlCenterPage(operatorPage, "Calls")
 
-    await operatorPage.getByRole("button", { name: "Last 30 days" }).click()
+    await operatorPage.getByRole("combobox", { name: "Date range", exact: true }).click()
+
+    await operatorPage.getByRole("option", { name: "Last 30 days", exact: true }).click()
     await expect
       .poll(() => analyticsRequests.at(-1)?.range)
       .toBe("30d")
@@ -560,13 +558,13 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       .click()
     await operatorPage.getByRole("navigation", { name: "Workspace" }).getByRole("button", { name: "Work", exact: true }).click()
     await expectNoOpenTasks(operatorPage)
-    await operatorPage.getByRole("button", { name: "AI diagnostics" }).click()
+    await operatorPage.getByRole("button", { name: "Control Center" }).click()
     await expect
       .poll(() => analyticsRequests.at(-1)?.locationId)
       .toBe(selectedLocation.id)
-    await analyticsRegion
-      .getByRole("button", { name: "Calls", exact: true })
-      .click()
+    await selectControlCenterPage(operatorPage, "Calls")
+    await analyticsRegion.getByRole("combobox", { name: "Judge flags", exact: true }).click()
+    await operatorPage.getByRole("option", { name: "All calls", exact: true }).click()
 
     await operatorPage
       .getByRole("button", { name: /Open analytics for call from/ })

@@ -79,10 +79,7 @@ export function WorkspaceNavRail({
         label="Home"
         active={view === "manage-agent"}
         aria-expanded={view === "manage-agent" && panelOpen}
-        onClick={() =>
-          view === "manage-agent" && projection.selection.agentPage !== "home"
-            ? onIntent({ type: "select-manage-agent", page: "home" })
-            : selectWithSidebar(view === "manage-agent", { type: "select-manage-agent", page: "home" })}
+        onClick={() => selectWithSidebar(view === "manage-agent", { type: "select-manage-agent", page: "home" })}
       >
         <HouseIcon />
       </RailButton>
@@ -107,7 +104,7 @@ export function WorkspaceNavRail({
       )}
       {discovery.platformOperator && (
         <RailButton
-          label="AI diagnostics"
+          label="Control Center"
           active={view === "operator-analytics"}
           aria-expanded={view === "operator-analytics" && panelOpen}
           onClick={() => selectWithSidebar(view === "operator-analytics", { type: "select-operator-analytics" })}

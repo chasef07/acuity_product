@@ -57,6 +57,25 @@ test("diagnostics label filters are sent on every page and reset when outcome ch
   assert.equal(backend.requests.at(-1)?.body?.outcome, "abandoned")
 })
 
+test("Control Center failure filters intersect labels on every page and reset the cursor when the judge changes", async (t) => {
+  const backend = fakeBackend(t, () => Response.json({ summary, calls: [call("failed")], nextCursor: "next" }))
+  const view = mountHook(t, useAiCallAnalytics)
+  const filters = { practiceID: "practice-1", locationID: "", range: "24h", revision: 0, enabled: true, failuresOnly: true, failingJudge: "transfer_policy_followed", intent: "speak_to_staff", outcome: "resolved" } as const
+  await view.render(filters)
+  await waitFor(() => view.latest().state === "ready")
+  assert.equal(backend.requests[0].body?.failuresOnly, true)
+  assert.equal(backend.requests[0].body?.failingJudge, "transfer_policy_followed")
+  assert.equal(backend.requests[0].body?.intent, "speak_to_staff")
+  await act(async () => void view.latest().loadNextPage())
+  assert.equal(backend.requests.at(-1)?.body?.cursor, "next")
+  assert.equal(backend.requests.at(-1)?.body?.failingJudge, "transfer_policy_followed")
+  await view.render({ ...filters, failingJudge: "call_ended_correctly" })
+  await waitFor(() => backend.requests.length === 3)
+  assert.equal(backend.requests.at(-1)?.body?.cursor, undefined)
+  assert.equal(backend.requests.at(-1)?.body?.failingJudge, "call_ended_correctly")
+  assert.equal(backend.requests.at(-1)?.body?.outcome, "resolved")
+})
+
 test("recent calls page by cursor and a filter change abandons the old page", async (t) => {
   const pages = new Map<string, ReturnType<typeof deferred<Response>>>()
   const backend = fakeBackend(t, (_, body) => {
