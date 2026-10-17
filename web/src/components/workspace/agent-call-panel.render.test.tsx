@@ -3,6 +3,17 @@ import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { CallTranscript } from "./agent-call-panel.tsx"
+import { CallFlow } from "./scorecard-flow.tsx"
+
+for (const [result, label] of [["pass", "Pass"], ["fail", "Fail"], ["unknown", "Incomplete"], [undefined, "Incomplete"]] as const) {
+  test(`staff call flow shows ${label} with no detailed scorecard (${result})`, () => {
+    const markup = renderToStaticMarkup(<CallFlow call={{ intent: "appointment_information", outcome: "resolved" }} result={result} />)
+    assert.match(markup, /Appointment confirmation\/details/)
+    assert.match(markup, /Resolved/)
+    assert.match(markup, new RegExp(`>${label}<`))
+    assert.doesNotMatch(markup, /Review judge checks|Caller sentiment|<details|Scorecard/)
+  })
+}
 
 test("the transcript puts the agent on the right and the caller on the left, like Work", () => {
   const markup = renderToStaticMarkup(
