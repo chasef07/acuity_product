@@ -78,8 +78,9 @@ test("Home connects Acuity to knowledge, insurance, and tools, with unanswered q
   await page.render(
     <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={(next) => pages.push(next)} />,
   )
-  assert.equal(page.host.querySelector("h1")?.textContent, homeGreeting(homeDay(new Date())).greeting)
-  assert.equal(page.host.querySelector("header time")?.textContent, homeGreeting(homeDay(new Date())).dateLabel)
+  const greeting = homeGreeting(homeDay(new Date()))
+  assert.equal(page.host.querySelector("h1")?.textContent, `${greeting.greeting} ${greeting.dateLabel}`)
+  assert.equal(page.host.querySelector("h1 time")?.textContent, greeting.dateLabel)
   const connections = page.host.querySelector('[aria-label="Agent connections"]')
   assert.ok(connections)
   assert.deepEqual(Array.from(connections.querySelectorAll("button"), (button) => button.getAttribute("aria-label")), ["Knowledge base", "Insurance", "Tools"])
@@ -209,7 +210,8 @@ test("each page keeps its title, actions, and filters inside the panel", async (
   await showPage("home")
   await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => /Version 3 · published/.test(page.text()))
-  assert.equal(page.host.querySelector("h1")?.textContent, homeGreeting(homeDay(new Date())).greeting)
+  const greeting = homeGreeting(homeDay(new Date()))
+  assert.equal(page.host.querySelector("h1")?.textContent, `${greeting.greeting} ${greeting.dateLabel}`)
   await page.unmount()
 })
 
