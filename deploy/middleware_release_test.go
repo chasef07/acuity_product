@@ -96,7 +96,7 @@ func TestMiddlewareInputsReachOnlyPortalAPIOrFailBeforeCloudAccess(t *testing.T)
 				}
 				commands := capturedGcloudCommands(t, capture)
 				for _, command := range commands {
-					if (strings.Contains(command, "MIDDLEWARE_") || strings.Contains(command, "--update-secrets")) &&
+					if strings.Contains(command, "MIDDLEWARE_") &&
 						(scenario.url == "" || !strings.HasPrefix(command, "run\tdeploy\tacuity-portal-api\t")) {
 						t.Fatalf("unexpected middleware configuration: %s", command)
 					}

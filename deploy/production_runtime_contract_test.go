@@ -625,6 +625,7 @@ func productionRuntimeEnvironment() []string {
 		"GOOGLE_CLIENT_ID_SECRET=google-client-id",
 		"GOOGLE_CLIENT_SECRET_SECRET=google-client-secret",
 		"TELNYX_API_KEY_SECRET=telnyx-api-key",
+		"OPENROUTER_API_KEY_SECRET=openrouter-api-key",
 		"MESSAGING_MEDIA_SIGNING_KEY_SECRET=messaging-media-signing-key",
 		"HANDOFF_TOKEN_KEY_SECRET=handoff-token-key",
 		"PLAYBACK_SIGNING_KEY_SECRET=playback-signing-key",

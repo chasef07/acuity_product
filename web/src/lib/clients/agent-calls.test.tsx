@@ -23,6 +23,40 @@ const call = (id: string) => ({
 
 const summary = { totalCalls: 3 }
 
+test("transcript intent and outcome filters reset pagination when only labels change", async (t) => {
+  const backend = fakeBackend(t, (_, body) => Response.json({ calls: [call(String(body.intent ?? "all"))], nextCursor: "next" }))
+  const view = mountHook(t, useAgentCalls)
+  const filters = { practiceID: "practice-1", locationID: "", range: "7d", phone: "", flaggedOnly: false, revision: 0, intent: "prescription_or_refill", outcome: "transferred" } as const
+  await view.render(filters)
+  await waitFor(() => view.latest().status === "ready")
+  assert.equal(backend.requests[0].body?.intent, "prescription_or_refill")
+  assert.equal(backend.requests[0].body?.outcome, "transferred")
+  await act(async () => void view.latest().loadMore())
+  assert.equal(backend.requests.at(-1)?.body?.cursor, "next")
+  await view.render({ ...filters, intent: "insurance_question", outcome: "resolved" })
+  await waitFor(() => backend.requests.length === 3)
+  assert.equal(backend.requests.at(-1)?.body?.cursor, undefined)
+  assert.equal(backend.requests.at(-1)?.body?.intent, "insurance_question")
+  assert.equal(backend.requests.at(-1)?.body?.outcome, "resolved")
+})
+
+test("diagnostics label filters are sent on every page and reset when outcome changes", async (t) => {
+  const backend = fakeBackend(t, () => Response.json({ summary, calls: [call("labeled")], nextCursor: "next" }))
+  const view = mountHook(t, useAiCallAnalytics)
+  const filters = { practiceID: "practice-1", locationID: "location-1", range: "24h", revision: 0, enabled: true, intent: "existing_patient_booking", outcome: "resolved" } as const
+  await view.render(filters)
+  await waitFor(() => view.latest().state === "ready")
+  assert.equal(backend.requests[0].body?.intent, "existing_patient_booking")
+  assert.equal(backend.requests[0].body?.outcome, "resolved")
+  await act(async () => void view.latest().loadNextPage())
+  assert.equal(backend.requests.at(-1)?.body?.intent, "existing_patient_booking")
+  assert.equal(backend.requests.at(-1)?.body?.cursor, "next")
+  await view.render({ ...filters, outcome: "abandoned" })
+  await waitFor(() => backend.requests.length === 3)
+  assert.equal(backend.requests.at(-1)?.body?.cursor, undefined)
+  assert.equal(backend.requests.at(-1)?.body?.outcome, "abandoned")
+})
+
 test("recent calls page by cursor and a filter change abandons the old page", async (t) => {
   const pages = new Map<string, ReturnType<typeof deferred<Response>>>()
   const backend = fakeBackend(t, (_, body) => {
@@ -163,7 +197,7 @@ function fakeBackend(
   process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
   clearAccessToken()
   const backend = {
-    requests: [] as { path: string; body?: unknown }[],
+    requests: [] as { path: string; body?: Record<string, unknown> }[],
     aborted: 0,
   }
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {

@@ -55,6 +55,7 @@ import { useAiCallEvidence } from "@/lib/clients/agent-calls"
 import { useScorecardQuestions } from "@/lib/clients/call-review"
 import { formatAppointmentDateTime, formatTimestamp } from "@/lib/format-time"
 import { formatUSPhoneDigits } from "@/lib/phone"
+import { CallLabels } from "./call-labels"
 
 export function OperatorAnalyticsDetailSheet({
   interactionID,
@@ -198,6 +199,7 @@ function OperatorAnalyticsDetailView({
           {formatTimestamp(detail.startedAt)} ·{" "}
           {formatDuration(detail.startedAt, detail.endedAt)}
         </p>
+        <div className="mt-3"><CallLabels call={detail} /></div>
         {detail.summary ? (
           <p className="mt-3 text-sm leading-6">{detail.summary}</p>
         ) : (

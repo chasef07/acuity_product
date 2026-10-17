@@ -681,7 +681,15 @@ export type AiAppointmentFacts = {
     startDatetime?: string;
 };
 
+export type CallIntent = 'new_patient_booking' | 'existing_patient_booking' | 'reschedule_appointment' | 'cancel_appointment' | 'appointment_information' | 'office_information' | 'insurance_question' | 'billing_question' | 'prescription_or_refill' | 'records_or_forms' | 'glasses_or_contacts' | 'returning_call' | 'speak_to_staff' | 'other';
+
+export type CallOutcome = 'resolved' | 'transferred' | 'abandoned';
+
+export type CallLabelingStatus = 'pending' | 'processing' | 'complete' | 'failed' | 'skipped';
+
 export type AgentCallsQuery = {
+    intent?: CallIntent;
+    outcome?: CallOutcome;
     practiceId: string;
     locationId?: string;
     range: OperatorAiAnalyticsRange;
@@ -696,6 +704,9 @@ export type AgentCallsQuery = {
 };
 
 export type AgentCall = {
+    intent?: CallIntent;
+    outcome?: CallOutcome;
+    labelingStatus?: CallLabelingStatus;
     id: string;
     phone: string;
     startedAt: string;
@@ -1328,6 +1339,8 @@ export type OperatorAiCallIssueReview = {
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
+    intent?: CallIntent;
+    outcome?: CallOutcome;
     /**
      * Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
      *
@@ -1565,6 +1578,9 @@ export type OperatorAiAnalyticsDiagnostics = {
 };
 
 export type OperatorAiCallAnalytics = {
+    intent?: CallIntent;
+    outcome?: CallOutcome;
+    labelingStatus?: CallLabelingStatus;
     reviewReasons?: Array<string>;
     id: string;
     locationId: string;
@@ -1587,7 +1603,7 @@ export type OperatorAiCallAnalytics = {
 };
 
 /**
- * The first page includes a fresh range summary. Cursor continuations return calls only within the initial reporting window; refresh without a cursor to obtain a new summary and window.
+ * The first page includes a fresh practice, location and range summary. Intent and outcome filters apply only to the calls table, not the summary or pending issues. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
  */
 export type OperatorAiAnalyticsPage = {
     /**
@@ -1677,6 +1693,9 @@ export type ProviderErrorDiagnostic = {
 };
 
 export type OperatorAiInteractionAnalytics = {
+    intent?: CallIntent;
+    outcome?: CallOutcome;
+    labelingStatus?: CallLabelingStatus;
     issue?: OperatorAiCallIssue;
     /**
      * The jury's verdict on each scorecard question it answered, read the same way as the staff scorecard.

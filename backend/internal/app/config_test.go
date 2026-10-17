@@ -32,6 +32,7 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		"ABITA_EYE_GROUP_SERVICE_SUBJECT":       "abita-eye-group",
 		"ABITA_EYE_GROUP_SERVICE_PRACTICE_ID":   "00000000-0000-0000-0000-000000000002",
 		"TELNYX_API_KEY":                        "KEY_synthetic",
+		"OPENROUTER_API_KEY":                    " synthetic-openrouter-key ",
 		"TELNYX_CALL_CONTROL_ID":                "call-control-synthetic",
 		"TELNYX_CREDENTIAL_CONNECTION_ID":       "credential-connection-synthetic",
 		"TELNYX_FROM_NUMBER":                    "+15555550100",
@@ -153,6 +154,12 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		loaded, err := LoadConfig(func(name string) string { return values[name] })
 		if err != nil {
 			t.Fatalf("load %s config: %v", role, err)
+		}
+		if role == RoleWorker && loaded.OpenRouterAPIKey != "synthetic-openrouter-key" {
+			t.Fatalf("worker labeling key was not configured")
+		}
+		if role != RoleWorker && loaded.OpenRouterAPIKey != "" {
+			t.Fatalf("labeling key exposed to %s", role)
 		}
 		if role == RoleRealtime &&
 			(loaded.Realtime.Lifetime != 270*time.Second ||

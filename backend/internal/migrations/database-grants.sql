@@ -641,3 +641,8 @@ GRANT UPDATE (note, question_idea, completed_at) ON ai_call_review_assignments T
 GRANT SELECT, INSERT ON ai_call_reviews TO acuity_portal;
 GRANT UPDATE (answer, note) ON ai_call_reviews TO acuity_portal;
 GRANT SELECT, INSERT ON ai_call_review_pools TO acuity_portal;
+
+-- Only the worker runs the labeling judges. Portal reads their public labels.
+GRANT SELECT (interaction_id, intent, outcome, status)
+ON public.ai_interaction_classifications TO acuity_portal;
+GRANT SELECT, INSERT, UPDATE ON public.ai_interaction_classifications TO acuity_worker;

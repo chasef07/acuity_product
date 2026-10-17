@@ -385,7 +385,8 @@ func runWorker(
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
 	interactions := interaction.New(database, accessModule, nil)
-	runner, err := worker.New(productionWorkerConfig(config.AcquireTimeout), calling, messages, interactions, pool)
+	classifications := interaction.NewClassificationWorker(database, interaction.NewCallLabelClassifier(config.OpenRouterAPIKey), calling, work.New(database, accessModule, nil))
+	runner, err := worker.New(productionWorkerConfig(config.AcquireTimeout), calling, messages, interactions, pool, classifications)
 	if err != nil {
 		return err
 	}

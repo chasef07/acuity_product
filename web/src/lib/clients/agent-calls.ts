@@ -9,6 +9,8 @@ import {
   reviewOperatorAiCallIssue,
 } from "../api/generated/sdk.gen"
 import type {
+  CallIntent,
+  CallOutcome,
   AgentCallIssueReason,
   AgentCallsPage,
   OperatorAiAnalyticsPage,
@@ -32,6 +34,8 @@ export function useAgentCalls({
   phone,
   flaggedOnly,
   needsKnowledgeOnly = false,
+  intent,
+  outcome,
   revision,
 }: {
   practiceID: string
@@ -40,10 +44,12 @@ export function useAgentCalls({
   phone: string
   flaggedOnly: boolean
   needsKnowledgeOnly?: boolean
+  intent?: CallIntent
+  outcome?: CallOutcome
   revision: number
 }) {
   return useCallPages<AgentCallsPage>(
-    JSON.stringify([practiceID, locationID, range, phone, flaggedOnly, needsKnowledgeOnly, revision]),
+    JSON.stringify([practiceID, locationID, range, phone, flaggedOnly, needsKnowledgeOnly, intent, outcome, revision]),
     true,
     (transport, cursor) =>
       queryAgentCalls({
@@ -55,6 +61,8 @@ export function useAgentCalls({
           phone,
           flaggedOnly,
           needsKnowledgeOnly,
+          intent,
+          outcome,
           limit: 50,
           cursor,
         },
@@ -104,15 +112,19 @@ export function useAiCallAnalytics({
   range,
   revision,
   enabled,
+  intent,
+  outcome,
 }: {
   practiceID: string
   locationID: string
   range: OperatorAiAnalyticsRange
   revision: number
   enabled: boolean
+  intent?: CallIntent
+  outcome?: CallOutcome
 }): AiCallLedger {
   const pages = useCallPages<OperatorAiAnalyticsPage>(
-    `${practiceID}:${locationID}:${range}:${revision}`,
+    JSON.stringify([practiceID, locationID, range, intent, outcome, revision]),
     Boolean(practiceID) && enabled,
     (transport, cursor) =>
       queryOperatorAiAnalytics({
@@ -121,6 +133,8 @@ export function useAiCallAnalytics({
           practiceId: practiceID,
           locationId: locationID || undefined,
           range,
+          intent,
+          outcome,
           cursor,
           limit: 50,
         },
