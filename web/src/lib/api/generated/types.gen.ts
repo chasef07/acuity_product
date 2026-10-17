@@ -1004,6 +1004,10 @@ export type OperatorCallReviewJudgeAnswer = {
 };
 
 export type OperatorCallReview = {
+    /**
+     * Evaluator version defining this call's review questions.
+     */
+    version?: string;
     interactionId: string;
     assigned: boolean;
     facts: Array<OperatorCallReviewFact>;
@@ -4153,7 +4157,12 @@ export type GetProviderMessageMediaResponse = GetProviderMessageMediaResponses[k
 export type GetOperatorScorecardQuestionsData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Evaluator version; omitted selects the current scorecard.
+         */
+        version?: 'typesafe-scorecard-v6' | 'typesafe-scorecard-v7' | 'typesafe-scorecard-v8';
+    };
     url: '/v1/operator/scorecard/questions';
 };
 

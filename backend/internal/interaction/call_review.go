@@ -66,6 +66,7 @@ type ReviewJudgeAnswer struct {
 
 type CallReview struct {
 	InteractionID string              `json:"interactionId"`
+	Version       string              `json:"version"`
 	Assigned      bool                `json:"assigned"`
 	Sample        string              `json:"-"`
 	Facts         []ReviewFact        `json:"facts"`
@@ -259,8 +260,12 @@ func reviewFlagged(answers map[string]bool, evaluation json.RawMessage) bool {
 
 func questionOrder() map[string]int {
 	order := map[string]int{}
-	for index, question := range ScorecardQuestions {
-		order[question.Key] = index
+	for _, catalog := range [][]ScorecardQuestion{ScorecardQuestions, legacyScorecardQuestions} {
+		for _, question := range catalog {
+			if _, exists := order[question.Key]; !exists {
+				order[question.Key] = len(order)
+			}
+		}
 	}
 	return order
 }
@@ -446,7 +451,7 @@ func (m *Module) OpenReviewQueue(ctx context.Context, command ReviewQueueCommand
 	return queue, nil
 }
 
-func reviewQuestions(facts map[string]bool) []string {
+func reviewQuestions(facts map[string]bool, version string) []string {
 	_, insuranceChecked := facts["insurance_verified"]
 	gates := map[string]bool{
 		"time_offered":                 facts["availability_searched"],
@@ -455,7 +460,7 @@ func reviewQuestions(facts map[string]bool) []string {
 		"insurance_plan_as_stated":     insuranceChecked,
 	}
 	questions := []string{}
-	for _, question := range ScorecardQuestions {
+	for _, question := range ScorecardQuestionsForVersion(version) {
 		if open, gated := gates[question.Key]; question.Source != "judge" || (gated && !open) {
 			continue
 		}
@@ -526,7 +531,29 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 	sort.Slice(review.Facts, func(left, right int) bool {
 		return scorecardQuestionByKey[review.Facts[left].Question].Code < scorecardQuestionByKey[review.Facts[right].Question].Code
 	})
-	review.Questions = reviewQuestions(facts)
+	var evaluation json.RawMessage
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(closeout_payload->'evaluation', '{}'::jsonb) FROM ai_interactions WHERE id = $1`, interactionID).Scan(&evaluation); err != nil {
+		return CallReview{}, fmt.Errorf("read scorecard version: %w", err)
+	}
+	jury, _ := readJury(evaluation)
+	review.Version = ScorecardJudgeVersion
+	if jury.Version != "" && ScorecardQuestionsForVersion(jury.Version) != nil {
+		review.Version = jury.Version
+	}
+	review.Questions = reviewQuestions(facts, review.Version)
+	if review.Version == ScorecardJudgeVersion {
+		applicable := review.Questions[:0]
+		for _, key := range review.Questions {
+			var result struct {
+				Status string `json:"status"`
+			}
+			_ = json.Unmarshal(jury.Results[key], &result)
+			if result.Status != "unknown" && result.Status != "not_applicable" {
+				applicable = append(applicable, key)
+			}
+		}
+		review.Questions = applicable
+	}
 
 	var reviewDate string
 	err = tx.QueryRow(ctx, `
@@ -581,7 +608,7 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, $13, $14)
 				ON CONFLICT (interaction_id, question, reviewer) DO UPDATE SET answer = EXCLUDED.answer, note = EXCLUDED.note
 			`, interactionID, authorization.Practice.ID, answer.Question, identity.Subject, identity.Email, answer.Answer, answer.Note,
-				reviewDate, review.Sample, ScorecardJudgeVersion, judgeAnswer, snapshot.Probability, judgeVersion, now); err != nil {
+				reviewDate, review.Sample, review.Version, judgeAnswer, snapshot.Probability, judgeVersion, now); err != nil {
 				return CallReview{}, fmt.Errorf("save call review: %w", err)
 			}
 		}
@@ -627,7 +654,7 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 		review.Submitted = true
 	}
 	if review.Submitted {
-		for _, question := range ScorecardQuestions {
+		for _, question := range ScorecardQuestionsForVersion(review.Version) {
 			if snapshot, found := snapshots[question.Key]; found {
 				review.Judge = append(review.Judge, snapshot)
 			} else if current, found := judge[question.Key]; found {

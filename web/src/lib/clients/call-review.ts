@@ -9,9 +9,10 @@ import {
 import type { OperatorCallReviewSubmission } from "../api/generated/types.gen"
 import { portalRequest, usePortalQuery } from "./portal-request"
 
-export function useScorecardQuestions() {
-  return usePortalQuery("scorecard-questions", (transport) =>
-    getOperatorScorecardQuestions(transport),
+export function useScorecardQuestions(version?: string) {
+  const supportedVersion = version === "typesafe-scorecard-v6" || version === "typesafe-scorecard-v7" || version === "typesafe-scorecard-v8" ? version : undefined
+  return usePortalQuery(`scorecard-questions:${supportedVersion ?? "current"}`, (transport) =>
+    getOperatorScorecardQuestions({ ...transport, query: { version: supportedVersion } }),
   )
 }
 

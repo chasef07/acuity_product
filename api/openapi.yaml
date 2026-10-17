@@ -1715,6 +1715,14 @@ paths:
     get:
       operationId: getOperatorScorecardQuestions
       summary: Read the scorecard question definitions shown to reviewers.
+      parameters:
+        - name: version
+          in: query
+          required: false
+          description: Evaluator version; omitted selects the current scorecard.
+          schema:
+            type: string
+            enum: [typesafe-scorecard-v6, typesafe-scorecard-v7, typesafe-scorecard-v8]
       responses:
         "200":
           description: Every scorecard question with its plain-English yes and no definitions.
@@ -4238,6 +4246,9 @@ components:
       additionalProperties: false
       required: [interactionId, assigned, facts, questions, submitted, note, questionIdea, answers, judge]
       properties:
+        version:
+          type: string
+          description: Evaluator version defining this call's review questions.
         interactionId: {type: string, format: uuid}
         assigned: {type: boolean}
         facts:

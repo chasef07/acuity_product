@@ -187,7 +187,7 @@ func TestPreviousJuryStillReadsForDisplayButNotAsAnswers(t *testing.T) {
 
 func TestClassifyBooking(t *testing.T) {
 	for want, answers := range map[bookingOutcome]map[string]bool{
-		bookingNotRequested: {"scheduling_succeeded": true, "availability_searched": false},
+		bookingNotRequested: {"new_booking_requested": false, "scheduling_succeeded": true, "availability_searched": false},
 		bookingConverted:    {"new_booking_requested": true, "scheduling_tool_called": true, "scheduling_succeeded": true, "booking_blocked": true},
 		bookingBlocked:      {"new_booking_requested": true, "booking_blocked": true},
 		bookingMissed:       {"new_booking_requested": true, "availability_searched": true, "time_offered": false},
@@ -211,7 +211,7 @@ func TestReviewAsksGatedQuestionsOnlyWhenTheyApply(t *testing.T) {
 		"scheduling write":   {map[string]bool{"scheduling_tool_called": true}, "[new_booking_requested office_rules_grounded appointment_datetime_correct office_question_answered promises_backed ended_while_caller_active]"},
 		"insurance rejected": {map[string]bool{"insurance_verified": false}, "[new_booking_requested office_rules_grounded office_question_answered promises_backed ended_while_caller_active insurance_plan_as_stated]"},
 	} {
-		if got := fmt.Sprint(reviewQuestions(test.facts)); got != test.want {
+		if got := fmt.Sprint(reviewQuestions(test.facts, legacyJudgeVersion)); got != test.want {
 			t.Errorf("%s: %s", name, got)
 		}
 	}
@@ -367,7 +367,7 @@ func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 		}
 		seen[question.Key], seen[question.Code] = true, true
 	}
-	for _, key := range []string{"new_booking_requested", "time_offered", "promises_backed", "ended_while_caller_active", "office_rules_grounded", "office_question_answered", "appointment_datetime_correct", "insurance_plan_as_stated", "requested_time_honored"} {
+	for _, key := range []string{"knowledge_available", "office_question_answered", "appointment_datetime_correct", "call_ended_correctly", "transfer_policy_followed", "emergency_policy_followed"} {
 		if !seen[key] {
 			t.Errorf("catalog is missing %s", key)
 		}

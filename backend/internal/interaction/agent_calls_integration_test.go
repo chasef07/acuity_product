@@ -225,4 +225,18 @@ func TestAgentCallsNeedingKnowledgeFollowTheJudge(t *testing.T) {
 	if err != nil || len(page.Calls) != 3 || len(page.Calls[1].KnowledgeGaps) != 1 || page.Calls[2].KnowledgeGaps == nil || len(page.Calls[2].KnowledgeGaps) != 0 {
 		t.Fatalf("all calls keep their gaps: %+v %v", page, err)
 	}
+	v8Gap := insert("v8-gap", now.Add(-4*time.Minute))
+	score(v8Gap, "knowledge_available", "judge", false, nil)
+	v8AnswerError := insert("v8-answer-error", now.Add(-5*time.Minute))
+	score(v8AnswerError, "knowledge_available", "judge", true, nil)
+	score(v8AnswerError, "office_question_answered", "judge", false, nil)
+	if _, err := pool.Exec(ctx, `UPDATE ai_interaction_scorecard_answers SET scorecard_version=$1 WHERE interaction_id=ANY($2::uuid[]) AND source='judge'`, ScorecardJudgeVersion, []string{v8Gap, v8AnswerError}); err != nil {
+		t.Fatal(err)
+	}
+	command.NeedsKnowledgeOnly = true
+	page, err = module.QueryAgentCalls(ctx, command)
+	if err != nil || len(page.Calls) != 2 || page.Calls[0].ID != unanswered || page.Calls[1].ID != v8Gap {
+		t.Fatalf("historical knowledge-gap verdicts keep their meaning; v8 answer errors are not knowledge gaps: %+v %v", page, err)
+	}
+
 }

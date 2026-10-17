@@ -164,7 +164,7 @@ function OperatorAnalyticsDetailView({
   focus?: DiagnosticFocus
   onIssueChange: (issue: OperatorAiCallIssue) => void
 }) {
-  const questions = useScorecardQuestions()
+  const questions = useScorecardQuestions(typeof detail.evaluation?.evaluatorVersion === "string" ? detail.evaluation.evaluatorVersion : undefined)
   const [showTiming, setShowTiming] = useState(true)
   const messageCount = detail.timeline.filter(
     (item) => item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE",

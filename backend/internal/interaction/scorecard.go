@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	ScorecardJudgeVersion = "typesafe-scorecard-v7"
+	ScorecardJudgeVersion = "typesafe-scorecard-v8"
+	legacyJudgeVersion    = "typesafe-scorecard-v7"
 	previousJudgeVersion  = "typesafe-scorecard-v6"
 	ScorecardCodeVersion  = "code-checks-v2"
 	scorecardNoAtOrBelow  = 0.40
@@ -31,7 +32,7 @@ type ScorecardQuestion struct {
 	Failure  bool   `json:"failure"`
 }
 
-var ScorecardQuestions = []ScorecardQuestion{
+var legacyScorecardQuestions = []ScorecardQuestion{
 	{
 		Key: "new_booking_requested", Code: "B1", Label: "New booking requested", Prompt: "Did the caller ask to book a new appointment?", Source: "judge",
 		Question: "Did the caller ask to book a NEW appointment, for themselves or someone else (for example a child)? Rescheduling, moving, or cancelling an existing appointment does not count. Asking about an existing appointment, insurance, prescriptions, glasses, records, or billing does not count by itself.",
@@ -144,7 +145,7 @@ var ScorecardQuestions = []ScorecardQuestion{
 
 var scorecardQuestionByKey = func() map[string]ScorecardQuestion {
 	result := map[string]ScorecardQuestion{}
-	for _, question := range ScorecardQuestions {
+	for _, question := range append(append([]ScorecardQuestion{}, legacyScorecardQuestions...), ScorecardQuestions...) {
 		result[question.Key] = question
 	}
 	return result
@@ -371,7 +372,7 @@ func juryQuestions(version string) []juryQuestion {
 		return previousJuryQuestions
 	}
 	questions := []juryQuestion{}
-	for _, question := range ScorecardQuestions {
+	for _, question := range ScorecardQuestionsForVersion(version) {
 		if question.Source != "judge" {
 			continue
 		}
@@ -386,7 +387,7 @@ func juryQuestions(version string) []juryQuestion {
 
 func readJury(evaluation json.RawMessage) (juryEvaluation, bool) {
 	var jury juryEvaluation
-	valid := json.Unmarshal(evaluation, &jury) == nil && (jury.Version == ScorecardJudgeVersion || jury.Version == previousJudgeVersion) &&
+	valid := json.Unmarshal(evaluation, &jury) == nil && (jury.Version == ScorecardJudgeVersion || jury.Version == legacyJudgeVersion || jury.Version == previousJudgeVersion) &&
 		(jury.Status == "complete" || jury.Status == "incomplete") && len(jury.Jurors) > 0
 	for _, juror := range jury.Jurors {
 		valid = valid && strings.TrimSpace(juror) != ""
@@ -400,7 +401,7 @@ func validProbability(value *float64) bool {
 
 func judgeAnswers(evaluation json.RawMessage) []scorecardAnswer {
 	jury, valid := readJury(evaluation)
-	if !valid || jury.Version != ScorecardJudgeVersion {
+	if !valid || jury.Version == previousJudgeVersion {
 		return nil
 	}
 	return juryAnswers(jury, juryQuestions(jury.Version))
@@ -414,6 +415,7 @@ func juryAnswers(jury juryEvaluation, questions []juryQuestion) []scorecardAnswe
 			continue
 		}
 		var result struct {
+			Status      string             `json:"status"`
 			Verdict     *bool              `json:"verdict"`
 			Probability *float64           `json:"probability"`
 			Votes       map[string]float64 `json:"votes"`
@@ -421,7 +423,7 @@ func juryAnswers(jury juryEvaluation, questions []juryQuestion) []scorecardAnswe
 		if json.Unmarshal(jury.Results[question.key], &result) != nil {
 			continue
 		}
-		if result.Verdict == nil || !validProbability(result.Probability) {
+		if result.Status == "unknown" || result.Status == "not_applicable" || result.Verdict == nil || !validProbability(result.Probability) {
 			continue
 		}
 		probability := *result.Probability
@@ -509,8 +511,11 @@ const (
 func classifyBooking(answers map[string]bool) bookingOutcome {
 	offered, offerJudged := answers["time_offered"]
 	searched, searchKnown := answers["availability_searched"]
+	requested, intentKnown := answers["new_booking_requested"]
 	switch {
-	case !answers["new_booking_requested"]:
+	case !intentKnown:
+		return bookingUnknown
+	case !requested:
 		return bookingNotRequested
 	case answers["scheduling_succeeded"]:
 		return bookingConverted
