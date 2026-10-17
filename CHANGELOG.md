@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.0](https://github.com/chasef07/acuity_product/compare/v1.41.0...v1.42.0) (2026-10-17)
+
+
+### Features
+
+* add sidebar analytics and call scorecard flows ([#497](https://github.com/chasef07/acuity_product/issues/497)) ([16a7c7a](https://github.com/chasef07/acuity_product/commit/16a7c7ad52792c8b89c7c126b1b1a44b496e68ad))
+
 ## [1.41.0](https://github.com/chasef07/acuity_product/compare/v1.40.0...v1.41.0) (2026-10-17)
 
 
