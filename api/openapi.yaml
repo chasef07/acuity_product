@@ -3858,6 +3858,10 @@ components:
       additionalProperties: false
       required: [call, locationName, messages, scorecard]
       properties:
+        checkResult:
+          type: string
+          enum: [pass, fail, unknown]
+          description: Aggregate judge check result. Missing or incomplete evidence is unknown; a confirmed failed check takes precedence.
         call:
           $ref: "#/components/schemas/AgentCall"
         locationName:

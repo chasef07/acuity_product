@@ -751,6 +751,10 @@ export type AgentCallMessage = {
 };
 
 export type AgentCallDetail = {
+    /**
+     * Aggregate judge check result. Missing or incomplete evidence is unknown; a confirmed failed check takes precedence.
+     */
+    checkResult?: 'pass' | 'fail' | 'unknown';
     call: AgentCall;
     locationName: string;
     messages: Array<AgentCallMessage>;

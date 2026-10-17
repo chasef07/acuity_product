@@ -52,6 +52,7 @@ type AgentCallDetail struct {
 	Issue        *AgentCallIssue    `json:"issue,omitempty"`
 	Scorecard    []AgentCallVerdict `json:"scorecard"`
 	Sentiment    *float64           `json:"sentiment,omitempty"`
+	CheckResult  string             `json:"checkResult"`
 }
 
 type AgentCallVerdict struct {
@@ -262,6 +263,7 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 	}
 	detail.Call.Intent, detail.Call.Outcome, detail.Call.LabelingStatus = labels.Intent, labels.Outcome, labels.LabelingStatus
 	detail.Scorecard = agentCallScorecard(closeout.Evaluation)
+	detail.CheckResult = agentCallCheckResult(closeout.Evaluation)
 	detail.Sentiment = jurySentiment(closeout.Evaluation)
 	timeline, _ := normalizeTimeline(stored.Transcript, nil, stored.StartedAt)
 	for _, item := range timeline {
@@ -294,6 +296,41 @@ func knowledgeGapQueries(detail json.RawMessage) []string {
 		}
 	}
 	return queries
+}
+
+func agentCallCheckResult(evaluation json.RawMessage) string {
+	jury, valid := readJury(evaluation)
+	if !valid {
+		return "unknown"
+	}
+	questions := juryQuestions(jury.Version)
+	answers := map[string]bool{}
+	for _, answer := range juryAnswers(jury, questions) {
+		answers[answer.Question] = answer.Answer
+	}
+	complete, passed := jury.Status == "complete", false
+	for _, question := range questions {
+		if answer, found := answers[question.key]; found {
+			if question.failureLabel != "" {
+				if !answer {
+					return "fail"
+				}
+				passed = true
+			}
+			continue
+		}
+		var result struct {
+			Status string `json:"status"`
+		}
+		_, failed := jury.Errors[question.key]
+		if failed || json.Unmarshal(jury.Results[question.key], &result) != nil || result.Status != "not_applicable" {
+			complete = false
+		}
+	}
+	if complete && passed {
+		return "pass"
+	}
+	return "unknown"
 }
 
 func agentCallScorecard(evaluation json.RawMessage) []AgentCallVerdict {

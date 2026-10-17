@@ -56,9 +56,10 @@ export function AgentHome({
   return (
     <section aria-labelledby={titleID} className="@container min-h-0 flex-1 overflow-auto">
       <header className="px-4 pt-8 sm:px-6">
-        <h1 id={titleID} className="text-2xl font-semibold tracking-tight">{greeting?.greeting ?? "Welcome"}</h1>
-        <p className="mt-2 min-h-5 text-sm text-muted-foreground"><time dateTime={day || undefined}>{greeting?.dateLabel}</time></p>
-        <p className="mt-2 text-sm text-muted-foreground">The knowledge, insurance guidance, and tools behind every call.</p>
+        <h1 id={titleID} className="text-2xl font-bold tracking-tight">
+          {greeting?.greeting ?? "Welcome"}{greeting && " "}
+          <time dateTime={day || undefined}>{greeting?.dateLabel}</time>
+        </h1>
       </header>
       <div className="px-4 py-10 sm:px-6 @[36rem]:py-16">
         <AgentHomeMap selected={selected} detailsID={detailsID} onSelect={selectArea} />

@@ -25,25 +25,7 @@ export function ScorecardFlow({ call = {}, checks, complete = true, children }: 
   return (
     <div aria-label="Intent to outcome scorecard" className="mt-3 text-xs">
       <div className="@container rounded-xl border bg-muted/20 p-3">
-        <div className="grid grid-cols-1 @min-[24rem]:grid-cols-[minmax(0,1fr)_1rem_minmax(0,1fr)_1rem_minmax(0,1fr)] items-center gap-1.5 [&_[data-slot=badge]]:h-auto [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:wrap-anywhere [&_[data-slot=badge]]:bg-transparent [&_[data-slot=badge]]:px-0 [&_[data-slot=badge]]:text-left [&_[data-slot=badge]]:leading-4">
-          <div className="min-w-0 self-stretch rounded-lg border bg-card p-2.5">
-            <p className="mb-2 text-[0.625rem] font-medium uppercase tracking-wider text-muted-foreground">Intent</p>
-            <CallLabel call={call} kind="intent" />
-          </div>
-          <ArrowRightIcon aria-hidden="true" className="size-4 justify-self-center rotate-90 text-muted-foreground @min-[24rem]:rotate-0" />
-          <div className="min-w-0 self-stretch rounded-lg border bg-card p-2.5">
-            <p className="mb-2 text-[0.625rem] font-medium uppercase tracking-wider text-muted-foreground">Outcome</p>
-            <CallLabel call={call} kind="outcome" />
-          </div>
-          <ArrowRightIcon aria-hidden="true" className="size-4 justify-self-center rotate-90 text-muted-foreground @min-[24rem]:rotate-0" />
-          <div aria-label="Check result" aria-live="polite" className={`min-w-0 self-stretch rounded-lg border p-2.5 ${result === "pass" ? "border-success/40 bg-success/10 text-success" : result === "fail" ? "border-destructive/40 bg-destructive/10 text-destructive" : "border-warning/40 bg-warning/10 text-warning"}`}>
-            <p className="mb-2 text-[0.625rem] font-medium uppercase tracking-wider">Checks</p>
-            <p className={`flex flex-wrap items-center gap-1.5 font-semibold ${result === "unknown" ? "text-xs" : "text-sm"}`}>
-              {result === "pass" ? <CheckIcon className="size-4 shrink-0" aria-hidden="true" /> : result === "fail" ? <XIcon className="size-4 shrink-0" aria-hidden="true" /> : <CircleHelpIcon className="size-4 shrink-0" aria-hidden="true" />}
-              <span className="min-w-0 break-words">{result === "pass" ? "Pass" : result === "fail" ? "Fail" : "Incomplete"}</span>
-            </p>
-          </div>
-        </div>
+        <CallFlow call={call} result={result} />
         <div className="mt-3 border-t pt-3">
           <p className={`font-medium ${result === "pass" ? "text-success" : result === "fail" ? "text-destructive" : "text-warning"}`}>
             {result === "pass" ? "All applicable checks passed" : result === "fail" ? `${failures.length} failed ${failures.length === 1 ? "check" : "checks"}` : "Checks incomplete"}
@@ -64,6 +46,30 @@ export function ScorecardFlow({ call = {}, checks, complete = true, children }: 
           {children}
         </div>
       </details>
+    </div>
+  )
+}
+
+export function CallFlow({ call, result = "unknown" }: { call: FlowCall; result?: "pass" | "fail" | "unknown" }) {
+  return (
+    <div className="grid grid-cols-1 @min-[24rem]:grid-cols-[minmax(0,1fr)_1rem_minmax(0,1fr)_1rem_minmax(0,1fr)] items-center gap-1.5 [&_[data-slot=badge]]:h-auto [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:wrap-anywhere [&_[data-slot=badge]]:bg-transparent [&_[data-slot=badge]]:px-0 [&_[data-slot=badge]]:text-left [&_[data-slot=badge]]:leading-4">
+      <div className="min-w-0 self-stretch rounded-lg border bg-card p-2.5">
+        <p className="mb-2 text-[0.625rem] font-medium uppercase tracking-wider text-muted-foreground">Intent</p>
+        <CallLabel call={call} kind="intent" />
+      </div>
+      <ArrowRightIcon aria-hidden="true" className="size-4 justify-self-center rotate-90 text-muted-foreground @min-[24rem]:rotate-0" />
+      <div className="min-w-0 self-stretch rounded-lg border bg-card p-2.5">
+        <p className="mb-2 text-[0.625rem] font-medium uppercase tracking-wider text-muted-foreground">Outcome</p>
+        <CallLabel call={call} kind="outcome" />
+      </div>
+      <ArrowRightIcon aria-hidden="true" className="size-4 justify-self-center rotate-90 text-muted-foreground @min-[24rem]:rotate-0" />
+      <div aria-label="Check result" aria-live="polite" className={`min-w-0 self-stretch rounded-lg border p-2.5 ${result === "pass" ? "border-success/40 bg-success/10 text-success" : result === "fail" ? "border-destructive/40 bg-destructive/10 text-destructive" : "border-warning/40 bg-warning/10 text-warning"}`}>
+        <p className="mb-2 text-[0.625rem] font-medium uppercase tracking-wider">Checks</p>
+        <p className={`flex flex-wrap items-center gap-1.5 font-semibold ${result === "unknown" ? "text-xs" : "text-sm"}`}>
+          {result === "pass" ? <CheckIcon className="size-4 shrink-0" aria-hidden="true" /> : result === "fail" ? <XIcon className="size-4 shrink-0" aria-hidden="true" /> : <CircleHelpIcon className="size-4 shrink-0" aria-hidden="true" />}
+          <span className="min-w-0 break-words">{result === "pass" ? "Pass" : result === "fail" ? "Fail" : "Incomplete"}</span>
+        </p>
+      </div>
     </div>
   )
 }

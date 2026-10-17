@@ -23,7 +23,6 @@ import type {
   AgentCallIssue,
   AgentCallIssueReason,
   AgentCallMessage,
-  AgentCallVerdict,
 } from "@/lib/api/generated/types.gen"
 import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
 import { formatClockTime, formatTimestamp } from "@/lib/format-time"
@@ -47,7 +46,7 @@ import {
 } from "@/components/ui/message"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Badge } from "@/components/ui/badge"
-import { CallLabels } from "./call-labels"
+import { CallFlow } from "./scorecard-flow"
 
 const actions = {
   BOOKED: "Booked",
@@ -239,9 +238,6 @@ function CallContent({
             : "Conversation with your agent"}
         </SheetDescription>
         {detail && (
-          <CallLabels call={detail.call} />
-        )}
-        {detail && (
           <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
             <AppointmentActions call={detail.call} />
             <span className="text-muted-foreground">
@@ -284,7 +280,9 @@ function CallContent({
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 scrollbar-thin"
         >
           <div className="flex flex-col gap-6">
-            <CallScorecard scorecard={detail.scorecard} sentiment={detail.sentiment} />
+            <section aria-label="Call flow" className="@container text-xs">
+              <CallFlow call={detail.call} result={detail.checkResult} />
+            </section>
             {detail.issue ? (
               <Alert role="status">
                 <FlagIcon aria-hidden="true" />
@@ -430,29 +428,4 @@ export function CallTranscript({ messages }: { messages: AgentCallMessage[] }) {
       </Message>
     )
   })
-}
-
-const sentimentLabels = ["Very negative", "Negative", "Neutral or mixed", "Positive", "Very positive"]
-
-export function CallScorecard({ scorecard, sentiment }: { scorecard: AgentCallVerdict[]; sentiment?: number }) {
-  if (scorecard.length === 0 && sentiment === undefined) return null
-  return (
-    <section aria-label="Call scorecard" className="rounded-lg border">
-      <h3 className="border-b px-3 py-2 text-sm font-medium">Scorecard</h3>
-      <ul className="divide-y text-sm">
-        {scorecard.map((item) => (
-          <li key={item.code} className="flex items-start justify-between gap-3 px-3 py-2">
-            <span>{item.prompt}</span>
-            <span className={item.answer === "no" ? "font-medium" : "text-muted-foreground"}>{item.answer === "no" ? "No" : "Yes"}</span>
-          </li>
-        ))}
-        {sentiment !== undefined && (
-          <li className="flex items-start justify-between gap-3 px-3 py-2">
-            <span>Caller sentiment</span>
-            <span className="text-muted-foreground">{sentimentLabels[Math.round(sentiment)]}</span>
-          </li>
-        )}
-      </ul>
-    </section>
-  )
 }
