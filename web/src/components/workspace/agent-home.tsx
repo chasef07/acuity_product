@@ -1,6 +1,6 @@
 "use client"
 
-import { useId, useRef, useState } from "react"
+import { useId, useRef, useState, useSyncExternalStore } from "react"
 import {
   ArrowRightLeftIcon,
   BookOpenIcon,
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { useAgentCalls } from "@/lib/clients/agent-calls"
 import { useLocationKnowledge } from "@/lib/clients/location-knowledge"
 import { formatTimestamp } from "@/lib/format-time"
+import { homeDay, homeGreeting } from "@/lib/home-greeting"
 import { formatUSPhone } from "@/lib/phone"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 import { AgentCallPanel } from "./agent-call-panel"
@@ -39,6 +40,8 @@ export function AgentHome({
   const details = useRef<HTMLDivElement>(null)
   const [selected, setSelected] = useState<AgentArea>()
   const area = agentAreas.find((item) => item.id === selected)
+  const day = useSyncExternalStore(subscribeHomeDay, currentHomeDay, serverHomeDay)
+  const greeting = day ? homeGreeting(day) : undefined
 
   function selectArea(next: AgentArea) {
     setSelected(next)
@@ -53,10 +56,9 @@ export function AgentHome({
   return (
     <section aria-labelledby={titleID} className="@container min-h-0 flex-1 overflow-auto">
       <header className="px-4 pt-8 sm:px-6">
-        <h1 id={titleID} className="text-2xl font-semibold tracking-tight">Your agent</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The knowledge, insurance guidance, and tools behind every call.
-        </p>
+        <h1 id={titleID} className="text-2xl font-semibold tracking-tight">{greeting?.greeting ?? "Welcome"}</h1>
+        <p className="mt-2 min-h-5 text-sm text-muted-foreground"><time dateTime={day || undefined}>{greeting?.dateLabel}</time></p>
+        <p className="mt-2 text-sm text-muted-foreground">The knowledge, insurance guidance, and tools behind every call.</p>
       </header>
       <div className="px-4 py-10 sm:px-6 @[36rem]:py-16">
         <AgentHomeMap selected={selected} detailsID={detailsID} onSelect={selectArea} />
@@ -90,6 +92,23 @@ export function AgentHome({
       </div>
     </section>
   )
+}
+
+function currentHomeDay() {
+  return homeDay(new Date())
+}
+
+function serverHomeDay() {
+  return ""
+}
+
+function subscribeHomeDay(onChange: () => void) {
+  const timer = window.setInterval(onChange, 60_000)
+  window.addEventListener("focus", onChange)
+  return () => {
+    window.clearInterval(timer)
+    window.removeEventListener("focus", onChange)
+  }
 }
 
 function KnowledgeVersion({ practiceID, locationID }: { practiceID: string; locationID: string }) {

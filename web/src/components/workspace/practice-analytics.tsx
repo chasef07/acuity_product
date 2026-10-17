@@ -15,11 +15,12 @@ import { usePracticeReport } from "@/lib/clients/analytics"
 export function PracticeAnalytics({
   practiceID,
   locationScopeID,
+  metric,
 }: {
   practiceID: string
   locationScopeID: string
+  metric: AnalyticsTab
 }) {
-  const [metric, setMetric] = useState<AnalyticsTab>("bookings")
   const [period, setPeriod] = useState(7)
   const current = usePracticeReport({
     practiceID,
@@ -30,7 +31,6 @@ export function PracticeAnalytics({
   return (
     <AnalyticsLayout
       metric={metric}
-      setMetric={setMetric}
       period={period}
       setPeriod={setPeriod}
       from={current.state === "ready" ? current.report.from : undefined}

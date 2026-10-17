@@ -4650,6 +4650,13 @@ components:
       additionalProperties: false
       required: [practiceId, range]
       properties:
+        failuresOnly:
+          type: boolean
+          description: Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; summary remains unfiltered.
+        failingJudge:
+          type: string
+          maxLength: 80
+          description: Restrict calls to explicit failures for this judge question key in the v6-v8 failure catalog. Implies failure filtering even when failuresOnly is false. Intersects intent and outcome filters.
         intent:
           $ref: "#/components/schemas/CallIntent"
         outcome:

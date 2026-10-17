@@ -131,10 +131,10 @@ test("the sidebar shows Manage agent pages in place of Tasks only while Manage a
   const nav = host.querySelector("nav")
   assert.ok(nav)
   assert.equal(document.getElementById(nav.getAttribute("aria-labelledby") ?? "")?.textContent, "Manage agent")
-  assert.deepEqual(Array.from(nav.querySelectorAll("button"), (button) => button.textContent), ["Home", "Transcripts", "Knowledge base", "Insurance list"])
+  assert.deepEqual(Array.from(nav.querySelectorAll("button"), (button) => button.textContent), ["Home", "Calls", "Knowledge base", "Insurance list"])
   assert.equal(nav.querySelector("[aria-current='page']")?.textContent, "Insurance list")
   assert.match(host.textContent ?? "", /Acuity Health/)
-  assert.doesNotMatch(host.textContent ?? "", /Workspace selector/)
+  assert.match(host.textContent ?? "", /Workspace selector/)
   assert.doesNotMatch(host.textContent ?? "", /Calling status/)
   assert.equal(host.querySelector("input[aria-label='Search tasks, names, or phone']"), null)
   assert.equal(host.querySelector("[aria-label='Workspace folders']"), null)
@@ -212,7 +212,7 @@ test("breadcrumbs mark only the current page and only offer navigation when a de
 })
 
 test("rail buttons are icon-only and keep their accessible names", () => {
-  for (const label of ["Home", "AI diagnostics"]) {
+  for (const label of ["Home", "Control Center"]) {
     const html = renderToStaticMarkup(
       <RailButton label={label} active={label === "Home"} onClick={() => {}}>
         <svg />

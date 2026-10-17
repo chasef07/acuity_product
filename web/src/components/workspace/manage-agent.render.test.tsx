@@ -9,6 +9,7 @@ import { InsuranceList } from "./insurance-list.tsx"
 import { KnowledgeHistory } from "./knowledge-base.tsx"
 import { ManageAgent } from "./manage-agent.tsx"
 import { authClient, clearAccessToken } from "../../lib/auth-client.ts"
+import { homeDay, homeGreeting } from "../../lib/home-greeting.ts"
 import type {
   AgentCallsPage,
   AgentCallsQuery,
@@ -52,7 +53,7 @@ const plans: InsurancePlanRule[] = [
 
 test("Manage agent shows the selected page at full width without its own navigation", async (t) => {
   const page = harness(t)
-  for (const [selected, heading] of [["transcripts", "Transcripts"], ["knowledge", "Knowledge base"], ["insurance", "Insurance list"]] as const) {
+  for (const [selected, heading] of [["transcripts", "Calls"], ["knowledge", "Knowledge base"], ["insurance", "Insurance list"]] as const) {
     await page.render(
       <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page={selected} onPage={() => {}} />,
     )
@@ -77,7 +78,8 @@ test("Home connects Acuity to knowledge, insurance, and tools, with unanswered q
   await page.render(
     <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={(next) => pages.push(next)} />,
   )
-  assert.equal(page.host.querySelector("h1")?.textContent, "Your agent")
+  assert.equal(page.host.querySelector("h1")?.textContent, homeGreeting(homeDay(new Date())).greeting)
+  assert.equal(page.host.querySelector("header time")?.textContent, homeGreeting(homeDay(new Date())).dateLabel)
   const connections = page.host.querySelector('[aria-label="Agent connections"]')
   assert.ok(connections)
   assert.deepEqual(Array.from(connections.querySelectorAll("button"), (button) => button.getAttribute("aria-label")), ["Knowledge base", "Insurance", "Tools"])
@@ -159,7 +161,7 @@ test("with all offices in scope and several offices, one-Location pages ask for 
   await page.unmount()
 })
 
-test("Transcripts follow the workspace's office, including all offices, without a page-level Office picker", async (t) => {
+test("Calls follow the workspace's office, including all offices, without a page-level Office picker", async (t) => {
   const page = harness(t)
   for (const locationScopeID of ["", locations[1].id]) {
     await page.render(
@@ -187,9 +189,9 @@ test("each page keeps its title, actions, and filters inside the panel", async (
     )
 
   await showPage("transcripts")
-  await waitFor(() => page.host.querySelector("header")?.textContent === "Transcripts1 call")
-  assert.equal(page.host.querySelector("h1")?.textContent, "Transcripts")
-  assert.ok(page.host.querySelector("header button[aria-label='Refresh calls']"))
+  await waitFor(() => page.host.querySelector("header")?.textContent === "Calls1 call")
+  assert.equal(page.host.querySelector("h1")?.textContent, "Calls")
+  assert.equal(page.host.querySelector("header button[aria-label='Refresh calls']"), null)
   assert.ok(page.host.querySelector("input[aria-label='Search phone number']"))
   assert.ok(page.host.querySelector("[role='combobox'][aria-label='Date range']"))
   assert.equal(page.host.querySelector("section")?.getAttribute("aria-labelledby"), page.host.querySelector("h1")?.id)
@@ -207,7 +209,30 @@ test("each page keeps its title, actions, and filters inside the panel", async (
   await showPage("home")
   await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => /Version 3 · published/.test(page.text()))
-  assert.equal(page.host.querySelector("h1")?.textContent, "Your agent")
+  assert.equal(page.host.querySelector("h1")?.textContent, homeGreeting(homeDay(new Date())).greeting)
+  await page.unmount()
+})
+
+test("Calls follows workspace revisions without a refresh button and keeps retry available on failure", async (t) => {
+  const page = harness(t)
+  const original = { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }
+  page.agentCalls = { calls: [original], nextCursor: "" }
+  const show = (revision: number) => page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} revision={revision} />)
+  await show(1)
+  await waitFor(() => page.host.querySelectorAll("tbody tr").length === 1)
+  assert.equal(page.host.querySelector("button[aria-label='Refresh calls']"), null)
+  assert.equal(page.host.querySelector("table")?.parentElement?.parentElement?.className, "w-full")
+  page.agentCalls = { calls: [{ ...original, id: "call-2", phone: "+15555550222" }, original], nextCursor: "" }
+  await show(2)
+  await waitFor(() => page.host.querySelectorAll("tbody tr").length === 2)
+  assert.match(page.text(), /555.*0222/)
+  page.agentCallsStatus = 503
+  await show(3)
+  await waitFor(() => page.alert().includes("Calls aren't available right now."))
+  page.agentCallsStatus = 200
+  await page.click("Try again")
+  await waitFor(() => page.host.querySelectorAll("tbody tr").length === 2)
+  assert.deepEqual(page.agentCallsRequests.map((request) => request.locationId), Array(4).fill(locations[0].id))
   await page.unmount()
 })
 
@@ -843,6 +868,7 @@ function harness(t: TestContext) {
     revisions: {} as Record<string, LocationKnowledge>,
     agentCallsRequests: [] as AgentCallsQuery[],
     agentCalls: { calls: [], nextCursor: "" } as AgentCallsPage,
+    agentCallsStatus: 200,
     historyRows: () => Array.from(host.querySelectorAll("li"), (row) => row.textContent ?? ""),
     publishGate: Promise.resolve(),
     render: (element: ReactNode, key = "first") =>
@@ -950,7 +976,7 @@ function harness(t: TestContext) {
     }
     assert.equal(url.pathname, "/v1/agent-calls/query")
     page.agentCallsRequests.push((await request.json()) as AgentCallsQuery)
-    return Response.json(page.agentCalls)
+    return page.agentCallsStatus === 200 ? Response.json(page.agentCalls) : new Response("", { status: page.agentCallsStatus })
   })
   return page
 }

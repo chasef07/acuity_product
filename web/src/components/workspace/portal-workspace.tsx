@@ -43,6 +43,7 @@ import { TaskCallContext, TaskCallAction } from "@/components/workspace/task-cal
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
 import { CallingRailControl } from "@/components/workspace/workspace-rail-button"
 import { WorkspaceRail, manageAgentPages } from "@/components/workspace/workspace-rail"
+import { practiceAnalyticsPages, type ControlCenterPage, type PracticeAnalyticsPage } from "@/components/workspace/analytics-navigation"
 import { WorkspaceTopBar } from "@/components/workspace/workspace-page-header"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import { WorkEmptyState } from "@/components/workspace/work-empty-state"
@@ -146,6 +147,8 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
   }>()
   const [taskCallError, setTaskCallError] = useState("")
   const [numberHistory, setNumberHistory] = useState<NumberHistory>()
+  const [controlCenterPage, setControlCenterPage] = useState<ControlCenterPage>("calls")
+  const [analyticsPage, setAnalyticsPage] = useState<PracticeAnalyticsPage>("bookings")
 
   useEffect(() => {
     if (session.isPending) return
@@ -342,9 +345,10 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
         }
       />
     )
-    const section = view === "manage-agent" ? "Home" : view === "analytics" ? "Analytics" : view === "operator-analytics" ? "AI diagnostics" : "Work"
+    const section = view === "manage-agent" ? "Home" : view === "analytics" ? "Analytics" : view === "operator-analytics" ? "Control Center" : "Work"
     const page = view === "manage-agent" && state.selection.agentPage !== "home"
       ? manageAgentPages.find((item) => item.value === state.selection.agentPage)?.label
+      : view === "analytics" ? practiceAnalyticsPages.find((item) => item.value === analyticsPage)?.label
       : isWorkView(view) ? selectedTask?.title : undefined
     return (
       <>
@@ -364,12 +368,14 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
             section={section}
             page={page}
             onSection={view === "manage-agent" ? () => sendIntent({ type: "select-manage-agent", page: "home" }) : undefined}
-          >
-            {view === "manage-agent" && state.selection.agentPage !== "home" && locationControl}
-          </WorkspaceTopBar>
+          />
           <div className="relative flex min-h-0 flex-1 overflow-clip">
           <WorkspaceRail
             projection={state}
+            controlCenterPage={controlCenterPage}
+            onControlCenterPage={setControlCenterPage}
+            analyticsPage={analyticsPage}
+            onAnalyticsPage={setAnalyticsPage}
             onIntent={sendIntent}
             callingStatus={<CallingFailureStatus />}
             locationControl={locationControl}
@@ -382,12 +388,14 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           >
             {view === "analytics" && canViewPracticeAnalytics(discovery, state.scope.practiceID) ? (
               <PracticeAnalytics
+                metric={analyticsPage}
                 key={state.scope.practiceID}
                 practiceID={state.scope.practiceID}
                 locationScopeID={state.scope.locationScopeID}
               />
             ) : view === "manage-agent" ? (
               <ManageAgent
+                revision={workspace.version}
                 key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
                 actorSubject={discovery.actor.subject}
                 practiceID={state.scope.practiceID}
@@ -398,6 +406,8 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
               />
             ) : view === "operator-analytics" && discovery.platformOperator ? (
               <OperatorAnalytics
+                revision={workspace.version}
+                tab={controlCenterPage}
                 practiceID={state.scope.practiceID}
                 locationScopeID={state.scope.locationScopeID}
                 locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}

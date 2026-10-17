@@ -3,7 +3,7 @@ import { Client } from "pg"
 import { expect, test } from "@playwright/test"
 import { openAgentPage, signInAs } from "./support"
 
-test("intent and outcome labels filter customer transcripts and AI diagnostics", async ({ page }, testInfo) => {
+test("intent and outcome labels filter customer Calls and Control Center", async ({ page }, testInfo) => {
   const databaseURL = process.env.E2E_DATABASE_URL
   test.skip(!databaseURL, "E2E_DATABASE_URL is required")
   if (!new URL(databaseURL!).pathname.endsWith("_e2e"))
@@ -34,10 +34,33 @@ test("intent and outcome labels filter customer transcripts and AI diagnostics",
     }
     await client.query("COMMIT")
     await signInAs(page, "selected@abita.test", "Synthetic Staff")
-    await openAgentPage(page, "Transcripts")
+    await openAgentPage(page, "Calls")
+    const searched = page.waitForResponse((response) => response.url().endsWith("/v1/agent-calls/query") && response.request().postDataJSON()?.phone === "555555098")
     await page.getByRole("textbox", { name: "Search phone number" }).fill("555555098")
+    await searched
     const rows = page.getByRole("table").locator("tbody tr")
     await expect(rows).toHaveCount(3)
+    await expect(page.getByRole("button", { name: "Refresh calls", exact: true })).toHaveCount(0)
+    const sourceCallId = randomUUID()
+    const incoming = await page.request.post(`${process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"}/v1/ai/interactions`, {
+      headers: { authorization: "Bearer synthetic-production-token" },
+      data: {
+        kind: "CLOSEOUT",
+        officeKey: "spring-hill",
+        sourceCallId,
+        callerPhone: "+15555550983",
+        officePhone: "+17275550101",
+        startedAt: new Date(Date.now() - 120_000).toISOString(),
+        endedAt: new Date(Date.now() - 60_000).toISOString(),
+        status: "ESCALATED",
+        transcript: { items: [] },
+        closeoutPayload: {},
+      },
+    })
+    expect(incoming.ok()).toBeTruthy()
+    const { rows: [received] } = await client.query("SELECT id FROM ai_interactions WHERE source_call_id=$1", [sourceCallId])
+    ids.push(received.id)
+    await expect(rows).toHaveCount(4)
     await page.getByRole("combobox", { name: "Intent", exact: true }).click()
     await page.getByRole("option", { name: "Existing patient booking", exact: true }).click()
     await expect(rows).toHaveCount(2)
@@ -58,8 +81,10 @@ test("intent and outcome labels filter customer transcripts and AI diagnostics",
     await page.keyboard.press("Escape")
 
     await signInAs(page, "founder@acuity.test", "Synthetic Acuity Operator")
-    await page.getByRole("button", { name: "AI diagnostics", exact: true }).click()
-    const diagnostics = page.getByRole("region", { name: "AI call analytics" })
+    await page.getByRole("button", { name: "Control Center", exact: true }).click()
+    const diagnostics = page.getByRole("region", { name: "Control Center" })
+    await diagnostics.getByRole("combobox", { name: "Judge flags", exact: true }).click()
+    await page.getByRole("option", { name: "All calls", exact: true }).click()
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page.getByRole("button", { name: "Fixture Location 1", exact: true }).click()
     await diagnostics.getByRole("combobox", { name: "Intent", exact: true }).click()
@@ -89,6 +114,7 @@ test("intent and outcome labels filter customer transcripts and AI diagnostics",
     expect(errors).toEqual([])
   } finally {
     await client.query("ROLLBACK")
+    await client.query("DELETE FROM ai_interaction_receipts WHERE interaction_id=ANY($1::uuid[])", [ids])
     await client.query("DELETE FROM ai_interactions WHERE id=ANY($1::uuid[])", [ids])
     await client.end()
   }

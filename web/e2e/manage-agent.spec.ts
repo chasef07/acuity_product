@@ -63,7 +63,7 @@ test("staff flag a call and Acuity reviews it", async ({
       ],
     )
     await signInAs(page, "selected@abita.test", "Synthetic Staff")
-    await openAgentPage(page, "Transcripts")
+    await openAgentPage(page, "Calls")
     await expect(page.getByRole("columnheader")).toHaveText([
       "Date / time",
       "Phone number",
@@ -197,7 +197,7 @@ test("staff flag a call and Acuity reviews it", async ({
     await page.keyboard.press("Escape")
     await page.setViewportSize({ width: 1280, height: 720 })
     await signInAs(page, "founder@acuity.test", "Synthetic Acuity Operator")
-    await openAgentPage(page, "Transcripts")
+    await openAgentPage(page, "Calls")
     await page
       .getByRole("textbox", { name: "Search phone number" })
       .fill("5555550876")
@@ -216,9 +216,9 @@ test("staff flag a call and Acuity reviews it", async ({
     ).toBeVisible()
     await page.keyboard.press("Escape")
     await page
-      .getByRole("button", { name: "AI diagnostics", exact: true })
+      .getByRole("button", { name: "Control Center", exact: true })
       .click()
-    const diagnostics = page.getByRole("region", { name: "AI call analytics" })
+    const diagnostics = page.getByRole("region", { name: "Control Center" })
     const pending = diagnostics
       .getByRole("status")
       .filter({ hasText: /flagged by staff needs? review/ })
@@ -312,7 +312,7 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
     )
   }
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
-  await openAgentPage(page, "Transcripts")
+  await openAgentPage(page, "Calls")
   await page
     .getByRole("textbox", { name: "Search phone number" })
     .fill("555555010")
@@ -434,7 +434,7 @@ test("the workspace opens on Home, where calls the judge says need knowledge lea
       [id, scope.practice_id],
     )
     await signInAs(page, "selected@abita.test", "Synthetic Staff", "/workspace")
-    await expect(page.getByRole("heading", { level: 1, name: "Your agent" })).toBeVisible()
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
     await page.getByRole("group", { name: "Agent connections" }).getByRole("button", { name: "Knowledge base", exact: true }).click()
     const gap = page.getByRole("listitem").filter({ hasText: "“Saturday parking”" })
     await expect(gap).toBeVisible()

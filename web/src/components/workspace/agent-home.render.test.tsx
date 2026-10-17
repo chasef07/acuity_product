@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { act } from "react"
-import { createRoot } from "react-dom/client"
+import { hydrateRoot } from "react-dom/client"
+import { renderToString } from "react-dom/server"
 import { JSDOM } from "jsdom"
 
 import { AgentHome } from "./agent-home"
@@ -51,12 +52,19 @@ test("Home exposes a failed next page, retains loaded calls, and clears the erro
   })
   const host = document.createElement("div")
   document.body.append(host)
-  const root = createRoot(host)
+  const home = <AgentHome practiceID="practice-1" locationID="office-1" onPage={() => {}} />
+  host.innerHTML = renderToString(home)
+  assert.equal(host.querySelector("h1")?.textContent, "Welcome")
+  assert.equal(host.querySelector("header time")?.textContent, "")
+  const hydrationErrors: unknown[] = []
+  let root: ReturnType<typeof hydrateRoot> | undefined
   context.after(async () => {
-    await act(async () => root.unmount())
+    await act(async () => root?.unmount())
     dom.window.close()
   })
-  await act(async () => root.render(<AgentHome practiceID="practice-1" locationID="office-1" onPage={() => {}} />))
+  await act(async () => { root = hydrateRoot(host, home, { onRecoverableError: (error) => hydrationErrors.push(error) }) })
+  assert.deepEqual(hydrationErrors, [])
+  assert.notEqual(host.querySelector("header time")?.textContent, "")
   await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Knowledge base"]')!.click())
   const button = Array.from(host.querySelectorAll("button")).find((item) => item.textContent === "Load more calls")
   assert.ok(button)

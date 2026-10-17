@@ -26,14 +26,16 @@ const (
 )
 
 type QueryAnalyticsCommand struct {
-	Intent     string
-	Outcome    string
-	Identity   access.Identity
-	PracticeID string
-	LocationID string
-	Range      AnalyticsRange
-	Cursor     string
-	Limit      int
+	FailuresOnly bool
+	FailingJudge string
+	Intent       string
+	Outcome      string
+	Identity     access.Identity
+	PracticeID   string
+	LocationID   string
+	Range        AnalyticsRange
+	Cursor       string
+	Limit        int
 }
 
 type AnalyticsDay struct {
@@ -158,14 +160,16 @@ type OperatorAnalyticsDetail struct {
 }
 
 type analyticsCursor struct {
-	Intent     string         `json:"intent,omitempty"`
-	Outcome    string         `json:"outcome,omitempty"`
-	Through    time.Time      `json:"through"`
-	Range      AnalyticsRange `json:"range"`
-	PracticeID string         `json:"practiceId"`
-	LocationID string         `json:"locationId,omitempty"`
-	StartedAt  time.Time      `json:"startedAt"`
-	ID         string         `json:"id"`
+	FailuresOnly bool           `json:"failuresOnly,omitempty"`
+	FailingJudge string         `json:"failingJudge,omitempty"`
+	Intent       string         `json:"intent,omitempty"`
+	Outcome      string         `json:"outcome,omitempty"`
+	Through      time.Time      `json:"through"`
+	Range        AnalyticsRange `json:"range"`
+	PracticeID   string         `json:"practiceId"`
+	LocationID   string         `json:"locationId,omitempty"`
+	StartedAt    time.Time      `json:"startedAt"`
+	ID           string         `json:"id"`
 }
 
 type analyticsProjection struct {
@@ -184,7 +188,7 @@ func (m *Module) QueryAnalytics(
 ) (AnalyticsPage, error) {
 	normalizeAnalyticsCommand(&command)
 	duration, ok := analyticsRangeDuration(command.Range)
-	if !ok || command.Limit < 1 || command.Limit > 100 || !validCallLabelFilters(command) {
+	if !ok || command.Limit < 1 || command.Limit > 100 || !validCallLabelFilters(command) || len(judgeFailureKeys(command.FailingJudge)) == 0 {
 		return AnalyticsPage{}, ErrInvalidInput
 	}
 	to := m.now().UTC().Truncate(time.Microsecond)
@@ -456,9 +460,15 @@ func queryAnalyticsCalls(
 			)
 			AND ($8 = '' OR classification.intent = $8)
 			AND ($9 = '' OR classification.outcome = $9)
+			AND (NOT $10::boolean OR EXISTS (
+				SELECT 1 FROM ai_interaction_scorecard_answers judged
+				WHERE judged.interaction_id = interaction.id
+					AND judged.source = 'judge' AND NOT judged.answer
+					AND judged.scorecard_version || ':' || judged.question = ANY($11::text[])
+			))
 		ORDER BY interaction.started_at DESC, interaction.id DESC
 		LIMIT $7
-	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, scanLimit, command.Intent, command.Outcome)
+	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, scanLimit, command.Intent, command.Outcome, command.FailuresOnly || command.FailingJudge != "", judgeFailureKeys(command.FailingJudge))
 	if err != nil {
 		return nil, nil, fmt.Errorf("query operator AI analytics page: %w", err)
 	}
@@ -574,6 +584,7 @@ func normalizeAnalyticsCommand(command *QueryAnalyticsCommand) {
 	command.Cursor = strings.TrimSpace(command.Cursor)
 	command.Intent = strings.TrimSpace(command.Intent)
 	command.Outcome = strings.TrimSpace(command.Outcome)
+	command.FailingJudge = strings.TrimSpace(command.FailingJudge)
 	if command.Limit == 0 {
 		command.Limit = 50
 	}
@@ -649,14 +660,16 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 
 func newAnalyticsCursor(command QueryAnalyticsCommand, startedAt time.Time, id string, through time.Time) analyticsCursor {
 	return analyticsCursor{
-		Intent:     command.Intent,
-		Outcome:    command.Outcome,
-		Through:    through,
-		Range:      command.Range,
-		PracticeID: command.PracticeID,
-		LocationID: command.LocationID,
-		StartedAt:  startedAt,
-		ID:         id,
+		FailuresOnly: command.FailuresOnly,
+		FailingJudge: command.FailingJudge,
+		Intent:       command.Intent,
+		Outcome:      command.Outcome,
+		Through:      through,
+		Range:        command.Range,
+		PracticeID:   command.PracticeID,
+		LocationID:   command.LocationID,
+		StartedAt:    startedAt,
+		ID:           id,
 	}
 }
 
@@ -674,7 +687,7 @@ func decodeCursor(command QueryAnalyticsCommand, target any, cursor *analyticsCu
 		return false
 	}
 	duration, _ := analyticsRangeDuration(command.Range)
-	return cursor.Intent == command.Intent && cursor.Outcome == command.Outcome && cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
+	return cursor.FailuresOnly == command.FailuresOnly && cursor.FailingJudge == command.FailingJudge && cursor.Intent == command.Intent && cursor.Outcome == command.Outcome && cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
 		!cursor.StartedAt.IsZero() && !cursor.Through.IsZero() && !cursor.Through.After(now) &&
 		!cursor.StartedAt.After(cursor.Through) && !cursor.StartedAt.Before(cursor.Through.Add(-duration)) &&
 		validUUID(cursor.ID)

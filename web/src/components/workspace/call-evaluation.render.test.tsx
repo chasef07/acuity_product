@@ -222,8 +222,28 @@ for (const version of ["typesafe-scorecard-v6", "typesafe-scorecard-v7"]) test(`
 test("v8 shows unknown knowledge separately from failures and omits removed sentiment", () => {
  const question = (key: string, prompt: string) => ({ key, prompt, code: "", label: "", source: "judge" as const, question: "", yes: "", no: "", failure: true })
  const html = renderToStaticMarkup(<CallEvaluation questions={[question("knowledge_available", "Did returned knowledge contain the answer?"), question("transfer_policy_followed", "Was transfer policy followed?")]} verdicts={[{question: "transfer_policy_followed", code: "T1", prompt: "", answer: "no"}]} evaluation={{evaluatorVersion: "typesafe-scorecard-v8", evaluator:"jury", status:"complete", jurors:["a","b","c"], results:{knowledge_available:{status:"unknown",reason:"no_office_knowledge_result"}, transfer_policy_followed:{verdict:false, probability:0.2,votes:{a:0.1,b:0.2,c:0.3},errors:{}}}}} />)
- assert.match(html, /Was transfer policy followed\?<\/dt><dd class="shrink-0 font-medium text-destructive">No/)
+ assert.match(html, /Was transfer policy followed\?<\/dt><dd class="shrink-0 font-medium text-destructive">Failed/)
  assert.match(html, />Unknown<\/dd>/)
  assert.match(html, /No usable office knowledge result was recorded/)
  assert.doesNotMatch(html, /Caller sentiment|Automatic red highlights|knowledge available/)
+})
+
+test("the intent/outcome flow cannot hide an expected missing check or turn a resolved call into a pass", () => {
+  const questions = ["transfer_policy_followed", "call_ended_correctly"].map((key) => ({ key, code: key, label: key, prompt: key, source: "judge" as const, question: "", yes: "", no: "", failure: true }))
+  const render = (answer: "yes" | "no", results: Record<string, unknown>) => renderToStaticMarkup(<CallEvaluation
+    call={{ intent: "speak_to_staff", outcome: "resolved" }} questions={questions}
+    verdicts={[{ question: "transfer_policy_followed", code: "T1", prompt: "", answer }]}
+    evaluation={{ evaluatorVersion: "typesafe-scorecard-v8", status: "complete", results }}
+  />)
+  const missing = render("yes", { transfer_policy_followed: { verdict: true } })
+  assert.match(missing, /Speak to staff/)
+  assert.match(missing, /Resolved/)
+  assert.match(missing, /Checks incomplete/)
+  assert.match(missing, /call_ended_correctly/)
+  assert.doesNotMatch(missing, /All applicable checks passed/)
+  const failed = render("no", { transfer_policy_followed: { verdict: false }, call_ended_correctly: { status: "not_applicable" } })
+  assert.match(failed, /1 failed check/)
+  assert.doesNotMatch(failed, /All applicable checks passed/)
+  const passed = render("yes", { transfer_policy_followed: { verdict: true }, call_ended_correctly: { status: "not_applicable" } })
+  assert.match(passed, /All applicable checks passed/)
 })

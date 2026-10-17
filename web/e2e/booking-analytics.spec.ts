@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { signInAs } from "./support"
+import { selectAnalyticsPage, signInAs } from "./support"
 
 test("Practice Admin booking analytics uses real scoped aggregates and clear copy", async ({
   page,
@@ -123,16 +123,17 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await signInAs(page, "admin@abita.test", "Fixture Admin")
     await page.getByRole("button", { name: "Analytics", exact: true }).click()
     await expect(
-      page.getByRole("heading", { name: "Confirmed bookings", exact: true }),
+      page.getByRole("navigation", { name: "Current location", exact: true }).getByText("Bookings", { exact: true }),
     ).toBeVisible()
     await expect(
-      page.getByRole("button", { name: "AI diagnostics", exact: true }),
+      page.getByRole("button", { name: "Control Center", exact: true }),
     ).toHaveCount(0)
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
-    await page.getByRole("button", { name: "7 days", exact: true }).click()
+    await page.getByRole("combobox", { name: "Date range", exact: true }).click()
+    await page.getByRole("option", { name: "Last 7 days", exact: true }).click()
     const performance = page.getByRole("region", {
       name: "Booking performance",
       exact: true,
@@ -187,7 +188,9 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
     ).toHaveText(["Total", "4", "66.7%", "7m 30s"])
-    await page.getByRole("button", { name: "Conversion", exact: true }).click()
+    await expect(page.getByRole("navigation", { name: "Analytics", exact: true }).getByRole("button")).toHaveCount(4)
+    await expect(page.getByRole("group", { name: "Analytics view", exact: true })).toHaveCount(0)
+    await selectAnalyticsPage(page, "Conversion")
     await expect(
       performance.getByRole("status", {
         name: "Booking conversion",
@@ -214,7 +217,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
       path: testInfo.outputPath("admin-booking-conversion.png"),
       fullPage: true,
     })
-    await page.getByRole("button", { name: "Duration", exact: true }).click()
+    await selectAnalyticsPage(page, "Duration")
     await expect(
       performance.getByRole("status", {
         name: "Median call duration",
@@ -223,7 +226,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     ).toBeVisible()
     await expect(
       page.getByRole("button", { name: "Duration", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true")
+    ).toHaveAttribute("aria-current", "page")
     await expect(performance.locator(".recharts-bar")).toHaveCount(2)
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-duration.png"),
@@ -232,7 +235,8 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
 
     const endpoint = `${process.env.E2E_PORTAL_API_URL}/v1/analytics/bookings/query`
     await page.route(endpoint, (route) => route.abort(), { times: 1 })
-    await page.getByRole("button", { name: "30 days", exact: true }).click()
+    await page.getByRole("combobox", { name: "Date range", exact: true }).click()
+    await page.getByRole("option", { name: "Last 30 days", exact: true }).click()
     await expect(
       page.getByText("Analytics couldn’t load", { exact: true }),
     ).toBeVisible()
@@ -244,6 +248,14 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       page.getByRole("region", { name: "Booking performance", exact: true }),
     ).toBeVisible()
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await selectAnalyticsPage(page, "Conversion")
+    await expect(page.getByRole("navigation", { name: "Analytics", exact: true })).toBeHidden()
+    await expect(page.getByRole("navigation", { name: "Current location", exact: true }).getByText("Conversion", { exact: true })).toBeVisible()
+    await expect(page.getByRole("combobox", { name: "Date range", exact: true })).toContainText("Last 30 days")
+    await expect(page.getByRole("combobox", { name: "Date range", exact: true })).toBeInViewport()
+    await page.screenshot({ path: testInfo.outputPath("admin-analytics-mobile.png"), fullPage: true })
 
     const staffContext = await browser.newContext()
     const staff = await staffContext.newPage()

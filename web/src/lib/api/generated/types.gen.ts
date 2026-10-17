@@ -1339,6 +1339,14 @@ export type OperatorAiCallIssueReview = {
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
+    /**
+     * Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; summary remains unfiltered.
+     */
+    failuresOnly?: boolean;
+    /**
+     * Restrict calls to explicit failures for this judge question key in the v6-v8 failure catalog. Implies failure filtering even when failuresOnly is false. Intersects intent and outcome filters.
+     */
+    failingJudge?: string;
     intent?: CallIntent;
     outcome?: CallOutcome;
     /**

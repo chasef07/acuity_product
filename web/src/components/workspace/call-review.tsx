@@ -285,6 +285,7 @@ function ReviewCall({
   onSaved: () => void
 }) {
   const review = useCallReview(call.interactionId)
+  const evidence = useAiCallEvidence(call.interactionId)
   const definitions = useScorecardQuestions(review.status === "ready" ? review.data.version : undefined)
   const callCatalog = definitions.status === "ready" ? new Map(definitions.data.questions.map((question) => [question.key, question])) : undefined
   return (
@@ -314,7 +315,7 @@ function ReviewCall({
             </ul>
           )}
         </header>
-        <Transcript interactionID={call.interactionId} />
+        <Transcript evidence={evidence} />
       </section>
       <aside aria-label="Scorecard" className="flex min-h-0 flex-col">
         {review.status === "loading" && (
@@ -338,6 +339,9 @@ function ReviewCall({
         {review.status === "ready" && callCatalog && (
           <ScorecardPanel
             review={review.data}
+            call={evidence.status === "ready" ? evidence.data : undefined}
+            evaluation={evidence.status === "ready" ? evidence.data.evaluation : undefined}
+            evidenceReady={evidence.status === "ready"}
             catalog={callCatalog}
             onSaved={onSaved}
             onNext={onNext}
@@ -373,8 +377,7 @@ function FactChip({
   )
 }
 
-function Transcript({ interactionID }: { interactionID: string }) {
-  const evidence = useAiCallEvidence(interactionID)
+function Transcript({ evidence }: { evidence: ReturnType<typeof useAiCallEvidence> }) {
   if (evidence.status === "loading") {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">

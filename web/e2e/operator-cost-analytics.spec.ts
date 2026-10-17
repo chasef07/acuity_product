@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { signInAs } from "./support"
+import { selectControlCenterPage, signInAs } from "./support"
 
 test("Platform Operator sees recorded costs and incomplete usage", async ({
   page,
@@ -41,15 +41,16 @@ test("Platform Operator sees recorded costs and incomplete usage", async ({
     }
     await signInAs(page, "founder@acuity.test", "Fixture Founder")
     await page
-      .getByRole("button", { name: "AI diagnostics", exact: true })
+      .getByRole("button", { name: "Control Center", exact: true })
       .click()
-    const diagnostics = page.getByRole("region", { name: "AI call analytics" })
+    const diagnostics = page.getByRole("region", { name: "Control Center" })
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
-    await diagnostics.getByRole("button", { name: "Cost", exact: true }).click()
-    await diagnostics.getByRole("button", { name: "Last 7 days", exact: true }).click()
+    await selectControlCenterPage(page, "Cost")
+    await diagnostics.getByRole("combobox", { name: "Date range", exact: true }).click()
+    await page.getByRole("option", { name: "Last 7 days", exact: true }).click()
 
     const overview = diagnostics.getByRole("region", {
       name: "AI cost overview",
@@ -96,7 +97,8 @@ test("Platform Operator sees recorded costs and incomplete usage", async ({
       "UPDATE ai_interactions SET transcript=jsonb_build_object('usage', $2::jsonb) WHERE id = ANY($1::uuid[])",
       [ids, JSON.stringify([usage[0]])],
     )
-    await page.getByRole("button", { name: "Last 30 days", exact: true }).click()
+    await page.getByRole("combobox", { name: "Date range", exact: true }).click()
+    await page.getByRole("option", { name: "Last 30 days", exact: true }).click()
     await expect(overview.getByText("Recorded estimated cost", { exact: true })).toBeVisible()
     await expect(overview.getByRole("status", { name: "Estimated cost" })).toHaveText("$1.27")
     await expect(overview.getByText(/Averages use the 0 of 2 calls/)).toBeVisible()

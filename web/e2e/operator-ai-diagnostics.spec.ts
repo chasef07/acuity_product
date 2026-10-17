@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { signInAs } from "./support"
+import { selectControlCenterPage, signInAs } from "./support"
 
-test("AI diagnostics connect measured distributions and tool failures to exact call evidence", async ({
+test("Control Center connects measured distributions and tool failures to exact call evidence", async ({
   page,
 }, testInfo) => {
   const databaseURL = process.env.E2E_DATABASE_URL
@@ -183,23 +183,26 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await page.setViewportSize({ width: 1440, height: 1320 })
     await signInAs(page, "founder@acuity.test", "Fixture Founder")
     await page
-      .getByRole("button", { name: "AI diagnostics", exact: true })
+      .getByRole("button", { name: "Control Center", exact: true })
       .click()
-    const diagnostics = page.getByRole("region", { name: "AI call analytics" })
+    const diagnostics = page.getByRole("region", { name: "Control Center" })
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
-    await diagnostics.getByRole("button", { name: "Last 7 days", exact: true }).click()
+    await diagnostics.getByRole("combobox", { name: "Date range", exact: true }).click()
+    await page.getByRole("option", { name: "Last 7 days", exact: true }).click()
+    await diagnostics.getByRole("combobox", { name: "Judge flags", exact: true }).click()
+    await page.getByRole("option", { name: "All calls", exact: true }).click()
     const flaggedCall = diagnostics.getByRole("row").filter({ hasText: "Possible unsupported claim" })
     await expect(flaggedCall).toHaveCount(1)
     await expect(flaggedCall).toContainText("Caller reports unresolved issue")
     await expect(flaggedCall).toHaveClass(/bg-destructive/)
-    await expect(diagnostics.getByRole("button", { name: "Calls", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await expect(page.getByRole("navigation", { name: "Control Center", exact: true }).getByRole("button", { name: "Calls", exact: true })).toHaveAttribute("aria-current", "page")
     await expect(diagnostics.getByRole("columnheader", { name: /P50/ })).toHaveCount(0)
     await expect(diagnostics.getByRole("table").locator("tbody tr")).toHaveCount(50)
 
-    await diagnostics.getByRole("button", { name: "Overview", exact: true }).click()
+    await selectControlCenterPage(page, "Overview")
     const volume = diagnostics.getByRole("region", {
       name: "Call volume over time",
       exact: true,
@@ -248,9 +251,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       animations: "disabled",
     })
     await page.setViewportSize({ width: 1280, height: 800 })
-    await diagnostics
-      .getByRole("button", { name: "Calls", exact: true })
-      .click()
+    await selectControlCenterPage(page, "Calls")
     await diagnostics
       .getByRole("button", { name: /Open analytics for call from/ })
       .first()
@@ -348,9 +349,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     })
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.setViewportSize({ width: 1440, height: 1320 })
-    await diagnostics
-      .getByRole("button", { name: "Quality", exact: true })
-      .click()
+    await selectControlCenterPage(page, "Quality")
     await expect(
       diagnostics.getByText("2 of 2 evaluated calls · 68 not evaluated"),
     ).toBeVisible()
@@ -380,9 +379,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       fullPage: true,
       animations: "disabled",
     })
-    await diagnostics
-      .getByRole("button", { name: "Tools", exact: true })
-      .click()
+    await selectControlCenterPage(page, "Tools")
     await expect(
       diagnostics.getByText("345 of 420 executions timed"),
     ).toBeVisible()
@@ -447,12 +444,12 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       fullPage: true,
       animations: "disabled",
     })
-    await page.getByRole("button", { name: "AI diagnostics", exact: true }).click()
+    await page.getByRole("button", { name: "Control Center", exact: true }).click()
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 5", exact: true })
       .click()
-    await diagnostics.getByRole("button", { name: "Tools", exact: true }).click()
+    await selectControlCenterPage(page, "Tools")
     await expect(
       diagnostics.getByText("No tool executions in this range."),
     ).toBeVisible()
@@ -518,16 +515,14 @@ test("historical tool failures reveal and focus their technical evidence", async
     await page.setViewportSize({ width: 1280, height: 800 })
     await signInAs(page, "founder@acuity.test", "Fixture Founder")
     await page
-      .getByRole("button", { name: "AI diagnostics", exact: true })
+      .getByRole("button", { name: "Control Center", exact: true })
       .click()
-    const diagnostics = page.getByRole("region", { name: "AI call analytics" })
+    const diagnostics = page.getByRole("region", { name: "Control Center" })
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
-    await diagnostics
-      .getByRole("button", { name: "Tools", exact: true })
-      .click()
+    await selectControlCenterPage(page, "Tools")
     const tool = diagnostics
       .getByRole("row")
       .filter({ hasText: "historical_lookup" })

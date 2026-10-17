@@ -166,3 +166,93 @@ func TestCallLabelsQueriesFilterBeforePaginationAndPreserveScope(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyticsJudgeFailuresFilterBeforePagination(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	am := access.New(pool, func() time.Time { return now })
+	operator := access.Identity{Subject: "failure-operator", Email: "operator@failures.test", EmailVerified: true}
+	_, err := am.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{operator.Email}, Practices: []access.PracticeProvision{{Key: "failures", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed"}, {Key: "other", Name: "Other"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testaccess.Activate(t, am, operator)
+	var practice, allowed, other string
+	if err := pool.QueryRow(ctx, `SELECT p.id::text, max(l.id::text) FILTER(WHERE l.provisioning_key='allowed'), max(l.id::text) FILTER(WHERE l.provisioning_key='other') FROM access_practices p JOIN access_locations l ON l.practice_id=p.id WHERE p.provisioning_key='failures' GROUP BY p.id`).Scan(&practice, &allowed, &other); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(source, location string, minutes int, question, version, answerSource string, answer bool, intent, outcome string) string {
+		t.Helper()
+		var id string
+		if err := pool.QueryRow(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage) VALUES('agent',$1,$2,$3,'+15555550111','+15555550100',$4,$5,'COMPLETED',3) RETURNING id::text`, practice, location, source, now.Add(-time.Duration(minutes)*time.Minute), now).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_classifications(interaction_id,intent,outcome,status) VALUES($1,$2,$3,'complete')`, id, intent, outcome); err != nil {
+			t.Fatal(err)
+		}
+		if question != "" {
+			if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_scorecard_answers(interaction_id,practice_id,question,source,answer,scorecard_version,judge_model,computed_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $4 = 'judge' THEN 'synthetic' ELSE NULL END,now())`, id, practice, question, answerSource, answer, version); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return id
+	}
+	insert("unjudged", allowed, 1, "", "", "", false, "office_information", "resolved")
+	insert("passing", allowed, 2, "office_question_answered", ScorecardJudgeVersion, "judge", true, "office_information", "resolved")
+	insert("context-no", allowed, 3, "new_booking_requested", legacyJudgeVersion, "judge", false, "office_information", "resolved")
+	insert("code-no", allowed, 4, "transfer_not_refused", ScorecardCodeVersion, "code", false, "office_information", "resolved")
+	insert("removed-judge", allowed, 5, "office_rules_grounded", ScorecardJudgeVersion, "judge", false, "office_information", "resolved")
+	insert("unknown-version", allowed, 6, "office_question_answered", "unknown-version", "judge", false, "office_information", "resolved")
+	insert("other-intent", allowed, 7, "office_question_answered", ScorecardJudgeVersion, "judge", false, "insurance_question", "resolved")
+	insert("other-outcome", allowed, 8, "office_question_answered", ScorecardJudgeVersion, "judge", false, "office_information", "abandoned")
+	first := insert("first", allowed, 9, "office_question_answered", ScorecardJudgeVersion, "judge", false, "office_information", "resolved")
+	second := insert("second", allowed, 10, "office_rules_grounded", legacyJudgeVersion, "judge", false, "office_information", "resolved")
+	third := insert("third", allowed, 11, "office_question_answered", legacyJudgeVersion, "judge", false, "office_information", "resolved")
+	insert("other-location", other, 1, "office_question_answered", ScorecardJudgeVersion, "judge", false, "office_information", "resolved")
+	m := New(pool, am, func() time.Time { return now })
+	cmd := QueryAnalyticsCommand{Identity: operator, PracticeID: practice, LocationID: allowed, Range: AnalyticsRange7Days, Limit: 1, Intent: "office_information", Outcome: "resolved", FailuresOnly: true}
+	page, err := m.QueryAnalytics(ctx, cmd)
+	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != first || page.NextCursor == "" {
+		t.Fatalf("first failures page: %+v %v", page, err)
+	}
+	if page.Summary == nil || page.Summary.TotalCalls != 11 {
+		t.Fatalf("failure filter changed full-scope summary: %+v", page.Summary)
+	}
+	cmd.Cursor = page.NextCursor
+	page, err = m.QueryAnalytics(ctx, cmd)
+	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != second || page.NextCursor == "" {
+		t.Fatalf("second failures page: %+v %v", page, err)
+	}
+	changed := cmd
+	changed.FailuresOnly = false
+	if _, err := m.QueryAnalytics(ctx, changed); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("cursor reused across failure scope: %v", err)
+	}
+	changed = cmd
+	changed.FailingJudge = "office_question_answered"
+	if _, err := m.QueryAnalytics(ctx, changed); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("cursor reused across judges: %v", err)
+	}
+	cmd.Cursor = ""
+	cmd.FailuresOnly = false
+	cmd.FailingJudge = "office_question_answered"
+	page, err = m.QueryAnalytics(ctx, cmd)
+	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != first || page.NextCursor == "" {
+		t.Fatalf("specific judge first page: %+v %v", page, err)
+	}
+	cmd.Cursor = page.NextCursor
+	page, err = m.QueryAnalytics(ctx, cmd)
+	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != third || page.NextCursor != "" {
+		t.Fatalf("specific judge continuation: %+v %v", page, err)
+	}
+	cmd.Cursor = ""
+	cmd.FailingJudge = "new_booking_requested"
+	if _, err := m.QueryAnalytics(ctx, cmd); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("non-failure judge accepted: %v", err)
+	}
+	cmd.FailingJudge = "invented"
+	if _, err := m.QueryAnalytics(ctx, cmd); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unknown judge accepted: %v", err)
+	}
+}

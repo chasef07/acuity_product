@@ -220,7 +220,7 @@ function OperatorAnalyticsDetailView({
                 className="[content-visibility:visible]"
               >
                 <CallIssueReview key={`issue-${detail.id}`} interactionID={detail.id} initialIssue={detail.issue} onChange={onIssueChange} />
-                <CallEvaluation evaluation={detail.evaluation} verdicts={detail.scorecard} questions={questions.status === "ready" ? questions.data.questions : []} />
+                <CallEvaluation call={detail} evaluation={detail.evaluation} verdicts={detail.scorecard} questions={questions.status === "ready" ? questions.data.questions : []} />
                 <section
                   aria-label="Call conversation"
                   className="border-b px-5 py-5 sm:px-6"
