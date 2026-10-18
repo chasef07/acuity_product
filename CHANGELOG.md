@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.3](https://github.com/chasef07/acuity_product/compare/v1.42.2...v1.42.3) (2026-10-18)
+
+
+### Bug Fixes
+
+* restore caller sentiment in v8 evaluations ([#504](https://github.com/chasef07/acuity_product/issues/504)) ([d4b4a6b](https://github.com/chasef07/acuity_product/commit/d4b4a6b7eacfc59e96f681dad8e5f05176b558cb))
+
 ## [1.42.2](https://github.com/chasef07/acuity_product/compare/v1.42.1...v1.42.2) (2026-10-18)
 
 
