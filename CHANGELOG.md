@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.0](https://github.com/chasef07/acuity_product/compare/v1.42.3...v1.43.0) (2026-10-18)
+
+
+### Features
+
+* **workspace:** refresh Home greeting and simplify agent details ([#508](https://github.com/chasef07/acuity_product/issues/508)) ([7124fb1](https://github.com/chasef07/acuity_product/commit/7124fb111099271fab5f5ec10cc2686a2a6e13d6))
+
 ## [1.42.3](https://github.com/chasef07/acuity_product/compare/v1.42.2...v1.42.3) (2026-10-18)
 
 
