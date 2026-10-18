@@ -120,10 +120,16 @@ function JuryScorecard({ evaluation, verdicts, questions, call }: { evaluation: 
     state: checkState(record(results[key]), answers.get(key), catalog.get(key)?.failure, Object.hasOwn(errors, key)),
   }))
   const sentiment = record(results.expressed_sentiment)
-  const score = typeof sentiment.score === "number" && sentiment.score >= 0 && sentiment.score <= 4 ? sentiment.score : undefined
+  const sentimentFailed = Object.hasOwn(errors, "expressed_sentiment")
+  const sentimentEvidence = sentimentFailed ? record(errors.expressed_sentiment) : sentiment
+  const sentimentVotes = record(sentimentEvidence.votes)
+  const sentimentErrors = record(sentimentEvidence.errors)
+  const checksComplete = questions.length > 0 && (evaluation.status === "complete" ||
+    (evaluation.status === "incomplete" && sentimentFailed && Object.keys(errors).every((name) => name === "expressed_sentiment")))
+  const score = !sentimentFailed && typeof sentiment.score === "number" && sentiment.score >= 0 && sentiment.score <= 4 ? sentiment.score : undefined
   return <>
     {evaluation.evaluatorVersion !== "typesafe-scorecard-v8" && <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer.</p>}
-    <ScorecardFlow call={call} checks={checks} complete={evaluation.status === "complete" && questions.length > 0}>
+    <ScorecardFlow call={call} checks={checks} complete={checksComplete}>
     {evaluation.evaluatorVersion === "typesafe-scorecard-v8" && <p className="px-3 pt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer.</p>}
     <dl className="divide-y px-3">
       {checks.map(({ key: name, state }) => {
@@ -146,13 +152,20 @@ function JuryScorecard({ evaluation, verdicts, questions, call }: { evaluation: 
           </dd>}
         </div>
       })}
-      {evaluation.evaluatorVersion !== "typesafe-scorecard-v8" && <div className="py-3 text-xs">
+      <div className="py-3 text-xs">
         <div className="flex items-start justify-between gap-3">
           <dt>Caller sentiment</dt>
           <dd className="shrink-0">{score === undefined ? "Unavailable" : `${evaluationScales.expressed_sentiment[Math.round(score)]} · ${score.toFixed(1)} / 4`}</dd>
         </div>
-        <dd className="mt-1 text-muted-foreground">Shown for context, not graded.</dd>
-      </div>}
+        <dd className="mt-1 text-muted-foreground">Shown for context; does not affect failure checks. Sentiment reflects transcript text, not vocal tone.</dd>
+        {sentimentFailed ? <dd className="mt-1 text-destructive">{sentimentEvidence.cause === "no_quorum" ? "No quorum" : "Sentiment judge failed"}</dd> : score === undefined ? <dd className="mt-1 text-muted-foreground">No valid score was recorded.</dd> : null}
+        {(Object.keys(sentimentVotes).length > 0 || Object.keys(sentimentErrors).length > 0) && <dd className="mt-1 flex flex-wrap gap-x-3 text-muted-foreground">
+          {jurors.map((juror) => {
+            const vote = sentimentVotes[juror]
+            return <span key={juror}>{jurorName(juror)}: {Object.hasOwn(sentimentErrors, juror) ? `failed (${String(sentimentErrors[juror])})` : typeof vote === "number" && vote >= 0 && vote <= 4 ? `${vote.toFixed(1)} / 4` : "no answer"}</span>
+          })}
+        </dd>}
+      </div>
     </dl>
     </ScorecardFlow>
   </>

@@ -132,3 +132,39 @@ func TestQualityTrendsKeepEmptyDatesUnknown(t *testing.T) {
 }
 
 func qualityFloat(value float64) *float64 { return &value }
+
+func TestV8SentimentCountsOnlyMeasuredScoresWithoutChangingChecks(t *testing.T) {
+	from := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	q := newQualityAccumulator(analyticsDays(from, from))
+	for _, tc := range []struct {
+		name, result, errors string
+		want                 *float64
+	}{
+		{"negative endpoint", `{"score":0,"votes":{"a":0,"b":0,"c":0},"errors":{}}`, `{}`, qualityFloat(0)},
+		{"fractional with partial failure", `{"score":1.5,"votes":{"a":1,"b":2},"errors":{"c":"TimeoutError"}}`, `{}`, qualityFloat(1.5)},
+		{"positive endpoint", `{"score":4,"votes":{"a":4,"b":4,"c":4},"errors":{}}`, `{}`, qualityFloat(4)},
+		{"historical missing", `null`, `{}`, nil},
+		{"null score", `{"score":null}`, `{}`, nil},
+		{"string score", `{"score":"2"}`, `{}`, nil},
+		{"below scale", `{"score":-1}`, `{}`, nil},
+		{"above scale", `{"score":5}`, `{}`, nil},
+		{"no quorum overrides stale score", `{"score":2}`, `{"expressed_sentiment":{"cause":"no_quorum","votes":{"a":2},"errors":{"b":"TimeoutError","c":"TimeoutError"}}}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := json.RawMessage(fmt.Sprintf(`{"evaluatorVersion":"typesafe-scorecard-v8","status":"incomplete","jurors":["a","b","c"],"results":{"expressed_sentiment":%s},"errors":%s}`, tc.result, tc.errors))
+			score := jurySentiment(raw)
+			reading := readEvaluation(raw)
+			if !reflect.DeepEqual(score, tc.want) || !reflect.DeepEqual(reading.Sentiment, tc.want) {
+				t.Fatalf("sentiment parser=%v analytics=%v want=%v", score, reading.Sentiment, tc.want)
+			}
+			if reading.Evaluated || len(reading.Scored) != 0 || len(reading.Flags) != 0 || len(judgeAnswers(raw)) != 0 {
+				t.Fatalf("sentiment must not create checks or flags: %+v", reading)
+			}
+			q.add(qualitySample{startedAt: from, evaluation: reading})
+		})
+	}
+	result := q.finish()
+	if result.SentimentCalls != 3 || result.MeanSentiment == nil || *result.MeanSentiment != 5.5/3 || result.Daily[0].SentimentCalls != 3 || result.FlaggedCalls != 0 {
+		t.Fatalf("only measured sentiment contributes to analytics: %+v", result)
+	}
+}

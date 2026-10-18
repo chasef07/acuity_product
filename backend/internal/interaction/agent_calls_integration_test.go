@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +92,31 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	raw, _ := json.Marshal(detail)
 	if strings.Contains(string(raw), "private") {
 		t.Fatal("staff projection leaked internal evidence")
+	}
+	for _, tc := range []struct {
+		name, result, errors string
+		want                 *float64
+	}{
+		{"v8 measured zero", `{"expressed_sentiment":{"score":0,"votes":{"a":0,"b":0,"c":0},"errors":{}}}`, `{}`, qualityFloat(0)},
+		{"v8 measured mean", `{"expressed_sentiment":{"score":1.5,"votes":{"a":1,"b":2},"errors":{"c":"TimeoutError"}}}`, `{}`, qualityFloat(1.5)},
+		{"historical v8 missing sentiment", `{}`, `{}`, nil},
+		{"v8 invalid sentiment", `{"expressed_sentiment":{"score":"2"}}`, `{}`, nil},
+		{"v8 no quorum", `{"expressed_sentiment":{"score":2}}`, `{"expressed_sentiment":{"cause":"no_quorum","votes":{"a":2},"errors":{"b":"TimeoutError","c":"TimeoutError"}}}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evaluation := fmt.Sprintf(`{"evaluatorVersion":"typesafe-scorecard-v8","status":"incomplete","jurors":["a","b","c"],"results":%s,"errors":%s}`, tc.result, tc.errors)
+			if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET closeout_payload = jsonb_set(closeout_payload, '{evaluation}', $2::jsonb) WHERE id = $1`, first, evaluation); err != nil {
+				t.Fatal(err)
+			}
+			detail, err := module.ReadAgentCall(ctx, staff, first)
+			if err != nil || !reflect.DeepEqual(detail.Sentiment, tc.want) {
+				t.Fatalf("call sentiment=%v want=%v err=%v", detail.Sentiment, tc.want, err)
+			}
+			raw, err := json.Marshal(detail)
+			if err != nil || strings.Contains(string(raw), `"sentiment":`) != (tc.want != nil) {
+				t.Fatalf("only measured sentiment should appear in the response: %s err=%v", raw, err)
+			}
+		})
 	}
 	if _, err = module.FlagAgentCallIssue(ctx, staff, first, "Incorrect office hours", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("free-text report: %v", err)
