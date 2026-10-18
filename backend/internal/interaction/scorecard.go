@@ -442,7 +442,7 @@ func juryAnswers(jury juryEvaluation, questions []juryQuestion) []scorecardAnswe
 
 func jurySentiment(evaluation json.RawMessage) *float64 {
 	jury, valid := readJury(evaluation)
-	if !valid {
+	if _, failed := jury.Errors["expressed_sentiment"]; !valid || failed {
 		return nil
 	}
 	var sentiment struct {

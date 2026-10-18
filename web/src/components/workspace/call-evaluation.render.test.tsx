@@ -219,13 +219,15 @@ for (const version of ["typesafe-scorecard-v6", "typesafe-scorecard-v7"]) test(`
   assert.match(html, /Negative · 1.2 \/ 4/)
 })
 
-test("v8 shows unknown knowledge separately from failures and omits removed sentiment", () => {
+test("v8 shows unknown knowledge separately from failures and missing sentiment as unavailable", () => {
  const question = (key: string, prompt: string) => ({ key, prompt, code: "", label: "", source: "judge" as const, question: "", yes: "", no: "", failure: true })
  const html = renderToStaticMarkup(<CallEvaluation questions={[question("knowledge_available", "Did returned knowledge contain the answer?"), question("transfer_policy_followed", "Was transfer policy followed?")]} verdicts={[{question: "transfer_policy_followed", code: "T1", prompt: "", answer: "no"}]} evaluation={{evaluatorVersion: "typesafe-scorecard-v8", evaluator:"jury", status:"complete", jurors:["a","b","c"], results:{knowledge_available:{status:"unknown",reason:"no_office_knowledge_result"}, transfer_policy_followed:{verdict:false, probability:0.2,votes:{a:0.1,b:0.2,c:0.3},errors:{}}}}} />)
  assert.match(html, /Was transfer policy followed\?<\/dt><dd class="shrink-0 font-medium text-destructive">Failed/)
  assert.match(html, />Unknown<\/dd>/)
  assert.match(html, /No usable office knowledge result was recorded/)
- assert.doesNotMatch(html, /Caller sentiment|Automatic red highlights|knowledge available/)
+ assert.doesNotMatch(html, /Automatic red highlights|knowledge available/)
+ assert.match(html, /Caller sentiment<\/dt><dd[^>]*>Unavailable/)
+ assert.match(html, /No valid score was recorded/)
 })
 
 test("the intent/outcome flow cannot hide an expected missing check or turn a resolved call into a pass", () => {
@@ -246,4 +248,64 @@ test("the intent/outcome flow cannot hide an expected missing check or turn a re
   assert.doesNotMatch(failed, /All applicable checks passed/)
   const passed = render("yes", { transfer_policy_followed: { verdict: true }, call_ended_correctly: { status: "not_applicable" } })
   assert.match(passed, /All applicable checks passed/)
+})
+
+for (const score of [0, 1.5, 2, 4]) test(`v8 displays numeric sentiment ${score} independently of failure checks`, () => {
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+    evaluatorVersion: "typesafe-scorecard-v8", status: "complete", jurors: ["model/a", "model/b", "model/c"],
+    results: { expressed_sentiment: { score, votes: { "model/a": score, "model/b": score }, errors: { "model/c": "TimeoutError" } } },
+  }} />)
+  assert.match(html, new RegExp(`Caller sentiment</dt><dd[^>]*>[^<]+ · ${score.toFixed(1)} / 4`))
+  assert.match(html, new RegExp(`a: ${score.toFixed(1)} / 4`))
+  assert.match(html, /c: failed \(TimeoutError\)/)
+  assert.match(html, /Sentiment reflects transcript text, not vocal tone/)
+  assert.doesNotMatch(html, /failed check|>Failed<|>No quorum<|a: .*%/)
+})
+
+for (const score of [undefined, null, "2", -1, 5, NaN, Infinity]) test(`v8 sentiment rejects invalid score ${String(score)}`, () => {
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+    evaluatorVersion: "typesafe-scorecard-v8", status: "complete", results: { expressed_sentiment: { score } },
+  }} />)
+  assert.match(html, /Caller sentiment<\/dt><dd[^>]*>Unavailable/)
+  assert.match(html, /No valid score was recorded/)
+  assert.doesNotMatch(html, /Neutral or mixed/)
+})
+
+test("v8 sentiment no quorum overrides a stale score and shows retained votes and failures", () => {
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+    evaluatorVersion: "typesafe-scorecard-v8", status: "incomplete", jurors: ["model/a", "model/b", "model/c"],
+    results: { expressed_sentiment: { score: 2 } },
+    errors: { expressed_sentiment: { cause: "no_quorum", votes: { "model/a": 0 }, errors: { "model/b": "TimeoutError", "model/c": "ValueError" } } },
+  }} />)
+  assert.match(html, /Caller sentiment<\/dt><dd[^>]*>Unavailable/)
+  assert.match(html, /No quorum/)
+  assert.match(html, /a: 0.0 \/ 4/)
+  assert.match(html, /b: failed \(TimeoutError\)/)
+  assert.match(html, /c: failed \(ValueError\)/)
+  assert.doesNotMatch(html, /Neutral or mixed|failed check|>Failed</)
+})
+
+test("a sentiment-only failure does not make six completed checks incomplete", () => {
+  const keys = ["knowledge_available", "office_question_answered", "appointment_datetime_correct", "call_ended_correctly", "transfer_policy_followed", "emergency_policy_followed"]
+  const questions = keys.map((key) => ({ key, code: key, label: key, prompt: key, source: "judge" as const, question: "", yes: "", no: "", failure: true }))
+  const verdicts = keys.map((question) => ({ question, code: question, prompt: question, answer: "yes" as const }))
+  const results = Object.fromEntries(keys.map((key) => [key, { verdict: true, probability: 0.9 }]))
+  const sentimentError = { cause: "no_quorum", votes: { a: 2 }, errors: { b: "TimeoutError", c: "TimeoutError" } }
+  const render = (result: Record<string, unknown>, errors: Record<string, unknown>) => renderToStaticMarkup(<CallEvaluation
+    questions={questions} verdicts={verdicts}
+    evaluation={{ evaluatorVersion: "typesafe-scorecard-v8", status: "incomplete", jurors: ["a", "b", "c"], results: result, errors }}
+  />)
+  const html = render(results, { expressed_sentiment: sentimentError })
+  assert.match(html, /All applicable checks passed/)
+  assert.match(html, /Caller sentiment<\/dt><dd[^>]*>Unavailable/)
+  assert.match(html, /No quorum/)
+  assert.doesNotMatch(html, /Checks incomplete/)
+  for (const incomplete of [
+    render(results, {}),
+    render(results, { expressed_sentiment: sentimentError, call_ended_correctly: { cause: "no_quorum" } }),
+    render({ ...results, call_ended_correctly: { status: "unknown" } }, { expressed_sentiment: sentimentError }),
+  ]) {
+    assert.match(incomplete, /Checks incomplete/)
+    assert.doesNotMatch(incomplete, /All applicable checks passed/)
+  }
 })
