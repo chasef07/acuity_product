@@ -64,22 +64,15 @@ test("Manage agent shows the selected page at full width without its own navigat
   await page.unmount()
 })
 
-test("Home connects Acuity to knowledge, insurance, and tools, with unanswered questions under knowledge", async (t) => {
+test("Home connects Acuity to knowledge, insurance, and tools", async (t) => {
   const page = harness(t)
   page.knowledge = { locationId: locations[0].id, sections: [], revision: { id: "revision-14", version: 14, createdAt: "2026-10-12T14:00:00Z" } }
-  page.agentCalls = {
-    calls: [
-      { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: ["Saturday hours", "parking"] },
-      { id: "call-2", phone: "+15555550112", startedAt: "2026-10-13T14:00:00Z", appointmentActions: [], transferred: true, issueFlagged: false, knowledgeGaps: [] },
-    ],
-    nextCursor: "",
-  }
   const pages: string[] = []
   await page.render(
     <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={(next) => pages.push(next)} />,
   )
   const greeting = homeGreeting(homeDay(new Date()))
-  assert.equal(page.host.querySelector("h1")?.textContent, `${greeting.greeting} ${greeting.dateLabel}`)
+  assert.equal(page.host.querySelector("h1 span")?.textContent, `${greeting.greeting},`)
   assert.equal(page.host.querySelector("h1 time")?.textContent, greeting.dateLabel)
   const connections = page.host.querySelector('[aria-label="Agent connections"]')
   assert.ok(connections)
@@ -88,22 +81,33 @@ test("Home connects Acuity to knowledge, insurance, and tools, with unanswered q
   assert.doesNotMatch(page.text(), /What Acuity can do|Transfer policy|Emergency policy/)
   assert.deepEqual(page.agentCallsRequests, [])
   await act(async () => page.button(/^Knowledge base/).click())
-  await waitFor(() => page.text().includes("“Saturday hours” · “parking”") && /Version 14 · published/.test(page.text()))
+  await waitFor(() => /Version 14 · published/.test(page.text()))
   assert.doesNotMatch(page.text(), /v14/)
-  assert.match(page.text(), /An office question went unanswered/)
-  assert.deepEqual(page.agentCallsRequests.map(({ locationId, range, needsKnowledgeOnly }) => ({ locationId, range, needsKnowledgeOnly })), [
-    { locationId: locations[0].id, range: "7d", needsKnowledgeOnly: true },
-  ])
-  const add = Array.from(page.host.querySelectorAll("button")).find((button) => button.textContent === "Add to knowledge")
-  await act(async () => add!.click())
-  assert.deepEqual(pages, ["knowledge"])
+  assert.match(page.text(), /Open knowledge base/)
+  assert.doesNotMatch(page.text(), /Needs knowledge|An office question went unanswered/)
+  assert.deepEqual(page.agentCallsRequests, [])
   await page.click("Open knowledge base")
   await act(async () => page.button(/^Insurance/).click())
   await page.click("Open insurance list")
-  assert.deepEqual(pages, ["knowledge", "knowledge", "insurance"])
+  assert.deepEqual(pages, ["knowledge", "insurance"])
   await act(async () => page.button(/^Tools/).click())
-  assert.match(page.text(), /Find the caller's patient record/)
-  assert.match(page.text(), /Book, reschedule, and cancel appointments/)
+  assert.deepEqual(
+    Array.from(page.host.querySelectorAll('[aria-label="Agent tools"] li'), (item) => item.querySelector("span")?.textContent),
+    [
+      "Search office knowledge",
+      "Find an existing patient",
+      "Register a new patient",
+      "Check insurance acceptance",
+      "Update insurance coverage",
+      "Find available appointments",
+      "Book an appointment",
+      "Reschedule an appointment",
+      "Cancel an appointment",
+      "Save a staff follow-up task",
+      "Transfer a call",
+      "End a call",
+    ],
+  )
   await page.click("Close details")
   assert.equal(page.host.querySelector('[aria-label="Agent details"]'), null)
   await page.unmount()
@@ -132,7 +136,7 @@ test("pages that show one Location use the workspace's office, or the only offic
       assert.equal(page.host.querySelector("[role='combobox'][aria-label='Office']"), null)
       assert.doesNotMatch(page.text(), /Choose an office/)
     }
-    assert.equal(page.agentCallsRequests.at(-1)?.locationId, expected)
+    assert.deepEqual(page.agentCallsRequests, [])
   }
   await page.unmount()
 })
@@ -211,7 +215,7 @@ test("each page keeps its title, actions, and filters inside the panel", async (
   await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => /Version 3 · published/.test(page.text()))
   const greeting = homeGreeting(homeDay(new Date()))
-  assert.equal(page.host.querySelector("h1")?.textContent, `${greeting.greeting} ${greeting.dateLabel}`)
+  assert.equal(page.host.querySelector("h1 span")?.textContent, `${greeting.greeting},`)
   await page.unmount()
 })
 

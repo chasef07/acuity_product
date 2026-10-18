@@ -10,24 +10,27 @@ import {
   XIcon,
 } from "lucide-react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { useAgentCalls } from "@/lib/clients/agent-calls"
 import { useLocationKnowledge } from "@/lib/clients/location-knowledge"
 import { formatTimestamp } from "@/lib/format-time"
 import { homeDay, homeGreeting } from "@/lib/home-greeting"
-import { formatUSPhone } from "@/lib/phone"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
-import { AgentCallPanel } from "./agent-call-panel"
 import { AgentHomeMap, agentAreas, type AgentArea } from "./agent-home-map"
-import { AgentQueryBody, type AgentLocationProps } from "./manage-agent-page"
+import type { AgentLocationProps } from "./manage-agent-page"
 
 const tools = [
-  { icon: BookOpenIcon, label: "Answer office questions", detail: "From the knowledge base" },
-  { icon: UserSearchIcon, label: "Find the caller's patient record" },
-  { icon: CalendarCheckIcon, label: "Book, reschedule, and cancel appointments" },
-  { icon: ShieldCheckIcon, label: "Check insurance" },
-  { icon: ArrowRightLeftIcon, label: "Transfer calls to staff" },
+  { icon: BookOpenIcon, label: "Search office knowledge" },
+  { icon: UserSearchIcon, label: "Find an existing patient" },
+  { icon: UserSearchIcon, label: "Register a new patient" },
+  { icon: ShieldCheckIcon, label: "Check insurance acceptance" },
+  { icon: ShieldCheckIcon, label: "Update insurance coverage" },
+  { icon: CalendarCheckIcon, label: "Find available appointments", optional: true },
+  { icon: CalendarCheckIcon, label: "Book an appointment", optional: true },
+  { icon: CalendarCheckIcon, label: "Reschedule an appointment", optional: true },
+  { icon: CalendarCheckIcon, label: "Cancel an appointment", optional: true },
+  { icon: BookOpenIcon, label: "Save a staff follow-up task", optional: true },
+  { icon: ArrowRightLeftIcon, label: "Transfer a call", optional: true },
+  { icon: XIcon, label: "End a call", optional: true },
 ]
 
 export function AgentHome({
@@ -56,9 +59,16 @@ export function AgentHome({
   return (
     <section aria-labelledby={titleID} className="@container min-h-0 flex-1 overflow-auto">
       <header className="px-4 pt-8 sm:px-6">
-        <h1 id={titleID} className="text-2xl font-bold tracking-tight">
-          {greeting?.greeting ?? "Welcome"}{greeting && " "}
-          <time dateTime={day || undefined}>{greeting?.dateLabel}</time>
+        <h1 id={titleID} className="tracking-tight">
+          <span className="block font-serif text-4xl font-medium sm:text-5xl">
+            {greeting?.greeting ?? "Welcome"},
+          </span>
+          <time
+            className="mt-2 block font-sans text-sm font-medium tracking-wide text-muted-foreground sm:text-base"
+            dateTime={day || undefined}
+          >
+            {greeting?.dateLabel}
+          </time>
         </h1>
       </header>
       <div className="px-4 py-10 sm:px-6 @[36rem]:py-16">
@@ -78,10 +88,7 @@ export function AgentHome({
               </Button>
             </header>
             {selected === "knowledge" ? (
-              <>
-                <Button variant="outline" className="mb-8" onClick={() => onPage("knowledge")}>Open knowledge base</Button>
-                {locationID && <NeedsKnowledge practiceID={practiceID} locationID={locationID} onAddKnowledge={() => onPage("knowledge")} />}
-              </>
+              <Button variant="outline" onClick={() => onPage("knowledge")}>Open knowledge base</Button>
             ) : selected === "insurance" ? (
               <>
                 <p className="mb-4 text-sm text-muted-foreground">Review accepted plans, referrals, and requirements for medical and routine vision coverage.</p>
@@ -137,146 +144,19 @@ function KnowledgeVersion({ practiceID, locationID }: { practiceID: string; loca
   )
 }
 
-function NeedsKnowledge({
-  practiceID,
-  locationID,
-  onAddKnowledge,
-}: {
-  practiceID: string
-  locationID: string
-  onAddKnowledge: () => void
-}) {
-  const titleID = useId()
-  const [revision, setRevision] = useState(0)
-  const [selectedID, setSelectedID] = useState("")
-  const current = useAgentCalls({
-    practiceID,
-    locationID,
-    range: "7d",
-    phone: "",
-    flaggedOnly: false,
-    needsKnowledgeOnly: true,
-    revision,
-  })
-  const calls = current.status === "ready" ? current.data.calls : []
-  const nextCursor = current.status === "ready" ? current.data.nextCursor : ""
-  const selectedIndex = calls.findIndex((call) => call.id === selectedID)
-  const moreError = current.moreFailure
-    ? "More calls could not be loaded. Try again."
-    : undefined
-
-  async function loadNext(from: string) {
-    const next = await current.loadMore()
-    if (next?.calls.length) setSelectedID((previous) => (previous === from ? next.calls[0].id : previous))
-  }
-
-  return (
-    <section aria-labelledby={titleID} className="min-w-0">
-      <div className="flex items-baseline gap-2">
-        <h2 id={titleID} className="text-lg font-semibold tracking-tight">
-          Needs knowledge
-        </h2>
-        {current.status === "ready" && (
-          <span className="font-mono text-sm text-muted-foreground">
-            {calls.length}
-            {nextCursor ? "+" : ""}
-          </span>
-        )}
-      </div>
-      <p className="mt-1 mb-4 text-sm text-muted-foreground">
-        Calls this week where a caller asked an office question the knowledge base couldn&apos;t answer.
-      </p>
-      <AgentQueryBody
-        query={current}
-        subject="calls"
-        unavailable="Calls aren't available right now."
-        onRetry={() => setRevision((value) => value + 1)}
-        isEmpty={(data) => data.calls.length === 0}
-        emptyTitle="Nothing needs knowledge"
-        emptyDescription="No unanswered office questions in the last 7 days."
-      >
-        {(data) => (
-          <ul className="border-t">
-            {data.calls.map((call) => (
-              <li key={call.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b py-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">
-                    {call.knowledgeGaps.length
-                      ? call.knowledgeGaps.map((gap) => `“${gap}”`).join(" · ")
-                      : "An office question went unanswered"}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatTimestamp(call.startedAt)}
-                    {" · "}
-                    {formatUSPhone(call.phone)}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => setSelectedID(call.id)}>
-                    Open call
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={onAddKnowledge}>
-                    Add to knowledge
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </AgentQueryBody>
-      {moreError && (
-        <Alert variant="destructive" className="mt-4">
-          <AlertTitle>More calls unavailable</AlertTitle>
-          <AlertDescription>{moreError}</AlertDescription>
-        </Alert>
-      )}
-      {nextCursor && (
-        <Button variant="outline" className="mt-4" disabled={current.loadingMore} onClick={() => void current.loadMore()}>
-          {current.loadingMore ? "Loading…" : "Load more calls"}
-        </Button>
-      )}
-      <AgentCallPanel
-        id={selectedID}
-        position={selectedIndex + 1}
-        loadedCount={calls.length}
-        hasMore={Boolean(nextCursor)}
-        loadingNext={current.loadingMore}
-        navigationError={moreError}
-        onPrevious={selectedIndex > 0 ? () => setSelectedID(calls[selectedIndex - 1].id) : undefined}
-        onNext={
-          selectedIndex >= 0 && (selectedIndex < calls.length - 1 || nextCursor)
-            ? () => {
-                if (selectedIndex < calls.length - 1) setSelectedID(calls[selectedIndex + 1].id)
-                else void loadNext(selectedID)
-              }
-            : undefined
-        }
-        onClose={() => setSelectedID("")}
-        onFlagged={(id) =>
-          current.update((shown) => ({
-            ...shown,
-            calls: shown.calls.map((call) => (call.id === id ? { ...call, issueFlagged: true } : call)),
-          }))
-        }
-      />
-    </section>
-  )
-}
-
 function AgentTools() {
   return (
-    <ul aria-label="Agent tools" className="border-t">
-      {tools.map((tool) => (
-        <li key={tool.label} className="flex items-center gap-3 border-b py-3">
-          <tool.icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium">{tool.label}</span>
-            {tool.detail && (
-              <span className="block text-xs text-muted-foreground">{tool.detail}</span>
-            )}
-          </span>
-        </li>
-      ))}
-    </ul>
+    <>
+      <p className="mb-3 text-sm text-muted-foreground">Some tools depend on this office&apos;s setup.</p>
+      <ul aria-label="Agent tools" className="border-t">
+        {tools.map((tool) => (
+          <li key={tool.label} className="flex min-h-11 items-center gap-3 border-b py-2">
+            <tool.icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 whitespace-nowrap text-sm font-medium">{tool.label}</span>
+            {tool.optional && <span className="text-xs text-muted-foreground">Optional</span>}
+          </li>
+        ))}
+      </ul>
+    </>
   )
 }
