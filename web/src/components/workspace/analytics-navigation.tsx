@@ -6,7 +6,9 @@ import {
   Clock3Icon,
   CoinsIcon,
   ListChecksIcon,
+  LayoutDashboardIcon,
   PhoneIcon,
+  ScaleIcon,
   ChartNoAxesColumnIncreasingIcon,
   UsersIcon,
   WrenchIcon,
@@ -21,14 +23,15 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
-export type CommandCenterPage = "calls" | "overview" | "breakdowns" | "tools" | "cost" | "review"
+export type CommandCenterPage = "calls" | "overview" | "breakdowns" | "tools" | "cost" | "review" | "judges"
 
 export const commandCenterPages: Array<{ value: CommandCenterPage; label: string; icon: typeof PhoneIcon }> = [
   { value: "calls", label: "Calls", icon: PhoneIcon },
-  { value: "overview", label: "Overview", icon: ChartNoAxesCombinedIcon },
+  { value: "overview", label: "Summary", icon: LayoutDashboardIcon },
   { value: "breakdowns", label: "Breakdowns", icon: ChartNoAxesColumnIncreasingIcon },
   { value: "tools", label: "Tools", icon: WrenchIcon },
   { value: "cost", label: "Cost", icon: CoinsIcon },
+  { value: "judges", label: "Judges", icon: ScaleIcon },
   { value: "review", label: "Review", icon: ListChecksIcon },
 ]
 

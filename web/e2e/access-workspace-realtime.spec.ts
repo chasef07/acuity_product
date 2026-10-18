@@ -474,7 +474,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     const analyticsRegion = operatorPage.getByRole("region", {
       name: "Command Center",
     })
-    await selectCommandCenterPage(operatorPage, "Overview")
+    await selectCommandCenterPage(operatorPage, "Summary")
     await expect(analyticsRegion.getByText("Total calls")).toBeVisible()
     await expect(analyticsRegion.getByRole("region", { name: "Overall stats" }).getByText("42", { exact: true })).toBeVisible()
     await expect(analyticsRegion.getByText("Booked appointments", { exact: true })).toBeVisible()

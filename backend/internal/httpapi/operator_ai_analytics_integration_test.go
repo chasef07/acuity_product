@@ -299,6 +299,15 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		firstPage.Summary.Quality.EvaluatedCalls+firstPage.Summary.Quality.UnevaluatedCalls != 2 {
 		t.Fatalf("operator analytics summary = %#v", firstPage.Summary)
 	}
+	judges := firstPage.Summary.Judges
+	if judges == nil || judges.TotalCalls != 2 || judges.ReportedCalls != 0 || judges.UnavailableCalls != 2 || judges.Version != interaction.ScorecardJudgeVersion || judges.YesAbove != 0.4 || len(judges.Questions) != 6 || judges.Models == nil || judges.Lineups == nil || judges.Pairs == nil {
+		t.Fatalf("missing judge evidence must remain explicit: %+v", judges)
+	}
+	for _, question := range judges.Questions {
+		if question.Key == "" || question.Question == "" || question.Yes == "" || question.No == "" || question.Pairs == nil {
+			t.Fatalf("judge criteria missing: %+v", question)
+		}
+	}
 	distributions := firstPage.Summary.Distributions
 	if distributions == nil || distributions.TotalCalls != 2 || distributions.Intents == nil || distributions.Outcomes == nil || distributions.Failures == nil ||
 		len(distributions.Intents) != 0 || len(distributions.Outcomes) != 0 || len(distributions.Failures) != 0 ||
@@ -518,6 +527,7 @@ type operatorAIInteractionFixture struct {
 
 type operatorAIAnalyticsTestPage struct {
 	Summary *struct {
+		Judges        *api.OperatorAIAnalyticsJudges        `json:"judges"`
 		Distributions *api.OperatorAIAnalyticsDistributions `json:"distributions"`
 		Daily         []struct {
 			BookingCount      *int     `json:"bookingCount"`

@@ -60,6 +60,7 @@ func analyticsDays(from, through time.Time) []AnalyticsDay {
 }
 
 type AnalyticsSummary struct {
+	Judges            AnalyticsJudges
 	Distributions     AnalyticsDistributions
 	Daily             []AnalyticsDay
 	Diagnostics       AnalyticsDiagnostics
@@ -308,6 +309,7 @@ func queryAnalyticsSummary(
 	summary.quality = newQualityAccumulator(summary.Daily)
 	summary.versions = versions
 	distributions := newDistributionAccumulator()
+	judges := newJudgeAccumulator()
 	dailyDistributions := map[string]*distributionAccumulator{}
 	for _, day := range summary.Daily {
 		dailyDistributions[day.Date] = newDistributionAccumulator()
@@ -346,6 +348,7 @@ func queryAnalyticsSummary(
 		projectAnalyticsEvidence(&projection)
 		projection.quality.startedAt = projection.call.StartedAt
 		projection.quality.evaluation = readEvaluation(evaluation)
+		judges.add(evaluation)
 		projection.quality.footprint = contextFootprint(footprint)
 		projection.quality.usage = callTokenUsage(usage)
 		projection.versions.values = map[string]string{}
@@ -363,6 +366,7 @@ func queryAnalyticsSummary(
 		return AnalyticsSummary{}, fmt.Errorf("iterate operator AI analytics summary: %w", err)
 	}
 	finalizeAnalyticsSummary(&summary)
+	summary.Judges = judges.finish()
 	summary.Distributions = AnalyticsDistributions{AnalyticsDistributionCounts: distributions.finish(), Daily: []AnalyticsDistributionDay{}}
 	for _, day := range summary.Daily {
 		summary.Distributions.Daily = append(summary.Distributions.Daily, AnalyticsDistributionDay{Date: day.Date, AnalyticsDistributionCounts: dailyDistributions[day.Date].finish()})

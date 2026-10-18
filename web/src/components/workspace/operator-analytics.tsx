@@ -16,6 +16,7 @@ import {
   type DiagnosticFocus,
   type SelectDiagnostic,
 } from "@/components/analytics/ai-diagnostics"
+import { OperatorJudges } from "./operator-judges"
 import { OverviewTrend } from "./overview-trend"
 import { BreakdownControls, CallBreakdowns, initialBreakdownSelection, type BreakdownSelection } from "./call-breakdowns"
 import { CostOverview } from "@/components/analytics/cost-overview"
@@ -245,6 +246,7 @@ function AnalyticsReady({
     <>
       {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
       {tab === "breakdowns" && <CallBreakdowns data={data.summary.distributions} selection={breakdownSelection} onSelection={onBreakdownSelection} onRetry={onRetry} />}
+      {tab === "judges" && <OperatorJudges report={data.summary.judges} onRetry={onRetry} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
       {tab === "calls" && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">

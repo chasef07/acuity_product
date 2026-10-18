@@ -20,7 +20,7 @@ export async function openAgentPage(page: Page, name: string) {
   }).toPass({ timeout: 10_000 })
 }
 
-export async function selectCommandCenterPage(page: Page, name: "Calls" | "Overview" | "Breakdowns" | "Tools" | "Cost" | "Review") {
+export async function selectCommandCenterPage(page: Page, name: "Calls" | "Summary" | "Breakdowns" | "Tools" | "Cost" | "Review" | "Judges") {
   const commandCenter = page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name: "Command Center", exact: true })
   const destination = page.getByRole("navigation", { name: "Command Center", exact: true }).getByRole("button", { name, exact: true })
   await expect(async () => {

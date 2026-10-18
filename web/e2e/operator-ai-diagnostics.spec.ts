@@ -202,7 +202,7 @@ test("Command Center connects measured distributions and tool failures to exact 
     await expect(diagnostics.getByRole("columnheader", { name: /P50/ })).toHaveCount(0)
     await expect(diagnostics.getByRole("table").locator("tbody tr")).toHaveCount(50)
 
-    await selectCommandCenterPage(page, "Overview")
+    await selectCommandCenterPage(page, "Summary")
     const overview = diagnostics.getByRole("region", { name: "Overall stats" })
     const metric = (label: string) => overview.locator("dl > div").filter({ has: page.getByText(label, { exact: true }) }).locator("dd").first()
     await expect(metric("Total calls")).toHaveText("70")
@@ -213,7 +213,7 @@ test("Command Center connects measured distributions and tool failures to exact 
     await expect(diagnostics.getByRole("group", { name: "Show version changes" })).toHaveCount(0)
     await expect(diagnostics.getByRole("img", { name: "Total calls over time" })).toBeVisible()
     await expect(diagnostics.getByText("Last 7 days", { exact: true })).toHaveCount(1)
-    await expect(page.getByRole("navigation", { name: "Current location" })).toHaveText("Command CenterOverview")
+    await expect(page.getByRole("navigation", { name: "Current location" })).toHaveText("Command CenterSummary")
     await page.screenshot({ path: testInfo.outputPath("command-center-overview.png"), fullPage: true, animations: "disabled" })
     await page.setViewportSize({ width: 390, height: 844 })
     await expect(overview).toBeVisible()

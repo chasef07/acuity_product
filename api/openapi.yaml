@@ -4742,6 +4742,7 @@ components:
           type: array
           description: All UTC dates in the full selected range, including dates without calls; independent of call pagination.
           items: {$ref: "#/components/schemas/OperatorAIAnalyticsDay"}
+        judges: {$ref: "#/components/schemas/OperatorAIAnalyticsJudges"}
         distributions: {$ref: "#/components/schemas/OperatorAIAnalyticsDistributions"}
         diagnostics: {$ref: "#/components/schemas/OperatorAIAnalyticsDiagnostics"}
         quality: {$ref: "#/components/schemas/OperatorAIAnalyticsQuality"}
@@ -4781,6 +4782,106 @@ components:
           format: double
           minimum: 0
           maximum: 1
+    OperatorAIAnalyticsJudges:
+      type: object
+      additionalProperties: false
+      required: [version, totalCalls, reportedCalls, unavailableCalls, models, lineups, questions, pairs, yesAbove]
+      description: Read-only observed judge evidence for the full selected practice, location, and date window, independent of pagination and intent, outcome, or failure filters. Includes only current v8 reports with complete or incomplete status and a unique, nonempty roster of nonblank model identifiers. Observed models and lineups are historical evidence, not a claim about current deployment configuration. Only current catalog boolean judge questions are counted; numerical sentiment is excluded.
+      properties:
+        version: {type: string}
+        totalCalls: {type: integer, minimum: 0}
+        reportedCalls:
+          type: integer
+          minimum: 0
+          description: Calls with a supported report envelope. Individual questions may still be missing, invalid, or inapplicable.
+        unavailableCalls:
+          type: integer
+          minimum: 0
+          description: Calls excluded for missing, malformed, or unsupported-version reports; totalCalls minus reportedCalls.
+        models:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIJudgeModel"}
+        lineups:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIJudgeLineup"}
+        questions:
+          type: array
+          description: Current boolean judge criteria with question-specific evidence. Status counts cover reportedCalls; excluded report envelopes do not enter question counts.
+          items: {$ref: "#/components/schemas/OperatorAIJudgeQuestion"}
+        pairs:
+          type: array
+          description: Model-pair comparisons summed across eligible boolean questions. A call can contribute several comparisons for the same pair. Includes valid observations from partial no-quorum reports; absent or invalid votes never count as disagreements.
+          items: {$ref: "#/components/schemas/OperatorAIJudgePair"}
+        yesAbove:
+          type: number
+          format: double
+          description: A model votes yes only when its valid probability is strictly greater than this threshold. Consensus is majority yes/no; a tie uses whether the mean valid probability is strictly above this threshold.
+    OperatorAIJudgeModel:
+      type: object
+      additionalProperties: false
+      required: [model, votes, missingVotes]
+      properties:
+        model: {type: string}
+        votes:
+          type: integer
+          minimum: 0
+          description: Valid probabilities from this roster model over attempted boolean question opportunities.
+        missingVotes:
+          type: integer
+          minimum: 0
+          description: Attempted boolean question opportunities in reports listing this model where its vote is missing or invalid. Unknown, not-applicable, and unavailable questions without a recognizable vote map create no opportunity.
+    OperatorAIJudgeLineup:
+      type: object
+      additionalProperties: false
+      required: [models, requiredVotes, calls]
+      properties:
+        models: {type: array, items: {type: string}}
+        requiredVotes:
+          type: integer
+          minimum: 1
+          description: Floor of the observed roster size divided by two, plus one.
+        calls: {type: integer, minimum: 0}
+    OperatorAIJudgePair:
+      type: object
+      additionalProperties: false
+      required: [left, right, compared, agreed, disagreed]
+      description: Canonically sorted model identifiers. One comparison requires two finite probabilities within 0 through 1 on the same call and question, both from the report roster. agreed plus disagreed equals compared; agreement rate is agreed divided by compared. Pairs without shared valid votes are omitted.
+      properties:
+        left: {type: string}
+        right: {type: string}
+        compared: {type: integer, minimum: 0}
+        agreed: {type: integer, minimum: 0}
+        disagreed: {type: integer, minimum: 0}
+    OperatorAIJudgeQuestion:
+      type: object
+      additionalProperties: false
+      required: [key, label, prompt, question, yes, no, attempted, quorumMet, noQuorum, unknown, notApplicable, unavailable, pairs]
+      description: Current catalog criteria. quorumMet, noQuorum, unknown, notApplicable, and unavailable are mutually exclusive and sum to reportedCalls. attempted is a separate count of recognized result or no_quorum vote maps, including maps whose malformed consensus is unavailable. Valid model observations remain comparable even when the stored consensus is unavailable.
+      properties:
+        key: {type: string}
+        label: {type: string}
+        prompt: {type: string}
+        question: {type: string}
+        yes: {type: string}
+        no: {type: string}
+        attempted: {type: integer, minimum: 0}
+        quorumMet:
+          type: integer
+          minimum: 0
+          description: Successful results with enough valid roster votes, a valid consensus probability, and a stored verdict consistent with majority and tie-break rules.
+        noQuorum:
+          type: integer
+          minimum: 0
+          description: Explicit no_quorum errors whose valid roster vote count is below the required count.
+        unknown: {type: integer, minimum: 0}
+        notApplicable: {type: integer, minimum: 0}
+        unavailable:
+          type: integer
+          minimum: 0
+          description: Missing or malformed question results, unrecognized errors, or contradictory quorum/verdict evidence in supported reports.
+        pairs:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIJudgePair"}
     OperatorAIAnalyticsDistributions:
       allOf:
         - $ref: "#/components/schemas/OperatorAIAnalyticsDistributionCounts"

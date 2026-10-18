@@ -3401,6 +3401,7 @@ func operatorAIAnalyticsPageResponse(
 			return api.OperatorAIAnalyticsPage{}, err
 		}
 		response.Summary = &api.OperatorAIAnalyticsSummary{
+			Judges:            analyticsJudgesResponse(page.Summary.Judges),
 			Distributions:     analyticsDistributionsResponse(page.Summary.Distributions),
 			Daily:             make([]api.OperatorAIAnalyticsDay, 0, len(page.Summary.Daily)),
 			Diagnostics:       analyticsDiagnosticsResponse(page.Summary.Diagnostics),

@@ -40,7 +40,7 @@ export function OverviewTrend({ days }: { days: OperatorAiAnalyticsDay[] }) {
     ? value.toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })
     : `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}${metric === "average" ? " min" : ""}`
   return (
-    <Card role="region" aria-label="Overview trend" className="mt-5">
+    <Card role="region" aria-label="Summary trend" className="mt-5">
       <CardHeader>
         <CardTitle>Over time</CardTitle>
         <CardDescription>{selected.label}{metric === "average" || percent ? " · Days without a denominator have no bar." : ""}</CardDescription>
