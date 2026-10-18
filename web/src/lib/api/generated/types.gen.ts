@@ -1373,6 +1373,11 @@ export type OperatorAiAnalyticsQueryRequest = {
 };
 
 export type OperatorAiAnalyticsDay = {
+    bookingCount?: number;
+    cancellationCount?: number;
+    rescheduleCount?: number;
+    toolCallCount?: number;
+    toolErrorCount?: number;
     /**
      * UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
      */
@@ -1397,6 +1402,7 @@ export type OperatorAiAnalyticsSummary = {
      * All UTC dates in the full selected range, including dates without calls; independent of call pagination.
      */
     daily: Array<OperatorAiAnalyticsDay>;
+    distributions?: OperatorAiAnalyticsDistributions;
     diagnostics?: OperatorAiAnalyticsDiagnostics;
     quality: OperatorAiAnalyticsQuality;
     versions: OperatorAiAnalyticsVersions;
@@ -1410,6 +1416,74 @@ export type OperatorAiAnalyticsSummary = {
     toolCallCount: number;
     toolErrorCount: number;
     toolFailureRate: number;
+};
+
+export type OperatorAiAnalyticsDistributions = OperatorAiAnalyticsDistributionCounts & {
+    /**
+     * Every UTC date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
+     */
+    daily: Array<OperatorAiAnalyticsDistributionDay>;
+};
+
+export type OperatorAiAnalyticsDistributionDay = OperatorAiAnalyticsDistributionCounts & {
+    /**
+     * UTC calendar date in YYYY-MM-DD format.
+     */
+    date: string;
+};
+
+/**
+ * Full practice, location, and date-window distributions, independent of call pagination and table filters. Only observed categories are returned, ordered by descending calls then category key. Intent and outcome counts retain valid partial classifications regardless of labeling status; each distribution plus its unlabeled count equals totalCalls.
+ */
+export type OperatorAiAnalyticsDistributionCounts = {
+    intents: Array<OperatorAiIntentCount>;
+    outcomes: Array<OperatorAiOutcomeCount>;
+    /**
+     * Distinct calls per eligible failure judge question, collapsed across scorecard versions v6-v8 using the same catalog and normalized judge answers as failuresOnly and failingJudge. An explicit false answer is a failure. A call may appear in multiple categories; category shares use the sum of these counts.
+     */
+    failures: Array<OperatorAiFailureCount>;
+    /**
+     * Calls without a persisted intent, including missing or partial classifications.
+     */
+    unlabeledIntentCalls: number;
+    /**
+     * Calls without a persisted outcome, including missing or partial classifications.
+     */
+    unlabeledOutcomeCalls: number;
+    /**
+     * Distinct calls with at least one persisted boolean judge answer for an eligible failure question in its v6-v8 catalog. Does not imply every question was evaluated. Context questions, code answers, older numeric scorecards, unknown answers, and not-applicable answers are excluded.
+     */
+    evaluatedCalls: number;
+    /**
+     * Distinct calls with at least one eligible explicit false judge answer.
+     */
+    failedCalls: number;
+    /**
+     * totalCalls minus evaluatedCalls; absence of usable failure-judge evidence is not a passing result.
+     */
+    unevaluatedCalls: number;
+};
+
+export type OperatorAiIntentCount = {
+    intent: CallIntent;
+    calls: number;
+};
+
+export type OperatorAiOutcomeCount = {
+    outcome: CallOutcome;
+    calls: number;
+};
+
+export type OperatorAiFailureCount = {
+    /**
+     * Eligible failure question key, accepted by the failingJudge filter.
+     */
+    key: string;
+    /**
+     * Question label from the newest supported scorecard catalog containing this key.
+     */
+    label: string;
+    calls: number;
 };
 
 export type OperatorAiCheckFlagCount = {

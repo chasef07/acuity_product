@@ -7,7 +7,7 @@ import {
   CoinsIcon,
   ListChecksIcon,
   PhoneIcon,
-  ShieldCheckIcon,
+  ChartNoAxesColumnIncreasingIcon,
   UsersIcon,
   WrenchIcon,
   type LucideIcon,
@@ -21,12 +21,12 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
-export type CommandCenterPage = "calls" | "overview" | "quality" | "tools" | "cost" | "review"
+export type CommandCenterPage = "calls" | "overview" | "breakdowns" | "tools" | "cost" | "review"
 
 export const commandCenterPages: Array<{ value: CommandCenterPage; label: string; icon: typeof PhoneIcon }> = [
   { value: "calls", label: "Calls", icon: PhoneIcon },
   { value: "overview", label: "Overview", icon: ChartNoAxesCombinedIcon },
-  { value: "quality", label: "Quality", icon: ShieldCheckIcon },
+  { value: "breakdowns", label: "Breakdowns", icon: ChartNoAxesColumnIncreasingIcon },
   { value: "tools", label: "Tools", icon: WrenchIcon },
   { value: "cost", label: "Cost", icon: CoinsIcon },
   { value: "review", label: "Review", icon: ListChecksIcon },

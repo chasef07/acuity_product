@@ -16,13 +16,8 @@ import {
   type DiagnosticFocus,
   type SelectDiagnostic,
 } from "@/components/analytics/ai-diagnostics"
-import { DiagnosticsQuality } from "@/components/analytics/agent-quality"
-import {
-  defaultVersionSelection,
-  VersionToolbar,
-  type VersionSelection,
-  type VersionView,
-} from "@/components/analytics/version-markers"
+import { OverviewTrend } from "./overview-trend"
+import { CallBreakdowns } from "./call-breakdowns"
 import { CostOverview } from "@/components/analytics/cost-overview"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -51,7 +46,6 @@ import {
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { PendingCallIssues } from "@/components/workspace/call-issue-review"
 import { CallReviewWorkspace } from "@/components/workspace/call-review"
-import { ImprovementTrend } from "@/components/workspace/scorecard-overview"
 import { CallLabel, CallLabelFilters, CallLabels, type IntentFilter, type OutcomeFilter } from "./call-labels"
 import { CallFailureFilter } from "./call-failure-filter"
 import type {
@@ -59,7 +53,6 @@ import type {
   OperatorAiAnalyticsRange,
   OperatorAiAnalyticsSummary,
   OperatorAiCallAnalytics,
-  Location,
 } from "@/lib/api/generated/types.gen"
 import {
   type AiCallAnalytics,
@@ -86,20 +79,17 @@ export function OperatorAnalytics({
   revision = 0,
   practiceID,
   locationScopeID,
-  locations,
 }: {
   tab: AnalyticsTab
   revision?: number
   practiceID: string
   locationScopeID: string
-  locations: Location[]
 }) {
   const locationID = locationScopeID
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("24h")
   const [intent, setIntent] = useState<IntentFilter>("all")
   const [outcome, setOutcome] = useState<OutcomeFilter>("all")
   const [judgeFlag, setJudgeFlag] = useState("any")
-  const [versionSelection, setVersionSelection] = useState<VersionSelection>(defaultVersionSelection)
   const costView = tab === "cost"
   const reviewView = tab === "review"
   const [requestVersion, setRequestVersion] = useState(0)
@@ -156,8 +146,8 @@ export function OperatorAnalytics({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-background">
         <h1 className="sr-only">{commandCenterPages.find((item) => item.value === tab)!.label}</h1>
         <main className="mx-auto w-full max-w-[1320px] p-4 sm:p-6">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-            <p className="text-[13px] font-medium">{reviewView ? "Daily call review and golden set" : ranges.find((item) => item.value === range)!.label}</p>
+          <div className="mb-5 flex flex-wrap items-center justify-end gap-4">
+            {reviewView && <p className="mr-auto text-[13px] font-medium">Daily call review and golden set</p>}
             {!reviewView && <div className="flex min-w-0 flex-wrap items-center gap-3">
             <OptionSelect label="Date range" value={range} items={ranges} onChange={setRange} />
             {tab === "calls" && <>
@@ -196,18 +186,11 @@ export function OperatorAnalytics({
                 onSelect={selectCall}
               />
             )}
-            {tab === "quality" && (
-              <div className="mb-4">
-                <ImprovementTrend practiceID={practiceID} locationID={locationID} range={range} />
-              </div>
-            )}
             {currentRequest.state === "ready" && currentRequest.data && (
               <AnalyticsReady
                 key={requestKey}
                 data={currentRequest.data}
-                locations={locations}
-                versionSelection={versionSelection}
-                onVersionSelectionChange={setVersionSelection}
+                onRetry={() => setRequestVersion((current) => current + 1)}
                 tab={tab}
                 range={range}
                 nextPageState={nextPageState}
@@ -235,9 +218,7 @@ export function OperatorAnalytics({
 
 function AnalyticsReady({
   data,
-  locations,
-  versionSelection,
-  onVersionSelectionChange,
+  onRetry,
   tab,
   range,
   nextPageState,
@@ -245,27 +226,17 @@ function AnalyticsReady({
   onSelect,
 }: {
   data: AiCallAnalytics
-  locations: Location[]
-  versionSelection: VersionSelection
-  onVersionSelectionChange: (selection: VersionSelection) => void
+  onRetry: () => void
   tab: AnalyticsTab
   range: OperatorAiAnalyticsRange
   nextPageState: AnalyticsNextPageState
   onLoadNextPage: () => void
   onSelect: SelectDiagnostic
 }) {
-  const versionView: VersionView = {
-    versions: data.summary.versions,
-    selection: versionSelection,
-    locations,
-  }
   return (
     <>
-      {tab === "quality" && (
-        <VersionToolbar view={versionView} onChange={onVersionSelectionChange} />
-      )}
       {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
-      {tab === "quality" && <DiagnosticsQuality summary={data.summary} versionView={versionView} />}
+      {tab === "breakdowns" && <CallBreakdowns data={data.summary.distributions} totalCalls={data.summary.totalCalls} onRetry={onRetry} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
       {tab === "calls" && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
@@ -317,6 +288,7 @@ function AnalyticsOverview({ summary }: { summary: OperatorAiAnalyticsSummary })
           </div>
         ))}
       </dl>
+      <OverviewTrend days={summary.daily} />
     </section>
   )
 }

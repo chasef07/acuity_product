@@ -411,7 +411,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                 tab={commandCenterPage}
                 practiceID={state.scope.practiceID}
                 locationScopeID={state.scope.locationScopeID}
-                locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
               />
             ) : view === "engagement" && selectedEngagement ? (
               <div className="relative flex min-h-0 flex-1 bg-background">

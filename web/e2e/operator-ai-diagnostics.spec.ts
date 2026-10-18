@@ -211,7 +211,8 @@ test("Command Center connects measured distributions and tool failures to exact 
     await expect(metric("Transfer rate")).toHaveText("50%")
     await expect(overview.locator("dt")).toHaveCount(8)
     await expect(diagnostics.getByRole("group", { name: "Show version changes" })).toHaveCount(0)
-    await expect(diagnostics.locator(".recharts-surface")).toHaveCount(0)
+    await expect(diagnostics.getByRole("img", { name: "Total calls over time" })).toBeVisible()
+    await expect(diagnostics.getByText("Last 7 days", { exact: true })).toHaveCount(1)
     await expect(page.getByRole("navigation", { name: "Current location" })).toHaveText("Command CenterOverview")
     await page.screenshot({ path: testInfo.outputPath("command-center-overview.png"), fullPage: true, animations: "disabled" })
     await page.setViewportSize({ width: 390, height: 844 })
@@ -317,36 +318,13 @@ test("Command Center connects measured distributions and tool failures to exact 
     })
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.setViewportSize({ width: 1440, height: 1320 })
-    await selectCommandCenterPage(page, "Quality")
-    await expect(
-      diagnostics.getByText("2 of 2 evaluated calls · 68 not evaluated"),
-    ).toBeVisible()
-    const redFlagVersions = diagnostics
-      .getByRole("region", { name: "Red flags over time" })
-      .getByRole("list", { name: "Version changes" })
-    await expect(redFlagVersions).toContainText("evaluator trace-v4")
-    await expect(redFlagVersions.getByRole("listitem")).toHaveAttribute("data-measurement", "true")
-    await expect(
-      diagnostics
-        .getByRole("region", { name: "Tokens per call over time" })
-        .getByRole("list", { name: "Version changes" }),
-    ).toHaveCount(0)
-    const checks = diagnostics.getByRole("region", { name: "Red flags by check" })
-    await expect(checks.getByText("Conversation responsive", { exact: true })).toBeVisible()
-    await expect(checks.getByText("Factual claims supported", { exact: true })).toBeVisible()
-    await expect(
-      diagnostics.getByText("No calls in this range reported a context footprint."),
-    ).toBeVisible()
-    await expect(
-      diagnostics
-        .getByRole("region", { name: "Caller sentiment over time" })
-        .locator(".recharts-bar-rectangle"),
-    ).not.toHaveCount(0)
-    await page.screenshot({
-      path: testInfo.outputPath("quality.png"),
-      fullPage: true,
-      animations: "disabled",
-    })
+    await selectCommandCenterPage(page, "Breakdowns")
+    await expect(diagnostics.getByRole("region", { name: "Intents", exact: true })).toContainText("70 calls · share of all calls")
+    await diagnostics.getByRole("button", { name: "Outcomes", exact: true }).click()
+    await expect(diagnostics.getByRole("region", { name: "Outcomes", exact: true })).toContainText("Unlabeled")
+    await diagnostics.getByRole("button", { name: "Judge failures", exact: true }).click()
+    await expect(diagnostics.getByRole("region", { name: "Judge failures", exact: true })).toContainText("No evaluated calls")
+    await expect(diagnostics.getByRole("group", { name: "Show version changes" })).toHaveCount(0)
     await selectCommandCenterPage(page, "Tools")
     await expect(
       diagnostics.getByText("345 of 420 executions timed"),

@@ -4694,6 +4694,11 @@ components:
       additionalProperties: false
       required: [date, totalCalls, callMinutes, transferCount]
       properties:
+        bookingCount: {type: integer, minimum: 0}
+        cancellationCount: {type: integer, minimum: 0}
+        rescheduleCount: {type: integer, minimum: 0}
+        toolCallCount: {type: integer, minimum: 0}
+        toolErrorCount: {type: integer, minimum: 0}
         date:
           type: string
           description: UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
@@ -4737,6 +4742,7 @@ components:
           type: array
           description: All UTC dates in the full selected range, including dates without calls; independent of call pagination.
           items: {$ref: "#/components/schemas/OperatorAIAnalyticsDay"}
+        distributions: {$ref: "#/components/schemas/OperatorAIAnalyticsDistributions"}
         diagnostics: {$ref: "#/components/schemas/OperatorAIAnalyticsDiagnostics"}
         quality: {$ref: "#/components/schemas/OperatorAIAnalyticsQuality"}
         versions: {$ref: "#/components/schemas/OperatorAIAnalyticsVersions"}
@@ -4775,6 +4781,84 @@ components:
           format: double
           minimum: 0
           maximum: 1
+    OperatorAIAnalyticsDistributions:
+      allOf:
+        - $ref: "#/components/schemas/OperatorAIAnalyticsDistributionCounts"
+        - type: object
+          required: [daily]
+          properties:
+            daily:
+              type: array
+              description: Every UTC date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
+              items: {$ref: "#/components/schemas/OperatorAIAnalyticsDistributionDay"}
+    OperatorAIAnalyticsDistributionDay:
+      allOf:
+        - $ref: "#/components/schemas/OperatorAIAnalyticsDistributionCounts"
+        - type: object
+          required: [date]
+          properties:
+            date: {type: string, description: UTC calendar date in YYYY-MM-DD format.}
+    OperatorAIAnalyticsDistributionCounts:
+      type: object
+      required: [intents, outcomes, failures, unlabeledIntentCalls, unlabeledOutcomeCalls, evaluatedCalls, failedCalls, unevaluatedCalls]
+      description: Full practice, location, and date-window distributions, independent of call pagination and table filters. Only observed categories are returned, ordered by descending calls then category key. Intent and outcome counts retain valid partial classifications regardless of labeling status; each distribution plus its unlabeled count equals totalCalls.
+      properties:
+        intents:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIIntentCount"}
+        outcomes:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIOutcomeCount"}
+        failures:
+          type: array
+          description: Distinct calls per eligible failure judge question, collapsed across scorecard versions v6-v8 using the same catalog and normalized judge answers as failuresOnly and failingJudge. An explicit false answer is a failure. A call may appear in multiple categories; category shares use the sum of these counts.
+          items: {$ref: "#/components/schemas/OperatorAIFailureCount"}
+        unlabeledIntentCalls:
+          type: integer
+          minimum: 0
+          description: Calls without a persisted intent, including missing or partial classifications.
+        unlabeledOutcomeCalls:
+          type: integer
+          minimum: 0
+          description: Calls without a persisted outcome, including missing or partial classifications.
+        evaluatedCalls:
+          type: integer
+          minimum: 0
+          description: Distinct calls with at least one persisted boolean judge answer for an eligible failure question in its v6-v8 catalog. Does not imply every question was evaluated. Context questions, code answers, older numeric scorecards, unknown answers, and not-applicable answers are excluded.
+        failedCalls:
+          type: integer
+          minimum: 0
+          description: Distinct calls with at least one eligible explicit false judge answer.
+        unevaluatedCalls:
+          type: integer
+          minimum: 0
+          description: totalCalls minus evaluatedCalls; absence of usable failure-judge evidence is not a passing result.
+    OperatorAIIntentCount:
+      type: object
+      additionalProperties: false
+      required: [intent, calls]
+      properties:
+        intent: {$ref: "#/components/schemas/CallIntent"}
+        calls: {type: integer, minimum: 0}
+    OperatorAIOutcomeCount:
+      type: object
+      additionalProperties: false
+      required: [outcome, calls]
+      properties:
+        outcome: {$ref: "#/components/schemas/CallOutcome"}
+        calls: {type: integer, minimum: 0}
+    OperatorAIFailureCount:
+      type: object
+      additionalProperties: false
+      required: [key, label, calls]
+      properties:
+        key:
+          type: string
+          description: Eligible failure question key, accepted by the failingJudge filter.
+        label:
+          type: string
+          description: Question label from the newest supported scorecard catalog containing this key.
+        calls: {type: integer, minimum: 0}
     OperatorAICheckFlagCount:
       type: object
       additionalProperties: false

@@ -3401,6 +3401,7 @@ func operatorAIAnalyticsPageResponse(
 			return api.OperatorAIAnalyticsPage{}, err
 		}
 		response.Summary = &api.OperatorAIAnalyticsSummary{
+			Distributions:     analyticsDistributionsResponse(page.Summary.Distributions),
 			Daily:             make([]api.OperatorAIAnalyticsDay, 0, len(page.Summary.Daily)),
 			Diagnostics:       analyticsDiagnosticsResponse(page.Summary.Diagnostics),
 			Quality:           analyticsQualityResponse(page.Summary.Quality),
@@ -3417,7 +3418,7 @@ func operatorAIAnalyticsPageResponse(
 			ToolFailureRate:   page.Summary.ToolFailureRate,
 		}
 		for _, day := range page.Summary.Daily {
-			response.Summary.Daily = append(response.Summary.Daily, api.OperatorAIAnalyticsDay{Date: day.Date, TotalCalls: day.TotalCalls, CallMinutes: day.CallMinutes, TransferCount: day.TransferCount, TransferRate: day.TransferRate})
+			response.Summary.Daily = append(response.Summary.Daily, api.OperatorAIAnalyticsDay{BookingCount: &day.BookingCount, CancellationCount: &day.CancellationCount, RescheduleCount: &day.RescheduleCount, ToolCallCount: &day.ToolCallCount, ToolErrorCount: &day.ToolErrorCount, Date: day.Date, TotalCalls: day.TotalCalls, CallMinutes: day.CallMinutes, TransferCount: day.TransferCount, TransferRate: day.TransferRate})
 		}
 	}
 	for _, call := range page.Calls {
