@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.42.2](https://github.com/chasef07/acuity_product/compare/v1.42.1...v1.42.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* **ci:** sync generated API and inline Home date tests ([#502](https://github.com/chasef07/acuity_product/issues/502)) ([c7090ab](https://github.com/chasef07/acuity_product/commit/c7090ab3a4dc2772fadc4cfd8b224cf5ab0f8204))
+* simplify staff call details and workspace headers ([#501](https://github.com/chasef07/acuity_product/issues/501)) ([c2c9654](https://github.com/chasef07/acuity_product/commit/c2c965459daadaf3107e130fafe7c029436dc79d))
+
 ## [1.42.1](https://github.com/chasef07/acuity_product/compare/v1.42.0...v1.42.1) (2026-10-17)
 
 
