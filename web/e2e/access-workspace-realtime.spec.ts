@@ -475,16 +475,17 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       name: "Command Center",
     })
     await selectCommandCenterPage(operatorPage, "Summary")
-    await expect(analyticsRegion.getByText("Total calls")).toBeVisible()
-    await expect(analyticsRegion.getByRole("region", { name: "Overall stats" }).getByText("42", { exact: true })).toBeVisible()
-    await expect(analyticsRegion.getByText("Booked appointments", { exact: true })).toBeVisible()
-    await expect(analyticsRegion.getByText("8", { exact: true })).toBeVisible()
-    await expect(analyticsRegion.getByText("Cancelled appointments", { exact: true })).toBeVisible()
-    await expect(analyticsRegion.getByText("3", { exact: true })).toBeVisible()
+    const totals = analyticsRegion.getByRole("region", { name: "Overall stats", exact: true }).locator("dl").first()
+    await expect(totals.getByText("Total calls")).toBeVisible()
+    await expect(totals.getByText("42", { exact: true })).toBeVisible()
+    await expect(totals.getByText("Booked appointments", { exact: true })).toBeVisible()
+    await expect(totals.getByText("8", { exact: true })).toBeVisible()
+    await expect(totals.getByText("Cancelled appointments", { exact: true })).toBeVisible()
+    await expect(totals.getByText("3", { exact: true })).toBeVisible()
     await expect(
-      analyticsRegion.getByText("Rescheduled appointments", { exact: true }),
+      totals.getByText("Rescheduled appointments", { exact: true }),
     ).toBeVisible()
-    await expect(analyticsRegion.getByText("4", { exact: true })).toBeVisible()
+    await expect(totals.getByText("4", { exact: true })).toBeVisible()
     await expect
       .poll(() =>
         operatorPage.evaluate(

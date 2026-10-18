@@ -49,7 +49,7 @@ test("diagnostic and human scorecards connect intent and outcome to failures wit
     await diagnostics.getByRole("combobox", { name: "Date range", exact: true }).click()
     await page.getByRole("option", { name: "Last 7 days", exact: true }).click()
     const navigation = page.getByRole("navigation", { name: "Command Center", exact: true })
-    await expect(navigation.getByRole("button")).toHaveCount(6)
+    await expect(navigation.getByRole("button")).toHaveText(["Calls", "Summary", "Breakdowns", "Tools", "Cost", "Judges", "Review"])
     await expect(navigation.getByRole("button", { name: "Calls", exact: true })).toHaveAttribute("aria-current", "page")
     await expect(diagnostics.getByRole("combobox", { name: "Judge flags", exact: true })).toContainText("Any judge failure")
     await expect(diagnostics.getByRole("table").locator("tbody tr")).toHaveCount(1)
