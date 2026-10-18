@@ -117,8 +117,9 @@ func analyticsVersionsResponse(value interaction.AnalyticsVersions) (api.Operato
 func analyticsDistributionsResponse(value interaction.AnalyticsDistributions) *api.OperatorAIAnalyticsDistributions {
 	counts := analyticsDistributionDayResponse("", value.AnalyticsDistributionCounts)
 	result := &api.OperatorAIAnalyticsDistributions{
-		Daily:   make([]api.OperatorAIAnalyticsDistributionDay, 0, len(value.Daily)),
-		Intents: counts.Intents, Outcomes: counts.Outcomes, Failures: counts.Failures,
+		TotalCalls: counts.TotalCalls,
+		Daily:      make([]api.OperatorAIAnalyticsDistributionDay, 0, len(value.Daily)),
+		Intents:    counts.Intents, Outcomes: counts.Outcomes, Failures: counts.Failures,
 		UnlabeledIntentCalls: counts.UnlabeledIntentCalls, UnlabeledOutcomeCalls: counts.UnlabeledOutcomeCalls,
 		EvaluatedCalls: counts.EvaluatedCalls, FailedCalls: counts.FailedCalls, UnevaluatedCalls: counts.UnevaluatedCalls,
 	}
@@ -130,6 +131,7 @@ func analyticsDistributionsResponse(value interaction.AnalyticsDistributions) *a
 
 func analyticsDistributionDayResponse(date string, value interaction.AnalyticsDistributionCounts) api.OperatorAIAnalyticsDistributionDay {
 	result := api.OperatorAIAnalyticsDistributionDay{
+		TotalCalls:            value.TotalCalls,
 		Date:                  date,
 		Intents:               make([]api.OperatorAIIntentCount, 0, len(value.Intents)),
 		Outcomes:              make([]api.OperatorAIOutcomeCount, 0, len(value.Outcomes)),

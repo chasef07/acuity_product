@@ -2,9 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
-import { CallBreakdowns, BreakdownView } from "./call-breakdowns.tsx"
+import { CallBreakdowns, BreakdownView, initialBreakdownSelection } from "./call-breakdowns.tsx"
 
 const data = {
+  totalCalls: 10,
   daily: [],
   intents: [{ intent: "office_information" as const, calls: 2 }, { intent: "existing_patient_booking" as const, calls: 5 }],
   outcomes: [{ outcome: "resolved" as const, calls: 6 }],
@@ -17,7 +18,7 @@ const data = {
 }
 
 function render(value = data, totalCalls = 10) {
-  return new JSDOM(renderToStaticMarkup(totalCalls ? <>{(["intents", "outcomes", "failures"] as const).map((kind) => <BreakdownView key={kind} data={value} totalCalls={totalCalls} kind={kind} />)}</> : <CallBreakdowns data={value} totalCalls={totalCalls} onRetry={() => {}} />)).window.document
+  return new JSDOM(renderToStaticMarkup(totalCalls ? <>{(["intents", "outcomes", "failures"] as const).map((kind) => <BreakdownView key={kind} data={{ ...value, totalCalls }} kind={kind} />)}</> : <CallBreakdowns data={{ ...value, totalCalls }} selection={initialBreakdownSelection} onSelection={() => {}} onRetry={() => {}} />)).window.document
 }
 
 test("breakdowns include unlabeled calls in label denominators and distinguish failure flags from calls", () => {
@@ -44,7 +45,7 @@ test("no evaluation is distinct from evaluated calls with no failures", () => {
 })
 
 test("missing distribution data is unavailable, and an empty window has no fabricated percentages", () => {
-  const missing = renderToStaticMarkup(<CallBreakdowns totalCalls={10} onRetry={() => {}} />)
+  const missing = renderToStaticMarkup(<CallBreakdowns selection={initialBreakdownSelection} onSelection={() => {}} onRetry={() => {}} />)
   assert.match(missing, /Breakdowns unavailable/)
   assert.match(missing, /Retry/)
   const empty = render(data, 0)

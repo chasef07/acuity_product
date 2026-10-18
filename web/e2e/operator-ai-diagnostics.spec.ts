@@ -319,7 +319,7 @@ test("Command Center connects measured distributions and tool failures to exact 
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.setViewportSize({ width: 1440, height: 1320 })
     await selectCommandCenterPage(page, "Breakdowns")
-    await expect(diagnostics.getByRole("region", { name: "Intents", exact: true })).toContainText("70 calls · share of all calls")
+    await expect(diagnostics.getByRole("region", { name: "Intents", exact: true })).toContainText("70 calls · share of selected calls")
     await diagnostics.getByRole("button", { name: "Outcomes", exact: true }).click()
     await expect(diagnostics.getByRole("region", { name: "Outcomes", exact: true })).toContainText("Unlabeled")
     await diagnostics.getByRole("button", { name: "Judge failures", exact: true }).click()

@@ -300,7 +300,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		t.Fatalf("operator analytics summary = %#v", firstPage.Summary)
 	}
 	distributions := firstPage.Summary.Distributions
-	if distributions == nil || distributions.Intents == nil || distributions.Outcomes == nil || distributions.Failures == nil ||
+	if distributions == nil || distributions.TotalCalls != 2 || distributions.Intents == nil || distributions.Outcomes == nil || distributions.Failures == nil ||
 		len(distributions.Intents) != 0 || len(distributions.Outcomes) != 0 || len(distributions.Failures) != 0 ||
 		distributions.UnlabeledIntentCalls != 2 || distributions.UnlabeledOutcomeCalls != 2 ||
 		distributions.EvaluatedCalls != 0 || distributions.FailedCalls != 0 || distributions.UnevaluatedCalls != 2 {
@@ -336,7 +336,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		t.Fatal("distribution daily coverage absent on wire")
 	}
 	for i, day := range distributions.Daily {
-		if day.Date != firstPage.Summary.Daily[i].Date || day.UnevaluatedCalls != firstPage.Summary.Daily[i].TotalCalls || day.Intents == nil || day.Outcomes == nil || day.Failures == nil {
+		if day.Date != firstPage.Summary.Daily[i].Date || day.TotalCalls != firstPage.Summary.Daily[i].TotalCalls || day.UnevaluatedCalls != firstPage.Summary.Daily[i].TotalCalls || day.Intents == nil || day.Outcomes == nil || day.Failures == nil {
 			t.Fatalf("daily missing evidence: %+v", day)
 		}
 	}

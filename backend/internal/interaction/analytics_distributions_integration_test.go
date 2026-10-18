@@ -86,7 +86,7 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 		t.Fatalf("full window/pagination: %+v", page)
 	}
 	d := page.Summary.Distributions
-	if d.UnlabeledIntentCalls != 62 || d.UnlabeledOutcomeCalls != 62 || d.EvaluatedCalls != 3 || d.UnevaluatedCalls != 62 || d.FailedCalls != 2 {
+	if d.TotalCalls != 65 || d.UnlabeledIntentCalls != 62 || d.UnlabeledOutcomeCalls != 62 || d.EvaluatedCalls != 3 || d.UnevaluatedCalls != 62 || d.FailedCalls != 2 {
 		t.Fatalf("distribution coverage: %+v", d)
 	}
 	if len(d.Intents) != 2 || d.Intents[0].Intent != "office_information" || d.Intents[0].Calls != 2 || d.Intents[1].Intent != "insurance_question" || d.Intents[1].Calls != 1 {
@@ -107,7 +107,7 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 			t.Fatal("daily dates out of order")
 		}
 		total := day.EvaluatedCalls + day.UnevaluatedCalls
-		if total != page.Summary.Daily[i].TotalCalls {
+		if total != day.TotalCalls || total != page.Summary.Daily[i].TotalCalls {
 			t.Fatalf("daily call coverage mismatch: %+v", day)
 		}
 		intents, outcomes := day.UnlabeledIntentCalls, day.UnlabeledOutcomeCalls
@@ -125,6 +125,7 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 		if intents != total || outcomes != total {
 			t.Fatalf("daily labels do not cover every call: %+v", day)
 		}
+		totals.summary.TotalCalls += day.TotalCalls
 		totals.summary.UnlabeledIntentCalls += day.UnlabeledIntentCalls
 		totals.summary.UnlabeledOutcomeCalls += day.UnlabeledOutcomeCalls
 		totals.summary.EvaluatedCalls += day.EvaluatedCalls
@@ -171,4 +172,126 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 	if err != nil || next.Summary != nil || len(next.Calls) != 15 {
 		t.Fatalf("continuation: %+v %v", next, err)
 	}
+	for i := 0; i < 60; i++ {
+		outcome := "resolved"
+		if i%2 == 1 {
+			outcome = "transferred"
+		}
+		insert(practice, location, fmt.Sprint("drill-", i), now.Add(-24*time.Hour), "office_information", outcome)
+	}
+	cmd.Cursor = ""
+	baseline, err := module.QueryAnalytics(ctx, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseline.Summary.TotalCalls != 125 {
+		t.Fatalf("drill baseline: %+v", baseline.Summary)
+	}
+	for _, test := range []struct {
+		name, intent, outcome                                       string
+		total, evaluated, failed, unlabeledIntent, unlabeledOutcome int
+		outcomes                                                    []AnalyticsOutcomeCount
+	}{
+		{name: "intent spans more than one page", intent: "office_information", total: 62, evaluated: 2, failed: 2, outcomes: []AnalyticsOutcomeCount{{Outcome: "resolved", Calls: 32}, {Outcome: "transferred", Calls: 30}}},
+		{name: "intent and outcome retain only matching failures", intent: "office_information", outcome: "resolved", total: 32, evaluated: 2, failed: 2, outcomes: []AnalyticsOutcomeCount{{Outcome: "resolved", Calls: 32}}},
+		{name: "other outcome excludes failing calls", intent: "office_information", outcome: "transferred", total: 30, outcomes: []AnalyticsOutcomeCount{{Outcome: "transferred", Calls: 30}}},
+		{name: "partial intent retains missing outcome", intent: "insurance_question", total: 1, evaluated: 1, unlabeledOutcome: 1, outcomes: []AnalyticsOutcomeCount{}},
+		{name: "partial outcome retains missing intent", outcome: "transferred", total: 31, unlabeledIntent: 1, outcomes: []AnalyticsOutcomeCount{{Outcome: "transferred", Calls: 31}}},
+		{name: "missing outcome cannot match", intent: "insurance_question", outcome: "resolved", outcomes: []AnalyticsOutcomeCount{}},
+		{name: "no matching intent", intent: "prescription_or_refill", outcomes: []AnalyticsOutcomeCount{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			filtered := cmd
+			filtered.Intent, filtered.Outcome = test.intent, test.outcome
+			result, err := module.QueryAnalytics(ctx, filtered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			counts := result.Summary.Distributions
+			if counts.TotalCalls != test.total || counts.EvaluatedCalls+counts.UnevaluatedCalls != test.total || counts.EvaluatedCalls != test.evaluated || counts.FailedCalls != test.failed || counts.UnlabeledIntentCalls != test.unlabeledIntent || counts.UnlabeledOutcomeCalls != test.unlabeledOutcome || !reflect.DeepEqual(counts.Outcomes, test.outcomes) {
+				t.Fatalf("drill distribution: %+v", counts)
+			}
+			if test.failed == 0 && len(counts.Failures) != 0 {
+				t.Fatalf("unrelated failures leaked: %+v", counts.Failures)
+			}
+			if test.failed == 2 && !reflect.DeepEqual(counts.Failures, d.Failures) {
+				t.Fatalf("scoped failures: %+v", counts.Failures)
+			}
+			global := *result.Summary
+			global.Distributions = baseline.Summary.Distributions
+			if !reflect.DeepEqual(&global, baseline.Summary) {
+				t.Fatal("drill filters changed global summary")
+			}
+			if len(result.Calls) != min(test.total, cmd.Limit) {
+				t.Fatalf("calls did not use same scope: %d", len(result.Calls))
+			}
+			if (result.NextCursor != "") != (test.total > cmd.Limit) {
+				t.Fatal("filtered pagination differs from distribution total")
+			}
+			dailyTotal, dailyEvaluated, dailyFailed, missingIntent, missingOutcome := 0, 0, 0, 0, 0
+			dailyIntents, dailyOutcomes, dailyFailures := map[CallIntent]int{}, map[CallOutcome]int{}, map[string]int{}
+			if len(counts.Daily) != len(baseline.Summary.Daily) {
+				t.Fatal("filtered daily dates missing")
+			}
+			for i, day := range counts.Daily {
+				if day.Date != baseline.Summary.Daily[i].Date {
+					t.Fatal("filtered dates out of order")
+				}
+				if day.TotalCalls != day.EvaluatedCalls+day.UnevaluatedCalls {
+					t.Fatal("daily denominator differs from coverage")
+				}
+				dailyTotal += day.TotalCalls
+				dailyEvaluated += day.EvaluatedCalls
+				dailyFailed += day.FailedCalls
+				missingIntent += day.UnlabeledIntentCalls
+				missingOutcome += day.UnlabeledOutcomeCalls
+				for _, row := range day.Intents {
+					dailyIntents[row.Intent] += row.Calls
+				}
+				for _, row := range day.Outcomes {
+					dailyOutcomes[row.Outcome] += row.Calls
+				}
+				for _, row := range day.Failures {
+					dailyFailures[row.Key] += row.Calls
+				}
+			}
+			if dailyTotal != test.total || dailyEvaluated != test.evaluated || dailyFailed != test.failed || missingIntent != test.unlabeledIntent || missingOutcome != test.unlabeledOutcome {
+				t.Fatal("filtered daily coverage does not reconcile")
+			}
+			for _, row := range counts.Intents {
+				if dailyIntents[row.Intent] != row.Calls {
+					t.Fatal("daily intents do not reconcile")
+				}
+				delete(dailyIntents, row.Intent)
+			}
+			for _, row := range counts.Outcomes {
+				if dailyOutcomes[row.Outcome] != row.Calls {
+					t.Fatal("daily outcomes do not reconcile")
+				}
+				delete(dailyOutcomes, row.Outcome)
+			}
+			for _, row := range counts.Failures {
+				if dailyFailures[row.Key] != row.Calls {
+					t.Fatal("daily failures do not reconcile")
+				}
+				delete(dailyFailures, row.Key)
+			}
+			if len(dailyIntents)+len(dailyOutcomes)+len(dailyFailures) != 0 {
+				t.Fatal("daily categories absent from aggregate")
+			}
+			for _, key := range []string{"", "office_question_answered"} {
+				failedFilter := filtered
+				failedFilter.FailuresOnly = true
+				failedFilter.FailingJudge = key
+				failedPage, err := module.QueryAnalytics(ctx, failedFilter)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(failedPage.Summary.Distributions, counts) {
+					t.Fatal("failure filters changed distribution scope")
+				}
+			}
+		})
+	}
+
 }

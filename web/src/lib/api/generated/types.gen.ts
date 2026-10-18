@@ -1344,7 +1344,7 @@ export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
     /**
-     * Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; summary remains unfiltered.
+     * Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; does not restrict summary distributions or other summary metrics.
      */
     failuresOnly?: boolean;
     /**
@@ -1433,9 +1433,13 @@ export type OperatorAiAnalyticsDistributionDay = OperatorAiAnalyticsDistribution
 };
 
 /**
- * Full practice, location, and date-window distributions, independent of call pagination and table filters. Only observed categories are returned, ordered by descending calls then category key. Intent and outcome counts retain valid partial classifications regardless of labeling status; each distribution plus its unlabeled count equals totalCalls.
+ * Full date-window distributions within the selected practice, location, intent, and outcome. Intent and outcome filters intersect using exact persisted labels; missing labels do not match named filters. Call pagination and failure filters do not restrict these counts. Other summary metrics retain their full practice, location, and date scope. Only observed categories are returned, ordered by descending calls then category key. Counts retain valid partial classifications regardless of labeling status; each label distribution plus its unlabeled count equals this object's totalCalls.
  */
 export type OperatorAiAnalyticsDistributionCounts = {
+    /**
+     * Calls matching the selected intent and outcome within this reporting window or date; denominator for this object's label distributions and evaluation coverage.
+     */
+    totalCalls: number;
     intents: Array<OperatorAiIntentCount>;
     outcomes: Array<OperatorAiOutcomeCount>;
     /**
@@ -1689,7 +1693,7 @@ export type OperatorAiCallAnalytics = {
 };
 
 /**
- * The first page includes a fresh practice, location and range summary. Intent and outcome filters apply only to the calls table, not the summary or pending issues. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
+ * The first page includes a fresh practice, location and range summary. Intent and outcome filters restrict the calls table and summary distributions; all other summary fields and pending issues retain their full practice, location, and range scope. Failure filters restrict only the calls table. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
  */
 export type OperatorAiAnalyticsPage = {
     /**

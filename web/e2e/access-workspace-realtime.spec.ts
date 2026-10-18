@@ -33,6 +33,7 @@ const operatorAnalyticsFixture = {
     },
     daily: [{ date: "2026-08-10", totalCalls: 42, callMinutes: 126.5, transferCount: 5, transferRate: 5 / 42 }],
     distributions: {
+      totalCalls: 42,
       intents: [{ intent: "existing_patient_booking", calls: 30 }, { intent: "office_information", calls: 10 }],
       outcomes: [{ outcome: "resolved", calls: 33 }, { outcome: "transferred", calls: 5 }, { outcome: "abandoned", calls: 2 }],
       unlabeledIntentCalls: 2,

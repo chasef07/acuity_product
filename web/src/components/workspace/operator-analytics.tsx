@@ -17,7 +17,7 @@ import {
   type SelectDiagnostic,
 } from "@/components/analytics/ai-diagnostics"
 import { OverviewTrend } from "./overview-trend"
-import { CallBreakdowns } from "./call-breakdowns"
+import { BreakdownControls, CallBreakdowns, initialBreakdownSelection, type BreakdownSelection } from "./call-breakdowns"
 import { CostOverview } from "@/components/analytics/cost-overview"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -90,6 +90,7 @@ export function OperatorAnalytics({
   const [intent, setIntent] = useState<IntentFilter>("all")
   const [outcome, setOutcome] = useState<OutcomeFilter>("all")
   const [judgeFlag, setJudgeFlag] = useState("any")
+  const [breakdownSelection, setBreakdownSelection] = useState<BreakdownSelection>(initialBreakdownSelection)
   const costView = tab === "cost"
   const reviewView = tab === "review"
   const [requestVersion, setRequestVersion] = useState(0)
@@ -102,8 +103,8 @@ export function OperatorAnalytics({
     range,
     revision: revision + requestVersion,
     enabled: !costView && !reviewView,
-    intent: tab === "calls" && intent !== "all" ? intent : undefined,
-    outcome: tab === "calls" && outcome !== "all" ? outcome : undefined,
+    intent: tab === "breakdowns" ? (breakdownSelection.intent === "all" ? undefined : breakdownSelection.intent) : tab === "calls" && intent !== "all" ? intent : undefined,
+    outcome: tab === "breakdowns" ? (breakdownSelection.outcome === "all" ? undefined : breakdownSelection.outcome) : tab === "calls" && outcome !== "all" ? outcome : undefined,
     failuresOnly: tab === "calls" && judgeFlag !== "all" ? true : undefined,
     failingJudge: tab === "calls" && judgeFlag !== "all" && judgeFlag !== "any" ? judgeFlag : undefined,
   })
@@ -156,6 +157,7 @@ export function OperatorAnalytics({
             </>}
             </div>}
           </div>
+        {tab === "breakdowns" && <BreakdownControls selection={breakdownSelection} onSelection={setBreakdownSelection} />}
         {reviewView ? (
           <CallReviewWorkspace key={practiceID} practiceID={practiceID} onOpenCall={(id) => selectCall(id)} />
         ) : costView ? (
@@ -190,6 +192,8 @@ export function OperatorAnalytics({
               <AnalyticsReady
                 key={requestKey}
                 data={currentRequest.data}
+                breakdownSelection={breakdownSelection}
+                onBreakdownSelection={setBreakdownSelection}
                 onRetry={() => setRequestVersion((current) => current + 1)}
                 tab={tab}
                 range={range}
@@ -218,6 +222,8 @@ export function OperatorAnalytics({
 
 function AnalyticsReady({
   data,
+  breakdownSelection,
+  onBreakdownSelection,
   onRetry,
   tab,
   range,
@@ -226,6 +232,8 @@ function AnalyticsReady({
   onSelect,
 }: {
   data: AiCallAnalytics
+  breakdownSelection: BreakdownSelection
+  onBreakdownSelection: (selection: BreakdownSelection) => void
   onRetry: () => void
   tab: AnalyticsTab
   range: OperatorAiAnalyticsRange
@@ -236,7 +244,7 @@ function AnalyticsReady({
   return (
     <>
       {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
-      {tab === "breakdowns" && <CallBreakdowns data={data.summary.distributions} totalCalls={data.summary.totalCalls} onRetry={onRetry} />}
+      {tab === "breakdowns" && <CallBreakdowns data={data.summary.distributions} selection={breakdownSelection} onSelection={onBreakdownSelection} onRetry={onRetry} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
       {tab === "calls" && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">

@@ -4656,7 +4656,7 @@ components:
       properties:
         failuresOnly:
           type: boolean
-          description: Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; summary remains unfiltered.
+          description: Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; does not restrict summary distributions or other summary metrics.
         failingJudge:
           type: string
           maxLength: 80
@@ -4800,9 +4800,13 @@ components:
             date: {type: string, description: UTC calendar date in YYYY-MM-DD format.}
     OperatorAIAnalyticsDistributionCounts:
       type: object
-      required: [intents, outcomes, failures, unlabeledIntentCalls, unlabeledOutcomeCalls, evaluatedCalls, failedCalls, unevaluatedCalls]
-      description: Full practice, location, and date-window distributions, independent of call pagination and table filters. Only observed categories are returned, ordered by descending calls then category key. Intent and outcome counts retain valid partial classifications regardless of labeling status; each distribution plus its unlabeled count equals totalCalls.
+      required: [totalCalls, intents, outcomes, failures, unlabeledIntentCalls, unlabeledOutcomeCalls, evaluatedCalls, failedCalls, unevaluatedCalls]
+      description: Full date-window distributions within the selected practice, location, intent, and outcome. Intent and outcome filters intersect using exact persisted labels; missing labels do not match named filters. Call pagination and failure filters do not restrict these counts. Other summary metrics retain their full practice, location, and date scope. Only observed categories are returned, ordered by descending calls then category key. Counts retain valid partial classifications regardless of labeling status; each label distribution plus its unlabeled count equals this object's totalCalls.
       properties:
+        totalCalls:
+          type: integer
+          minimum: 0
+          description: Calls matching the selected intent and outcome within this reporting window or date; denominator for this object's label distributions and evaluation coverage.
         intents:
           type: array
           items: {$ref: "#/components/schemas/OperatorAIIntentCount"}
@@ -5151,7 +5155,7 @@ components:
         transcriptAvailable:
           type: boolean
     OperatorAIAnalyticsPage:
-      description: The first page includes a fresh practice, location and range summary. Intent and outcome filters apply only to the calls table, not the summary or pending issues. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
+      description: The first page includes a fresh practice, location and range summary. Intent and outcome filters restrict the calls table and summary distributions; all other summary fields and pending issues retain their full practice, location, and range scope. Failure filters restrict only the calls table. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
       type: object
       additionalProperties: false
       required: [calls, nextCursor]

@@ -352,8 +352,11 @@ func queryAnalyticsSummary(
 		for i, dimension := range versionDimensions {
 			projection.versions.values[dimension] = values[i]
 		}
-		distributions.add(intent, outcome, evaluated, failures)
-		dailyDistributions[projection.call.StartedAt.UTC().Format(time.DateOnly)].add(intent, outcome, evaluated, failures)
+		if (command.Intent == "" || intent != nil && *intent == command.Intent) &&
+			(command.Outcome == "" || outcome != nil && *outcome == command.Outcome) {
+			distributions.add(intent, outcome, evaluated, failures)
+			dailyDistributions[projection.call.StartedAt.UTC().Format(time.DateOnly)].add(intent, outcome, evaluated, failures)
+		}
 		summarizeAnalyticsProjection(&summary, projection)
 	}
 	if err := rows.Err(); err != nil {

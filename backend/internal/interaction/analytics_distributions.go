@@ -29,6 +29,7 @@ type AnalyticsDistributionDay struct {
 }
 
 type AnalyticsDistributionCounts struct {
+	TotalCalls            int
 	Intents               []AnalyticsIntentCount
 	Outcomes              []AnalyticsOutcomeCount
 	Failures              []AnalyticsFailureCount
@@ -51,6 +52,7 @@ func newDistributionAccumulator() *distributionAccumulator {
 }
 
 func (a *distributionAccumulator) add(intent, outcome *string, evaluated bool, failures []string) {
+	a.summary.TotalCalls++
 	if intent == nil {
 		a.summary.UnlabeledIntentCalls++
 	} else {
