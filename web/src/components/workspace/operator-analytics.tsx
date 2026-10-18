@@ -1,24 +1,17 @@
 "use client"
 
-import { type ReactNode, useState } from "react"
+import { useState } from "react"
 import {
   ArrowRightIcon,
-  CalendarCheck2Icon,
-  CalendarClockIcon,
-  CalendarX2Icon,
-  ChartNoAxesCombinedIcon,
   CircleAlertIcon,
-  Clock3Icon,
   InboxIcon,
   PhoneForwardedIcon,
   RefreshCwIcon,
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { WorkspacePageHeader } from "@/components/workspace/workspace-page-header"
-import { controlCenterPages, type ControlCenterPage } from "./analytics-navigation"
+import { commandCenterPages, type CommandCenterPage } from "./analytics-navigation"
 import {
-  DiagnosticsCallTrends,
   DiagnosticsTools,
   type DiagnosticFocus,
   type SelectDiagnostic,
@@ -36,9 +29,7 @@ import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card"
 import {
   Empty,
@@ -60,7 +51,7 @@ import {
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { PendingCallIssues } from "@/components/workspace/call-issue-review"
 import { CallReviewWorkspace } from "@/components/workspace/call-review"
-import { BookingConversionKpi, ImprovementTrend } from "@/components/workspace/scorecard-overview"
+import { ImprovementTrend } from "@/components/workspace/scorecard-overview"
 import { CallLabel, CallLabelFilters, CallLabels, type IntentFilter, type OutcomeFilter } from "./call-labels"
 import { CallFailureFilter } from "./call-failure-filter"
 import type {
@@ -79,7 +70,7 @@ import { formatTimestamp } from "@/lib/format-time"
 import { formatUSPhoneDigits } from "@/lib/phone"
 
 type AnalyticsNextPageState = AiCallLedger["nextPage"]
-type AnalyticsTab = ControlCenterPage
+type AnalyticsTab = CommandCenterPage
 
 const ranges: Array<{
   value: OperatorAiAnalyticsRange
@@ -159,11 +150,11 @@ export function OperatorAnalytics({
 
   return (
     <section
-      aria-label="Control Center"
+      aria-label="Command Center"
       className="flex min-h-0 flex-1 flex-col overflow-hidden"
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-background">
-        <WorkspacePageHeader section="Control Center" title={controlCenterPages.find((item) => item.value === tab)!.label} />
+        <h1 className="sr-only">{commandCenterPages.find((item) => item.value === tab)!.label}</h1>
         <main className="mx-auto w-full max-w-[1320px] p-4 sm:p-6">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
             <p className="text-[13px] font-medium">{reviewView ? "Daily call review and golden set" : ranges.find((item) => item.value === range)!.label}</p>
@@ -185,7 +176,7 @@ export function OperatorAnalytics({
           />
         ) : (
           <>
-            {currentRequest.state === "loading" && <AnalyticsLoading />}
+            {currentRequest.state === "loading" && <AnalyticsLoading overview={tab === "overview"} />}
             {currentRequest.state === "denied" && (
               <AnalyticsFailure
                 title="Analytics access unavailable"
@@ -214,7 +205,6 @@ export function OperatorAnalytics({
               <AnalyticsReady
                 key={requestKey}
                 data={currentRequest.data}
-                practiceID={practiceID}
                 locations={locations}
                 versionSelection={versionSelection}
                 onVersionSelectionChange={setVersionSelection}
@@ -245,7 +235,6 @@ export function OperatorAnalytics({
 
 function AnalyticsReady({
   data,
-  practiceID,
   locations,
   versionSelection,
   onVersionSelectionChange,
@@ -256,7 +245,6 @@ function AnalyticsReady({
   onSelect,
 }: {
   data: AiCallAnalytics
-  practiceID: string
   locations: Location[]
   versionSelection: VersionSelection
   onVersionSelectionChange: (selection: VersionSelection) => void
@@ -273,10 +261,10 @@ function AnalyticsReady({
   }
   return (
     <>
-      {(tab === "overview" || tab === "quality") && (
+      {tab === "quality" && (
         <VersionToolbar view={versionView} onChange={onVersionSelectionChange} />
       )}
-      {tab === "overview" && <AnalyticsOverview summary={data.summary} versionView={versionView} kpi={<BookingConversionKpi practiceID={practiceID} range={range} />} />}
+      {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
       {tab === "quality" && <DiagnosticsQuality summary={data.summary} versionView={versionView} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
       {tab === "calls" && data.calls.length === 0 ? (
@@ -307,102 +295,29 @@ function AnalyticsReady({
   )
 }
 
-function AnalyticsOverview({
-  summary,
-  versionView,
-  kpi,
-}: {
-  summary: OperatorAiAnalyticsSummary
-  versionView: VersionView
-  kpi: ReactNode
-}) {
-  const outcomes = [
-    {
-      label: "Total calls",
-      value: summary.totalCalls.toLocaleString(),
-      note: "All calls in selected range",
-      icon: ChartNoAxesCombinedIcon,
-    },
-    {
-      label: "Call minutes",
-      value: Math.round(summary.totalCallMinutes).toLocaleString(),
-      note: "Completed AI call time",
-      icon: Clock3Icon,
-    },
-    {
-      label: "Booked",
-      value: summary.bookingCount.toLocaleString(),
-      note: "Appointments booked",
-      icon: CalendarCheck2Icon,
-    },
-    {
-      label: "Cancelled",
-      value: summary.cancellationCount.toLocaleString(),
-      note: "Appointments cancelled",
-      icon: CalendarX2Icon,
-    },
-    {
-      label: "Rescheduled",
-      value: summary.rescheduleCount.toLocaleString(),
-      note: "Appointments moved",
-      icon: CalendarClockIcon,
-    },
+function AnalyticsOverview({ summary }: { summary: OperatorAiAnalyticsSummary }) {
+  const metrics = [
+    { label: "Booked appointments", value: summary.bookingCount.toLocaleString() },
+    { label: "Cancelled appointments", value: summary.cancellationCount.toLocaleString() },
+    { label: "Rescheduled appointments", value: summary.rescheduleCount.toLocaleString() },
+    { label: "Total calls", value: summary.totalCalls.toLocaleString() },
+    { label: "Total minutes", value: summary.totalCallMinutes.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
+    { label: "Avg. time / call", value: summary.totalCalls ? formatDuration(Math.round(summary.totalCallMinutes * 60 / summary.totalCalls)) : "—" },
+    { label: "Transfer rate", value: summary.totalCalls ? formatRate(summary.transferRate) : "—", note: `${summary.transferCount.toLocaleString()} of ${summary.totalCalls.toLocaleString()} calls` },
+    { label: "Tool failure rate", value: summary.toolCallCount ? formatRate(summary.toolFailureRate) : "—", note: `${summary.toolErrorCount.toLocaleString()} of ${summary.toolCallCount.toLocaleString()} tool calls` },
   ]
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        {outcomes.map((item) => (
-          <Card key={item.label} size="sm" className="min-w-0">
-            <CardHeader className="grid-cols-[1fr_auto]">
-              <div>
-                <CardDescription>{item.label}</CardDescription>
-                <CardTitle className="mt-1 font-mono text-xl font-semibold tracking-[-0.03em] sm:text-2xl">
-                  {item.value}
-                </CardTitle>
-              </div>
-              <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                <item.icon className="size-3.5" aria-hidden="true" />
-              </span>
-            </CardHeader>
-            <CardContent className="truncate text-[0.6875rem] text-muted-foreground">
-              {item.note}
-            </CardContent>
-          </Card>
+    <section aria-label="Overall stats">
+      <dl className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border bg-border min-[380px]:grid-cols-2 xl:grid-cols-4">
+        {metrics.map((metric) => (
+          <div key={metric.label} className="min-w-0 bg-background px-5 py-6 sm:px-6 sm:py-8">
+            <dt className="text-[13px] font-medium text-foreground">{metric.label}</dt>
+            <dd className="mt-5 text-3xl leading-none font-medium tracking-tight tabular-nums sm:text-4xl">{metric.value}</dd>
+            {metric.note && <dd className="mt-3 text-xs text-muted-foreground">{metric.note}</dd>}
+          </div>
         ))}
-        {kpi}
-      </div>
-
-      <DiagnosticsCallTrends summary={summary} versionView={versionView} />
-
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <OperationalHealth summary={summary} />
-      </div>
-    </div>
-  )
-}
-
-function OperationalHealth({ summary }: { summary: OperatorAiAnalyticsSummary }) {
-  return (
-    <Card size="sm" className="min-w-0">
-      <CardHeader>
-        <CardTitle className="text-sm">Operational health</CardTitle>
-        <CardDescription>Transfers and tool reliability</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <dl className="grid grid-cols-2 gap-4 border-t pt-3">
-          <CompactValue
-            label="Transfer rate"
-            value={formatRate(summary.transferRate)}
-            note={`${summary.transferCount.toLocaleString()} calls`}
-          />
-          <CompactValue
-            label="Tool failure rate"
-            value={formatRate(summary.toolFailureRate)}
-            note={`${summary.toolErrorCount.toLocaleString()} / ${summary.toolCallCount.toLocaleString()} tool calls`}
-          />
-        </dl>
-      </CardContent>
-    </Card>
+      </dl>
+    </section>
   )
 }
 
@@ -577,9 +492,19 @@ function ReviewReasons({ reasons }: { reasons?: string[] }) {
   </span>
 }
 
-function AnalyticsLoading() {
+function AnalyticsLoading({ overview }: { overview: boolean }) {
+  if (overview) return (
+    <div role="status" aria-label="Loading Command Center" aria-busy="true" className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border bg-border min-[380px]:grid-cols-2 xl:grid-cols-4">
+      {Array.from({ length: 8 }, (_, index) => (
+        <div key={index} className="bg-background px-5 py-6 sm:px-6 sm:py-8">
+          <Skeleton className="h-4 w-32 max-w-full" />
+          <Skeleton className="mt-5 h-10 w-24" />
+        </div>
+      ))}
+    </div>
+  )
   return (
-    <div role="status" aria-label="Loading Control Center" aria-busy="true">
+    <div role="status" aria-label="Loading Command Center" aria-busy="true">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {Array.from({ length: 4 }, (_, index) => (
           <Card key={index} size="sm">

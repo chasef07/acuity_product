@@ -216,9 +216,9 @@ test("staff flag a call and Acuity reviews it", async ({
     ).toBeVisible()
     await page.keyboard.press("Escape")
     await page
-      .getByRole("button", { name: "Control Center", exact: true })
+      .getByRole("button", { name: "Command Center", exact: true })
       .click()
-    const diagnostics = page.getByRole("region", { name: "Control Center" })
+    const diagnostics = page.getByRole("region", { name: "Command Center" })
     const pending = diagnostics
       .getByRole("status")
       .filter({ hasText: /flagged by staff needs? review/ })

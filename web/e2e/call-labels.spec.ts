@@ -3,7 +3,7 @@ import { Client } from "pg"
 import { expect, test } from "@playwright/test"
 import { openAgentPage, signInAs } from "./support"
 
-test("intent and outcome labels filter customer Calls and Control Center", async ({ page }, testInfo) => {
+test("intent and outcome labels filter customer Calls and Command Center", async ({ page }, testInfo) => {
   const databaseURL = process.env.E2E_DATABASE_URL
   test.skip(!databaseURL, "E2E_DATABASE_URL is required")
   if (!new URL(databaseURL!).pathname.endsWith("_e2e"))
@@ -81,8 +81,8 @@ test("intent and outcome labels filter customer Calls and Control Center", async
     await page.keyboard.press("Escape")
 
     await signInAs(page, "founder@acuity.test", "Synthetic Acuity Operator")
-    await page.getByRole("button", { name: "Control Center", exact: true }).click()
-    const diagnostics = page.getByRole("region", { name: "Control Center" })
+    await page.getByRole("button", { name: "Command Center", exact: true }).click()
+    const diagnostics = page.getByRole("region", { name: "Command Center" })
     await diagnostics.getByRole("combobox", { name: "Judge flags", exact: true }).click()
     await page.getByRole("option", { name: "All calls", exact: true }).click()
     await page.getByRole("button", { name: "Workspace selector" }).click()

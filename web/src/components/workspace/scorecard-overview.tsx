@@ -1,19 +1,12 @@
 "use client"
 
 import { useState } from "react"
-import { BookOpenTextIcon, ChevronRightIcon, CircleAlertIcon, TrendingUpIcon } from "lucide-react"
+import { BookOpenTextIcon, ChevronRightIcon, CircleAlertIcon } from "lucide-react"
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
 import styles from "@/components/analytics/ai-diagnostics.module.css"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import {
   Sheet,
   SheetContent,
@@ -77,33 +70,6 @@ export function ScorecardDefinitionsButton({ questions }: { questions: OperatorS
         </SheetContent>
       </Sheet>
     </>
-  )
-}
-
-export function BookingConversionKpi({ practiceID, range }: { practiceID: string; range: OperatorAiAnalyticsRange }) {
-  const results = useScorecardResults(practiceID, "", range)
-  const data = results.status === "ready" ? results.data : undefined
-  return (
-    <Card size="sm" className="min-w-0">
-      <CardHeader className="grid-cols-[1fr_auto]">
-        <div>
-          <CardDescription>Booking conversion, all offices</CardDescription>
-          <CardTitle className="mt-1 font-mono text-xl font-semibold tracking-[-0.03em] sm:text-2xl">
-            {results.status === "loading" ? <Skeleton className="h-7 w-14" /> : data?.conversion == null ? "—" : `${Math.round(data.conversion * 100)}%`}
-          </CardTitle>
-        </div>
-        <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <TrendingUpIcon className="size-3.5" aria-hidden="true" />
-        </span>
-      </CardHeader>
-      <CardContent className="text-[0.6875rem] text-muted-foreground">
-        {results.status === "failed"
-          ? "Unavailable"
-          : data
-            ? `${data.converted} of ${data.bookingCallers - data.blocked} new-booking callers · ${data.missed} missed · ${data.notSearched} not searched · ${data.blocked} blocked`
-            : "Loading"}
-      </CardContent>
-    </Card>
   )
 }
 

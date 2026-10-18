@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { selectControlCenterPage, signInAs } from "./support"
+import { selectCommandCenterPage, signInAs } from "./support"
 
 test("Platform Operator sees recorded costs and incomplete usage", async ({
   page,
@@ -41,14 +41,14 @@ test("Platform Operator sees recorded costs and incomplete usage", async ({
     }
     await signInAs(page, "founder@acuity.test", "Fixture Founder")
     await page
-      .getByRole("button", { name: "Control Center", exact: true })
+      .getByRole("button", { name: "Command Center", exact: true })
       .click()
-    const diagnostics = page.getByRole("region", { name: "Control Center" })
+    const diagnostics = page.getByRole("region", { name: "Command Center" })
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
-    await selectControlCenterPage(page, "Cost")
+    await selectCommandCenterPage(page, "Cost")
     await diagnostics.getByRole("combobox", { name: "Date range", exact: true }).click()
     await page.getByRole("option", { name: "Last 7 days", exact: true }).click()
 

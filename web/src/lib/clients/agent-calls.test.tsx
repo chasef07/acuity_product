@@ -57,7 +57,7 @@ test("diagnostics label filters are sent on every page and reset when outcome ch
   assert.equal(backend.requests.at(-1)?.body?.outcome, "abandoned")
 })
 
-test("Control Center failure filters intersect labels on every page and reset the cursor when the judge changes", async (t) => {
+test("Command Center failure filters intersect labels on every page and reset the cursor when the judge changes", async (t) => {
   const backend = fakeBackend(t, () => Response.json({ summary, calls: [call("failed")], nextCursor: "next" }))
   const view = mountHook(t, useAiCallAnalytics)
   const filters = { practiceID: "practice-1", locationID: "", range: "24h", revision: 0, enabled: true, failuresOnly: true, failingJudge: "transfer_policy_followed", intent: "speak_to_staff", outcome: "resolved" } as const

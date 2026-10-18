@@ -212,7 +212,7 @@ test("breadcrumbs mark only the current page and only offer navigation when a de
 })
 
 test("rail buttons are icon-only and keep their accessible names", () => {
-  for (const label of ["Home", "Control Center"]) {
+  for (const label of ["Home", "Command Center"]) {
     const html = renderToStaticMarkup(
       <RailButton label={label} active={label === "Home"} onClick={() => {}}>
         <svg />

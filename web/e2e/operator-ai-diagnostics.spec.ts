@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { selectControlCenterPage, signInAs } from "./support"
+import { selectCommandCenterPage, signInAs } from "./support"
 
-test("Control Center connects measured distributions and tool failures to exact call evidence", async ({
+test("Command Center connects measured distributions and tool failures to exact call evidence", async ({
   page,
 }, testInfo) => {
   const databaseURL = process.env.E2E_DATABASE_URL
@@ -183,9 +183,9 @@ test("Control Center connects measured distributions and tool failures to exact 
     await page.setViewportSize({ width: 1440, height: 1320 })
     await signInAs(page, "founder@acuity.test", "Fixture Founder")
     await page
-      .getByRole("button", { name: "Control Center", exact: true })
+      .getByRole("button", { name: "Command Center", exact: true })
       .click()
-    const diagnostics = page.getByRole("region", { name: "Control Center" })
+    const diagnostics = page.getByRole("region", { name: "Command Center" })
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 6", exact: true })
@@ -198,60 +198,28 @@ test("Control Center connects measured distributions and tool failures to exact 
     await expect(flaggedCall).toHaveCount(1)
     await expect(flaggedCall).toContainText("Caller reports unresolved issue")
     await expect(flaggedCall).toHaveClass(/bg-destructive/)
-    await expect(page.getByRole("navigation", { name: "Control Center", exact: true }).getByRole("button", { name: "Calls", exact: true })).toHaveAttribute("aria-current", "page")
+    await expect(page.getByRole("navigation", { name: "Command Center", exact: true }).getByRole("button", { name: "Calls", exact: true })).toHaveAttribute("aria-current", "page")
     await expect(diagnostics.getByRole("columnheader", { name: /P50/ })).toHaveCount(0)
     await expect(diagnostics.getByRole("table").locator("tbody tr")).toHaveCount(50)
 
-    await selectControlCenterPage(page, "Overview")
-    const volume = diagnostics.getByRole("region", {
-      name: "Call volume over time",
-      exact: true,
-    })
-    const transfers = diagnostics.getByRole("region", {
-      name: "Transfer rate over time",
-      exact: true,
-    })
-    await expect(volume.getByRole("strong")).toHaveText("70")
-    await expect(
-      diagnostics
-        .getByRole("region", { name: "Call minutes over time", exact: true })
-        .getByRole("strong"),
-    ).toHaveText("140 min")
-    await expect(transfers.getByRole("strong")).toHaveText("50.0%")
-    await expect(
-      transfers.getByText("35 of 70 calls transferred"),
-    ).toBeVisible()
-    await expect(volume.locator(".recharts-bar-rectangle")).not.toHaveCount(0)
-    await expect(transfers.locator(".recharts-line-curve")).toHaveCount(1)
-    await transfers.getByText("View daily data", { exact: true }).click()
-    const dailyRows = transfers.getByRole("table").locator("tbody tr")
-    const dailyCounts = await dailyRows.evaluateAll((rows) =>
-      rows.reduce(
-        (sum, row) => sum + Number(row.querySelector("td")?.textContent),
-        0,
-      ),
-    )
-    expect(dailyCounts).toBe(70)
-    await transfers.getByText("View daily data", { exact: true }).click()
-    await page.screenshot({
-      path: testInfo.outputPath("call-trends.png"),
-      fullPage: true,
-      animations: "disabled",
-    })
+    await selectCommandCenterPage(page, "Overview")
+    const overview = diagnostics.getByRole("region", { name: "Overall stats" })
+    const metric = (label: string) => overview.locator("dl > div").filter({ has: page.getByText(label, { exact: true }) }).locator("dd").first()
+    await expect(metric("Total calls")).toHaveText("70")
+    await expect(metric("Total minutes")).toHaveText("140")
+    await expect(metric("Avg. time / call")).toHaveText("2m 0s")
+    await expect(metric("Transfer rate")).toHaveText("50%")
+    await expect(overview.locator("dt")).toHaveCount(8)
+    await expect(diagnostics.getByRole("group", { name: "Show version changes" })).toHaveCount(0)
+    await expect(diagnostics.locator(".recharts-surface")).toHaveCount(0)
+    await expect(page.getByRole("navigation", { name: "Current location" })).toHaveText("Command CenterOverview")
+    await page.screenshot({ path: testInfo.outputPath("command-center-overview.png"), fullPage: true, animations: "disabled" })
     await page.setViewportSize({ width: 390, height: 844 })
-    await expect(volume).toBeVisible()
-    expect(
-      await diagnostics.evaluate(
-        (element) => element.scrollWidth <= element.clientWidth,
-      ),
-    ).toBe(true)
-    await page.screenshot({
-      path: testInfo.outputPath("call-trends-mobile.png"),
-      fullPage: true,
-      animations: "disabled",
-    })
+    await expect(overview).toBeVisible()
+    expect(await diagnostics.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath("command-center-overview-mobile.png"), fullPage: true, animations: "disabled" })
     await page.setViewportSize({ width: 1280, height: 800 })
-    await selectControlCenterPage(page, "Calls")
+    await selectCommandCenterPage(page, "Calls")
     await diagnostics
       .getByRole("button", { name: /Open analytics for call from/ })
       .first()
@@ -349,7 +317,7 @@ test("Control Center connects measured distributions and tool failures to exact 
     })
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.setViewportSize({ width: 1440, height: 1320 })
-    await selectControlCenterPage(page, "Quality")
+    await selectCommandCenterPage(page, "Quality")
     await expect(
       diagnostics.getByText("2 of 2 evaluated calls · 68 not evaluated"),
     ).toBeVisible()
@@ -379,7 +347,7 @@ test("Control Center connects measured distributions and tool failures to exact 
       fullPage: true,
       animations: "disabled",
     })
-    await selectControlCenterPage(page, "Tools")
+    await selectCommandCenterPage(page, "Tools")
     await expect(
       diagnostics.getByText("345 of 420 executions timed"),
     ).toBeVisible()
@@ -444,12 +412,12 @@ test("Control Center connects measured distributions and tool failures to exact 
       fullPage: true,
       animations: "disabled",
     })
-    await page.getByRole("button", { name: "Control Center", exact: true }).click()
+    await page.getByRole("button", { name: "Command Center", exact: true }).click()
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 5", exact: true })
       .click()
-    await selectControlCenterPage(page, "Tools")
+    await selectCommandCenterPage(page, "Tools")
     await expect(
       diagnostics.getByText("No tool executions in this range."),
     ).toBeVisible()
@@ -515,14 +483,14 @@ test("historical tool failures reveal and focus their technical evidence", async
     await page.setViewportSize({ width: 1280, height: 800 })
     await signInAs(page, "founder@acuity.test", "Fixture Founder")
     await page
-      .getByRole("button", { name: "Control Center", exact: true })
+      .getByRole("button", { name: "Command Center", exact: true })
       .click()
-    const diagnostics = page.getByRole("region", { name: "Control Center" })
+    const diagnostics = page.getByRole("region", { name: "Command Center" })
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page
       .getByRole("button", { name: "Fixture Location 6", exact: true })
       .click()
-    await selectControlCenterPage(page, "Tools")
+    await selectCommandCenterPage(page, "Tools")
     const tool = diagnostics
       .getByRole("row")
       .filter({ hasText: "historical_lookup" })

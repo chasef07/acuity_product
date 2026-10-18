@@ -20,11 +20,11 @@ export async function openAgentPage(page: Page, name: string) {
   }).toPass({ timeout: 10_000 })
 }
 
-export async function selectControlCenterPage(page: Page, name: "Calls" | "Overview" | "Quality" | "Tools" | "Cost" | "Review") {
-  const controlCenter = page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name: "Control Center", exact: true })
-  const destination = page.getByRole("navigation", { name: "Control Center", exact: true }).getByRole("button", { name, exact: true })
+export async function selectCommandCenterPage(page: Page, name: "Calls" | "Overview" | "Quality" | "Tools" | "Cost" | "Review") {
+  const commandCenter = page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name: "Command Center", exact: true })
+  const destination = page.getByRole("navigation", { name: "Command Center", exact: true }).getByRole("button", { name, exact: true })
   await expect(async () => {
-    if (await controlCenter.getAttribute("aria-expanded") !== "true") await controlCenter.click()
+    if (await commandCenter.getAttribute("aria-expanded") !== "true") await commandCenter.click()
     await expect(destination).toBeInViewport({ ratio: 1, timeout: 500 })
     await destination.click({ timeout: 1000 })
   }).toPass({ timeout: 10_000 })
