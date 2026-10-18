@@ -65,7 +65,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { ReviewFolder } from "./review-folder"
-import { AnalyticsNavigation, controlCenterPages, practiceAnalyticsPages, type ControlCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
+import { AnalyticsNavigation, commandCenterPages, practiceAnalyticsPages, type CommandCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { Task, TaskFolderCounts } from "@/lib/api/generated/types.gen"
 import { formatUSPhone } from "@/lib/phone"
@@ -108,8 +108,8 @@ const taskCategoryOptions: Array<{ value: TaskCategoryFilter; label: string }> =
 
 type WorkspaceRailProps = {
   projection: WorkspaceProjectionState
-  controlCenterPage?: ControlCenterPage
-  onControlCenterPage?: (page: ControlCenterPage) => void
+  commandCenterPage?: CommandCenterPage
+  onCommandCenterPage?: (page: CommandCenterPage) => void
   analyticsPage?: PracticeAnalyticsPage
   onAnalyticsPage?: (page: PracticeAnalyticsPage) => void
   callingStatus?: ReactNode
@@ -165,8 +165,8 @@ function currentPractice(projection: WorkspaceProjectionState) {
 
 export function WorkspaceRail({
   projection,
-  controlCenterPage = "calls",
-  onControlCenterPage,
+  commandCenterPage = "calls",
+  onCommandCenterPage,
   analyticsPage = "bookings",
   onAnalyticsPage,
   locationControl,
@@ -350,9 +350,9 @@ export function WorkspaceRail({
               onPage={(page) => onIntent({ type: "select-manage-agent", page })}
             />
           </SidebarContent>
-        ) : view === "operator-analytics" && onControlCenterPage ? (
+        ) : view === "operator-analytics" && onCommandCenterPage ? (
           <SidebarContent className="overflow-y-auto px-2 py-2">
-            <AnalyticsNavigation label="Control Center" pages={controlCenterPages} page={controlCenterPage} onPage={onControlCenterPage} />
+            <AnalyticsNavigation label="Command Center" pages={commandCenterPages} page={commandCenterPage} onPage={onCommandCenterPage} />
           </SidebarContent>
         ) : view === "analytics" && onAnalyticsPage ? (
           <SidebarContent className="overflow-y-auto px-2 py-2">

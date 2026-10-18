@@ -4656,7 +4656,7 @@ components:
       properties:
         failuresOnly:
           type: boolean
-          description: Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; summary remains unfiltered.
+          description: Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; does not restrict summary distributions or other summary metrics.
         failingJudge:
           type: string
           maxLength: 80
@@ -4694,6 +4694,11 @@ components:
       additionalProperties: false
       required: [date, totalCalls, callMinutes, transferCount]
       properties:
+        bookingCount: {type: integer, minimum: 0}
+        cancellationCount: {type: integer, minimum: 0}
+        rescheduleCount: {type: integer, minimum: 0}
+        toolCallCount: {type: integer, minimum: 0}
+        toolErrorCount: {type: integer, minimum: 0}
         date:
           type: string
           description: UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
@@ -4737,6 +4742,8 @@ components:
           type: array
           description: All UTC dates in the full selected range, including dates without calls; independent of call pagination.
           items: {$ref: "#/components/schemas/OperatorAIAnalyticsDay"}
+        judges: {$ref: "#/components/schemas/OperatorAIAnalyticsJudges"}
+        distributions: {$ref: "#/components/schemas/OperatorAIAnalyticsDistributions"}
         diagnostics: {$ref: "#/components/schemas/OperatorAIAnalyticsDiagnostics"}
         quality: {$ref: "#/components/schemas/OperatorAIAnalyticsQuality"}
         versions: {$ref: "#/components/schemas/OperatorAIAnalyticsVersions"}
@@ -4775,6 +4782,188 @@ components:
           format: double
           minimum: 0
           maximum: 1
+    OperatorAIAnalyticsJudges:
+      type: object
+      additionalProperties: false
+      required: [version, totalCalls, reportedCalls, unavailableCalls, models, lineups, questions, pairs, yesAbove]
+      description: Read-only observed judge evidence for the full selected practice, location, and date window, independent of pagination and intent, outcome, or failure filters. Includes only current v8 reports with complete or incomplete status and a unique, nonempty roster of nonblank model identifiers. Observed models and lineups are historical evidence, not a claim about current deployment configuration. Only current catalog boolean judge questions are counted; numerical sentiment is excluded.
+      properties:
+        version: {type: string}
+        totalCalls: {type: integer, minimum: 0}
+        reportedCalls:
+          type: integer
+          minimum: 0
+          description: Calls with a supported report envelope. Individual questions may still be missing, invalid, or inapplicable.
+        unavailableCalls:
+          type: integer
+          minimum: 0
+          description: Calls excluded for missing, malformed, or unsupported-version reports; totalCalls minus reportedCalls.
+        models:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIJudgeModel"}
+        lineups:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIJudgeLineup"}
+        questions:
+          type: array
+          description: Current boolean judge criteria with question-specific evidence. Status counts cover reportedCalls; excluded report envelopes do not enter question counts.
+          items: {$ref: "#/components/schemas/OperatorAIJudgeQuestion"}
+        pairs:
+          type: array
+          description: Model-pair comparisons summed across eligible boolean questions. A call can contribute several comparisons for the same pair. Includes valid observations from partial no-quorum reports; absent or invalid votes never count as disagreements.
+          items: {$ref: "#/components/schemas/OperatorAIJudgePair"}
+        yesAbove:
+          type: number
+          format: double
+          description: A model votes yes only when its valid probability is strictly greater than this threshold. Consensus is majority yes/no; a tie uses whether the mean valid probability is strictly above this threshold.
+    OperatorAIJudgeModel:
+      type: object
+      additionalProperties: false
+      required: [model, votes, missingVotes]
+      properties:
+        model: {type: string}
+        votes:
+          type: integer
+          minimum: 0
+          description: Valid probabilities from this roster model over attempted boolean question opportunities.
+        missingVotes:
+          type: integer
+          minimum: 0
+          description: Attempted boolean question opportunities in reports listing this model where its vote is missing or invalid. Unknown, not-applicable, and unavailable questions without a recognizable vote map create no opportunity.
+    OperatorAIJudgeLineup:
+      type: object
+      additionalProperties: false
+      required: [models, requiredVotes, calls]
+      properties:
+        models: {type: array, items: {type: string}}
+        requiredVotes:
+          type: integer
+          minimum: 1
+          description: Floor of the observed roster size divided by two, plus one.
+        calls: {type: integer, minimum: 0}
+    OperatorAIJudgePair:
+      type: object
+      additionalProperties: false
+      required: [left, right, compared, agreed, disagreed]
+      description: Canonically sorted model identifiers. One comparison requires two finite probabilities within 0 through 1 on the same call and question, both from the report roster. agreed plus disagreed equals compared; agreement rate is agreed divided by compared. Pairs without shared valid votes are omitted.
+      properties:
+        left: {type: string}
+        right: {type: string}
+        compared: {type: integer, minimum: 0}
+        agreed: {type: integer, minimum: 0}
+        disagreed: {type: integer, minimum: 0}
+    OperatorAIJudgeQuestion:
+      type: object
+      additionalProperties: false
+      required: [key, label, prompt, question, yes, no, attempted, quorumMet, noQuorum, unknown, notApplicable, unavailable, pairs]
+      description: Current catalog criteria. quorumMet, noQuorum, unknown, notApplicable, and unavailable are mutually exclusive and sum to reportedCalls. attempted is a separate count of recognized result or no_quorum vote maps, including maps whose malformed consensus is unavailable. Valid model observations remain comparable even when the stored consensus is unavailable.
+      properties:
+        key: {type: string}
+        label: {type: string}
+        prompt: {type: string}
+        question: {type: string}
+        yes: {type: string}
+        no: {type: string}
+        attempted: {type: integer, minimum: 0}
+        quorumMet:
+          type: integer
+          minimum: 0
+          description: Successful results with enough valid roster votes, a valid consensus probability, and a stored verdict consistent with majority and tie-break rules.
+        noQuorum:
+          type: integer
+          minimum: 0
+          description: Explicit no_quorum errors whose valid roster vote count is below the required count.
+        unknown: {type: integer, minimum: 0}
+        notApplicable: {type: integer, minimum: 0}
+        unavailable:
+          type: integer
+          minimum: 0
+          description: Missing or malformed question results, unrecognized errors, or contradictory quorum/verdict evidence in supported reports.
+        pairs:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIJudgePair"}
+    OperatorAIAnalyticsDistributions:
+      allOf:
+        - $ref: "#/components/schemas/OperatorAIAnalyticsDistributionCounts"
+        - type: object
+          required: [daily]
+          properties:
+            daily:
+              type: array
+              description: Every UTC date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
+              items: {$ref: "#/components/schemas/OperatorAIAnalyticsDistributionDay"}
+    OperatorAIAnalyticsDistributionDay:
+      allOf:
+        - $ref: "#/components/schemas/OperatorAIAnalyticsDistributionCounts"
+        - type: object
+          required: [date]
+          properties:
+            date: {type: string, description: UTC calendar date in YYYY-MM-DD format.}
+    OperatorAIAnalyticsDistributionCounts:
+      type: object
+      required: [totalCalls, intents, outcomes, failures, unlabeledIntentCalls, unlabeledOutcomeCalls, evaluatedCalls, failedCalls, unevaluatedCalls]
+      description: Full date-window distributions within the selected practice, location, intent, and outcome. Intent and outcome filters intersect using exact persisted labels; missing labels do not match named filters. Call pagination and failure filters do not restrict these counts. Other summary metrics retain their full practice, location, and date scope. Only observed categories are returned, ordered by descending calls then category key. Counts retain valid partial classifications regardless of labeling status; each label distribution plus its unlabeled count equals this object's totalCalls.
+      properties:
+        totalCalls:
+          type: integer
+          minimum: 0
+          description: Calls matching the selected intent and outcome within this reporting window or date; denominator for this object's label distributions and evaluation coverage.
+        intents:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIIntentCount"}
+        outcomes:
+          type: array
+          items: {$ref: "#/components/schemas/OperatorAIOutcomeCount"}
+        failures:
+          type: array
+          description: Distinct calls per eligible failure judge question, collapsed across scorecard versions v6-v8 using the same catalog and normalized judge answers as failuresOnly and failingJudge. An explicit false answer is a failure. A call may appear in multiple categories; category shares use the sum of these counts.
+          items: {$ref: "#/components/schemas/OperatorAIFailureCount"}
+        unlabeledIntentCalls:
+          type: integer
+          minimum: 0
+          description: Calls without a persisted intent, including missing or partial classifications.
+        unlabeledOutcomeCalls:
+          type: integer
+          minimum: 0
+          description: Calls without a persisted outcome, including missing or partial classifications.
+        evaluatedCalls:
+          type: integer
+          minimum: 0
+          description: Distinct calls with at least one persisted boolean judge answer for an eligible failure question in its v6-v8 catalog. Does not imply every question was evaluated. Context questions, code answers, older numeric scorecards, unknown answers, and not-applicable answers are excluded.
+        failedCalls:
+          type: integer
+          minimum: 0
+          description: Distinct calls with at least one eligible explicit false judge answer.
+        unevaluatedCalls:
+          type: integer
+          minimum: 0
+          description: totalCalls minus evaluatedCalls; absence of usable failure-judge evidence is not a passing result.
+    OperatorAIIntentCount:
+      type: object
+      additionalProperties: false
+      required: [intent, calls]
+      properties:
+        intent: {$ref: "#/components/schemas/CallIntent"}
+        calls: {type: integer, minimum: 0}
+    OperatorAIOutcomeCount:
+      type: object
+      additionalProperties: false
+      required: [outcome, calls]
+      properties:
+        outcome: {$ref: "#/components/schemas/CallOutcome"}
+        calls: {type: integer, minimum: 0}
+    OperatorAIFailureCount:
+      type: object
+      additionalProperties: false
+      required: [key, label, calls]
+      properties:
+        key:
+          type: string
+          description: Eligible failure question key, accepted by the failingJudge filter.
+        label:
+          type: string
+          description: Question label from the newest supported scorecard catalog containing this key.
+        calls: {type: integer, minimum: 0}
     OperatorAICheckFlagCount:
       type: object
       additionalProperties: false
@@ -5067,7 +5256,7 @@ components:
         transcriptAvailable:
           type: boolean
     OperatorAIAnalyticsPage:
-      description: The first page includes a fresh practice, location and range summary. Intent and outcome filters apply only to the calls table, not the summary or pending issues. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
+      description: The first page includes a fresh practice, location and range summary. Intent and outcome filters restrict the calls table and summary distributions; all other summary fields and pending issues retain their full practice, location, and range scope. Failure filters restrict only the calls table. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
       type: object
       additionalProperties: false
       required: [calls, nextCursor]

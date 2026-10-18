@@ -6,8 +6,10 @@ import {
   Clock3Icon,
   CoinsIcon,
   ListChecksIcon,
+  LayoutDashboardIcon,
   PhoneIcon,
-  ShieldCheckIcon,
+  ScaleIcon,
+  ChartNoAxesColumnIncreasingIcon,
   UsersIcon,
   WrenchIcon,
   type LucideIcon,
@@ -21,14 +23,15 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
-export type ControlCenterPage = "calls" | "overview" | "quality" | "tools" | "cost" | "review"
+export type CommandCenterPage = "calls" | "overview" | "breakdowns" | "tools" | "cost" | "review" | "judges"
 
-export const controlCenterPages: Array<{ value: ControlCenterPage; label: string; icon: typeof PhoneIcon }> = [
+export const commandCenterPages: Array<{ value: CommandCenterPage; label: string; icon: typeof PhoneIcon }> = [
   { value: "calls", label: "Calls", icon: PhoneIcon },
-  { value: "overview", label: "Overview", icon: ChartNoAxesCombinedIcon },
-  { value: "quality", label: "Quality", icon: ShieldCheckIcon },
+  { value: "overview", label: "Summary", icon: LayoutDashboardIcon },
+  { value: "breakdowns", label: "Breakdowns", icon: ChartNoAxesColumnIncreasingIcon },
   { value: "tools", label: "Tools", icon: WrenchIcon },
   { value: "cost", label: "Cost", icon: CoinsIcon },
+  { value: "judges", label: "Judges", icon: ScaleIcon },
   { value: "review", label: "Review", icon: ListChecksIcon },
 ]
 
@@ -63,7 +66,7 @@ export function AnalyticsNavigation<Page extends string>({
               <SidebarMenuButton
                 isActive={page === item.value}
                 aria-current={page === item.value ? "page" : undefined}
-                className="h-9 rounded-lg px-2.5"
+                className="h-9 rounded-lg px-2.5 font-medium text-sidebar-foreground/90 [&>svg]:text-sidebar-foreground/90"
                 onClick={() => {
                   onPage(item.value)
                   if (isMobile) setOpenMobile(false)

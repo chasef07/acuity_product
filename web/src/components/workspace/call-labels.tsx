@@ -2,7 +2,7 @@ import type { CallIntent, CallOutcome, CallLabelingStatus } from "@/lib/api/gene
 import { Badge } from "@/components/ui/badge"
 import { OptionSelect } from "./manage-agent-page"
 
-const intentLabels: Record<CallIntent, string> = {
+export const intentLabels: Record<CallIntent, string> = {
   new_patient_booking: "New patient booking",
   existing_patient_booking: "Existing patient booking",
   reschedule_appointment: "Reschedule appointment",
@@ -19,7 +19,7 @@ const intentLabels: Record<CallIntent, string> = {
   other: "Other",
 }
 
-const outcomeLabels: Record<CallOutcome, string> = {
+export const outcomeLabels: Record<CallOutcome, string> = {
   resolved: "Resolved",
   transferred: "Transferred",
   abandoned: "Abandoned",

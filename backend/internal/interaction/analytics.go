@@ -39,11 +39,16 @@ type QueryAnalyticsCommand struct {
 }
 
 type AnalyticsDay struct {
-	Date          string
-	TotalCalls    int
-	CallMinutes   float64
-	TransferCount int
-	TransferRate  *float64
+	BookingCount      int
+	CancellationCount int
+	RescheduleCount   int
+	ToolCallCount     int
+	ToolErrorCount    int
+	Date              string
+	TotalCalls        int
+	CallMinutes       float64
+	TransferCount     int
+	TransferRate      *float64
 }
 
 func analyticsDays(from, through time.Time) []AnalyticsDay {
@@ -55,6 +60,8 @@ func analyticsDays(from, through time.Time) []AnalyticsDay {
 }
 
 type AnalyticsSummary struct {
+	Judges            AnalyticsJudges
+	Distributions     AnalyticsDistributions
 	Daily             []AnalyticsDay
 	Diagnostics       AnalyticsDiagnostics
 	Quality           AnalyticsQuality
@@ -276,15 +283,24 @@ func queryAnalyticsSummary(
 			COALESCE(interaction.version_tools, ''),
 			COALESCE(interaction.version_knowledge, ''),
 			COALESCE(interaction.version_judges, ''),
-			COALESCE(interaction.version_evaluator, '')
+			COALESCE(interaction.version_evaluator, ''),
+			classification.intent, classification.outcome, judged.evaluated, judged.failures
 		FROM ai_interactions interaction
+		LEFT JOIN ai_interaction_classifications classification ON classification.interaction_id = interaction.id
+		LEFT JOIN LATERAL (
+			SELECT count(*) > 0 AS evaluated,
+				COALESCE(array_agg(DISTINCT answer.question) FILTER (WHERE NOT answer.answer), '{}') AS failures
+			FROM ai_interaction_scorecard_answers answer
+			WHERE answer.interaction_id = interaction.id AND answer.source = 'judge'
+				AND answer.scorecard_version || ':' || answer.question = ANY($5::text[])
+		) judged ON true
 		LEFT JOIN ai_interaction_issues issue ON issue.interaction_id = interaction.id
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.started_at >= $3
 			AND interaction.started_at <= $4
 		ORDER BY interaction.started_at, interaction.id
-	`, command.PracticeID, locationIDs, from, to)
+	`, command.PracticeID, locationIDs, from, to, judgeFailureKeys(""))
 	if err != nil {
 		return AnalyticsSummary{}, fmt.Errorf("query operator AI analytics summary: %w", err)
 	}
@@ -292,12 +308,21 @@ func queryAnalyticsSummary(
 	summary := AnalyticsSummary{Daily: analyticsDays(from, to), diagnostics: newDiagnosticsAccumulator()}
 	summary.quality = newQualityAccumulator(summary.Daily)
 	summary.versions = versions
+	distributions := newDistributionAccumulator()
+	judges := newJudgeAccumulator()
+	dailyDistributions := map[string]*distributionAccumulator{}
+	for _, day := range summary.Daily {
+		dailyDistributions[day.Date] = newDistributionAccumulator()
+	}
 	for rows.Next() {
 		if summary.TotalCalls == analyticsRowLimit {
 			return AnalyticsSummary{}, errors.New("operator AI analytics exceeds bounded reporting window")
 		}
 		var projection analyticsProjection
 		var evaluation, footprint, usage json.RawMessage
+		var intent, outcome *string
+		var evaluated bool
+		var failures []string
 		values := make([]string, len(versionDimensions))
 		if err := rows.Scan(
 			&projection.call.ID,
@@ -313,6 +338,7 @@ func queryAnalyticsSummary(
 			&projection.quality.staffFlag,
 			&projection.versions.locationID,
 			&values[0], &values[1], &values[2], &values[3], &values[4], &values[5],
+			&intent, &outcome, &evaluated, &failures,
 		); err != nil {
 			return AnalyticsSummary{}, fmt.Errorf("scan operator AI analytics summary: %w", err)
 		}
@@ -322,11 +348,17 @@ func queryAnalyticsSummary(
 		projectAnalyticsEvidence(&projection)
 		projection.quality.startedAt = projection.call.StartedAt
 		projection.quality.evaluation = readEvaluation(evaluation)
+		judges.add(evaluation)
 		projection.quality.footprint = contextFootprint(footprint)
 		projection.quality.usage = callTokenUsage(usage)
 		projection.versions.values = map[string]string{}
 		for i, dimension := range versionDimensions {
 			projection.versions.values[dimension] = values[i]
+		}
+		if (command.Intent == "" || intent != nil && *intent == command.Intent) &&
+			(command.Outcome == "" || outcome != nil && *outcome == command.Outcome) {
+			distributions.add(intent, outcome, evaluated, failures)
+			dailyDistributions[projection.call.StartedAt.UTC().Format(time.DateOnly)].add(intent, outcome, evaluated, failures)
 		}
 		summarizeAnalyticsProjection(&summary, projection)
 	}
@@ -334,6 +366,11 @@ func queryAnalyticsSummary(
 		return AnalyticsSummary{}, fmt.Errorf("iterate operator AI analytics summary: %w", err)
 	}
 	finalizeAnalyticsSummary(&summary)
+	summary.Judges = judges.finish()
+	summary.Distributions = AnalyticsDistributions{AnalyticsDistributionCounts: distributions.finish(), Daily: []AnalyticsDistributionDay{}}
+	for _, day := range summary.Daily {
+		summary.Distributions.Daily = append(summary.Distributions.Daily, AnalyticsDistributionDay{Date: day.Date, AnalyticsDistributionCounts: dailyDistributions[day.Date].finish()})
+	}
 	return summary, nil
 }
 
@@ -349,6 +386,16 @@ func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analytic
 		day := &summary.Daily[i]
 		if day.Date == date {
 			day.TotalCalls++
+			day.ToolCallCount += projection.call.ToolCallCount
+			day.ToolErrorCount += projection.call.ToolErrorCount
+			switch projection.appointmentOutcome {
+			case OutcomeBooking:
+				day.BookingCount++
+			case OutcomeCancellation:
+				day.CancellationCount++
+			case OutcomeReschedule:
+				day.RescheduleCount++
+			}
 			day.CallMinutes += minutes
 			if projection.call.Transferred {
 				day.TransferCount++

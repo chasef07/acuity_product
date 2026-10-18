@@ -1344,7 +1344,7 @@ export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
     /**
-     * Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; summary remains unfiltered.
+     * Restrict calls to explicit failing judge answers from persisted scorecards v6-v8, using each version's failure-question catalog. Missing, unknown, not-applicable, contextual answers, and earlier numeric scorecards do not match. Applies before pagination; does not restrict summary distributions or other summary metrics.
      */
     failuresOnly?: boolean;
     /**
@@ -1373,6 +1373,11 @@ export type OperatorAiAnalyticsQueryRequest = {
 };
 
 export type OperatorAiAnalyticsDay = {
+    bookingCount?: number;
+    cancellationCount?: number;
+    rescheduleCount?: number;
+    toolCallCount?: number;
+    toolErrorCount?: number;
     /**
      * UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
      */
@@ -1397,6 +1402,8 @@ export type OperatorAiAnalyticsSummary = {
      * All UTC dates in the full selected range, including dates without calls; independent of call pagination.
      */
     daily: Array<OperatorAiAnalyticsDay>;
+    judges?: OperatorAiAnalyticsJudges;
+    distributions?: OperatorAiAnalyticsDistributions;
     diagnostics?: OperatorAiAnalyticsDiagnostics;
     quality: OperatorAiAnalyticsQuality;
     versions: OperatorAiAnalyticsVersions;
@@ -1410,6 +1417,168 @@ export type OperatorAiAnalyticsSummary = {
     toolCallCount: number;
     toolErrorCount: number;
     toolFailureRate: number;
+};
+
+/**
+ * Read-only observed judge evidence for the full selected practice, location, and date window, independent of pagination and intent, outcome, or failure filters. Includes only current v8 reports with complete or incomplete status and a unique, nonempty roster of nonblank model identifiers. Observed models and lineups are historical evidence, not a claim about current deployment configuration. Only current catalog boolean judge questions are counted; numerical sentiment is excluded.
+ */
+export type OperatorAiAnalyticsJudges = {
+    version: string;
+    totalCalls: number;
+    /**
+     * Calls with a supported report envelope. Individual questions may still be missing, invalid, or inapplicable.
+     */
+    reportedCalls: number;
+    /**
+     * Calls excluded for missing, malformed, or unsupported-version reports; totalCalls minus reportedCalls.
+     */
+    unavailableCalls: number;
+    models: Array<OperatorAiJudgeModel>;
+    lineups: Array<OperatorAiJudgeLineup>;
+    /**
+     * Current boolean judge criteria with question-specific evidence. Status counts cover reportedCalls; excluded report envelopes do not enter question counts.
+     */
+    questions: Array<OperatorAiJudgeQuestion>;
+    /**
+     * Model-pair comparisons summed across eligible boolean questions. A call can contribute several comparisons for the same pair. Includes valid observations from partial no-quorum reports; absent or invalid votes never count as disagreements.
+     */
+    pairs: Array<OperatorAiJudgePair>;
+    /**
+     * A model votes yes only when its valid probability is strictly greater than this threshold. Consensus is majority yes/no; a tie uses whether the mean valid probability is strictly above this threshold.
+     */
+    yesAbove: number;
+};
+
+export type OperatorAiJudgeModel = {
+    model: string;
+    /**
+     * Valid probabilities from this roster model over attempted boolean question opportunities.
+     */
+    votes: number;
+    /**
+     * Attempted boolean question opportunities in reports listing this model where its vote is missing or invalid. Unknown, not-applicable, and unavailable questions without a recognizable vote map create no opportunity.
+     */
+    missingVotes: number;
+};
+
+export type OperatorAiJudgeLineup = {
+    models: Array<string>;
+    /**
+     * Floor of the observed roster size divided by two, plus one.
+     */
+    requiredVotes: number;
+    calls: number;
+};
+
+/**
+ * Canonically sorted model identifiers. One comparison requires two finite probabilities within 0 through 1 on the same call and question, both from the report roster. agreed plus disagreed equals compared; agreement rate is agreed divided by compared. Pairs without shared valid votes are omitted.
+ */
+export type OperatorAiJudgePair = {
+    left: string;
+    right: string;
+    compared: number;
+    agreed: number;
+    disagreed: number;
+};
+
+/**
+ * Current catalog criteria. quorumMet, noQuorum, unknown, notApplicable, and unavailable are mutually exclusive and sum to reportedCalls. attempted is a separate count of recognized result or no_quorum vote maps, including maps whose malformed consensus is unavailable. Valid model observations remain comparable even when the stored consensus is unavailable.
+ */
+export type OperatorAiJudgeQuestion = {
+    key: string;
+    label: string;
+    prompt: string;
+    question: string;
+    yes: string;
+    no: string;
+    attempted: number;
+    /**
+     * Successful results with enough valid roster votes, a valid consensus probability, and a stored verdict consistent with majority and tie-break rules.
+     */
+    quorumMet: number;
+    /**
+     * Explicit no_quorum errors whose valid roster vote count is below the required count.
+     */
+    noQuorum: number;
+    unknown: number;
+    notApplicable: number;
+    /**
+     * Missing or malformed question results, unrecognized errors, or contradictory quorum/verdict evidence in supported reports.
+     */
+    unavailable: number;
+    pairs: Array<OperatorAiJudgePair>;
+};
+
+export type OperatorAiAnalyticsDistributions = OperatorAiAnalyticsDistributionCounts & {
+    /**
+     * Every UTC date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
+     */
+    daily: Array<OperatorAiAnalyticsDistributionDay>;
+};
+
+export type OperatorAiAnalyticsDistributionDay = OperatorAiAnalyticsDistributionCounts & {
+    /**
+     * UTC calendar date in YYYY-MM-DD format.
+     */
+    date: string;
+};
+
+/**
+ * Full date-window distributions within the selected practice, location, intent, and outcome. Intent and outcome filters intersect using exact persisted labels; missing labels do not match named filters. Call pagination and failure filters do not restrict these counts. Other summary metrics retain their full practice, location, and date scope. Only observed categories are returned, ordered by descending calls then category key. Counts retain valid partial classifications regardless of labeling status; each label distribution plus its unlabeled count equals this object's totalCalls.
+ */
+export type OperatorAiAnalyticsDistributionCounts = {
+    /**
+     * Calls matching the selected intent and outcome within this reporting window or date; denominator for this object's label distributions and evaluation coverage.
+     */
+    totalCalls: number;
+    intents: Array<OperatorAiIntentCount>;
+    outcomes: Array<OperatorAiOutcomeCount>;
+    /**
+     * Distinct calls per eligible failure judge question, collapsed across scorecard versions v6-v8 using the same catalog and normalized judge answers as failuresOnly and failingJudge. An explicit false answer is a failure. A call may appear in multiple categories; category shares use the sum of these counts.
+     */
+    failures: Array<OperatorAiFailureCount>;
+    /**
+     * Calls without a persisted intent, including missing or partial classifications.
+     */
+    unlabeledIntentCalls: number;
+    /**
+     * Calls without a persisted outcome, including missing or partial classifications.
+     */
+    unlabeledOutcomeCalls: number;
+    /**
+     * Distinct calls with at least one persisted boolean judge answer for an eligible failure question in its v6-v8 catalog. Does not imply every question was evaluated. Context questions, code answers, older numeric scorecards, unknown answers, and not-applicable answers are excluded.
+     */
+    evaluatedCalls: number;
+    /**
+     * Distinct calls with at least one eligible explicit false judge answer.
+     */
+    failedCalls: number;
+    /**
+     * totalCalls minus evaluatedCalls; absence of usable failure-judge evidence is not a passing result.
+     */
+    unevaluatedCalls: number;
+};
+
+export type OperatorAiIntentCount = {
+    intent: CallIntent;
+    calls: number;
+};
+
+export type OperatorAiOutcomeCount = {
+    outcome: CallOutcome;
+    calls: number;
+};
+
+export type OperatorAiFailureCount = {
+    /**
+     * Eligible failure question key, accepted by the failingJudge filter.
+     */
+    key: string;
+    /**
+     * Question label from the newest supported scorecard catalog containing this key.
+     */
+    label: string;
+    calls: number;
 };
 
 export type OperatorAiCheckFlagCount = {
@@ -1615,7 +1784,7 @@ export type OperatorAiCallAnalytics = {
 };
 
 /**
- * The first page includes a fresh practice, location and range summary. Intent and outcome filters apply only to the calls table, not the summary or pending issues. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
+ * The first page includes a fresh practice, location and range summary. Intent and outcome filters restrict the calls table and summary distributions; all other summary fields and pending issues retain their full practice, location, and range scope. Failure filters restrict only the calls table. Cursor continuations return calls only within the initial reporting window and filters; refresh without a cursor to obtain a new summary and window.
  */
 export type OperatorAiAnalyticsPage = {
     /**

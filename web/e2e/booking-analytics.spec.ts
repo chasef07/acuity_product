@@ -126,7 +126,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
       page.getByRole("navigation", { name: "Current location", exact: true }).getByText("Bookings", { exact: true }),
     ).toBeVisible()
     await expect(
-      page.getByRole("button", { name: "Control Center", exact: true }),
+      page.getByRole("button", { name: "Command Center", exact: true }),
     ).toHaveCount(0)
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page

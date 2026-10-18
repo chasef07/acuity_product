@@ -5,7 +5,7 @@ import Image from "next/image"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
-  ActivityIcon,
+  TowerControlIcon,
   ChartNoAxesCombinedIcon,
   HouseIcon,
   InboxIcon,
@@ -104,12 +104,12 @@ export function WorkspaceNavRail({
       )}
       {discovery.platformOperator && (
         <RailButton
-          label="Control Center"
+          label="Command Center"
           active={view === "operator-analytics"}
           aria-expanded={view === "operator-analytics" && panelOpen}
           onClick={() => selectWithSidebar(view === "operator-analytics", { type: "select-operator-analytics" })}
         >
-          <ActivityIcon />
+          <TowerControlIcon />
         </RailButton>
       )}
       {availabilityControl}

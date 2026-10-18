@@ -299,9 +299,34 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		firstPage.Summary.Quality.EvaluatedCalls+firstPage.Summary.Quality.UnevaluatedCalls != 2 {
 		t.Fatalf("operator analytics summary = %#v", firstPage.Summary)
 	}
+	judges := firstPage.Summary.Judges
+	if judges == nil || judges.TotalCalls != 2 || judges.ReportedCalls != 0 || judges.UnavailableCalls != 2 || judges.Version != interaction.ScorecardJudgeVersion || judges.YesAbove != 0.4 || len(judges.Questions) != 6 || judges.Models == nil || judges.Lineups == nil || judges.Pairs == nil {
+		t.Fatalf("missing judge evidence must remain explicit: %+v", judges)
+	}
+	for _, question := range judges.Questions {
+		if question.Key == "" || question.Question == "" || question.Yes == "" || question.No == "" || question.Pairs == nil {
+			t.Fatalf("judge criteria missing: %+v", question)
+		}
+	}
+	distributions := firstPage.Summary.Distributions
+	if distributions == nil || distributions.TotalCalls != 2 || distributions.Intents == nil || distributions.Outcomes == nil || distributions.Failures == nil ||
+		len(distributions.Intents) != 0 || len(distributions.Outcomes) != 0 || len(distributions.Failures) != 0 ||
+		distributions.UnlabeledIntentCalls != 2 || distributions.UnlabeledOutcomeCalls != 2 ||
+		distributions.EvaluatedCalls != 0 || distributions.FailedCalls != 0 || distributions.UnevaluatedCalls != 2 {
+		t.Fatalf("unclassified and unjudged calls must remain visible: %+v", distributions)
+	}
 	totalCalls, transfers := 0, 0
+	bookings, cancellations, reschedules, toolCalls, toolErrors := 0, 0, 0, 0, 0
 	var callMinutes float64
 	for _, day := range firstPage.Summary.Daily {
+		if day.BookingCount == nil || day.CancellationCount == nil || day.RescheduleCount == nil || day.ToolCallCount == nil || day.ToolErrorCount == nil {
+			t.Fatalf("daily metrics absent: %+v", day)
+		}
+		bookings += *day.BookingCount
+		cancellations += *day.CancellationCount
+		reschedules += *day.RescheduleCount
+		toolCalls += *day.ToolCallCount
+		toolErrors += *day.ToolErrorCount
 		callMinutes += day.CallMinutes
 		totalCalls += day.TotalCalls
 		transfers += day.TransferCount
@@ -311,6 +336,18 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	}
 	if len(firstPage.Summary.Daily) < 2 || totalCalls != firstPage.Summary.TotalCalls || transfers != firstPage.Summary.TransferCount || math.Abs(callMinutes-firstPage.Summary.TotalCallMinutes) > 0.0001 {
 		t.Fatalf("daily trends do not cover full range: %#v", firstPage.Summary.Daily)
+	}
+
+	if bookings != firstPage.Summary.BookingCount || cancellations != firstPage.Summary.CancellationCount || reschedules != firstPage.Summary.RescheduleCount || toolCalls != firstPage.Summary.ToolCallCount || toolErrors != firstPage.Summary.ToolErrorCount {
+		t.Fatal("daily activity metrics do not sum to summary")
+	}
+	if len(distributions.Daily) != len(firstPage.Summary.Daily) {
+		t.Fatal("distribution daily coverage absent on wire")
+	}
+	for i, day := range distributions.Daily {
+		if day.Date != firstPage.Summary.Daily[i].Date || day.TotalCalls != firstPage.Summary.Daily[i].TotalCalls || day.UnevaluatedCalls != firstPage.Summary.Daily[i].TotalCalls || day.Intents == nil || day.Outcomes == nil || day.Failures == nil {
+			t.Fatalf("daily missing evidence: %+v", day)
+		}
 	}
 
 	if len(firstPage.Calls) != 1 || firstPage.Calls[0].ID != escalatedID ||
@@ -490,12 +527,19 @@ type operatorAIInteractionFixture struct {
 
 type operatorAIAnalyticsTestPage struct {
 	Summary *struct {
-		Daily []struct {
-			Date          string   `json:"date"`
-			TotalCalls    int      `json:"totalCalls"`
-			CallMinutes   float64  `json:"callMinutes"`
-			TransferCount int      `json:"transferCount"`
-			TransferRate  *float64 `json:"transferRate"`
+		Judges        *api.OperatorAIAnalyticsJudges        `json:"judges"`
+		Distributions *api.OperatorAIAnalyticsDistributions `json:"distributions"`
+		Daily         []struct {
+			BookingCount      *int     `json:"bookingCount"`
+			CancellationCount *int     `json:"cancellationCount"`
+			RescheduleCount   *int     `json:"rescheduleCount"`
+			ToolCallCount     *int     `json:"toolCallCount"`
+			ToolErrorCount    *int     `json:"toolErrorCount"`
+			Date              string   `json:"date"`
+			TotalCalls        int      `json:"totalCalls"`
+			CallMinutes       float64  `json:"callMinutes"`
+			TransferCount     int      `json:"transferCount"`
+			TransferRate      *float64 `json:"transferRate"`
 		} `json:"daily"`
 		Quality struct {
 			Daily            []json.RawMessage `json:"daily"`

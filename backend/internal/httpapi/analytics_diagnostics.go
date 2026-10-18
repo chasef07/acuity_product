@@ -113,3 +113,43 @@ func analyticsVersionsResponse(value interaction.AnalyticsVersions) (api.Operato
 	}
 	return result, nil
 }
+
+func analyticsDistributionsResponse(value interaction.AnalyticsDistributions) *api.OperatorAIAnalyticsDistributions {
+	counts := analyticsDistributionDayResponse("", value.AnalyticsDistributionCounts)
+	result := &api.OperatorAIAnalyticsDistributions{
+		TotalCalls: counts.TotalCalls,
+		Daily:      make([]api.OperatorAIAnalyticsDistributionDay, 0, len(value.Daily)),
+		Intents:    counts.Intents, Outcomes: counts.Outcomes, Failures: counts.Failures,
+		UnlabeledIntentCalls: counts.UnlabeledIntentCalls, UnlabeledOutcomeCalls: counts.UnlabeledOutcomeCalls,
+		EvaluatedCalls: counts.EvaluatedCalls, FailedCalls: counts.FailedCalls, UnevaluatedCalls: counts.UnevaluatedCalls,
+	}
+	for _, day := range value.Daily {
+		result.Daily = append(result.Daily, analyticsDistributionDayResponse(day.Date, day.AnalyticsDistributionCounts))
+	}
+	return result
+}
+
+func analyticsDistributionDayResponse(date string, value interaction.AnalyticsDistributionCounts) api.OperatorAIAnalyticsDistributionDay {
+	result := api.OperatorAIAnalyticsDistributionDay{
+		TotalCalls:            value.TotalCalls,
+		Date:                  date,
+		Intents:               make([]api.OperatorAIIntentCount, 0, len(value.Intents)),
+		Outcomes:              make([]api.OperatorAIOutcomeCount, 0, len(value.Outcomes)),
+		Failures:              make([]api.OperatorAIFailureCount, 0, len(value.Failures)),
+		UnlabeledIntentCalls:  value.UnlabeledIntentCalls,
+		UnlabeledOutcomeCalls: value.UnlabeledOutcomeCalls,
+		EvaluatedCalls:        value.EvaluatedCalls,
+		FailedCalls:           value.FailedCalls,
+		UnevaluatedCalls:      value.UnevaluatedCalls,
+	}
+	for _, row := range value.Intents {
+		result.Intents = append(result.Intents, api.OperatorAIIntentCount{Intent: api.CallIntent(row.Intent), Calls: row.Calls})
+	}
+	for _, row := range value.Outcomes {
+		result.Outcomes = append(result.Outcomes, api.OperatorAIOutcomeCount{Outcome: api.CallOutcome(row.Outcome), Calls: row.Calls})
+	}
+	for _, row := range value.Failures {
+		result.Failures = append(result.Failures, api.OperatorAIFailureCount{Key: row.Key, Label: row.Label, Calls: row.Calls})
+	}
+	return result
+}
