@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.2](https://github.com/chasef07/acuity_product/compare/v1.43.1...v1.43.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **calls:** keep Command Center stable during live updates ([#512](https://github.com/chasef07/acuity_product/issues/512)) ([8641b63](https://github.com/chasef07/acuity_product/commit/8641b63804cb608a5f509cdab003b321892596d8))
+
 ## [1.43.1](https://github.com/chasef07/acuity_product/compare/v1.43.0...v1.43.1) (2026-10-19)
 
 
