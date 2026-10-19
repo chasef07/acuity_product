@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.1](https://github.com/chasef07/acuity_product/compare/v1.43.0...v1.43.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **calls:** keep live updates without loading flashes ([#510](https://github.com/chasef07/acuity_product/issues/510)) ([cefb93f](https://github.com/chasef07/acuity_product/commit/cefb93f3f22bae2f41f4955b47798153ec6814df))
+
 ## [1.43.0](https://github.com/chasef07/acuity_product/compare/v1.42.3...v1.43.0) (2026-10-18)
 
 
