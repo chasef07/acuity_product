@@ -97,7 +97,7 @@ export function OperatorAnalytics({
   const [requestVersion, setRequestVersion] = useState(0)
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
-  const requestKey = `${practiceID}:${locationID}:${range}:${intent}:${outcome}:${judgeFlag}:${revision}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${intent}:${outcome}:${judgeFlag}`
   const currentRequest = useAiCallAnalytics({
     practiceID,
     locationID,
