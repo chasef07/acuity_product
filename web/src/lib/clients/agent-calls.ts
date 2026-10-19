@@ -49,7 +49,7 @@ export function useAgentCalls({
   revision: number
 }) {
   return useCallPages<AgentCallsPage>(
-    JSON.stringify([practiceID, locationID, range, phone, flaggedOnly, needsKnowledgeOnly, intent, outcome, revision]),
+    JSON.stringify([practiceID, locationID, range, phone, flaggedOnly, needsKnowledgeOnly, intent, outcome]),
     true,
     (transport, cursor) =>
       queryAgentCalls({
@@ -71,6 +71,7 @@ export function useAgentCalls({
       calls: [...shown.calls, ...next.calls],
       nextCursor: next.nextCursor,
     }),
+    revision,
   )
 }
 
@@ -210,10 +211,12 @@ function useCallPages<P extends { nextCursor: string }>(
   enabled: boolean,
   send: (transport: PortalTransport, cursor?: string) => Promise<PortalResult<P>>,
   append: (shown: P, next: P) => P,
+  revision = 0,
 ): CallPages<P> {
   const [snapshot, setSnapshot] = useState<{
     key: string
     controller: AbortController
+    revision: number
     query: PortalQuery<P>
   }>()
   const [more, setMore] = useState<{
@@ -232,6 +235,7 @@ function useCallPages<P extends { nextCursor: string }>(
         setSnapshot({
           key,
           controller,
+          revision,
           query: outcome.ok
             ? { status: "ready", data: outcome.data }
             : { status: "failed", failure: outcome.failure },
@@ -241,10 +245,10 @@ function useCallPages<P extends { nextCursor: string }>(
       () => undefined,
     )
     return () => controller.abort()
-  }, [key, enabled])
+  }, [key, enabled, revision])
 
   const current = snapshot?.key === key ? snapshot : undefined
-  const currentMore = more?.key === key ? more : undefined
+  const currentMore = more?.key === key && current?.revision === revision ? more : undefined
 
   async function loadMore() {
     if (current?.query.status !== "ready" || currentMore?.loading) return

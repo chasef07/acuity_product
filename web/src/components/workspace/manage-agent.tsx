@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { CheckIcon, FlagIcon, RefreshCwIcon } from "lucide-react"
+import { CheckIcon, FlagIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { Spinner } from "@/components/ui/spinner"
@@ -47,12 +47,14 @@ export function ManageAgent({
   locations,
   page,
   onPage,
+  revision = 0,
 }: {
   actorSubject: string
   practiceID: string
   locationScopeID: string
   locations: Location[]
   page: ManageAgentPage
+  revision?: number
   onPage: (page: ManageAgentPage) => void
 }) {
   const [coverage, setCoverage] = useState<InsuranceCoverage>("medical")
@@ -69,7 +71,7 @@ export function ManageAgent({
       ) : page === "insurance" ? (
         <InsuranceList {...location} coverage={coverage} onCoverage={setCoverage} />
       ) : (
-        <AgentCalls practiceID={practiceID} locationScopeID={locationScopeID} />
+        <AgentCalls practiceID={practiceID} locationScopeID={locationScopeID} revision={revision} />
       )}
     </div>
   )
@@ -78,9 +80,11 @@ export function ManageAgent({
 function AgentCalls({
   practiceID,
   locationScopeID,
+  revision,
 }: {
   practiceID: string
   locationScopeID: string
+  revision: number
 }) {
   const [range, setRange] = useState<AgentCallsQuery["range"]>("24h")
   const [phoneInput, setPhoneInput] = useState("")
@@ -98,7 +102,7 @@ function AgentCalls({
     flaggedOnly,
     intent: intent === "all" ? undefined : intent,
     outcome: outcome === "all" ? undefined : outcome,
-    revision: version,
+    revision: revision + version,
   })
   const calls = current.status === "ready" ? current.data.calls : []
   const nextCursor = current.status === "ready" ? current.data.nextCursor : ""
@@ -132,16 +136,6 @@ function AgentCalls({
             {nextCursor ? "+" : ""} {calls.length === 1 && !nextCursor ? "call" : "calls"}
           </span>
         )
-      }
-      actions={
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Refresh calls"
-          onClick={() => setVersion((value) => value + 1)}
-        >
-          <RefreshCwIcon />
-        </Button>
       }
       controls={
         <>
