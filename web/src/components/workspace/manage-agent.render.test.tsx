@@ -219,7 +219,7 @@ test("each page keeps its title, actions, and filters inside the panel", async (
   await page.unmount()
 })
 
-test("Calls follows workspace revisions without a refresh button and keeps retry available on failure", async (t) => {
+test("Calls updates automatically without replacing the table while refreshing and keeps retry available", async (t) => {
   const page = harness(t)
   const original = { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }
   page.agentCalls = { calls: [original], nextCursor: "" }
@@ -229,7 +229,15 @@ test("Calls follows workspace revisions without a refresh button and keeps retry
   assert.equal(page.host.querySelector("button[aria-label='Refresh calls']"), null)
   assert.equal(page.host.querySelector("table")?.parentElement?.parentElement?.className, "w-full")
   page.agentCalls = { calls: [{ ...original, id: "call-2", phone: "+15555550222" }, original], nextCursor: "" }
+  let finishRefresh!: () => void
+  page.agentCallsGate = new Promise<void>((resolve) => { finishRefresh = resolve })
+  const table = page.host.querySelector("table")
   await show(2)
+  await waitFor(() => page.agentCallsRequests.length === 2)
+  assert.equal(page.host.querySelector("table") === table, true)
+  assert.equal(page.host.querySelectorAll("tbody tr").length, 1)
+  assert.equal(page.host.querySelector('[aria-label="Loading calls"]'), null)
+  await act(async () => finishRefresh())
   await waitFor(() => page.host.querySelectorAll("tbody tr").length === 2)
   assert.match(page.text(), /555.*0222/)
   page.agentCallsStatus = 503
@@ -875,6 +883,7 @@ function harness(t: TestContext) {
     agentCallsRequests: [] as AgentCallsQuery[],
     agentCalls: { calls: [], nextCursor: "" } as AgentCallsPage,
     agentCallsStatus: 200,
+    agentCallsGate: Promise.resolve(),
     historyRows: () => Array.from(host.querySelectorAll("li"), (row) => row.textContent ?? ""),
     publishGate: Promise.resolve(),
     render: (element: ReactNode, key = "first") =>
@@ -982,6 +991,7 @@ function harness(t: TestContext) {
     }
     assert.equal(url.pathname, "/v1/agent-calls/query")
     page.agentCallsRequests.push((await request.json()) as AgentCallsQuery)
+    await page.agentCallsGate
     return page.agentCallsStatus === 200 ? Response.json(page.agentCalls) : new Response("", { status: page.agentCallsStatus })
   })
   return page

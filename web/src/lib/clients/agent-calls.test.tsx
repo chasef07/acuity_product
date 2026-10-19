@@ -135,6 +135,54 @@ test("recent calls page by cursor and a filter change abandons the old page", as
   assert.equal(updated.status === "ready" && updated.data.calls[1].issueFlagged, true)
 })
 
+test("call refresh retains rows, cancels old pagination, and clears rows on scope changes and denial", async (t) => {
+  const pending: ReturnType<typeof deferred<Response>>[] = []
+  const backend = fakeBackend(t, () => {
+    const response = deferred<Response>()
+    pending.push(response)
+    return response.promise
+  })
+  const view = mountHook(t, useAgentCalls)
+  const filters = { practiceID: "practice-1", locationID: "office-1", range: "24h", phone: "", flaggedOnly: false, revision: 0 } as const
+  await view.render(filters)
+  await waitFor(() => pending.length === 1)
+  assert.equal(view.latest().status, "loading")
+  pending[0].resolve(Response.json({ calls: [call("original")], nextCursor: "next" }))
+  await waitFor(() => view.latest().status === "ready")
+
+  await act(async () => void view.latest().loadMore())
+  await waitFor(() => pending.length === 2)
+  assert.equal(view.latest().loadingMore, true)
+  await view.render({ ...filters, revision: 1 })
+  await waitFor(() => pending.length === 3)
+  assert.equal(backend.aborted, 1)
+  const refreshing = view.latest()
+  assert.equal(refreshing.status, "ready")
+  assert.equal(refreshing.status === "ready" && refreshing.data.calls[0].id, "original")
+  assert.equal(refreshing.loadingMore, false)
+  await act(async () => void refreshing.loadMore())
+  assert.equal(pending.length, 3)
+  pending[1].resolve(Response.json({ calls: [call("stale-page")], nextCursor: "" }))
+  pending[2].resolve(Response.json({ calls: [call("new"), call("original")], nextCursor: "next-new" }))
+  await waitFor(() => {
+    const current = view.latest()
+    return current.status === "ready" && current.data.calls[0].id === "new"
+  })
+  const updated = view.latest()
+  assert.deepEqual(updated.status === "ready" && updated.data.calls.map((item) => item.id), ["new", "original"])
+
+  await view.render({ ...filters, locationID: "office-2", revision: 2 })
+  await waitFor(() => pending.length === 4)
+  assert.equal(view.latest().status, "loading")
+  pending[3].resolve(Response.json({ calls: [call("other-office")], nextCursor: "" }))
+  await waitFor(() => view.latest().status === "ready")
+  await view.render({ ...filters, locationID: "office-2", revision: 3 })
+  await waitFor(() => pending.length === 5)
+  pending[4].resolve(new Response("", { status: 403 }))
+  await waitFor(() => view.latest().status === "failed")
+  assert.equal("data" in view.latest(), false)
+})
+
 test("AI call analytics separate denied, unavailable, and next-page failures", async (t) => {
   let answer: (body: Record<string, unknown>) => Response = () =>
     Response.json({ calls: [], nextCursor: "" })
