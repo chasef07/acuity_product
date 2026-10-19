@@ -67,9 +67,13 @@ test("call breakdowns use the full selection and keep missing labels and judge c
     await flow.screenshot({ path: testInfo.outputPath("breakdowns-flow-selected.png"), animations: "disabled" })
     await page.screenshot({ path: testInfo.outputPath("breakdowns-gap-calls.png"), fullPage: true, animations: "disabled" })
 
-    await flow.getByRole("button", { name: "Select Insurance question" }).click()
+    await flow.getByRole("button", { name: "Select Existing patient booking to Abandoned" }).click()
+    await expect(chips).toContainText("Intent: Existing patient booking")
+    await expect(chips).toContainText("Outcome: Abandoned")
+    await expect(ledger).toContainText("5 shown")
+    await flow.getByRole("button", { name: "Select Insurance question", exact: true }).click()
     await expect(chips).toContainText("Intent: Insurance question")
-    await expect(chips).not.toContainText("Failed:")
+    await expect(chips).not.toContainText("Outcome:")
     await expect(ledger).toContainText("10 shown")
 
     await flow.getByRole("radio", { name: "List" }).or(flow.getByRole("button", { name: "List", exact: true })).click()
@@ -96,7 +100,7 @@ test("call breakdowns use the full selection and keep missing labels and judge c
 
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page.getByRole("button", { name: "Fixture Location 5", exact: true }).click()
-    await expect(command.getByText(/No calls in this selection/)).toBeVisible()
+    await expect(command.getByText(/No calls in this date range/)).toBeVisible()
     expect(errors).toEqual([])
   } finally {
     await client.query("ROLLBACK")

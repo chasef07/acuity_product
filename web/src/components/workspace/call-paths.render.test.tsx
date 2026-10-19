@@ -17,23 +17,16 @@ const paths = [
 ]
 const labels = { transfer_policy_followed: "Transfer policy followed", knowledge_available: "Office knowledge had the answer" }
 
-test("problems rank intent and failure pairs by calls, with rates against every intent", () => {
+test("problems rank intent and failure pairs by calls, leaving out intents with too few calls", () => {
   const problems = rankProblems(paths, labels, 10)
-  assert.deepEqual(problems.map((problem) => [problem.intent, problem.failure ?? problem.outcome, problem.calls, problem.intentCalls, problem.tooFew]), [
-    ["new_patient_booking", "abandoned", 12, 28, false],
-    ["speak_to_staff", "transfer_policy_followed", 6, 69, false],
-    ["speak_to_staff", "abandoned", 3, 69, false],
-    ["speak_to_staff", "knowledge_available", 1, 69, false],
-    ["cancel_appointment", "abandoned", 2, 2, true],
-    ["cancel_appointment", "knowledge_available", 2, 2, true],
+  assert.deepEqual(problems.map((problem) => [problem.intent, problem.failure ?? problem.outcome, problem.calls, Math.round(problem.rate * 100)]), [
+    ["new_patient_booking", "abandoned", 12, 43],
+    ["speak_to_staff", "transfer_policy_followed", 6, 9],
+    ["speak_to_staff", "abandoned", 3, 4],
+    ["speak_to_staff", "knowledge_available", 1, 1],
   ])
-  const abandoned = problems[0]
-  assert.equal(abandoned.label, "Abandoned")
-  assert.equal(Math.round(abandoned.rate * 100), 43)
-  assert.equal(Math.round(abandoned.averageRate * 100), 17)
+  assert.equal(problems[0].label, "Abandoned")
   assert.equal(problems[1].label, "Transfer policy followed")
-  assert.equal(problems[1].kbGap, false)
-  assert.equal(problems[3].kbGap, true)
 })
 
 test("flow keeps every call, sends only failures to reasons, and marks KB gaps apart from agent mistakes", () => {
@@ -104,4 +97,20 @@ test("list view breaks the selected calls down by every column, keeping unlabele
   assert.deepEqual(rows("Failure reasons"), [["Office knowledge had the answer", 2]])
   const all = breakdownLists(paths, labels)
   assert.deepEqual(all.find((list) => list.title === "Intents")!.rows.at(-1), { label: "Unlabeled", calls: 41 })
+})
+
+test("bands select only what they show, and the highlight keeps the full chart's buckets", () => {
+  const many = ["other", "speak_to_staff", "office_information", "cancel_appointment", "reschedule_appointment", "billing_question", "insurance_question", "records_or_forms", "returning_call"]
+    .map((intent, index) => route(intent, "resolved", true, [], 20 - index))
+  const flow = callFlow([...many, route(undefined, "resolved", false, [], 4), route("other", "resolved", true, ["a", "b"], 1)], labels, { intent: "returning_call" })
+  const band = (from: string, to: string) => flow.links.find((link) => flow.nodes[link.source].name === from && flow.nodes[link.target].name === to)!
+  assert.deepEqual(band("All calls", "Other intents").selection, undefined)
+  assert.deepEqual(band("All calls", "Other").selection, { intent: "other" })
+  assert.deepEqual(band("Other", "Resolved").selection, { intent: "other", outcome: "resolved" })
+  assert.equal(band("Other intents", "Resolved").selection, undefined)
+  assert.equal(band("No intent", "Resolved").selection, undefined)
+  assert.equal(band("Fail", "Multiple issues").selection, undefined)
+  assert.equal(band("All calls", "Other intents").selected, 12)
+  assert.equal(band("Other intents", "Resolved").selected, 12)
+  assert.equal(band("All calls", "Other").selected, 0)
 })

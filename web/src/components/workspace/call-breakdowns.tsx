@@ -12,7 +12,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/u
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { intentLabels, outcomeLabels } from "./call-labels"
-import { breakdownLists, callFlow, judgeLabels, matchesSelection, mergeSelection, rankProblems, type BreakdownRow, type CallSelection, type FlowNode, type FlowTone } from "./call-paths"
+import { breakdownLists, callFlow, judgeLabels, matchesSelection, mergeSelection, rankProblems, type BreakdownRow, type CallSelection, type FlowLink, type FlowNode, type FlowTone } from "./call-paths"
 
 const minGapIntentCalls = 10
 
@@ -38,10 +38,11 @@ export function CallBreakdowns({ data, selection, onSelection, onRetry }: {
       <AlertDescription><p>Distribution data could not be loaded.</p><Button size="sm" variant="outline" onClick={onRetry}>Retry</Button></AlertDescription>
     </Alert>
   )
-  if (!data.totalCalls) return <Empty><EmptyHeader><EmptyTitle>No calls in this selection</EmptyTitle><EmptyDescription>Change the date range or office.</EmptyDescription></EmptyHeader></Empty>
   const labels = Object.fromEntries(data.failures.map((failure) => [failure.key, failure.label]))
   const selected = data.paths.filter((path) => matchesSelection(path, selection))
-  const gaps = rankProblems(data.paths, labels, minGapIntentCalls).filter((problem) => !problem.tooFew).slice(0, 3)
+  const chips = <SelectionChips selection={selection} labels={labels} calls={selected.reduce((sum, path) => sum + path.calls, 0)} onSelection={onSelection} />
+  if (!data.totalCalls) return <div className="grid gap-4">{chips}<Empty><EmptyHeader><EmptyTitle>No calls in this date range</EmptyTitle><EmptyDescription>Change the date range or office.</EmptyDescription></EmptyHeader></Empty></div>
+  const gaps = rankProblems(data.paths, labels, minGapIntentCalls).slice(0, 3)
   return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
     {gaps.length > 0 && <div role="group" aria-label="Biggest gaps" className="flex flex-wrap items-center gap-2">
       <span className="text-xs text-muted-foreground">Biggest gaps</span>
@@ -49,7 +50,7 @@ export function CallBreakdowns({ data, selection, onSelection, onRetry }: {
         {intentLabels[gap.intent]} · {gap.outcome ? gap.label : `Failed: ${gap.label}`} · {Math.round(gap.rate * 100)}%
       </Button>)}
     </div>}
-    <SelectionChips selection={selection} labels={labels} calls={selected.reduce((sum, path) => sum + path.calls, 0)} onSelection={onSelection} />
+    {chips}
     <Card role="region" aria-label="Call flow">
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>Call flow</CardTitle>
@@ -60,7 +61,7 @@ export function CallBreakdowns({ data, selection, onSelection, onRetry }: {
       </CardHeader>
       <CardContent>
         <div className={mode === "flow" ? "hidden md:block" : "hidden"}>
-          <CallFlowChart flow={callFlow(data.paths, labels)} highlight={Object.keys(selection).length ? callFlow(selected, labels) : undefined} onSelection={onSelection} />
+          <CallFlowChart flow={callFlow(data.paths, labels, selection)} highlight={Object.keys(selection).length > 0} onSelection={onSelection} />
         </div>
         <div className={cn(mode === "flow" && "md:hidden")}>
           <BreakdownLists lists={breakdownLists(selected, labels)} onRow={(row) => onSelection(mergeSelection(selection, row))} />
@@ -121,27 +122,28 @@ function BreakdownBar({ row, total, onRow }: { row: BreakdownRow; total: number;
 
 type Flow = ReturnType<typeof callFlow>
 
-function CallFlowChart({ flow, highlight, onSelection }: { flow: Flow; highlight?: Flow; onSelection: (selection: CallSelection) => void }) {
-  const lit = highlight && new Set(highlight.links.map((link) => `${highlight.nodes[link.source].name}→${highlight.nodes[link.target].name}`))
-  const litNodes = highlight && new Set(highlight.links.flatMap((link) => [highlight.nodes[link.source].name, highlight.nodes[link.target].name]))
+function CallFlowChart({ flow, highlight, onSelection }: { flow: Flow; highlight: boolean; onSelection: (selection: CallSelection) => void }) {
+  const litNodes = new Set(flow.links.filter((link) => link.selected).flatMap((link) => [flow.nodes[link.source].name, flow.nodes[link.target].name]))
   return <div className="h-[520px] w-full">
     <ResponsiveContainer width="100%" height="100%">
       <Sankey data={flow} iterations={32} sort={false} align="left" nodeWidth={10} nodePadding={12} margin={{ top: 8, right: 240, bottom: 8, left: 0 }}
-        link={(props: LinkProps) => <FlowLinkPath {...props} lit={lit} onExplore={onSelection} />}
-        node={(props: NodeProps) => <FlowNodeBox {...props} dim={Boolean(litNodes && !litNodes.has((props.payload as unknown as FlowNode).name))} onExplore={onSelection} />} />
+        link={(props: LinkProps) => <FlowLinkPath {...props} highlight={highlight} onExplore={onSelection} />}
+        node={(props: NodeProps) => <FlowNodeBox {...props} dim={highlight && !litNodes.has((props.payload as unknown as FlowNode).name)} onExplore={onSelection} />} />
     </ResponsiveContainer>
   </div>
 }
 
-function FlowLinkPath({ sourceX, sourceY, sourceControlX, targetX, targetY, targetControlX, linkWidth, payload, lit, onExplore }: LinkProps & { lit?: Set<string>; onExplore: (selection: CallSelection) => void }) {
+function FlowLinkPath({ sourceX, sourceY, sourceControlX, targetX, targetY, targetControlX, linkWidth, payload, highlight, onExplore }: LinkProps & { highlight: boolean; onExplore: (selection: CallSelection) => void }) {
   const target = payload.target as unknown as FlowNode
   const source = payload.source as unknown as FlowNode
-  const selection = source.selection || target.selection ? { ...source.selection, ...target.selection } : undefined
+  const { selection, selected } = payload as unknown as FlowLink
   const colored = target.tone !== "neutral" && target.tone !== "muted"
-  const opacity = !lit ? (colored ? 0.35 : 0.18) : lit.has(`${source.name}→${target.name}`) ? 0.55 : 0.05
+  const opacity = !highlight ? (colored ? 0.35 : 0.18) : selected ? 0.55 : 0.05
   return <path d={`M${sourceX},${sourceY} C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
     fill="none" stroke={toneColor[target.tone]} strokeOpacity={opacity} strokeWidth={Math.max(1, linkWidth)}
-    className={cn(selection && "cursor-pointer")} onClick={selection ? () => onExplore(selection) : undefined}>
+    className={cn(selection && "cursor-pointer")} onClick={selection ? () => onExplore(selection) : undefined}
+    role={selection ? "button" : undefined} aria-label={selection ? `Select ${source.name} to ${target.name}` : undefined} tabIndex={selection ? 0 : undefined}
+    onKeyDown={selection ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onExplore(selection) } } : undefined}>
     <title>{`${source.name} → ${target.name}: ${(payload as unknown as { value: number }).value.toLocaleString()} calls`}</title>
   </path>
 }

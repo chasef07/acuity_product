@@ -263,8 +263,9 @@ function AnalyticsReady({
             </EmptyMedia>
             <EmptyTitle>No calls match these filters</EmptyTitle>
             <EmptyDescription>
-              Change judge flags, intent, outcome, time range, or workspace office to review another slice
-              of call evidence.
+              {tab === "breakdowns"
+                ? "Remove a selection chip, or change the date range or office."
+                : "Change judge flags, intent, outcome, time range, or workspace office to review another slice of call evidence."}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
