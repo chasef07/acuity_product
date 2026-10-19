@@ -18,7 +18,7 @@ import {
 } from "@/components/analytics/ai-diagnostics"
 import { OperatorJudges } from "./operator-judges"
 import { OverviewTrend } from "./overview-trend"
-import { CallBreakdowns } from "./call-breakdowns"
+import { CallBreakdowns, type FlowMode } from "./call-breakdowns"
 import type { CallSelection } from "./call-paths"
 import { CostOverview } from "@/components/analytics/cost-overview"
 import { Badge } from "@/components/ui/badge"
@@ -93,6 +93,7 @@ export function OperatorAnalytics({
   const [outcome, setOutcome] = useState<OutcomeFilter>("all")
   const [judgeFlag, setJudgeFlag] = useState("any")
   const [selection, setSelection] = useState<CallSelection>({})
+  const [flowMode, setFlowMode] = useState<FlowMode>("flow")
   const breakdowns = tab === "breakdowns"
   const costView = tab === "cost"
   const reviewView = tab === "review"
@@ -170,7 +171,7 @@ export function OperatorAnalytics({
           </div>
         {breakdowns && flowRequest.state !== "denied" && <section aria-label="Breakdowns" className="mb-5">
           {flowRequest.state === "loading" ? <Skeleton className="h-[640px] w-full rounded-xl" /> : (
-            <CallBreakdowns data={flowRequest.data?.summary.distributions} selection={selection} onSelection={setSelection} onRetry={() => setRequestVersion((current) => current + 1)} />
+            <CallBreakdowns data={flowRequest.data?.summary.distributions} selection={selection} onSelection={setSelection} mode={flowMode} onMode={setFlowMode} onRetry={() => setRequestVersion((current) => current + 1)} />
           )}
         </section>}
         {reviewView ? (
@@ -255,7 +256,7 @@ function AnalyticsReady({
       {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
       {tab === "judges" && <OperatorJudges report={data.summary.judges} onRetry={onRetry} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
-      {(tab === "calls" || tab === "breakdowns") && data.calls.length === 0 ? (
+      {tab === "breakdowns" && data.summary.totalCalls === 0 ? null : (tab === "calls" || tab === "breakdowns") && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
           <EmptyHeader>
             <EmptyMedia variant="icon">

@@ -76,7 +76,7 @@ test("call breakdowns use the full selection and keep missing labels and judge c
     await expect(chips).not.toContainText("Outcome:")
     await expect(ledger).toContainText("10 shown")
 
-    await flow.getByRole("radio", { name: "List" }).or(flow.getByRole("button", { name: "List", exact: true })).click()
+    await flow.getByRole("button", { name: "List", exact: true }).click()
     await expect(flow.locator('section[aria-label="Outcomes"]')).toContainText("Transferred7 calls70%")
     await flow.locator('section[aria-label="Outcomes"]').getByRole("button", { name: "Select Abandoned" }).click()
     await expect(chips).toContainText("Outcome: Abandoned")
@@ -101,6 +101,7 @@ test("call breakdowns use the full selection and keep missing labels and judge c
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page.getByRole("button", { name: "Fixture Location 5", exact: true }).click()
     await expect(command.getByText(/No calls in this date range/)).toBeVisible()
+    await expect(command.getByText("No calls match these filters")).toHaveCount(0)
     expect(errors).toEqual([])
   } finally {
     await client.query("ROLLBACK")

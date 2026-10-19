@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from "react"
 import { ArrowRightIcon, CircleAlertIcon, XIcon } from "lucide-react"
 import { ResponsiveContainer, Sankey } from "recharts"
 import type { LinkProps, NodeProps } from "recharts/types/chart/Sankey"
@@ -24,13 +23,16 @@ const toneColor: Record<FlowTone, string> = {
   gap: "var(--warning)",
 }
 
-export function CallBreakdowns({ data, selection, onSelection, onRetry }: {
+export type FlowMode = "flow" | "list"
+
+export function CallBreakdowns({ data, selection, onSelection, mode, onMode, onRetry }: {
   data?: OperatorAiAnalyticsDistributions
   selection: CallSelection
   onSelection: (selection: CallSelection) => void
+  mode: FlowMode
+  onMode: (mode: FlowMode) => void
   onRetry: () => void
 }) {
-  const [mode, setMode] = useState<"flow" | "list">("flow")
   if (!data || data.totalCalls === undefined) return (
     <Alert>
       <CircleAlertIcon aria-hidden="true" />
@@ -46,7 +48,7 @@ export function CallBreakdowns({ data, selection, onSelection, onRetry }: {
   return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
     {gaps.length > 0 && <div role="group" aria-label="Biggest gaps" className="flex flex-wrap items-center gap-2">
       <span className="text-xs text-muted-foreground">Biggest gaps</span>
-      {gaps.map((gap) => <Button key={gap.key} variant="outline" size="sm" className="h-auto max-w-full py-1.5 text-left whitespace-normal" onClick={() => onSelection(gap.outcome ? { intent: gap.intent, outcome: gap.outcome } : { intent: gap.intent, failure: gap.failure })}>
+      {gaps.map((gap) => <Button key={gap.key} variant="outline" size="sm" className="h-auto max-w-full py-1.5 text-left whitespace-normal" onClick={() => onSelection(gap.selection)}>
         {intentLabels[gap.intent]} · {gap.outcome ? gap.label : `Failed: ${gap.label}`} · {Math.round(gap.rate * 100)}%
       </Button>)}
     </div>}
@@ -54,15 +56,15 @@ export function CallBreakdowns({ data, selection, onSelection, onRetry }: {
     <Card role="region" aria-label="Call flow">
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>Call flow</CardTitle>
-        <ToggleGroup aria-label="Call flow view" variant="segmented" size="sm" className="hidden md:flex" value={[mode]} onValueChange={(values) => values[0] && setMode(values[0] as "flow" | "list")}>
+        <ToggleGroup aria-label="Call flow view" variant="segmented" size="sm" className="hidden md:flex" value={[mode]} onValueChange={(values) => values[0] && onMode(values[0] as FlowMode)}>
           <ToggleGroupItem value="flow">Flow</ToggleGroupItem>
           <ToggleGroupItem value="list">List</ToggleGroupItem>
         </ToggleGroup>
       </CardHeader>
       <CardContent>
-        <div className={mode === "flow" ? "hidden md:block" : "hidden"}>
+        {mode === "flow" && <div className="hidden md:block">
           <CallFlowChart flow={callFlow(data.paths, labels, selection)} highlight={Object.keys(selection).length > 0} onSelection={onSelection} />
-        </div>
+        </div>}
         <div className={cn(mode === "flow" && "md:hidden")}>
           <BreakdownLists lists={breakdownLists(selected, labels)} onRow={(row) => onSelection(mergeSelection(selection, row))} />
         </div>
@@ -123,12 +125,12 @@ function BreakdownBar({ row, total, onRow }: { row: BreakdownRow; total: number;
 type Flow = ReturnType<typeof callFlow>
 
 function CallFlowChart({ flow, highlight, onSelection }: { flow: Flow; highlight: boolean; onSelection: (selection: CallSelection) => void }) {
-  const litNodes = new Set(flow.links.filter((link) => link.selected).flatMap((link) => [flow.nodes[link.source].name, flow.nodes[link.target].name]))
+  const litNodes = new Set(flow.links.filter((link) => link.selected).flatMap((link) => [link.source, link.target]))
   return <div className="h-[520px] w-full">
     <ResponsiveContainer width="100%" height="100%">
       <Sankey data={flow} iterations={32} sort={false} align="left" nodeWidth={10} nodePadding={12} margin={{ top: 8, right: 240, bottom: 8, left: 0 }}
         link={(props: LinkProps) => <FlowLinkPath {...props} highlight={highlight} onExplore={onSelection} />}
-        node={(props: NodeProps) => <FlowNodeBox {...props} dim={highlight && !litNodes.has((props.payload as unknown as FlowNode).name)} onExplore={onSelection} />} />
+        node={(props: NodeProps) => <FlowNodeBox {...props} dim={highlight && !litNodes.has(props.index)} onExplore={onSelection} />} />
     </ResponsiveContainer>
   </div>
 }

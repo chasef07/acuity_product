@@ -26,7 +26,7 @@ const data = {
 }
 
 function render(selection: CallSelection, value = data) {
-  return new JSDOM(renderToStaticMarkup(<CallBreakdowns data={value} selection={selection} onSelection={() => {}} onRetry={() => {}} />)).window.document
+  return new JSDOM(renderToStaticMarkup(<CallBreakdowns data={value} selection={selection} onSelection={() => {}} mode="flow" onMode={() => {}} onRetry={() => {}} />)).window.document
 }
 
 test("biggest gaps lead the page, skipping intents with too few calls", () => {
@@ -57,7 +57,7 @@ test("a selection shows removable chips and narrows every list to its calls", ()
 })
 
 test("missing distribution data is unavailable, and an empty window has no fabricated percentages", () => {
-  const missing = renderToStaticMarkup(<CallBreakdowns selection={{}} onSelection={() => {}} onRetry={() => {}} />)
+  const missing = renderToStaticMarkup(<CallBreakdowns selection={{}} onSelection={() => {}} mode="flow" onMode={() => {}} onRetry={() => {}} />)
   assert.match(missing, /Breakdowns unavailable/)
   assert.match(missing, /Retry/)
   const empty = render({ intent: "cancel_appointment" }, { ...data, totalCalls: 0, paths: [] })
