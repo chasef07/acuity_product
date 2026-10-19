@@ -98,6 +98,17 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 	if len(d.Failures) != 3 || d.Failures[0].Key != "office_question_answered" || d.Failures[0].Calls != 2 || d.Failures[1].Key != "call_ended_correctly" || d.Failures[1].Calls != 1 || d.Failures[2].Key != "office_rules_grounded" || d.Failures[2].Calls != 1 {
 		t.Fatalf("failure categories: %+v", d.Failures)
 	}
+	pathCalls, routes := 0, map[string]int{}
+	for _, path := range d.Paths {
+		pathCalls += path.Calls
+		routes[pathKey(path)] = path.Calls
+	}
+	if pathCalls != d.TotalCalls ||
+		routes["office_information|resolved|true|call_ended_correctly,office_question_answered,office_rules_grounded"] != 1 ||
+		routes["office_information|resolved|true|office_question_answered"] != 1 ||
+		routes["insurance_question||true|"] != 1 || routes["||false|"] != 61 {
+		t.Fatalf("paths: %d calls, routes %v", pathCalls, routes)
+	}
 	if len(d.Daily) != len(page.Summary.Daily) {
 		t.Fatal("distribution days must match summary days")
 	}

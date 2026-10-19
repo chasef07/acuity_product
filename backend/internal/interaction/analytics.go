@@ -309,6 +309,7 @@ func queryAnalyticsSummary(
 	summary.quality = newQualityAccumulator(summary.Daily)
 	summary.versions = versions
 	distributions := newDistributionAccumulator()
+	distributions.routes = map[string]*AnalyticsPathCount{}
 	judges := newJudgeAccumulator()
 	dailyDistributions := map[string]*distributionAccumulator{}
 	for _, day := range summary.Daily {
@@ -367,7 +368,7 @@ func queryAnalyticsSummary(
 	}
 	finalizeAnalyticsSummary(&summary)
 	summary.Judges = judges.finish()
-	summary.Distributions = AnalyticsDistributions{AnalyticsDistributionCounts: distributions.finish(), Daily: []AnalyticsDistributionDay{}}
+	summary.Distributions = AnalyticsDistributions{AnalyticsDistributionCounts: distributions.finish(), Daily: []AnalyticsDistributionDay{}, Paths: distributions.paths()}
 	for _, day := range summary.Daily {
 		summary.Distributions.Daily = append(summary.Distributions.Daily, AnalyticsDistributionDay{Date: day.Date, AnalyticsDistributionCounts: dailyDistributions[day.Date].finish()})
 	}

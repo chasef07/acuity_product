@@ -40,7 +40,7 @@ test("Command Center keeps the same call table during and after automatic refres
     dom.window.close()
   })
   const render = (revision: number, locationID = "office-1") => act(async () => root.render(
-    <OperatorAnalytics practiceID="practice-1" locationScopeID={locationID} tab="calls" revision={revision} />,
+    <OperatorAnalytics practiceID="practice-1" locationScopeID={locationID} tab="calls" revision={revision} onTab={() => {}} />,
   ))
   const result = (ids: string[]) => Response.json({
     summary: { totalCalls: ids.length },

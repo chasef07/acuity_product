@@ -1513,6 +1513,10 @@ export type OperatorAiAnalyticsDistributions = OperatorAiAnalyticsDistributionCo
      * Every UTC date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
      */
     daily: Array<OperatorAiAnalyticsDistributionDay>;
+    /**
+     * Every call's full route through intent, outcome, judge evaluation, and failed judges, grouped into identical routes and ordered by descending calls then route. Path calls sum to totalCalls. Uses the same labels, judge catalog, and intent and outcome filters as the aggregate counts.
+     */
+    paths: Array<OperatorAiPathCount>;
 };
 
 export type OperatorAiAnalyticsDistributionDay = OperatorAiAnalyticsDistributionCounts & {
@@ -1556,6 +1560,20 @@ export type OperatorAiAnalyticsDistributionCounts = {
      * totalCalls minus evaluatedCalls; absence of usable failure-judge evidence is not a passing result.
      */
     unevaluatedCalls: number;
+};
+
+export type OperatorAiPathCount = {
+    intent?: CallIntent;
+    outcome?: CallOutcome;
+    /**
+     * True when the call has at least one eligible boolean failure-judge answer, as in evaluatedCalls.
+     */
+    evaluated: boolean;
+    /**
+     * Sorted eligible failure question keys with an explicit false answer; empty when none failed.
+     */
+    failures: Array<string>;
+    calls: number;
 };
 
 export type OperatorAiIntentCount = {

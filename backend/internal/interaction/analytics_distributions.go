@@ -1,6 +1,10 @@
 package interaction
 
-import "sort"
+import (
+	"sort"
+	"strconv"
+	"strings"
+)
 
 type AnalyticsIntentCount struct {
 	Intent CallIntent
@@ -21,6 +25,15 @@ type AnalyticsFailureCount struct {
 type AnalyticsDistributions struct {
 	AnalyticsDistributionCounts
 	Daily []AnalyticsDistributionDay
+	Paths []AnalyticsPathCount
+}
+
+type AnalyticsPathCount struct {
+	Intent    *CallIntent
+	Outcome   *CallOutcome
+	Evaluated bool
+	Failures  []string
+	Calls     int
 }
 
 type AnalyticsDistributionDay struct {
@@ -45,6 +58,7 @@ type distributionAccumulator struct {
 	intents  map[CallIntent]int
 	outcomes map[CallOutcome]int
 	failures map[string]int
+	routes   map[string]*AnalyticsPathCount
 }
 
 func newDistributionAccumulator() *distributionAccumulator {
@@ -74,6 +88,49 @@ func (a *distributionAccumulator) add(intent, outcome *string, evaluated bool, f
 	for _, key := range failures {
 		a.failures[key]++
 	}
+	if a.routes == nil {
+		return
+	}
+	path := AnalyticsPathCount{Evaluated: evaluated, Failures: append([]string{}, failures...)}
+	if intent != nil {
+		value := CallIntent(*intent)
+		path.Intent = &value
+	}
+	if outcome != nil {
+		value := CallOutcome(*outcome)
+		path.Outcome = &value
+	}
+	sort.Strings(path.Failures)
+	key := pathKey(path)
+	if a.routes[key] == nil {
+		a.routes[key] = &path
+	}
+	a.routes[key].Calls++
+}
+
+func pathKey(path AnalyticsPathCount) string {
+	intent, outcome := "", ""
+	if path.Intent != nil {
+		intent = string(*path.Intent)
+	}
+	if path.Outcome != nil {
+		outcome = string(*path.Outcome)
+	}
+	return intent + "|" + outcome + "|" + strconv.FormatBool(path.Evaluated) + "|" + strings.Join(path.Failures, ",")
+}
+
+func (a *distributionAccumulator) paths() []AnalyticsPathCount {
+	result := make([]AnalyticsPathCount, 0, len(a.routes))
+	for _, path := range a.routes {
+		result = append(result, *path)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Calls != result[j].Calls {
+			return result[i].Calls > result[j].Calls
+		}
+		return pathKey(result[i]) < pathKey(result[j])
+	})
+	return result
 }
 
 func (a *distributionAccumulator) finish() AnalyticsDistributionCounts {

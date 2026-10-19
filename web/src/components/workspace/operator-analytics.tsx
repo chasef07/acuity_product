@@ -19,6 +19,7 @@ import {
 import { OperatorJudges } from "./operator-judges"
 import { OverviewTrend } from "./overview-trend"
 import { BreakdownControls, CallBreakdowns, initialBreakdownSelection, type BreakdownSelection } from "./call-breakdowns"
+import type { CallsFilter } from "./call-flow-overview"
 import { CostOverview } from "@/components/analytics/cost-overview"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -80,11 +81,13 @@ export function OperatorAnalytics({
   revision = 0,
   practiceID,
   locationScopeID,
+  onTab,
 }: {
   tab: AnalyticsTab
   revision?: number
   practiceID: string
   locationScopeID: string
+  onTab: (tab: AnalyticsTab) => void
 }) {
   const locationID = locationScopeID
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("24h")
@@ -110,6 +113,12 @@ export function OperatorAnalytics({
     failingJudge: tab === "calls" && judgeFlag !== "all" && judgeFlag !== "any" ? judgeFlag : undefined,
   })
   const nextPageState = currentRequest.nextPage
+  const viewCalls = (filter: CallsFilter) => {
+    setIntent(filter.intent)
+    setOutcome(filter.outcome ?? "all")
+    setJudgeFlag(filter.failure ?? "all")
+    onTab("calls")
+  }
 
   async function loadNextPage() {
     const page = await currentRequest.loadNextPage()
@@ -195,6 +204,7 @@ export function OperatorAnalytics({
                 data={currentRequest.data}
                 breakdownSelection={breakdownSelection}
                 onBreakdownSelection={setBreakdownSelection}
+                onViewCalls={viewCalls}
                 onRetry={() => setRequestVersion((current) => current + 1)}
                 tab={tab}
                 range={range}
@@ -225,6 +235,7 @@ function AnalyticsReady({
   data,
   breakdownSelection,
   onBreakdownSelection,
+  onViewCalls,
   onRetry,
   tab,
   range,
@@ -235,6 +246,7 @@ function AnalyticsReady({
   data: AiCallAnalytics
   breakdownSelection: BreakdownSelection
   onBreakdownSelection: (selection: BreakdownSelection) => void
+  onViewCalls: (filter: CallsFilter) => void
   onRetry: () => void
   tab: AnalyticsTab
   range: OperatorAiAnalyticsRange
@@ -245,7 +257,7 @@ function AnalyticsReady({
   return (
     <>
       {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
-      {tab === "breakdowns" && <CallBreakdowns data={data.summary.distributions} selection={breakdownSelection} onSelection={onBreakdownSelection} onRetry={onRetry} />}
+      {tab === "breakdowns" && <CallBreakdowns data={data.summary.distributions} selection={breakdownSelection} onSelection={onBreakdownSelection} onRetry={onRetry} onViewCalls={onViewCalls} />}
       {tab === "judges" && <OperatorJudges report={data.summary.judges} onRetry={onRetry} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
       {tab === "calls" && data.calls.length === 0 ? (

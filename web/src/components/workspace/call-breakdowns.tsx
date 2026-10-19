@@ -10,6 +10,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart"
 import { cn } from "@/lib/utils"
 import { CallLabelFilters, intentLabels, outcomeLabels, type IntentFilter, type OutcomeFilter } from "./call-labels"
+import { CallFlowOverview, type CallsFilter, type FlowSelection } from "./call-flow-overview"
 
 type Kind = "intents" | "outcomes" | "failures"
 export type BreakdownSelection = { kind: Kind; intent: IntentFilter; outcome: OutcomeFilter }
@@ -47,11 +48,12 @@ function rowsFor(data: OperatorAiAnalyticsDistributionCounts, kind: Kind): Distr
   return rows
 }
 
-export function CallBreakdowns({ data, selection, onSelection, onRetry }: {
+export function CallBreakdowns({ data, selection, onSelection, onRetry, onViewCalls }: {
   data?: OperatorAiAnalyticsDistributions
   selection: BreakdownSelection
   onSelection: (selection: BreakdownSelection) => void
   onRetry: () => void
+  onViewCalls: (filter: CallsFilter) => void
 }) {
   if (!data || data.totalCalls === undefined) return (
     <Alert>
@@ -61,9 +63,16 @@ export function CallBreakdowns({ data, selection, onSelection, onRetry }: {
     </Alert>
   )
   if (!data.totalCalls) return <Empty><EmptyHeader><EmptyTitle>No calls in this selection</EmptyTitle><EmptyDescription>Change a filter, date range, or office.</EmptyDescription></EmptyHeader></Empty>
-  return <BreakdownView data={data} kind={selection.kind} onSelect={(value) => onSelection(selection.kind === "intents"
-    ? { kind: "outcomes", intent: value as IntentFilter, outcome: "all" }
-    : { ...selection, kind: "failures", outcome: value as OutcomeFilter })} />
+  const unfiltered = selection.kind === "intents" && selection.intent === "all" && selection.outcome === "all"
+  const explore = (flow: FlowSelection) => onSelection(flow.intent
+    ? { kind: "outcomes", intent: flow.intent, outcome: "all" }
+    : { kind: "failures", intent: "all", outcome: flow.outcome ?? "all" })
+  return <>
+    {unfiltered && <CallFlowOverview data={data} onSelect={explore} onViewCalls={onViewCalls} />}
+    <BreakdownView data={data} kind={selection.kind} onSelect={(value) => onSelection(selection.kind === "intents"
+      ? { kind: "outcomes", intent: value as IntentFilter, outcome: "all" }
+      : { ...selection, kind: "failures", outcome: value as OutcomeFilter })} />
+  </>
 }
 
 export function BreakdownView({ data, kind, onSelect }: { data: OperatorAiAnalyticsDistributions; kind: Kind; onSelect?: (value: string) => void }) {
