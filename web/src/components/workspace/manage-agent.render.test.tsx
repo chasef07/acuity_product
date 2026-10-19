@@ -196,7 +196,7 @@ test("each page keeps its title, actions, and filters inside the panel", async (
   await showPage("transcripts")
   await waitFor(() => page.host.querySelector("header")?.textContent === "Calls1 call")
   assert.equal(page.host.querySelector("h1")?.textContent, "Calls")
-  assert.equal(page.host.querySelector("header button[aria-label='Refresh calls']"), null)
+  assert.ok(page.host.querySelector("header button[aria-label='Refresh calls']"))
   assert.ok(page.host.querySelector("input[aria-label='Search phone number']"))
   assert.ok(page.host.querySelector("[role='combobox'][aria-label='Date range']"))
   assert.equal(page.host.querySelector("section")?.getAttribute("aria-labelledby"), page.host.querySelector("h1")?.id)
@@ -219,21 +219,26 @@ test("each page keeps its title, actions, and filters inside the panel", async (
   await page.unmount()
 })
 
-test("Calls follows workspace revisions without a refresh button and keeps retry available on failure", async (t) => {
+test("Calls refreshes on request and keeps retry available on failure", async (t) => {
   const page = harness(t)
   const original = { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }
   page.agentCalls = { calls: [original], nextCursor: "" }
-  const show = (revision: number) => page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} revision={revision} />)
-  await show(1)
+  const show = () => page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} />)
+  await show()
   await waitFor(() => page.host.querySelectorAll("tbody tr").length === 1)
-  assert.equal(page.host.querySelector("button[aria-label='Refresh calls']"), null)
+  assert.ok(page.host.querySelector("button[aria-label='Refresh calls']"))
   assert.equal(page.host.querySelector("table")?.parentElement?.parentElement?.className, "w-full")
   page.agentCalls = { calls: [{ ...original, id: "call-2", phone: "+15555550222" }, original], nextCursor: "" }
-  await show(2)
+  const table = page.host.querySelector("table")
+  await show()
+  assert.equal(page.agentCallsRequests.length, 1)
+  assert.equal(page.host.querySelector("table"), table)
+  assert.equal(page.host.querySelectorAll("tbody tr").length, 1)
+  await act(async () => page.host.querySelector<HTMLButtonElement>("button[aria-label='Refresh calls']")!.click())
   await waitFor(() => page.host.querySelectorAll("tbody tr").length === 2)
   assert.match(page.text(), /555.*0222/)
   page.agentCallsStatus = 503
-  await show(3)
+  await act(async () => page.host.querySelector<HTMLButtonElement>("button[aria-label='Refresh calls']")!.click())
   await waitFor(() => page.alert().includes("Calls aren't available right now."))
   page.agentCallsStatus = 200
   await page.click("Try again")
