@@ -1354,13 +1354,22 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 		t.Fatalf("operator Task reopen: %v", err)
 	}
 
-	auditEvents, err := accessModule.AuditTrail(
-		context.Background(),
-		operator,
-		staff.Practice.ID,
-	)
+	rows, err := pool.Query(context.Background(), `
+		SELECT id::text, actor_subject, action
+		FROM access_audit_events
+		WHERE practice_id = $1
+		ORDER BY created_at, id
+	`, staff.Practice.ID)
 	if err != nil {
-		t.Fatalf("load operator Task audit trail: %v", err)
+		t.Fatalf("load operator Task audit rows: %v", err)
+	}
+	auditEvents, err := pgx.CollectRows(rows, pgx.RowToStructByName[struct {
+		ID           string
+		ActorSubject string
+		Action       string
+	}])
+	if err != nil {
+		t.Fatalf("scan operator Task audit rows: %v", err)
 	}
 	expectedVersions := map[string]int64{
 		"task.title_changed": renamed.Version,

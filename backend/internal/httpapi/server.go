@@ -2429,11 +2429,10 @@ func discoveryResponse(discovery access.Discovery) (api.AccessDiscovery, error) 
 			return api.AccessDiscovery{}, err
 		}
 		item := api.PracticeAccess{
-			Id:             practiceResponse.Id,
-			Name:           practiceResponse.Name,
-			Version:        practiceResponse.Version,
-			Locations:      []api.Location{},
-			CallingEnabled: practice.CallingEnabled,
+			Id:        practiceResponse.Id,
+			Name:      practiceResponse.Name,
+			Version:   practiceResponse.Version,
+			Locations: []api.Location{},
 		}
 		if practice.Membership != nil {
 			membership, err := membershipResponse(*practice.Membership)

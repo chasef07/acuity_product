@@ -87,20 +87,18 @@ type callingAccessSnapshot struct {
 }
 
 type callingPracticeAccess struct {
-	PracticeID     string             `json:"practiceId"`
-	Membership     *access.Membership `json:"membership,omitempty"`
-	Locations      []access.Location  `json:"locations"`
-	CallingEnabled bool               `json:"callingEnabled"`
+	PracticeID string             `json:"practiceId"`
+	Membership *access.Membership `json:"membership,omitempty"`
+	Locations  []access.Location  `json:"locations"`
 }
 
 func callingAccessState(discovery access.Discovery) callingAccessSnapshot {
 	practices := make([]callingPracticeAccess, 0, len(discovery.Practices))
 	for _, practice := range discovery.Practices {
 		practices = append(practices, callingPracticeAccess{
-			PracticeID:     practice.ID,
-			Membership:     practice.Membership,
-			Locations:      practice.Locations,
-			CallingEnabled: practice.CallingEnabled,
+			PracticeID: practice.ID,
+			Membership: practice.Membership,
+			Locations:  practice.Locations,
 		})
 	}
 	return callingAccessSnapshot{
@@ -146,9 +144,7 @@ func (m *Module) ReadCallingStateConditionally(
 	}
 	state.PracticeIDs = []string{}
 	for _, practice := range discovery.Practices {
-		if practice.CallingEnabled {
-			state.PracticeIDs = append(state.PracticeIDs, practice.ID)
-		}
+		state.PracticeIDs = append(state.PracticeIDs, practice.ID)
 	}
 	state.ETag = etag
 	return state, false, nil
@@ -316,12 +312,7 @@ func (m *Module) readCallingState(
 }
 
 func hasOperationalCallingAccess(discovery access.Discovery) bool {
-	for _, practice := range discovery.Practices {
-		if practice.CallingEnabled {
-			return true
-		}
-	}
-	return false
+	return len(discovery.Practices) > 0
 }
 
 func (m *Module) readStaffStateCall(
@@ -419,11 +410,9 @@ func (m *Module) readCallingStateETag(
 	practiceIDs := make([]string, 0, len(discovery.Practices))
 	locationIDs := make([]string, 0)
 	for _, practice := range discovery.Practices {
-		if practice.CallingEnabled {
-			practiceIDs = append(practiceIDs, practice.ID)
-			for _, location := range practice.Locations {
-				locationIDs = append(locationIDs, location.ID)
-			}
+		practiceIDs = append(practiceIDs, practice.ID)
+		for _, location := range practice.Locations {
+			locationIDs = append(locationIDs, location.ID)
 		}
 	}
 	accessSnapshot, err := json.Marshal(callingAccessState(discovery))
@@ -483,7 +472,13 @@ func (m *Module) readCallingStateETag(
 			JOIN relevant_call_ids relevant ON relevant.id = call.id
 		), state_rows AS (
 			SELECT 'lease'::text AS kind, lease.user_subject AS id,
-				to_jsonb(lease) || jsonb_build_object(
+				jsonb_build_object(
+					'sessionId', lease.session_id,
+					'desiredAvailable', lease.desired_available,
+					'registered', lease.registered,
+					'microphoneReady', lease.microphone_ready,
+					'audioReady', lease.audio_ready,
+					'sessionHealthy', lease.session_healthy,
 					'leaseCurrent', lease.lease_expires_at > $4
 				) AS value
 			FROM human_calling_softphone_leases lease
@@ -529,5 +524,5 @@ func (m *Module) readCallingStateETag(
 	_, _ = digest.Write([]byte(callingSnapshot))
 	_, _ = digest.Write([]byte{0})
 	_, _ = digest.Write([]byte(m.config.RingWindowDuration.String()))
-	return `"` + base64.RawURLEncoding.EncodeToString(digest.Sum(nil)) + `"`, nil
+	return `W/"` + base64.RawURLEncoding.EncodeToString(digest.Sum(nil)) + `"`, nil
 }

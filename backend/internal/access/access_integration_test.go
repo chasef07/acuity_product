@@ -228,58 +228,33 @@ func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testi
 	}
 }
 
-func TestAccessGrantRevocationDeniesSignUpAndIsAudited(t *testing.T) {
+func TestRevokedAccessGrantDeniesSignUp(t *testing.T) {
 	pool := testdb.Open(t)
+	ctx := context.Background()
 	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
 	module := access.New(pool, func() time.Time { return now })
-	operator := access.Identity{
-		Subject: "operator-subject", Email: "operator@acuity.test", EmailVerified: true,
-	}
-	if _, err := module.Provision(context.Background(), access.Provisioning{
-		Environment: "test", RequestedBy: "access-grant-revocation-test",
-		PlatformOperators: []string{operator.Email},
+	if _, err := module.Provision(ctx, access.Provisioning{
+		Environment: "test", RequestedBy: "revoked-grant-test",
 		Practices: []access.PracticeProvision{{
-			Key: "abita-eye-group", Name: "Abita Eye Group",
-			Locations: []access.LocationProvision{{Key: "sweetwater", Name: "Sweetwater"}},
+			Key: "practice", Name: "Practice",
+			Locations: []access.LocationProvision{{Key: "office", Name: "Office"}},
 			AccessGrants: []access.AccessGrantProvision{{
-				Key: "pending-staff", Email: "pending@abita.test",
+				Key: "pending", Email: "pending@abita.test",
 				Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
 			}},
 		}},
 	}); err != nil {
-		t.Fatalf("provision revocable Access Grant: %v", err)
+		t.Fatal(err)
 	}
-	discovery, err := module.DiscoverActor(context.Background(), operator)
-	if err != nil {
-		t.Fatalf("discover Platform Operator: %v", err)
+	if err := module.InspectSignUpEligibility(ctx, "pending@abita.test"); err != nil {
+		t.Fatalf("active Access Grant eligibility: %v", err)
 	}
-	var grantID string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT id::text FROM access_grants WHERE email = 'pending@abita.test'
-	`).Scan(&grantID); err != nil {
-		t.Fatalf("read pending Access Grant: %v", err)
+	result, err := pool.Exec(ctx, `UPDATE access_grants SET revoked_at = $1 WHERE email = 'pending@abita.test'`, now)
+	if err != nil || result.RowsAffected() != 1 {
+		t.Fatalf("revoke fixture Access Grant: rows=%d err=%v", result.RowsAffected(), err)
 	}
-	command := access.RevokeAccessGrantCommand{
-		Identity: operator, PracticeID: discovery.Practices[0].ID, AccessGrantID: grantID,
-	}
-	if err := module.RevokeAccessGrant(context.Background(), command); err != nil {
-		t.Fatalf("revoke Access Grant: %v", err)
-	}
-	if err := module.RevokeAccessGrant(context.Background(), command); err != nil {
-		t.Fatalf("repeat Access Grant revocation: %v", err)
-	}
-	if err := module.InspectSignUpEligibility(context.Background(), "pending@abita.test"); !errors.Is(err, access.ErrDenied) {
+	if err := module.InspectSignUpEligibility(ctx, "pending@abita.test"); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("revoked Access Grant eligibility error = %v", err)
-	}
-	var auditCount int
-	if err := pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM access_audit_events
-		WHERE action = 'access_grant.revoked' AND details->>'accessGrantId' = $1
-	`, grantID).Scan(&auditCount); err != nil {
-		t.Fatalf("count Access Grant revocation audit: %v", err)
-	}
-	if auditCount != 1 {
-		t.Fatalf("Access Grant revocation audit count = %d, want 1", auditCount)
 	}
 }
 
@@ -1100,9 +1075,6 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 	if demo.Membership != nil || customer.Membership != nil {
 		t.Fatalf("operator Memberships = demo:%#v customer:%#v", demo.Membership, customer.Membership)
 	}
-	if !demo.CallingEnabled || !customer.CallingEnabled {
-		t.Fatalf("operator calling = demo:%t customer:%t", demo.CallingEnabled, customer.CallingEnabled)
-	}
 
 	tx, err := pool.Begin(context.Background())
 	if err != nil {
@@ -1179,83 +1151,6 @@ func TestProvisioningRejectsOperatorSpecificAccessGrant(t *testing.T) {
 	if !errors.Is(err, access.ErrInvalidInput) ||
 		!strings.Contains(err.Error(), "Platform Operators do not use Access Grants") {
 		t.Fatalf("operator-specific Access Grant error = %v", err)
-	}
-}
-
-func TestMembershipRevocationTakesEffectOnNextResolutionAndIsAudited(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return now })
-	ctx := context.Background()
-	operator := access.Identity{
-		Subject:       "founder-subject",
-		Email:         "founder@acuity.test",
-		EmailVerified: true,
-	}
-
-	_, err := module.Provision(ctx, access.Provisioning{
-		Environment:       "test",
-		RequestedBy:       "access-revocation-test",
-		PlatformOperators: []string{operator.Email},
-		Practices: []access.PracticeProvision{{
-			Key:       "abita-eye-group",
-			Name:      "Abita Eye Group",
-			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture Location 1"}},
-			AccessGrants: []access.AccessGrantProvision{{
-				Key:           "active-staff",
-				Email:         "active@abita.test",
-				Role:          access.RoleStaff,
-				LocationScope: access.LocationScopeAll,
-			}},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("provision revocation fixture: %v", err)
-	}
-	discovery, err := module.DiscoverActor(ctx, operator)
-	if err != nil {
-		t.Fatalf("discover operator: %v", err)
-	}
-	practiceID := discovery.Practices[0].ID
-	memberIdentity := access.Identity{
-		Subject:       "active-subject",
-		Email:         "active@abita.test",
-		EmailVerified: true,
-	}
-	memberDiscovery, err := module.DiscoverActor(ctx, memberIdentity)
-	if err != nil {
-		t.Fatalf("activate active Membership: %v", err)
-	}
-	authorization, err := module.ResolveActor(ctx, memberIdentity, memberDiscovery.Practices[0].ID, "")
-	if err != nil {
-		t.Fatalf("resolve active Membership: %v", err)
-	}
-	if err := module.RevokeMembership(ctx, access.RevokeMembershipCommand{
-		Identity:     operator,
-		PracticeID:   practiceID,
-		MembershipID: authorization.Membership.ID,
-	}); err != nil {
-		t.Fatalf("revoke membership: %v", err)
-	}
-	if _, err := module.ResolveActor(ctx, memberIdentity, practiceID, ""); !errors.Is(err, access.ErrDenied) {
-		t.Fatalf("resolve revoked membership error = %v", err)
-	}
-
-	events, err := module.AuditTrail(ctx, operator, practiceID)
-	if err != nil {
-		t.Fatalf("load audit trail: %v", err)
-	}
-	actions := map[string]bool{}
-	for _, event := range events {
-		actions[event.Action] = true
-		if event.Action == "membership.revoked" {
-			if event.ActorSubject != operator.Subject {
-				t.Fatalf("revocation audit = %#v", event)
-			}
-		}
-	}
-	if !actions["membership.revoked"] {
-		t.Fatalf("audit actions = %#v", actions)
 	}
 }
 

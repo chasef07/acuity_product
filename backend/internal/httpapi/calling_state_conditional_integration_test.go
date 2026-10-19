@@ -28,9 +28,8 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 		EmailVerified: true,
 	}
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
-		Environment:       "test",
-		RequestedBy:       "conditional-calling-state-test",
-		PlatformOperators: []string{"operator@conditional-calling-state.test"},
+		Environment: "test",
+		RequestedBy: "conditional-calling-state-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "conditional-calling-state",
 			Name:      "Conditional Calling State",
@@ -104,8 +103,8 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 	}
 	etag := initial.Header.Get("ETag")
 	_ = initial.Body.Close()
-	if etag == "" {
-		t.Fatal("initial Calling state omitted ETag")
+	if !strings.HasPrefix(etag, `W/"`) {
+		t.Fatalf("Calling state ETag = %q, want a weak validator", etag)
 	}
 
 	lock, err := pool.Acquire(context.Background())
@@ -230,18 +229,7 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 		t.Fatalf("expired-lease softphone = %#v, want no ownership or availability", expiredState.Softphone)
 	}
 
-	operator := access.Identity{
-		Subject:       "conditional-calling-state-operator",
-		Email:         "operator@conditional-calling-state.test",
-		EmailVerified: true,
-	}
-	if err := accessModule.RevokeMembership(context.Background(), access.RevokeMembershipCommand{
-		Identity:     operator,
-		PracticeID:   authorization.Practice.ID,
-		MembershipID: authorization.Membership.ID,
-	}); err != nil {
-		t.Fatalf("revoke conditional Calling Membership: %v", err)
-	}
+	testaccess.SeedRevokedMembership(t, pool, authorization, now)
 	revokedRequest, err := http.NewRequest(
 		http.MethodGet,
 		server.URL+"/v1/calling/state",

@@ -245,9 +245,6 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 			practiceID = discovery.Practices[0].ID
 			sweetwater = discovery.Practices[0].Locations[0]
 		}
-		if !discovery.Practices[0].CallingEnabled {
-			t.Fatalf("portal CallingEnabled for %q = false", identity.Email)
-		}
 	}
 
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{

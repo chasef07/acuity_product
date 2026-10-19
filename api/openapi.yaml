@@ -2498,7 +2498,7 @@ components:
         - $ref: "#/components/schemas/Practice"
         - type: object
           additionalProperties: false
-          required: [locations, callingEnabled]
+          required: [locations]
           properties:
             membership:
               $ref: "#/components/schemas/Membership"
@@ -2506,8 +2506,6 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Location"
-            callingEnabled:
-              type: boolean
     AccessDiscovery:
       type: object
       additionalProperties: false
