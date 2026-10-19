@@ -242,6 +242,30 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   await waitFor(() => backend.requests.length === sent + 1)
 })
 
+test("analytics stays denied through a pending refresh after pagination loses authorization", async (t) => {
+  const refresh = deferred<Response>()
+  let firstPageRequests = 0
+  fakeBackend(t, (_, body) => {
+    if (body.cursor) return new Response("", { status: 401 })
+    if (++firstPageRequests > 1) return refresh.promise
+    return Response.json({ summary, calls: [call("original")], nextCursor: "next" })
+  })
+  const view = mountHook(t, useAiCallAnalytics)
+  const filters = { practiceID: "practice-1", locationID: "office-1", range: "24h", revision: 0, enabled: true } as const
+  await view.render(filters)
+  await waitFor(() => view.latest().state === "ready")
+  await act(async () => void (await view.latest().loadNextPage()))
+  assert.equal(view.latest().state, "denied")
+  assert.equal(view.latest().data, undefined)
+  await view.render({ ...filters, revision: 1 })
+  await waitFor(() => firstPageRequests === 2)
+  assert.equal(view.latest().state, "denied")
+  assert.equal(view.latest().data, undefined)
+  refresh.resolve(Response.json({ summary, calls: [call("authorized")], nextCursor: "" }))
+  await waitFor(() => view.latest().state === "ready")
+  assert.equal(view.latest().data?.calls[0].id, "authorized")
+})
+
 test("call commands report conflicts and send the saved choice", async (t) => {
   const backend = fakeBackend(t, () => new Response("{}", { status: 409 }))
   const flagged = await flagAgentCallIssue("call-1", "OTHER", "")

@@ -129,7 +129,7 @@ export function useAiCallAnalytics({
   failingJudge?: string
 }): AiCallLedger {
   const pages = useCallPages<OperatorAiAnalyticsPage>(
-    JSON.stringify([practiceID, locationID, range, intent, outcome, failuresOnly, failingJudge, revision]),
+    JSON.stringify([practiceID, locationID, range, intent, outcome, failuresOnly, failingJudge]),
     Boolean(practiceID) && enabled,
     (transport, cursor) =>
       queryOperatorAiAnalytics({
@@ -151,6 +151,7 @@ export function useAiCallAnalytics({
       calls: [...shown.calls, ...next.calls],
       nextCursor: next.nextCursor,
     }),
+    revision,
   )
   const denied =
     pages.status === "failed"
@@ -248,7 +249,7 @@ function useCallPages<P extends { nextCursor: string }>(
   }, [key, enabled, revision])
 
   const current = snapshot?.key === key ? snapshot : undefined
-  const currentMore = more?.key === key && current?.revision === revision ? more : undefined
+  const currentMore = more?.key === key ? more : undefined
 
   async function loadMore() {
     if (current?.query.status !== "ready" || currentMore?.loading) return
@@ -291,7 +292,7 @@ function useCallPages<P extends { nextCursor: string }>(
 
   return {
     ...(current?.query ?? { status: "loading" }),
-    loadingMore: Boolean(currentMore?.loading),
+    loadingMore: Boolean(currentMore?.loading) && current?.revision === revision,
     moreFailure: currentMore?.failure,
     loadMore,
     update,
