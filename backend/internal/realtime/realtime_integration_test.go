@@ -293,16 +293,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		renamed.Version != task.Version+1 {
 		t.Fatalf("Task rename hint = %#v, Task = %#v", renameHint, renamed)
 	}
-	if err := accessModule.RevokeMembership(
-		context.Background(),
-		access.RevokeMembershipCommand{
-			Identity:     operator,
-			PracticeID:   practice.ID,
-			MembershipID: memberAuthorization.Membership.ID,
-		},
-	); err != nil {
-		t.Fatalf("revoke streamed Membership: %v", err)
-	}
+	testaccess.SeedRevokedMembership(t, pool, memberAuthorization, now)
 	if _, err := workModule.ReadTask(
 		context.Background(),
 		member,

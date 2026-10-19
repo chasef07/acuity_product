@@ -8,9 +8,10 @@ import { JSDOM } from "jsdom"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
-import { TaskCallContext } from "./task-call-context.tsx"
+import { TaskCallContext, TaskCallAction } from "./task-call-context.tsx"
+import { CallingDock } from "./calling-dock.tsx"
 import { WorkEmptyState } from "./work-empty-state.tsx"
-import { RailButton } from "./workspace-rail-button.tsx"
+import { CallingRailControl, RailButton } from "./workspace-rail-button.tsx"
 import { WorkspaceRail } from "./workspace-rail.tsx"
 import { WorkspaceTopBar } from "./workspace-page-header.tsx"
 import { clearAccessToken } from "../../lib/auth-client.ts"
@@ -25,6 +26,30 @@ import type {
   WorkspaceProjectionIntent,
   WorkspaceProjectionState,
 } from "../../lib/workspace-projection.ts"
+
+test("an accessible practice renders calling navigation and the Task call action", () => {
+  const markup = renderToStaticMarkup(
+    <SidebarProvider>
+      <CallingDock
+        actorSubject="calling-member"
+        practiceID="practice-1"
+        onTaskCallHandled={() => {}}
+        onCallScope={() => {}}
+        onCallConnected={() => {}}
+        onDisposition={() => {}}
+      >
+        {(_activeCall, occupied) => <>
+          <CallingRailControl workActive />
+          <TaskCallAction task={projectedTask()} canCall={!occupied} historyHint={0} pending={false} onCall={() => {}} />
+        </>}
+      </CallingDock>
+    </SidebarProvider>,
+  )
+  assert.match(markup, /aria-label="Receive calls"/)
+  assert.match(markup, /role="switch"/)
+  assert.match(markup, /Checking Call route/)
+  assert.match(markup, /<audio/)
+})
 
 test("Task rail toggles the selected context while preserving the conversation", async () => {
   const task = projectedTask()
@@ -53,7 +78,6 @@ test("Task rail toggles the selected context while preserving the conversation",
       onAIInteractionOpen={() => {}}
       calling={{
         callingOccupied: false,
-        callingEnabled: false,
         outboundPending: false,
         ownsSoftphone: false,
         startOutbound: async () => undefined,
@@ -341,7 +365,6 @@ test("the sender office follows the offices of the selected Task", async (t) => 
   const started: string[] = []
   const calling = {
     callingOccupied: false,
-    callingEnabled: true,
     outboundPending: false,
     ownsSoftphone: true,
     startOutbound: async (locationID: string) => {
@@ -738,7 +761,6 @@ function conversationHarness(t: TestContext) {
           onAIInteractionOpen={(id) => conversation.opened.push(`ai:${id}`)}
           calling={{
             callingOccupied: false,
-            callingEnabled: false,
             outboundPending: false,
             ownsSoftphone: false,
             startOutbound: async () => undefined,
@@ -854,7 +876,6 @@ function projectedWorkspace(task: Task): WorkspaceProjectionState {
           id: "practice-1",
           name: "Example Eye Group",
           version: 1,
-          callingEnabled: false,
           membership: {
             id: "membership-1",
             role: "STAFF",

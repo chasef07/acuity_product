@@ -335,7 +335,6 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
             locations: [
               { id: staleLocationID, name: "Stale Callback Location" },
             ],
-            callingEnabled: false,
           },
         ],
       },

@@ -4,7 +4,6 @@ import { type ComponentProps, type ReactNode, useId } from "react"
 import { PhoneIcon, PhoneOffIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { useSidebar } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Tooltip,
@@ -17,10 +16,8 @@ import { cn } from "@/lib/utils"
 
 export function CallingRailControl({
   workActive,
-  onOpenWork,
 }: {
   workActive: boolean
-  onOpenWork: () => void
 }) {
   const {
     activeCall,
@@ -28,11 +25,8 @@ export function CallingRailControl({
     available,
     callingFailure,
     ownsSoftphone,
-    callingEnabled,
     setAvailability,
   } = useCallingNavigation()
-  const { isMobile, setOpen, setOpenMobile } = useSidebar()
-  if (!callingEnabled && !callingFailure) return null
   const failure = callingFailure ? projectCallingFailure(callingFailure) : undefined
   const attention = failure
     ? failure.action && !workActive
@@ -45,22 +39,6 @@ export function CallingRailControl({
       ? "Receiving calls"
       : "Not receiving calls"
   const icon = availabilityPending ? <Spinner /> : available ? <PhoneIcon /> : <PhoneOffIcon />
-  if (!callingEnabled) {
-    return (
-      <RailButton
-        label="Calls"
-        tooltip={attention}
-        attention={attention}
-        onClick={() => {
-          onOpenWork()
-          if (isMobile) setOpenMobile(true)
-          else setOpen(true)
-        }}
-      >
-        {icon}
-      </RailButton>
-    )
-  }
   return (
     <RailButton
       label="Receive calls"

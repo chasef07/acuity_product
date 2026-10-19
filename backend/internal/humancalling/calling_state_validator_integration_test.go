@@ -12,6 +12,105 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestCallingStateValidatorTracksSoftphoneChangesButNotHeartbeats(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 19, 17, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, identities := provisionConcurrentStaff(t, accessModule, now, "lease-validator", 1)
+	staff := identities[0]
+	calling := humancalling.New(pool, accessModule, nil,
+		humancalling.Config{}, func() time.Time { return now },
+	)
+	command := humancalling.ReadinessCommand{
+		Identity: staff, SessionID: "lease-validator-session", Registered: true,
+		MicrophoneReady: true, AudioReady: true, SessionHealthy: true, Available: true,
+	}
+	if _, err := calling.AcquireSoftphone(ctx, staff, command.SessionID, false); err != nil {
+		t.Fatal(err)
+	}
+	setReadiness := func(t *testing.T, command humancalling.ReadinessCommand) humancalling.SoftphoneState {
+		t.Helper()
+		state, err := calling.SetReadiness(ctx, command)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	readState := func(t *testing.T) humancalling.CallingState {
+		t.Helper()
+		state, err := calling.ReadCallingState(ctx, staff)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	assertModified := func(t *testing.T, before humancalling.CallingState, wantModified bool) humancalling.CallingState {
+		t.Helper()
+		after, notModified, err := calling.ReadCallingStateConditionally(ctx, staff, before.ETag)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if notModified == wantModified || (after.ETag != before.ETag) != wantModified {
+			t.Fatalf("validator changed=%t, want %t", !notModified, wantModified)
+		}
+		return after
+	}
+	setReadiness(t, command)
+
+	t.Run("unchanged heartbeat", func(t *testing.T) {
+		before := readState(t)
+		now = now.Add(4 * time.Second)
+		lease := setReadiness(t, command)
+		if !lease.LeaseExpiresAt.After(before.Softphone.LeaseExpiresAt) {
+			t.Fatal("heartbeat did not extend the lease")
+		}
+		assertModified(t, before, false)
+	})
+	for _, testCase := range []struct {
+		name   string
+		change func(*humancalling.ReadinessCommand)
+	}{
+		{"registered", func(command *humancalling.ReadinessCommand) { command.Registered = false }},
+		{"microphone ready", func(command *humancalling.ReadinessCommand) { command.MicrophoneReady = false }},
+		{"audio ready", func(command *humancalling.ReadinessCommand) { command.AudioReady = false }},
+		{"session healthy", func(command *humancalling.ReadinessCommand) { command.SessionHealthy = false }},
+		{"desired available", func(command *humancalling.ReadinessCommand) { command.Available = false }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			before := readState(t)
+			changed := command
+			testCase.change(&changed)
+			setReadiness(t, changed)
+			after := assertModified(t, before, true)
+			if !before.Softphone.Available || after.Softphone.Available {
+				t.Fatal("readiness loss did not change available state")
+			}
+			setReadiness(t, command)
+		})
+	}
+	t.Run("session ownership", func(t *testing.T) {
+		before := readState(t)
+		command.SessionID = "replacement-session"
+		if _, err := calling.AcquireSoftphone(ctx, staff, command.SessionID, true); err != nil {
+			t.Fatal(err)
+		}
+		setReadiness(t, command)
+		after := assertModified(t, before, true)
+		if after.Softphone.SessionID != command.SessionID || !after.Softphone.Available {
+			t.Fatalf("unexpected replacement softphone: %+v", after.Softphone)
+		}
+	})
+	t.Run("lease expiry", func(t *testing.T) {
+		before := readState(t)
+		now = before.Softphone.LeaseExpiresAt
+		after := assertModified(t, before, true)
+		if !before.Softphone.Owner || after.Softphone.Owner || after.Softphone.Available {
+			t.Fatalf("expired softphone remains owned or available: %+v", after.Softphone)
+		}
+	})
+}
+
 func TestCallingStateValidatorAvoidsSequentialScansAtVolume(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()

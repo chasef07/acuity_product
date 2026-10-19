@@ -153,7 +153,6 @@ type EngagementWorkspaceProps = {
 type EngagementWorkspaceCalling = Pick<
   ReturnType<typeof useCallingNavigation>,
   | "callingOccupied"
-  | "callingEnabled"
   | "outboundPending"
   | "ownsSoftphone"
   | "startOutbound"
@@ -196,7 +195,6 @@ export function EngagementWorkspaceView({
   const [copyState, setCopyState] = useCopyState()
   const {
     callingOccupied,
-    callingEnabled,
     outboundPending,
     ownsSoftphone,
     startOutbound,
@@ -262,7 +260,6 @@ export function EngagementWorkspaceView({
             title={`Call ${formatUSPhone(engagement.phone)}`}
             disabled={
               !canMutate ||
-              !callingEnabled ||
               !route ||
               !ownsSoftphone ||
               callingOccupied

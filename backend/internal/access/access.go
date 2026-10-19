@@ -29,11 +29,10 @@ const (
 )
 
 var (
-	ErrDenied             = errors.New("access denied")
-	ErrAccessGrantClaimed = errors.New("Access Grant already claimed")
-	ErrInvalidInput       = errors.New("invalid access input")
-	ErrNoOfficeRoute      = errors.New("Location has no single Abita Office Route")
-	ErrLocationConflict   = errors.New("Location key belongs to a differently named Location")
+	ErrDenied           = errors.New("access denied")
+	ErrInvalidInput     = errors.New("invalid access input")
+	ErrNoOfficeRoute    = errors.New("Location has no single Abita Office Route")
+	ErrLocationConflict = errors.New("Location key belongs to a differently named Location")
 )
 
 var abitaOfficeKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
@@ -155,9 +154,8 @@ type Authorization struct {
 
 type PracticeAccess struct {
 	Practice
-	Membership     *Membership `json:"membership,omitempty"`
-	Locations      []Location  `json:"locations"`
-	CallingEnabled bool        `json:"callingEnabled"`
+	Membership *Membership `json:"membership,omitempty"`
+	Locations  []Location  `json:"locations"`
 }
 
 type Discovery struct {
@@ -166,27 +164,11 @@ type Discovery struct {
 	Practices        []PracticeAccess `json:"practices"`
 }
 
-func portalCallingEnabled(platformOperator bool, membership *Membership) bool {
-	return platformOperator || membership != nil
-}
-
 type AddLocationCommand struct {
 	Identity   Identity
 	PracticeID string
 	Key        string
 	Name       string
-}
-
-type RevokeAccessGrantCommand struct {
-	Identity      Identity
-	PracticeID    string
-	AccessGrantID string
-}
-
-type RevokeMembershipCommand struct {
-	Identity     Identity
-	PracticeID   string
-	MembershipID string
 }
 
 type AuditEvent struct {
@@ -982,10 +964,9 @@ func (m *Module) discoverActor(
 			if len(result.Practices) == 0 ||
 				result.Practices[len(result.Practices)-1].ID != practice.ID {
 				result.Practices = append(result.Practices, PracticeAccess{
-					Practice:       practice,
-					Membership:     &membership,
-					Locations:      []Location{},
-					CallingEnabled: portalCallingEnabled(false, &membership),
+					Practice:   practice,
+					Membership: &membership,
+					Locations:  []Location{},
 				})
 			}
 			if location.ID != "" {
@@ -1032,7 +1013,6 @@ func (m *Module) discoverActor(
 			rows.Close()
 			return Discovery{}, fmt.Errorf("scan discovered Practice: %w", err)
 		}
-		practice.CallingEnabled = portalCallingEnabled(true, nil)
 		practice.Locations = []Location{}
 		result.Practices = append(result.Practices, practice)
 	}
@@ -1181,197 +1161,6 @@ func (m *Module) activateProvisionedEmail(
 	return nil
 }
 
-func (m *Module) RevokeAccessGrant(
-	ctx context.Context,
-	command RevokeAccessGrantCommand,
-) error {
-	if !command.Identity.EmailVerified || command.Identity.Subject == "" ||
-		command.PracticeID == "" || command.AccessGrantID == "" {
-		return ErrDenied
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin Access Grant revocation: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, isOperator, err := resolvePlatformOperator(ctx, tx, command.Identity); err != nil {
-		return err
-	} else if !isOperator {
-		return ErrDenied
-	}
-
-	var claimedAt, revokedAt *time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT claimed_at, revoked_at
-		FROM access_grants
-		WHERE id = $1 AND practice_id = $2
-		FOR UPDATE
-	`, command.AccessGrantID, command.PracticeID).Scan(&claimedAt, &revokedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrDenied
-		}
-		return fmt.Errorf("load Access Grant for revocation: %w", err)
-	}
-	if claimedAt != nil {
-		return ErrAccessGrantClaimed
-	}
-	if revokedAt != nil {
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit repeated Access Grant revocation: %w", err)
-		}
-		return nil
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE access_grants
-		SET revoked_at = $2
-		WHERE id = $1
-	`, command.AccessGrantID, m.now()); err != nil {
-		return fmt.Errorf("revoke Access Grant: %w", err)
-	}
-	if err := auditRevocation(
-		ctx,
-		tx,
-		command.Identity.Subject,
-		command.PracticeID,
-		"access_grant.revoked",
-		"accessGrantId",
-		command.AccessGrantID,
-	); err != nil {
-		return err
-	}
-	if _, err := m.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Access Grant revocation: %w", err)
-	}
-	return nil
-}
-
-func (m *Module) RevokeMembership(
-	ctx context.Context,
-	command RevokeMembershipCommand,
-) error {
-	if !command.Identity.EmailVerified || command.Identity.Subject == "" ||
-		command.PracticeID == "" || command.MembershipID == "" {
-		return ErrDenied
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin Membership revocation: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, isOperator, err := resolvePlatformOperator(ctx, tx, command.Identity); err != nil {
-		return err
-	} else if !isOperator {
-		return ErrDenied
-	}
-
-	var revokedAt *time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT revoked_at
-		FROM access_memberships
-		WHERE id = $1 AND practice_id = $2
-		FOR UPDATE
-	`, command.MembershipID, command.PracticeID).Scan(&revokedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrDenied
-		}
-		return fmt.Errorf("load Membership for revocation: %w", err)
-	}
-	if revokedAt != nil {
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit repeated Membership revocation: %w", err)
-		}
-		return nil
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE access_memberships
-		SET revoked_at = $2
-		WHERE id = $1
-	`, command.MembershipID, m.now()); err != nil {
-		return fmt.Errorf("revoke Membership: %w", err)
-	}
-	if err := auditRevocation(
-		ctx,
-		tx,
-		command.Identity.Subject,
-		command.PracticeID,
-		"membership.revoked",
-		"membershipId",
-		command.MembershipID,
-	); err != nil {
-		return err
-	}
-	if _, err := m.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Membership revocation: %w", err)
-	}
-	return nil
-}
-
-func (m *Module) AuditTrail(
-	ctx context.Context,
-	identity Identity,
-	practiceID string,
-) ([]AuditEvent, error) {
-	if !identity.EmailVerified || identity.Subject == "" || practiceID == "" {
-		return nil, ErrDenied
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("begin audit trail: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
-	if err != nil {
-		return nil, err
-	}
-	if !isOperator {
-		return nil, ErrDenied
-	}
-	rows, err := tx.Query(ctx, `
-		SELECT
-			id::text,
-			actor_subject,
-			practice_id::text,
-			action,
-			COALESCE(reason, ''),
-			created_at
-		FROM access_audit_events
-		WHERE practice_id = $1
-		ORDER BY created_at, id
-	`, practiceID)
-	if err != nil {
-		return nil, fmt.Errorf("load audit trail: %w", err)
-	}
-	defer rows.Close()
-	events := []AuditEvent{}
-	for rows.Next() {
-		var event AuditEvent
-		if err := rows.Scan(
-			&event.ID,
-			&event.ActorSubject,
-			&event.PracticeID,
-			&event.Action,
-			&event.Reason,
-			&event.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan audit event: %w", err)
-		}
-		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate audit trail: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit audit trail: %w", err)
-	}
-	return events, nil
-}
-
 func (m *Module) AddLocation(
 	ctx context.Context,
 	command AddLocationCommand,
@@ -1442,29 +1231,6 @@ func (m *Module) AddLocation(
 		return LocationMutation{}, fmt.Errorf("commit Location mutation: %w", err)
 	}
 	return result, nil
-}
-
-func auditRevocation(
-	ctx context.Context,
-	tx pgx.Tx,
-	actorSubject string,
-	practiceID string,
-	action string,
-	targetKey string,
-	targetID string,
-) error {
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO access_audit_events (
-			actor_type, actor_subject, practice_id, action, details
-		)
-		VALUES (
-			'PLATFORM_OPERATOR', $1, $2, $3,
-			jsonb_build_object($4::text, $5::text)
-		)
-	`, actorSubject, practiceID, action, targetKey, targetID); err != nil {
-		return fmt.Errorf("audit %s: %w", action, err)
-	}
-	return nil
 }
 
 func resolvePlatformOperator(

@@ -245,10 +245,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       />
     )
   }
-  const callingEnabled = practice.callingEnabled
-  const callingRuntimeEnabled = discovery.practices.some(
-    (item) => item.callingEnabled,
-  )
   const contextPanelLabel =
     state.selection.contextView === "task"
       ? "Task context"
@@ -265,8 +261,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       <CallingDock
         key={discovery.actor.subject}
         actorSubject={discovery.actor.subject}
-        callingEnabled={callingEnabled}
-        callingRuntimeEnabled={callingRuntimeEnabled}
         practiceID={state.scope.practiceID}
         taskCallRequest={taskCallRequest}
         onTaskCallHandled={(requestID, requestError) => {
@@ -359,7 +353,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
           availabilityControl={
             <CallingRailControl
               workActive={isWorkView(view)}
-              onOpenWork={() => sendIntent({ type: "select-work" })}
             />
           }
         />
@@ -438,7 +431,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         : undefined
                     }
                     callAction={!state.selection.taskGroup && selectedTask && selectedTask.state === "OPEN" && contextView === "task" ? (
-                      <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={callingEnabled && !callingOccupied} historyHint={state.detailRevision} pending={Boolean(taskCallRequest)} onCall={(task) => {
+                      <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={!callingOccupied} historyHint={state.detailRevision} pending={Boolean(taskCallRequest)} onCall={(task) => {
                         setTaskCallError("")
                         void projection.dispatch({ type: "remember-return-task", taskID: task.id })
                         setTaskCallRequest({ id: window.crypto.randomUUID(), taskID: task.id })
