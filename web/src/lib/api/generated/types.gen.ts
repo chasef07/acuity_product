@@ -1350,6 +1350,10 @@ export type OperatorAiAnalyticsQueryRequest = {
      * Restrict calls to explicit failures for this judge question key in the v6-v8 failure catalog. Implies failure filtering even when failuresOnly is false. Intersects intent and outcome filters.
      */
     failingJudge?: string;
+    /**
+     * Restrict calls by failure-judge coverage in the v6-v8 catalog. pass matches calls with at least one eligible boolean judge answer and no explicit failure; unjudged matches calls with no eligible boolean judge answer. Cannot be combined with failuresOnly or failingJudge. Intersects intent and outcome filters; does not restrict summary distributions.
+     */
+    judgeResult?: 'pass' | 'unjudged';
     intent?: CallIntent;
     outcome?: CallOutcome;
     /**

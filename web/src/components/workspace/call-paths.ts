@@ -3,6 +3,44 @@ import { intentLabels, outcomeLabels } from "./call-labels"
 
 const knowledgeGapKey = "knowledge_available"
 
+export type CallSelection = { intent?: CallIntent; outcome?: CallOutcome; judge?: "pass" | "fail" | "unjudged"; failure?: string }
+
+export function matchesSelection(path: OperatorAiPathCount, selection: CallSelection) {
+  const judge = !path.evaluated ? "unjudged" : path.failures.length ? "fail" : "pass"
+  return (!selection.intent || path.intent === selection.intent) &&
+    (!selection.outcome || path.outcome === selection.outcome) &&
+    (!selection.judge || judge === selection.judge) &&
+    (!selection.failure || path.failures.includes(selection.failure))
+}
+
+export function mergeSelection(current: CallSelection, next: CallSelection): CallSelection {
+  const merged = { ...current, ...next }
+  if (next.failure && merged.judge !== "fail") delete merged.judge
+  if (next.judge && next.judge !== "fail") delete merged.failure
+  return merged
+}
+
+export type BreakdownRow = { label: string; calls: number; selection?: CallSelection }
+
+export function breakdownLists(paths: OperatorAiPathCount[], failureLabels: Record<string, string>) {
+  const total = paths.reduce((sum, path) => sum + path.calls, 0)
+  const list = (title: string, key: (path: OperatorAiPathCount) => string[], row: (key: string) => Omit<BreakdownRow, "calls">) => {
+    const counts = new Map<string, number>()
+    for (const path of paths) for (const value of key(path)) counts.set(value, (counts.get(value) ?? 0) + path.calls)
+    const rows = [...counts].map(([value, calls]) => ({ ...row(value), calls }))
+    return { title, total, rows: rows.sort((a, b) => Number(!a.selection) - Number(!b.selection) || b.calls - a.calls || a.label.localeCompare(b.label)) }
+  }
+  const unlabeled = { label: "Unlabeled" }
+  return [
+    list("Intents", (path) => [path.intent ?? ""], (intent) => intent ? { label: intentLabels[intent as CallIntent], selection: { intent: intent as CallIntent } } : unlabeled),
+    list("Outcomes", (path) => [path.outcome ?? ""], (outcome) => outcome ? { label: outcomeLabels[outcome as CallOutcome], selection: { outcome: outcome as CallOutcome } } : unlabeled),
+    list("Judge results", (path) => [!path.evaluated ? "unjudged" : path.failures.length ? "fail" : "pass"], (judge) => ({ label: judgeLabels[judge as keyof typeof judgeLabels], selection: { judge: judge as CallSelection["judge"] } })),
+    list("Failure reasons", (path) => path.failures, (failure) => ({ label: failureLabels[failure] ?? failure, selection: { failure } })),
+  ]
+}
+
+export const judgeLabels = { pass: "Pass", fail: "Fail", unjudged: "Not judged" }
+
 export type CallProblem = {
   key: string
   intent: CallIntent
@@ -47,7 +85,7 @@ export function rankProblems(paths: OperatorAiPathCount[], failureLabels: Record
 }
 
 export type FlowTone = "neutral" | "muted" | "pass" | "fail" | "gap"
-export type FlowNode = { name: string; column: number; tone: FlowTone; intent?: CallIntent; outcome?: CallOutcome }
+export type FlowNode = { name: string; column: number; tone: FlowTone; selection?: CallSelection }
 export type FlowLink = { source: number; target: number; value: number }
 
 const maxIntents = 7
@@ -75,14 +113,14 @@ export function callFlow(paths: OperatorAiPathCount[], failureLabels: Record<str
   for (const key of [...position.keys()].sort((a, b) => mean(a) - mean(b))) {
     node(`intent:${key}`, !key ? { name: "No intent", column: 1, tone: "muted" }
       : key === restIntents ? { name: "Other intents", column: 1, tone: "neutral" }
-        : { name: intentLabels[key as CallIntent], column: 1, tone: "neutral", intent: key as CallIntent })
+        : { name: intentLabels[key as CallIntent], column: 1, tone: "neutral", selection: { intent: key as CallIntent } })
   }
   for (const outcome of outcomeOrder) {
-    if (paths.some((path) => path.outcome === outcome)) node(`outcome:${outcome ?? ""}`, outcome ? { name: outcomeLabels[outcome], column: 2, tone: "neutral", outcome } : { name: "No outcome", column: 2, tone: "muted" })
+    if (paths.some((path) => path.outcome === outcome)) node(`outcome:${outcome ?? ""}`, outcome ? { name: outcomeLabels[outcome], column: 2, tone: "neutral", selection: { outcome } } : { name: "No outcome", column: 2, tone: "muted" })
   }
   const judge = (path: OperatorAiPathCount) => !path.evaluated ? "Not judged" : path.failures.length ? "Fail" : "Pass"
   for (const name of ["Pass", "Fail", "Not judged"]) {
-    if (paths.some((path) => judge(path) === name)) node(`judge:${name}`, { name, column: 3, tone: name === "Pass" ? "pass" : name === "Fail" ? "fail" : "muted" })
+    if (paths.some((path) => judge(path) === name)) node(`judge:${name}`, { name, column: 3, tone: name === "Pass" ? "pass" : name === "Fail" ? "fail" : "muted", selection: { judge: name === "Pass" ? "pass" : name === "Fail" ? "fail" : "unjudged" } })
   }
   const reason = (path: OperatorAiPathCount) => path.failures.length > 1 ? "multiple" : path.failures[0]
   const reasonCalls = new Map<string, number>()
@@ -90,7 +128,7 @@ export function callFlow(paths: OperatorAiPathCount[], failureLabels: Record<str
   for (const [key] of [...reasonCalls].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
     node(`reason:${key}`, key === "multiple"
       ? { name: "Multiple issues", column: 4, tone: "fail" }
-      : { name: failureLabels[key] ?? key, column: 4, tone: key === knowledgeGapKey ? "gap" : "fail" })
+      : { name: failureLabels[key] ?? key, column: 4, tone: key === knowledgeGapKey ? "gap" : "fail", selection: { failure: key } })
   }
   const values = new Map<string, number>()
   const link = (source: number, target: number, calls: number) => values.set(`${source}:${target}`, (values.get(`${source}:${target}`) ?? 0) + calls)

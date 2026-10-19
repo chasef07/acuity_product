@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { callFlow, rankProblems } from "./call-paths.ts"
+import { breakdownLists, callFlow, matchesSelection, mergeSelection, rankProblems } from "./call-paths.ts"
 
 const route = (intent: string | undefined, outcome: string | undefined, evaluated: boolean, failures: string[], calls: number) =>
   ({ intent, outcome, evaluated, failures, calls }) as Parameters<typeof rankProblems>[0][number]
@@ -63,9 +63,45 @@ test("intents past the top seven share one unclickable bucket, apart from the re
   const intents = flow.nodes.filter((node) => node.column === 1)
   const other = intents.find((node) => node.name === "Other")!
   const rest = intents.find((node) => node.name === "Other intents")!
-  assert.equal(other.intent, "other")
-  assert.equal(rest.intent, undefined)
+  assert.deepEqual(other.selection, { intent: "other" })
+  assert.equal(rest.selection, undefined)
   const into = (target: typeof rest) => flow.links.filter((link) => flow.nodes[link.target] === target).reduce((sum, link) => sum + link.value, 0)
   assert.equal(into(other), 20)
   assert.equal(into(rest), 12 + 13)
+})
+
+test("every flow box and band carries the selection it would apply", () => {
+  const flow = callFlow(paths, labels)
+  const selection = (name: string) => flow.nodes.find((node) => node.name === name)!.selection
+  assert.deepEqual(selection("New patient booking"), { intent: "new_patient_booking" })
+  assert.deepEqual(selection("Abandoned"), { outcome: "abandoned" })
+  assert.deepEqual(selection("Pass"), { judge: "pass" })
+  assert.deepEqual(selection("Not judged"), { judge: "unjudged" })
+  assert.deepEqual(selection("Office knowledge had the answer"), { failure: "knowledge_available" })
+  assert.equal(selection("Multiple issues"), undefined)
+  assert.equal(selection("No intent"), undefined)
+  assert.equal(selection("All calls"), undefined)
+})
+
+test("selections match routes, and merging drops contradictions", () => {
+  const sum = (selection: Parameters<typeof matchesSelection>[1]) => paths.filter((path) => matchesSelection(path, selection)).reduce((total, path) => total + path.calls, 0)
+  assert.equal(sum({}), 140)
+  assert.equal(sum({ intent: "speak_to_staff", judge: "fail" }), 6)
+  assert.equal(sum({ failure: "transfer_policy_followed" }), 6)
+  assert.equal(sum({ judge: "pass" }), 91)
+  assert.equal(sum({ judge: "unjudged" }), 41)
+  assert.deepEqual(mergeSelection({ judge: "pass", intent: "cancel_appointment" }, { failure: "knowledge_available" }), { intent: "cancel_appointment", failure: "knowledge_available" })
+  assert.deepEqual(mergeSelection({ failure: "knowledge_available" }, { judge: "unjudged" }), { judge: "unjudged" })
+  assert.deepEqual(mergeSelection({ failure: "knowledge_available" }, { judge: "fail" }), { failure: "knowledge_available", judge: "fail" })
+})
+
+test("list view breaks the selected calls down by every column, keeping unlabeled calls", () => {
+  const lists = breakdownLists(paths.filter((path) => matchesSelection(path, { outcome: "abandoned" })), labels)
+  const rows = (title: string) => lists.find((list) => list.title === title)!.rows.map((row) => [row.label, row.calls])
+  assert.equal(lists.find((list) => list.title === "Intents")!.total, 17)
+  assert.deepEqual(rows("Intents"), [["New patient booking", 12], ["Speak to staff", 3], ["Cancel appointment", 2]])
+  assert.deepEqual(rows("Judge results"), [["Pass", 15], ["Fail", 2]])
+  assert.deepEqual(rows("Failure reasons"), [["Office knowledge had the answer", 2]])
+  const all = breakdownLists(paths, labels)
+  assert.deepEqual(all.find((list) => list.title === "Intents")!.rows.at(-1), { label: "Unlabeled", calls: 41 })
 })

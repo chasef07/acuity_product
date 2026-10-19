@@ -402,7 +402,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
               <OperatorAnalytics
                 revision={workspace.version}
                 tab={commandCenterPage}
-                onTab={setCommandCenterPage}
                 practiceID={state.scope.practiceID}
                 locationScopeID={state.scope.locationScopeID}
               />

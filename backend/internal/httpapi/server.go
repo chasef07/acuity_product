@@ -627,6 +627,7 @@ func (server *Server) QueryOperatorAIAnalytics(
 			Outcome:      stringValue(body.Outcome),
 			FailuresOnly: body.FailuresOnly != nil && *body.FailuresOnly,
 			FailingJudge: stringValue(body.FailingJudge),
+			JudgeResult:  stringValue(body.JudgeResult),
 		},
 	)
 	if err != nil {

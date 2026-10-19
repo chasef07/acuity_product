@@ -2,6 +2,7 @@ package interaction
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -168,6 +169,46 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 	result, err := module.QueryAnalytics(ctx, filtered)
 	if err != nil || len(result.Calls) != d.FailedCalls {
 		t.Fatalf("failed calls disagree with Calls filter: %+v %v", result, err)
+	}
+	judgeCalls := map[string]int{}
+	for _, path := range d.Paths {
+		switch {
+		case !path.Evaluated:
+			judgeCalls[JudgeResultUnjudged] += path.Calls
+		case len(path.Failures) == 0:
+			judgeCalls[JudgeResultPass] += path.Calls
+		}
+	}
+	for _, judge := range []string{JudgeResultPass, JudgeResultUnjudged} {
+		filtered := cmd
+		filtered.JudgeResult = judge
+		filtered.Limit = 100
+		result, err := module.QueryAnalytics(ctx, filtered)
+		if err != nil || len(result.Calls) != judgeCalls[judge] || judgeCalls[judge] == 0 {
+			t.Fatalf("%s calls disagree with paths (%d): %d %v", judge, judgeCalls[judge], len(result.Calls), err)
+		}
+		if !reflect.DeepEqual(result.Summary, page.Summary) {
+			t.Fatalf("%s filter changed full-window summary", judge)
+		}
+	}
+	for _, invalid := range []QueryAnalyticsCommand{
+		func() QueryAnalyticsCommand { c := cmd; c.JudgeResult = "maybe"; return c }(),
+		func() QueryAnalyticsCommand {
+			c := cmd
+			c.JudgeResult = JudgeResultPass
+			c.FailuresOnly = true
+			return c
+		}(),
+		func() QueryAnalyticsCommand {
+			c := cmd
+			c.JudgeResult = JudgeResultUnjudged
+			c.FailingJudge = "office_question_answered"
+			return c
+		}(),
+	} {
+		if _, err := module.QueryAnalytics(ctx, invalid); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("judge result %q with failure filters must be invalid: %v", invalid.JudgeResult, err)
+		}
 	}
 	emptyCommand := cmd
 	emptyCommand.LocationID = emptyLocation
