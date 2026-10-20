@@ -25,9 +25,15 @@ const (
 	AnalyticsRange30Days  AnalyticsRange = "30d"
 )
 
+const (
+	JudgeResultPass     = "pass"
+	JudgeResultUnjudged = "unjudged"
+)
+
 type QueryAnalyticsCommand struct {
 	FailuresOnly bool
 	FailingJudge string
+	JudgeResult  string
 	Intent       string
 	Outcome      string
 	Identity     access.Identity
@@ -169,6 +175,7 @@ type OperatorAnalyticsDetail struct {
 type analyticsCursor struct {
 	FailuresOnly bool           `json:"failuresOnly,omitempty"`
 	FailingJudge string         `json:"failingJudge,omitempty"`
+	JudgeResult  string         `json:"judgeResult,omitempty"`
 	Intent       string         `json:"intent,omitempty"`
 	Outcome      string         `json:"outcome,omitempty"`
 	Through      time.Time      `json:"through"`
@@ -195,7 +202,7 @@ func (m *Module) QueryAnalytics(
 ) (AnalyticsPage, error) {
 	normalizeAnalyticsCommand(&command)
 	duration, ok := analyticsRangeDuration(command.Range)
-	if !ok || command.Limit < 1 || command.Limit > 100 || !validCallLabelFilters(command) || len(judgeFailureKeys(command.FailingJudge)) == 0 {
+	if !ok || command.Limit < 1 || command.Limit > 100 || !validCallLabelFilters(command) || !validJudgeResult(command) || len(judgeFailureKeys(command.FailingJudge)) == 0 {
 		return AnalyticsPage{}, ErrInvalidInput
 	}
 	to := m.now().UTC().Truncate(time.Microsecond)
@@ -309,6 +316,7 @@ func queryAnalyticsSummary(
 	summary.quality = newQualityAccumulator(summary.Daily)
 	summary.versions = versions
 	distributions := newDistributionAccumulator()
+	distributions.routes = map[string]*AnalyticsPathCount{}
 	judges := newJudgeAccumulator()
 	dailyDistributions := map[string]*distributionAccumulator{}
 	for _, day := range summary.Daily {
@@ -367,7 +375,7 @@ func queryAnalyticsSummary(
 	}
 	finalizeAnalyticsSummary(&summary)
 	summary.Judges = judges.finish()
-	summary.Distributions = AnalyticsDistributions{AnalyticsDistributionCounts: distributions.finish(), Daily: []AnalyticsDistributionDay{}}
+	summary.Distributions = AnalyticsDistributions{AnalyticsDistributionCounts: distributions.finish(), Daily: []AnalyticsDistributionDay{}, Paths: distributions.paths()}
 	for _, day := range summary.Daily {
 		summary.Distributions.Daily = append(summary.Distributions.Daily, AnalyticsDistributionDay{Date: day.Date, AnalyticsDistributionCounts: dailyDistributions[day.Date].finish()})
 	}
@@ -513,9 +521,19 @@ func queryAnalyticsCalls(
 					AND judged.source = 'judge' AND NOT judged.answer
 					AND judged.scorecard_version || ':' || judged.question = ANY($11::text[])
 			))
+			AND ($12 = '' OR ($12 = 'pass') = EXISTS (
+				SELECT 1 FROM ai_interaction_scorecard_answers judged
+				WHERE judged.interaction_id = interaction.id AND judged.source = 'judge'
+					AND judged.scorecard_version || ':' || judged.question = ANY($13::text[])
+			))
+			AND ($12 <> 'pass' OR NOT EXISTS (
+				SELECT 1 FROM ai_interaction_scorecard_answers judged
+				WHERE judged.interaction_id = interaction.id AND judged.source = 'judge' AND NOT judged.answer
+					AND judged.scorecard_version || ':' || judged.question = ANY($13::text[])
+			))
 		ORDER BY interaction.started_at DESC, interaction.id DESC
 		LIMIT $7
-	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, scanLimit, command.Intent, command.Outcome, command.FailuresOnly || command.FailingJudge != "", judgeFailureKeys(command.FailingJudge))
+	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, scanLimit, command.Intent, command.Outcome, command.FailuresOnly || command.FailingJudge != "", judgeFailureKeys(command.FailingJudge), command.JudgeResult, judgeFailureKeys(""))
 	if err != nil {
 		return nil, nil, fmt.Errorf("query operator AI analytics page: %w", err)
 	}
@@ -632,9 +650,17 @@ func normalizeAnalyticsCommand(command *QueryAnalyticsCommand) {
 	command.Intent = strings.TrimSpace(command.Intent)
 	command.Outcome = strings.TrimSpace(command.Outcome)
 	command.FailingJudge = strings.TrimSpace(command.FailingJudge)
+	command.JudgeResult = strings.TrimSpace(command.JudgeResult)
 	if command.Limit == 0 {
 		command.Limit = 50
 	}
+}
+
+func validJudgeResult(command QueryAnalyticsCommand) bool {
+	if command.JudgeResult == "" {
+		return true
+	}
+	return (command.JudgeResult == JudgeResultPass || command.JudgeResult == JudgeResultUnjudged) && !command.FailuresOnly && command.FailingJudge == ""
 }
 
 func analyticsRangeDuration(value AnalyticsRange) (time.Duration, bool) {
@@ -709,6 +735,7 @@ func newAnalyticsCursor(command QueryAnalyticsCommand, startedAt time.Time, id s
 	return analyticsCursor{
 		FailuresOnly: command.FailuresOnly,
 		FailingJudge: command.FailingJudge,
+		JudgeResult:  command.JudgeResult,
 		Intent:       command.Intent,
 		Outcome:      command.Outcome,
 		Through:      through,
@@ -734,7 +761,7 @@ func decodeCursor(command QueryAnalyticsCommand, target any, cursor *analyticsCu
 		return false
 	}
 	duration, _ := analyticsRangeDuration(command.Range)
-	return cursor.FailuresOnly == command.FailuresOnly && cursor.FailingJudge == command.FailingJudge && cursor.Intent == command.Intent && cursor.Outcome == command.Outcome && cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
+	return cursor.FailuresOnly == command.FailuresOnly && cursor.FailingJudge == command.FailingJudge && cursor.JudgeResult == command.JudgeResult && cursor.Intent == command.Intent && cursor.Outcome == command.Outcome && cursor.Range == command.Range && cursor.PracticeID == command.PracticeID && cursor.LocationID == command.LocationID &&
 		!cursor.StartedAt.IsZero() && !cursor.Through.IsZero() && !cursor.Through.After(now) &&
 		!cursor.StartedAt.After(cursor.Through) && !cursor.StartedAt.Before(cursor.Through.Add(-duration)) &&
 		validUUID(cursor.ID)

@@ -1350,6 +1350,10 @@ export type OperatorAiAnalyticsQueryRequest = {
      * Restrict calls to explicit failures for this judge question key in the v6-v8 failure catalog. Implies failure filtering even when failuresOnly is false. Intersects intent and outcome filters.
      */
     failingJudge?: string;
+    /**
+     * Restrict calls by failure-judge coverage in the v6-v8 catalog. pass matches calls with at least one eligible boolean judge answer and no explicit failure; unjudged matches calls with no eligible boolean judge answer. Cannot be combined with failuresOnly or failingJudge. Intersects intent and outcome filters; does not restrict summary distributions.
+     */
+    judgeResult?: 'pass' | 'unjudged';
     intent?: CallIntent;
     outcome?: CallOutcome;
     /**
@@ -1513,6 +1517,10 @@ export type OperatorAiAnalyticsDistributions = OperatorAiAnalyticsDistributionCo
      * Every UTC date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
      */
     daily: Array<OperatorAiAnalyticsDistributionDay>;
+    /**
+     * Every call's full route through intent, outcome, judge evaluation, and failed judges, grouped into identical routes and ordered by descending calls then route. Path calls sum to totalCalls. Uses the same labels, judge catalog, and intent and outcome filters as the aggregate counts.
+     */
+    paths: Array<OperatorAiPathCount>;
 };
 
 export type OperatorAiAnalyticsDistributionDay = OperatorAiAnalyticsDistributionCounts & {
@@ -1556,6 +1564,20 @@ export type OperatorAiAnalyticsDistributionCounts = {
      * totalCalls minus evaluatedCalls; absence of usable failure-judge evidence is not a passing result.
      */
     unevaluatedCalls: number;
+};
+
+export type OperatorAiPathCount = {
+    intent?: CallIntent;
+    outcome?: CallOutcome;
+    /**
+     * True when the call has at least one eligible boolean failure-judge answer, as in evaluatedCalls.
+     */
+    evaluated: boolean;
+    /**
+     * Sorted eligible failure question keys with an explicit false answer; empty when none failed.
+     */
+    failures: Array<string>;
+    calls: number;
 };
 
 export type OperatorAiIntentCount = {

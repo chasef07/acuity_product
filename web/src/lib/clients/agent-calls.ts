@@ -117,6 +117,7 @@ export function useAiCallAnalytics({
   outcome,
   failuresOnly,
   failingJudge,
+  judgeResult,
 }: {
   practiceID: string
   locationID: string
@@ -127,9 +128,10 @@ export function useAiCallAnalytics({
   outcome?: CallOutcome
   failuresOnly?: boolean
   failingJudge?: string
+  judgeResult?: "pass" | "unjudged"
 }): AiCallLedger {
   const pages = useCallPages<OperatorAiAnalyticsPage>(
-    JSON.stringify([practiceID, locationID, range, intent, outcome, failuresOnly, failingJudge]),
+    JSON.stringify([practiceID, locationID, range, intent, outcome, failuresOnly, failingJudge, judgeResult]),
     Boolean(practiceID) && enabled,
     (transport, cursor) =>
       queryOperatorAiAnalytics({
@@ -142,6 +144,7 @@ export function useAiCallAnalytics({
           outcome,
           failuresOnly: failuresOnly || undefined,
           failingJudge: failingJudge || undefined,
+          judgeResult,
           cursor,
           limit: 50,
         },

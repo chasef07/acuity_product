@@ -119,12 +119,25 @@ func analyticsDistributionsResponse(value interaction.AnalyticsDistributions) *a
 	result := &api.OperatorAIAnalyticsDistributions{
 		TotalCalls: counts.TotalCalls,
 		Daily:      make([]api.OperatorAIAnalyticsDistributionDay, 0, len(value.Daily)),
+		Paths:      make([]api.OperatorAIPathCount, 0, len(value.Paths)),
 		Intents:    counts.Intents, Outcomes: counts.Outcomes, Failures: counts.Failures,
 		UnlabeledIntentCalls: counts.UnlabeledIntentCalls, UnlabeledOutcomeCalls: counts.UnlabeledOutcomeCalls,
 		EvaluatedCalls: counts.EvaluatedCalls, FailedCalls: counts.FailedCalls, UnevaluatedCalls: counts.UnevaluatedCalls,
 	}
 	for _, day := range value.Daily {
 		result.Daily = append(result.Daily, analyticsDistributionDayResponse(day.Date, day.AnalyticsDistributionCounts))
+	}
+	for _, path := range value.Paths {
+		row := api.OperatorAIPathCount{Evaluated: path.Evaluated, Failures: path.Failures, Calls: path.Calls}
+		if path.Intent != nil {
+			intent := api.CallIntent(*path.Intent)
+			row.Intent = &intent
+		}
+		if path.Outcome != nil {
+			outcome := api.CallOutcome(*path.Outcome)
+			row.Outcome = &outcome
+		}
+		result.Paths = append(result.Paths, row)
 	}
 	return result
 }

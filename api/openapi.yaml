@@ -4659,6 +4659,10 @@ components:
           type: string
           maxLength: 80
           description: Restrict calls to explicit failures for this judge question key in the v6-v8 failure catalog. Implies failure filtering even when failuresOnly is false. Intersects intent and outcome filters.
+        judgeResult:
+          type: string
+          enum: [pass, unjudged]
+          description: Restrict calls by failure-judge coverage in the v6-v8 catalog. pass matches calls with at least one eligible boolean judge answer and no explicit failure; unjudged matches calls with no eligible boolean judge answer. Cannot be combined with failuresOnly or failingJudge. Intersects intent and outcome filters; does not restrict summary distributions.
         intent:
           $ref: "#/components/schemas/CallIntent"
         outcome:
@@ -4884,12 +4888,16 @@ components:
       allOf:
         - $ref: "#/components/schemas/OperatorAIAnalyticsDistributionCounts"
         - type: object
-          required: [daily]
+          required: [daily, paths]
           properties:
             daily:
               type: array
               description: Every UTC date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
               items: {$ref: "#/components/schemas/OperatorAIAnalyticsDistributionDay"}
+            paths:
+              type: array
+              description: Every call's full route through intent, outcome, judge evaluation, and failed judges, grouped into identical routes and ordered by descending calls then route. Path calls sum to totalCalls. Uses the same labels, judge catalog, and intent and outcome filters as the aggregate counts.
+              items: {$ref: "#/components/schemas/OperatorAIPathCount"}
     OperatorAIAnalyticsDistributionDay:
       allOf:
         - $ref: "#/components/schemas/OperatorAIAnalyticsDistributionCounts"
@@ -4936,6 +4944,21 @@ components:
           type: integer
           minimum: 0
           description: totalCalls minus evaluatedCalls; absence of usable failure-judge evidence is not a passing result.
+    OperatorAIPathCount:
+      type: object
+      additionalProperties: false
+      required: [evaluated, failures, calls]
+      properties:
+        intent: {$ref: "#/components/schemas/CallIntent"}
+        outcome: {$ref: "#/components/schemas/CallOutcome"}
+        evaluated:
+          type: boolean
+          description: True when the call has at least one eligible boolean failure-judge answer, as in evaluatedCalls.
+        failures:
+          type: array
+          description: Sorted eligible failure question keys with an explicit false answer; empty when none failed.
+          items: {type: string}
+        calls: {type: integer, minimum: 0}
     OperatorAIIntentCount:
       type: object
       additionalProperties: false

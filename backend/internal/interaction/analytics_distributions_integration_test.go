@@ -2,6 +2,7 @@ package interaction
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -98,6 +99,17 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 	if len(d.Failures) != 3 || d.Failures[0].Key != "office_question_answered" || d.Failures[0].Calls != 2 || d.Failures[1].Key != "call_ended_correctly" || d.Failures[1].Calls != 1 || d.Failures[2].Key != "office_rules_grounded" || d.Failures[2].Calls != 1 {
 		t.Fatalf("failure categories: %+v", d.Failures)
 	}
+	pathCalls, routes := 0, map[string]int{}
+	for _, path := range d.Paths {
+		pathCalls += path.Calls
+		routes[pathKey(path)] = path.Calls
+	}
+	if pathCalls != d.TotalCalls ||
+		routes["office_information|resolved|true|call_ended_correctly,office_question_answered,office_rules_grounded"] != 1 ||
+		routes["office_information|resolved|true|office_question_answered"] != 1 ||
+		routes["insurance_question||true|"] != 1 || routes["||false|"] != 61 {
+		t.Fatalf("paths: %d calls, routes %v", pathCalls, routes)
+	}
 	if len(d.Daily) != len(page.Summary.Daily) {
 		t.Fatal("distribution days must match summary days")
 	}
@@ -157,6 +169,46 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 	result, err := module.QueryAnalytics(ctx, filtered)
 	if err != nil || len(result.Calls) != d.FailedCalls {
 		t.Fatalf("failed calls disagree with Calls filter: %+v %v", result, err)
+	}
+	judgeCalls := map[string]int{}
+	for _, path := range d.Paths {
+		switch {
+		case !path.Evaluated:
+			judgeCalls[JudgeResultUnjudged] += path.Calls
+		case len(path.Failures) == 0:
+			judgeCalls[JudgeResultPass] += path.Calls
+		}
+	}
+	for _, judge := range []string{JudgeResultPass, JudgeResultUnjudged} {
+		filtered := cmd
+		filtered.JudgeResult = judge
+		filtered.Limit = 100
+		result, err := module.QueryAnalytics(ctx, filtered)
+		if err != nil || len(result.Calls) != judgeCalls[judge] || judgeCalls[judge] == 0 {
+			t.Fatalf("%s calls disagree with paths (%d): %d %v", judge, judgeCalls[judge], len(result.Calls), err)
+		}
+		if !reflect.DeepEqual(result.Summary, page.Summary) {
+			t.Fatalf("%s filter changed full-window summary", judge)
+		}
+	}
+	for _, invalid := range []QueryAnalyticsCommand{
+		func() QueryAnalyticsCommand { c := cmd; c.JudgeResult = "maybe"; return c }(),
+		func() QueryAnalyticsCommand {
+			c := cmd
+			c.JudgeResult = JudgeResultPass
+			c.FailuresOnly = true
+			return c
+		}(),
+		func() QueryAnalyticsCommand {
+			c := cmd
+			c.JudgeResult = JudgeResultUnjudged
+			c.FailingJudge = "office_question_answered"
+			return c
+		}(),
+	} {
+		if _, err := module.QueryAnalytics(ctx, invalid); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("judge result %q with failure filters must be invalid: %v", invalid.JudgeResult, err)
+		}
 	}
 	emptyCommand := cmd
 	emptyCommand.LocationID = emptyLocation
