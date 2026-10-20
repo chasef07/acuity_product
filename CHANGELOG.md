@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.44.0](https://github.com/chasef07/acuity_product/compare/v1.43.2...v1.44.0) (2026-10-20)
+
+
+### Features
+
+* **breakdowns:** select calls from a call-flow Sankey ([#516](https://github.com/chasef07/acuity_product/issues/516)) ([c6e367b](https://github.com/chasef07/acuity_product/commit/c6e367b2fc4b3e6910a162cd7ea79eae3c84c66d))
+
+
+### Bug Fixes
+
+* **calling:** stabilize state validators and remove unused access paths ([#513](https://github.com/chasef07/acuity_product/issues/513)) ([9bfb1f8](https://github.com/chasef07/acuity_product/commit/9bfb1f8931d8f649e7bf48029664bf9c451b2a6e))
+
 ## [1.43.2](https://github.com/chasef07/acuity_product/compare/v1.43.1...v1.43.2) (2026-10-19)
 
 
