@@ -10,8 +10,9 @@ export function AnimatedAcuityMark({ className }: { className?: string }) {
 
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
-    const started = performance.now()
+    let started: number | undefined
     let frame = requestAnimationFrame(function draw(now) {
+      started ??= now
       const progress = ((now - started) / 1000 / motion.seconds) % 1
       motion.frame(progress).forEach((dot, index) => {
         const circle = circles.current[index]
