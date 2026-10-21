@@ -26,13 +26,14 @@ import (
 func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 	t *testing.T,
 ) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	now := time.Date(2026, time.August, 18, 17, 56, 0, 0, time.UTC)
 	const prefix = "outbound-answer-provisioning"
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, staff := provisionConcurrentStaff(t, accessModule, now, prefix, 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(t, db.Owner, accessModule, now, prefix, 1)
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
 		CallControlID: prefix + "-staff-control",
 		CallLegID:     prefix + "-staff-leg",
@@ -41,16 +42,19 @@ func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 	if err != nil {
 		t.Fatal(err)
 	}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
 		WebhookPublicKeys:      [][]byte{publicKey},
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingProvider := humancalling.New(db.As(testdb.Provider), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, prefix+"-browser")
-	if err := calling.ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
 		PracticeKey: prefix + "-practice",
 		LocationKey: prefix + "-location",
 		Number:      "+15555550123",
@@ -69,7 +73,7 @@ func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	if processed, err := calling.ProcessNextCommand(ctx); err != nil || !processed {
+	if processed, err := callingWorker.ProcessNextCommand(ctx); err != nil || !processed {
 		t.Fatalf("execute outbound Staff Dial: processed=%t err=%v", processed, err)
 	}
 	dial := provider.last(humancalling.CommandDialOutboundStaff)
@@ -95,7 +99,7 @@ func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 		privateKey,
 		append([]byte(timestamp+"|"), body...),
 	))
-	if _, err := calling.ReceiveWebhook(ctx, body, timestamp, signature); err != nil {
+	if _, err := callingProvider.ReceiveWebhook(ctx, body, timestamp, signature); err != nil {
 		t.Fatalf("receive outbound Staff answer: %v", err)
 	}
 
@@ -124,7 +128,7 @@ func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 
 	receiptResult := make(chan error, 1)
 	go func() {
-		processed, err := calling.ProcessNextReceipt(ctx)
+		processed, err := callingWorker.ProcessNextReceipt(ctx)
 		if !processed && err == nil {
 			err = errors.New("no outbound Staff answer receipt processed")
 		}
@@ -142,7 +146,7 @@ func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 			return
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
-		_, err = accessModule.ProvisionInTx(ctx, tx, access.Provisioning{
+		_, err = access.New(pool, func() time.Time { return now }).ProvisionInTx(ctx, tx, access.Provisioning{
 			Environment: "test",
 			RequestedBy: prefix + "-release",
 			Practices: []access.PracticeProvision{{
@@ -156,7 +160,7 @@ func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 		})
 		if err != nil {
 			err = fmt.Errorf("access provisioning: %w", err)
-		} else if err = calling.ProvisionOutboundVoiceFallbacksInTx(
+		} else if err = humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionOutboundVoiceFallbacksInTx(
 			ctx,
 			tx,
 			[]humancalling.OutboundVoiceFallbackProvision{{
@@ -250,20 +254,28 @@ func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 }
 
 func TestRejectedHandoffTerminalizesExactProviderLegLifecycleReceipts(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
 	now := time.Date(2026, time.August, 11, 12, 0, 0, 0, time.UTC)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+	callingConfig := humancalling.Config{
+		CallControlID:     "expected-connection",
+		WebhookPublicKeys: [][]byte{publicKey},
+	}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Provider),
 		nil,
 		nil,
-		humancalling.Config{
-			CallControlID:     "expected-connection",
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		callingConfig,
+		func() time.Time { return now },
+	)
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker),
+		nil,
+		nil,
+		callingConfig,
 		func() time.Time { return now },
 	)
 	receive := func(raw []byte) humancalling.WebhookReceipt {
@@ -283,7 +295,7 @@ func TestRejectedHandoffTerminalizesExactProviderLegLifecycleReceipts(t *testing
 	}
 	process := func(eventType string) {
 		t.Helper()
-		processed, err := calling.ProcessNextReceipt(context.Background())
+		processed, err := callingWorker.ProcessNextReceipt(context.Background())
 		if err != nil || !processed {
 			t.Fatalf("process %s: processed=%t err=%v", eventType, processed, err)
 		}
@@ -328,20 +340,29 @@ func TestRejectedHandoffTerminalizesExactProviderLegLifecycleReceipts(t *testing
 }
 
 func TestRejectedHandoffFinalizedDuringRolloutTerminalizesLifecycleReceipt(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 11, 12, 30, 0, 0, time.UTC)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+	callingConfig := humancalling.Config{
+		CallControlID:     "expected-connection",
+		WebhookPublicKeys: [][]byte{publicKey},
+	}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Provider),
 		nil,
 		nil,
-		humancalling.Config{
-			CallControlID:     "expected-connection",
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		callingConfig,
+		func() time.Time { return now },
+	)
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker),
+		nil,
+		nil,
+		callingConfig,
 		func() time.Time { return now },
 	)
 	receive := func(eventID, eventType string) humancalling.WebhookReceipt {
@@ -378,7 +399,7 @@ func TestRejectedHandoffFinalizedDuringRolloutTerminalizesLifecycleReceipt(t *te
 	}
 
 	receive("rollout-answered", "call.answered")
-	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+	if processed, err := callingWorker.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process rollout-overlap answer: processed=%t err=%v", processed, err)
 	}
 	if receipt := receive("rollout-answered", "call.answered"); receipt.State != humancalling.ReceiptFailed {
@@ -387,20 +408,29 @@ func TestRejectedHandoffFinalizedDuringRolloutTerminalizesLifecycleReceipt(t *te
 }
 
 func TestUnrelatedProviderReceiptStopsRetryingAfterOneDay(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+	callingConfig := humancalling.Config{
+		CallControlID:     "expected-connection",
+		WebhookPublicKeys: [][]byte{publicKey},
+	}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Provider),
 		nil,
 		nil,
-		humancalling.Config{
-			CallControlID:     "expected-connection",
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		callingConfig,
+		func() time.Time { return now },
+	)
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker),
+		nil,
+		nil,
+		callingConfig,
 		func() time.Time { return now },
 	)
 	raw := []byte(fmt.Sprintf(
@@ -425,7 +455,7 @@ func TestUnrelatedProviderReceiptStopsRetryingAfterOneDay(t *testing.T) {
 	`, "expired-related-fact", now.Add(-25*time.Hour), now); err != nil {
 		t.Fatalf("age unrelated provider receipt: %v", err)
 	}
-	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+	if processed, err := callingWorker.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process unrelated provider receipt: processed=%t err=%v", processed, err)
 	}
 
@@ -446,30 +476,46 @@ func TestUnrelatedProviderReceiptStopsRetryingAfterOneDay(t *testing.T) {
 }
 
 func TestChildReceiptWakesWhenParentAttachesRelatedCall(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 14, 13, 0, 0, 0, time.UTC)
 	prefix := "child-before-parent"
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionConcurrentStaff(t, accessModule, now, prefix, 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, now, prefix, 1)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var metrics bytes.Buffer
+	callingConfig := humancalling.Config{
+		HandoffSIPDomain:  "synthetic.sip.telnyx.com",
+		CallControlID:     "expected-connection",
+		WebhookPublicKeys: [][]byte{publicKey},
+		Observer: observability.NewLogger(
+			observability.RuntimeWorker,
+			"worker-related-receipt-test",
+			slog.New(slog.NewJSONHandler(&metrics, nil)),
+		),
+	}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		nil,
-		humancalling.Config{
-			HandoffSIPDomain:  "synthetic.sip.telnyx.com",
-			CallControlID:     "expected-connection",
-			WebhookPublicKeys: [][]byte{publicKey},
-			Observer: observability.NewLogger(
-				observability.RuntimeWorker,
-				"worker-related-receipt-test",
-				slog.New(slog.NewJSONHandler(&metrics, nil)),
-			),
-		},
+		callingConfig,
+		func() time.Time { return now },
+	)
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker),
+		accessModule,
+		nil,
+		callingConfig,
+		func() time.Time { return now },
+	)
+	callingProvider := humancalling.New(
+		db.As(testdb.Provider),
+		accessModule,
+		nil,
+		callingConfig,
 		func() time.Time { return now },
 	)
 	callerPhone := "+15555550100"
@@ -497,7 +543,7 @@ func TestChildReceiptWakesWhenParentAttachesRelatedCall(t *testing.T) {
 			privateKey,
 			append([]byte(timestamp+"|"), body...),
 		))
-		if _, err := calling.ReceiveWebhook(
+		if _, err := callingProvider.ReceiveWebhook(
 			context.Background(), body, timestamp, signature,
 		); err != nil {
 			t.Fatalf("receive provider receipt: %v", err)
@@ -505,7 +551,7 @@ func TestChildReceiptWakesWhenParentAttachesRelatedCall(t *testing.T) {
 	}
 	process := func(eventType string) bool {
 		t.Helper()
-		processed, err := calling.ProcessNextReceipt(context.Background())
+		processed, err := callingWorker.ProcessNextReceipt(context.Background())
 		if err != nil {
 			t.Fatalf("process %s: %v", eventType, err)
 		}
@@ -554,32 +600,54 @@ func TestChildReceiptWakesWhenParentAttachesRelatedCall(t *testing.T) {
 
 func TestLateAnswerForTerminalCleanupFailedLegIsObsolete(t *testing.T) {
 	now := time.Date(2026, time.August, 14, 13, 45, 0, 0, time.UTC)
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, "terminal-late-answer", 1,
+		t, db.Owner, accessModule, now, "terminal-late-answer", 1,
 	)
 	provider := &recordingProvider{}
+	callingConfig := humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		WebhookPublicKeys:      [][]byte{publicKey},
+	}
 	calling := humancalling.New(
+		db.As(testdb.Portal),
+		accessModule,
+		provider,
+		callingConfig,
+		func() time.Time { return now },
+	)
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker),
+		accessModule,
+		provider,
+		callingConfig,
+		func() time.Time { return now },
+	)
+	callingProvider := humancalling.New(
+		db.As(testdb.Provider),
+		accessModule,
+		provider,
+		callingConfig,
+		func() time.Time { return now },
+	)
+	prepareCredentials(t, callingWorker)
+	readyConcurrentStaff(t, calling, staff, "terminal-late-answer-browser")
+	if err := humancalling.New(
 		pool,
 		accessModule,
 		provider,
-		humancalling.Config{
-			StaffSIPDomain:         "sip.telnyx.com",
-			CallControlID:          "staff-call-control-connection",
-			CredentialConnectionID: "staff-credential-connection",
-			WebhookPublicKeys:      [][]byte{publicKey},
-		},
+		callingConfig,
 		func() time.Time { return now },
-	)
-	prepareCredentials(t, calling)
-	readyConcurrentStaff(t, calling, staff, "terminal-late-answer-browser")
-	if err := calling.ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
+	).ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
 		PracticeKey: "terminal-late-answer-practice",
 		LocationKey: "terminal-late-answer-location",
 		Number:      "+14843336938", Enabled: true,
@@ -601,7 +669,7 @@ func TestLateAnswerForTerminalCleanupFailedLegIsObsolete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	if processed, err := calling.ProcessNextCommand(ctx); !processed || err != nil {
+	if processed, err := callingWorker.ProcessNextCommand(ctx); !processed || err != nil {
 		t.Fatalf("reject outbound Dial: processed=%t err=%v", processed, err)
 	}
 	var callLegID, legState, legError string
@@ -629,10 +697,10 @@ func TestLateAnswerForTerminalCleanupFailedLegIsObsolete(t *testing.T) {
 		privateKey,
 		append([]byte(timestamp+"|"), raw...),
 	))
-	if _, err := calling.ReceiveWebhook(ctx, raw, timestamp, signature); err != nil {
+	if _, err := callingProvider.ReceiveWebhook(ctx, raw, timestamp, signature); err != nil {
 		t.Fatalf("receive terminal late answer: %v", err)
 	}
-	if processed, err := calling.ProcessNextReceipt(ctx); err != nil || !processed {
+	if processed, err := callingWorker.ProcessNextReceipt(ctx); err != nil || !processed {
 		t.Fatalf("process terminal late answer: processed=%t err=%v", processed, err)
 	}
 	var receiptState, errorCode string
@@ -1358,12 +1426,13 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 	t *testing.T,
 	recordingClientStateKind string,
 ) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 16, 12, 0, 0, 0, time.UTC)
 	currentTime := now
-	accessModule := access.New(pool, func() time.Time { return currentTime })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return currentTime })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, "outbound-recording-after-hangup", 1,
+		t, db.Owner, accessModule, now, "outbound-recording-after-hangup", 1,
 	)
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE access_practices SET
@@ -1381,17 +1450,20 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 	if err != nil {
 		t.Fatal(err)
 	}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
 		WebhookPublicKeys:      [][]byte{publicKey},
-	}, func() time.Time { return currentTime })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return currentTime })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return currentTime })
+	callingProvider := humancalling.New(db.As(testdb.Provider), accessModule, provider, callingConfig, func() time.Time { return currentTime })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "outbound-recording-browser")
-	if err := calling.ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return currentTime }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "outbound-recording-after-hangup-practice",
 			LocationKey: "outbound-recording-after-hangup-location",
@@ -1411,7 +1483,7 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
 	staffClientState, _ := staffDial.Payload["client_state"].(string)
 	staffFact := humancalling.ProviderFact{
@@ -1420,13 +1492,13 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		CallControlID: "outbound-recording-staff-control", CallLegID: "outbound-recording-staff-leg",
 		CallSessionID: "outbound-recording-staff-session", ClientState: staffClientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff initiation: %v", err)
 	}
 	staffFact.EventID = "outbound-recording-staff-answered"
 	staffFact.Type = humancalling.FactCallAnswered
 	staffFact.OccurredAt = now.Add(2 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff answer: %v", err)
 	}
 	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
@@ -1440,7 +1512,7 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		}); err != nil {
 		t.Fatalf("confirm outbound Staff media: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
 	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
 	destinationFact := humancalling.ProviderFact{
@@ -1449,16 +1521,16 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		CallControlID: "outbound-recording-destination-control", CallLegID: "outbound-recording-destination-leg",
 		CallSessionID: "outbound-recording-destination-session", ClientState: destinationClientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination initiation: %v", err)
 	}
 	destinationFact.EventID = "outbound-recording-destination-answered"
 	destinationFact.Type = humancalling.FactCallAnswered
 	destinationFact.OccurredAt = now.Add(4 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination answer: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	for _, fact := range []humancalling.ProviderFact{
 		{
 			EventID: "outbound-recording-destination-bridged", Type: humancalling.FactCallBridged,
@@ -1471,7 +1543,7 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 			CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
 		},
 	} {
-		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+		if err := callingWorker.ApplyProviderFact(context.Background(), fact); err != nil {
 			t.Fatalf("project outbound Bridge: %v", err)
 		}
 	}
@@ -1481,7 +1553,7 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 	); err != nil {
 		t.Fatalf("request outbound Hangup: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	var recordingClientState string
 	for _, command := range provider.all(humancalling.CommandHangupLeg) {
 		if command.TargetID == destinationFact.CallControlID {
@@ -1544,15 +1616,15 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		privateKey,
 		append([]byte(timestamp+"|"), body...),
 	))
-	if _, err := calling.ReceiveWebhook(
+	if _, err := callingProvider.ReceiveWebhook(
 		context.Background(), body, timestamp, signature,
 	); err != nil {
 		t.Fatalf("receive outbound recording webhook: %v", err)
 	}
-	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+	if processed, err := callingWorker.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process outbound recording webhook: processed=%t err=%v", processed, err)
 	}
-	duplicateReceipt, err := calling.ReceiveWebhook(
+	duplicateReceipt, err := callingProvider.ReceiveWebhook(
 		context.Background(), body, timestamp, signature,
 	)
 	if err != nil {
@@ -1609,12 +1681,12 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		privateKey,
 		append([]byte(timestamp+"|"), readyBody...),
 	))
-	if _, err := calling.ReceiveWebhook(
+	if _, err := callingProvider.ReceiveWebhook(
 		context.Background(), readyBody, timestamp, readySignature,
 	); err != nil {
 		t.Fatalf("receive READY recording replay: %v", err)
 	}
-	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+	if processed, err := callingWorker.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process READY recording replay: processed=%t err=%v", processed, err)
 	}
 	if err := pool.QueryRow(context.Background(), `
@@ -1647,12 +1719,12 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		privateKey,
 		append([]byte(timestamp+"|"), mismatchBody...),
 	))
-	if _, err := calling.ReceiveWebhook(
+	if _, err := callingProvider.ReceiveWebhook(
 		context.Background(), mismatchBody, timestamp, mismatchSignature,
 	); err != nil {
 		t.Fatalf("receive mismatched recording callback: %v", err)
 	}
-	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+	if processed, err := callingWorker.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process mismatched recording callback: processed=%t err=%v", processed, err)
 	}
 	if err := pool.QueryRow(context.Background(), `

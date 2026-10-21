@@ -22,11 +22,12 @@ import (
 )
 
 func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 4, 9, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	locationID := authorization.Locations[0].ID
 	phone := "+15555550100"
 	missedCallID := insertCallAt(
@@ -50,7 +51,7 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 
 	ensureRecovery := func(command work.EnsureRecoveryTaskCommand) work.Task {
 		t.Helper()
-		tx, err := pool.Begin(context.Background())
+		tx, err := db.As(testdb.Worker).Begin(context.Background())
 		if err != nil {
 			t.Fatalf("begin recovery Task transaction: %v", err)
 		}
@@ -161,11 +162,12 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 }
 
 func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.October, 14, 9, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	ctx := context.Background()
 	locationID := authorization.Locations[0].ID
 	phone := "+15555550100"
@@ -195,7 +197,7 @@ func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
 	}
 	ensureRecovery := func(command work.EnsureRecoveryTaskCommand) work.Task {
 		t.Helper()
-		tx, err := pool.Begin(ctx)
+		tx, err := db.As(testdb.Worker).Begin(ctx)
 		if err != nil {
 			t.Fatalf("begin recovery transaction: %v", err)
 		}
@@ -270,17 +272,18 @@ func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
 }
 
 func TestNewTaskAbsorbsTheCallersOpenMissedCall(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.October, 14, 9, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	ctx := context.Background()
 	phone := "+15555550100"
 	missed := func(locationID string) work.Task {
 		t.Helper()
 		callID := insertCallAt(t, pool, authorization, locationID, phone, "Missed", now)
-		tx, err := pool.Begin(ctx)
+		tx, err := db.As(testdb.Worker).Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -335,7 +338,7 @@ func TestNewTaskAbsorbsTheCallersOpenMissedCall(t *testing.T) {
 	if err != nil || untouched.State != work.TaskOpen || len(untouched.Interactions) != 1 {
 		t.Fatalf("another office's voicemail changed: %#v, %v", untouched, err)
 	}
-	followUp := ensureCallFollowUp(t, pool, module, work.EnsureCallFollowUpCommand{
+	followUp := ensureCallFollowUp(t, db.As(testdb.Portal), module, work.EnsureCallFollowUpCommand{
 		CallID:     insertCallAt(t, pool, authorization, authorization.Locations[1].ID, phone, "Call back", now),
 		PracticeID: authorization.Practice.ID, LocationID: authorization.Locations[1].ID,
 		Phone: phone, Reason: "Call back about refill", Creator: authorization.Actor,
@@ -373,11 +376,12 @@ func assertTaskAcknowledgementIntentCount(
 }
 
 func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 13, 11, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	phone := "+15555550124"
 
 	ensure := func(locationID string, callAt time.Time) work.Task {
@@ -385,7 +389,7 @@ func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *tes
 		callID := insertCallAt(
 			t, pool, authorization, locationID, phone, "Shared caller", callAt,
 		)
-		tx, err := pool.Begin(context.Background())
+		tx, err := db.As(testdb.Worker).Begin(context.Background())
 		if err != nil {
 			t.Fatalf("begin recovery Task: %v", err)
 		}
@@ -414,7 +418,7 @@ func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *tes
 
 	resolve := func(at time.Time, sourceID string) {
 		t.Helper()
-		tx, err := pool.Begin(context.Background())
+		tx, err := db.As(testdb.Worker).Begin(context.Background())
 		if err != nil {
 			t.Fatalf("begin recovery resolution: %v", err)
 		}
@@ -483,11 +487,12 @@ func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *tes
 }
 
 func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	service := access.ServiceIdentity{
 		Subject:       "abita-synthetic",
 		PracticeID:    authorization.Practice.ID,
@@ -607,7 +612,7 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 		task.CreatedBy.Email != "" {
 		t.Fatalf("created AI Task = %#v", task)
 	}
-	sourceSearch, err := workspace.New(pool, accessModule).QueryTasks(
+	sourceSearch, err := workspace.New(db.As(testdb.Portal), accessModule).QueryTasks(
 		context.Background(),
 		workspace.QueryTasksCommand{
 			Identity:   identity,
@@ -629,7 +634,7 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 		authorization.Locations[0].Name,
 		"appointments",
 	} {
-		page, err := workspace.New(pool, accessModule).QueryTasks(
+		page, err := workspace.New(db.As(testdb.Portal), accessModule).QueryTasks(
 			context.Background(),
 			workspace.QueryTasksCommand{
 				Identity: identity, PracticeID: authorization.Practice.ID,
@@ -703,11 +708,12 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 }
 
 func TestCreateAITaskSupportsMultipleOutcomesAndConcurrentReplay(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	service := access.ServiceIdentity{
 		Subject:       "abita-concurrent",
 		PracticeID:    authorization.Practice.ID,
@@ -828,11 +834,12 @@ func TestCreateAITaskSupportsMultipleOutcomesAndConcurrentReplay(t *testing.T) {
 }
 
 func TestCreateAITaskRejectsInvalidOrUnauthorizedCommandsWithoutEffects(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	command := work.CreateAITaskCommand{
 		Service: access.ServiceIdentity{
 			Subject:       "abita-denied",
@@ -900,11 +907,12 @@ func TestCreateAITaskRejectsInvalidOrUnauthorizedCommandsWithoutEffects(t *testi
 }
 
 func TestCreateAITaskRollsBackEveryEffectWhenWorkspaceChangeFails(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	command := work.CreateAITaskCommand{
 		Service: access.ServiceIdentity{
 			Subject:       "abita-atomic",
@@ -977,13 +985,14 @@ func TestCreateAITaskRollsBackEveryEffectWhenWorkspaceChangeFails(t *testing.T) 
 }
 
 func TestTaskLifecycleRejectsStaleRenameAndKeepsCompletionRecoverable(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
 	callID := insertCall(t, pool, authorization, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
-	task := ensureCallFollowUp(t, pool, module, work.EnsureCallFollowUpCommand{
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
+	task := ensureCallFollowUp(t, db.As(testdb.Portal), module, work.EnsureCallFollowUpCommand{
 		CallID:     callID,
 		PracticeID: authorization.Practice.ID,
 		LocationID: authorization.Locations[0].ID,
@@ -1102,16 +1111,17 @@ func TestTaskLifecycleRejectsStaleRenameAndKeepsCompletionRecoverable(t *testing
 }
 
 func TestTaskReadsLoadRelatedInteractionCountsInOneQuery(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	writes := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	writes := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 
 	tasks := make([]work.Task, 3)
 	for index := range tasks {
 		tasks[index] = createTask(
-			t, pool, writes, authorization, authorization.Locations[0].ID,
+			t, db, writes, authorization, authorization.Locations[0].ID,
 			fmt.Sprintf("+1985555010%d", index),
 			fmt.Sprintf("Query count Task %d", index),
 			now.Add(time.Duration(index)*time.Minute),
@@ -1120,7 +1130,7 @@ func TestTaskReadsLoadRelatedInteractionCountsInOneQuery(t *testing.T) {
 	attachTaskInteractionFixture(t, pool, tasks[0])
 
 	tracer := &workInteractionQueryTracer{}
-	reads := newTracedWorkspaceModule(t, pool, tracer, now)
+	reads := newTracedWorkspaceModule(t, db.As(testdb.Portal), tracer, now)
 	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity: identity, PracticeID: authorization.Practice.ID,
 		Ordering: work.TaskOrderingTime,
@@ -1148,7 +1158,7 @@ func TestTaskReadsLoadRelatedInteractionCountsInOneQuery(t *testing.T) {
 	}
 
 	readTracer := &workInteractionQueryTracer{}
-	read, err := newTracedWorkModule(t, pool, readTracer, now).ReadTask(context.Background(), identity, tasks[0].ID)
+	read, err := newTracedWorkModule(t, db.As(testdb.Portal), readTracer, now).ReadTask(context.Background(), identity, tasks[0].ID)
 	if err != nil {
 		t.Fatalf("read Task with related Interactions: %v", err)
 	}
@@ -1162,14 +1172,15 @@ func TestTaskReadsLoadRelatedInteractionCountsInOneQuery(t *testing.T) {
 }
 
 func TestConcurrentCompletionAndReopenCommitOneActivityPerTransition(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	task := createTask(
 		t,
-		pool,
+		db,
 		module,
 		authorization,
 		authorization.Locations[0].ID,
@@ -1267,10 +1278,11 @@ func TestConcurrentCompletionAndReopenCommitOneActivityPerTransition(t *testing.
 }
 
 func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(
 		context.Background(),
 		access.Provisioning{
 			Environment:       "test",
@@ -1298,10 +1310,10 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 		EmailVerified: true,
 	}
 	staff := testaccess.Activate(t, accessModule, staffIdentity)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	task := createTask(
 		t,
-		pool,
+		db,
 		module,
 		staff,
 		staff.Locations[0].ID,
@@ -1315,7 +1327,7 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 		EmailVerified: true,
 	}
 
-	page, err := workspace.New(pool, accessModule).QueryTasks(context.Background(), workspace.QueryTasksCommand{
+	page, err := workspace.New(db.As(testdb.Portal), accessModule).QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity:   operator,
 		PracticeID: staff.Practice.ID,
 	})
@@ -1418,14 +1430,15 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 }
 
 func TestOperatorTaskAuditFailureRollsBackMutation(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	staff, staffIdentity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	staff, staffIdentity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	task := createTask(
 		t,
-		pool,
+		db,
 		module,
 		staff,
 		staff.Locations[0].ID,
@@ -1581,10 +1594,7 @@ func newTracedWorkModule(
 	now time.Time,
 ) *work.Module {
 	t.Helper()
-	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatalf("parse traced Work database config: %v", err)
-	}
+	config := pool.Config()
 	config.ConnConfig.Tracer = tracer
 	tracedPool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
@@ -1605,10 +1615,7 @@ func newTracedWorkspaceModule(
 	now time.Time,
 ) *workspace.Module {
 	t.Helper()
-	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatalf("parse traced Workspace database config: %v", err)
-	}
+	config := pool.Config()
 	config.ConnConfig.Tracer = tracer
 	tracedPool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
@@ -1623,11 +1630,12 @@ func newTracedWorkspaceModule(
 
 func provisionStaff(
 	t *testing.T,
+	owner *pgxpool.Pool,
 	module *access.Module,
 	now time.Time,
 ) (access.Authorization, access.Identity) {
 	t.Helper()
-	_, err := module.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(owner, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "work-lifecycle-test",
 		Practices: []access.PracticeProvision{{
@@ -1683,10 +1691,7 @@ func insertCall(
 
 func createTask(
 	t *testing.T,
-	pool interface {
-		BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
-		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	},
+	db *testdb.DB,
 	module *work.Module,
 	authorization access.Authorization,
 	locationID string,
@@ -1697,14 +1702,14 @@ func createTask(
 	t.Helper()
 	callID := insertCallAt(
 		t,
-		pool,
+		db.Owner,
 		authorization,
 		locationID,
 		phone,
 		reason,
 		now,
 	)
-	return ensureCallFollowUp(t, pool, module, work.EnsureCallFollowUpCommand{
+	return ensureCallFollowUp(t, db.As(testdb.Portal), module, work.EnsureCallFollowUpCommand{
 		CallID:     callID,
 		PracticeID: authorization.Practice.ID,
 		LocationID: locationID,
@@ -1798,11 +1803,12 @@ func insertCallAt(
 }
 
 func TestReopenConflictsWithEquivalentOpenRecoveryTask(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	ctx := context.Background()
 	missedCall := func(at time.Time) work.Task {
 		t.Helper()

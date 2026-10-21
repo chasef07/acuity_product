@@ -17,10 +17,10 @@ func sendAutomaticAcknowledgement(
 	fixture automaticAcknowledgementTestFixture,
 ) messaging.ProviderCommand {
 	t.Helper()
-	if queued, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
+	if queued, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
 		t.Fatalf("queue automatic acknowledgement = %t, %v", queued, err)
 	}
-	if processed, err := fixture.module.ProcessNextCommand(context.Background()); err != nil || !processed {
+	if processed, err := fixture.worker.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("send automatic acknowledgement = %t, %v", processed, err)
 	}
 	return fixture.provider.commands[len(fixture.provider.commands)-1]
@@ -48,12 +48,12 @@ func projectDeliveryEvent(
 		fixture.privateKey,
 		append([]byte(timestamp+"|"), raw...),
 	))
-	if _, err := fixture.module.ReceiveWebhook(
+	if _, err := fixture.ingress.ReceiveWebhook(
 		context.Background(), callbackToken, raw, timestamp, signature,
 	); err != nil {
 		t.Fatalf("receive %s %s: %v", eventType, status, err)
 	}
-	if processed, err := fixture.module.ProcessNextReceipt(context.Background()); err != nil || !processed {
+	if processed, err := fixture.worker.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("project %s %s = %t, %v", eventType, status, processed, err)
 	}
 }
@@ -140,7 +140,7 @@ func TestReconciliationDoesNotTreatLateSentAsContradictory(t *testing.T) {
 		MessageID: "provider-message-1",
 		State:     messaging.DeliverySent,
 	}
-	if reconciled, err := fixture.module.ReconcileNextCommand(context.Background()); err != nil || !reconciled {
+	if reconciled, err := fixture.worker.ReconcileNextCommand(context.Background()); err != nil || !reconciled {
 		t.Fatalf("reconcile late sent evidence = %t, %v", reconciled, err)
 	}
 	evidence := readAcknowledgementEvidence(t, fixture, "reconcile-final")
@@ -149,7 +149,7 @@ func TestReconciliationDoesNotTreatLateSentAsContradictory(t *testing.T) {
 		evidence.commandError != "" {
 		t.Fatalf("late reconciliation evidence = %#v", evidence)
 	}
-	if reconciled, err := fixture.module.ReconcileNextCommand(context.Background()); err != nil || reconciled {
+	if reconciled, err := fixture.worker.ReconcileNextCommand(context.Background()); err != nil || reconciled {
 		t.Fatalf("late sent evidence kept reconciliation polling = %t, %v", reconciled, err)
 	}
 }
@@ -157,10 +157,10 @@ func TestReconciliationDoesNotTreatLateSentAsContradictory(t *testing.T) {
 func TestTemporaryProviderUnavailabilityDefersSendWithinWindow(t *testing.T) {
 	fixture := newAutomaticAcknowledgementTestFixture(t, true)
 	fixture.provider.sendError = messaging.ErrTemporary
-	if queued, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
+	if queued, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
 		t.Fatalf("queue automatic acknowledgement = %t, %v", queued, err)
 	}
-	if processed, err := fixture.module.ProcessNextCommand(context.Background()); err != nil || !processed {
+	if processed, err := fixture.worker.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("process rate-limited acknowledgement = %t, %v", processed, err)
 	}
 	var delivery, commandState, commandError string
@@ -184,11 +184,11 @@ func TestTemporaryProviderUnavailabilityDefersSendWithinWindow(t *testing.T) {
 		!nextAttemptAt.Equal(fixture.clock.Add(15*time.Second)) {
 		t.Fatalf("deferred command = %s/%s/%s at %s", delivery, commandState, commandError, nextAttemptAt)
 	}
-	if processed, err := fixture.module.ProcessNextCommand(context.Background()); err != nil || processed {
+	if processed, err := fixture.worker.ProcessNextCommand(context.Background()); err != nil || processed {
 		t.Fatalf("deferred command retried before its delay = %t, %v", processed, err)
 	}
 	*fixture.clock = fixture.clock.Add(15 * time.Second)
-	if processed, err := fixture.module.ProcessNextCommand(context.Background()); err != nil || !processed {
+	if processed, err := fixture.worker.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("retry deferred command = %t, %v", processed, err)
 	}
 	readState()
@@ -199,7 +199,7 @@ func TestTemporaryProviderUnavailabilityDefersSendWithinWindow(t *testing.T) {
 
 func TestTemporaryProviderUnavailabilityFailsAfterWindow(t *testing.T) {
 	fixture := newAutomaticAcknowledgementTestFixture(t, true)
-	if queued, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
+	if queued, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
 		t.Fatalf("queue automatic acknowledgement = %t, %v", queued, err)
 	}
 	if _, err := fixture.pool.Exec(context.Background(), `
@@ -210,7 +210,7 @@ func TestTemporaryProviderUnavailabilityFailsAfterWindow(t *testing.T) {
 		t.Fatalf("age provider command: %v", err)
 	}
 	fixture.provider.sendError = messaging.ErrTemporary
-	if processed, err := fixture.module.ProcessNextCommand(context.Background()); err != nil || !processed {
+	if processed, err := fixture.worker.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("process exhausted rate-limited acknowledgement = %t, %v", processed, err)
 	}
 	var delivery, failure, commandState string

@@ -135,9 +135,10 @@ func (tx *recordingTx) QueryRow(
 }
 
 func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	current := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return current })
+	module := access.New(db.As(testdb.Portal), func() time.Time { return current })
 
 	provisioning := access.Provisioning{
 		Environment: "test",
@@ -158,7 +159,7 @@ func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testi
 			}},
 		}},
 	}
-	_, err := module.Provision(context.Background(), provisioning)
+	_, err := access.New(pool, func() time.Time { return current }).Provision(context.Background(), provisioning)
 	if err != nil {
 		t.Fatalf("provision email access: %v", err)
 	}
@@ -207,7 +208,7 @@ func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testi
 	if replayed.Practices[0].Membership.ID != membership.ID {
 		t.Fatalf("rediscovery changed Membership: %s != %s", replayed.Practices[0].Membership.ID, membership.ID)
 	}
-	reconciled, err := module.Provision(context.Background(), provisioning)
+	reconciled, err := access.New(pool, func() time.Time { return current }).Provision(context.Background(), provisioning)
 	if err != nil {
 		t.Fatalf("reconcile unchanged Access Grant: %v", err)
 	}
@@ -223,17 +224,18 @@ func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testi
 		LocationScope:        access.LocationScopeSelected,
 		SelectedLocationKeys: []string{"hollywood"},
 	}}
-	if _, err := module.Provision(context.Background(), changed); !errors.Is(err, access.ErrInvalidInput) {
+	if _, err := access.New(pool, func() time.Time { return current }).Provision(context.Background(), changed); !errors.Is(err, access.ErrInvalidInput) {
 		t.Fatalf("changed Access Grant reconciliation error = %v", err)
 	}
 }
 
 func TestRevokedAccessGrantDeniesSignUp(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return now })
-	if _, err := module.Provision(ctx, access.Provisioning{
+	module := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{
 		Environment: "test", RequestedBy: "revoked-grant-test",
 		Practices: []access.PracticeProvision{{
 			Key: "practice", Name: "Practice",
@@ -259,9 +261,10 @@ func TestRevokedAccessGrantDeniesSignUp(t *testing.T) {
 }
 
 func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return now })
+	module := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	provision := func(routeLocation string) {
 		t.Helper()
 		locations := []access.LocationProvision{
@@ -274,7 +277,7 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 		case "office-2":
 			locations[1].AbitaOfficeKeys = []string{"spring-hill"}
 		}
-		if _, err := module.Provision(
+		if _, err := access.New(pool, func() time.Time { return now }).Provision(
 			context.Background(),
 			access.Provisioning{
 				Environment: "test",
@@ -307,7 +310,7 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 	}
 	authorize := func(officeKey string) (access.ServiceAuthorization, error) {
 		t.Helper()
-		tx, err := pool.Begin(context.Background())
+		tx, err := db.As(testdb.Portal).Begin(context.Background())
 		if err != nil {
 			t.Fatalf("begin Abita route authorization: %v", err)
 		}
@@ -360,9 +363,10 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 }
 
 func TestServiceLocationAuthorizationEntryPoints(t *testing.T) {
-	pool := testdb.Open(t)
-	module := access.New(pool, nil)
-	if _, err := module.Provision(context.Background(), access.Provisioning{
+	db := testdb.Open(t)
+	pool := db.Owner
+	module := access.New(db.As(testdb.Portal), nil)
+	if _, err := access.New(pool, nil).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "service-location-authorization-test",
 		Practices: []access.PracticeProvision{{
@@ -413,7 +417,7 @@ func TestServiceLocationAuthorizationEntryPoints(t *testing.T) {
 			knownKey:   "known-office",
 			unknownKey: "unknown-office",
 			authorize: func(identity access.ServiceIdentity, key string) (access.ServiceAuthorization, error) {
-				tx, err := pool.Begin(context.Background())
+				tx, err := db.As(testdb.Portal).Begin(context.Background())
 				if err != nil {
 					return access.ServiceAuthorization{}, err
 				}
@@ -425,7 +429,7 @@ func TestServiceLocationAuthorizationEntryPoints(t *testing.T) {
 			knownKey:   "+12025550123",
 			unknownKey: "+12025550124",
 			authorize: func(identity access.ServiceIdentity, key string) (access.ServiceAuthorization, error) {
-				tx, err := pool.Begin(context.Background())
+				tx, err := db.As(testdb.Portal).Begin(context.Background())
 				if err != nil {
 					return access.ServiceAuthorization{}, err
 				}
@@ -469,9 +473,9 @@ func TestServiceLocationAuthorizationEntryPoints(t *testing.T) {
 }
 
 func TestProvisioningRequireEmptyAccessStateRejectsExistingConfiguration(t *testing.T) {
-	pool := testdb.Open(t)
-	module := access.New(pool, nil)
-	if _, err := module.Provision(context.Background(), access.Provisioning{
+	db := testdb.Open(t)
+	pool := db.Owner
+	if _, err := access.New(pool, nil).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "legacy-configuration-test",
 		Practices: []access.PracticeProvision{{
@@ -486,7 +490,7 @@ func TestProvisioningRequireEmptyAccessStateRejectsExistingConfiguration(t *test
 		t.Fatalf("seed legacy access state: %v", err)
 	}
 
-	_, err := module.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(pool, nil).Provision(context.Background(), access.Provisioning{
 		Environment:             "production",
 		RequestedBy:             "clean-launch-test",
 		RequireEmptyAccessState: true,
@@ -511,11 +515,12 @@ func TestProvisioningRequireEmptyAccessStateRejectsExistingConfiguration(t *test
 }
 
 func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return now })
+	module := access.New(db.As(testdb.Portal), func() time.Time { return now })
 
-	_, err := module.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "access-integration-test",
 		Practices: []access.PracticeProvision{{
@@ -566,7 +571,7 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 		practiceID = discovery.Practices[0].ID
 	}
 
-	_, err = module.Provision(context.Background(), access.Provisioning{
+	_, err = access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "access-integration-test",
 		Practices: []access.PracticeProvision{{
@@ -629,16 +634,17 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 }
 
 func TestPlatformOperatorMutatesAcrossPracticesAndKeepsRealActor(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return now })
+	module := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	operator := access.Identity{
 		Subject:       "founder-subject",
 		Email:         "founder@acuity.test",
 		EmailVerified: true,
 	}
 
-	_, err := module.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "access-integration-test",
 		PlatformOperators: []string{"founder@acuity.test"},
@@ -747,11 +753,12 @@ func TestPlatformOperatorMutatesAcrossPracticesAndKeepsRealActor(t *testing.T) {
 }
 
 func TestAccessGrantDiscoveryAndRequestedLocationStayInsideAccess(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return now })
+	module := access.New(db.As(testdb.Portal), func() time.Time { return now })
 
-	_, err := module.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "access-integration-test",
 		PlatformOperators: []string{"founder@acuity.test"},
@@ -836,10 +843,11 @@ func TestAccessGrantDiscoveryAndRequestedLocationStayInsideAccess(t *testing.T) 
 }
 
 func TestPlatformOperatorPrecedenceFollowsBoundSubjectAndFailsClosedOnConflict(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return now })
-	if _, err := module.Provision(context.Background(), access.Provisioning{
+	module := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "operator-identity-test",
 		PlatformOperators: []string{"founder@acuity.test"},
@@ -873,9 +881,10 @@ func TestPlatformOperatorPrecedenceFollowsBoundSubjectAndFailsClosedOnConflict(t
 }
 
 func TestDiscoverActorWaitsForConcurrentOperatorProvisioningBeforeClaimingGrant(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	module := access.New(pool, nil)
+	module := access.New(db.As(testdb.Portal), nil)
 	identity := access.Identity{
 		Subject:       "concurrent-provisioning-subject",
 		Email:         "concurrent-provisioning@acuity.test",
@@ -891,7 +900,7 @@ func TestDiscoverActorWaitsForConcurrentOperatorProvisioningBeforeClaimingGrant(
 			LocationScope: access.LocationScopeAll,
 		}},
 	}
-	if _, err := module.Provision(ctx, access.Provisioning{
+	if _, err := access.New(pool, nil).Provision(ctx, access.Provisioning{
 		Environment: "test",
 		RequestedBy: "concurrent-operator-grant",
 		Practices:   []access.PracticeProvision{practice},
@@ -904,7 +913,7 @@ func TestDiscoverActorWaitsForConcurrentOperatorProvisioningBeforeClaimingGrant(
 		t.Fatalf("begin concurrent operator provisioning: %v", err)
 	}
 	defer func() { _ = provisioningTx.Rollback(ctx) }()
-	if _, err := module.ProvisionInTx(ctx, provisioningTx, access.Provisioning{
+	if _, err := access.New(pool, nil).ProvisionInTx(ctx, provisioningTx, access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "concurrent-operator-provisioning",
 		PlatformOperators: []string{identity.Email},
@@ -957,14 +966,15 @@ func TestDiscoverActorWaitsForConcurrentOperatorProvisioningBeforeClaimingGrant(
 }
 
 func TestAlreadyBoundPlatformOperatorReadAuthorizationsProceedConcurrently(t *testing.T) {
-	pool := testdb.Open(t)
-	module := access.New(pool, nil)
+	db := testdb.Open(t)
+	pool := db.Owner
+	module := access.New(db.As(testdb.Portal), nil)
 	identity := access.Identity{
 		Subject:       "concurrent-operator-subject",
 		Email:         "concurrent-operator@acuity.test",
 		EmailVerified: true,
 	}
-	if _, err := module.Provision(context.Background(), access.Provisioning{
+	if _, err := access.New(pool, nil).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "operator-concurrency-test",
 		PlatformOperators: []string{identity.Email},
@@ -980,7 +990,7 @@ func TestAlreadyBoundPlatformOperatorReadAuthorizationsProceedConcurrently(t *te
 		t.Fatalf("bind concurrent operator: discovery=%#v err=%v", discovery, err)
 	}
 
-	firstConnection, err := pool.Acquire(context.Background())
+	firstConnection, err := db.As(testdb.Portal).Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("acquire first authorization connection: %v", err)
 	}
@@ -1000,7 +1010,7 @@ func TestAlreadyBoundPlatformOperatorReadAuthorizationsProceedConcurrently(t *te
 		t.Fatalf("authorize first operator read: %v", err)
 	}
 
-	secondConnection, err := pool.Acquire(context.Background())
+	secondConnection, err := db.As(testdb.Portal).Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("acquire second authorization connection: %v", err)
 	}
@@ -1024,16 +1034,17 @@ func TestAlreadyBoundPlatformOperatorReadAuthorizationsProceedConcurrently(t *te
 }
 
 func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return now })
+	module := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	operator := access.Identity{
 		Subject:       "founder-subject",
 		Email:         "founder@acuity.test",
 		EmailVerified: true,
 	}
 
-	if _, err := module.Provision(context.Background(), access.Provisioning{
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "operator-staff-test",
 		PlatformOperators: []string{operator.Email},
@@ -1076,7 +1087,7 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 		t.Fatalf("operator Memberships = demo:%#v customer:%#v", demo.Membership, customer.Membership)
 	}
 
-	tx, err := pool.Begin(context.Background())
+	tx, err := db.As(testdb.Portal).Begin(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1090,7 +1101,7 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 	}
 	changeContext, cancelChange := context.WithTimeout(context.Background(), time.Second)
 	defer cancelChange()
-	changeTx, err := pool.Begin(changeContext)
+	changeTx, err := db.As(testdb.Portal).Begin(changeContext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1131,9 +1142,9 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 }
 
 func TestProvisioningRejectsOperatorSpecificAccessGrant(t *testing.T) {
-	pool := testdb.Open(t)
-	module := access.New(pool, nil)
-	_, err := module.Provision(context.Background(), access.Provisioning{
+	db := testdb.Open(t)
+	pool := db.Owner
+	_, err := access.New(pool, nil).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "operator-invariant-test",
 		PlatformOperators: []string{"operator@acuity.test"},
@@ -1155,10 +1166,11 @@ func TestProvisioningRejectsOperatorSpecificAccessGrant(t *testing.T) {
 }
 
 func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorOnce(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	module := access.New(pool, nil)
-	if _, err := module.Provision(ctx, access.Provisioning{
+	module := access.New(db.As(testdb.Portal), nil)
+	if _, err := access.New(pool, nil).Provision(ctx, access.Provisioning{
 		Environment: "test", RequestedBy: "locked-authorization-regression",
 		Practices: []access.PracticeProvision{{
 			Key: "locked-authorization", Name: "Locked Authorization",
@@ -1192,7 +1204,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 		t.Fatalf("load denied Location: %v", err)
 	}
 
-	recorder := &statementRecorder{Pool: pool}
+	recorder := &statementRecorder{Pool: db.As(testdb.Portal)}
 	recordedModule := access.New(recorder, nil)
 	tx, err := recorder.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -1237,7 +1249,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 	}
 	for _, method := range methods {
 		t.Run(method.name+" denies out-of-scope Location", func(t *testing.T) {
-			tx, err := pool.Begin(ctx)
+			tx, err := db.As(testdb.Portal).Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1248,7 +1260,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 		})
 	}
 	t.Run("read permits whole-Practice authorization", func(t *testing.T) {
-		tx, err := pool.Begin(ctx)
+		tx, err := db.As(testdb.Portal).Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1259,7 +1271,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 	})
 	for _, method := range methods[:2] {
 		t.Run(method.name+" requires Location", func(t *testing.T) {
-			tx, err := pool.Begin(ctx)
+			tx, err := db.As(testdb.Portal).Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1272,7 +1284,8 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 }
 
 func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	member := access.Identity{
 		Subject: "set-query-member-subject", Email: "set-query-member@acuity.test", EmailVerified: true,
@@ -1295,8 +1308,8 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 			}},
 		})
 	}
-	module := access.New(pool, nil)
-	if _, err := module.Provision(ctx, access.Provisioning{
+	module := access.New(db.As(testdb.Portal), nil)
+	if _, err := access.New(pool, nil).Provision(ctx, access.Provisioning{
 		Environment: "test", RequestedBy: "set-query-regression",
 		PlatformOperators: []string{operator.Email}, Practices: practices,
 	}); err != nil {
@@ -1309,7 +1322,7 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 		t.Fatalf("bind set query operator: %v", err)
 	}
 
-	recorder := &statementRecorder{Pool: pool}
+	recorder := &statementRecorder{Pool: db.As(testdb.Portal)}
 	recordedModule := access.New(recorder, nil)
 	memberDiscovery, err := recordedModule.DiscoverActor(ctx, member)
 	if err != nil {
@@ -1379,15 +1392,16 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 }
 
 func TestDiscoverActorKeepsOperatorPracticeAndLocationSnapshotConsistent(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	operator := access.Identity{
 		Subject:       "snapshot-operator-subject",
 		Email:         "snapshot-operator@acuity.test",
 		EmailVerified: true,
 	}
-	module := access.New(pool, nil)
-	if _, err := module.Provision(ctx, access.Provisioning{
+	module := access.New(db.As(testdb.Portal), nil)
+	if _, err := access.New(pool, nil).Provision(ctx, access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "operator-snapshot-regression",
 		PlatformOperators: []string{operator.Email},
@@ -1404,9 +1418,9 @@ func TestDiscoverActorKeepsOperatorPracticeAndLocationSnapshotConsistent(t *test
 	}
 
 	interleaver := &operatorDiscoveryInterleaver{
-		Pool: pool,
+		Pool: db.As(testdb.Portal),
 		inject: func(ctx context.Context) error {
-			_, err := module.Provision(ctx, access.Provisioning{
+			_, err := access.New(pool, nil).Provision(ctx, access.Provisioning{
 				Environment: "test",
 				RequestedBy: "operator-snapshot-interleave",
 				Practices: []access.PracticeProvision{{

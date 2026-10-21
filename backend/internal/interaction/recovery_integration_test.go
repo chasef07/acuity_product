@@ -17,7 +17,8 @@ func TestSourceClockRecoveryPreservesEvidenceAndRequiresOperator(t *testing.T) {
 	for _, scenario := range []string{"clock_only", "wrong_phone", "ordinary_user", "historical_summary", "conflicting_outcome"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
-			pool := testdb.Open(t)
+			db := testdb.Open(t)
+			pool := db.Owner
 			now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 			started := now.Add(-time.Hour)
 			var practiceID, locationID, interactionID, receiptID string
@@ -53,9 +54,10 @@ func TestSourceClockRecoveryPreservesEvidenceAndRequiresOperator(t *testing.T) {
 			if err := pool.QueryRow(ctx, `INSERT INTO ai_interaction_receipts(service_subject,practice_id,location_id,source_call_id,kind,payload_fingerprint,payload) VALUES('agent',$1,$2,'source-call',$3,$4,$5) RETURNING id::text`, practiceID, locationID, payload.Kind, fingerprint[:], raw).Scan(&receiptID); err != nil {
 				t.Fatal(err)
 			}
-			module := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
+			module := New(db.As(testdb.Portal), access.New(db.As(testdb.Portal), func() time.Time { return now }), func() time.Time { return now })
+			moduleWorker := New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), func() time.Time { return now }), func() time.Time { return now })
 			if scenario != "historical_summary" {
-				if worked, err := module.ProcessNextReceipt(ctx); err != nil || !worked {
+				if worked, err := moduleWorker.ProcessNextReceipt(ctx); err != nil || !worked {
 					t.Fatalf("reproduce source conflict: worked=%v err=%v", worked, err)
 				}
 			} else if _, err := pool.Exec(ctx, `UPDATE ai_interaction_receipts SET state='QUARANTINED',projection_error_code='SOURCE_CONFLICT' WHERE id=$1`, receiptID); err != nil {
@@ -75,12 +77,12 @@ func TestSourceClockRecoveryPreservesEvidenceAndRequiresOperator(t *testing.T) {
 			if scenario == "ordinary_user" {
 				operator.Subject, operator.Email = "staff", "staff@example.test"
 			}
-			result, err := module.RecoverSourceClock(ctx, operator, receiptID)
+			result, err := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now }).RecoverSourceClock(ctx, operator, receiptID)
 			if scenario == "clock_only" {
 				if err != nil || result.Status != CallCompleted || !result.StartedAt.Equal(started) || result.EndedAt == nil || !result.EndedAt.Equal(now) {
 					t.Fatalf("recovered result: status=%s start=%s end=%v err=%v", result.Status, result.StartedAt, result.EndedAt, err)
 				}
-				if _, err := module.RecoverSourceClock(ctx, operator, receiptID); err != nil {
+				if _, err := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now }).RecoverSourceClock(ctx, operator, receiptID); err != nil {
 					t.Fatalf("idempotent recovery: %v", err)
 				}
 			} else if err == nil {
@@ -115,7 +117,7 @@ func TestSourceClockRecoveryPreservesEvidenceAndRequiresOperator(t *testing.T) {
 				if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_receipts(service_subject,practice_id,location_id,source_call_id,kind,payload_fingerprint,payload) VALUES('agent',$1,$2,'source-call','CLOSEOUT',$3,$4)`, practiceID, locationID, closeoutFingerprint[:], closeout); err != nil {
 					t.Fatal(err)
 				}
-				if processed, err := module.ProcessNextReceipt(ctx); err != nil || !processed {
+				if processed, err := moduleWorker.ProcessNextReceipt(ctx); err != nil || !processed {
 					t.Fatalf("establish supported closeout: %v %v", processed, err)
 				}
 				for attempt := 0; attempt < 2; attempt++ {

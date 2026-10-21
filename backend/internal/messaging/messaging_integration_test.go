@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"testing"
 	"time"
 
@@ -29,8 +28,11 @@ import (
 const automaticTaskAcknowledgementCopy = "We received your request and shared it with our office team. Someone will follow up with you soon. Reply STOP to opt out."
 
 type automaticAcknowledgementTestFixture struct {
+	db         *testdb.DB
 	pool       *pgxpool.Pool
 	module     *messaging.Module
+	worker     *messaging.Module
+	ingress    *messaging.Module
 	provider   *providerFixture
 	task       work.Task
 	practiceID string
@@ -46,11 +48,12 @@ func newAutomaticAcknowledgementTestFixture(
 	configuration bool,
 ) automaticAcknowledgementTestFixture {
 	t.Helper()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
 	clock := &now
-	accessModule := access.New(pool, func() time.Time { return *clock })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return *clock })
+	_, err := access.New(pool, func() time.Time { return *clock }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "automatic-task-acknowledgement-scenarios",
 		Practices: []access.PracticeProvision{{
@@ -88,24 +91,48 @@ func newAutomaticAcknowledgementTestFixture(
 	`).Scan(&practiceID, &locationID); err != nil {
 		t.Fatalf("read automatic acknowledgement scenario scope: %v", err)
 	}
-	workModule := work.New(pool, accessModule, func() time.Time { return *clock })
+	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return *clock })
 	provider := &providerFixture{}
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("create automatic acknowledgement webhook key: %v", err)
 	}
+	moduleConfig := messaging.Config{
+		WebhookPublicKeys: [][]byte{publicKey},
+	}
 	module := messaging.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		workModule,
 		provider,
-		messaging.Config{
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		moduleConfig,
+		func() time.Time { return *clock },
+	)
+	worker := messaging.New(
+		db.As(testdb.Worker),
+		accessModule,
+		workModule,
+		provider,
+		moduleConfig,
+		func() time.Time { return *clock },
+	)
+	ingress := messaging.New(
+		db.As(testdb.Provider),
+		accessModule,
+		workModule,
+		provider,
+		moduleConfig,
 		func() time.Time { return *clock },
 	)
 	if configuration {
-		if err := module.Provision(context.Background(), []messaging.LocationProvision{{
+		if err := messaging.New(
+			pool,
+			accessModule,
+			workModule,
+			provider,
+			moduleConfig,
+			func() time.Time { return *clock },
+		).Provision(context.Background(), []messaging.LocationProvision{{
 			PracticeKey:        "automatic-acknowledgement-scenarios",
 			LocationKey:        "main",
 			Sender:             "+17275550100",
@@ -138,7 +165,7 @@ func newAutomaticAcknowledgementTestFixture(
 		t.Fatalf("create automatic acknowledgement scenario Task = %#v, %q, %v", task, status, err)
 	}
 	return automaticAcknowledgementTestFixture{
-		pool: pool, module: module, provider: provider, task: task,
+		db: db, pool: pool, module: module, worker: worker, ingress: ingress, provider: provider, task: task,
 		practiceID: practiceID, locationID: locationID, identity: identity, now: now,
 		clock:      clock,
 		privateKey: privateKey,
@@ -214,7 +241,7 @@ func TestQueueTaskAcknowledgementPreservesPreSendNonDeliveryEvidence(t *testing.
 			if test.prepare != nil {
 				test.prepare(t, fixture)
 			}
-			processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background())
+			processed, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background())
 			if err != nil || !processed {
 				t.Fatalf("queue automatic acknowledgement = %t, %v", processed, err)
 			}
@@ -264,7 +291,7 @@ func TestQueueTaskAcknowledgementConvergesAcrossConcurrentClaimsAndTransactionIn
 		errors := make(chan error, 8)
 		for range 8 {
 			go func() {
-				processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background())
+				processed, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background())
 				results <- processed
 				errors <- err
 			}()
@@ -309,7 +336,7 @@ func TestQueueTaskAcknowledgementConvergesAcrossConcurrentClaimsAndTransactionIn
 		`); err != nil {
 			t.Fatalf("install acknowledgement interruption: %v", err)
 		}
-		if processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err == nil || processed {
+		if processed, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background()); err == nil || processed {
 			t.Fatalf("interrupted acknowledgement queue = %t, %v; want rollback", processed, err)
 		}
 		var state string
@@ -333,7 +360,7 @@ func TestQueueTaskAcknowledgementConvergesAcrossConcurrentClaimsAndTransactionIn
 		`); err != nil {
 			t.Fatalf("remove acknowledgement interruption: %v", err)
 		}
-		processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background())
+		processed, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background())
 		if err != nil || !processed {
 			t.Fatalf("retry interrupted acknowledgement = %t, %v", processed, err)
 		}
@@ -387,7 +414,7 @@ func TestStaffSendAndAutomaticTaskAcknowledgementUseOneLockOrder(t *testing.T) {
 		t.Fatalf("hold staff Message Thread barrier: %v", err)
 	}
 
-	staffPool := openMessagingTestPoolWithApplicationName(t, "automatic-ack-staff-send")
+	staffPool := openMessagingTestPoolWithApplicationName(t, fixture.db.As(testdb.Portal), "automatic-ack-staff-send")
 	staffAccess := access.New(staffPool, func() time.Time { return *fixture.clock })
 	staffModule := messaging.New(
 		staffPool,
@@ -397,7 +424,7 @@ func TestStaffSendAndAutomaticTaskAcknowledgementUseOneLockOrder(t *testing.T) {
 		messaging.Config{},
 		func() time.Time { return *fixture.clock },
 	)
-	queuePool := openMessagingTestPoolWithApplicationName(t, "automatic-ack-queue")
+	queuePool := openMessagingTestPoolWithApplicationName(t, fixture.db.As(testdb.Worker), "automatic-ack-queue")
 	queueAccess := access.New(queuePool, func() time.Time { return *fixture.clock })
 	queueModule := messaging.New(
 		queuePool,
@@ -451,12 +478,9 @@ func TestStaffSendAndAutomaticTaskAcknowledgementUseOneLockOrder(t *testing.T) {
 	}
 }
 
-func openMessagingTestPoolWithApplicationName(t *testing.T, name string) *pgxpool.Pool {
+func openMessagingTestPoolWithApplicationName(t *testing.T, role *pgxpool.Pool, name string) *pgxpool.Pool {
 	t.Helper()
-	config, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
-	if err != nil {
-		t.Fatalf("parse named Messaging test pool: %v", err)
-	}
+	config := role.Config()
 	config.ConnConfig.RuntimeParams["application_name"] = name
 	config.MaxConns = 2
 	pool, err := pgxpool.NewWithConfig(context.Background(), config)
@@ -513,10 +537,10 @@ func TestAutomaticTaskAcknowledgementProjectsProviderRejectionAndUnknownOutcome(
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newAutomaticAcknowledgementTestFixture(t, true)
 			fixture.provider.sendError = test.sendError
-			if queued, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
+			if queued, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
 				t.Fatalf("queue automatic acknowledgement = %t, %v", queued, err)
 			}
-			if processed, err := fixture.module.ProcessNextCommand(context.Background()); err != nil || !processed {
+			if processed, err := fixture.worker.ProcessNextCommand(context.Background()); err != nil || !processed {
 				t.Fatalf("process automatic acknowledgement = %t, %v", processed, err)
 			}
 			var delivery, failure string
@@ -535,10 +559,10 @@ func TestAutomaticTaskAcknowledgementProjectsProviderRejectionAndUnknownOutcome(
 
 func TestAutomaticTaskAcknowledgementProjectsDuplicateProviderFailureReceiptOnce(t *testing.T) {
 	fixture := newAutomaticAcknowledgementTestFixture(t, true)
-	if queued, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
+	if queued, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
 		t.Fatalf("queue automatic acknowledgement = %t, %v", queued, err)
 	}
-	if processed, err := fixture.module.ProcessNextCommand(context.Background()); err != nil || !processed {
+	if processed, err := fixture.worker.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("send automatic acknowledgement = %t, %v", processed, err)
 	}
 	providerCommand := fixture.provider.commands[0]
@@ -552,22 +576,22 @@ func TestAutomaticTaskAcknowledgementProjectsDuplicateProviderFailureReceiptOnce
 		fixture.privateKey,
 		append([]byte(timestamp+"|"), rawReceipt...),
 	))
-	first, err := fixture.module.ReceiveWebhook(
+	first, err := fixture.ingress.ReceiveWebhook(
 		context.Background(), providerCommand.CallbackToken, rawReceipt, timestamp, signature,
 	)
 	if err != nil {
 		t.Fatalf("receive automatic acknowledgement failure: %v", err)
 	}
-	duplicate, err := fixture.module.ReceiveWebhook(
+	duplicate, err := fixture.ingress.ReceiveWebhook(
 		context.Background(), providerCommand.CallbackToken, rawReceipt, timestamp, signature,
 	)
 	if err != nil || first.Duplicate || !duplicate.Duplicate {
 		t.Fatalf("automatic acknowledgement receipts = %#v, %#v, %v", first, duplicate, err)
 	}
-	if processed, err := fixture.module.ProcessNextReceipt(context.Background()); err != nil || !processed {
+	if processed, err := fixture.worker.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("project automatic acknowledgement failure = %t, %v", processed, err)
 	}
-	if processed, err := fixture.module.ProcessNextReceipt(context.Background()); err != nil || processed {
+	if processed, err := fixture.worker.ProcessNextReceipt(context.Background()); err != nil || processed {
 		t.Fatalf("replay automatic acknowledgement failure = %t, %v; want idle", processed, err)
 	}
 	var delivery, failure string
@@ -584,10 +608,11 @@ func TestAutomaticTaskAcknowledgementProjectsDuplicateProviderFailureReceiptOnce
 }
 
 func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "messaging-send-test",
 		Practices: []access.PracticeProvision{{
@@ -623,19 +648,43 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil {
 		t.Fatalf("create webhook key: %v", err)
 	}
-	workModule := work.New(pool, accessModule, func() time.Time { return now })
+	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
+	moduleConfig := messaging.Config{
+		WebhookPublicKeys: [][]byte{publicKey},
+	}
 	module := messaging.New(
+		db.As(testdb.Portal),
+		accessModule,
+		workModule,
+		provider,
+		moduleConfig,
+		func() time.Time { return now },
+	)
+	moduleWorker := messaging.New(
+		db.As(testdb.Worker),
+		accessModule,
+		workModule,
+		provider,
+		moduleConfig,
+		func() time.Time { return now },
+	)
+	moduleProvider := messaging.New(
+		db.As(testdb.Provider),
+		accessModule,
+		workModule,
+		provider,
+		moduleConfig,
+		func() time.Time { return now },
+	)
+	reads := workspace.New(db.As(testdb.Portal), accessModule)
+	if err := messaging.New(
 		pool,
 		accessModule,
 		workModule,
 		provider,
-		messaging.Config{
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		moduleConfig,
 		func() time.Time { return now },
-	)
-	reads := workspace.New(pool, accessModule)
-	if err := module.Provision(context.Background(), []messaging.LocationProvision{{
+	).Provision(context.Background(), []messaging.LocationProvision{{
 		PracticeKey:        "message-practice",
 		LocationKey:        "message-office",
 		Sender:             "+17275550100",
@@ -648,7 +697,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	}}); err != nil {
 		t.Fatalf("provision Messaging fixture: %v", err)
 	}
-	if err := module.RecoverInterruptedCommands(context.Background()); err != nil {
+	if err := moduleWorker.RecoverInterruptedCommands(context.Background()); err != nil {
 		t.Fatalf("recover empty interrupted-command set: %v", err)
 	}
 	var workspaceVersionBefore int
@@ -766,7 +815,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			workspaceVersion,
 		)
 	}
-	processed, err := module.ProcessNextCommand(context.Background())
+	processed, err := moduleWorker.ProcessNextCommand(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("process Message provider command = %t, %v", processed, err)
 	}
@@ -801,7 +850,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), rawReceipt...),
 	))
-	receipt, err := module.ReceiveWebhook(
+	receipt, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		providerCommand.CallbackToken,
 		rawReceipt,
@@ -811,7 +860,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil {
 		t.Fatalf("receive delivery webhook: %v", err)
 	}
-	duplicate, err := module.ReceiveWebhook(
+	duplicate, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		providerCommand.CallbackToken,
 		rawReceipt,
@@ -833,7 +882,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(retryTimestamp+"|"), retriedRawReceipt...),
 	))
-	retriedReceipt, err := module.ReceiveWebhook(
+	retriedReceipt, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		providerCommand.CallbackToken,
 		retriedRawReceipt,
@@ -851,7 +900,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), conflictingRawReceipt...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		providerCommand.CallbackToken,
 		conflictingRawReceipt,
@@ -881,7 +930,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	`, receipt.EventID, now); err != nil {
 		t.Fatalf("simulate interrupted receipt projection: %v", err)
 	}
-	processed, err = module.ProcessNextReceipt(context.Background())
+	processed, err = moduleWorker.ProcessNextReceipt(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("process delivery receipt = %t, %v", processed, err)
 	}
@@ -901,7 +950,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), transientRawReceipt...),
 	))
-	transientReceipt, err := module.ReceiveWebhook(
+	transientReceipt, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		providerCommand.CallbackToken,
 		transientRawReceipt,
@@ -925,7 +974,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		context.Background(),
 		100*time.Millisecond,
 	)
-	processed, err = module.ProcessNextReceipt(projectionContext)
+	processed, err = moduleWorker.ProcessNextReceipt(projectionContext)
 	cancelProjection()
 	if !processed || err == nil {
 		t.Fatalf("transient receipt projection = %t, %v", processed, err)
@@ -945,7 +994,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		t.Fatalf("release transient projection blocker: %v", err)
 	}
 	now = now.Add(31 * time.Second)
-	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("reclaim transient receipt = %t, %v", processed, err)
 	}
@@ -966,7 +1015,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	provider.sendResult = messaging.ProviderResult{
 		MessageID: "provider-message-unknown",
 	}
-	processed, err = module.ProcessNextCommand(context.Background())
+	processed, err = moduleWorker.ProcessNextCommand(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("process ambiguous Message command = %t, %v", processed, err)
 	}
@@ -977,7 +1026,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if unknown.Delivery != messaging.DeliveryUnknown {
 		t.Fatalf("ambiguous Message = %#v", unknown)
 	}
-	processed, err = module.ProcessNextCommand(context.Background())
+	processed, err = moduleWorker.ProcessNextCommand(context.Background())
 	if err != nil || processed {
 		t.Fatalf("ambiguous Message was selected for blind retry = %t, %v", processed, err)
 	}
@@ -998,7 +1047,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		MessageID: "provider-message-unknown",
 		State:     messaging.DeliveryDelivered,
 	}
-	reconciled, err := module.ReconcileNextCommand(context.Background())
+	reconciled, err := moduleWorker.ReconcileNextCommand(context.Background())
 	if err != nil || !reconciled {
 		t.Fatalf("reconcile unknown Message = %t, %v", reconciled, err)
 	}
@@ -1020,7 +1069,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		MessageID: "provider-message-unknown",
 		State:     messaging.DeliveryFailed,
 	}
-	if reconciled, err := module.ReconcileNextCommand(context.Background()); err != nil ||
+	if reconciled, err := moduleWorker.ReconcileNextCommand(context.Background()); err != nil ||
 		!reconciled {
 		t.Fatalf("reconcile contradictory Message = %t, %v", reconciled, err)
 	}
@@ -1058,7 +1107,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), rawInbound...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		"",
 		rawInbound,
@@ -1067,11 +1116,11 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	); err != nil {
 		t.Fatalf("receive inbound Message: %v", err)
 	}
-	processed, err = module.ProcessNextReceipt(context.Background())
+	processed, err = moduleWorker.ProcessNextReceipt(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("process inbound Message = %t, %v", processed, err)
 	}
-	if _, err := module.ReceiveWebhook(context.Background(), "", rawInbound, timestamp, signature); err != nil {
+	if _, err := moduleProvider.ReceiveWebhook(context.Background(), "", rawInbound, timestamp, signature); err != nil {
 		t.Fatalf("replay inbound Message: %v", err)
 	}
 	var reviewVersion int64
@@ -1149,7 +1198,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), rawStop...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		"",
 		rawStop,
@@ -1158,7 +1207,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	); err != nil {
 		t.Fatalf("receive STOP: %v", err)
 	}
-	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("process STOP = %t, %v", processed, err)
 	}
@@ -1188,7 +1237,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), rawStart...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		"",
 		rawStart,
@@ -1197,7 +1246,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	); err != nil {
 		t.Fatalf("receive START: %v", err)
 	}
-	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("process START = %t, %v", processed, err)
 	}
@@ -1212,7 +1261,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), rawNewerStop...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		"",
 		rawNewerStop,
@@ -1221,7 +1270,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	); err != nil {
 		t.Fatalf("receive newer STOP: %v", err)
 	}
-	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("process newer STOP = %t, %v", processed, err)
 	}
@@ -1235,7 +1284,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), rawOlderStart...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		"",
 		rawOlderStart,
@@ -1244,7 +1293,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	); err != nil {
 		t.Fatalf("receive reordered older START: %v", err)
 	}
-	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("process reordered older START = %t, %v", processed, err)
 	}
@@ -1260,7 +1309,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), rawEqualStart...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		"",
 		rawEqualStart,
@@ -1269,7 +1318,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	); err != nil {
 		t.Fatalf("receive equal-time START: %v", err)
 	}
-	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("process equal-time START = %t, %v", processed, err)
 	}
@@ -1291,7 +1340,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		privateKey,
 		append([]byte(timestamp+"|"), rawNewestStart...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		"",
 		rawNewestStart,
@@ -1300,7 +1349,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	); err != nil {
 		t.Fatalf("receive newest START: %v", err)
 	}
-	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("process newest START = %t, %v", processed, err)
 	}
@@ -1846,10 +1895,11 @@ func phoneTimelineMessages(
 func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	t *testing.T,
 ) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 15, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "messaging-attachment-test",
 		Practices: []access.PracticeProvision{{
@@ -1899,23 +1949,47 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		AttachmentObjectStore: memoryStore,
 	}
 	provider := &providerFixture{}
+	moduleConfig := messaging.Config{
+		WebhookPublicKeys:  [][]byte{publicKey},
+		AttachmentStore:    store,
+		MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
+		MediaSigningKey:    bytes.Repeat([]byte{7}, 32),
+		MediaURLTTL:        5 * time.Minute,
+		HTTPClient:         mediaServer.Client(),
+	}
 	module := messaging.New(
+		db.As(testdb.Portal),
+		accessModule,
+		work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }),
+		provider,
+		moduleConfig,
+		func() time.Time { return now },
+	)
+	moduleWorker := messaging.New(
+		db.As(testdb.Worker),
+		accessModule,
+		work.New(db.As(testdb.Worker), accessModule, func() time.Time { return now }),
+		provider,
+		moduleConfig,
+		func() time.Time { return now },
+	)
+	moduleProvider := messaging.New(
+		db.As(testdb.Provider),
+		accessModule,
+		work.New(db.As(testdb.Provider), accessModule, func() time.Time { return now }),
+		provider,
+		moduleConfig,
+		func() time.Time { return now },
+	)
+	reads := workspace.New(db.As(testdb.Portal), accessModule)
+	if err := messaging.New(
 		pool,
 		accessModule,
 		work.New(pool, accessModule, func() time.Time { return now }),
 		provider,
-		messaging.Config{
-			WebhookPublicKeys:  [][]byte{publicKey},
-			AttachmentStore:    store,
-			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
-			MediaSigningKey:    bytes.Repeat([]byte{7}, 32),
-			MediaURLTTL:        5 * time.Minute,
-			HTTPClient:         mediaServer.Client(),
-		},
+		moduleConfig,
 		func() time.Time { return now },
-	)
-	reads := workspace.New(pool, accessModule)
-	if err := module.Provision(context.Background(), []messaging.LocationProvision{{
+	).Provision(context.Background(), []messaging.LocationProvision{{
 		PracticeKey:        "attachment-practice",
 		LocationKey:        "attachment-office",
 		Sender:             "+17275550110",
@@ -2035,7 +2109,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	}); !errors.Is(err, messaging.ErrConflict) {
 		t.Fatalf("reused attachment error = %v", err)
 	}
-	if processed, err := module.ProcessNextCommand(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextCommand(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("send outbound MMS = %t, %v", processed, err)
 	}
@@ -2046,7 +2120,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	if err != nil {
 		t.Fatalf("parse provider media URL: %v", err)
 	}
-	providerContent, err := module.OpenProviderAttachment(
+	providerContent, err := moduleProvider.OpenProviderAttachment(
 		context.Background(),
 		pending.ID,
 		signedURL.Query().Get("expires"),
@@ -2074,7 +2148,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		privateKey,
 		append([]byte(timestamp+"|"), rawFailed...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		provider.commands[0].CallbackToken,
 		rawFailed,
@@ -2083,7 +2157,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	); err != nil {
 		t.Fatalf("receive outbound MMS failure: %v", err)
 	}
-	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("project outbound MMS failure = %t, %v", processed, err)
 	}
@@ -2164,7 +2238,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		t.Fatalf("open retried outbound MMS = %#v, %v", newAttemptContent, err)
 	}
 	provider.sendResult = messaging.ProviderResult{MessageID: "provider-message-2"}
-	if processed, err := module.ProcessNextCommand(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextCommand(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("send outbound MMS new attempt = %t, %v", processed, err)
 	}
@@ -2183,7 +2257,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		privateKey,
 		append([]byte(timestamp+"|"), rawInbound...),
 	))
-	if _, err := module.ReceiveWebhook(
+	if _, err := moduleProvider.ReceiveWebhook(
 		context.Background(),
 		"",
 		rawInbound,
@@ -2192,7 +2266,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	); err != nil {
 		t.Fatalf("receive inbound MMS: %v", err)
 	}
-	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("project inbound MMS = %t, %v", processed, err)
 	}
@@ -2203,7 +2277,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		t.Fatalf("processing inbound attachment = %#v", inbound)
 	}
 	attachmentID := inbound.Attachment.ID
-	if processed, err := module.ProcessNextAttachment(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextAttachment(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("fail expired inbound media copy = %t, %v", processed, err)
 	}
@@ -2223,7 +2297,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		t.Fatalf("retry inbound attachment = %#v, %v", retrying, err)
 	}
 	mediaAvailable = true
-	if processed, err := module.ProcessNextAttachment(context.Background()); err != nil ||
+	if processed, err := moduleWorker.ProcessNextAttachment(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("copy inbound media = %t, %v", processed, err)
 	}
@@ -2259,7 +2333,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	}
 	now = now.Add(16 * time.Minute)
 	store.deleteError = errors.New("transient protected-object deletion failure")
-	if err := module.ExpirePendingAttachments(
+	if err := moduleWorker.ExpirePendingAttachments(
 		context.Background(),
 	); err == nil {
 		t.Fatal("attachment expiration ignored object deletion failure")
@@ -2286,7 +2360,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 
 	store.deleteError = nil
 	now = now.Add(31 * time.Second)
-	if err := module.ExpirePendingAttachments(context.Background()); err != nil {
+	if err := moduleWorker.ExpirePendingAttachments(context.Background()); err != nil {
 		t.Fatalf("retry attachment expiration: %v", err)
 	}
 	if err := pool.QueryRow(context.Background(), `
@@ -2312,15 +2386,16 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 func TestPlatformOperatorMessagingWritesDirectlyAndAuditsAtomically(
 	t *testing.T,
 ) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 14, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	operator := access.Identity{
 		Subject:       "messaging-operator-subject",
 		Email:         "messaging-operator@acuity.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "operator-messaging-test",
 		PlatformOperators: []string{operator.Email},
@@ -2350,14 +2425,21 @@ func TestPlatformOperatorMessagingWritesDirectlyAndAuditsAtomically(
 		t.Fatalf("operator Messaging practices = %#v", discovery.Practices)
 	}
 	module := messaging.New(
+		db.As(testdb.Portal),
+		accessModule,
+		work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }),
+		&providerFixture{},
+		messaging.Config{},
+		func() time.Time { return now },
+	)
+	if err := messaging.New(
 		pool,
 		accessModule,
 		work.New(pool, accessModule, func() time.Time { return now }),
 		&providerFixture{},
 		messaging.Config{},
 		func() time.Time { return now },
-	)
-	if err := module.Provision(context.Background(), []messaging.LocationProvision{{
+	).Provision(context.Background(), []messaging.LocationProvision{{
 		PracticeKey:        "support-message-a",
 		LocationKey:        "office-a",
 		Sender:             "+17275550120",
@@ -2539,7 +2621,7 @@ func TestRecategorizedMessageFollowUpStillDeduplicatesItsThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock := func() time.Time { return *f.clock }
-	if _, err := work.New(f.pool, access.New(f.pool, clock), clock).ChangeTaskCategory(ctx, work.ChangeTaskCategoryCommand{Identity: f.identity, TaskID: first.ID, ExpectedVersion: first.Version, Category: work.TaskCategoryMedication}); err != nil {
+	if _, err := work.New(f.db.As(testdb.Portal), access.New(f.db.As(testdb.Portal), clock), clock).ChangeTaskCategory(ctx, work.ChangeTaskCategoryCommand{Identity: f.identity, TaskID: first.ID, ExpectedVersion: first.Version, Category: work.TaskCategoryMedication}); err != nil {
 		t.Fatal(err)
 	}
 	second, status, err := f.module.CreateFollowUpTask(ctx, messaging.CreateFollowUpTaskCommand{Identity: f.identity, MessageID: inbound("Synthetic second request")})

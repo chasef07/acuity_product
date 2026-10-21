@@ -19,9 +19,10 @@ import (
 )
 
 func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	accessModule := access.New(pool, time.Now)
+	accessModule := access.New(db.As(testdb.Portal), time.Now)
 	canonical := []struct {
 		key    string
 		tenant int
@@ -51,7 +52,7 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 		practices[i].Locations = append(practices[i].Locations,
 			access.LocationProvision{Key: "shared-office", Name: "Synthetic shared route", AbitaOfficeKeys: []string{"shared-office"}})
 	}
-	if _, err := accessModule.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "knowledge-isolation-test", Practices: practices}); err != nil {
+	if _, err := access.New(pool, time.Now).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "knowledge-isolation-test", Practices: practices}); err != nil {
 		t.Fatal(err)
 	}
 	var practiceIDs [2]string
@@ -73,7 +74,7 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 		t.Fatal(err)
 	}
 	embeddings := &knowledgeEmbeddingDouble{}
-	module, err := knowledge.New(pool, accessModule, embeddings, knowledge.Config{})
+	module, err := knowledge.New(db.As(testdb.Portal), accessModule, embeddings, knowledge.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

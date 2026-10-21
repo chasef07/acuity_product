@@ -16,11 +16,12 @@ import (
 )
 
 func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	authorization, identities := provisionConcurrentStaff(
-		t, access.New(pool, func() time.Time { return now }), now, "calling-state-capacity", 1,
+		t, db.Owner, access.New(db.As(testdb.Portal), func() time.Time { return now }), now, "calling-state-capacity", 1,
 	)
 	if _, err := pool.Exec(ctx, `
 		WITH inserted AS (
@@ -81,7 +82,7 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 		}
 	}
 	trace := &callingStateQueryTrace{}
-	config := pool.Config().Copy()
+	config := db.As(testdb.Portal).Config()
 	config.MaxConns = 1
 	config.ConnConfig.Tracer = trace
 	runtimePool, err := pgxpool.NewWithConfig(ctx, config)

@@ -17,12 +17,13 @@ import (
 )
 
 func TestCallLabelsHTTPFiltersAndPublicProjection(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	am := access.New(pool, nil)
+	am := access.New(db.As(testdb.Portal), nil)
 	staff := access.Identity{Subject: "labels-http-staff", Email: "staff@labels-http.test", EmailVerified: true}
 	operator := access.Identity{Subject: "labels-http-operator", Email: "operator@labels-http.test", EmailVerified: true}
-	_, err := am.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{operator.Email}, Practices: []access.PracticeProvision{{Key: "labels-http", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "main", Name: "Main"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeAll}}}}})
+	_, err := access.New(pool, nil).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{operator.Email}, Practices: []access.PracticeProvision{{Key: "labels-http", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "main", Name: "Main"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeAll}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestCallLabelsHTTPFiltersAndPublicProjection(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET closeout_payload='{"evaluation":{"classification":{"version":"call-labels-v1","model":"typesafe/jev-1.14","status":"complete","intent":"office_information","outcome":"resolved","answers":{"private-label-evidence":"do not expose"},"reason":"private-error"}}}' WHERE id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := newPortalHandler(t, httpapi.Config{AcquireTimeout: time.Second}, pool, am, staticAuthenticator{"staff": staff, "operator": operator})
+	handler, err := newPortalHandler(t, httpapi.Config{AcquireTimeout: time.Second}, db.As(testdb.Portal), am, staticAuthenticator{"staff": staff, "operator": operator})
 	if err != nil {
 		t.Fatal(err)
 	}

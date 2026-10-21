@@ -13,12 +13,13 @@ import (
 )
 
 func TestResponsibilitiesFilterWithoutGrantingAccess(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
-	report, err := m.ProvisionResponsibilities(context.Background(), work.ResponsibilityProvision{PracticeKey: "synthetic-practice", Locations: []work.ResponsibilityLocation{{LocationKey: "synthetic-location-1", Members: []work.ResponsibilityMember{{Email: identity.Email, Category: "medication", Role: "primary"}, {Email: identity.Email, Category: "medication", Role: "backup"}, {Email: "pending@synthetic.test", Category: "documentation", Role: "primary"}}}}})
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
+	report, err := work.New(pool, a, func() time.Time { return now }).ProvisionResponsibilities(context.Background(), work.ResponsibilityProvision{PracticeKey: "synthetic-practice", Locations: []work.ResponsibilityLocation{{LocationKey: "synthetic-location-1", Members: []work.ResponsibilityMember{{Email: identity.Email, Category: "medication", Role: "primary"}, {Email: identity.Email, Category: "medication", Role: "backup"}, {Email: "pending@synthetic.test", Category: "documentation", Role: "primary"}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestResponsibilitiesFilterWithoutGrantingAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	reads := workspace.New(pool, a)
+	reads := workspace.New(db.As(testdb.Portal), a)
 	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Responsibility: "mine"})
 	if err != nil {
 		t.Fatal(err)
@@ -46,11 +47,11 @@ func TestResponsibilitiesFilterWithoutGrantingAccess(t *testing.T) {
 }
 
 func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
 	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	ctx := context.Background()
 	create := func(key, name string) work.Task {
 		t.Helper()
@@ -62,7 +63,7 @@ func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) 
 	}
 	first := create("first", "Family Member One")
 	second := create("second", "Family Member Two")
-	reads := workspace.New(pool, a)
+	reads := workspace.New(db.As(testdb.Portal), a)
 	page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Search: "Family Member One", Limit: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -94,16 +95,17 @@ func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) 
 }
 
 func TestRelatedTaskGroupsKeepCallersSeparate(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	ctx := context.Background()
-	ordinary := ensureCallFollowUp(t, pool, m, work.EnsureCallFollowUpCommand{CallID: insertCall(t, pool, auth, now), PracticeID: auth.Practice.ID, LocationID: auth.Locations[0].ID, Phone: "+15555550100", Reason: "Synthetic administrative follow-up", Creator: auth.Actor})
+	ordinary := ensureCallFollowUp(t, db.As(testdb.Portal), m, work.EnsureCallFollowUpCommand{CallID: insertCall(t, pool, auth, now), PracticeID: auth.Practice.ID, LocationID: auth.Locations[0].ID, Phone: "+15555550100", Reason: "Synthetic administrative follow-up", Creator: auth.Actor})
 	otherCaller := "+15555550101"
 	callID := insertCallAt(t, pool, auth, ordinary.LocationID, otherCaller, "Other caller", now.Add(time.Second))
-	tx, err := pool.Begin(ctx)
+	tx, err := db.As(testdb.Worker).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +117,7 @@ func TestRelatedTaskGroupsKeepCallersSeparate(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	reads := workspace.New(pool, a)
+	reads := workspace.New(db.As(testdb.Portal), a)
 	for _, kind := range []string{"", "follow_up", "calls"} {
 		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Kind: kind})
 		if err != nil {
@@ -182,43 +184,45 @@ func TestRelatedTaskGroupsKeepCallersSeparate(t *testing.T) {
 }
 
 func TestReclassificationRunAndRestorationNeverOverwriteStaffEdits(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `INSERT INTO access_platform_operators(email,user_subject) VALUES($1,$2)`, identity.Email, identity.Subject); err != nil {
 		t.Fatal(err)
 	}
 	testaccess.Activate(t, a, identity)
-	m := work.New(pool, a, func() time.Time { return now })
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
+	maintenance := work.New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
 	task, _, err := m.CreateAITask(ctx, work.CreateAITaskCommand{Service: access.ServiceIdentity{Subject: "backfill-agent", PracticeID: auth.Practice.ID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}}, OfficeKey: "spring-hill", OfficePhone: "+12025550100", SourceCallID: "backfill-call", IdempotencyKey: "backfill-expedite", Phone: "+12025550123", Summary: "Expedite prescription", Message: "Caller requests a glasses prescription copy.", Category: work.TaskCategoryDocumentation, Urgency: work.TaskUrgencyNormal})
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := m.PlanReclassification(ctx, identity, "synthetic-run", auth.Practice.ID, []string{task.LocationID})
+	plan, err := maintenance.PlanReclassification(ctx, identity, "synthetic-run", auth.Practice.ID, []string{task.LocationID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(plan.Tasks) != 1 || plan.Tasks[0].NewCategory != work.TaskCategoryOptical {
 		t.Fatalf("plan: %#v", plan)
 	}
-	result, err := m.ApplyReclassification(ctx, identity, plan)
+	result, err := maintenance.ApplyReclassification(ctx, identity, plan)
 	if err != nil || result[0].Status != "applied" {
 		t.Fatalf("apply: %#v %v", result, err)
 	}
-	result, err = m.ApplyReclassification(ctx, identity, plan)
+	result, err = maintenance.ApplyReclassification(ctx, identity, plan)
 	if err != nil || result[0].Status != "already_applied" {
 		t.Fatalf("repeat: %#v %v", result, err)
 	}
-	restore, err := m.RestorationPlan(ctx, identity, plan.RunID, plan.PracticeID, plan.LocationIDs)
+	restore, err := maintenance.RestorationPlan(ctx, identity, plan.RunID, plan.PracticeID, plan.LocationIDs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.ChangeTaskCategory(ctx, work.ChangeTaskCategoryCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: 2, Category: work.TaskCategoryOther}); err != nil {
 		t.Fatal(err)
 	}
-	result, err = m.ApplyReclassification(ctx, identity, restore)
+	result, err = maintenance.ApplyReclassification(ctx, identity, restore)
 	if err != nil || result[0].Status != "skipped_changed" {
 		t.Fatalf("restore overwrote staff: %#v %v", result, err)
 	}
@@ -229,15 +233,17 @@ func TestReclassificationRunAndRestorationNeverOverwriteStaffEdits(t *testing.T)
 }
 
 func TestReclassificationPlanUsesRequestContextAcrossAuthorizationSubjects(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `INSERT INTO access_platform_operators(email,user_subject) VALUES($1,$2)`, identity.Email, identity.Subject); err != nil {
 		t.Fatal(err)
 	}
-	m := work.New(pool, a, func() time.Time { return now })
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
+	maintenance := work.New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
 	cases := []struct {
 		key, message string
 		old, want    work.TaskCategory
@@ -272,7 +278,7 @@ func TestReclassificationPlanUsesRequestContextAcrossAuthorizationSubjects(t *te
 		}
 		expected[task.ID] = c.want
 	}
-	plan, err := m.PlanReclassification(ctx, identity, "classification-plan", auth.Practice.ID, []string{auth.Locations[0].ID})
+	plan, err := maintenance.PlanReclassification(ctx, identity, "classification-plan", auth.Practice.ID, []string{auth.Locations[0].ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,14 +293,15 @@ func TestReclassificationPlanUsesRequestContextAcrossAuthorizationSubjects(t *te
 }
 
 func TestGroupMetadataCommandsDenyUnrelatedStaffWithoutSideEffects(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
 	ctx := context.Background()
-	m := work.New(pool, a, func() time.Time { return now })
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	callID := insertCall(t, pool, auth, now)
-	task := ensureCallFollowUp(t, pool, m, work.EnsureCallFollowUpCommand{CallID: callID, PracticeID: auth.Practice.ID, LocationID: auth.Locations[0].ID, Phone: "+15555550100", Reason: "Synthetic request", Creator: auth.Actor})
+	task := ensureCallFollowUp(t, db.As(testdb.Portal), m, work.EnsureCallFollowUpCommand{CallID: callID, PracticeID: auth.Practice.ID, LocationID: auth.Locations[0].ID, Phone: "+15555550100", Reason: "Synthetic request", Creator: auth.Actor})
 	outsider := access.Identity{Subject: "unrelated-staff", Email: "unrelated@synthetic.test", EmailVerified: true}
 	_, err := m.ChangeTaskCategory(ctx, work.ChangeTaskCategoryCommand{Identity: outsider, TaskID: task.ID, ExpectedVersion: task.Version, Category: work.TaskCategoryPreOp})
 	if !errors.Is(err, work.ErrDenied) {

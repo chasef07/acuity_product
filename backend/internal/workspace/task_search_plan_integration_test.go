@@ -13,7 +13,8 @@ import (
 )
 
 func TestTaskQueriesUseSearchAndLocationIndexes(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	const practiceID = "10000000-0000-0000-0000-000000000001"
 	if _, err := pool.Exec(ctx, `INSERT INTO access_practices(id,provisioning_key,name) VALUES($1,'task-search-plan','Synthetic Search Plan')`, practiceID); err != nil {

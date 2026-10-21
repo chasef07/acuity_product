@@ -41,7 +41,8 @@ func seedRetryReceipt(t *testing.T, pool *pgxpool.Pool, practice, location, sour
 
 func TestPoisonReceiptRetriesWithoutBlockingThenQuarantinesVisibly(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	practice, location := seedRetryLocation(t, pool, "poison-receipt")
 	if _, err := pool.Exec(ctx, `
@@ -61,7 +62,7 @@ func TestPoisonReceiptRetriesWithoutBlockingThenQuarantinesVisibly(t *testing.T)
 	poison := seedRetryReceipt(t, pool, practice, location, "synthetic-poison", now.Add(-2*time.Hour))
 	healthy := seedRetryReceipt(t, pool, practice, location, "synthetic-healthy", now.Add(-time.Hour))
 	clock := now
-	module := New(pool, access.New(pool, func() time.Time { return clock }), func() time.Time { return clock })
+	module := New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), func() time.Time { return clock }), func() time.Time { return clock })
 	readReceipt := func(id string) (state, errorCode, lastError string, attempts int, next *time.Time) {
 		t.Helper()
 		if err := pool.QueryRow(ctx, `SELECT state, COALESCE(projection_error_code,''), COALESCE(last_error_code,''), projection_attempts, next_attempt_at FROM ai_interaction_receipts WHERE id=$1`, id).Scan(&state, &errorCode, &lastError, &attempts, &next); err != nil {
@@ -105,7 +106,8 @@ func TestPoisonReceiptRetriesWithoutBlockingThenQuarantinesVisibly(t *testing.T)
 
 func TestReceiptWorkerSkipsReceiptLockedByAnotherWorker(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	practice, location := seedRetryLocation(t, pool, "locked-receipt")
 	locked := seedRetryReceipt(t, pool, practice, location, "synthetic-locked", now.Add(-2*time.Hour))
@@ -118,7 +120,7 @@ func TestReceiptWorkerSkipsReceiptLockedByAnotherWorker(t *testing.T) {
 	if _, err := holder.Exec(ctx, `SELECT 1 FROM ai_interaction_receipts WHERE id=$1 FOR UPDATE`, locked); err != nil {
 		t.Fatal(err)
 	}
-	module := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
+	module := New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), func() time.Time { return now }), func() time.Time { return now })
 	bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if processed, err := module.ProcessNextReceipt(bounded); !processed || err != nil {
@@ -135,14 +137,15 @@ func TestReceiptWorkerSkipsReceiptLockedByAnotherWorker(t *testing.T) {
 
 func TestTimedOutFinalAttemptStillQuarantinesReceipt(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	practice, location := seedRetryLocation(t, pool, "timeout-receipt")
 	id := seedRetryReceipt(t, pool, practice, location, "synthetic-timeout", now.Add(-time.Hour))
 	if _, err := pool.Exec(ctx, `UPDATE ai_interaction_receipts SET projection_attempts=$2 WHERE id=$1`, id, maxReceiptProjectionAttempts-1); err != nil {
 		t.Fatal(err)
 	}
-	module := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
+	module := New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), func() time.Time { return now }), func() time.Time { return now })
 	_, _, attempts, claimed, err := module.claimReceipt(ctx)
 	if err != nil || !claimed || attempts != maxReceiptProjectionAttempts {
 		t.Fatalf("claim = %t %d %v", claimed, attempts, err)

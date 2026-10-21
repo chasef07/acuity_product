@@ -26,7 +26,7 @@ func (publicationEmbedder) Embed(_ context.Context, texts []string, _ knowledge.
 }
 
 func TestImportPublishesOnlyOfficesWithoutKnowledge(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.OpenAsOwner(t)
 	ctx := context.Background()
 	auth := access.New(pool, nil)
 	const email = "operator@example.com"
@@ -72,7 +72,7 @@ func TestImportPublishesOnlyOfficesWithoutKnowledge(t *testing.T) {
 }
 
 func TestExportRoundTripsARevision(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.OpenAsOwner(t)
 	ctx := context.Background()
 	auth := access.New(pool, nil)
 	_, err := auth.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "synthetic", Name: "Synthetic practice", Locations: []access.LocationProvision{
@@ -144,7 +144,7 @@ func TestExportRoundTripsARevision(t *testing.T) {
 }
 
 func TestImportHoldsAbitaOfficesToTheEntryStandard(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.OpenAsOwner(t)
 	ctx := context.Background()
 	auth := access.New(pool, nil)
 	_, err := auth.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "abita-eye-group", Name: "Synthetic Abita", Locations: []access.LocationProvision{{Key: "new", Name: "New office", AbitaOfficeKeys: []string{"new-office"}}}}}})

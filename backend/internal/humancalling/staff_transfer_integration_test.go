@@ -27,9 +27,9 @@ type connectedStaffTransferFixture struct {
 func prepareConnectedOutboundStaffTransfer(t *testing.T, prefix string) connectedStaffTransferFixture {
 	t.Helper()
 	now := time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC)
-	pool := testdb.Open(t)
+	pool := testdb.OpenAsOwner(t)
 	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, staff := provisionConcurrentStaff(t, accessModule, now, prefix, 2)
+	authorization, staff := provisionConcurrentStaff(t, pool, accessModule, now, prefix, 2)
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
 		{CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-provider-leg"},
 		{CallControlID: prefix + "-destination-control", CallLegID: prefix + "-destination-provider-leg"},

@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
+	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -49,10 +49,7 @@ func (s *delayedAttachmentStore) Delete(ctx context.Context, key string) error {
 func attachmentCapacityFixture(t *testing.T) (automaticAcknowledgementTestFixture, *pgxpool.Pool, *messaging.Module, *delayedAttachmentStore, messaging.UploadAttachmentCommand) {
 	t.Helper()
 	f := newAutomaticAcknowledgementTestFixture(t, true)
-	config, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := f.db.As(testdb.Portal).Config()
 	config.MaxConns = 1
 	pool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
@@ -102,7 +99,7 @@ func TestAttachmentUploadReleasesConnectionAndRechecksRevocation(t *testing.T) {
 		t.Fatalf("revoked upload error=%v", err)
 	}
 	*f.clock = f.clock.Add(31 * time.Second)
-	if err := m.ExpirePendingAttachments(context.Background()); err != nil {
+	if err := messaging.New(f.db.As(testdb.Worker), nil, nil, nil, messaging.Config{AttachmentStore: s}, func() time.Time { return *f.clock }).ExpirePendingAttachments(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.MemoryAttachmentStore.Get(context.Background(), key); !errors.Is(err, messaging.ErrObjectNotFound) {
@@ -119,7 +116,7 @@ func TestAttachmentLateWriteRemainsSweepableAfterItsFirstCleanup(t *testing.T) {
 	key := awaitStorage(t, s)
 	cancel()
 	*f.clock = f.clock.Add(31 * time.Second)
-	if err := m.ExpirePendingAttachments(context.Background()); err != nil {
+	if err := messaging.New(f.db.As(testdb.Worker), nil, nil, nil, messaging.Config{AttachmentStore: s}, func() time.Time { return *f.clock }).ExpirePendingAttachments(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	requireDatabaseAvailable(t, pool)
@@ -135,7 +132,7 @@ func TestAttachmentLateWriteRemainsSweepableAfterItsFirstCleanup(t *testing.T) {
 		t.Fatalf("fixture did not publish its late bytes: %v", err)
 	}
 	*f.clock = f.clock.Add(time.Hour + time.Second)
-	if err := m.ExpirePendingAttachments(context.Background()); err != nil {
+	if err := messaging.New(f.db.As(testdb.Worker), nil, nil, nil, messaging.Config{AttachmentStore: s}, func() time.Time { return *f.clock }).ExpirePendingAttachments(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.MemoryAttachmentStore.Get(context.Background(), key); !errors.Is(err, messaging.ErrObjectNotFound) {

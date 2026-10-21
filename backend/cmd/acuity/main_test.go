@@ -12,12 +12,11 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/app"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) {
-	pool := testdb.Open(t)
-	ensureRuntimeRoles(t, pool)
+	db := testdb.Open(t)
+	pool := db.Owner
 	output := filepath.Join(t.TempDir(), "provisioning-output.json")
 	input := filepath.Join("..", "..", "..", "config", "production-provisioning.json")
 
@@ -157,7 +156,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		t.Fatalf("Locations = %#v, want %#v", locations, wantLocations)
 	}
 
-	discovery, err := access.New(pool, nil).DiscoverActor(
+	discovery, err := access.New(db.As(testdb.Portal), nil).DiscoverActor(
 		context.Background(),
 		access.Identity{
 			Subject:       "production-topology-test",
@@ -508,39 +507,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	}
 }
 
-func ensureRuntimeRoles(t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-	if _, err := pool.Exec(context.Background(), `
-		DO $roles$
-		BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'acuity_auth') THEN
-				CREATE ROLE acuity_auth NOLOGIN;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'acuity_portal') THEN
-				CREATE ROLE acuity_portal NOLOGIN;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'acuity_provider') THEN
-				CREATE ROLE acuity_provider NOLOGIN;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'acuity_realtime') THEN
-				CREATE ROLE acuity_realtime NOLOGIN;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'acuity_worker') THEN
-				CREATE ROLE acuity_worker NOLOGIN;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'acuity_migrate') THEN
-				CREATE ROLE acuity_migrate NOLOGIN;
-			END IF;
-		END
-		$roles$;
-	`); err != nil {
-		t.Fatalf("ensure runtime roles: %v", err)
-	}
-}
-
 func TestMigrateRollsBackProvisioningWhenVoiceConfigurationFails(t *testing.T) {
-	pool := testdb.Open(t)
-	ensureRuntimeRoles(t, pool)
+	pool := testdb.Open(t).Owner
 	directory := t.TempDir()
 	input := filepath.Join(directory, "invalid-provisioning.json")
 	file, err := os.Create(input)
@@ -591,7 +559,7 @@ func TestMigrateRollsBackProvisioningWhenVoiceConfigurationFails(t *testing.T) {
 }
 
 func TestProvisionConfiguredLocationVoiceRejectsMissingLocation(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.Open(t).Owner
 	err := provisionConfiguredLocationVoice(context.Background(), app.Config{
 		LocationVoiceProvision: app.LocationVoiceProvisionConfig{
 			PracticeKey: "abita-eye-group",

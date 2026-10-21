@@ -33,11 +33,12 @@ const legacyTaskSearchSQL = `
 		)`
 
 func TestTaskSearchKeepsCaseInsensitiveSubstringSemantics(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, time.September, 10, 15, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	if _, err := accessModule.Provision(ctx, access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{
 		Environment: "test",
 		RequestedBy: "workspace-task-search-test",
 		Practices: []access.PracticeProvision{{
@@ -128,7 +129,7 @@ func TestTaskSearchKeepsCaseInsensitiveSubstringSemantics(t *testing.T) {
 		t.Fatalf("insert uncategorized Task: %v", err)
 	}
 
-	reads := workspace.New(pool, accessModule)
+	reads := workspace.New(db.As(testdb.Portal), accessModule)
 	query := func(search string, state work.TaskState) ([]string, int) {
 		t.Helper()
 		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{

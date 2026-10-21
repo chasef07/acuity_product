@@ -38,10 +38,11 @@ import (
 )
 
 func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "access-http-test",
 		PlatformOperators: []string{"founder@acuity.test"},
@@ -72,7 +73,7 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	handler, err := newPortalHandler(t, httpapi.Config{
 		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 500 * time.Millisecond,
-	}, pool, accessModule, staticAuthenticator{
+	}, db.As(testdb.Portal), accessModule, staticAuthenticator{
 		"selected-token": identity,
 	})
 	if err != nil {
@@ -173,7 +174,8 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 }
 
 func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 3, 12, 0, 0, 0, time.UTC)
 	var metrics synchronizedBuffer
 	observer := observability.NewLogger(
@@ -181,8 +183,8 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		"voicemail-playback-test",
 		slog.New(slog.NewJSONHandler(&metrics, nil)),
 	)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "voicemail-http-test",
 		Practices: []access.PracticeProvision{{
@@ -274,7 +276,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin voicemail HTTP Task: %v", err)
 	}
-	task, err := work.New(pool, accessModule, func() time.Time { return now }).EnsureRecoveryTask(
+	task, err := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }).EnsureRecoveryTask(
 		context.Background(),
 		tx,
 		work.EnsureRecoveryTaskCommand{
@@ -322,7 +324,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 
 	audio := &httpVoicemailAudio{}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		httpCallingProvider{},
 		humancalling.Config{
@@ -335,7 +337,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	handler, err := newPortalHandlerWithCalling(
 		t,
 		httpapi.Config{AllowedOrigins: []string{"http://localhost:3000"}, AcquireTimeout: time.Second},
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		staticAuthenticator{
 			"voicemail-http-token":   identity,
@@ -632,10 +634,11 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 }
 
 func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "work-http-test",
 		Practices: []access.PracticeProvision{{
@@ -726,7 +729,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	`, callID, now.Add(10*time.Second), now.Add(70*time.Second), identity.Subject); err != nil {
 		t.Fatalf("insert Task HTTP CallLegs: %v", err)
 	}
-	workModule := work.New(pool, accessModule, func() time.Time { return now })
+	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	tx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})
 	if err != nil {
 		t.Fatalf("begin Task HTTP fixture transaction: %v", err)
@@ -757,7 +760,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 			AllowedOrigins: []string{"http://localhost:3000"},
 			AcquireTimeout: 500 * time.Millisecond,
 		},
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		staticAuthenticator{"task-token": identity},
 	)
@@ -885,10 +888,11 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 }
 
 func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "portal-pool-test",
 		Practices: []access.PracticeProvision{{
@@ -915,16 +919,17 @@ func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing
 	handler, err := newPortalHandler(t, httpapi.Config{
 		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 75 * time.Millisecond,
-	}, pool, accessModule, staticAuthenticator{"member-token": identity})
+	}, db.As(testdb.Portal), accessModule, staticAuthenticator{"member-token": identity})
 	if err != nil {
 		t.Fatalf("new bounded HTTP adapter: %v", err)
 	}
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	held := make([]*pgxpool.Conn, 0, pool.Config().MaxConns)
-	for pool.Stat().AcquiredConns() < pool.Config().MaxConns {
-		connection, err := pool.Acquire(context.Background())
+	portal := db.As(testdb.Portal)
+	held := make([]*pgxpool.Conn, 0, portal.Config().MaxConns)
+	for portal.Stat().AcquiredConns() < portal.Config().MaxConns {
+		connection, err := portal.Acquire(context.Background())
 		if err != nil {
 			t.Fatalf("saturate test pool: %v", err)
 		}
@@ -959,7 +964,7 @@ func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing
 }
 
 func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
 	var metrics bytes.Buffer
 	observer := observability.NewLogger(
@@ -976,7 +981,7 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 		t.Fatalf("generate next webhook key: %v", err)
 	}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Provider),
 		nil,
 		nil,
 		humancalling.Config{
@@ -987,7 +992,7 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 	handler, err := httpapi.NewProviderIngress(httpapi.Config{
 		AcquireTimeout: 500 * time.Millisecond,
 		Observer:       observer,
-	}, pool, calling, messaging.New(pool, nil, nil, nil, messaging.Config{}, nil))
+	}, db.As(testdb.Provider), calling, messaging.New(db.As(testdb.Provider), nil, nil, nil, messaging.Config{}, nil))
 	if err != nil {
 		t.Fatalf("new provider-ingress HTTP adapter: %v", err)
 	}
@@ -1060,10 +1065,11 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 }
 
 func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(
 		context.Background(),
 		access.Provisioning{
 			Environment: "test",
@@ -1137,21 +1143,21 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 			AllowedOrigins: []string{"http://localhost:3000"},
 			AcquireTimeout: 500 * time.Millisecond,
 		},
-		pool,
+		db.As(testdb.Portal),
 		httpapi.PortalDependencies{
 			Access:        accessModule,
 			Authenticator: staticAuthenticator{"staff-token": staffIdentity},
 			Calling: humancalling.New(
-				pool,
+				db.As(testdb.Portal),
 				accessModule,
 				httpCallingProvider{},
 				humancalling.Config{},
 				nil,
 			),
-			Interactions:         interaction.New(pool, accessModule, func() time.Time { return now }),
-			Messaging:            messaging.New(pool, accessModule, work.New(pool, accessModule, nil), nil, messaging.Config{}, nil),
-			Work:                 work.New(pool, accessModule, func() time.Time { return now }),
-			Workspace:            workspace.New(pool, accessModule),
+			Interactions:         interaction.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }),
+			Messaging:            messaging.New(db.As(testdb.Portal), accessModule, work.New(db.As(testdb.Portal), accessModule, nil), nil, messaging.Config{}, nil),
+			Work:                 work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }),
+			Workspace:            workspace.New(db.As(testdb.Portal), accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
@@ -1372,7 +1378,8 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 }
 
 func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
 	var metrics bytes.Buffer
 	observer := observability.NewLogger(
@@ -1380,8 +1387,8 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		"portal-api-test",
 		slog.New(slog.NewJSONHandler(&metrics, nil)),
 	)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "human-calling-http-test",
 		Practices: []access.PracticeProvision{{
@@ -1409,22 +1416,30 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		EmailVerified: true,
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
+	callingConfig := humancalling.Config{
+		HandoffSIPDomain:   "synthetic.sip.telnyx.com",
+		RingWindowDuration: 20 * time.Second,
+		HandoffTokenKey:    []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:      "http-call-control-connection",
+	}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		httpCallingProvider{},
-		humancalling.Config{
-			HandoffSIPDomain:   "synthetic.sip.telnyx.com",
-			RingWindowDuration: 20 * time.Second,
-			HandoffTokenKey:    []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:      "http-call-control-connection",
-		},
+		callingConfig,
 		func() time.Time { return now },
 	)
-	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker),
+		accessModule,
+		httpCallingProvider{},
+		callingConfig,
+		func() time.Time { return now },
+	)
+	if err := callingWorker.ReconcileCredentials(context.Background()); err != nil {
 		t.Fatalf("reconcile HTTP calling credentials: %v", err)
 	}
-	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+	if processed, err := callingWorker.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("create HTTP calling credential: processed=%t err=%v", processed, err)
 	}
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
@@ -1462,15 +1477,15 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 			AcquireTimeout: 500 * time.Millisecond,
 			Observer:       observer,
 		},
-		pool,
+		db.As(testdb.Portal),
 		httpapi.PortalDependencies{
 			Access:               accessModule,
 			Authenticator:        staticAuthenticator{"calling-token": identity},
 			Calling:              calling,
-			Interactions:         interaction.New(pool, accessModule, nil),
-			Messaging:            messaging.New(pool, accessModule, work.New(pool, accessModule, nil), nil, messaging.Config{}, nil),
-			Work:                 work.New(pool, accessModule, nil),
-			Workspace:            workspace.New(pool, accessModule),
+			Interactions:         interaction.New(db.As(testdb.Portal), accessModule, nil),
+			Messaging:            messaging.New(db.As(testdb.Portal), accessModule, work.New(db.As(testdb.Portal), accessModule, nil), nil, messaging.Config{}, nil),
+			Work:                 work.New(db.As(testdb.Portal), accessModule, nil),
+			Workspace:            workspace.New(db.As(testdb.Portal), accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
@@ -1603,7 +1618,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		t.Fatalf("ambiguous handoff route status = %d, body = %s", bothRoutes.StatusCode, readBody(t, bothRoutes))
 	}
 	_ = bothRoutes.Body.Close()
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "http-inbound-event",
 		Type:          humancalling.FactCallInitiated,
 		OccurredAt:    now,
@@ -1654,7 +1669,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	}
 	_ = readiness.Body.Close()
 	for {
-		processed, err := calling.ProcessNextCommand(context.Background())
+		processed, err := callingWorker.ProcessNextCommand(context.Background())
 		if err != nil {
 			t.Fatalf("process caller admission command: %v", err)
 		}
@@ -1662,7 +1677,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 			break
 		}
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "http-inbound-answered",
 		Type:          humancalling.FactCallAnswered,
 		OccurredAt:    now.Add(time.Second),
@@ -1673,7 +1688,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		t.Fatalf("fan out HTTP caller: %v", err)
 	}
 	for {
-		processed, err := calling.ProcessNextCommand(context.Background())
+		processed, err := callingWorker.ProcessNextCommand(context.Background())
 		if err != nil {
 			t.Fatalf("process HTTP ring-window command: %v", err)
 		}
@@ -1738,6 +1753,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 type callingHangupHTTPFixture struct {
 	pool          *pgxpool.Pool
 	calling       *humancalling.Module
+	worker        *humancalling.Module
 	identity      access.Identity
 	authorization access.Authorization
 	server        *httptest.Server
@@ -1752,10 +1768,11 @@ func newCallingHangupHTTPFixture(
 	config humancalling.Config,
 ) callingHangupHTTPFixture {
 	t.Helper()
-	pool := testdb.Open(t)
-	accessModule := access.New(pool, clock)
+	db := testdb.Open(t)
+	pool := db.Owner
+	accessModule := access.New(db.As(testdb.Portal), clock)
 	email := prefix + "@synthetic.test"
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	if _, err := access.New(pool, clock).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: prefix + "-http-test",
 		Practices: []access.PracticeProvision{{
@@ -1782,7 +1799,14 @@ func newCallingHangupHTTPFixture(
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
+		accessModule,
+		httpCallingProvider{},
+		config,
+		clock,
+	)
+	worker := humancalling.New(
+		db.As(testdb.Worker),
 		accessModule,
 		httpCallingProvider{},
 		config,
@@ -1795,7 +1819,7 @@ func newCallingHangupHTTPFixture(
 			AllowedOrigins: []string{"http://localhost:3000"},
 			AcquireTimeout: 500 * time.Millisecond,
 		},
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		staticAuthenticator{token: identity},
 		calling,
@@ -1808,6 +1832,7 @@ func newCallingHangupHTTPFixture(
 	return callingHangupHTTPFixture{
 		pool:          pool,
 		calling:       calling,
+		worker:        worker,
 		identity:      identity,
 		authorization: authorization,
 		server:        server,
@@ -1871,7 +1896,7 @@ func TestCallingHangupReturnsTerminalCallWhenProviderWinsRace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create provider-first Hangup handoff: %v", err)
 	}
-	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := fixture.worker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "provider-first-hangup-caller-initiated",
 		Type:          humancalling.FactCallInitiated,
 		OccurredAt:    now,
@@ -1922,7 +1947,7 @@ func TestCallingHangupReturnsTerminalCallWhenProviderWinsRace(t *testing.T) {
 	}
 
 	providerEndedAt := now
-	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := fixture.worker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:           "provider-first-hangup-staff-ended",
 		Type:              humancalling.FactCallHangup,
 		OccurredAt:        providerEndedAt,
@@ -2112,15 +2137,16 @@ func TestCallingHangupReplaysCommittedCommandButRejectsMissingIntent(t *testing.
 }
 
 func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 19, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	operator := access.Identity{
 		Subject:       "http-recovery-operator",
 		Email:         "http-recovery@acuity.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "http-recovery-test",
 		PlatformOperators: []string{operator.Email},
@@ -2180,7 +2206,7 @@ func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 	`, eventID, callID, now); err != nil {
 		t.Fatalf("seed HTTP recovery receipt: %v", err)
 	}
-	probe := humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, func() time.Time { return now })
+	probe := humancalling.New(db.As(testdb.Portal), accessModule, httpCallingProvider{}, humancalling.Config{}, func() time.Time { return now })
 	if _, err := probe.ReadOperatorTimeline(context.Background(), operator, callID); err != nil {
 		t.Fatalf("read direct operator timeline: %v", err)
 	}
@@ -2188,7 +2214,7 @@ func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 	handler, err := newPortalHandler(t, httpapi.Config{
 		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 500 * time.Millisecond,
-	}, pool, accessModule, staticAuthenticator{"operator-token": operator})
+	}, db.As(testdb.Portal), accessModule, staticAuthenticator{"operator-token": operator})
 	if err != nil {
 		t.Fatalf("new HTTP recovery portal: %v", err)
 	}

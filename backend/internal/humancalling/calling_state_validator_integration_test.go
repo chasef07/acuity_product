@@ -13,13 +13,13 @@ import (
 )
 
 func TestCallingStateValidatorTracksSoftphoneChangesButNotHeartbeats(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
 	ctx := context.Background()
 	now := time.Date(2026, 10, 19, 17, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, identities := provisionConcurrentStaff(t, accessModule, now, "lease-validator", 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, identities := provisionConcurrentStaff(t, db.Owner, accessModule, now, "lease-validator", 1)
 	staff := identities[0]
-	calling := humancalling.New(pool, accessModule, nil,
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, nil,
 		humancalling.Config{}, func() time.Time { return now },
 	)
 	command := humancalling.ReadinessCommand{
@@ -112,11 +112,12 @@ func TestCallingStateValidatorTracksSoftphoneChangesButNotHeartbeats(t *testing.
 }
 
 func TestCallingStateValidatorAvoidsSequentialScansAtVolume(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, 10, 13, 17, 0, 0, 0, time.UTC)
 	authorization, identities := provisionConcurrentStaff(
-		t, access.New(pool, func() time.Time { return now }), now, "calling-state-plan", 2,
+		t, db.Owner, access.New(db.As(testdb.Portal), func() time.Time { return now }), now, "calling-state-plan", 2,
 	)
 	if _, err := pool.Exec(ctx, `
 		WITH inserted AS (
@@ -175,7 +176,7 @@ func TestCallingStateValidatorAvoidsSequentialScansAtVolume(t *testing.T) {
 	}
 
 	trace := &callingStateQueryTrace{}
-	config := pool.Config().Copy()
+	config := db.As(testdb.Portal).Config()
 	config.ConnConfig.Tracer = trace
 	tracedPool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
@@ -233,15 +234,16 @@ func (node planNode) sequentialScans() []string {
 }
 
 func TestCallingStateValidatorTracksOnlyLiveOrUndisposedOwnCallLegs(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, 10, 13, 17, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, identities := provisionConcurrentStaff(
-		t, accessModule, now, "calling-state-own-legs", 2,
+		t, db.Owner, accessModule, now, "calling-state-own-legs", 2,
 	)
 	staff, other := identities[0], identities[1]
-	calling := humancalling.New(pool, accessModule, nil,
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, nil,
 		humancalling.Config{}, func() time.Time { return now },
 	)
 

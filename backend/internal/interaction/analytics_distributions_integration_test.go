@@ -13,7 +13,8 @@ import (
 )
 
 func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 	var practice, otherPractice, location, otherLocation, foreignLocation, emptyLocation string
@@ -77,7 +78,7 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 		id := insert(excluded.practice, excluded.location, fmt.Sprint("excluded-", i), excluded.at, "billing_question", "abandoned")
 		answer(id, "office_question_answered", ScorecardJudgeVersion, "judge", false)
 	}
-	module := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
+	module := New(db.As(testdb.Portal), access.New(db.As(testdb.Portal), func() time.Time { return now }), func() time.Time { return now })
 	cmd := QueryAnalyticsCommand{Identity: access.Identity{Subject: "distribution", Email: "distribution@example.test", EmailVerified: true}, PracticeID: practice, LocationID: location, Range: AnalyticsRange7Days, Limit: 50}
 	page, err := module.QueryAnalytics(ctx, cmd)
 	if err != nil {

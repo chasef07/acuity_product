@@ -12,10 +12,11 @@ import (
 )
 
 func TestCallingStateIncludesEveryDiscoveredPractice(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	member := access.Identity{Subject: "calling-member", Email: "member@calling.test", EmailVerified: true}
 	operator := access.Identity{Subject: "calling-operator", Email: "operator@calling.test", EmailVerified: true}
 	practices := []access.PracticeProvision{}
@@ -26,13 +27,13 @@ func TestCallingStateIncludesEveryDiscoveredPractice(t *testing.T) {
 			AccessGrants: []access.AccessGrantProvision{{Key: "member", Email: member.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeAll}},
 		})
 	}
-	if _, err := accessModule.Provision(ctx, access.Provisioning{
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{
 		Environment: "test", RequestedBy: "discovered-practices-test",
 		PlatformOperators: []string{operator.Email}, Practices: practices,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	calling := humancalling.New(pool, accessModule, nil, humancalling.Config{}, func() time.Time { return now })
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, nil, humancalling.Config{}, func() time.Time { return now })
 	for _, identity := range []access.Identity{member, operator} {
 		t.Run(identity.Subject, func(t *testing.T) {
 			discovery, err := accessModule.DiscoverActor(ctx, identity)

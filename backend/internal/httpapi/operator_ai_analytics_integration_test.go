@@ -25,9 +25,10 @@ import (
 )
 
 func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	operator := access.Identity{
 		Subject:       "operator-ai-analytics-subject",
 		Email:         "operator-ai-analytics@acuity.test",
@@ -38,7 +39,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		Email:         "admin-ai-analytics@acuity.test",
 		EmailVerified: true,
 	}
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "operator-ai-analytics-test",
 		PlatformOperators: []string{operator.Email},
@@ -176,11 +177,11 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create operator AI service authenticator: %v", err)
 	}
-	workModule := work.New(pool, accessModule, func() time.Time { return now })
-	callingModule := humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil)
+	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
+	callingModule := humancalling.New(db.As(testdb.Portal), accessModule, httpCallingProvider{}, humancalling.Config{}, nil)
 	handler, err := httpapi.NewPortal(
 		httpapi.Config{AcquireTimeout: time.Second},
-		pool,
+		db.As(testdb.Portal),
 		httpapi.PortalDependencies{
 			Access: accessModule,
 			Authenticator: staticAuthenticator{
@@ -188,10 +189,10 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 				"admin-token":    admin,
 			},
 			Calling:              callingModule,
-			Interactions:         interaction.New(pool, accessModule, func() time.Time { return now }),
-			Messaging:            messaging.New(pool, accessModule, workModule, nil, messaging.Config{}, nil),
+			Interactions:         interaction.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }),
+			Messaging:            messaging.New(db.As(testdb.Portal), accessModule, workModule, nil, messaging.Config{}, nil),
 			Work:                 workModule,
-			Workspace:            workspace.New(pool, accessModule),
+			Workspace:            workspace.New(db.As(testdb.Portal), accessModule),
 			ServiceAuthenticator: serviceAuth,
 		},
 	)

@@ -11,7 +11,8 @@ import (
 
 func TestTaskClassificationCoversEveryOriginAndUrgency(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	folders := map[work.TaskOrigin]string{
 		work.TaskOriginHumanCallFollowUp:    "follow_up",
 		work.TaskOriginAbitaAI:              "follow_up",

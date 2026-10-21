@@ -14,11 +14,12 @@ import (
 )
 
 func TestPhoneHistoryNamesTheStaffMemberWhoPlacedAnUnansweredCallback(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, 9, 8, 14, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(ctx, access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{
 		Environment: "test", RequestedBy: "callback-attribution-test",
 		Practices: []access.PracticeProvision{{
 			Key: "callback", Name: "Callback Practice",
@@ -41,7 +42,7 @@ func TestPhoneHistoryNamesTheStaffMemberWhoPlacedAnUnansweredCallback(t *testing
 
 	missedAt := now.Add(-10 * time.Minute)
 	missedCallID := insertRecoveryCall(t, pool, authorization, locationID, phone, missedAt)
-	writes := work.New(pool, accessModule, func() time.Time { return now })
+	writes := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +107,7 @@ func TestPhoneHistoryNamesTheStaffMemberWhoPlacedAnUnansweredCallback(t *testing
 		t.Fatal(err)
 	}
 
-	page, err := workspace.New(pool, accessModule).QueryPhoneTimeline(ctx, workspace.QueryPhoneTimelineCommand{
+	page, err := workspace.New(db.As(testdb.Portal), accessModule).QueryPhoneTimeline(ctx, workspace.QueryPhoneTimelineCommand{
 		Identity: viewer, PracticeID: authorization.Practice.ID, Phone: phone,
 	})
 	if err != nil {
@@ -180,7 +181,7 @@ func TestPhoneHistoryNamesTheStaffMemberWhoPlacedAnUnansweredCallback(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterReopen, err := workspace.New(pool, accessModule).QueryPhoneTimeline(ctx, workspace.QueryPhoneTimelineCommand{
+	afterReopen, err := workspace.New(db.As(testdb.Portal), accessModule).QueryPhoneTimeline(ctx, workspace.QueryPhoneTimelineCommand{
 		Identity: viewer, PracticeID: authorization.Practice.ID, Phone: phone,
 	})
 	if err != nil {

@@ -19,15 +19,16 @@ import (
 )
 
 func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	identity := access.Identity{
 		Subject:       "conditional-calling-state-staff",
 		Email:         "staff@conditional-calling-state.test",
 		EmailVerified: true,
 	}
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "conditional-calling-state-test",
 		Practices: []access.PracticeProvision{{
@@ -70,7 +71,7 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 	}
 
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		httpCallingProvider{},
 		humancalling.Config{},
@@ -79,7 +80,7 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 	handler, err := newPortalHandlerWithCalling(
 		t,
 		httpapi.Config{AcquireTimeout: 100 * time.Millisecond},
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		staticAuthenticator{"conditional-token": identity},
 		calling,
@@ -150,7 +151,7 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 	if err != nil {
 		t.Fatalf("begin unrelated Task creation: %v", err)
 	}
-	if _, err := work.New(pool, accessModule, func() time.Time { return now }).EnsureCallFollowUp(
+	if _, err := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }).EnsureCallFollowUp(
 		context.Background(),
 		taskTransaction,
 		work.EnsureCallFollowUpCommand{
@@ -256,15 +257,16 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 }
 
 func TestCallingStateLogsTheBrowserCallingChangeReport(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.October, 13, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	identity := access.Identity{
 		Subject:       "calling-change-report-staff",
 		Email:         "staff@calling-change-report.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "calling-change-report-test",
 		PlatformOperators: []string{"operator@calling-change-report.test"},
@@ -295,11 +297,11 @@ func TestCallingStateLogsTheBrowserCallingChangeReport(t *testing.T) {
 				slog.New(slog.NewJSONHandler(&metrics, nil)),
 			),
 		},
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		staticAuthenticator{"change-report-token": identity},
 		humancalling.New(
-			pool,
+			db.As(testdb.Portal),
 			accessModule,
 			httpCallingProvider{},
 			humancalling.Config{},

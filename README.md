@@ -163,8 +163,9 @@ Run the commands below from the repository root. The frontend package lives in
   [the verification workflow](.github/workflows/verify.yml).
 - pnpm 10.34.5, matching [`web/package.json`](web/package.json).
 - A running local PostgreSQL 16 server, the `psql` and `createdb` tools, and
-  `curl`. Use a disposable local database cluster whose user can create roles
-  and reset schemas for integration tests.
+  `curl`. Use a disposable local database cluster whose user is a superuser:
+  integration tests reset schemas, create the runtime roles, and connect as
+  them.
 
 Install dependencies:
 
@@ -290,6 +291,13 @@ Keep database-backed packages serial: they share and reset schemas. Without
 database behavior passed. CI shards the complete package set across isolated
 databases for pull requests, main, and exact-release verification. Packages
 within each shard remain serial, and every shard must pass.
+
+Integration tests open the database with `testdb.Open`, which creates the
+runtime roles and applies `database-grants.sql`. Seed with SQL and provisioning
+through `db.Owner`; construct modules with `db.As(testdb.Portal)` (or `Worker`,
+`Provider`, `Realtime`), the role that runs that code in production, so a
+missing grant fails the test with permission denied. Tests still on
+`testdb.OpenAsOwner` are a shrinking baseline in `architecture/`.
 
 ### Frontend
 

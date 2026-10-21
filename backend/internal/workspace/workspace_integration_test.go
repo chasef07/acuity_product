@@ -18,10 +18,11 @@ import (
 )
 
 func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "workspace-read-test",
 		Practices: []access.PracticeProvision{{
@@ -49,7 +50,7 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 		EmailVerified: true,
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
-	workModule := work.New(pool, accessModule, func() time.Time { return now })
+	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	task, status, err := workModule.CreateAITask(
 		context.Background(),
 		work.CreateAITaskCommand{
@@ -77,9 +78,11 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 		t.Fatalf("create Workspace Task = %#v, %q, %v", task, status, err)
 	}
 	messages := messaging.New(
-		pool, accessModule, workModule, nil, messaging.Config{}, func() time.Time { return now },
+		db.As(testdb.Portal), accessModule, workModule, nil, messaging.Config{}, func() time.Time { return now },
 	)
-	if err := messages.Provision(context.Background(), []messaging.LocationProvision{{
+	if err := messaging.New(
+		pool, accessModule, workModule, nil, messaging.Config{}, func() time.Time { return now },
+	).Provision(context.Background(), []messaging.LocationProvision{{
 		PracticeKey:        "workspace-read-practice",
 		LocationKey:        "workspace-read-location",
 		Sender:             "+17275550100",
@@ -101,7 +104,7 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 		t.Fatalf("create Workspace Message: %v", err)
 	}
 
-	reads := workspace.New(pool, accessModule)
+	reads := workspace.New(db.As(testdb.Portal), accessModule)
 	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity: identity, PracticeID: task.PracticeID,
 	})
@@ -114,10 +117,7 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 		t.Fatalf("Workspace Queue projection = %#v", page)
 	}
 	tracer := &workspaceQueryTracer{}
-	tracedConfig, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatalf("parse traced Workspace database config: %v", err)
-	}
+	tracedConfig := db.As(testdb.Portal).Config()
 	tracedConfig.ConnConfig.Tracer = tracer
 	tracedPool, err := pgxpool.NewWithConfig(context.Background(), tracedConfig)
 	if err != nil {
