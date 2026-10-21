@@ -132,7 +132,7 @@ export type CallingCardView =
   | CallingCardCallView
   | CallingCardOfferView
 
-export type CallingCardIdentity = {
+type CallingCardIdentity = {
   primary: string
   details: string[]
 }
@@ -162,7 +162,7 @@ export type CallingDispositionOutcome =
   | "CREATE_TASK"
   | "NO_FOLLOW_UP"
 
-export type CallingCardActions = {
+type CallingCardActions = {
   dispositions: Array<{
     outcome: CallingDispositionOutcome
     label: string
@@ -178,7 +178,7 @@ export type CallingCardActions = {
   }
 }
 
-export type CallingCardControl = {
+type CallingCardControl = {
   kind: "mute" | "end" | "keypad"
   visible: boolean
   disabled: boolean

@@ -3,7 +3,6 @@ import {
   getOperatorScorecardQuestions,
   openOperatorCallReviewQueue,
   queryOperatorJudgeAccuracy,
-  queryOperatorScorecardResults,
   submitOperatorCallReview,
 } from "../api/generated/sdk.gen"
 import type { OperatorCallReviewSubmission } from "../api/generated/types.gen"
@@ -51,16 +50,5 @@ export function useJudgeAccuracy(practiceID: string) {
     practiceID ? `judge-accuracy:${practiceID}` : null,
     (transport) =>
       queryOperatorJudgeAccuracy({ ...transport, body: { practiceId: practiceID } }),
-  )
-}
-
-export function useScorecardResults(practiceID: string, locationID: string, range: "24h" | "7d" | "30d") {
-  return usePortalQuery(
-    practiceID ? `scorecard-results:${practiceID}:${locationID}:${range}` : null,
-    (transport) =>
-      queryOperatorScorecardResults({
-        ...transport,
-        body: { practiceId: practiceID, locationId: locationID || undefined, range },
-      }),
   )
 }

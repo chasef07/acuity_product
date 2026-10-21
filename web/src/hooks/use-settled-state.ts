@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 
-export const stateSettleMilliseconds = 1_000
+const stateSettleMilliseconds = 1_000
 
 export function useSettledState<State>(state: State) {
   const [observed, setObserved] = useState({ state, settled: true })

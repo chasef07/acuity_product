@@ -3,7 +3,7 @@ import type { ComponentType } from "react"
 
 import chasePortrait from "../../public/marketing/chase-fagen-v2.png"
 
-export type BlogAuthor = {
+type BlogAuthor = {
   name: string
   role: string
   portrait: StaticImageData

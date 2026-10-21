@@ -149,7 +149,7 @@ function failureMessage(failure: PortalFailure, subject: string, unavailable: st
   return `The ${subject} could not be loaded.`
 }
 
-export function ChooseOffice() {
+function ChooseOffice() {
   return (
     <AgentEmpty
       title="Choose an office"

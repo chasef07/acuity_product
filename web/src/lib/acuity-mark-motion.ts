@@ -1,4 +1,4 @@
-export type AcuityMarkDot = { x: number; y: number; r: number; opacity: number }
+type AcuityMarkDot = { x: number; y: number; r: number; opacity: number }
 
 type Motion = { name: string; seconds: number; frame: (progress: number) => AcuityMarkDot[] }
 

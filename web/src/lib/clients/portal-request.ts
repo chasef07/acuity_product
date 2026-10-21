@@ -4,7 +4,7 @@ import { portalClient } from "../api/client"
 import type { ErrorEnvelope } from "../api/generated/types.gen"
 import { getAccessTokenResult } from "../auth-client"
 
-export type PortalFailureKind =
+type PortalFailureKind =
   | "signedOut"
   | "unauthenticated"
   | "unauthorized"

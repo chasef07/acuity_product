@@ -5,7 +5,7 @@ const knowledgeGapKey = "knowledge_available"
 
 export type CallSelection = { intent?: CallIntent; outcome?: CallOutcome; judge?: "pass" | "fail" | "unjudged"; failure?: string }
 
-export function judgeOf(path: OperatorAiPathCount) {
+function judgeOf(path: OperatorAiPathCount) {
   return !path.evaluated ? "unjudged" : path.failures.length ? "fail" : "pass"
 }
 
