@@ -23,7 +23,7 @@ import (
 
 func TestReceiptClaimHoldsEachCallSessionBehindItsInFlightReceipt(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	pool := testdb.OpenAsOwner(t)
 	now := time.Now().UTC()
 	currentTime := now
 	calling := humancalling.New(pool, access.New(pool, time.Now), nil, humancalling.Config{},
@@ -85,9 +85,10 @@ func TestReceiptClaimHoldsEachCallSessionBehindItsInFlightReceipt(t *testing.T) 
 func TestConcurrentReceiptWorkersApplyEachCallSessionInArrivalOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	database := &claimTimingDatabase{Database: pool, claimed: map[string]time.Time{}}
-	calling := humancalling.New(database, access.New(pool, time.Now), nil, humancalling.Config{}, time.Now)
+	calling := humancalling.New(database, access.New(db.As(testdb.Portal), time.Now), nil, humancalling.Config{}, time.Now)
 	insertSessionReceipt := newSignedReceiptIngress(t, pool)
 	const sessions, perSession, workers = 4, 8, 4
 	receivedAt := time.Now().Add(-time.Minute)

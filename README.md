@@ -291,6 +291,13 @@ database behavior passed. CI shards the complete package set across isolated
 databases for pull requests, main, and exact-release verification. Packages
 within each shard remain serial, and every shard must pass.
 
+Integration tests open the database with `testdb.Open`, which creates the
+runtime roles and applies `database-grants.sql`. Seed with SQL and provisioning
+through `db.Owner`; construct modules with `db.As(testdb.Portal)` (or `Worker`,
+`Provider`, `Realtime`), the role that runs that code in production, so a
+missing grant fails the test with permission denied. Tests still on
+`testdb.OpenAsOwner` are a shrinking baseline in `architecture/`.
+
 ### Frontend
 
 ```sh

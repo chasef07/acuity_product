@@ -38,7 +38,8 @@ func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			pool := testdb.Open(t)
+			db := testdb.Open(t)
+			pool := db.Owner
 			publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
 				t.Fatal(err)
@@ -50,9 +51,10 @@ func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 				FromNumber: "+15555550102", RingbackURL: "https://media.synthetic.test/ringback.wav",
 				WebhookPublicKeys: [][]byte{publicKey},
 			}
-			seedAccess := access.New(pool, time.Now)
-			authorization, staff := provisionConcurrentStaff(t, seedAccess, time.Now(), "receipt-latency", scenario.staff)
-			seedCalling := humancalling.New(pool, seedAccess, &recordingProvider{}, config, time.Now)
+			seedAccess := access.New(db.As(testdb.Portal), time.Now)
+			authorization, staff := provisionConcurrentStaff(t, db.Owner, seedAccess, time.Now(), "receipt-latency", scenario.staff)
+			seedCalling := humancalling.New(db.As(testdb.Portal), seedAccess, &recordingProvider{}, config, time.Now)
+			seedCallingWorker := humancalling.New(db.As(testdb.Worker), seedAccess, &recordingProvider{}, config, time.Now)
 			prepareCredentials(t, seedCalling)
 			readyConcurrentStaff(t, seedCalling, staff, "receipt-latency-browser")
 			if _, err := seedCalling.CreateHandoff(ctx, humancalling.CreateHandoffCommand{
@@ -62,7 +64,7 @@ func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if err := seedCalling.ApplyProviderFact(ctx, humancalling.ProviderFact{
+			if err := seedCallingWorker.ApplyProviderFact(ctx, humancalling.ProviderFact{
 				EventID: "receipt-latency-initiated", Type: humancalling.FactCallInitiated, OccurredAt: time.Now(),
 				ConnectionID: config.CallControlID, CallControlID: "receipt-latency-caller-control",
 				CallLegID: "receipt-latency-caller-leg", CallSessionID: "receipt-latency-caller-session",

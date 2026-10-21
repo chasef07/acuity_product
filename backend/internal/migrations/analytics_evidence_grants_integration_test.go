@@ -8,9 +8,7 @@ import (
 )
 
 func TestAnalyticsEvidenceProjectsUnderRuntimeGrants(t *testing.T) {
-	pool := testdb.Open(t)
-	createDatabaseRoles(t, pool)
-	applyDatabaseGrants(t, pool)
+	pool := testdb.Open(t).Owner
 	ctx := context.Background()
 	var practiceID, locationID string
 	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('analytics-grants','Analytics Grants') RETURNING id::text`).Scan(&practiceID); err != nil {

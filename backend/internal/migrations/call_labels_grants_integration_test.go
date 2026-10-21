@@ -8,9 +8,7 @@ import (
 )
 
 func TestCallLabelsRuntimeGrantsKeepJudgeEvidencePrivate(t *testing.T) {
-	pool := testdb.Open(t)
-	createDatabaseRoles(t, pool)
-	applyDatabaseGrants(t, pool)
+	pool := testdb.Open(t).Owner
 	ctx := context.Background()
 	var practice, location string
 	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('label-grants','Synthetic Practice') RETURNING id::text`).Scan(&practice); err != nil {

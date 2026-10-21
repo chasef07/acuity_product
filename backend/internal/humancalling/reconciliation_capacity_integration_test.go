@@ -20,11 +20,12 @@ import (
 func TestOutgoingCallLegMaintenanceDoesNotStarveRealtimeCommandsAtProductionCardinality(
 	t *testing.T,
 ) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 11, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, _ := provisionConcurrentStaff(
-		t, accessModule, now, "reconciliation-capacity", 1,
+		t, db.Owner, accessModule, now, "reconciliation-capacity", 1,
 	)
 
 	if _, err := pool.Exec(context.Background(), `
@@ -212,11 +213,12 @@ func TestOutgoingCallLegMaintenanceDoesNotStarveRealtimeCommandsAtProductionCard
 }
 
 func TestOutgoingCallLegMaintenanceRecoversOneInterruptedCommandPerTick(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, _ := provisionConcurrentStaff(
-		t, accessModule, now, "bounded-interrupted-recovery", 1,
+		t, db.Owner, accessModule, now, "bounded-interrupted-recovery", 1,
 	)
 	if _, err := pool.Exec(context.Background(), `
 		WITH inserted_calls AS (
@@ -253,7 +255,7 @@ func TestOutgoingCallLegMaintenanceRecoversOneInterruptedCommandPerTick(t *testi
 		t.Fatalf("seed interrupted provider commands: %v", err)
 	}
 	calling := humancalling.New(
-		pool, accessModule, &recordingProvider{}, humancalling.Config{},
+		db.As(testdb.Worker), accessModule, &recordingProvider{}, humancalling.Config{},
 		func() time.Time { return now },
 	)
 
@@ -282,11 +284,12 @@ func TestOutgoingCallLegMaintenanceRecoversOneInterruptedCommandPerTick(t *testi
 }
 
 func TestClaimNextCommandLocksCallLegBeforeProviderCommand(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.September, 1, 12, 30, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, _ := provisionConcurrentStaff(
-		t, accessModule, now, "claim-lock-order", 1,
+		t, db.Owner, accessModule, now, "claim-lock-order", 1,
 	)
 	var callLegID, commandID string
 	if err := pool.QueryRow(context.Background(), `
@@ -344,7 +347,7 @@ func TestClaimNextCommandLocksCallLegBeforeProviderCommand(t *testing.T) {
 		DROP FUNCTION IF EXISTS block_provider_command_claim()
 	`)
 	calling := humancalling.New(
-		pool, accessModule, &recordingProvider{}, humancalling.Config{},
+		db.As(testdb.Worker), accessModule, &recordingProvider{}, humancalling.Config{},
 		func() time.Time { return now },
 	)
 	type claimResult struct {

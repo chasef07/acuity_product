@@ -21,7 +21,8 @@ import (
 func TestCredentialLegReceiptsPreserveCallAndClassifyObservation(t *testing.T) {
 	for _, scenario := range []string{"tracked", "arrives_before_staff_session", "unmatched_session", "wrong_connection", "ambiguous_session", "wrong_staff_connection", "non_staff_session"} {
 		t.Run(scenario, func(t *testing.T) {
-			pool := testdb.Open(t)
+			db := testdb.Open(t)
+			pool := db.Owner
 			ctx := context.Background()
 			now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 			const callID = "00000000-0000-0000-0000-000000000804"
@@ -81,7 +82,11 @@ func TestCredentialLegReceiptsPreserveCallAndClassifyObservation(t *testing.T) {
 				t.Fatal(err)
 			}
 			var logs bytes.Buffer
-			calling := humancalling.New(pool, nil, nil, humancalling.Config{
+			calling := humancalling.New(db.As(testdb.Provider), nil, nil, humancalling.Config{
+				CallControlID: "call-control", CredentialConnectionID: "credential", WebhookPublicKeys: [][]byte{public},
+				Observer: observability.NewLogger(observability.RuntimeWorker, "synthetic", slog.New(slog.NewJSONHandler(&logs, nil))),
+			}, func() time.Time { return now })
+			callingWorker := humancalling.New(db.As(testdb.Worker), nil, nil, humancalling.Config{
 				CallControlID: "call-control", CredentialConnectionID: "credential", WebhookPublicKeys: [][]byte{public},
 				Observer: observability.NewLogger(observability.RuntimeWorker, "synthetic", slog.New(slog.NewJSONHandler(&logs, nil))),
 			}, func() time.Time { return now })
@@ -117,7 +122,7 @@ func TestCredentialLegReceiptsPreserveCallAndClassifyObservation(t *testing.T) {
 			}
 			process := func() {
 				t.Helper()
-				if ok, err := calling.ProcessNextReceipt(ctx); err != nil || !ok {
+				if ok, err := callingWorker.ProcessNextReceipt(ctx); err != nil || !ok {
 					t.Fatalf("process: %t %v", ok, err)
 				}
 			}

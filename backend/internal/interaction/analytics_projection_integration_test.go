@@ -17,7 +17,8 @@ import (
 
 func TestAnalyticsLargeTranscriptQueryBudget(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	var practiceID, locationID string
 	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('analytics-scale','Synthetic Analytics') RETURNING id::text`).Scan(&practiceID); err != nil {
@@ -39,11 +40,11 @@ func TestAnalyticsLargeTranscriptQueryBudget(t *testing.T) {
  SELECT 'agent',$1,$2,'synthetic-'||n,'+15555550101','+15555550102',$3::timestamptz - n*interval '1 second',$3,'COMPLETED',3,$4,'{"domainOutcomes":[]}' FROM generate_series(1,$5) AS n`, practiceID, locationID, now, transcript, calls); err != nil {
 		t.Fatal(err)
 	}
-	db, err := postgres.NewExecutor(pool, postgres.ExecutorConfig{AcquireTimeout: time.Second, OperationTimeout: 10 * time.Second, StatementTimeout: 5 * time.Second}, nil)
+	executor, err := postgres.NewExecutor(db.As(testdb.Portal), postgres.ExecutorConfig{AcquireTimeout: time.Second, OperationTimeout: 10 * time.Second, StatementTimeout: 5 * time.Second}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	module := New(db, access.New(db, func() time.Time { return now }), func() time.Time { return now })
+	module := New(executor, access.New(executor, func() time.Time { return now }), func() time.Time { return now })
 	command := QueryAnalyticsCommand{Identity: access.Identity{Subject: "operator", Email: "operator@example.test", EmailVerified: true}, PracticeID: practiceID, Range: AnalyticsRange24Hours, Limit: 25}
 	started := time.Now()
 	page, err := module.QueryAnalytics(ctx, command)
@@ -143,7 +144,8 @@ func projectionLatencySamples(projection analyticsProjection) latencyValueSet {
 
 func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	var practiceID, locationID string
 	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('quality-trends','Quality Trends') RETURNING id::text`).Scan(&practiceID); err != nil {
 		t.Fatal(err)

@@ -16,9 +16,10 @@ import (
 
 func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	staff := []struct {
 		key      string
 		category work.TaskCategory
@@ -32,7 +33,7 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	for _, member := range staff {
 		grants = append(grants, access.AccessGrantProvision{Key: member.key, Email: member.key + "@shared-review.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"allowed"}})
 	}
-	if _, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "shared-review-test", Practices: []access.PracticeProvision{{
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "shared-review-test", Practices: []access.PracticeProvision{{
 		Key: "shared-review", Name: "Synthetic Shared Review", AccessGrants: grants,
 		Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed", AbitaOfficeKeys: []string{"allowed", "spring-hill"}}, {Key: "denied", Name: "Denied", AbitaOfficeKeys: []string{"denied"}}},
 	}}}); err != nil {
@@ -40,8 +41,8 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	}
 	admin := access.Identity{Subject: "shared-review-admin", Email: "admin@shared-review.test", EmailVerified: true}
 	auth := testaccess.Activate(t, a, admin)
-	m := work.New(pool, a, func() time.Time { return now })
-	reads := workspace.New(pool, a)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
+	reads := workspace.New(db.As(testdb.Portal), a)
 	locations := map[string]string{}
 	for _, key := range []string{"allowed", "denied"} {
 		var locationID string

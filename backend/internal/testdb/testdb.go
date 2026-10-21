@@ -13,13 +13,58 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func Open(t *testing.T) *pgxpool.Pool {
-	return open(t, "")
+type Role string
+
+const (
+	Portal   Role = "acuity_portal"
+	Provider Role = "acuity_provider"
+	Realtime Role = "acuity_realtime"
+	Worker   Role = "acuity_worker"
+)
+
+type DB struct {
+	Owner *pgxpool.Pool
+	t     *testing.T
+	pools map[Role]*pgxpool.Pool
+}
+
+func Open(t *testing.T) *DB {
+	t.Helper()
+	owner := open(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := migrations.ApplyRuntimeGrants(ctx, owner); err != nil {
+		t.Fatalf("apply runtime grants: %v", err)
+	}
+	return &DB{Owner: owner, t: t, pools: map[Role]*pgxpool.Pool{}}
+}
+
+func (db *DB) As(role Role) *pgxpool.Pool {
+	db.t.Helper()
+	if pool, ok := db.pools[role]; ok {
+		return pool
+	}
+	config := db.Owner.Config()
+	config.ConnConfig.RuntimeParams["role"] = string(role)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		db.t.Fatalf("open %s pool: %v", role, err)
+	}
+	db.t.Cleanup(pool.Close)
+	db.pools[role] = pool
+	return pool
 }
 
 func OpenThrough(t *testing.T, last string) *pgxpool.Pool {
 	t.Helper()
 	return open(t, last)
+}
+
+func OpenAsOwner(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	return Open(t).Owner
 }
 
 func open(t *testing.T, last string) *pgxpool.Pool {
@@ -94,6 +139,32 @@ func open(t *testing.T, last string) *pgxpool.Pool {
 		CREATE SCHEMA public
 	`); err != nil {
 		t.Fatalf("reset test database: %v", err)
+	}
+	if _, err := lock.Exec(migrationContext, `
+		DO $roles$
+		DECLARE
+			role_name text;
+		BEGIN
+			FOREACH role_name IN ARRAY ARRAY[
+				'acuity_auth',
+				'acuity_migrate',
+				'acuity_portal',
+				'acuity_provider',
+				'acuity_realtime',
+				'acuity_worker'
+			] LOOP
+				IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+					BEGIN
+						EXECUTE format('CREATE ROLE %I NOLOGIN', role_name);
+					EXCEPTION WHEN duplicate_object OR unique_violation THEN
+						NULL;
+					END;
+				END IF;
+			END LOOP;
+		END
+		$roles$
+	`); err != nil {
+		t.Fatalf("create runtime database roles: %v", err)
 	}
 	var migrationErr error
 	if last == "" {

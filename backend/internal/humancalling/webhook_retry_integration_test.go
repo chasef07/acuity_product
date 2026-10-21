@@ -16,14 +16,15 @@ import (
 )
 
 func TestProviderWebhookRetryWithNewDeliveryMetadataIsDuplicate(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Provider),
 		nil,
 		nil,
 		humancalling.Config{

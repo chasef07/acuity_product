@@ -42,7 +42,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 	} {
 		office := fixture.office
 		t.Run(office, func(t *testing.T) {
-			pool := testdb.Open(t)
+			pool := testdb.OpenAsOwner(t)
 			ctx := context.Background()
 			a := access.New(pool, time.Now)
 			_, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "focused", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{office}}}}}})

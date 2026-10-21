@@ -13,7 +13,8 @@ import (
 )
 
 func TestAnalyticsJudgesCoverFullWindowAndIgnoreLabelFilters(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 	var practice, otherPractice, location, otherLocation, foreignLocation string
@@ -50,7 +51,7 @@ func TestAnalyticsJudgesCoverFullWindowAndIgnoreLabelFilters(t *testing.T) {
 	insert(otherPractice, foreignLocation, "other-practice", now, raw)
 	insert(practice, location, "past", now.Add(-8*24*time.Hour), raw)
 	insert(practice, location, "future", now.Add(time.Second), raw)
-	module := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
+	module := New(db.As(testdb.Portal), access.New(db.As(testdb.Portal), func() time.Time { return now }), func() time.Time { return now })
 	cmd := QueryAnalyticsCommand{Identity: access.Identity{Subject: "judges", Email: "judges@example.test", EmailVerified: true}, PracticeID: practice, LocationID: location, Range: AnalyticsRange7Days, Limit: 50}
 	page, err := module.QueryAnalytics(ctx, cmd)
 	if err != nil {

@@ -36,9 +36,10 @@ func (constantEmbedder) Embed(_ context.Context, texts []string, _ knowledge.Tas
 }
 
 func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) {
-	pool := testdb.Open(t)
-	accessModule := access.New(pool, nil)
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	db := testdb.Open(t)
+	pool := db.Owner
+	accessModule := access.New(db.As(testdb.Portal), nil)
+	if _, err := access.New(pool, nil).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "insurance-rules-http-test",
 		Practices: []access.PracticeProvision{{
@@ -89,7 +90,7 @@ func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	knowledgeModule, err := knowledge.New(pool, accessModule, constantEmbedder{}, knowledge.Config{})
+	knowledgeModule, err := knowledge.New(db.As(testdb.Portal), accessModule, constantEmbedder{}, knowledge.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,15 +109,15 @@ func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	workModule := work.New(pool, accessModule, nil)
-	handler, err := httpapi.NewPortal(httpapi.Config{AcquireTimeout: time.Second}, pool, httpapi.PortalDependencies{
+	workModule := work.New(db.As(testdb.Portal), accessModule, nil)
+	handler, err := httpapi.NewPortal(httpapi.Config{AcquireTimeout: time.Second}, db.As(testdb.Portal), httpapi.PortalDependencies{
 		Access:               accessModule,
 		Authenticator:        staticAuthenticator{"admin-token": admin, "staff-token": staff},
-		Calling:              humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil),
-		Interactions:         interaction.New(pool, accessModule, nil),
-		Messaging:            messaging.New(pool, accessModule, workModule, nil, messaging.Config{}, nil),
+		Calling:              humancalling.New(db.As(testdb.Portal), accessModule, httpCallingProvider{}, humancalling.Config{}, nil),
+		Interactions:         interaction.New(db.As(testdb.Portal), accessModule, nil),
+		Messaging:            messaging.New(db.As(testdb.Portal), accessModule, workModule, nil, messaging.Config{}, nil),
 		Work:                 workModule,
-		Workspace:            workspace.New(pool, accessModule),
+		Workspace:            workspace.New(db.As(testdb.Portal), accessModule),
 		Insurance:            insuranceModule,
 		Knowledge:            knowledgeModule,
 		ServiceAuthenticator: serviceAuthenticator,

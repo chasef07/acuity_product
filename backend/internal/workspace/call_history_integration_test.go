@@ -13,11 +13,12 @@ import (
 )
 
 func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(ctx, access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{
 		Environment: "test", RequestedBy: "call-history-test",
 		Practices: []access.PracticeProvision{{Key: "history", Name: "History", Locations: []access.LocationProvision{{Key: "office", Name: "Office", AbitaOfficeKeys: []string{"history-office"}}, {Key: "hidden", Name: "Hidden office"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: "staff@history.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"office"}}}}},
 	})
@@ -37,7 +38,7 @@ func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	writes := work.New(pool, accessModule, func() time.Time { return now.Add(time.Minute) })
+	writes := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now.Add(time.Minute) })
 	task, _, err := writes.CreateAITask(ctx, work.CreateAITaskCommand{
 		Service:   access.ServiceIdentity{Subject: "history-ai", PracticeID: authorization.Practice.ID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}},
 		OfficeKey: "history-office", OfficePhone: "+12025550100", SourceCallID: sourceCallID, IdempotencyKey: "history-task", Phone: phone, Summary: "Confirm instructions", Message: "Caller needs instructions after booking", Category: work.TaskCategoryDocumentation, Urgency: work.TaskUrgencyNormal,
@@ -45,7 +46,7 @@ func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	reads := workspace.New(pool, accessModule)
+	reads := workspace.New(db.As(testdb.Portal), accessModule)
 	page, err := reads.QueryPhoneTimeline(ctx, workspace.QueryPhoneTimelineCommand{Identity: identity, PracticeID: authorization.Practice.ID, Phone: phone, Limit: 1})
 	if err != nil {
 		t.Fatal(err)

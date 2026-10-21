@@ -27,16 +27,23 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			ctx := context.Background()
-			pool := testdb.Open(t)
+			db := testdb.Open(t)
+			pool := db.Owner
 			now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
-			accessModule := access.New(pool, func() time.Time { return now })
-			auth, staff := provisionConcurrentStaff(t, accessModule, now, "ring-group", 2)
+			accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+			auth, staff := provisionConcurrentStaff(t, db.Owner, accessModule, now, "ring-group", 2)
 			operator := access.Identity{Subject: "ring-operator", Email: "operator@synthetic.test", EmailVerified: true}
 			if _, err := pool.Exec(ctx, `INSERT INTO access_platform_operators(email,user_subject) VALUES ($1,$2)`, operator.Email, operator.Subject); err != nil {
 				t.Fatal(err)
 			}
 			provider := &recordingProvider{}
-			calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+			calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+				HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
+				RingWindowDuration: 20 * time.Second, HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+				CallControlID: "staff-call-control-connection", CredentialConnectionID: "staff-credential-connection",
+				FromNumber: "+14843336938", RingbackURL: "https://media.synthetic.test/ringback.wav",
+			}, func() time.Time { return now })
+			callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
 				HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
 				RingWindowDuration: 20 * time.Second, HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
 				CallControlID: "staff-call-control-connection", CredentialConnectionID: "staff-credential-connection",
@@ -53,7 +60,12 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 				}
 				defer tx.Rollback(ctx)
 				for i := 0; i < 2; i++ {
-					if err := calling.ProvisionLocationRingGroupsInTx(ctx, tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "ring-group-practice", LocationKey: "ring-group-location", MemberEmails: []string{" " + strings.ToUpper(email) + " ", email}}}, "ring-test"); err != nil {
+					if err := humancalling.New(pool, accessModule, provider, humancalling.Config{
+						HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
+						RingWindowDuration: 20 * time.Second, HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+						CallControlID: "staff-call-control-connection", CredentialConnectionID: "staff-credential-connection",
+						FromNumber: "+14843336938", RingbackURL: "https://media.synthetic.test/ringback.wav",
+					}, func() time.Time { return now }).ProvisionLocationRingGroupsInTx(ctx, tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "ring-group-practice", LocationKey: "ring-group-location", MemberEmails: []string{" " + strings.ToUpper(email) + " ", email}}}, "ring-test"); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -92,14 +104,14 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 				ConnectionID: "staff-call-control-connection", CallControlID: "ring-caller-control", CallLegID: "ring-caller-leg", CallSessionID: "ring-caller-session",
 				From: "+15555550100", To: "+14843989071",
 			}
-			if err := calling.ApplyProviderFact(ctx, caller); err != nil {
+			if err := callingWorker.ApplyProviderFact(ctx, caller); err != nil {
 				t.Fatal(err)
 			}
 			processAllCommands(t, calling)
 			caller.EventID = "ring-answered"
 			caller.Type = humancalling.FactCallAnswered
 			caller.OccurredAt = now.Add(time.Second)
-			if err := calling.ApplyProviderFact(ctx, caller); err != nil {
+			if err := callingWorker.ApplyProviderFact(ctx, caller); err != nil {
 				t.Fatal(err)
 			}
 			processAllCommands(t, calling)
@@ -119,7 +131,7 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 			if scenario.want == 0 {
 				ring := provider.last(humancalling.CommandStartRingWindow)
 				state, _ := ring.Payload["client_state"].(string)
-				if err := calling.ApplyProviderFact(ctx, humancalling.ProviderFact{
+				if err := callingWorker.ApplyProviderFact(ctx, humancalling.ProviderFact{
 					EventID: "ring-completed", Type: humancalling.FactPlaybackEnded, OccurredAt: now.Add(21 * time.Second),
 					CallControlID: caller.CallControlID, CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
 					ClientState: state, PlaybackStatus: "completed",
@@ -137,14 +149,14 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 
 func TestLocationRingGroupAuditCommitsWithProvisioning(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.September, 30, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	auth, staff := provisionConcurrentStaff(t, accessModule, now, "ring-audit", 1)
-	calling := humancalling.New(pool, accessModule, nil, humancalling.Config{}, nil)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, staff := provisionConcurrentStaff(t, db.Owner, accessModule, now, "ring-audit", 1)
 	provision := func(tx pgx.Tx) {
 		t.Helper()
-		if err := calling.ProvisionLocationRingGroupsInTx(ctx, tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "ring-audit-practice", LocationKey: "ring-audit-location", MemberEmails: []string{staff[0].Email}}}, "ring-audit-test"); err != nil {
+		if err := humancalling.New(pool, accessModule, nil, humancalling.Config{}, nil).ProvisionLocationRingGroupsInTx(ctx, tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "ring-audit-practice", LocationKey: "ring-audit-location", MemberEmails: []string{staff[0].Email}}}, "ring-audit-test"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -194,14 +206,14 @@ func TestLocationRingGroupAuditCommitsWithProvisioning(t *testing.T) {
 }
 
 func TestLocationRingGroupRejectsEmptyOrInvalidMembers(t *testing.T) {
-	pool := testdb.Open(t)
-	calling := humancalling.New(pool, access.New(pool, nil), nil, humancalling.Config{}, nil)
+	db := testdb.Open(t)
+	pool := db.Owner
 	for _, emails := range [][]string{nil, {}, {""}, {"not-an-email"}, {"Person <person@synthetic.test>"}} {
 		tx, err := pool.Begin(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = calling.ProvisionLocationRingGroupsInTx(context.Background(), tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "unused", LocationKey: "unused", MemberEmails: emails}}, "ring-test")
+		err = humancalling.New(pool, access.New(pool, nil), nil, humancalling.Config{}, nil).ProvisionLocationRingGroupsInTx(context.Background(), tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "unused", LocationKey: "unused", MemberEmails: emails}}, "ring-test")
 		tx.Rollback(context.Background())
 		if err != humancalling.ErrInvalidInput {
 			t.Fatalf("invalid group error=%v", err)

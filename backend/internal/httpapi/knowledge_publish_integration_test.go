@@ -19,14 +19,12 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/knowledge"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
-	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type switchableEmbedder struct {
@@ -71,10 +69,11 @@ type publishBody struct {
 }
 
 func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	owner := access.New(pool, nil)
-	if _, err := owner.Provision(ctx, access.Provisioning{
+	seedAccess := access.New(db.As(testdb.Portal), nil)
+	if _, err := access.New(pool, nil).Provision(ctx, access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "knowledge-publish-http-test",
 		PlatformOperators: []string{"operator@acuity.test"},
@@ -107,9 +106,9 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 	staff := access.Identity{Subject: "staff-subject", Email: "staff@abita.test", EmailVerified: true}
 	demoAdmin := access.Identity{Subject: "demo-admin-subject", Email: "admin@demo.test", EmailVerified: true}
 	operator := access.Identity{Subject: "operator-subject", Email: "operator@acuity.test", EmailVerified: true}
-	staffAuthorization := testaccess.Activate(t, owner, staff)
-	demoAuthorization := testaccess.Activate(t, owner, demoAdmin)
-	if _, err := owner.DiscoverActor(ctx, operator); err != nil {
+	staffAuthorization := testaccess.Activate(t, seedAccess, staff)
+	demoAuthorization := testaccess.Activate(t, seedAccess, demoAdmin)
+	if _, err := seedAccess.DiscoverActor(ctx, operator); err != nil {
 		t.Fatalf("activate operator: %v", err)
 	}
 	abita := staffAuthorization.Practice.ID
@@ -124,11 +123,11 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 	}
 
 	embedder := &switchableEmbedder{}
-	ownerKnowledge, err := knowledge.New(pool, owner, embedder, knowledge.Config{})
+	seedKnowledge, err := knowledge.New(db.As(testdb.Portal), seedAccess, embedder, knowledge.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial, err := ownerKnowledge.ReplaceCorpus(ctx, knowledge.ImportCommand{
+	initial, err := seedKnowledge.ReplaceCorpus(ctx, knowledge.ImportCommand{
 		ID: uuid.NewString(), PracticeID: abita, OfficeKey: "hollywood",
 		Sections:   append(syntheticAbitaSections(), knowledge.Section{ID: "sunglasses", Title: "Sunglasses", Text: "Synthetic sunglasses are sold here."}),
 		Provenance: "approved synthetic fixture", Reason: "initial import", ActorSubject: "synthetic-operator",
@@ -137,30 +136,7 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		t.Fatalf("import initial knowledge: %v", err)
 	}
 
-	for _, role := range []string{"acuity_portal", "acuity_provider", "acuity_realtime", "acuity_worker", "acuity_auth", "acuity_migrate"} {
-		var exists bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)`, role).Scan(&exists); err != nil {
-			t.Fatal(err)
-		}
-		if !exists {
-			if _, err := pool.Exec(ctx, "CREATE ROLE "+pgx.Identifier{role}.Sanitize()+" NOLOGIN"); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if err := migrations.ApplyRuntimeGrants(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	config := pool.Config().Copy()
-	config.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
-		_, err := c.Exec(ctx, `SET ROLE acuity_portal`)
-		return err
-	}
-	runtimePool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer runtimePool.Close()
+	runtimePool := db.As(testdb.Portal)
 
 	accessModule := access.New(runtimePool, nil)
 	knowledgeModule, err := knowledge.New(runtimePool, accessModule, embedder, knowledge.Config{SearchEmbeddingTimeout: 500 * time.Millisecond})

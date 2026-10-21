@@ -16,11 +16,12 @@ import (
 
 func TestSharedReviewTasksPreserveEvidenceAndRejectStaleCompletion(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	practice, location := auth.Practice.ID, auth.Locations[0].ID
 	var thread string
 	if err := pool.QueryRow(ctx, `INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone,created_at,updated_at) VALUES($1,$2,'+15555550100','+15555550123',$3,$3) RETURNING id::text`, practice, location, now).Scan(&thread); err != nil {
@@ -92,11 +93,12 @@ func TestSharedReviewTasksPreserveEvidenceAndRejectStaleCompletion(t *testing.T)
 
 func TestAppointmentReviewIsOneSpringHillTaskPerInteraction(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	practice, springHill, otherOffice := auth.Practice.ID, auth.Locations[0].ID, auth.Locations[1].ID
 	ensure, reviews := appointmentReviewHarness(t, pool, m, practice)
 
@@ -180,11 +182,12 @@ func appointmentReviewHarness(t *testing.T, pool *pgxpool.Pool, m *work.Module, 
 
 func TestCompletedCheckpointReviewCannotHideSameTimeCloseoutEvidence(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	ensure, reviews := appointmentReviewHarness(t, pool, m, auth.Practice.ID)
 	location, occurredAt := auth.Locations[0].ID, now.Add(-time.Minute)
 

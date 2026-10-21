@@ -14,12 +14,13 @@ import (
 )
 
 func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	a := access.New(pool, nil)
+	a := access.New(db.As(testdb.Portal), nil)
 	admin := access.Identity{Subject: "staff-report-admin", Email: "admin@staff.test", EmailVerified: true}
 	staff := access.Identity{Subject: "staff-report-person", Email: "person@staff.test", EmailVerified: true}
-	_, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "staff-analytics", Practices: []access.PracticeProvision{
+	_, err := access.New(pool, nil).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "staff-analytics", Practices: []access.PracticeProvision{
 		{Key: "staff-report", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "a", Name: "A"}, {Key: "b", Name: "B"}}, AccessGrants: []access.AccessGrantProvision{
 			{Key: "admin", Email: admin.Email, Role: access.RoleAdmin, LocationScope: access.LocationScopeAll},
 			{Key: "person", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
@@ -113,7 +114,7 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	module := workspace.New(pool, a)
+	module := workspace.New(db.As(testdb.Portal), a)
 	command := workspace.QueryStaffAnalyticsCommand{Identity: admin, PracticeID: practice, LocationID: locA, Days: 7, TimeZone: "UTC"}
 	report, err := module.QueryStaffAnalytics(ctx, command)
 	if err != nil {

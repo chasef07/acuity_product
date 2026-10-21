@@ -309,6 +309,7 @@ TO acuity_realtime;
 
 -- worker: durable receipt projection, command execution, and reconciliation.
 GRANT SELECT ON TABLE
+    public.access_abita_office_locations,
     public.access_calling_scopes,
     public.access_locations,
     public.access_membership_locations,

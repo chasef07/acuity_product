@@ -19,7 +19,6 @@ func TestCallLabelsMigrationRetiresQueueAndPreservesHistory(t *testing.T) {
 	if err := pool.QueryRow(ctx, `INSERT INTO access_locations(practice_id,provisioning_key,name) VALUES($1,'main','Main') RETURNING id::text`, practice).Scan(&location); err != nil {
 		t.Fatal(err)
 	}
-	createDatabaseRoles(t, pool)
 	if _, err := pool.Exec(ctx, `GRANT SELECT,INSERT,UPDATE ON ai_interaction_classifications TO acuity_worker`); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +65,7 @@ func TestCallLabelsMigrationRetiresQueueAndPreservesHistory(t *testing.T) {
 }
 
 func TestCallLabelsProjectionValidatesSuppliedClassificationAndReplacesStaleLabels(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.Open(t).Owner
 	ctx := context.Background()
 	var practice, location string
 	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('label-projection','Synthetic') RETURNING id::text`).Scan(&practice); err != nil {

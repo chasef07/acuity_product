@@ -2,7 +2,6 @@ package migrations_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -10,14 +9,11 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestWorkerCanQueueAutomaticTaskAcknowledgement(t *testing.T) {
-	pool := testdb.Open(t)
-	createDatabaseRoles(t, pool)
-	applyDatabaseGrants(t, pool)
+	db := testdb.Open(t)
+	pool := db.Owner
 
 	ctx := context.Background()
 	now := time.Date(2026, time.August, 20, 14, 0, 0, 0, time.UTC)
@@ -76,19 +72,7 @@ func TestWorkerCanQueueAutomaticTaskAcknowledgement(t *testing.T) {
 		t.Fatalf("provision worker acknowledgement sender: %v", err)
 	}
 
-	config, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
-	if err != nil {
-		t.Fatalf("parse worker database config: %v", err)
-	}
-	config.AfterConnect = func(ctx context.Context, connection *pgx.Conn) error {
-		_, err := connection.Exec(ctx, "SET ROLE acuity_worker")
-		return err
-	}
-	workerPool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatalf("open worker pool: %v", err)
-	}
-	t.Cleanup(workerPool.Close)
+	workerPool := db.As(testdb.Worker)
 	workerAccess := access.New(workerPool, func() time.Time { return now })
 	workerModule := messaging.New(
 		workerPool,

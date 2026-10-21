@@ -12,13 +12,14 @@ import (
 )
 
 func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	now := time.Date(2026, time.August, 9, 6, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, "outbound-resilience", 5,
+		t, db.Owner, accessModule, now, "outbound-resilience", 5,
 	)
 	dialResults := make([]humancalling.ProviderResult, 0, 10)
 	for index := range staff {
@@ -34,7 +35,14 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 		})
 	}
 	provider := &recordingProvider{dialResults: dialResults}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "fixture-call-control",
+		CredentialConnectionID: "fixture-credential-connection",
+	}, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
@@ -43,7 +51,13 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	readyConcurrentStaff(t, calling, staff, "outbound-resilience-browser")
-	if err := calling.ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
+	if err := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "fixture-call-control",
+		CredentialConnectionID: "fixture-credential-connection",
+	}, func() time.Time { return now }).ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
 		PracticeKey: "outbound-resilience-practice",
 		LocationKey: "outbound-resilience-location",
 		Number:      "+14843336938",
@@ -133,14 +147,14 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 				CallLegID: leg.legID, CallSessionID: leg.sessionID,
 				ClientState: leg.clientState,
 			}
-			if err := calling.ApplyProviderFact(ctx, fact); err != nil {
+			if err := callingWorker.ApplyProviderFact(ctx, fact); err != nil {
 				staffFacts <- err
 				return
 			}
 			fact.EventID = "outbound-burst-staff-answered-" + leg.callID
 			fact.Type = humancalling.FactCallAnswered
 			fact.OccurredAt = now.Add(2 * time.Second)
-			staffFacts <- calling.ApplyProviderFact(ctx, fact)
+			staffFacts <- callingWorker.ApplyProviderFact(ctx, fact)
 		}()
 	}
 	for range staffLegs {
@@ -199,7 +213,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 	destinationFacts := make(chan error, len(destinationLegs))
 	for _, leg := range destinationLegs {
 		go func() {
-			destinationFacts <- calling.ApplyProviderFact(ctx, humancalling.ProviderFact{
+			destinationFacts <- callingWorker.ApplyProviderFact(ctx, humancalling.ProviderFact{
 				EventID: "outbound-burst-destination-initiated-" + leg.callID,
 				Type:    humancalling.FactCallInitiated, OccurredAt: now.Add(3 * time.Second),
 				ConnectionID: "fixture-call-control", CallControlID: leg.controlID,
@@ -216,7 +230,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 	outcomeFacts := make(chan error, len(destinationLegs)-1)
 	for _, leg := range destinationLegs {
 		if callOutcome[leg.callID] == "answer" {
-			if err := calling.ApplyProviderFact(ctx, humancalling.ProviderFact{
+			if err := callingWorker.ApplyProviderFact(ctx, humancalling.ProviderFact{
 				EventID: "outbound-burst-destination-outcome-" + leg.callID,
 				Type:    humancalling.FactCallAnswered, OccurredAt: now.Add(4 * time.Second),
 				ConnectionID: "fixture-call-control", CallControlID: leg.controlID,
@@ -239,7 +253,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 			fact.Type = humancalling.FactCallHangup
 			fact.HangupCause = outcome
 			fact.TerminationSource = "DESTINATION"
-			if err := calling.ApplyProviderFact(ctx, fact); err != nil {
+			if err := callingWorker.ApplyProviderFact(ctx, fact); err != nil {
 				outcomeFacts <- fmt.Errorf("%s: %w", outcome, err)
 				return
 			}
@@ -279,7 +293,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 			CallLegID: answeredDestination.legID, CallSessionID: answeredDestination.sessionID,
 			HangupCause: "NORMAL_CLEARING", TerminationSource: "DESTINATION"},
 	} {
-		if err := calling.ApplyProviderFact(ctx, fact); err != nil {
+		if err := callingWorker.ApplyProviderFact(ctx, fact); err != nil {
 			t.Fatalf("complete answered outbound Call: %v", err)
 		}
 	}
@@ -287,7 +301,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 	staffHangups := make(chan error, len(staffLegs))
 	for _, leg := range staffLegs {
 		go func() {
-			staffHangups <- calling.ApplyProviderFact(ctx, humancalling.ProviderFact{
+			staffHangups <- callingWorker.ApplyProviderFact(ctx, humancalling.ProviderFact{
 				EventID: "outbound-burst-staff-ended-" + leg.callID,
 				Type:    humancalling.FactCallHangup, OccurredAt: now.Add(7 * time.Second),
 				CallControlID: leg.controlID, CallLegID: leg.legID,

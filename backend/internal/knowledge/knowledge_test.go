@@ -66,21 +66,23 @@ func TestValidateImport(t *testing.T) {
 	}
 }
 func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	a := access.New(pool, time.Now)
-	_, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "knowledge-test", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{"office-a", "office-b"}}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: "staff@example.com", Role: access.RoleStaff, LocationScope: access.LocationScopeAll}}}}})
+	a := access.New(db.As(testdb.Portal), time.Now)
+	_, err := access.New(pool, time.Now).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "knowledge-test", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{"office-a", "office-b"}}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: "staff@example.com", Role: access.RoleStaff, LocationScope: access.LocationScopeAll}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	authorization := testaccess.Activate(t, a, access.Identity{Subject: "staff", Email: "staff@example.com", EmailVerified: true})
 	provider := &testEmbedder{}
+	portal := db.As(testdb.Portal)
 	provider.before = func() {
-		if got := pool.Stat().AcquiredConns(); got != 1 {
-			t.Errorf("provider called with %d acquired connections; only test advisory lock expected", got)
+		if got := portal.Stat().AcquiredConns(); got != 0 {
+			t.Errorf("provider called with %d acquired portal connections; want none", got)
 		}
 	}
-	m, err := New(pool, a, provider, Config{MinSimilarity: 0.5})
+	m, err := New(portal, a, provider, Config{MinSimilarity: 0.5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,11 +219,11 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 	}
 
 	provisioning := access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "knowledge-test", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{"office-a", "office-b"}}}}}}
-	if _, err := a.Provision(ctx, provisioning); err != nil {
+	if _, err := access.New(pool, time.Now).Provision(ctx, provisioning); err != nil {
 		t.Fatalf("reconcile existing routes after import: %v", err)
 	}
 	provisioning.Practices[0].Locations[0].AbitaOfficeKeys = []string{"office-b"}
-	if _, err := a.Provision(ctx, provisioning); err != nil {
+	if _, err := access.New(pool, time.Now).Provision(ctx, provisioning); err != nil {
 		t.Fatalf("retire imported route: %v", err)
 	}
 	if _, err := m.Search(ctx, service, "office-a", "hours"); !errors.Is(err, access.ErrDenied) {

@@ -13,15 +13,16 @@ import (
 func TestOperatorReadinessDoesNotDeadlockWorkspaceChange(t *testing.T) {
 	for _, lockedResource := range []string{"lease", "call"} {
 		t.Run(lockedResource, func(t *testing.T) {
-			pool := testdb.Open(t)
+			db := testdb.Open(t)
+			pool := db.Owner
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			now := time.Date(2026, time.September, 9, 18, 0, 0, 0, time.UTC)
-			accessModule := access.New(pool, func() time.Time { return now })
+			accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 			operator := access.Identity{
 				Subject: "readiness-operator", Email: "readiness-operator@synthetic.test", EmailVerified: true,
 			}
-			if _, err := accessModule.Provision(ctx, access.Provisioning{
+			if _, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{
 				Environment: "test", RequestedBy: "readiness-locking-test",
 				PlatformOperators: []string{operator.Email},
 				Practices: []access.PracticeProvision{{
@@ -36,7 +37,7 @@ func TestOperatorReadinessDoesNotDeadlockWorkspaceChange(t *testing.T) {
 				t.Fatal(err)
 			}
 			practice := discovery.Practices[0]
-			calling := humancalling.New(pool, accessModule, &recordingProvider{}, humancalling.Config{}, func() time.Time { return now })
+			calling := humancalling.New(db.As(testdb.Portal), accessModule, &recordingProvider{}, humancalling.Config{}, func() time.Time { return now })
 			readyConcurrentStaff(t, calling, []access.Identity{operator}, "readiness-browser")
 
 			var callID string

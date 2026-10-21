@@ -12,7 +12,7 @@ import (
 )
 
 func TestBookingPatientBasisUsesOutcomesAndPhoneEvidence(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.Open(t).Owner
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
  INSERT INTO access_practices(id,provisioning_key,name) VALUES('00000000-0000-0000-0000-000000000101','classification','Synthetic');
@@ -70,7 +70,7 @@ func TestBookingPatientBasisUsesOutcomesAndPhoneEvidence(t *testing.T) {
 }
 
 func TestBookingPhoneLookupBackfillDryRunAndApply(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.Open(t).Owner
 	ctx := context.Background()
 	const practice = "00000000-0000-0000-0000-000000000101"
 	const call = "00000000-0000-0000-0000-000000000103"

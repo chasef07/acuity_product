@@ -28,10 +28,11 @@ import (
 )
 
 func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 14, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "messaging-http-test",
 		Practices: []access.PracticeProvision{{
@@ -59,10 +60,10 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	if err != nil {
 		t.Fatalf("create Messaging HTTP webhook key: %v", err)
 	}
-	workModule := work.New(pool, accessModule, func() time.Time { return now })
+	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	messageProvider := &httpMessageProvider{}
 	messageModule := messaging.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		workModule,
 		messageProvider,
@@ -74,7 +75,45 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		},
 		func() time.Time { return now },
 	)
-	if err := messageModule.Provision(
+	messageModuleWorker := messaging.New(
+		db.As(testdb.Worker),
+		accessModule,
+		workModule,
+		messageProvider,
+		messaging.Config{
+			WebhookPublicKeys:  [][]byte{publicKey},
+			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
+			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
+			MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
+		},
+		func() time.Time { return now },
+	)
+	messageModuleProvider := messaging.New(
+		db.As(testdb.Provider),
+		accessModule,
+		workModule,
+		messageProvider,
+		messaging.Config{
+			WebhookPublicKeys:  [][]byte{publicKey},
+			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
+			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
+			MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
+		},
+		func() time.Time { return now },
+	)
+	if err := messaging.New(
+		pool,
+		accessModule,
+		workModule,
+		messageProvider,
+		messaging.Config{
+			WebhookPublicKeys:  [][]byte{publicKey},
+			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
+			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
+			MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
+		},
+		func() time.Time { return now },
+	).Provision(
 		context.Background(),
 		[]messaging.LocationProvision{{
 			PracticeKey:        "message-http-practice",
@@ -109,7 +148,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		t.Fatalf("create Messaging HTTP service authenticator: %v", err)
 	}
 	callingModule := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		httpCallingProvider{},
 		humancalling.Config{},
@@ -120,15 +159,15 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 			AllowedOrigins: []string{"http://localhost:3000"},
 			AcquireTimeout: time.Second,
 		},
-		pool,
+		db.As(testdb.Portal),
 		httpapi.PortalDependencies{
 			Access:               accessModule,
 			Authenticator:        staticAuthenticator{"message-token": identity},
 			Calling:              callingModule,
-			Interactions:         interaction.New(pool, accessModule, nil),
+			Interactions:         interaction.New(db.As(testdb.Portal), accessModule, nil),
 			Messaging:            messageModule,
 			Work:                 workModule,
-			Workspace:            workspace.New(pool, accessModule),
+			Workspace:            workspace.New(db.As(testdb.Portal), accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
@@ -166,15 +205,15 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	if len(messageProvider.commands) != 0 {
 		t.Fatalf("browser request contacted provider: %#v", messageProvider.commands)
 	}
-	if processed, err := messageModule.ProcessNextCommand(context.Background()); err != nil || !processed {
+	if processed, err := messageModuleWorker.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("process HTTP Message command = %t, %v", processed, err)
 	}
 
 	ingressHandler, err := httpapi.NewProviderIngress(
 		httpapi.Config{AcquireTimeout: time.Second},
-		pool,
+		db.As(testdb.Provider),
 		humancalling.New(
-			pool,
+			db.As(testdb.Provider),
 			nil,
 			nil,
 			humancalling.Config{
@@ -182,7 +221,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 			},
 			nil,
 		),
-		messageModule,
+		messageModuleProvider,
 	)
 	if err != nil {
 		t.Fatalf("create Messaging provider ingress: %v", err)
@@ -203,7 +242,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		now,
 		privateKey,
 	)
-	if processed, err := messageModule.ProcessNextReceipt(context.Background()); err != nil || !processed {
+	if processed, err := messageModuleWorker.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process HTTP delivery receipt = %t, %v", processed, err)
 	}
 
@@ -220,7 +259,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		now,
 		privateKey,
 	)
-	if processed, err := messageModule.ProcessNextReceipt(context.Background()); err != nil || !processed {
+	if processed, err := messageModuleWorker.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process HTTP inbound receipt = %t, %v", processed, err)
 	}
 

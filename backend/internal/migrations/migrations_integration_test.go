@@ -25,7 +25,7 @@ const (
 )
 
 func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.Open(t).Owner
 	ctx := context.Background()
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatalf("repeat migrations: %v", err)
@@ -304,7 +304,7 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 }
 
 func TestConcurrentStaffDialMigrationEnforcesActiveCommandLanes(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.Open(t).Owner
 	ctx := context.Background()
 	now := time.Date(2026, time.August, 19, 19, 0, 0, 0, time.UTC)
 	const (
@@ -701,7 +701,7 @@ func TestCallLegCutoverRejectsQuarantinedReceipt(t *testing.T) {
 }
 
 func TestProviderReceiptRetryConstraintsRemainEnforced(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.Open(t).Owner
 	ctx := context.Background()
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
 	assertViolation := func(eventID, state string, attempts int, last, quarantined *time.Time, constraint string) {
