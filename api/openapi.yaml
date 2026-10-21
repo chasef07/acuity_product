@@ -3176,20 +3176,7 @@ components:
           type: string
           format: uuid
         state:
-          type: string
-          enum:
-            - PREPARING
-            - RINGING
-            - CONNECTING
-            - CONNECTED
-            - VOICEMAIL_GREETING
-            - VOICEMAIL_RECORDING
-            - UNANSWERED
-            - VOICEMAIL
-            - MISSED
-            - NEEDS_DISPOSITION
-            - RESOLVED
-            - FOLLOW_UP_REQUIRED
+          $ref: "#/components/schemas/CallState"
         dispositionDeadline:
           type: string
           format: date-time
@@ -5914,6 +5901,21 @@ components:
             $ref: "#/components/schemas/ConversationTimelineItem"
         nextCursor:
           type: string
+    CallState:
+      type: string
+      enum:
+        - PREPARING
+        - RINGING
+        - CONNECTING
+        - CONNECTED
+        - VOICEMAIL_GREETING
+        - VOICEMAIL_RECORDING
+        - UNANSWERED
+        - VOICEMAIL
+        - MISSED
+        - NEEDS_DISPOSITION
+        - RESOLVED
+        - FOLLOW_UP_REQUIRED
     CallHistoryItem:
       type: object
       additionalProperties: false
@@ -5964,18 +5966,7 @@ components:
         sourceCallId:
           type: string
         outcome:
-          type: string
-          enum:
-            - PREPARING
-            - RINGING
-            - CONNECTING
-            - CONNECTED
-            - UNANSWERED
-            - VOICEMAIL
-            - MISSED
-            - NEEDS_DISPOSITION
-            - RESOLVED
-            - FOLLOW_UP_REQUIRED
+          $ref: "#/components/schemas/CallState"
     OperatorCallingTimelineEntry:
       type: object
       additionalProperties: false
@@ -6027,18 +6018,7 @@ components:
           type: string
           format: uuid
         state:
-          type: string
-          enum:
-            - PREPARING
-            - RINGING
-            - CONNECTING
-            - CONNECTED
-            - UNANSWERED
-            - VOICEMAIL
-            - MISSED
-            - NEEDS_DISPOSITION
-            - RESOLVED
-            - FOLLOW_UP_REQUIRED
+          $ref: "#/components/schemas/CallState"
         version:
           type: integer
           format: int64
