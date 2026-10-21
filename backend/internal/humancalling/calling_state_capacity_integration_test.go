@@ -82,7 +82,7 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 		}
 	}
 	trace := &callingStateQueryTrace{}
-	config := pool.Config().Copy()
+	config := db.As(testdb.Portal).Config()
 	config.MaxConns = 1
 	config.ConnConfig.Tracer = trace
 	runtimePool, err := pgxpool.NewWithConfig(ctx, config)

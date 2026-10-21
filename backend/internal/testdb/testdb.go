@@ -53,6 +53,9 @@ func (db *DB) As(role Role) *pgxpool.Pool {
 		db.t.Fatalf("open %s pool: %v", role, err)
 	}
 	db.t.Cleanup(pool.Close)
+	if err := pool.Ping(ctx); err != nil {
+		db.t.Fatalf("connect as %s: %v", role, err)
+	}
 	db.pools[role] = pool
 	return pool
 }

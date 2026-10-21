@@ -176,7 +176,7 @@ func TestCallingStateValidatorAvoidsSequentialScansAtVolume(t *testing.T) {
 	}
 
 	trace := &callingStateQueryTrace{}
-	config := pool.Config().Copy()
+	config := db.As(testdb.Portal).Config()
 	config.ConnConfig.Tracer = trace
 	tracedPool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {

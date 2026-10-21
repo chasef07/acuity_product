@@ -180,26 +180,23 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	if event := readSSEEvent(t, callingReader); event.Event != "ready" || !event.Data.CallingHints {
 		t.Fatalf("Calling stream ready event = %#v", event)
 	}
+	callingConfig := humancalling.Config{
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:    "realtime-call-control-connection",
+	}
 	calling := humancalling.New(
 		db.As(testdb.Portal),
 		accessModule,
 		realtimeCallingProvider{},
-		humancalling.Config{
-			HandoffSIPDomain: "synthetic.sip.telnyx.com",
-			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:    "realtime-call-control-connection",
-		},
+		callingConfig,
 		func() time.Time { return now },
 	)
 	callingWorker := humancalling.New(
 		db.As(testdb.Worker),
 		accessModule,
 		realtimeCallingProvider{},
-		humancalling.Config{
-			HandoffSIPDomain: "synthetic.sip.telnyx.com",
-			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:    "realtime-call-control-connection",
-		},
+		callingConfig,
 		func() time.Time { return now },
 	)
 	_, err = calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
@@ -351,7 +348,7 @@ func TestRealtimeReconnectAndRevalidationBurstStaysAvailableDuringUnrelatedOpera
 	now := time.Date(2026, time.August, 18, 15, 38, 57, 0, time.UTC)
 	_, identity, authorization := provisionRealtimeMember(
 		t,
-		ownerPool,
+		db,
 		now,
 		"realtime-reconnect-contention",
 	)
@@ -845,11 +842,10 @@ func TestRealtimeListenerDeathClosesStreamsAndRecoveryAcceptsFreshStreams(t *tes
 
 func TestRealtimePlannedRotationIsJitteredAcrossConcurrentClients(t *testing.T) {
 	db := testdb.Open(t)
-	pool := db.Owner
 	now := time.Date(2026, time.July, 31, 13, 0, 0, 0, time.UTC)
 	accessModule, identity, authorization := provisionRealtimeMember(
 		t,
-		pool,
+		db,
 		now,
 		"realtime-rotation",
 	)
@@ -1060,14 +1056,14 @@ func (writer pipeSSEWriter) Flush() {}
 
 func provisionRealtimeMember(
 	t *testing.T,
-	pool *pgxpool.Pool,
+	db *testdb.DB,
 	now time.Time,
 	key string,
 ) (*access.Module, access.Identity, access.Authorization) {
 	t.Helper()
-	accessModule := access.New(pool, func() time.Time { return now })
+	clock := func() time.Time { return now }
 	email := key + "@realtime.test"
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(db.Owner, clock).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: key,
 		Practices: []access.PracticeProvision{{
@@ -1090,8 +1086,8 @@ func provisionRealtimeMember(
 		Email:         email,
 		EmailVerified: true,
 	}
-	authorization := testaccess.Activate(t, accessModule, identity)
-	return accessModule, identity, authorization
+	authorization := testaccess.Activate(t, access.New(db.As(testdb.Portal), clock), identity)
+	return access.New(db.As(testdb.Realtime), clock), identity, authorization
 }
 
 func waitForHubReady(t *testing.T, hub *realtime.Hub) {

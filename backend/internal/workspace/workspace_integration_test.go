@@ -117,10 +117,7 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 		t.Fatalf("Workspace Queue projection = %#v", page)
 	}
 	tracer := &workspaceQueryTracer{}
-	tracedConfig, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatalf("parse traced Workspace database config: %v", err)
-	}
+	tracedConfig := db.As(testdb.Portal).Config()
 	tracedConfig.ConnConfig.Tracer = tracer
 	tracedPool, err := pgxpool.NewWithConfig(context.Background(), tracedConfig)
 	if err != nil {

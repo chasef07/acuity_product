@@ -35,29 +35,18 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 		})
 	}
 	provider := &recordingProvider{dialResults: dialResults}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "fixture-call-control",
 		CredentialConnectionID: "fixture-credential-connection",
-	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "fixture-call-control",
-		CredentialConnectionID: "fixture-credential-connection",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "outbound-resilience-browser")
-	if err := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "fixture-call-control",
-		CredentialConnectionID: "fixture-credential-connection",
-	}, func() time.Time { return now }).ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
 		PracticeKey: "outbound-resilience-practice",
 		LocationKey: "outbound-resilience-location",
 		Number:      "+14843336938",
@@ -101,7 +90,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 		}
 		callOutcome[result.call.ID] = outcomes[result.index]
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	type legFact struct {
 		callID, subject, controlID, legID, clientState, sessionID string
@@ -176,7 +165,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 			t.Fatalf("confirm concurrent outbound media: %v", err)
 		}
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	destinationLegs := make([]legFact, 0, len(staff))
 	rows, err = pool.Query(ctx, `
@@ -265,7 +254,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 			t.Fatalf("project concurrent outbound outcome: %v", err)
 		}
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	var answeredDestination legFact
 	for _, leg := range destinationLegs {
@@ -297,7 +286,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 			t.Fatalf("complete answered outbound Call: %v", err)
 		}
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	staffHangups := make(chan error, len(staffLegs))
 	for _, leg := range staffLegs {
 		go func() {
@@ -315,7 +304,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 			t.Fatalf("complete outbound Staff cleanup: %v", err)
 		}
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	wantTerminal := map[string]string{
 		"answer": "ENDED", "busy": "UNANSWERED", "no_answer": "UNANSWERED",

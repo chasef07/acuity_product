@@ -85,22 +85,17 @@ func TestProviderReceiptAuditAttributesTerminalFailuresWithoutIdentifiers(t *tes
 	}
 
 	var metrics bytes.Buffer
-	calling := humancalling.New(db.As(testdb.Portal), nil, nil, humancalling.Config{
+	callingConfig := humancalling.Config{
 		Observer: observability.NewLogger(
 			observability.RuntimeWorker,
 			"worker-receipt-audit-test",
 			slog.New(slog.NewJSONHandler(&metrics, nil)),
 		),
-	}, func() time.Time {
+	}
+	calling := humancalling.New(db.As(testdb.Portal), nil, nil, callingConfig, func() time.Time {
 		return now
 	})
-	callingWorker := humancalling.New(db.As(testdb.Worker), nil, nil, humancalling.Config{
-		Observer: observability.NewLogger(
-			observability.RuntimeWorker,
-			"worker-receipt-audit-test",
-			slog.New(slog.NewJSONHandler(&metrics, nil)),
-		),
-	}, func() time.Time {
+	callingWorker := humancalling.New(db.As(testdb.Worker), nil, nil, callingConfig, func() time.Time {
 		return now
 	})
 	for range 2 {

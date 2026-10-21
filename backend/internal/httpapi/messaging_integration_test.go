@@ -62,17 +62,18 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	}
 	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	messageProvider := &httpMessageProvider{}
+	messageModuleConfig := messaging.Config{
+		WebhookPublicKeys:  [][]byte{publicKey},
+		AttachmentStore:    messaging.NewMemoryAttachmentStore(),
+		MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
+		MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
+	}
 	messageModule := messaging.New(
 		db.As(testdb.Portal),
 		accessModule,
 		workModule,
 		messageProvider,
-		messaging.Config{
-			WebhookPublicKeys:  [][]byte{publicKey},
-			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
-			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
-			MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
-		},
+		messageModuleConfig,
 		func() time.Time { return now },
 	)
 	messageModuleWorker := messaging.New(
@@ -80,12 +81,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		accessModule,
 		workModule,
 		messageProvider,
-		messaging.Config{
-			WebhookPublicKeys:  [][]byte{publicKey},
-			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
-			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
-			MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
-		},
+		messageModuleConfig,
 		func() time.Time { return now },
 	)
 	messageModuleProvider := messaging.New(
@@ -93,12 +89,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		accessModule,
 		workModule,
 		messageProvider,
-		messaging.Config{
-			WebhookPublicKeys:  [][]byte{publicKey},
-			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
-			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
-			MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
-		},
+		messageModuleConfig,
 		func() time.Time { return now },
 	)
 	if err := messaging.New(
@@ -106,12 +97,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		accessModule,
 		workModule,
 		messageProvider,
-		messaging.Config{
-			WebhookPublicKeys:  [][]byte{publicKey},
-			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
-			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
-			MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
-		},
+		messageModuleConfig,
 		func() time.Time { return now },
 	).Provision(
 		context.Background(),

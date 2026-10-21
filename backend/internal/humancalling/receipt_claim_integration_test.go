@@ -23,10 +23,11 @@ import (
 
 func TestReceiptClaimHoldsEachCallSessionBehindItsInFlightReceipt(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.OpenAsOwner(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
 	currentTime := now
-	calling := humancalling.New(pool, access.New(pool, time.Now), nil, humancalling.Config{},
+	calling := humancalling.New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), time.Now), nil, humancalling.Config{},
 		func() time.Time { return currentTime })
 	insertSessionReceipt := newSignedReceiptIngress(t, pool)
 

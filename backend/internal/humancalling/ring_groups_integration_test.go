@@ -37,18 +37,14 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 				t.Fatal(err)
 			}
 			provider := &recordingProvider{}
-			calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+			callingConfig := humancalling.Config{
 				HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
 				RingWindowDuration: 20 * time.Second, HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
 				CallControlID: "staff-call-control-connection", CredentialConnectionID: "staff-credential-connection",
 				FromNumber: "+14843336938", RingbackURL: "https://media.synthetic.test/ringback.wav",
-			}, func() time.Time { return now })
-			callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-				HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
-				RingWindowDuration: 20 * time.Second, HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
-				CallControlID: "staff-call-control-connection", CredentialConnectionID: "staff-credential-connection",
-				FromNumber: "+14843336938", RingbackURL: "https://media.synthetic.test/ringback.wav",
-			}, func() time.Time { return now })
+			}
+			calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+			callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
 			if scenario.restricted {
 				email := staff[0].Email
 				if scenario.unclaimed {
@@ -60,12 +56,7 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 				}
 				defer tx.Rollback(ctx)
 				for i := 0; i < 2; i++ {
-					if err := humancalling.New(pool, accessModule, provider, humancalling.Config{
-						HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
-						RingWindowDuration: 20 * time.Second, HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
-						CallControlID: "staff-call-control-connection", CredentialConnectionID: "staff-credential-connection",
-						FromNumber: "+14843336938", RingbackURL: "https://media.synthetic.test/ringback.wav",
-					}, func() time.Time { return now }).ProvisionLocationRingGroupsInTx(ctx, tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "ring-group-practice", LocationKey: "ring-group-location", MemberEmails: []string{" " + strings.ToUpper(email) + " ", email}}}, "ring-test"); err != nil {
+					if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationRingGroupsInTx(ctx, tx, []humancalling.LocationRingGroupProvision{{PracticeKey: "ring-group-practice", LocationKey: "ring-group-location", MemberEmails: []string{" " + strings.ToUpper(email) + " ", email}}}, "ring-test"); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -77,7 +68,7 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 					t.Fatalf("idempotent ring audits=%d err=%v", audits, err)
 				}
 			}
-			prepareCredentials(t, calling)
+			prepareCredentials(t, callingWorker)
 			readyConcurrentStaff(t, calling, append(slices.Clone(staff), operator), "ring-browser")
 			if scenario.unavailable {
 				if _, err := pool.Exec(ctx, `UPDATE human_calling_softphone_leases SET desired_available=false WHERE user_subject=$1`, staff[0].Subject); err != nil {
@@ -107,14 +98,14 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 			if err := callingWorker.ApplyProviderFact(ctx, caller); err != nil {
 				t.Fatal(err)
 			}
-			processAllCommands(t, calling)
+			processAllCommands(t, callingWorker)
 			caller.EventID = "ring-answered"
 			caller.Type = humancalling.FactCallAnswered
 			caller.OccurredAt = now.Add(time.Second)
 			if err := callingWorker.ApplyProviderFact(ctx, caller); err != nil {
 				t.Fatal(err)
 			}
-			processAllCommands(t, calling)
+			processAllCommands(t, callingWorker)
 			var subjects []string
 			if err := pool.QueryRow(ctx, `SELECT COALESCE(array_agg(staff_subject ORDER BY staff_subject),'{}') FROM human_calling_call_legs WHERE role='STAFF'`).Scan(&subjects); err != nil {
 				t.Fatal(err)
@@ -138,7 +129,7 @@ func TestLocationRingGroupRestrictsInboundFanout(t *testing.T) {
 				}); err != nil {
 					t.Fatal(err)
 				}
-				processAllCommands(t, calling)
+				processAllCommands(t, callingWorker)
 				if provider.count(humancalling.CommandSpeakVoicemail) != 1 {
 					t.Fatalf("unanswered ring group did not start voicemail")
 				}

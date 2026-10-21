@@ -147,18 +147,14 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 	pool := db.Owner
 	now := time.Now()
 	seedAccess := access.New(db.As(testdb.Portal), func() time.Time { return now })
-	seedCalling := humancalling.New(db.As(testdb.Portal), seedAccess, &recordingProvider{}, humancalling.Config{
+	seedCallingConfig := humancalling.Config{
 		HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
 		RingWindowDuration: 20 * time.Second, HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID: "staff-call-control-connection", CredentialConnectionID: "staff-credential-connection",
 		FromNumber: "+15555550102", RingbackURL: "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
-	seedCallingWorker := humancalling.New(db.As(testdb.Worker), seedAccess, &recordingProvider{}, humancalling.Config{
-		HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
-		RingWindowDuration: 20 * time.Second, HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID: "staff-call-control-connection", CredentialConnectionID: "staff-credential-connection",
-		FromNumber: "+15555550102", RingbackURL: "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
+	}
+	seedCalling := humancalling.New(db.As(testdb.Portal), seedAccess, &recordingProvider{}, seedCallingConfig, func() time.Time { return now })
+	seedCallingWorker := humancalling.New(db.As(testdb.Worker), seedAccess, &recordingProvider{}, seedCallingConfig, func() time.Time { return now })
 	var practices []access.Authorization
 	var staffGroups [][]access.Identity
 	for index := range 2 {
@@ -166,7 +162,7 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 		practices = append(practices, authorization)
 		staffGroups = append(staffGroups, staff)
 	}
-	prepareCredentials(t, seedCalling)
+	prepareCredentials(t, seedCallingWorker)
 	var callers []humancalling.ProviderFact
 	for index, authorization := range practices {
 		prefix := fmt.Sprintf("mixed-%d", index)
@@ -188,7 +184,7 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 		}
 		callers = append(callers, fact)
 	}
-	processAllCommands(t, seedCalling)
+	processAllCommands(t, seedCallingWorker)
 	for index, fact := range callers {
 		fact.EventID = fmt.Sprintf("mixed-%d-answered", index)
 		fact.Type = humancalling.FactCallAnswered
@@ -230,9 +226,9 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 	}
 	var metrics mixedLatencyLog
 	observer := observability.NewLogger(observability.RuntimeWorker, "worker-mixed-test", slog.New(slog.NewJSONHandler(&metrics, nil)))
-	newRuntime := func(role observability.RuntimeRole) (*pgxpool.Pool, *postgres.Executor) {
+	newRuntime := func(role observability.RuntimeRole, databaseRole testdb.Role) (*pgxpool.Pool, *postgres.Executor) {
 		runtimeObserver := observability.NewLogger(role, "mixed-test", slog.New(slog.NewJSONHandler(&metrics, nil)))
-		config := pool.Config().Copy()
+		config := db.As(databaseRole).Config()
 		config.MaxConns = 2
 		runtimePool, err := pgxpool.NewWithConfig(ctx, config)
 		if err != nil {
@@ -247,8 +243,8 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 		}
 		return runtimePool, database
 	}
-	workerPool, workerDatabase := newRuntime(observability.RuntimeWorker)
-	_, portalDatabase := newRuntime(observability.RuntimePortalAPI)
+	workerPool, workerDatabase := newRuntime(observability.RuntimeWorker, testdb.Worker)
+	_, portalDatabase := newRuntime(observability.RuntimePortalAPI, testdb.Portal)
 	provider := &mixedLatencyProvider{started: make(chan struct{}, 10), release: make(chan struct{}), effects: make(map[string]int)}
 	var releaseEffects sync.Once
 	calling := humancalling.New(workerDatabase, access.New(workerDatabase, time.Now), provider, humancalling.Config{Observer: observer}, time.Now)

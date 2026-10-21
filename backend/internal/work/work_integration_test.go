@@ -51,7 +51,7 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 
 	ensureRecovery := func(command work.EnsureRecoveryTaskCommand) work.Task {
 		t.Helper()
-		tx, err := pool.Begin(context.Background())
+		tx, err := db.As(testdb.Worker).Begin(context.Background())
 		if err != nil {
 			t.Fatalf("begin recovery Task transaction: %v", err)
 		}
@@ -197,7 +197,7 @@ func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
 	}
 	ensureRecovery := func(command work.EnsureRecoveryTaskCommand) work.Task {
 		t.Helper()
-		tx, err := pool.Begin(ctx)
+		tx, err := db.As(testdb.Worker).Begin(ctx)
 		if err != nil {
 			t.Fatalf("begin recovery transaction: %v", err)
 		}
@@ -283,7 +283,7 @@ func TestNewTaskAbsorbsTheCallersOpenMissedCall(t *testing.T) {
 	missed := func(locationID string) work.Task {
 		t.Helper()
 		callID := insertCallAt(t, pool, authorization, locationID, phone, "Missed", now)
-		tx, err := pool.Begin(ctx)
+		tx, err := db.As(testdb.Worker).Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -338,7 +338,7 @@ func TestNewTaskAbsorbsTheCallersOpenMissedCall(t *testing.T) {
 	if err != nil || untouched.State != work.TaskOpen || len(untouched.Interactions) != 1 {
 		t.Fatalf("another office's voicemail changed: %#v, %v", untouched, err)
 	}
-	followUp := ensureCallFollowUp(t, pool, module, work.EnsureCallFollowUpCommand{
+	followUp := ensureCallFollowUp(t, db.As(testdb.Portal), module, work.EnsureCallFollowUpCommand{
 		CallID:     insertCallAt(t, pool, authorization, authorization.Locations[1].ID, phone, "Call back", now),
 		PracticeID: authorization.Practice.ID, LocationID: authorization.Locations[1].ID,
 		Phone: phone, Reason: "Call back about refill", Creator: authorization.Actor,
@@ -389,7 +389,7 @@ func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *tes
 		callID := insertCallAt(
 			t, pool, authorization, locationID, phone, "Shared caller", callAt,
 		)
-		tx, err := pool.Begin(context.Background())
+		tx, err := db.As(testdb.Worker).Begin(context.Background())
 		if err != nil {
 			t.Fatalf("begin recovery Task: %v", err)
 		}
@@ -418,7 +418,7 @@ func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *tes
 
 	resolve := func(at time.Time, sourceID string) {
 		t.Helper()
-		tx, err := pool.Begin(context.Background())
+		tx, err := db.As(testdb.Worker).Begin(context.Background())
 		if err != nil {
 			t.Fatalf("begin recovery resolution: %v", err)
 		}
@@ -992,7 +992,7 @@ func TestTaskLifecycleRejectsStaleRenameAndKeepsCompletionRecoverable(t *testing
 	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
 	callID := insertCall(t, pool, authorization, now)
 	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
-	task := ensureCallFollowUp(t, pool, module, work.EnsureCallFollowUpCommand{
+	task := ensureCallFollowUp(t, db.As(testdb.Portal), module, work.EnsureCallFollowUpCommand{
 		CallID:     callID,
 		PracticeID: authorization.Practice.ID,
 		LocationID: authorization.Locations[0].ID,
@@ -1121,7 +1121,7 @@ func TestTaskReadsLoadRelatedInteractionCountsInOneQuery(t *testing.T) {
 	tasks := make([]work.Task, 3)
 	for index := range tasks {
 		tasks[index] = createTask(
-			t, pool, writes, authorization, authorization.Locations[0].ID,
+			t, db, writes, authorization, authorization.Locations[0].ID,
 			fmt.Sprintf("+1985555010%d", index),
 			fmt.Sprintf("Query count Task %d", index),
 			now.Add(time.Duration(index)*time.Minute),
@@ -1130,7 +1130,7 @@ func TestTaskReadsLoadRelatedInteractionCountsInOneQuery(t *testing.T) {
 	attachTaskInteractionFixture(t, pool, tasks[0])
 
 	tracer := &workInteractionQueryTracer{}
-	reads := newTracedWorkspaceModule(t, pool, tracer, now)
+	reads := newTracedWorkspaceModule(t, db.As(testdb.Portal), tracer, now)
 	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity: identity, PracticeID: authorization.Practice.ID,
 		Ordering: work.TaskOrderingTime,
@@ -1158,7 +1158,7 @@ func TestTaskReadsLoadRelatedInteractionCountsInOneQuery(t *testing.T) {
 	}
 
 	readTracer := &workInteractionQueryTracer{}
-	read, err := newTracedWorkModule(t, pool, readTracer, now).ReadTask(context.Background(), identity, tasks[0].ID)
+	read, err := newTracedWorkModule(t, db.As(testdb.Portal), readTracer, now).ReadTask(context.Background(), identity, tasks[0].ID)
 	if err != nil {
 		t.Fatalf("read Task with related Interactions: %v", err)
 	}
@@ -1180,7 +1180,7 @@ func TestConcurrentCompletionAndReopenCommitOneActivityPerTransition(t *testing.
 	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	task := createTask(
 		t,
-		pool,
+		db,
 		module,
 		authorization,
 		authorization.Locations[0].ID,
@@ -1313,7 +1313,7 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	task := createTask(
 		t,
-		pool,
+		db,
 		module,
 		staff,
 		staff.Locations[0].ID,
@@ -1438,7 +1438,7 @@ func TestOperatorTaskAuditFailureRollsBackMutation(t *testing.T) {
 	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	task := createTask(
 		t,
-		pool,
+		db,
 		module,
 		staff,
 		staff.Locations[0].ID,
@@ -1594,10 +1594,7 @@ func newTracedWorkModule(
 	now time.Time,
 ) *work.Module {
 	t.Helper()
-	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatalf("parse traced Work database config: %v", err)
-	}
+	config := pool.Config()
 	config.ConnConfig.Tracer = tracer
 	tracedPool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
@@ -1618,10 +1615,7 @@ func newTracedWorkspaceModule(
 	now time.Time,
 ) *workspace.Module {
 	t.Helper()
-	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatalf("parse traced Workspace database config: %v", err)
-	}
+	config := pool.Config()
 	config.ConnConfig.Tracer = tracer
 	tracedPool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
@@ -1697,10 +1691,7 @@ func insertCall(
 
 func createTask(
 	t *testing.T,
-	pool interface {
-		BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
-		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	},
+	db *testdb.DB,
 	module *work.Module,
 	authorization access.Authorization,
 	locationID string,
@@ -1711,14 +1702,14 @@ func createTask(
 	t.Helper()
 	callID := insertCallAt(
 		t,
-		pool,
+		db.Owner,
 		authorization,
 		locationID,
 		phone,
 		reason,
 		now,
 	)
-	return ensureCallFollowUp(t, pool, module, work.EnsureCallFollowUpCommand{
+	return ensureCallFollowUp(t, db.As(testdb.Portal), module, work.EnsureCallFollowUpCommand{
 		CallID:     callID,
 		PracticeID: authorization.Practice.ID,
 		LocationID: locationID,

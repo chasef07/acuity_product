@@ -163,8 +163,9 @@ Run the commands below from the repository root. The frontend package lives in
   [the verification workflow](.github/workflows/verify.yml).
 - pnpm 10.34.5, matching [`web/package.json`](web/package.json).
 - A running local PostgreSQL 16 server, the `psql` and `createdb` tools, and
-  `curl`. Use a disposable local database cluster whose user can create roles
-  and reset schemas for integration tests.
+  `curl`. Use a disposable local database cluster whose user is a superuser:
+  integration tests reset schemas, create the runtime roles, and connect as
+  them.
 
 Install dependencies:
 

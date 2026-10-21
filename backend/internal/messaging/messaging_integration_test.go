@@ -97,14 +97,15 @@ func newAutomaticAcknowledgementTestFixture(
 	if err != nil {
 		t.Fatalf("create automatic acknowledgement webhook key: %v", err)
 	}
+	moduleConfig := messaging.Config{
+		WebhookPublicKeys: [][]byte{publicKey},
+	}
 	module := messaging.New(
 		db.As(testdb.Portal),
 		accessModule,
 		workModule,
 		provider,
-		messaging.Config{
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		moduleConfig,
 		func() time.Time { return *clock },
 	)
 	worker := messaging.New(
@@ -112,9 +113,7 @@ func newAutomaticAcknowledgementTestFixture(
 		accessModule,
 		workModule,
 		provider,
-		messaging.Config{
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		moduleConfig,
 		func() time.Time { return *clock },
 	)
 	ingress := messaging.New(
@@ -122,9 +121,7 @@ func newAutomaticAcknowledgementTestFixture(
 		accessModule,
 		workModule,
 		provider,
-		messaging.Config{
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		moduleConfig,
 		func() time.Time { return *clock },
 	)
 	if configuration {
@@ -133,9 +130,7 @@ func newAutomaticAcknowledgementTestFixture(
 			accessModule,
 			workModule,
 			provider,
-			messaging.Config{
-				WebhookPublicKeys: [][]byte{publicKey},
-			},
+			moduleConfig,
 			func() time.Time { return *clock },
 		).Provision(context.Background(), []messaging.LocationProvision{{
 			PracticeKey:        "automatic-acknowledgement-scenarios",
@@ -654,14 +649,15 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		t.Fatalf("create webhook key: %v", err)
 	}
 	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
+	moduleConfig := messaging.Config{
+		WebhookPublicKeys: [][]byte{publicKey},
+	}
 	module := messaging.New(
 		db.As(testdb.Portal),
 		accessModule,
 		workModule,
 		provider,
-		messaging.Config{
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		moduleConfig,
 		func() time.Time { return now },
 	)
 	moduleWorker := messaging.New(
@@ -669,9 +665,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		accessModule,
 		workModule,
 		provider,
-		messaging.Config{
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		moduleConfig,
 		func() time.Time { return now },
 	)
 	moduleProvider := messaging.New(
@@ -679,9 +673,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		accessModule,
 		workModule,
 		provider,
-		messaging.Config{
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		moduleConfig,
 		func() time.Time { return now },
 	)
 	reads := workspace.New(db.As(testdb.Portal), accessModule)
@@ -690,9 +682,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		accessModule,
 		workModule,
 		provider,
-		messaging.Config{
-			WebhookPublicKeys: [][]byte{publicKey},
-		},
+		moduleConfig,
 		func() time.Time { return now },
 	).Provision(context.Background(), []messaging.LocationProvision{{
 		PracticeKey:        "message-practice",
@@ -1959,19 +1949,20 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		AttachmentObjectStore: memoryStore,
 	}
 	provider := &providerFixture{}
+	moduleConfig := messaging.Config{
+		WebhookPublicKeys:  [][]byte{publicKey},
+		AttachmentStore:    store,
+		MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
+		MediaSigningKey:    bytes.Repeat([]byte{7}, 32),
+		MediaURLTTL:        5 * time.Minute,
+		HTTPClient:         mediaServer.Client(),
+	}
 	module := messaging.New(
 		db.As(testdb.Portal),
 		accessModule,
 		work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }),
 		provider,
-		messaging.Config{
-			WebhookPublicKeys:  [][]byte{publicKey},
-			AttachmentStore:    store,
-			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
-			MediaSigningKey:    bytes.Repeat([]byte{7}, 32),
-			MediaURLTTL:        5 * time.Minute,
-			HTTPClient:         mediaServer.Client(),
-		},
+		moduleConfig,
 		func() time.Time { return now },
 	)
 	moduleWorker := messaging.New(
@@ -1979,14 +1970,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		accessModule,
 		work.New(db.As(testdb.Worker), accessModule, func() time.Time { return now }),
 		provider,
-		messaging.Config{
-			WebhookPublicKeys:  [][]byte{publicKey},
-			AttachmentStore:    store,
-			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
-			MediaSigningKey:    bytes.Repeat([]byte{7}, 32),
-			MediaURLTTL:        5 * time.Minute,
-			HTTPClient:         mediaServer.Client(),
-		},
+		moduleConfig,
 		func() time.Time { return now },
 	)
 	moduleProvider := messaging.New(
@@ -1994,14 +1978,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		accessModule,
 		work.New(db.As(testdb.Provider), accessModule, func() time.Time { return now }),
 		provider,
-		messaging.Config{
-			WebhookPublicKeys:  [][]byte{publicKey},
-			AttachmentStore:    store,
-			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
-			MediaSigningKey:    bytes.Repeat([]byte{7}, 32),
-			MediaURLTTL:        5 * time.Minute,
-			HTTPClient:         mediaServer.Client(),
-		},
+		moduleConfig,
 		func() time.Time { return now },
 	)
 	reads := workspace.New(db.As(testdb.Portal), accessModule)
@@ -2010,14 +1987,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		accessModule,
 		work.New(pool, accessModule, func() time.Time { return now }),
 		provider,
-		messaging.Config{
-			WebhookPublicKeys:  [][]byte{publicKey},
-			AttachmentStore:    store,
-			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
-			MediaSigningKey:    bytes.Repeat([]byte{7}, 32),
-			MediaURLTTL:        5 * time.Minute,
-			HTTPClient:         mediaServer.Client(),
-		},
+		moduleConfig,
 		func() time.Time { return now },
 	).Provision(context.Background(), []messaging.LocationProvision{{
 		PracticeKey:        "attachment-practice",

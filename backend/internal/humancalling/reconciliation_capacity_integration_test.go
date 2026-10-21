@@ -133,10 +133,7 @@ func TestOutgoingCallLegMaintenanceDoesNotStarveRealtimeCommandsAtProductionCard
 			t.Fatalf("analyze %s: %v", relation, err)
 		}
 	}
-	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := db.As(testdb.Worker).Config()
 	queryStarted := make(chan struct{})
 	config.MaxConns = 2
 	config.ConnConfig.Tracer = &reconciliationQueryTracer{started: queryStarted}

@@ -23,30 +23,30 @@ var domainModules = map[string]bool{
 }
 
 var ownerRunBaseline = []struct {
-	file         string
-	opens        int
-	constructors int
-	reason       string
+	file   string
+	opens  int
+	pools  int
+	reason string
 }{
 	{"backend/cmd/knowledge-import/publication_test.go", 3, 0, "the import command connects with operator-supplied credentials whose runtime role is unknown"},
 	{"backend/cmd/knowledge-import/retrieval_integration_test.go", 1, 0, "the import command connects with operator-supplied credentials whose runtime role is unknown"},
-	{"backend/internal/humancalling/calllegs_integration_test.go", 2, 0, "shared fixtures drive provider, worker, and portal paths through one module"},
-	{"backend/internal/humancalling/receipt_claim_integration_test.go", 1, 0, "receipt helpers drive worker claims through the test's only module"},
-	{"backend/internal/humancalling/staff_transfer_integration_test.go", 1, 0, "shared fixtures drive provider, worker, and portal paths through one module"},
+	{"backend/internal/humancalling/calllegs_integration_test.go", 2, 1, "prepareInboundFanout and newOutboundEndFixture drive provider, worker, and portal paths through one module; every test that calls them runs as owner"},
+	{"backend/internal/humancalling/staff_transfer_integration_test.go", 1, 0, "prepareConnectedOutboundStaffTransfer drives provider, worker, and portal paths through one module"},
 	{"backend/internal/interaction/analytics_projection_integration_test.go", 1, 0, "projects against an earlier migration, before the runtime grant contract applies"},
 	{"backend/internal/interaction/cost_usage_projection_integration_test.go", 1, 0, "projects against an earlier migration, before the runtime grant contract applies"},
 	{"backend/internal/interaction/recovery_integration_test.go", 0, 4, "RecoverSourceClock has no production caller, so no runtime role owns it"},
-	{"backend/internal/work/responsibility_integration_test.go", 0, 2, "task-maintenance connects with operator-supplied credentials whose runtime role is unknown"},
+	{"backend/internal/postgres/executor_integration_test.go", 0, 1, "the platform executor runs no module code"},
+	{"backend/internal/work/responsibility_integration_test.go", 0, 4, "task-maintenance connects with operator-supplied credentials whose runtime role is unknown"},
 	{"backend/internal/workspace/phone_lookup_integration_test.go", 1, 0, "queries an earlier migration, before the runtime grant contract applies"},
 }
 
-type ownerRuns struct{ opens, constructors int }
+type ownerRuns struct{ opens, pools int }
 
 func TestIntegrationTestsRunModulesAsRuntimeRoles(t *testing.T) {
 	root := repositoryRoot(t)
 	baseline := map[string]ownerRuns{}
 	for _, entry := range ownerRunBaseline {
-		baseline[entry.file] = ownerRuns{entry.opens, entry.constructors}
+		baseline[entry.file] = ownerRuns{entry.opens, entry.pools}
 	}
 	fset := token.NewFileSet()
 	for _, name := range trackedGoFiles(t) {
@@ -72,11 +72,11 @@ func TestIntegrationTestsRunModulesAsRuntimeRoles(t *testing.T) {
 		if got.opens > want.opens {
 			t.Errorf("%s: %d owner-only database opens (testdb.OpenAsOwner or testdb.OpenThrough), baseline allows %d. Use testdb.Open: seed through db.Owner and construct modules with db.As(testdb.Portal, Worker, Provider, or Realtime), the role that runs that code in production.", name, got.opens, want.opens)
 		}
-		if got.constructors > want.constructors {
-			t.Errorf("%s: %d modules constructed on db.Owner, baseline allows %d. Construct them with db.As(<role>) for the role that runs that code in production; db.Owner is for seeding SQL and provisioning, as in access.New(db.Owner, clock).Provision(...).", name, got.constructors, want.constructors)
+		if got.pools > want.pools {
+			t.Errorf("%s: %d modules or pools built on the owner pool, baseline allows %d. Construct modules with db.As(<role>) for the role that runs that code in production, and derive custom pools from db.As(<role>).Config(); db.Owner is for seeding SQL and provisioning, as in access.New(db.Owner, clock).Provision(...).", name, got.pools, want.pools)
 		}
-		if got.opens < want.opens || got.constructors < want.constructors {
-			t.Errorf("ownerRunBaseline: %s now has %d owner opens and %d owner constructors. Lower its entry to match so it cannot grow back.", name, got.opens, got.constructors)
+		if got.opens < want.opens || got.pools < want.pools {
+			t.Errorf("ownerRunBaseline: %s now has %d owner opens and %d owner modules or pools. Lower its entry to match so it cannot grow back.", name, got.opens, got.pools)
 		}
 	}
 	for file := range baseline {
@@ -103,6 +103,9 @@ func countOwnerRuns(file *ast.File) ownerRuns {
 		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "testdb" &&
 			(sel.Sel.Name == "OpenAsOwner" || sel.Sel.Name == "OpenThrough") {
 			runs.opens++
+		}
+		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "pgxpool" && sel.Sel.Name == "ParseConfig" {
+			runs.pools++
 		}
 		if receiver, ok := sel.X.(*ast.CallExpr); ok && strings.HasPrefix(sel.Sel.Name, "Provision") {
 			ast.Inspect(receiver, func(node ast.Node) bool {
@@ -134,14 +137,20 @@ func countOwnerRuns(file *ast.File) ownerRuns {
 			}
 			return true
 		})
+		isOwner := func(expr ast.Expr) bool {
+			ident, ok := expr.(*ast.Ident)
+			return (ok && ownerNames[ident.Name]) || isOwnerSelector(expr)
+		}
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
-			if !ok || len(call.Args) == 0 || provisioners[call] || !isModuleConstructor(call, internal) {
+			if !ok || provisioners[call] {
 				return true
 			}
-			arg := call.Args[0]
-			if ident, ok := arg.(*ast.Ident); (ok && ownerNames[ident.Name]) || isOwnerSelector(arg) {
-				runs.constructors++
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Config" && isOwner(sel.X) {
+				runs.pools++
+			}
+			if len(call.Args) > 0 && isModuleConstructor(call, internal) && isOwner(call.Args[0]) {
+				runs.pools++
 			}
 			return true
 		})
@@ -175,15 +184,18 @@ func TestFixture(t *testing.T) {
 	_, _ = access.New(pool, nil).Provision(ctx, provisioning)
 	_ = messaging.New(pool, nil, work.New(pool, nil, nil)).Provision(ctx, locations)
 	_ = work.New(db.As(testdb.Portal), access.New(db.As(testdb.Portal), nil), nil)
+	_ = db.As(testdb.Worker).Config()
 	_ = work.New(pool, nil, nil)
 	_ = access.New(db.Owner, nil)
+	_ = pool.Config()
+	_, _ = pgxpool.ParseConfig(url)
 	_ = work.New(legacy, nil, nil)
 }
 `, parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := countOwnerRuns(file), (ownerRuns{opens: 2, constructors: 2}); got != want {
+	if got, want := countOwnerRuns(file), (ownerRuns{opens: 2, pools: 4}); got != want {
 		t.Fatalf("countOwnerRuns = %+v, want %+v", got, want)
 	}
 }

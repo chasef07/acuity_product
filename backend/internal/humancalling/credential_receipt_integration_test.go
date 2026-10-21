@@ -82,14 +82,12 @@ func TestCredentialLegReceiptsPreserveCallAndClassifyObservation(t *testing.T) {
 				t.Fatal(err)
 			}
 			var logs bytes.Buffer
-			calling := humancalling.New(db.As(testdb.Provider), nil, nil, humancalling.Config{
+			callingConfig := humancalling.Config{
 				CallControlID: "call-control", CredentialConnectionID: "credential", WebhookPublicKeys: [][]byte{public},
 				Observer: observability.NewLogger(observability.RuntimeWorker, "synthetic", slog.New(slog.NewJSONHandler(&logs, nil))),
-			}, func() time.Time { return now })
-			callingWorker := humancalling.New(db.As(testdb.Worker), nil, nil, humancalling.Config{
-				CallControlID: "call-control", CredentialConnectionID: "credential", WebhookPublicKeys: [][]byte{public},
-				Observer: observability.NewLogger(observability.RuntimeWorker, "synthetic", slog.New(slog.NewJSONHandler(&logs, nil))),
-			}, func() time.Time { return now })
+			}
+			calling := humancalling.New(db.As(testdb.Provider), nil, nil, callingConfig, func() time.Time { return now })
+			callingWorker := humancalling.New(db.As(testdb.Worker), nil, nil, callingConfig, func() time.Time { return now })
 			occurredAt := now
 			receive := func(kind string) humancalling.WebhookReceipt {
 				connection, session := "credential", "shared-session"

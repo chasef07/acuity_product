@@ -55,7 +55,7 @@ func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 			authorization, staff := provisionConcurrentStaff(t, db.Owner, seedAccess, time.Now(), "receipt-latency", scenario.staff)
 			seedCalling := humancalling.New(db.As(testdb.Portal), seedAccess, &recordingProvider{}, config, time.Now)
 			seedCallingWorker := humancalling.New(db.As(testdb.Worker), seedAccess, &recordingProvider{}, config, time.Now)
-			prepareCredentials(t, seedCalling)
+			prepareCredentials(t, seedCallingWorker)
 			readyConcurrentStaff(t, seedCalling, staff, "receipt-latency-browser")
 			if _, err := seedCalling.CreateHandoff(ctx, humancalling.CreateHandoffCommand{
 				Service:    humancalling.ServiceIdentity{Subject: "synthetic-agent", PracticeID: authorization.Practice.ID},
@@ -72,9 +72,9 @@ func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			processAllCommands(t, seedCalling)
-			newExecutor := func() (*pgxpool.Pool, *postgres.Executor) {
-				poolConfig := pool.Config().Copy()
+			processAllCommands(t, seedCallingWorker)
+			newExecutor := func(role testdb.Role) (*pgxpool.Pool, *postgres.Executor) {
+				poolConfig := db.As(role).Config()
 				poolConfig.MaxConns = 2
 				runtimePool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 				if err != nil {
@@ -89,8 +89,8 @@ func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 				}
 				return runtimePool, database
 			}
-			workerPool, workerExecutor := newExecutor()
-			_, ingressExecutor := newExecutor()
+			workerPool, workerExecutor := newExecutor(testdb.Worker)
+			_, ingressExecutor := newExecutor(testdb.Provider)
 			measuredDatabase := &fanoutCommitDatabase{Database: workerExecutor, committed: make(chan fanoutCommitObservation, 1)}
 			provider := &receiptLatencyProvider{ringbackDelay: scenario.ringback, dispatches: make(chan time.Time, scenario.staff), effects: make(map[string]int)}
 			calling := humancalling.New(measuredDatabase, access.New(measuredDatabase, time.Now), provider, config, time.Now)

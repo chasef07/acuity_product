@@ -108,10 +108,11 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	insert(true)
 	apply(r, "FAILED")
 	assertOpen(1)
-	tx, err := pool.Begin(ctx)
+	tx, err := db.As(testdb.Worker).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err = m.EnsureAppointmentReview(ctx, tx, uuid.NewString(), auth.Practice.ID, auth.Locations[0].ID, "+15555550123", "synthetic-separate-obligation", "Review booked appointment", "Verify this synthetic appointment.", now); err != nil {
 		t.Fatal(err)
 	}

@@ -1416,34 +1416,30 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		EmailVerified: true,
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
+	callingConfig := humancalling.Config{
+		HandoffSIPDomain:   "synthetic.sip.telnyx.com",
+		RingWindowDuration: 20 * time.Second,
+		HandoffTokenKey:    []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:      "http-call-control-connection",
+	}
 	calling := humancalling.New(
 		db.As(testdb.Portal),
 		accessModule,
 		httpCallingProvider{},
-		humancalling.Config{
-			HandoffSIPDomain:   "synthetic.sip.telnyx.com",
-			RingWindowDuration: 20 * time.Second,
-			HandoffTokenKey:    []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:      "http-call-control-connection",
-		},
+		callingConfig,
 		func() time.Time { return now },
 	)
 	callingWorker := humancalling.New(
 		db.As(testdb.Worker),
 		accessModule,
 		httpCallingProvider{},
-		humancalling.Config{
-			HandoffSIPDomain:   "synthetic.sip.telnyx.com",
-			RingWindowDuration: 20 * time.Second,
-			HandoffTokenKey:    []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:      "http-call-control-connection",
-		},
+		callingConfig,
 		func() time.Time { return now },
 	)
 	if err := callingWorker.ReconcileCredentials(context.Background()); err != nil {
 		t.Fatalf("reconcile HTTP calling credentials: %v", err)
 	}
-	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+	if processed, err := callingWorker.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("create HTTP calling credential: processed=%t err=%v", processed, err)
 	}
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
@@ -1673,7 +1669,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	}
 	_ = readiness.Body.Close()
 	for {
-		processed, err := calling.ProcessNextCommand(context.Background())
+		processed, err := callingWorker.ProcessNextCommand(context.Background())
 		if err != nil {
 			t.Fatalf("process caller admission command: %v", err)
 		}
@@ -1692,7 +1688,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		t.Fatalf("fan out HTTP caller: %v", err)
 	}
 	for {
-		processed, err := calling.ProcessNextCommand(context.Background())
+		processed, err := callingWorker.ProcessNextCommand(context.Background())
 		if err != nil {
 			t.Fatalf("process HTTP ring-window command: %v", err)
 		}

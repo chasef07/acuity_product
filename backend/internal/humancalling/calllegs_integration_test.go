@@ -77,44 +77,27 @@ func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.
 	}
 
 	provider := &recordingProvider{}
+	callingConfig := humancalling.Config{
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		FromNumber:             "+14843336938",
+		RingbackURL:            "https://media.synthetic.test/ringback.wav",
+	}
 	calling := humancalling.New(
-		db.As(testdb.Portal), accessModule, provider, humancalling.Config{
-			HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-			StaffSIPDomain:         "sip.telnyx.com",
-			RingWindowDuration:     20 * time.Second,
-			HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:          "staff-call-control-connection",
-			CredentialConnectionID: "staff-credential-connection",
-			FromNumber:             "+14843336938",
-			RingbackURL:            "https://media.synthetic.test/ringback.wav",
-		},
+		db.As(testdb.Portal), accessModule, provider, callingConfig,
 		func() time.Time { return now },
 	)
 	callingWorker := humancalling.New(
-		db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-			HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-			StaffSIPDomain:         "sip.telnyx.com",
-			RingWindowDuration:     20 * time.Second,
-			HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:          "staff-call-control-connection",
-			CredentialConnectionID: "staff-credential-connection",
-			FromNumber:             "+14843336938",
-			RingbackURL:            "https://media.synthetic.test/ringback.wav",
-		},
+		db.As(testdb.Worker), accessModule, provider, callingConfig,
 		func() time.Time { return now },
 	)
-	prepareCredentials(t, calling)
+	prepareCredentials(t, callingWorker)
 	if err := humancalling.New(
-		pool, accessModule, provider, humancalling.Config{
-			HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-			StaffSIPDomain:         "sip.telnyx.com",
-			RingWindowDuration:     20 * time.Second,
-			HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:          "staff-call-control-connection",
-			CredentialConnectionID: "staff-credential-connection",
-			FromNumber:             "+14843336938",
-			RingbackURL:            "https://media.synthetic.test/ringback.wav",
-		},
+		pool, accessModule, provider, callingConfig,
 		func() time.Time { return now },
 	).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
@@ -214,14 +197,14 @@ func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.
 	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("admit remaining Practice inbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	caller.EventID = "remaining-inbound-answered"
 	caller.Type = humancalling.FactCallAnswered
 	caller.OccurredAt = now.Add(time.Second)
 	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("fan out remaining Practice inbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if staffLegs := countStaffLegsForCaller(
 		t, pool, caller.CallControlID,
 	); staffLegs != 0 {
@@ -284,7 +267,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 			CallLegID:     "admin-outbound-provider-leg",
 		},
 	}}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
@@ -293,18 +276,10 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 		CredentialConnectionID: "staff-credential-connection",
 		FromNumber:             "+14843336938",
 		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-		FromNumber:             "+14843336938",
-		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "location-ring-browser")
 
 	if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
@@ -327,14 +302,14 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("admit Sweetwater caller: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	caller.EventID = "location-ring-answered"
 	caller.Type = humancalling.FactCallAnswered
 	caller.OccurredAt = now.Add(time.Second)
 	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("fan out Sweetwater caller: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	var subjects []string
 	if err := pool.QueryRow(context.Background(), `
@@ -421,16 +396,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 			adminAfterOutcome, err)
 	}
 
-	if err := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-		FromNumber:             "+14843336938",
-		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "location-ring-practice", LocationKey: "sweetwater",
 			Number: "+14843336938", Enabled: true,
@@ -447,7 +413,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start Admin outbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	adminDial := provider.last(humancalling.CommandDialOutboundStaff)
 	adminClientState, _ := adminDial.Payload["client_state"].(string)
 	adminStaff := humancalling.ProviderFact{
@@ -501,7 +467,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		{CallControlID: "staff-control-1", CallLegID: "staff-provider-leg-1"},
 		{CallControlID: "staff-control-2", CallLegID: "staff-provider-leg-2"},
 	}}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
@@ -510,19 +476,11 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		CredentialConnectionID: "staff-credential-connection",
 		FromNumber:             "+14843336938",
 		RingbackURL:            "https://media.synthetic.test/ringback.mp3",
-	}, func() time.Time { return currentTime })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-		FromNumber:             "+14843336938",
-		RingbackURL:            "https://media.synthetic.test/ringback.mp3",
-	}, func() time.Time { return currentTime })
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return currentTime })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return currentTime })
 
-	prepareCredentials(t, calling)
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "call-leg-browser")
 	handoff, err := calling.CreateHandoff(
 		context.Background(),
@@ -588,7 +546,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("admit REFER caller: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	caller.EventID = "caller-answered"
 	caller.Type = humancalling.FactCallAnswered
@@ -596,7 +554,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("fan out caller answer: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	if provider.count(humancalling.CommandStartRingWindow) != 1 ||
 		provider.count(humancalling.CommandDialStaff) != 2 {
@@ -681,7 +639,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("complete ring window after provisional winner: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	bridge := provider.last(humancalling.CommandBridge)
 	if bridge.CallLegID == "" || bridge.PeerCallLegID == "" ||
@@ -779,7 +737,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("confirm caller Bridge: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	stop := provider.last(humancalling.CommandStopRingWindow)
 	if stop.Payload["stop"] != "all" {
 		t.Fatalf("Stop ring-window payload = %#v", stop.Payload)
@@ -846,7 +804,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		connectedCall.DispositionDeadline == nil {
 		t.Fatalf("completed connected Call = %#v, %v", connectedCall, err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	currentTime = now.Add(30 * time.Second)
 	if expired, err := callingWorker.ExpireDispositions(context.Background()); err != nil || expired != 1 {
 		t.Fatalf("expire connected disposition = %d, %v", expired, err)
@@ -887,16 +845,13 @@ func TestInboundReferRejectsAmbiguousCallerReservations(t *testing.T) {
 	authorization, _ := provisionConcurrentStaff(
 		t, db.Owner, accessModule, now, "ambiguous-handoff", 1,
 	)
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, &recordingProvider{}, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain: "synthetic.sip.telnyx.com",
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:    "staff-call-control-connection",
-	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, &recordingProvider{}, humancalling.Config{
-		HandoffSIPDomain: "synthetic.sip.telnyx.com",
-		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:    "staff-call-control-connection",
-	}, func() time.Time { return now })
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, &recordingProvider{}, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, &recordingProvider{}, callingConfig, func() time.Time { return now })
 	for _, suffix := range []string{"one", "two"} {
 		if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 			Service: humancalling.ServiceIdentity{
@@ -1811,29 +1766,18 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 		{CallControlID: "ringback-staff-control", CallLegID: "ringback-staff-leg"},
 		{CallControlID: "ringback-destination-control", CallLegID: "ringback-destination-leg"},
 	}}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "outbound-ringback-browser")
-	if err := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "outbound-ringback-practice",
 			LocationKey: "outbound-ringback-location",
@@ -1853,7 +1797,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
 	staffClientState, _ := staffDial.Payload["client_state"].(string)
 	staffFact := humancalling.ProviderFact{
@@ -1882,7 +1826,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 		}); err != nil {
 		t.Fatalf("confirm outbound Staff media: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
 	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
 	destinationFact := humancalling.ProviderFact{
@@ -1894,7 +1838,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination initiation: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if provider.count(humancalling.CommandBridge) != 1 {
 		t.Fatalf("outbound ringing Bridge commands = %d, want 1", provider.count(humancalling.CommandBridge))
 	}
@@ -2010,7 +1954,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination answer: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if provider.count(humancalling.CommandBridge) != 1 {
 		t.Fatalf("destination answer created duplicate Bridge: %#v", provider.commands)
 	}
@@ -2041,29 +1985,18 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 		{CallControlID: "outbound-staff-control", CallLegID: "outbound-staff-provider-leg"},
 		{CallControlID: "destination-control", CallLegID: "destination-provider-leg"},
 	}}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "outbound-browser")
-	if err := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "call-leg-outbound-practice",
 			LocationKey: "call-leg-outbound-location",
@@ -2090,7 +2023,7 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	`, call.ID).Scan(&callerLegs); err != nil || callerLegs != 1 {
 		t.Fatalf("outbound caller CallLegs = %d, err = %v", callerLegs, err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
 	staffClientState, _ := staffDial.Payload["client_state"].(string)
 	staffFact := humancalling.ProviderFact{
@@ -2119,7 +2052,7 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 		}); err != nil {
 		t.Fatalf("confirm outbound Staff media: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
 	if destinationDial.Payload["bridge_on_answer"] != false ||
 		destinationDial.Payload["link_to"] != "outbound-staff-control" ||
@@ -2142,7 +2075,7 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project reordered destination initiation: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	bridge := provider.last(humancalling.CommandBridge)
 	if bridge.TargetID != "outbound-staff-control" ||
 		bridge.Payload["call_control_id"] != "destination-control" ||
@@ -2181,7 +2114,7 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project late destination initiation: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if provider.count(humancalling.CommandBridge) != 1 {
 		t.Fatalf("reordered destination facts created duplicate Bridge: %#v", provider.commands)
 	}
@@ -2221,29 +2154,18 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 		},
 		observations: []humancalling.ProviderCallObservation{{Active: false}},
 	}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "stale-bridged-outbound-browser")
-	if err := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "stale-bridged-outbound-practice",
 			LocationKey: "stale-bridged-outbound-location",
@@ -2263,7 +2185,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
 	staffClientState, _ := staffDial.Payload["client_state"].(string)
 	staffFact := humancalling.ProviderFact{
@@ -2292,7 +2214,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 		}); err != nil {
 		t.Fatalf("confirm outbound Staff media: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
 	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
 	destinationFact := humancalling.ProviderFact{
@@ -2310,7 +2232,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination answer: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	for _, fact := range []humancalling.ProviderFact{
 		{
 			EventID: "stale-bridged-destination-bridged", Type: humancalling.FactCallBridged,
@@ -2805,7 +2727,7 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 		blockStarted: make(chan struct{}),
 		blockRelease: make(chan struct{}),
 	}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
@@ -2814,17 +2736,9 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 		CredentialConnectionID: "staff-credential-connection",
 		FromNumber:             "+14843336938",
 		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-		FromNumber:             "+14843336938",
-		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
 
 	callIDs := make([]string, 2)
 	for index := range callIDs {
@@ -2878,7 +2792,7 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 
 	firstDone := make(chan error, 1)
 	go func() {
-		processed, err := calling.ProcessNextCommand(context.Background())
+		processed, err := callingWorker.ProcessNextCommand(context.Background())
 		if err == nil && !processed {
 			err = errors.New("first worker found no command")
 		}
@@ -2890,7 +2804,7 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 		t.Fatal("first command did not reach provider barrier")
 	}
 
-	processed, secondErr := calling.ProcessNextCommand(context.Background())
+	processed, secondErr := callingWorker.ProcessNextCommand(context.Background())
 	close(provider.blockRelease)
 	if firstErr := <-firstDone; firstErr != nil {
 		t.Fatalf("first command worker: %v", firstErr)
@@ -3281,10 +3195,7 @@ func TestCommandWorkerRetriesAfterLosingClaimRace(t *testing.T) {
 			close(claimRelease)
 		}
 	})
-	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := db.As(testdb.Worker).Config()
 	config.MaxConns = 1
 	config.ConnConfig.Tracer = &commandClaimTracer{
 		started: claimStarted,
@@ -3447,13 +3358,10 @@ func TestCredentialCommandExecutionExpiresInFailedQuarantine(t *testing.T) {
 				t, db.Owner, accessModule, now, "expired-execution-"+strings.ToLower(string(action)), 1,
 			)
 			provider := &credentialFailureProvider{executeErr: errors.New("synthetic provider timeout")}
-			calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+			calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
 				CredentialConnectionID: "staff-credential-connection",
 			}, func() time.Time { return now })
-			callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-				CredentialConnectionID: "staff-credential-connection",
-			}, func() time.Time { return now })
-			if err := callingWorker.ReconcileCredentials(context.Background()); err != nil {
+			if err := calling.ReconcileCredentials(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			if action == humancalling.CommandDisableCredential {
@@ -3493,7 +3401,7 @@ func TestCredentialCommandExecutionExpiresInFailedQuarantine(t *testing.T) {
 				t.Fatal("expired credential execution did not claim the command")
 			}
 			assertCredentialQuarantined(t, pool, staff[0].Subject)
-			if err := callingWorker.ReconcileCredentials(context.Background()); err != nil {
+			if err := calling.ReconcileCredentials(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			var activeDisableCommands int
@@ -3595,13 +3503,10 @@ func TestCredentialReconciliationRetriesFailedCreateForActiveStaff(t *testing.T)
 	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	_, staff := provisionConcurrentStaff(t, db.Owner, accessModule, now, "failed-credential-retry", 1)
 	provider := &credentialFailureProvider{executeErr: errors.New("synthetic provider rejection")}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
 		CredentialConnectionID: "staff-credential-connection",
 	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	if err := callingWorker.ReconcileCredentials(context.Background()); err != nil {
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(context.Background(), `
@@ -3617,7 +3522,7 @@ func TestCredentialReconciliationRetriesFailedCreateForActiveStaff(t *testing.T)
 	assertCredentialQuarantined(t, pool, staff[0].Subject)
 	credentialRetry := func() (state string, activeCreates int) {
 		t.Helper()
-		if err := callingWorker.ReconcileCredentials(context.Background()); err != nil {
+		if err := calling.ReconcileCredentials(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		if err := pool.QueryRow(context.Background(), `
@@ -3927,29 +3832,18 @@ func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 		CallControlID: "outbound-media-timeout-control",
 		CallLegID:     "outbound-media-timeout-provider-leg",
 	}}}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "outbound-media-timeout-browser")
-	if err := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		StaffSIPDomain:         "sip.telnyx.com",
-		RingWindowDuration:     20 * time.Second,
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "outbound-media-timeout-practice",
 			LocationKey: "outbound-media-timeout-location",
@@ -3969,7 +3863,7 @@ func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	dial := provider.last(humancalling.CommandDialOutboundStaff)
 	clientState, _ := dial.Payload["client_state"].(string)
 	staffFact := humancalling.ProviderFact{
@@ -4029,7 +3923,7 @@ func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 	if err != nil || !readiness.Available || readiness.ActiveCallID != "" {
 		t.Fatalf("released outbound softphone = %#v, err = %v", readiness, err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if provider.count(humancalling.CommandHangupLeg) != 1 {
 		t.Fatalf("expired outbound media Hangups = %#v", provider.commands)
 	}
@@ -4044,7 +3938,7 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 		t, db.Owner, accessModule, now, "hangup-before-answer", 1,
 	)
 	provider := &recordingProvider{}
-	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
@@ -4052,17 +3946,10 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 		CredentialConnectionID: "staff-credential-connection",
 		FromNumber:             "+14843336938",
 		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
-	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
-		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-		StaffSIPDomain:         "sip.telnyx.com",
-		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-		CallControlID:          "staff-call-control-connection",
-		CredentialConnectionID: "staff-credential-connection",
-		FromNumber:             "+14843336938",
-		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "hangup-before-answer-browser")
 	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
@@ -4085,7 +3972,7 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatal(err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	answer := provider.last(humancalling.CommandAnswerCaller)
 	answerClientState, _ := answer.Payload["client_state"].(string)
 	if answerClientState == "" {
@@ -4106,7 +3993,7 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatal(err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	var terminal, answerCommandState string
 	var staffLegs, recoveryTasks int
 	if err := pool.QueryRow(context.Background(), `
