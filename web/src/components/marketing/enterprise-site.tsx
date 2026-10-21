@@ -46,6 +46,7 @@ export type MarketingRoute =
 const navigation: Array<{ href: MarketingRoute; label: string }> = [
   { href: "/", label: "Home" },
   { href: "/method", label: "Our Method" },
+  { href: "/integrations", label: "Integrations" },
   { href: "/who-we-are", label: "Who We Are" },
 ]
 
@@ -301,6 +302,8 @@ export function EnterpriseHome({
 }
 
 const stediPartnerUrl = "https://www.stedi.com/platform-partners#acuity-health"
+const modMedListingUrl = "https://modmed.my.site.com/synapsysmarketplace/s/partner-app/a9YUW000000jfGj2AI/data-buddies-solutions-llc"
+const liveKitCaseStudyUrl ="https://livekit.com/blog/how-acuity-health-transforms-patient-access-with-livekit-voice-agents"
 
 export function IntegrationsPageContent() {
   return (
@@ -308,11 +311,26 @@ export function IntegrationsPageContent() {
       <section className={styles.missionVision} aria-labelledby="integrations-title" id="integrations">
         <div className={styles.missionStatement}>
           <p className={styles.eyebrow}>Partnerships & integrations</p>
-          <h1 id="integrations-title">Built around the systems your practice already uses.</h1>
+          <h1 id="integrations-title">Integrations and partners built around the systems your practice already uses.</h1>
         </div>
         <div className={styles.visionStatement}>
           <p className={styles.eyebrow}>From the call to the next step</p>
           <p>Connect patient conversations to scheduling and insurance eligibility, shaped around the way your team works.</p>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="livekit-partner">
+        <header>
+          <p className={styles.eyebrow}>Voice AI infrastructure · Featured case study</p>
+          <h2 id="livekit-partner">LiveKit</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Our voice agents run on LiveKit. Building agents as code lets us tailor each one to a practice, and LiveKit Simulations tests every release against patient profiles and edge cases before it reaches patients.</p>
+          <div className={styles.platformActions}>
+            <a className={styles.inlineArrowLink} href={liveKitCaseStudyUrl} target="_blank" rel="noopener">
+              Read how Acuity Health transforms patient access with LiveKit <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
         </div>
       </section>
 
@@ -327,8 +345,23 @@ export function IntegrationsPageContent() {
             <Link className={styles.inlineArrowLink} href="/integrations/advancedmd">
               Explore the AdvancedMD integration <ArrowRight size={16} aria-hidden="true" />
             </Link>
-            <a className={styles.inlineArrowLink} href="https://www.advancedmd.com/integrations/marketplace/acuity-health/" target="_blank" rel="noreferrer">
+            <a className={styles.inlineArrowLink} href="https://www.advancedmd.com/integrations/marketplace/acuity-health/" target="_blank" rel="noopener">
               View our AdvancedMD marketplace listing <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="modmed-marketplace">
+        <header>
+          <p className={styles.eyebrow}>EHR & PMS · SynapSYS Marketplace</p>
+          <h2 id="modmed-marketplace">ModMed</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Acuity Health is available on the ModMed SynapSYS Marketplace. Practices using ModMed can find our AI receptionist there, and we scope the supported workflows with your team before rollout.</p>
+          <div className={styles.platformActions}>
+            <a className={styles.inlineArrowLink} href={modMedListingUrl} target="_blank" rel="noopener">
+              View our ModMed SynapSYS Marketplace listing <ArrowRight size={16} aria-hidden="true" />
             </a>
           </div>
         </div>
@@ -345,7 +378,7 @@ export function IntegrationsPageContent() {
             <Link className={styles.inlineArrowLink} href="/integrations/stedi">
               Explore insurance eligibility <ArrowRight size={16} aria-hidden="true" />
             </Link>
-            <a className={styles.inlineArrowLink} href={stediPartnerUrl} target="_blank" rel="noreferrer">
+            <a className={styles.inlineArrowLink} href={stediPartnerUrl} target="_blank" rel="noopener">
               View Acuity on Stedi <ArrowRight size={16} aria-hidden="true" />
             </a>
           </div>
@@ -360,7 +393,7 @@ export function IntegrationsPageContent() {
         <div className={styles.storyBody}>
           <p>Whitecotton Vision brings Acuity Health to ophthalmology and optometry practices alongside its ophthalmic equipment and practice technology. Their team helps practices assess fit and supports implementation.</p>
           <div className={styles.platformActions}>
-            <a className={styles.inlineArrowLink} href="https://whitecottonvision.com/acuity-health" target="_blank" rel="noreferrer">
+            <a className={styles.inlineArrowLink} href="https://whitecottonvision.com/acuity-health" target="_blank" rel="noopener">
               Explore Acuity with Whitecotton Vision <ArrowRight size={16} aria-hidden="true" />
             </a>
           </div>
@@ -369,13 +402,13 @@ export function IntegrationsPageContent() {
 
       <section className={styles.integrationEditorial} aria-labelledby="other-systems">
         <header>
-          <p className={styles.eyebrow}>More EHR & PMS integrations</p>
-          <h2 id="other-systems">Your systems.<br />Your workflow.</h2>
+          <p className={styles.eyebrow}>Your systems. Your workflow.</p>
+          <h2 id="other-systems">More EHR & PMS integrations</h2>
         </header>
         <div className={styles.storyBody}>
           <p>We also connect with these platforms. We scope the supported workflows and access requirements with your team before rollout.</p>
           <ul className={styles.integrationNames}>
-            <li>Nextech</li><li>Athenahealth</li><li>ModMed</li><li>Compulink</li>
+            <li>Nextech</li><li>athenahealth</li><li>Compulink</li>
           </ul>
           <p>Use another system? We can assess a custom connection around the work your practice needs.</p>
         </div>
@@ -384,7 +417,7 @@ export function IntegrationsPageContent() {
       <section className={styles.integrationEditorial} aria-labelledby="integration-setup">
         <header>
           <p className={styles.eyebrow}>How we build</p>
-          <h2 id="integration-setup">The connection starts with your workflow.</h2>
+          <h2 id="integration-setup">How integration setup works</h2>
         </header>
         <div className={styles.storyBody}>
           <p>We map the work with your team: scheduling rules, insurance requirements, and the moments that need staff attention.</p>
@@ -418,10 +451,10 @@ export function StediPageContent() {
           <p>Stedi connects eligibility requests to insurance payers. Acuity brings that connection into the work of answering patient calls and preparing the next step with your practice.</p>
           <p>Real-time checks help reduce manual verification. Available benefits and response times depend on the payer, the patient information provided, and your practice’s enrollment.</p>
           <div className={styles.platformActions}>
-            <a className={styles.inlineArrowLink} href="https://www.stedi.com/blog/spotlight-chase-fagen-acuity-health" target="_blank" rel="noreferrer">
+            <a className={styles.inlineArrowLink} href="https://www.stedi.com/blog/spotlight-chase-fagen-acuity-health" target="_blank" rel="noopener">
               Read our CTO’s thoughts on Stedi <ArrowRight size={16} aria-hidden="true" />
             </a>
-            <a className={styles.inlineArrowLink} href={stediPartnerUrl} target="_blank" rel="noreferrer">
+            <a className={styles.inlineArrowLink} href={stediPartnerUrl} target="_blank" rel="noopener">
               View Acuity on Stedi <ArrowRight size={16} aria-hidden="true" />
             </a>
           </div>
@@ -455,7 +488,7 @@ export function StediPageContent() {
           <h2 id="eligibility-questions">Know what the check can tell you.</h2>
         </header>
         <div className={styles.eligibilityAnswers}>
-          <div><h3>Does this support every payer?</h3><p>Support varies by payer and coverage type. We review your payer mix and any enrollment requirements with your team. You can also explore <a href="https://www.stedi.com/healthcare/network" target="_blank" rel="noreferrer">Stedi’s payer network</a>.</p></div>
+          <div><h3>Does this support every payer?</h3><p>Support varies by payer and coverage type. We review your payer mix and any enrollment requirements with your team. You can also explore <a href="https://www.stedi.com/healthcare/network" target="_blank" rel="noopener">Stedi’s payer network</a>.</p></div>
           <div><h3>Does eligibility guarantee payment?</h3><p>No. An eligibility response is not a guarantee of payment, prior authorization, or confirmation that a particular procedure is covered. Your practice’s acceptance rules and any remaining verification still apply.</p></div>
           <div><h3>What if a check cannot be completed?</h3><p>We define the staff handoff during setup, including when patient information needs correction or a payer cannot return a usable result.</p></div>
           <Link className={styles.inlineArrowLink} href="/integrations">All partnerships & integrations <ArrowRight size={16} aria-hidden="true" /></Link>
@@ -486,7 +519,7 @@ export function AdvancedMDPageContent() {
           <a
             className={styles.inlineArrowLink}
             href="https://www.advancedmd.com/integrations/marketplace/acuity-health/"
-            rel="noreferrer"
+            rel="noopener"
             target="_blank"
           >
             View our AdvancedMD marketplace listing

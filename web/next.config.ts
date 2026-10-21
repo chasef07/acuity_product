@@ -23,6 +23,16 @@ const nextConfig: NextConfig = {
         destination: "/integrations/advancedmd",
         permanent: true,
       },
+      {
+        source: "/partners",
+        destination: "/integrations",
+        permanent: true,
+      },
+      {
+        source: "/partnerships",
+        destination: "/integrations",
+        permanent: true,
+      },
     ]
   },
   async headers() {
