@@ -56,7 +56,7 @@ func TestOperatorReadinessDoesNotDeadlockWorkspaceChange(t *testing.T) {
 				}
 			}
 
-			workerTx, err := pool.Begin(ctx)
+			workerTx, err := db.As(testdb.Worker).Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

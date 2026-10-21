@@ -310,7 +310,7 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 	}
 	authorize := func(officeKey string) (access.ServiceAuthorization, error) {
 		t.Helper()
-		tx, err := pool.Begin(context.Background())
+		tx, err := db.As(testdb.Portal).Begin(context.Background())
 		if err != nil {
 			t.Fatalf("begin Abita route authorization: %v", err)
 		}
@@ -417,7 +417,7 @@ func TestServiceLocationAuthorizationEntryPoints(t *testing.T) {
 			knownKey:   "known-office",
 			unknownKey: "unknown-office",
 			authorize: func(identity access.ServiceIdentity, key string) (access.ServiceAuthorization, error) {
-				tx, err := pool.Begin(context.Background())
+				tx, err := db.As(testdb.Portal).Begin(context.Background())
 				if err != nil {
 					return access.ServiceAuthorization{}, err
 				}
@@ -429,7 +429,7 @@ func TestServiceLocationAuthorizationEntryPoints(t *testing.T) {
 			knownKey:   "+12025550123",
 			unknownKey: "+12025550124",
 			authorize: func(identity access.ServiceIdentity, key string) (access.ServiceAuthorization, error) {
-				tx, err := pool.Begin(context.Background())
+				tx, err := db.As(testdb.Portal).Begin(context.Background())
 				if err != nil {
 					return access.ServiceAuthorization{}, err
 				}
@@ -990,7 +990,7 @@ func TestAlreadyBoundPlatformOperatorReadAuthorizationsProceedConcurrently(t *te
 		t.Fatalf("bind concurrent operator: discovery=%#v err=%v", discovery, err)
 	}
 
-	firstConnection, err := pool.Acquire(context.Background())
+	firstConnection, err := db.As(testdb.Portal).Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("acquire first authorization connection: %v", err)
 	}
@@ -1010,7 +1010,7 @@ func TestAlreadyBoundPlatformOperatorReadAuthorizationsProceedConcurrently(t *te
 		t.Fatalf("authorize first operator read: %v", err)
 	}
 
-	secondConnection, err := pool.Acquire(context.Background())
+	secondConnection, err := db.As(testdb.Portal).Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("acquire second authorization connection: %v", err)
 	}
@@ -1087,7 +1087,7 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 		t.Fatalf("operator Memberships = demo:%#v customer:%#v", demo.Membership, customer.Membership)
 	}
 
-	tx, err := pool.Begin(context.Background())
+	tx, err := db.As(testdb.Portal).Begin(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1101,7 +1101,7 @@ func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 	}
 	changeContext, cancelChange := context.WithTimeout(context.Background(), time.Second)
 	defer cancelChange()
-	changeTx, err := pool.Begin(changeContext)
+	changeTx, err := db.As(testdb.Portal).Begin(changeContext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1204,7 +1204,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 		t.Fatalf("load denied Location: %v", err)
 	}
 
-	recorder := &statementRecorder{Pool: pool}
+	recorder := &statementRecorder{Pool: db.As(testdb.Portal)}
 	recordedModule := access.New(recorder, nil)
 	tx, err := recorder.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -1249,7 +1249,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 	}
 	for _, method := range methods {
 		t.Run(method.name+" denies out-of-scope Location", func(t *testing.T) {
-			tx, err := pool.Begin(ctx)
+			tx, err := db.As(testdb.Portal).Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1260,7 +1260,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 		})
 	}
 	t.Run("read permits whole-Practice authorization", func(t *testing.T) {
-		tx, err := pool.Begin(ctx)
+		tx, err := db.As(testdb.Portal).Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1271,7 +1271,7 @@ func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorO
 	})
 	for _, method := range methods[:2] {
 		t.Run(method.name+" requires Location", func(t *testing.T) {
-			tx, err := pool.Begin(ctx)
+			tx, err := db.As(testdb.Portal).Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1322,7 +1322,7 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 		t.Fatalf("bind set query operator: %v", err)
 	}
 
-	recorder := &statementRecorder{Pool: pool}
+	recorder := &statementRecorder{Pool: db.As(testdb.Portal)}
 	recordedModule := access.New(recorder, nil)
 	memberDiscovery, err := recordedModule.DiscoverActor(ctx, member)
 	if err != nil {
@@ -1418,7 +1418,7 @@ func TestDiscoverActorKeepsOperatorPracticeAndLocationSnapshotConsistent(t *test
 	}
 
 	interleaver := &operatorDiscoveryInterleaver{
-		Pool: pool,
+		Pool: db.As(testdb.Portal),
 		inject: func(ctx context.Context) error {
 			_, err := access.New(pool, nil).Provision(ctx, access.Provisioning{
 				Environment: "test",

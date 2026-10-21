@@ -266,7 +266,7 @@ func newCallingAccessFailureFixture(
 	}
 	fixture.authorization = testaccess.Activate(t, accessModule, fixture.staff)
 
-	fixture.database = &accessLookupFaultDatabase{Database: pool}
+	fixture.database = &accessLookupFaultDatabase{Database: db.As(testdb.Portal)}
 	calling := humancalling.New(
 		fixture.database,
 		access.New(fixture.database, fixture.now),

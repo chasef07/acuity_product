@@ -2373,7 +2373,7 @@ func prepareTerminalNeverStartedCaller(
 	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, now, prefix, 1)
 	calling := humancalling.New(
-		db.As(testdb.Portal), accessModule, provider, humancalling.Config{}, func() time.Time { return now },
+		db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return now },
 	)
 
 	var terminalCallID, terminalLegID string

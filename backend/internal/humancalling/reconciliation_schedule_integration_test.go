@@ -48,7 +48,7 @@ func TestOutgoingReconciliationBackoffIsDurableAndDoesNotStarveOtherCalls(t *tes
 	legID := seedScheduledObservationLeg(t, pool, authorization, now.Add(-2*time.Minute), "failing")
 	provider := &scheduledObservationProvider{err: humancalling.ErrInvalidInput, healthyControlID: "healthy-control"}
 	for index, delay := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 15 * time.Minute, 15 * time.Minute} {
-		calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, humancalling.Config{}, func() time.Time { return now })
+		calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return now })
 		if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); !maintained || !errors.Is(err, humancalling.ErrInvalidInput) {
 			t.Fatalf("observation %d = maintained:%t err:%v", index+1, maintained, err)
 		}
