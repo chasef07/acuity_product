@@ -11,19 +11,6 @@ const appointmentTitles: Record<AiAppointmentOutcome, string> = {
   INDETERMINATE: "AI call",
 }
 
-export function aiCallCompletionLabel(status: AiInteractionCallStatus) {
-  switch (status) {
-    case "COMPLETED":
-      return "Call completed"
-    case "ESCALATED":
-      return "Transferred to staff"
-    case "FAILED":
-      return "AI call failed"
-    default:
-      return "AI call in progress"
-  }
-}
-
 export function aiCallTimelinePresentation(
   outcome: AiAppointmentOutcome,
   status: AiInteractionCallStatus,

@@ -1,0 +1,5 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["src/components/workspace/*.render.test.tsx", "src/lib/auth-cli.ts"],
+  "ignore": ["src/lib/api/generated/**"]
+}

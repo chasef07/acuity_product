@@ -33,7 +33,7 @@ export type SoftphoneFailureKind =
   | "conflict"
   | "temporary-request"
 
-export type SoftphoneFailure = {
+type SoftphoneFailure = {
   kind: SoftphoneFailureKind
   message: string
   recoverable: boolean
@@ -42,7 +42,7 @@ export type SoftphoneFailure = {
 
 export type RuntimeOffer = RingingCallLeg & { answerReady: boolean }
 
-export type RuntimePendingCall = Pick<
+type RuntimePendingCall = Pick<
   CallingCall,
   | "id"
   | "direction"
@@ -117,7 +117,7 @@ export type SoftphoneRuntimeSnapshot = {
   failure?: SoftphoneFailure
 }
 
-export type StateRead =
+type StateRead =
   | { status: "not-modified"; etag?: string }
   | { status: "modified"; state: CallingState; etag?: string }
 
@@ -197,7 +197,7 @@ export interface SoftphoneMicrophone {
   ): Promise<{ stop(): void }>
 }
 
-export interface SoftphoneVisibility {
+interface SoftphoneVisibility {
   isHidden(): boolean
   subscribe(listener: () => void): () => void
 }

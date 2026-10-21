@@ -3,7 +3,7 @@ import { checkState } from "@/lib/scorecard-flow"
 import { Badge } from "@/components/ui/badge"
 import type { AgentCallVerdict, OperatorScorecardQuestion } from "@/lib/api/generated/types.gen"
 
-export const evaluationLabels: Record<string, string> = {
+const evaluationLabels: Record<string, string> = {
   request_understood: "Caller request understood",
   appointment_datetime_correct: "Appointment date and time correct",
   office_rules_grounded: "Office rules supported by evidence",
@@ -17,7 +17,7 @@ export const evaluationLabels: Record<string, string> = {
   expressed_sentiment: "Expressed caller sentiment",
   reports_unresolved: "Caller reports unresolved issue",
 }
-export const evaluationScales: Record<string, string[]> = {
+const evaluationScales: Record<string, string[]> = {
   request_specificity: ["Contradictory or shifting", "Vague", "Mostly clear", "Fully specified"],
   expressed_sentiment: ["Very negative", "Negative", "Neutral or mixed", "Positive", "Very positive"],
 }
