@@ -2726,7 +2726,7 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		LocationName:        call.LocationName,
 		Direction:           api.CallingCallDirection(call.Direction),
 		EntryPoint:          api.CallingCallEntryPoint(call.EntryPoint),
-		State:               api.CallingCallState(call.State),
+		State:               api.CallState(call.State),
 		Phone:               call.Phone,
 		CallerId:            call.CallerID,
 		PhoneSource:         call.PhoneSource,
@@ -3213,7 +3213,7 @@ func callHistoryItemResponse(
 		LocationName:    item.LocationName,
 		AnsweredByEmail: item.AnsweredByEmail,
 		TransferReason:  item.TransferReason,
-		Outcome:         api.CallHistoryItemOutcome(item.Outcome),
+		Outcome:         api.CallState(item.Outcome),
 	}
 	if item.SourceCallID != "" {
 		response.SourceCallId = &item.SourceCallID
@@ -3238,7 +3238,7 @@ func operatorTimelineResponse(
 	response := api.OperatorCallingTimeline{
 		CallId:     callID,
 		PracticeId: practiceID,
-		State:      api.OperatorCallingTimelineState(timeline.State),
+		State:      api.CallState(timeline.State),
 		Version:    timeline.Version,
 		Entries:    make([]api.OperatorCallingTimelineEntry, 0, len(timeline.Entries)),
 	}

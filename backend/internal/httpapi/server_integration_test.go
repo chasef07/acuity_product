@@ -1963,7 +1963,7 @@ func TestCallingHangupReturnsTerminalCallWhenProviderWinsRace(t *testing.T) {
 	}
 	var current api.CallingCall
 	decode(t, response, &current)
-	if current.State != api.CallingCallStateNEEDSDISPOSITION {
+	if current.State != api.CallStateNEEDSDISPOSITION {
 		t.Fatalf("provider-first Hangup Call state = %s", current.State)
 	}
 	hangupCommandsAfter := fixture.hangupCommandCount(t, callID)

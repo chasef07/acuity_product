@@ -453,7 +453,7 @@ export type CallingCall = {
     direction: 'INBOUND' | 'OUTBOUND';
     entryPoint: 'AI_HANDOFF' | 'TASK' | 'STANDALONE';
     taskId?: string;
-    state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'VOICEMAIL_GREETING' | 'VOICEMAIL_RECORDING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    state: CallState;
     dispositionDeadline?: string;
     phone: string;
     phoneSource: string;
@@ -2098,6 +2098,8 @@ export type ConversationTimelinePage = {
     nextCursor: string;
 };
 
+export type CallState = 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'VOICEMAIL_GREETING' | 'VOICEMAIL_RECORDING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+
 export type CallHistoryItem = {
     id: string;
     type: 'CALL';
@@ -2117,7 +2119,7 @@ export type CallHistoryItem = {
     placedByEmail?: string;
     transferReason: string;
     sourceCallId?: string;
-    outcome: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    outcome: CallState;
 };
 
 export type OperatorCallingTimelineEntry = {
@@ -2136,7 +2138,7 @@ export type OperatorCallingTimelineEntry = {
 export type OperatorCallingTimeline = {
     callId: string;
     practiceId: string;
-    state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    state: CallState;
     version: number;
     entries: Array<OperatorCallingTimelineEntry>;
 };
