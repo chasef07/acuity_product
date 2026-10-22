@@ -5035,6 +5035,85 @@ test("a lease acquisition that reports ownership moved releases local media so i
   await runtime.stop()
 })
 
+test("a takeover fenced out by an ownership change reconciles instead of leaving the old ownership failure", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.startOutboundHandler = async () => {
+    throw new SoftphoneAdapterError("ownership", "Calling ownership moved to another browser.", true)
+  }
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  await runtime.startOutbound({
+    idempotencyKey: "outbound-before-fenced-takeover",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  })
+  const acquisition = deferred<SoftphoneState>()
+  backend.acquireLeaseHandler = async () => acquisition.promise
+  const recovering = runtime.recover()
+  await drainMicrotasks()
+  backend.lease = lease({ sessionId: "other-session", owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().lease?.owner, false)
+
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  acquisition.resolve(backend.lease)
+  await recovering
+
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+  assert.equal(runtime.getSnapshot().failure, undefined)
+  await runtime.stop()
+})
+
+test("a start refused after a refresh observed the dialing start's Call leaves that start in charge of its result", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const response = deferred<CallingCall>()
+  backend.startOutboundHandler = async () => response.promise
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const request = {
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  }
+  const dialing = runtime.startOutbound({ ...request, idempotencyKey: "observed-while-dialing" })
+  await eventually(() => assert.notEqual(runtime.getSnapshot().pendingCall, undefined))
+  const started = call({ id: "call-observed-while-dialing", state: "PREPARING" })
+  backend.calls.set(started.id, started)
+  backend.lease = lease({ owner: true, activeCallId: started.id })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().expectedCallID, started.id)
+
+  const refused = await runtime.startOutbound({ ...request, idempotencyKey: "refused-after-observed" })
+  response.resolve(started)
+
+  assert.equal(refused?.message, "Finish the current Call before starting another.")
+  assert.equal(await dialing, undefined)
+  assert.equal(runtime.getSnapshot().activeCall?.id, started.id)
+  await runtime.stop()
+})
+
 test("a disposition committed while the lease was lost and regained still returns its result", async () => {
   const backend = new DeterministicBackend()
   const pending = call({ id: "call-disposition-regained", state: "NEEDS_DISPOSITION", version: 3 })

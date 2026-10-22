@@ -621,7 +621,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       accessBlocked ? operations.get("ownership")?.failure : ownership,
       { ...update, lease },
     )
-    if (ownershipLost) void releaseLocalMedia()
+    return ownershipLost ? releaseLocalMedia() : undefined
   }
 
   function clearFailures(slots: readonly OperationSlot[] = [...operations.keys()]) {
@@ -1297,7 +1297,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             ),
           )
         : []
-      reportLease(lease, !lease.owner && !ownLeaseLapsed
+      const released = reportLease(lease, !lease.owner && !ownLeaseLapsed
         ? ownershipFailure(lease, ownershipLost)
         : undefined, {
         offers,
@@ -1324,7 +1324,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           : persistMediaCorrelation(undefined),
       })
       syncAttention(offers)
-      if (ownershipLost || ownershipMoved) await releaseLocalMedia()
+      if (released) await released
+      if (ownershipMoved) await releaseLocalMedia()
       if (!live(refresh)) return
       reclaimLapsedLease()
       if (ownershipMoved && !stopped && lease.owner) void connectMedia()
@@ -1798,7 +1799,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   }
 
   function refuseOutbound(failure: SoftphoneFailure) {
-    if (snapshot.call.stage !== "dialing") fail(open("outbound"), failure)
+    if (!operations.get("outbound")?.pending) fail(open("outbound"), failure)
     return failure
   }
 
@@ -2243,12 +2244,20 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         ),
         options.sessionID,
       )
-      if (!live(acquisition)) return
+      if (!live(acquisition)) {
+        await reconcileStaleCommand()
+        return
+      }
       settle(acquisition)
-      reportLease(lease, lease.owner ? undefined : ownershipFailure(lease), {
-        call: claimedCall(lease),
-      })
-      if (!lease.owner) return
+      const released = reportLease(
+        lease,
+        lease.owner ? undefined : ownershipFailure(lease),
+        { call: claimedCall(lease) },
+      )
+      if (!lease.owner) {
+        await released
+        return
+      }
       await signalRefresh()
       await connectMedia()
     } catch (error) {
@@ -2410,7 +2419,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           recoverable: true,
         })
       }
-      const outbound = open("outbound", {}, {
+      const outbound = open("outbound", { pending: true }, {
         call: { stage: "dialing", pending: pendingOutboundCall(input) },
       })
       signalStaffIntent()
@@ -2812,7 +2821,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       }
       attachedLeg = undefined
       persistCallRecoveryID(undefined)
-      clearFailures(["outbound", "hangup", "retry", "disposition"])
+      clearFailures(["outbound", "retry"])
       publish({
         call: idleCall,
         mediaAttachment: undefined,
