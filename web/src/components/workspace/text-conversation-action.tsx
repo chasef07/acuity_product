@@ -7,8 +7,8 @@ import { useSettledState } from "@/hooks/use-settled-state"
 import type { Task } from "@/lib/api/generated/types.gen"
 import { completeTask, reopenTask } from "@/lib/clients/tasks"
 
-export function TextConversationAction({ task, reviewedTask, onUpdated, onNext }: { task: Task; reviewedTask?: Task; onUpdated: (task: Task) => void; onNext?: () => void }) {
-  const needsReview = task.state === "OPEN" && (reviewedTask?.id !== task.id || reviewedTask.version !== task.version)
+export function TextConversationAction({ task, reviewed, onUpdated, onNext }: { task: Task; reviewed: boolean; onUpdated: (task: Task) => void; onNext?: () => void }) {
+  const needsReview = task.state === "OPEN" && !reviewed
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const stateSettled = useSettledState(task.state)

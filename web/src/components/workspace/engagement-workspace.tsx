@@ -72,7 +72,8 @@ export function EngagementWorkspaceView({
   onHistoryChange,
   calling,
 }: EngagementWorkspaceProps & { calling: EngagementWorkspaceCalling }) {
-  const [reviewedTextTask, setReviewedTextTask] = useState<Task>()
+  const [reviewedTextTaskKey, setReviewedTextTaskKey] = useState("")
+  const textTaskKey = textTask ? `${textTask.id}:${textTask.version}` : ""
   const [chosenRoute, setRoute] = useState("")
   const route =
     engagement.locations.length === 1
@@ -172,7 +173,7 @@ export function EngagementWorkspaceView({
           </Button>
         )}
         <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
-          {textTask && onTextTaskUpdated && <TextConversationAction key={textTask.id} task={textTask} reviewedTask={reviewedTextTask} onUpdated={onTextTaskUpdated} onNext={onNextTask} />}
+          {textTask && onTextTaskUpdated && <TextConversationAction key={textTask.id} task={textTask} reviewed={reviewedTextTaskKey === textTaskKey} onUpdated={onTextTaskUpdated} onNext={onNextTask} />}
           {engagement.locations.length > 1 && (
             <NativeSelect
               aria-label="Sender office"
@@ -206,8 +207,8 @@ export function EngagementWorkspaceView({
         }}
         practiceID={practiceID}
         locationID={route}
-        reviewTask={textTask}
-        onTaskReviewed={setReviewedTextTask}
+        reviewKey={textTaskKey}
+        onReviewed={setReviewedTextTaskKey}
         initialDestination={engagement.phone}
         canMutate={canMutate}
         selectedTaskID={selectedTaskID}

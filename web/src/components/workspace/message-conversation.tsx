@@ -41,8 +41,8 @@ type TimelineSource = {
 }
 
 export function MessageConversation({
-  reviewTask,
-  onTaskReviewed,
+  reviewKey,
+  onReviewed,
   timelineSource,
   practiceID,
   locationID,
@@ -57,8 +57,8 @@ export function MessageConversation({
   onAIInteractionOpen,
   onHistoryChange,
 }: {
-  reviewTask?: Task
-  onTaskReviewed: (task: Task | undefined) => void
+  reviewKey: string
+  onReviewed: (reviewKey: string) => void
   timelineSource: TimelineSource
   practiceID: string
   locationID: string
@@ -90,9 +90,7 @@ export function MessageConversation({
   } = useEngagementTimeline({ ...timelineSource, hold: awayFromLatest })
   const error = failure ? "The conversation could not be loaded." : ""
   const scroller = useRef<HTMLDivElement | null>(null)
-  const currentReviewTask = useRef(reviewTask)
   const reviewSeenAt = useRef(0)
-  useEffect(() => { currentReviewTask.current = reviewTask }, [reviewTask])
   const historyPhone = timelineSource.phone
   useEffect(() => {
     onHistoryChange?.({ phone: historyPhone, items })
@@ -113,7 +111,6 @@ export function MessageConversation({
     void refresh()
   }
 
-  const reviewKey = reviewTask ? `${reviewTask.id}:${reviewTask.version}` : ""
   const seenReviewKey = useRef(reviewKey)
   useEffect(() => {
     if (seenReviewKey.current === reviewKey) return
@@ -124,7 +121,7 @@ export function MessageConversation({
 
   const showLatest = useEffectEvent((requestedAt: number) => {
     if (awayFromLatest) return
-    if (requestedAt >= reviewSeenAt.current) onTaskReviewed(currentReviewTask.current)
+    if (requestedAt >= reviewSeenAt.current) onReviewed(reviewKey)
     window.requestAnimationFrame(() =>
       scroller.current?.scrollTo({
         top: scroller.current.scrollHeight,
