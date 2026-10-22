@@ -166,7 +166,7 @@ type OperationSlot =
 
 const operationFences = {
   session: "session",
-  lease: "session",
+  lease: "lease",
   ownership: "session",
   access: "session",
   refresh: "session",
@@ -176,13 +176,13 @@ const operationFences = {
   answer: "answer",
   detail: "call",
   outbound: "lease",
-  hangup: "lease",
+  hangup: "callID",
   retry: "lease",
-  disposition: "lease",
+  disposition: "callID",
   transfer: "leg",
 } as const satisfies Record<
   OperationSlot,
-  "session" | "lease" | "call" | "leg" | "answer"
+  "session" | "lease" | "callID" | "call" | "leg" | "answer"
 >
 
 const failurePriority: readonly OperationSlot[] = [
@@ -200,6 +200,11 @@ const failurePriority: readonly OperationSlot[] = [
   "readiness",
   "refresh",
 ]
+
+const sessionFailureKinds: ReadonlySet<SoftphoneFailureKind> = new Set([
+  "access",
+  "authentication",
+])
 
 const resolvedByHealthyReadiness: readonly OperationSlot[] = [
   "media",
@@ -503,14 +508,24 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       const answered = answeredLeg(call)
       return JSON.stringify([owner, answered?.callID, answered?.media])
     }
-    const subject =
+    const callID =
       call.stage === "tracking"
-        ? [call.stage, call.callID]
+        ? call.callID
         : call.stage === "outcome" || call.stage === "disposition"
-          ? [call.stage, call.call.id]
+          ? call.call.id
           : call.stage === "idle"
-            ? []
-            : ["pending", call.pending?.id]
+            ? undefined
+            : call.pending?.id
+    if (fence === "callID") return JSON.stringify([owner, callID])
+    const subject =
+      call.stage === "idle"
+        ? []
+        : [
+            call.stage === "dialing" || call.stage === "answering"
+              ? "pending"
+              : call.stage,
+            callID,
+          ]
     if (fence === "call") return JSON.stringify([owner, ...subject])
     return JSON.stringify([
       owner,
@@ -599,12 +614,14 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     ownership: SoftphoneFailure | undefined,
     update: Partial<SoftphoneModel>,
   ) {
+    const ownershipLost = snapshot.lease?.owner === true && !lease.owner
     if (operations.get("lease")?.failure) operations.delete("lease")
     report(
       "ownership",
       accessBlocked ? operations.get("ownership")?.failure : ownership,
       { ...update, lease },
     )
+    if (ownershipLost) void releaseLocalMedia()
   }
 
   function clearFailures(slots: readonly OperationSlot[] = [...operations.keys()]) {
@@ -1781,7 +1798,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   }
 
   function refuseOutbound(failure: SoftphoneFailure) {
-    if (!live(operations.get("outbound"))) fail(open("outbound"), failure)
+    if (snapshot.call.stage !== "dialing") fail(open("outbound"), failure)
     return failure
   }
 
@@ -2171,6 +2188,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     if (
       stopped ||
       leaseReclaim ||
+      operations.get("lease")?.pending ||
       !snapshot.lease ||
       !leaseLapsedForSession(snapshot.lease, options.sessionID)
     ) {
@@ -2211,7 +2229,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       report("ownership", ownershipFailure(snapshot.lease))
       return
     }
-    const acquisition = open("lease")
+    const acquisition = open("lease", { pending: true })
     try {
       const lease = leaseForSession(
         await backendRequest((signal) =>
@@ -2794,6 +2812,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       }
       attachedLeg = undefined
       persistCallRecoveryID(undefined)
+      clearFailures(["outbound", "hangup", "retry", "disposition"])
       publish({
         call: idleCall,
         mediaAttachment: undefined,
@@ -2819,7 +2838,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         )
         if (!live(disposition)) {
           await reconcileStaleCommand()
-          return
+          return stopped ? undefined : result
         }
         applyCall(result.call)
         settle(disposition, {
@@ -3037,10 +3056,13 @@ function withEnding(call: CallPointer, ending: boolean): CallPointer {
 }
 
 function shownFailure(operations: ReadonlyMap<OperationSlot, Operation>) {
-  for (const slot of failurePriority) {
-    const failure = operations.get(slot)?.failure
-    if (failure) return failure
-  }
+  const failures = failurePriority.flatMap(
+    (slot) => operations.get(slot)?.failure ?? [],
+  )
+  return (
+    failures.find((failure) => sessionFailureKinds.has(failure.kind)) ??
+    failures[0]
+  )
 }
 
 function callSettled(call: Pick<CallingCall, "state"> | undefined) {
