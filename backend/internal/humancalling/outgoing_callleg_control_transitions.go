@@ -427,13 +427,20 @@ func (m *Module) failRoutingCall(
 	errorCode string,
 ) error {
 	var callerLegID, callerControlID string
+	var terminal bool
 	if err := tx.QueryRow(ctx, `
-		SELECT id::text, COALESCE(provider_call_control_id, '')
-		FROM human_calling_call_legs
-		WHERE call_id = $1 AND role = 'CALLER'
-		FOR UPDATE
-	`, callID).Scan(&callerLegID, &callerControlID); err != nil {
+		SELECT caller.id::text, COALESCE(caller.provider_call_control_id, ''),
+			call.terminal_outcome IS NOT NULL
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs caller
+			ON caller.call_id = call.id AND caller.role = 'CALLER'
+		WHERE call.id = $1
+		FOR UPDATE OF call, caller
+	`, callID).Scan(&callerLegID, &callerControlID, &terminal); err != nil {
 		return fmt.Errorf("lock routing-failure caller: %w", err)
+	}
+	if terminal {
+		return nil
 	}
 	if _, err := m.ensureRecoveryOutcome(ctx, tx, callID, RecoveryMissedCall,
 		"ROUTING_FAILED", ProviderFact{OccurredAt: m.now()}); err != nil {

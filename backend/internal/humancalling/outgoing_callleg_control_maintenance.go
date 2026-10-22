@@ -726,22 +726,11 @@ func (m *Module) quarantineStaleCallLeg(
 		return fmt.Errorf("begin stale CallLeg quarantine: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var terminal bool
-	if err := tx.QueryRow(ctx, `
-		SELECT terminal_outcome IS NOT NULL
-		FROM human_calling_calls
-		WHERE id = $1
-		FOR UPDATE
-	`, callID).Scan(&terminal); err != nil {
-		return fmt.Errorf("lock stale Call quarantine: %w", err)
-	}
 	quarantinedAt := m.now()
-	if !terminal {
-		if err := m.failRoutingCall(
-			ctx, tx, callID, providerObservationConflictErrorCode,
-		); err != nil {
-			return fmt.Errorf("fail contradictory stale Call: %w", err)
-		}
+	if err := m.failRoutingCall(
+		ctx, tx, callID, providerObservationConflictErrorCode,
+	); err != nil {
+		return fmt.Errorf("fail contradictory stale Call: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_call_legs
@@ -749,7 +738,7 @@ func (m *Module) quarantineStaleCallLeg(
 			ending_at = COALESCE(ending_at, $2),
 			ended_at = COALESCE(ended_at, $2),
 			error_code = $3, updated_at = $2
-		WHERE id = $1 AND call_id = $4
+		WHERE id = $1 AND call_id = $4 AND state <> 'ENDED'
 	`, callLegID, quarantinedAt, providerObservationConflictErrorCode, callID); err != nil {
 		return fmt.Errorf("quarantine contradictory stale CallLeg: %w", err)
 	}
