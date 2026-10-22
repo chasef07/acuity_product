@@ -428,20 +428,39 @@ func (m *Module) failRoutingCall(
 	errorCode string,
 ) error {
 	var callerLegID, callerControlID string
+	var direction CallDirection
 	var terminal bool
 	if err := tx.QueryRow(ctx, `
 		SELECT caller.id::text, COALESCE(caller.provider_call_control_id, ''),
-			call.terminal_outcome IS NOT NULL
+			call.direction, call.terminal_outcome IS NOT NULL
 		FROM human_calling_calls call
 		JOIN human_calling_call_legs caller
 			ON caller.call_id = call.id AND caller.role = 'CALLER'
 		WHERE call.id = $1
 		FOR UPDATE OF call, caller
-	`, callID).Scan(&callerLegID, &callerControlID, &terminal); err != nil {
+	`, callID).Scan(&callerLegID, &callerControlID, &direction, &terminal); err != nil {
 		return fmt.Errorf("lock routing-failure caller: %w", err)
 	}
 	if terminal {
 		return nil
+	}
+	if direction == CallOutbound {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_calls
+			SET terminal_outcome = CASE WHEN bridge.connected THEN 'ENDED' ELSE 'UNANSWERED' END,
+				disposition_deadline = CASE WHEN bridge.connected THEN $3::timestamptz END,
+				ended_at = COALESCE(ended_at, $2), updated_at = $2
+			FROM (
+				SELECT EXISTS (
+					SELECT 1 FROM human_calling_call_legs
+					WHERE call_id = $1 AND bridged_at IS NOT NULL
+				) AS connected
+			) bridge
+			WHERE id = $1
+		`, callID, m.now(), m.now().Add(m.config.DispositionDuration)); err != nil {
+			return fmt.Errorf("end failed outbound Call: %w", err)
+		}
+		return m.endRemainingCallLegs(ctx, tx, callID)
 	}
 	if _, err := m.ensureRecoveryOutcome(ctx, tx, callID, RecoveryMissedCall,
 		"ROUTING_FAILED", ProviderFact{OccurredAt: m.now()}); err != nil {

@@ -668,6 +668,77 @@ func TestStaleLegReconcilerSkipsObsoleteObservation(t *testing.T) {
 	}
 }
 
+func TestStaleLegReconcilerQuarantinesContradictoryOutboundLeg(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		connected bool
+		want      string
+	}{
+		{name: "ringing", want: "UNANSWERED"},
+		{name: "connected", connected: true, want: "NEEDS_DISPOSITION"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prefix := "replay-stale-outbound-" + test.name
+			call := dialOutboundReplay(t, prefix)
+			if test.connected {
+				bridgedDestination, bridgedStaff := call.destinationLeg, call.staffLeg
+				bridgedDestination.ClientState, bridgedStaff.ClientState = "", ""
+				call.deliver(t,
+					call.fact(call.destinationLeg, "destination", humancalling.FactCallAnswered, 3800),
+					call.fact(bridgedDestination, "destination", humancalling.FactCallBridged, 4000),
+					call.fact(bridgedStaff, "staff", humancalling.FactCallBridged, 4000),
+				)
+				call.settle(t)
+			}
+			if _, err := call.db.Owner.Exec(context.Background(), `
+				UPDATE human_calling_call_legs SET updated_at = $2 WHERE provider_call_control_id = $1
+			`, call.staffLeg.CallControlID, call.current.Add(-2*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			contradiction := call.fact(call.staffLeg, "contradiction", humancalling.FactCallInitiated, 4100)
+			contradiction.CallLegID = prefix + "-contradictory-leg"
+			call.provider.mu.Lock()
+			call.provider.observations = append(call.provider.observations, humancalling.ProviderCallObservation{
+				Active: true, CallControlID: call.staffLeg.CallControlID, CallLegID: call.staffLeg.CallLegID,
+				CallSessionID: call.staffLeg.CallSessionID, Events: []humancalling.ProviderFact{contradiction},
+			})
+			call.provider.mu.Unlock()
+
+			if reconciled, err := call.worker.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+				t.Fatalf("reconcile contradictory outbound Staff leg = %t, %v", reconciled, err)
+			}
+
+			var staffLeg, destinationLeg string
+			var quarantined, recoveryTasks int
+			if err := call.db.Owner.QueryRow(context.Background(), `
+				SELECT staff.state || '/' || COALESCE(staff.error_code, ''),
+					destination.state || '/' || (
+						SELECT count(*) FROM human_calling_provider_commands command
+						WHERE command.call_leg_id = destination.id AND command.action = 'HANGUP_LEG'
+					) || ' Hangup',
+					(SELECT count(*) FROM human_calling_timeline timeline
+						WHERE timeline.call_id = staff.call_id
+							AND timeline.kind = 'call_leg.reconciliation_quarantined'),
+					(SELECT count(*) FROM work_task_interactions interaction
+						WHERE interaction.call_id = staff.call_id)
+				FROM human_calling_call_legs staff
+				JOIN human_calling_call_legs destination
+					ON destination.call_id = staff.call_id AND destination.role = 'DESTINATION'
+				WHERE staff.provider_call_control_id = $1
+			`, call.staffLeg.CallControlID).Scan(&staffLeg, &destinationLeg, &quarantined, &recoveryTasks); err != nil {
+				t.Fatal(err)
+			}
+			if state := call.callState(t); state != test.want ||
+				staffLeg != "FAILED/PROVIDER_OBSERVATION_CONFLICT" || destinationLeg != "ENDING/1 Hangup" ||
+				quarantined != 1 || recoveryTasks != 0 {
+				t.Fatalf("quarantined outbound Call = %s, Staff leg %s, destination leg %s, quarantined:%d "+
+					"recovery Tasks:%d; want %s, FAILED/PROVIDER_OBSERVATION_CONFLICT, ENDING/1 Hangup, 1, 0",
+					state, staffLeg, destinationLeg, quarantined, recoveryTasks, test.want)
+			}
+		})
+	}
+}
+
 func TestReceiptReplayVoicemailRecordingAfterRoutingFailureApplies(t *testing.T) {
 	call := answerInboundReplay(t, "replay-174")
 	ringCompleted := call.fact(call.callerLeg, "ring-window", humancalling.FactPlaybackEnded, 20000)
