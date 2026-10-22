@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.45.0](https://github.com/chasef07/acuity_product/compare/v1.44.1...v1.45.0) (2026-10-22)
+
+
+### Features
+
+* **calling:** observe illegal CallLeg and Call outcome moves ([#524](https://github.com/chasef07/acuity_product/issues/524)) ([0290ea2](https://github.com/chasef07/acuity_product/commit/0290ea2cff771e5d47f086c40ac960bf8d62baef))
+
+
+### Bug Fixes
+
+* **calling:** classify call state in one view that every reader uses ([#523](https://github.com/chasef07/acuity_product/issues/523)) ([7fc8892](https://github.com/chasef07/acuity_product/commit/7fc8892dfb6bf0433b4b507ea0c476e4dd617b18))
+
 ## [1.44.1](https://github.com/chasef07/acuity_product/compare/v1.44.0...v1.44.1) (2026-10-21)
 
 
