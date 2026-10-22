@@ -187,11 +187,20 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 
 	var activeCallID string
 	if err := pool.QueryRow(ctx, `
-		UPDATE human_calling_calls SET terminal_outcome = NULL, ended_at = NULL,
-			updated_at = $1, version = version + 1
-		WHERE id = (SELECT id FROM human_calling_calls WHERE terminal_outcome = 'RESOLVED' LIMIT 1)
-		RETURNING id::text
-	`, now.Add(time.Minute)).Scan(&activeCallID); err != nil {
+		WITH active AS (
+			INSERT INTO human_calling_calls (
+				practice_id, location_id, direction, entry_point, created_at, updated_at
+			) VALUES ($1, $2, 'INBOUND', 'STANDALONE', $3, $3)
+			RETURNING id
+		), caller AS (
+			INSERT INTO human_calling_call_legs (
+				call_id, role, sequence, state, ended_at, created_at, updated_at
+			)
+			SELECT id, 'CALLER', 1, 'ENDED', $3, $3, $3 FROM active
+		)
+		SELECT id::text FROM active
+	`, authorization.Practice.ID, authorization.Locations[0].ID,
+		now.Add(time.Minute)).Scan(&activeCallID); err != nil {
 		t.Fatal(err)
 	}
 	readConditionally(state, true)

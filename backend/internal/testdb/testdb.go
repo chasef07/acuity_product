@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -93,6 +94,11 @@ func open(t *testing.T, last string) *pgxpool.Pool {
 	config.MinConns = 0
 	config.MaxConnIdleTime = time.Minute
 	config.MaxConnLifetime = 5 * time.Minute
+	config.ConnConfig.OnNotice = func(_ *pgconn.PgConn, notice *pgconn.Notice) {
+		if strings.HasPrefix(notice.Message, "HC00") {
+			t.Errorf("illegal Call transition: %s", notice.Message)
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
