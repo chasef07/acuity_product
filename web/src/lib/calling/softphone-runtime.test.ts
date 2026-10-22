@@ -4631,6 +4631,117 @@ test("state reads report calling changes the poll found without a hint as missed
   await fixture.runtime.stop()
 })
 
+test("a delayed outbound response cannot repaint a Call after the lease was lost and regained", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const response = deferred<CallingCall>()
+  backend.startOutboundHandler = async () => response.promise
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const starting = runtime.startOutbound({
+    idempotencyKey: "outbound-across-lease-regain",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  })
+  await eventually(() => assert.notEqual(runtime.getSnapshot().pendingCall, undefined))
+
+  backend.lease = lease({ sessionId: "other-session", owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().lease?.owner, false)
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+
+  const stale = call({ id: "outbound-across-lease-regain", state: "PREPARING" })
+  backend.calls.set(stale.id, stale)
+  response.resolve(stale)
+  await starting
+
+  assert.equal(runtime.getSnapshot().expectedCallID, "")
+  assert.equal(runtime.getSnapshot().activeCall, undefined)
+  assert.equal(runtime.getSnapshot().pendingCall, undefined)
+  assert.equal(runtime.getSnapshot().occupied, false)
+})
+
+test("a Call detail read cannot repaint the Call after a readiness write lost the lease", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-detail-after-lease-loss")
+  const detail = deferred<CallingCall>()
+  let detailReads = 0
+  fixture.backend.readCallHandler = async () => {
+    detailReads += 1
+    return detail.promise
+  }
+  let repaintedAfterLeaseLoss = false
+  fixture.runtime.subscribe(() => {
+    const snapshot = fixture.runtime.getSnapshot()
+    if (snapshot.lease?.owner === false && (snapshot.activeCall || snapshot.expectedCallID)) {
+      repaintedAfterLeaseLoss = true
+    }
+  })
+  const refreshing = fixture.runtime.signalRefresh()
+  await eventually(() => assert.equal(detailReads, 1))
+
+  fixture.backend.writeReadinessHandler = () =>
+    lease({ sessionId: "other-session", owner: true })
+  await fixture.clock.advance(4_000)
+  await eventually(() => assert.equal(fixture.runtime.getSnapshot().lease?.owner, false))
+
+  detail.resolve(fixture.connected)
+  await refreshing
+
+  assert.equal(fixture.runtime.getSnapshot().activeCall, undefined)
+  assert.equal(fixture.runtime.getSnapshot().expectedCallID, "")
+  assert.equal(repaintedAfterLeaseLoss, false)
+})
+
+test("a transfer candidate failure for a Call that ended does not surface on its Outcome", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-transfer-candidates-failed-after-end")
+  const candidates = deferred<[]>()
+  fixture.backend.listTransferCandidatesHandler = () => candidates.promise
+  const loading = fixture.runtime.loadTransferCandidates()
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, true)
+
+  const terminal = setAttachedOutboundTerminal(fixture)
+  await fixture.runtime.signalRefresh()
+  assert.equal(fixture.runtime.getSnapshot().pendingDisposition?.id, terminal.id)
+  candidates.reject(
+    new SoftphoneAdapterError("temporary-request", "Transfer options could not be loaded. Try again.", true),
+  )
+  await loading
+
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+  assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+})
+
+test("a transfer request failure for a Call that ended does not surface on its Outcome", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-transfer-request-failed-after-end")
+  const request = deferred<StaffTransfer>()
+  fixture.backend.requestTransferHandler = () => request.promise
+  const requesting = fixture.runtime.requestTransfer("target-subject", "", "transfer-after-end-key")
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, true)
+
+  const terminal = setAttachedOutboundTerminal(fixture)
+  await fixture.runtime.signalRefresh()
+  assert.equal(fixture.runtime.getSnapshot().pendingDisposition?.id, terminal.id)
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+  request.reject(new SoftphoneAdapterError("conflict", "The Call or recipient availability changed before transfer."))
+  await requesting
+
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+  assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+})
+
 function callingHintFixture(
   state: CallingState,
   visibility: { isHidden(): boolean; subscribe(listener: () => void): () => void } = visible(),
