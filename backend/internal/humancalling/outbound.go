@@ -410,7 +410,7 @@ func (m *Module) StartOutboundCall(
 			FactCallAnswered,
 			FactCallHangup,
 		),
-		"client_state": encodeCallLegClientState(callID, staffLegID, "STAFF", "outbound_media"),
+		"client_state": encodeCallLegClientState(callID, staffLegID, roleStaff, kindOutboundMedia),
 		"custom_headers": []map[string]string{{
 			"name": "X-Acuity-Media-Token", "value": m.staffMediaToken(callID, staffLegID),
 		}},
@@ -600,7 +600,7 @@ func (m *Module) ConfirmOutboundMedia(
 				FactCallHangup,
 			),
 			"client_state": encodeCallLegClientState(
-				command.CallID, destinationLegID, "DESTINATION", "dial",
+				command.CallID, destinationLegID, roleDestination, kindDial,
 			),
 		}, "")
 	if err != nil {
@@ -615,24 +615,23 @@ func (m *Module) ConfirmOutboundMedia(
 func (m *Module) applyOutboundDestinationFact(
 	ctx context.Context,
 	fact ProviderFact,
-	callID string,
-) error {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.CallID != callID || state.Role != "DESTINATION" ||
-		fact.CallControlID == "" || fact.CallLegID == "" || fact.CallSessionID == "" {
-		return ErrConflict
+	state callLegClientState,
+) (factVerdict, error) {
+	if fact.CallControlID == "" || fact.CallLegID == "" || fact.CallSessionID == "" {
+		return factConflict, nil
 	}
+	callID := state.CallID
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin outbound destination projection: %w", err)
+		return "", fmt.Errorf("begin outbound destination projection: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !claimed {
+		return commitFact(ctx, tx)
 	}
 	var practiceID, terminal string
 	if err := tx.QueryRow(ctx, `
@@ -640,7 +639,7 @@ func (m *Module) applyOutboundDestinationFact(
 		FROM human_calling_calls
 		WHERE id = $1 AND direction = 'OUTBOUND' FOR UPDATE
 	`, callID).Scan(&practiceID, &terminal); err != nil {
-		return fmt.Errorf("lock outbound Call: %w", err)
+		return "", fmt.Errorf("lock outbound Call: %w", err)
 	}
 	var priorState, storedConnectionID, storedControlID, storedLegID, storedSessionID string
 	if err := tx.QueryRow(ctx, `
@@ -654,13 +653,13 @@ func (m *Module) applyOutboundDestinationFact(
 	`, state.CallLegID, callID).Scan(
 		&priorState, &storedConnectionID, &storedControlID, &storedLegID, &storedSessionID,
 	); err != nil {
-		return fmt.Errorf("lock outbound destination CallLeg: %w", err)
+		return "", fmt.Errorf("lock outbound destination CallLeg: %w", err)
 	}
 	if (storedConnectionID != "" && fact.ConnectionID != storedConnectionID) ||
 		(storedControlID != "" && fact.CallControlID != storedControlID) ||
 		(storedLegID != "" && fact.CallLegID != storedLegID) ||
 		(storedSessionID != "" && fact.CallSessionID != storedSessionID) {
-		return ErrConflict
+		return factConflict, nil
 	}
 	activeDestination := terminal == "" && priorState != "ENDING" &&
 		priorState != "ENDED" && priorState != "FAILED"
@@ -675,7 +674,7 @@ func (m *Module) applyOutboundDestinationFact(
 				AND state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
 		)
 	`, state.CallLegID).Scan(&bridgeExists); err != nil {
-		return fmt.Errorf("read outbound Bridge intent: %w", err)
+		return "", fmt.Errorf("read outbound Bridge intent: %w", err)
 	}
 	startBridge := activeDestination && bridgeStartState && !bridgeExists &&
 		(fact.Type == FactCallInitiated || fact.Type == FactCallAnswered)
@@ -705,7 +704,7 @@ func (m *Module) applyOutboundDestinationFact(
 	`, state.CallLegID, fact.ConnectionID, fact.CallControlID, fact.CallLegID,
 		fact.CallSessionID, nextState, fact.OccurredAt, m.now(), callID,
 		answered); err != nil {
-		return fmt.Errorf("project outbound destination CallLeg: %w", err)
+		return "", fmt.Errorf("project outbound destination CallLeg: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands SET state = 'RECONCILED',
@@ -713,7 +712,7 @@ func (m *Module) applyOutboundDestinationFact(
 		WHERE call_leg_id = $1 AND action = 'DIAL_OUTBOUND_DESTINATION'
 			AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 	`, state.CallLegID, fact.OccurredAt, m.now()); err != nil {
-		return fmt.Errorf("reconcile outbound destination Dial: %w", err)
+		return "", fmt.Errorf("reconcile outbound destination Dial: %w", err)
 	}
 	if terminal != "" || priorState == "ENDING" || priorState == "ENDED" ||
 		priorState == "FAILED" {
@@ -721,11 +720,11 @@ func (m *Module) applyOutboundDestinationFact(
 			ctx, tx, callID, state.CallLegID, "", "", CommandHangupLeg,
 			fact.CallControlID,
 			map[string]any{"client_state": encodeCallLegClientState(
-				callID, state.CallLegID, "DESTINATION", "late_fact_cleanup",
+				callID, state.CallLegID, roleDestination, kindLateFactCleanup,
 			)},
 			"",
 		); err != nil {
-			return err
+			return "", err
 		}
 	} else if startBridge {
 		var staffLegID, staffControlID string
@@ -734,58 +733,57 @@ func (m *Module) applyOutboundDestinationFact(
 			WHERE call_id = $1 AND role = 'STAFF' AND state = 'BRIDGE_PENDING'
 			FOR UPDATE
 		`, callID).Scan(&staffLegID, &staffControlID); err != nil {
-			return fmt.Errorf("lock outbound Staff CallLeg: %w", err)
+			return "", fmt.Errorf("lock outbound Staff CallLeg: %w", err)
 		}
 		bridgePayload, err := m.prepareConnectedBridgeCommand(
 			ctx, tx, callID, fact.CallControlID,
 			encodeCallLegClientState(
-				callID, staffLegID, "STAFF", "outbound_media",
+				callID, staffLegID, roleStaff, kindOutboundMedia,
 			),
 			false,
 		)
 		if err != nil {
-			return err
+			return "", err
 		}
 		bridgePayload["play_ringtone"] = true
 		bridgePayload["ringtone"] = "us"
 		if _, err := m.insertCallLegCommand(ctx, tx, callID, staffLegID,
 			state.CallLegID, "", CommandBridge, staffControlID, bridgePayload, ""); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if answered {
 		if err := m.reserveConnectedCallRecording(ctx, tx, callID); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if err := appendTimeline(ctx, tx, callID, practiceID,
 		"provider.destination."+strings.TrimPrefix(string(fact.Type), "call."), "",
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
-func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) error {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Role != "DESTINATION" ||
-		(state.Kind != "bridge" && state.Kind != "dial" && !hangupClientState(state.Kind)) {
-		return ErrConflict
-	}
+func (m *Module) applyOutboundBridge(
+	ctx context.Context,
+	fact ProviderFact,
+	state callLegClientState,
+) (factVerdict, error) {
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin outbound Bridge projection: %w", err)
+		return "", fmt.Errorf("begin outbound Bridge projection: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !claimed {
+		return commitFact(ctx, tx)
 	}
 	var practiceID, staffLegID, staffState string
 	var destinationControlID, destinationProviderLegID, destinationSessionID string
@@ -804,18 +802,21 @@ func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) err
 		&practiceID, &staffLegID, &staffState, &destinationControlID,
 		&destinationProviderLegID, &destinationSessionID,
 	); err != nil {
-		return fmt.Errorf("lock outbound bridged CallLegs: %w", err)
+		return "", fmt.Errorf("lock outbound bridged CallLegs: %w", err)
 	}
 	if fact.CallControlID != destinationControlID ||
 		fact.CallLegID != destinationProviderLegID ||
 		fact.CallSessionID != destinationSessionID {
-		return ErrConflict
+		return factConflict, nil
 	}
-	historicalBridge, err := projectBridgeEvidence(
+	bridgeVerdict, historicalBridge, err := projectBridgeEvidence(
 		ctx, tx, state.CallID, state.CallLegID, fact.OccurredAt, m.now(),
 	)
 	if err != nil {
-		return fmt.Errorf("confirm outbound Bridge: %w", err)
+		return "", fmt.Errorf("confirm outbound Bridge: %w", err)
+	}
+	if bridgeVerdict != factApplied {
+		return bridgeVerdict, nil
 	}
 	historicalUpgrade := false
 	if historicalBridge {
@@ -823,7 +824,7 @@ func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) err
 			ctx, tx, state.CallID, state.CallLegID, fact.OccurredAt,
 		)
 		if err != nil {
-			return err
+			return "", err
 		}
 	}
 	if _, err := tx.Exec(ctx, `
@@ -832,40 +833,40 @@ func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) err
 		WHERE peer_call_leg_id = $1 AND action = 'BRIDGE'
 			AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 	`, state.CallLegID, fact.OccurredAt, m.now()); err != nil {
-		return err
+		return "", err
 	}
 	if err := m.reserveConnectedCallRecording(ctx, tx, state.CallID); err != nil {
-		return err
+		return "", err
 	}
 	if staffState == "BRIDGED" || historicalUpgrade {
 		if err := appendTimeline(ctx, tx, state.CallID, practiceID, "call.connected",
 			"", fact.EventID, "", opaqueReference(fact.CallLegID), "",
 			fact.OccurredAt); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
-func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact) error {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Role != "STAFF" {
-		return ErrConflict
-	}
+func (m *Module) applyOutboundStaffBridge(
+	ctx context.Context,
+	fact ProviderFact,
+	state callLegClientState,
+) (factVerdict, error) {
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin outbound Staff Bridge projection: %w", err)
+		return "", fmt.Errorf("begin outbound Staff Bridge projection: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !claimed {
+		return commitFact(ctx, tx)
 	}
 	var practiceID, controlID, providerLegID, sessionID string
 	var destinationBridged bool
@@ -885,17 +886,20 @@ func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact
 	`, state.CallID, state.CallLegID).Scan(
 		&practiceID, &controlID, &providerLegID, &sessionID, &destinationBridged,
 	); err != nil {
-		return fmt.Errorf("lock outbound Staff Bridge CallLeg: %w", err)
+		return "", fmt.Errorf("lock outbound Staff Bridge CallLeg: %w", err)
 	}
 	if fact.CallControlID != controlID || fact.CallLegID != providerLegID ||
 		fact.CallSessionID != sessionID {
-		return ErrConflict
+		return factConflict, nil
 	}
-	historicalBridge, err := projectBridgeEvidence(
+	bridgeVerdict, historicalBridge, err := projectBridgeEvidence(
 		ctx, tx, state.CallID, state.CallLegID, fact.OccurredAt, m.now(),
 	)
 	if err != nil {
-		return fmt.Errorf("confirm outbound Staff Bridge: %w", err)
+		return "", fmt.Errorf("confirm outbound Staff Bridge: %w", err)
+	}
+	if bridgeVerdict != factApplied {
+		return bridgeVerdict, nil
 	}
 	historicalUpgrade := false
 	if historicalBridge {
@@ -903,7 +907,7 @@ func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact
 			ctx, tx, state.CallID, state.CallLegID, fact.OccurredAt,
 		)
 		if err != nil {
-			return err
+			return "", err
 		}
 	}
 	if _, err := tx.Exec(ctx, `
@@ -912,58 +916,66 @@ func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact
 		WHERE call_leg_id = $1 AND action = 'BRIDGE'
 			AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 	`, state.CallLegID, fact.OccurredAt, m.now()); err != nil {
-		return err
+		return "", err
 	}
 	if err := m.reserveConnectedCallRecording(ctx, tx, state.CallID); err != nil {
-		return err
+		return "", err
 	}
 	if destinationBridged || historicalUpgrade {
 		if err := appendTimeline(ctx, tx, state.CallID, practiceID, "call.connected",
 			"", fact.EventID, "", opaqueReference(fact.CallLegID), "",
 			fact.OccurredAt); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
 func (m *Module) applyOutboundRingtoneFact(
 	ctx context.Context,
 	fact ProviderFact,
 	state callLegClientState,
-) error {
-	hangupRequested := hangupClientState(state.Kind)
-	if fact.Type != FactPlaybackStarted &&
-		(fact.Type != FactPlaybackEnded || (!hangupRequested &&
-			fact.PlaybackStatus != "completed" && fact.PlaybackStatus != "call_hangup")) {
-		return ErrConflict
+) (factVerdict, error) {
+	afterHangupRequest := hangupRequested(state.Kind)
+	if fact.Type == FactPlaybackEnded && !afterHangupRequest &&
+		fact.PlaybackStatus != "completed" && fact.PlaybackStatus != "call_hangup" {
+		return factConflict, nil
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin outbound ringtone projection: %w", err)
+		return "", fmt.Errorf("begin outbound ringtone projection: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+	if err != nil {
+		return "", err
 	}
-	if err := requireOutboundRingtoneFact(ctx, tx, fact, state); err != nil {
-		return err
+	if !claimed {
+		return commitFact(ctx, tx)
 	}
-	if hangupRequested &&
+	expected, err := requireOutboundRingtoneFact(ctx, tx, fact, state)
+	if err != nil {
+		return "", err
+	}
+	if !expected {
+		return factConflict, nil
+	}
+	if afterHangupRequest &&
 		(fact.Type != FactPlaybackEnded || fact.PlaybackStatus != "call_hangup") {
-		return errTerminalOrObsoleteProviderFact
+		return factObsolete, nil
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
-func requireOutboundRingtoneFact(ctx context.Context, tx pgx.Tx, fact ProviderFact, state callLegClientState) error {
+func requireOutboundRingtoneFact(
+	ctx context.Context,
+	tx pgx.Tx,
+	fact ProviderFact,
+	state callLegClientState,
+) (bool, error) {
 	var expected bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -993,13 +1005,10 @@ func requireOutboundRingtoneFact(ctx context.Context, tx pgx.Tx, fact ProviderFa
 				AND bridge.state IN ('SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
 		)
 	`, state.CallID, state.CallLegID, fact.CallControlID, fact.CallLegID,
-		fact.CallSessionID, fact.ClientState, hangupClientState(state.Kind)).Scan(&expected); err != nil {
-		return fmt.Errorf("validate outbound ringtone fact: %w", err)
+		fact.CallSessionID, fact.ClientState, hangupRequested(state.Kind)).Scan(&expected); err != nil {
+		return false, fmt.Errorf("validate outbound ringtone fact: %w", err)
 	}
-	if !expected {
-		return ErrConflict
-	}
-	return nil
+	return expected, nil
 }
 
 func normalizeOutboundCommand(command *StartOutboundCallCommand) {

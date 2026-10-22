@@ -12,36 +12,38 @@ import (
 func (m *Module) applyStaffTransferTargetFact(
 	ctx context.Context,
 	fact ProviderFact,
-) error {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Role != "STAFF" || state.Kind != staffTransferTargetKind ||
-		state.TransferID == "" ||
+	state callLegClientState,
+) (factVerdict, error) {
+	if state.TransferID == "" ||
 		fact.CallControlID == "" || fact.CallLegID == "" || fact.CallSessionID == "" {
-		return ErrConflict
+		return factConflict, nil
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin staff transfer target projection: %w", err)
+		return "", fmt.Errorf("begin staff transfer target projection: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+	if err != nil {
+		return "", err
 	}
-	transfer, targetState, storedControl, storedLeg, storedSession, err :=
+	if !claimed {
+		return commitFact(ctx, tx)
+	}
+	transfer, targetState, storedControl, storedLeg, storedSession, found, err :=
 		m.lockStaffTransferTarget(
 			ctx, tx, state.CallID, state.CallLegID, state.TransferID,
 		)
 	if err != nil {
-		return err
+		return "", err
+	}
+	if !found {
+		return factWaiting, nil
 	}
 	if (storedControl != "" && storedControl != fact.CallControlID) ||
 		(storedLeg != "" && storedLeg != fact.CallLegID) ||
 		(storedSession != "" && storedSession != fact.CallSessionID) {
-		return ErrConflict
+		return factConflict, nil
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_call_legs
@@ -54,7 +56,7 @@ func (m *Module) applyStaffTransferTargetFact(
 		WHERE id = $1
 	`, state.CallLegID, fact.ConnectionID, fact.CallControlID, fact.CallLegID,
 		fact.CallSessionID, m.now()); err != nil {
-		return fmt.Errorf("bind transfer target provider identity: %w", err)
+		return "", fmt.Errorf("bind transfer target provider identity: %w", err)
 	}
 
 	terminal := transfer.State != StaffTransferRequested &&
@@ -67,7 +69,7 @@ func (m *Module) applyStaffTransferTargetFact(
 				last_error_code = NULL, updated_at = $3
 			WHERE id = $1 AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 		`, transfer.ProviderCommandID, fact.OccurredAt, m.now()); err != nil {
-			return fmt.Errorf("reconcile terminal transfer effect: %w", err)
+			return "", fmt.Errorf("reconcile terminal transfer effect: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_call_legs
@@ -75,28 +77,28 @@ func (m *Module) applyStaffTransferTargetFact(
 				ending_at = COALESCE(ending_at, $2), updated_at = $2
 			WHERE id = $1
 		`, state.CallLegID, m.now()); err != nil {
-			return err
+			return "", err
 		}
 		if _, err := m.insertCallLegCommand(
 			ctx, tx, transfer.CallID, state.CallLegID, "", transfer.RecipientSubject,
 			CommandHangupLeg, fact.CallControlID,
 			map[string]any{"client_state": encodeCallLegClientState(
-				transfer.CallID, state.CallLegID, "STAFF", "transfer_terminal_cleanup",
+				transfer.CallID, state.CallLegID, roleStaff, kindTransferTerminalCleanup,
 			)}, "",
 		); err != nil {
-			return err
+			return "", err
 		}
 	} else if fact.Type == FactCallAnswered {
 		eligible, err := m.transferTargetStillEligible(ctx, tx, transfer)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if !eligible || !fact.OccurredAt.Before(transfer.ExpiresAt) {
 			if err := m.failStaffTransferTx(
 				ctx, tx, transfer.ID, StaffTransferFailed,
 				"TRANSFER_TARGET_NOT_READY", leaveTransferTargetAvailability,
 			); err != nil {
-				return err
+				return "", err
 			}
 		} else {
 			var recipientSession string
@@ -105,7 +107,7 @@ func (m *Module) applyStaffTransferTargetFact(
 				FROM human_calling_staff_transfers
 				WHERE id = $1
 			`, transfer.ID).Scan(&recipientSession); err != nil {
-				return fmt.Errorf("read transfer recipient session: %w", err)
+				return "", fmt.Errorf("read transfer recipient session: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_call_legs
@@ -113,7 +115,7 @@ func (m *Module) applyStaffTransferTargetFact(
 					updated_at = $3
 				WHERE id = $1 AND state IN ('PENDING', 'DIALING', 'RINGING', 'ANSWERED')
 			`, transfer.TargetCallLegID, fact.OccurredAt, m.now()); err != nil {
-				return fmt.Errorf("accept transfer target occupancy: %w", err)
+				return "", fmt.Errorf("accept transfer target occupancy: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_staff_transfers
@@ -121,7 +123,7 @@ func (m *Module) applyStaffTransferTargetFact(
 					updated_at = $3
 				WHERE id = $1 AND state IN ('REQUESTED', 'ACCEPTED')
 			`, transfer.ID, fact.OccurredAt, m.now()); err != nil {
-				return fmt.Errorf("record transfer target answer: %w", err)
+				return "", fmt.Errorf("record transfer target answer: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_softphone_leases
@@ -129,53 +131,55 @@ func (m *Module) applyStaffTransferTargetFact(
 				WHERE user_subject = $1 AND session_id = $2
 			`, transfer.RecipientSubject, recipientSession,
 				m.now()); err != nil {
-				return fmt.Errorf("reserve transfer target softphone: %w", err)
+				return "", fmt.Errorf("reserve transfer target softphone: %w", err)
 			}
 		}
 	}
 	if fact.Type == FactCallBridged && !terminal {
 		if err := m.recordStaffTransferBridge(ctx, tx, transfer.ID, fact.OccurredAt); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if !terminal {
 		if _, err := m.completeStaffTransferIfReady(ctx, tx, transfer.ID); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if err := m.advanceStaffTransferProjection(
 		ctx, tx, transfer.CallID, transfer.PracticeID, fact,
 	); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
 func (m *Module) applyStaffTransferBridge(
 	ctx context.Context,
 	fact ProviderFact,
-) error {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Kind != staffTransferSourceKind || state.TransferID == "" {
-		return ErrConflict
+	state callLegClientState,
+) (factVerdict, error) {
+	if state.TransferID == "" {
+		return factConflict, nil
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin staff transfer bridge projection: %w", err)
+		return "", fmt.Errorf("begin staff transfer bridge projection: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !claimed {
+		return commitFact(ctx, tx)
 	}
 	var lockedCallID string
 	if err := tx.QueryRow(ctx, `
 		SELECT id::text FROM human_calling_calls WHERE id = $1 FOR UPDATE
-	`, state.CallID).Scan(&lockedCallID); err != nil {
-		return errRelatedFactPending
+	`, state.CallID).Scan(&lockedCallID); errors.Is(err, pgx.ErrNoRows) {
+		return factWaiting, nil
+	} else if err != nil {
+		return "", fmt.Errorf("lock staff transfer bridge Call: %w", err)
 	}
 	var transferID, callID, practiceID, transferState string
 	err = tx.QueryRow(ctx, `
@@ -188,28 +192,31 @@ func (m *Module) applyStaffTransferBridge(
 	`, state.CallID, state.CallLegID, state.TransferID).Scan(
 		&transferID, &callID, &practiceID, &transferState,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return factWaiting, nil
+	}
 	if err != nil {
-		return errRelatedFactPending
+		return "", fmt.Errorf("lock staff transfer bridge: %w", err)
 	}
 	if transferState != string(StaffTransferRequested) &&
 		transferState != string(StaffTransferAccepted) {
 		if err := m.advanceStaffTransferProjection(
 			ctx, tx, callID, practiceID, fact,
 		); err != nil {
-			return err
+			return "", err
 		}
-		return tx.Commit(ctx)
+		return commitFact(ctx, tx)
 	}
 	if err := m.recordStaffTransferBridge(ctx, tx, transferID, fact.OccurredAt); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := m.completeStaffTransferIfReady(ctx, tx, transferID); err != nil {
-		return err
+		return "", err
 	}
 	if err := m.advanceStaffTransferProjection(ctx, tx, callID, practiceID, fact); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
 func (m *Module) recordStaffTransferBridge(
@@ -308,7 +315,7 @@ func (m *Module) completeStaffTransferIfReady(
 			ctx, tx, transfer.CallID, transfer.SourceCallLegID, "",
 			transfer.RequestedBySubject, CommandHangupLeg, sourceControl,
 			map[string]any{"client_state": encodeCallLegClientState(
-				transfer.CallID, transfer.SourceCallLegID, "STAFF", "transferred_cleanup",
+				transfer.CallID, transfer.SourceCallLegID, roleStaff, kindTransferredCleanup,
 			)}, "",
 		); err != nil {
 			return false, err
@@ -421,7 +428,7 @@ func (m *Module) failStaffTransferTx(
 				ctx, tx, transfer.CallID, transfer.TargetCallLegID, "",
 				transfer.RecipientSubject, CommandHangupLeg, targetControl,
 				map[string]any{"client_state": encodeCallLegClientState(
-					transfer.CallID, transfer.TargetCallLegID, "STAFF", "transfer_failed_cleanup",
+					transfer.CallID, transfer.TargetCallLegID, roleStaff, kindTransferFailedCleanup,
 				)}, "",
 			); err != nil {
 				return err
@@ -500,12 +507,14 @@ func (m *Module) lockStaffTransferTarget(
 	callID string,
 	targetLegID string,
 	transferID string,
-) (StaffTransfer, string, string, string, string, error) {
+) (StaffTransfer, string, string, string, string, bool, error) {
 	var lockedCallID string
 	if err := tx.QueryRow(ctx, `
 		SELECT id::text FROM human_calling_calls WHERE id = $1 FOR UPDATE
-	`, callID).Scan(&lockedCallID); err != nil {
-		return StaffTransfer{}, "", "", "", "", errRelatedFactPending
+	`, callID).Scan(&lockedCallID); errors.Is(err, pgx.ErrNoRows) {
+		return StaffTransfer{}, "", "", "", "", false, nil
+	} else if err != nil {
+		return StaffTransfer{}, "", "", "", "", false, fmt.Errorf("lock transfer target Call: %w", err)
 	}
 	var lockedTransferID, targetState, controlID, providerLegID, sessionID string
 	if err := tx.QueryRow(ctx, `
@@ -520,11 +529,13 @@ func (m *Module) lockStaffTransferTarget(
 		FOR UPDATE OF transfer, target
 	`, callID, targetLegID, transferID).Scan(
 		&lockedTransferID, &targetState, &controlID, &providerLegID, &sessionID,
-	); err != nil {
-		return StaffTransfer{}, "", "", "", "", errRelatedFactPending
+	); errors.Is(err, pgx.ErrNoRows) {
+		return StaffTransfer{}, "", "", "", "", false, nil
+	} else if err != nil {
+		return StaffTransfer{}, "", "", "", "", false, fmt.Errorf("lock transfer target: %w", err)
 	}
 	transfer, err := readStaffTransfer(ctx, tx, lockedTransferID)
-	return transfer, targetState, controlID, providerLegID, sessionID, err
+	return transfer, targetState, controlID, providerLegID, sessionID, true, err
 }
 
 func (m *Module) transferTargetStillEligible(

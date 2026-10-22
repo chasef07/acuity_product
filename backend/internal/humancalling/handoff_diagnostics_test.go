@@ -20,13 +20,20 @@ func TestHandoffRejectionsExplainAdmissionWithoutIdentifiers(t *testing.T) {
 			m := &Module{config: Config{CallControlID: "expected-connection"}, observer: observability.NewLogger(observability.RuntimeWorker, "synthetic-revision", slog.New(slog.NewJSONHandler(&output, nil)))}
 			fact := ProviderFact{CallControlID: "synthetic-control", CallLegID: "synthetic-leg", CallSessionID: "synthetic-session", ConnectionID: "expected-connection", From: "+15555550100", To: "+15555550101"}
 			var err error
+			admit := func() error {
+				verdict, err := m.admitHandoff(context.Background(), fact, callLegClientState{})
+				if err != nil {
+					return err
+				}
+				return verdict.err()
+			}
 			switch reason {
 			case "provider_identity":
 				fact.CallControlID = ""
-				err = m.admitHandoff(context.Background(), fact)
+				err = admit()
 			case "connection":
 				fact.ConnectionID = "unrelated-connection"
-				err = m.admitHandoff(context.Background(), fact)
+				err = admit()
 			default:
 				candidates := 0
 				if reason == "ambiguous_handoff" {

@@ -24,11 +24,6 @@ const (
 	StaffTransferFailed    StaffTransferState = "FAILED"
 )
 
-const (
-	staffTransferTargetKind = "staff_transfer_target"
-	staffTransferSourceKind = "staff_transfer_source"
-)
-
 type staffTransferResponder uint8
 
 const (
@@ -186,7 +181,8 @@ func (m *Module) RequestStaffTransfer(
 		return StaffTransfer{}, ErrIneligible
 	}
 
-	var sourceLegID, customerLegID, customerRole, customerControlID string
+	var sourceLegID, customerLegID, customerControlID string
+	var customerRole callLegRole
 	if err := tx.QueryRow(ctx, `
 		SELECT source.id::text, customer.id::text, customer.role,
 			customer.provider_call_control_id
@@ -244,7 +240,7 @@ func (m *Module) RequestStaffTransfer(
 		return StaffTransfer{}, fmt.Errorf("create transfer target CallLeg: %w", err)
 	}
 	targetClientState := encodeStaffTransferClientState(
-		command.CallID, targetLegID, "STAFF", staffTransferTargetKind, transferID,
+		command.CallID, targetLegID, roleStaff, kindStaffTransferTarget, transferID,
 	)
 	commandID, err := m.insertCallLegCommand(
 		ctx, tx, command.CallID, targetLegID, customerLegID,
@@ -255,7 +251,7 @@ func (m *Module) RequestStaffTransfer(
 			"timeout_secs": int(m.config.StaffTransferDuration.Seconds()),
 			"client_state": encodeStaffTransferClientState(
 				command.CallID, customerLegID, customerRole,
-				staffTransferSourceKind, transferID,
+				kindStaffTransferSource, transferID,
 			),
 			"target_leg_client_state": targetClientState,
 			"webhook_retries_policies": telnyxWebhookRetryPolicies(

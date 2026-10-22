@@ -394,7 +394,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		(legState == "ENDED" || legState == "FAILED") {
 		state, valid := parseCallLegClientState(providerClientState)
 		if !valid || state.CallID != callID || state.CallLegID != legID ||
-			state.Role != "CALLER" || state.Kind != "ring_window" {
+			state.Role != roleCaller || state.Kind != kindRingWindow {
 			return false, nil
 		}
 		terminalized, err := m.terminalizeStopRingWindow(
@@ -415,7 +415,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		}
 		return false, nil
 	}
-	clientState := encodeCallLegClientState(callID, legID, role, "reconciled")
+	clientState := encodeCallLegClientState(callID, legID, callLegRole(role), kindReconciled)
 	if providerClientState == "" {
 		providerClientState = clientState
 	} else if commandAction == CommandTransferStaff {
@@ -481,7 +481,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 			event.ClientState == "" &&
 			(role == "DESTINATION" ||
 				(role == "STAFF" && direction == string(CallInbound))) {
-			factClientState = encodeCallLegClientState(callID, legID, role, "bridge")
+			factClientState = encodeCallLegClientState(callID, legID, callLegRole(role), kindBridge)
 		}
 		fact := event
 		if fact.ConnectionID == "" {
@@ -497,6 +497,9 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 			fact.TerminationSource = "RECONCILER"
 		}
 		if err := m.ApplyProviderFact(ctx, fact); err != nil {
+			if errors.Is(err, errTerminalOrObsoleteProviderFact) {
+				continue
+			}
 			if errors.Is(err, ErrConflict) {
 				if quarantineErr := m.quarantineStaleCallLeg(
 					ctx, callID, practiceID, legID, commandID,
@@ -593,14 +596,16 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		CallControlID:     controlID,
 		CallLegID:         providerLegID,
 		CallSessionID:     sessionID,
-		ClientState:       encodeCallLegClientState(callID, legID, role, "reconciled_absent"),
+		ClientState:       encodeCallLegClientState(callID, legID, callLegRole(role), kindReconciledAbsent),
 		HangupCause:       "CALL_DOES_NOT_EXIST",
 		TerminationSource: "RECONCILER",
 	}
-	if err := m.applyHangupWithObservation(ctx, fact, &observationClaim); err != nil {
-		return true, err
+	state, _ := parseCallLegClientState(fact.ClientState)
+	verdict, err := m.applyHangupWithObservation(ctx, fact, state, &observationClaim)
+	if err == nil && verdict != factObsolete {
+		err = verdict.err()
 	}
-	return true, nil
+	return true, err
 }
 
 type callLegObservationClaim struct {
@@ -1014,7 +1019,7 @@ func (m *Module) rejectUnobservedCommand(
 		_, err = m.insertCallLegCommand(
 			ctx, tx, callID, callLegID, "", subject, CommandHangupLeg, targetID,
 			map[string]any{"client_state": encodeCallLegClientState(
-				callID, callLegID, role, "cleanup_retry",
+				callID, callLegID, callLegRole(role), kindCleanupRetry,
 			)},
 			"",
 		)

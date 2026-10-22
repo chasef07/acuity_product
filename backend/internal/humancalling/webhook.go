@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -525,30 +526,28 @@ func (m *Module) replayProviderReceipt(
 		}
 		return ReceiptIgnored, ""
 	}
+	var verdict factVerdict
 	retryCode := projectionAttachCallRetry
 	err = m.attachReceiptCall(ctx, eventID, fact)
 	if err == nil {
 		retryCode = projectionApplyFactRetry
-		err = m.ApplyProviderFact(ctx, fact)
-		if errors.Is(err, ErrConflict) {
-			retryCode = projectionApplyFactConflict
-		}
-		if err == nil {
-			retryCode = projectionAttachCallRetry
-			err = m.attachReceiptCall(ctx, eventID, fact)
-		}
+		verdict, err = m.applyProviderFact(ctx, fact)
+	}
+	if err == nil && verdict == factApplied {
+		retryCode = projectionAttachCallRetry
+		err = m.attachReceiptCall(ctx, eventID, fact)
 		if err == nil {
 			retryCode = projectionWakeRelatedRetry
 			err = m.wakeRelatedReceipts(ctx, eventID, fact)
 		}
 	}
-	if errors.Is(err, ErrInvalidHandoff) {
+	if err == nil && verdict == factRejected {
 		if err := m.rememberRejectedProviderLeg(ctx, fact); err != nil {
 			return ReceiptPending, projectionRecordRejectedLegRetry
 		}
 		return ReceiptFailed, "HANDOFF_REJECTED"
 	}
-	if err != nil && rejectedHandoffLifecycle(fact.Type) {
+	if (err != nil || verdict != factApplied) && rejectedHandoffLifecycle(fact.Type) {
 		rejected, lookupErr := m.providerLegWasRejected(ctx, fact)
 		if lookupErr != nil {
 			return ReceiptPending, projectionLookupRejectedLegRetry
@@ -558,14 +557,16 @@ func (m *Module) replayProviderReceipt(
 		}
 	}
 	switch {
-	case err == nil:
+	case err != nil:
+		return ReceiptPending, retryCode
+	case verdict == factApplied:
 		return ReceiptApplied, ""
-	case errors.Is(err, errRelatedFactPending):
+	case verdict == factWaiting:
 		return ReceiptPending, "WAITING_FOR_RELATED_FACT"
-	case errors.Is(err, errTerminalOrObsoleteProviderFact):
+	case verdict == factObsolete:
 		return ReceiptFailed, "TERMINAL_OR_OBSOLETE_PROVIDER_FACT"
 	default:
-		return ReceiptPending, retryCode
+		return ReceiptPending, projectionApplyFactConflict
 	}
 }
 
@@ -808,18 +809,7 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 		Type:       FactType(event.Data.EventType),
 		OccurredAt: event.Data.OccurredAt,
 	}
-	switch fact.Type {
-	case FactCallInitiated,
-		FactCallAnswered,
-		FactCallBridged,
-		FactCallHangup,
-		FactPlaybackStarted,
-		FactPlaybackEnded,
-		FactSpeakStarted,
-		FactSpeakEnded,
-		FactRecordingSaved,
-		FactRecordingError:
-	default:
+	if !slices.Contains(providerFactTypes, fact.Type) {
 		return fact, false, nil
 	}
 	payload := event.Data.Payload
@@ -857,9 +847,7 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 	}
 	if fact.ClientState != "" {
 		state, ok := parseCallLegClientState(fact.ClientState)
-		if !ok || !validUUID(state.CallID) || !validUUID(state.CallLegID) ||
-			(state.Role != "CALLER" && state.Role != "STAFF" &&
-				state.Role != "DESTINATION") {
+		if !ok || !validUUID(state.CallID) || !validUUID(state.CallLegID) {
 			return ProviderFact{}, false, ErrInvalidWebhook
 		}
 	}

@@ -171,7 +171,7 @@ func (m *Module) RequestHangup(
 				return Call{}, fmt.Errorf("scan committed Hangup command: %w", err)
 			}
 			state, valid := parseCallLegClientState(clientState)
-			if valid && state.CallID == callID && state.Kind == callLegClientStateStaffHangup {
+			if valid && state.CallID == callID && state.Kind == kindStaffHangup {
 				hangupCommitted = true
 				break
 			}
@@ -241,7 +241,8 @@ func (m *Module) RequestHangup(
 		return Call{}, fmt.Errorf("lock exact Hangup targets: %w", err)
 	}
 	type target struct {
-		id, role, subject, controlID, uncertainDialCommandID string
+		id, subject, controlID, uncertainDialCommandID string
+		role                                           callLegRole
 	}
 	targets := []target{}
 	for rows.Next() {
@@ -285,7 +286,7 @@ func (m *Module) RequestHangup(
 			if _, err := m.insertCallLegCommand(
 				ctx, tx, callID, target.id, "", target.subject, CommandHangupLeg, "",
 				map[string]any{"client_state": encodeCallLegClientState(
-					callID, target.id, target.role, callLegClientStateStaffHangup,
+					callID, target.id, target.role, kindStaffHangup,
 				)}, target.uncertainDialCommandID,
 			); err != nil {
 				return Call{}, err
@@ -295,7 +296,7 @@ func (m *Module) RequestHangup(
 		if _, err := m.insertCallLegCommand(
 			ctx, tx, callID, target.id, "", target.subject, CommandHangupLeg,
 			target.controlID, map[string]any{"client_state": encodeCallLegClientState(
-				callID, target.id, target.role, callLegClientStateStaffHangup,
+				callID, target.id, target.role, kindStaffHangup,
 			)}, "",
 		); err != nil {
 			return Call{}, err
