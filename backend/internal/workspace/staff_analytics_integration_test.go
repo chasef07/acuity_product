@@ -146,8 +146,8 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 	if err != nil || allReport.Total.TextsSent != 4 {
 		t.Fatalf("all-Location texts: %+v, %v", allReport.Total, err)
 	}
-	incompleteCall := insertCall(locA, "INBOUND", []int{120}, true)
-	if _, err := pool.Exec(ctx, `UPDATE human_calling_call_legs SET state='ENDING', ended_at=NULL WHERE call_id=$1`, incompleteCall); err != nil {
+	incompleteCall := insertCall(locA, "INBOUND", nil, true)
+	if _, err := pool.Exec(ctx, `INSERT INTO human_calling_call_legs(call_id,role,sequence,staff_subject,state,answered_at,bridge_pending_at,bridged_at) VALUES($1,'STAFF',1,$2,'ENDING',$3,$3,$3)`, incompleteCall, staff.Subject, day); err != nil {
 		t.Fatal(err)
 	}
 	report, err = module.QueryStaffAnalytics(ctx, command)

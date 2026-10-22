@@ -242,8 +242,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	var callID string
 	if err := pool.QueryRow(context.Background(), `
 		UPDATE human_calling_calls
-		SET terminal_outcome = 'FOLLOW_UP_REQUIRED',
-			disposition_outcome = 'FOLLOW_UP_REQUIRED',
+		SET terminal_outcome = 'ENDED', disposition_deadline = $1,
 			ended_at = $1, updated_at = $1
 		WHERE id = (
 			SELECT call_id FROM human_calling_call_legs
@@ -252,7 +251,15 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		)
 		RETURNING id::text
 	`, now).Scan(&callID); err != nil {
-		t.Fatalf("prepare realtime Task Call: %v", err)
+		t.Fatalf("end realtime Task Call: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET terminal_outcome = 'FOLLOW_UP_REQUIRED',
+			disposition_outcome = 'FOLLOW_UP_REQUIRED', disposition_deadline = NULL
+		WHERE id = $1
+	`, callID); err != nil {
+		t.Fatalf("disposition realtime Task Call: %v", err)
 	}
 	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	taskTx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})

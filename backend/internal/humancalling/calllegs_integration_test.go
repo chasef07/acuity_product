@@ -2838,10 +2838,7 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 	`); err != nil {
 		t.Fatal(err)
 	}
-	workerConfig, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
+	workerConfig := pool.Config()
 	workerConfig.MaxConns = 2
 	workerPool, err := pgxpool.NewWithConfig(context.Background(), workerConfig)
 	if err != nil {
@@ -4376,11 +4373,26 @@ func TestBridgeWinnerCommitsCleanupWhenSendingLosingDialReturns(t *testing.T) {
 	prefix := "sending-loser"
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
 		{CallControlID: prefix + "-winner-control", CallLegID: prefix + "-winner-leg"},
-		{CallControlID: prefix + "-initial-loser-control", CallLegID: prefix + "-initial-loser-leg"},
 	}}
 	pool, calling, _, _ := prepareInboundFanout(t, now, prefix, provider, 2)
+	var loserLegID string
+	if err := pool.QueryRow(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET next_attempt_at = $1::timestamptz + interval '1 hour'
+		WHERE id = (
+			SELECT id FROM human_calling_provider_commands
+			WHERE action = 'DIAL_STAFF'
+			ORDER BY created_at DESC, id DESC LIMIT 1
+		)
+		RETURNING call_leg_id::text
+	`, now).Scan(&loserLegID); err != nil {
+		t.Fatal(err)
+	}
 	processAllCommands(t, calling)
 	dials := provider.all(humancalling.CommandDialStaff)
+	if len(dials) != 1 || dials[0].CallLegID == loserLegID {
+		t.Fatalf("only the winner should be dialed before the Bridge: %#v", dials)
+	}
 	winnerState, _ := dials[0].Payload["client_state"].(string)
 	winner := humancalling.ProviderFact{
 		EventID: prefix + "-winner-initiated", Type: humancalling.FactCallInitiated,
@@ -4400,18 +4412,10 @@ func TestBridgeWinnerCommitsCleanupWhenSendingLosingDialReturns(t *testing.T) {
 	bridge := provider.last(humancalling.CommandBridge)
 	bridgeState, _ := bridge.Payload["client_state"].(string)
 	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_call_legs
-		SET state = 'PENDING', provider_call_control_id = NULL,
-			provider_call_leg_id = NULL, provider_call_session_id = NULL
-		WHERE id = $1
-	`, dials[1].CallLegID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_provider_commands
-		SET state = 'PENDING', next_attempt_at = $2
+		SET next_attempt_at = $2
 		WHERE call_leg_id = $1 AND action = 'DIAL_STAFF'
-	`, dials[1].CallLegID, now); err != nil {
+	`, loserLegID, now); err != nil {
 		t.Fatal(err)
 	}
 	provider.mu.Lock()
@@ -4451,7 +4455,7 @@ func TestBridgeWinnerCommitsCleanupWhenSendingLosingDialReturns(t *testing.T) {
 		JOIN human_calling_provider_commands command
 			ON command.call_leg_id = leg.id AND command.action = 'HANGUP_LEG'
 		WHERE leg.id = $1 AND command.state = 'PENDING'
-	`, dials[1].CallLegID).Scan(&legState, &controlID, &hangupTarget); err != nil {
+	`, loserLegID).Scan(&legState, &controlID, &hangupTarget); err != nil {
 		t.Fatal(err)
 	}
 	if legState != "ENDING" || controlID != prefix+"-late-control" ||

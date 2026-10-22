@@ -30,7 +30,7 @@ var ownerRunBaseline = []struct {
 }{
 	{"backend/cmd/knowledge-import/publication_test.go", 3, 0, "the import command connects with operator-supplied credentials whose runtime role is unknown"},
 	{"backend/cmd/knowledge-import/retrieval_integration_test.go", 1, 0, "the import command connects with operator-supplied credentials whose runtime role is unknown"},
-	{"backend/internal/humancalling/calllegs_integration_test.go", 2, 1, "prepareInboundFanout and newOutboundEndFixture drive provider, worker, and portal paths through one module; every test that calls them runs as owner"},
+	{"backend/internal/humancalling/calllegs_integration_test.go", 2, 0, "prepareInboundFanout and newOutboundEndFixture drive provider, worker, and portal paths through one module; every test that calls them runs as owner"},
 	{"backend/internal/humancalling/staff_transfer_integration_test.go", 1, 0, "prepareConnectedOutboundStaffTransfer drives provider, worker, and portal paths through one module"},
 	{"backend/internal/interaction/analytics_projection_integration_test.go", 1, 0, "projects against an earlier migration, before the runtime grant contract applies"},
 	{"backend/internal/interaction/cost_usage_projection_integration_test.go", 1, 0, "projects against an earlier migration, before the runtime grant contract applies"},
