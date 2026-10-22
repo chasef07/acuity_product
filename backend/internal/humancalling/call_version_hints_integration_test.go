@@ -152,13 +152,13 @@ func (fixture callVersionFixture) requestTransfer(t *testing.T) (humancalling.St
 	})
 }
 
-type inboundCall struct {
+type versionedInboundCall struct {
 	callVersionFixture
 	caller    humancalling.ProviderFact
 	staffLegs []humancalling.ProviderFact
 }
 
-func newInboundCall(t *testing.T, prefix string) *inboundCall {
+func newInboundCall(t *testing.T, prefix string) *versionedInboundCall {
 	t.Helper()
 	fixture := newCallVersionFixture(t, prefix, 2, &recordingProvider{
 		dialResults: []humancalling.ProviderResult{
@@ -177,7 +177,7 @@ func newInboundCall(t *testing.T, prefix string) *inboundCall {
 	if err != nil {
 		t.Fatalf("create handoff: %v", err)
 	}
-	return &inboundCall{
+	return &versionedInboundCall{
 		callVersionFixture: fixture,
 		caller: humancalling.ProviderFact{
 			Type: humancalling.FactCallInitiated, OccurredAt: fixture.now,
@@ -189,7 +189,7 @@ func newInboundCall(t *testing.T, prefix string) *inboundCall {
 	}
 }
 
-func (call *inboundCall) callerFact(kind humancalling.FactType, seconds int) humancalling.ProviderFact {
+func (call *versionedInboundCall) callerFact(kind humancalling.FactType, seconds int) humancalling.ProviderFact {
 	fact := call.caller
 	fact.EventID = call.prefix + "-caller-" + string(kind)
 	fact.Type = kind
@@ -197,7 +197,7 @@ func (call *inboundCall) callerFact(kind humancalling.FactType, seconds int) hum
 	return fact
 }
 
-func (call *inboundCall) staffFact(index int, kind humancalling.FactType, seconds int) humancalling.ProviderFact {
+func (call *versionedInboundCall) staffFact(index int, kind humancalling.FactType, seconds int) humancalling.ProviderFact {
 	fact := call.staffLegs[index]
 	fact.EventID = fmt.Sprintf("%s-staff-%d-%s", call.prefix, index+1, kind)
 	fact.Type = kind
@@ -211,7 +211,7 @@ func (call *inboundCall) staffFact(index int, kind humancalling.FactType, second
 	return fact
 }
 
-func (call *inboundCall) dialStaff(t *testing.T) {
+func (call *versionedInboundCall) dialStaff(t *testing.T) {
 	t.Helper()
 	processAllCommands(t, call.worker)
 	for dialIndex, dial := range call.provider.all(humancalling.CommandDialStaff) {
@@ -236,7 +236,7 @@ func (call *inboundCall) dialStaff(t *testing.T) {
 	}
 }
 
-func (call *inboundCall) completeRingWindow(t *testing.T) {
+func (call *versionedInboundCall) completeRingWindow(t *testing.T) {
 	t.Helper()
 	ring := call.provider.last(humancalling.CommandStartRingWindow)
 	clientState, _ := ring.Payload["client_state"].(string)
@@ -246,7 +246,7 @@ func (call *inboundCall) completeRingWindow(t *testing.T) {
 	call.apply(t, fact)
 }
 
-func (call *inboundCall) steps() []hintStep {
+func (call *versionedInboundCall) steps() []hintStep {
 	return []hintStep{
 		{"admit caller", true, func(t *testing.T) {
 			call.apply(t, call.callerFact(humancalling.FactCallInitiated, 0))
@@ -502,37 +502,37 @@ func runPausedCallWriters(
 }
 
 func TestConcurrentCallWritersQueueOnTheCallLock(t *testing.T) {
-	bridgeReady := func(t *testing.T, prefix string) *inboundCall {
+	bridgeReady := func(t *testing.T, prefix string) *versionedInboundCall {
 		call := newInboundCall(t, prefix)
 		for _, step := range call.steps()[:9] {
 			step.run(t)
 		}
 		return call
 	}
-	connected := func(t *testing.T, prefix string) *inboundCall {
+	connected := func(t *testing.T, prefix string) *versionedInboundCall {
 		call := newInboundCall(t, prefix)
 		for _, step := range call.steps()[:13] {
 			step.run(t)
 		}
 		return call
 	}
-	bridgeWinner := func(t *testing.T, call *inboundCall) func() error {
+	bridgeWinner := func(t *testing.T, call *versionedInboundCall) func() error {
 		fact := call.staffFact(0, humancalling.FactCallBridged, 5)
 		return func() error { return call.worker.ApplyProviderFact(context.Background(), fact) }
 	}
-	hangup := func(t *testing.T, call *inboundCall) func() error {
+	hangup := func(t *testing.T, call *versionedInboundCall) func() error {
 		callID := call.callID(t)
 		return func() error {
 			_, err := call.portal.RequestHangup(context.Background(), call.staff[0], call.session(0), callID)
 			return err
 		}
 	}
-	callerHangup := func(t *testing.T, call *inboundCall) func() error {
+	callerHangup := func(t *testing.T, call *versionedInboundCall) func() error {
 		fact := call.callerFact(humancalling.FactCallHangup, 7)
 		fact.HangupCause, fact.TerminationSource = "NORMAL_CLEARING", "CALLER"
 		return func() error { return call.worker.ApplyProviderFact(context.Background(), fact) }
 	}
-	transfer := func(t *testing.T, call *inboundCall) func() error {
+	transfer := func(t *testing.T, call *versionedInboundCall) func() error {
 		return func() error {
 			_, err := call.requestTransfer(t)
 			return err
