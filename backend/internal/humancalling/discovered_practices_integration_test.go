@@ -43,7 +43,7 @@ func TestCallingStateIncludesEveryDiscoveredPractice(t *testing.T) {
 			if len(discovery.Practices) != 2 {
 				t.Fatalf("discovered %d practices, want 2", len(discovery.Practices))
 			}
-			state, err := calling.ReadCallingState(ctx, identity)
+			state, _, err := calling.ReadCallingStateConditionally(ctx, identity, "")
 			if err != nil {
 				t.Fatal(err)
 			}

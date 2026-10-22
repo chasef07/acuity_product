@@ -403,7 +403,7 @@ func TestOutboundCallWritersAdvanceTheVersionAndHint(t *testing.T) {
 			fixture.apply(t, fact(staff, "staff", humancalling.FactCallAnswered, 2))
 		}},
 		{"media confirmed", true, func(t *testing.T) {
-			state, err := fixture.portal.ReadCallingState(context.Background(), fixture.staff[0])
+			state, _, err := fixture.portal.ReadCallingStateConditionally(context.Background(), fixture.staff[0], "")
 			if err != nil || len(state.Ringing) != 1 {
 				t.Fatalf("outbound media offer = %#v, %v", state.Ringing, err)
 			}

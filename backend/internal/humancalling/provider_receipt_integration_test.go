@@ -1501,7 +1501,7 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff answer: %v", err)
 	}
-	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(callingState.Ringing) != 1 {
 		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
 	}
@@ -1965,7 +1965,7 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 	}); err != nil {
 		t.Fatalf("enable Staff availability after delayed Hangup: %v", err)
 	}
-	state, err := calling.ReadCallingState(context.Background(), staff[0])
+	state, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || !state.Softphone.Available || state.Softphone.ActiveCallID != "" {
 		t.Errorf("Staff availability after delayed Hangup = %#v err=%v",
 			state.Softphone, err)

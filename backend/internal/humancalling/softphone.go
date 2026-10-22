@@ -96,7 +96,7 @@ func (m *Module) AcquireSoftphone(
 			return SoftphoneState{}, fmt.Errorf("commit connected Call lease refusal: %w", err)
 		}
 		var state SoftphoneState
-		if err := m.loadCurrentCallCapacity(ctx, identity.Subject, &state); err != nil {
+		if err := loadCurrentCallCapacity(ctx, m.database, identity.Subject, &state); err != nil {
 			return SoftphoneState{}, err
 		}
 		return state, nil
@@ -135,7 +135,7 @@ func (m *Module) AcquireSoftphone(
 		if err := tx.Commit(ctx); err != nil {
 			return SoftphoneState{}, fmt.Errorf("commit losing lease acquisition: %w", err)
 		}
-		if err := m.loadCurrentCallCapacity(ctx, identity.Subject, &state); err != nil {
+		if err := loadCurrentCallCapacity(ctx, m.database, identity.Subject, &state); err != nil {
 			return SoftphoneState{}, err
 		}
 		return state, nil
@@ -180,7 +180,7 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, fmt.Errorf("commit softphone lease acquisition: %w", err)
 	}
 	state.Owner = true
-	if err := m.loadCurrentCallCapacity(ctx, identity.Subject, &state); err != nil {
+	if err := loadCurrentCallCapacity(ctx, m.database, identity.Subject, &state); err != nil {
 		return SoftphoneState{}, err
 	}
 	return state, nil
@@ -292,19 +292,22 @@ func (m *Module) SetReadiness(
 		return SoftphoneState{}, fmt.Errorf("commit calling readiness: %w", err)
 	}
 	state.Owner = true
-	if err := m.loadCurrentCallCapacity(ctx, command.Identity.Subject, &state); err != nil {
+	if err := loadCurrentCallCapacity(ctx, m.database, command.Identity.Subject, &state); err != nil {
 		return SoftphoneState{}, err
 	}
 	return state, nil
 }
 
-func (m *Module) loadCurrentCallCapacity(
+func loadCurrentCallCapacity(
 	ctx context.Context,
+	querier interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	},
 	subject string,
 	state *SoftphoneState,
 ) error {
 	var globallyOccupied bool
-	if err := m.database.QueryRow(ctx, `
+	if err := querier.QueryRow(ctx, `
 		WITH occupied AS (
 			SELECT call.id, call.practice_id, call.location_id, call.direction,
 				leg.staff_session_id, leg.state, leg.answered_at, leg.updated_at
@@ -354,7 +357,7 @@ func (m *Module) loadCurrentCallCapacity(
 	if globallyOccupied {
 		state.Available = false
 	}
-	if err := m.database.QueryRow(ctx, `
+	if err := querier.QueryRow(ctx, `
 		SELECT COALESCE((
 			SELECT call.id::text
 			FROM human_calling_calls call
