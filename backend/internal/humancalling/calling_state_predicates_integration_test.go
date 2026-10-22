@@ -11,16 +11,17 @@ import (
 )
 
 func TestCallingStateETagIncludesNewVoicemailGreeting(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identities := provisionConcurrentStaff(t, accessModule, now, "voicemail-etag", 1)
-	calling := humancalling.New(pool, accessModule, nil, humancalling.Config{}, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identities := provisionConcurrentStaff(t, db.Owner, accessModule, now, "voicemail-etag", 1)
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, nil, humancalling.Config{}, func() time.Time { return now })
 	if _, err := calling.AcquireSoftphone(ctx, identities[0], "voicemail-etag-session", false); err != nil {
 		t.Fatal(err)
 	}
-	before, err := calling.ReadCallingState(ctx, identities[0])
+	before, _, err := calling.ReadCallingStateConditionally(ctx, identities[0], "")
 	if err != nil {
 		t.Fatal(err)
 	}

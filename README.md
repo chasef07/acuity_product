@@ -118,7 +118,9 @@ generated API, domain modules import only reviewed domain edges, and SQL may
 use only its own module's tables (by migration prefix) while `workspace` only
 reads. Existing cross-module SQL is a shrinking baseline in that package. It
 also rejects comments in hand-written Go; only tool directives such as
-`//go:generate` and `//go:embed` are allowed.
+`//go:generate` and `//go:embed` are allowed. Migration SQL is outside that
+scan: the softphone takeover trigger in migration `0106` reads Access's
+operational scopes, as `softphone.go` already does.
 
 Knowledge uses Access for Practice and office authorization, a Google Vertex AI
 adapter for embeddings, and PostgreSQL/pgvector for passages and immutable revisions.
@@ -150,7 +152,10 @@ Go bindings and the TypeScript client are generated from it, not edited by hand.
    with a slow idle fallback poll. It polls faster while the stream is down,
    silent, or does not cover every Practice in the user's Calling state.
    Neither browser intent nor a successful provider request
-   proves that a call connected or a message was delivered.
+   proves that a call connected or a message was delivered. Database triggers
+   own `human_calling_calls.version` and the `calling` hint, so writers lock the
+   Call before writing its CallLegs, commands, transfers, voicemails, or
+   recordings, and never set the version or send the hint themselves.
 
 ## Local development
 
@@ -163,8 +168,9 @@ Run the commands below from the repository root. The frontend package lives in
   [the verification workflow](.github/workflows/verify.yml).
 - pnpm 10.34.5, matching [`web/package.json`](web/package.json).
 - A running local PostgreSQL 16 server, the `psql` and `createdb` tools, and
-  `curl`. Use a disposable local database cluster whose user can create roles
-  and reset schemas for integration tests.
+  `curl`. Use a disposable local database cluster whose user is a superuser:
+  integration tests reset schemas, create the runtime roles, and connect as
+  them.
 
 Install dependencies:
 
@@ -290,6 +296,13 @@ Keep database-backed packages serial: they share and reset schemas. Without
 database behavior passed. CI shards the complete package set across isolated
 databases for pull requests, main, and exact-release verification. Packages
 within each shard remain serial, and every shard must pass.
+
+Integration tests open the database with `testdb.Open`, which creates the
+runtime roles and applies `database-grants.sql`. Seed with SQL and provisioning
+through `db.Owner`; construct modules with `db.As(testdb.Portal)` (or `Worker`,
+`Provider`, `Realtime`), the role that runs that code in production, so a
+missing grant fails the test with permission denied. Tests still on
+`testdb.OpenAsOwner` are a shrinking baseline in `architecture/`.
 
 ### Frontend
 

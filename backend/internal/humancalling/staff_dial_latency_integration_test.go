@@ -143,23 +143,26 @@ func (provider *inboundLatencyProvider) Execute(ctx context.Context, command hum
 func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now()
-	seedAccess := access.New(pool, func() time.Time { return now })
-	seedCalling := humancalling.New(pool, seedAccess, &recordingProvider{}, humancalling.Config{
+	seedAccess := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	seedCallingConfig := humancalling.Config{
 		HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
 		RingWindowDuration: 20 * time.Second, HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID: "staff-call-control-connection", CredentialConnectionID: "staff-credential-connection",
 		FromNumber: "+15555550102", RingbackURL: "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
+	}
+	seedCalling := humancalling.New(db.As(testdb.Portal), seedAccess, &recordingProvider{}, seedCallingConfig, func() time.Time { return now })
+	seedCallingWorker := humancalling.New(db.As(testdb.Worker), seedAccess, &recordingProvider{}, seedCallingConfig, func() time.Time { return now })
 	var practices []access.Authorization
 	var staffGroups [][]access.Identity
 	for index := range 2 {
-		authorization, staff := provisionConcurrentStaff(t, seedAccess, now, fmt.Sprintf("mixed-%d", index), 5)
+		authorization, staff := provisionConcurrentStaff(t, db.Owner, seedAccess, now, fmt.Sprintf("mixed-%d", index), 5)
 		practices = append(practices, authorization)
 		staffGroups = append(staffGroups, staff)
 	}
-	prepareCredentials(t, seedCalling)
+	prepareCredentials(t, seedCallingWorker)
 	var callers []humancalling.ProviderFact
 	for index, authorization := range practices {
 		prefix := fmt.Sprintf("mixed-%d", index)
@@ -176,16 +179,16 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 			ConnectionID: "staff-call-control-connection", CallControlID: prefix + "-control",
 			CallLegID: prefix + "-leg", CallSessionID: prefix + "-session", From: "+15555550100", To: "+15555550103",
 		}
-		if err := seedCalling.ApplyProviderFact(ctx, fact); err != nil {
+		if err := seedCallingWorker.ApplyProviderFact(ctx, fact); err != nil {
 			t.Fatal(err)
 		}
 		callers = append(callers, fact)
 	}
-	processAllCommands(t, seedCalling)
+	processAllCommands(t, seedCallingWorker)
 	for index, fact := range callers {
 		fact.EventID = fmt.Sprintf("mixed-%d-answered", index)
 		fact.Type = humancalling.FactCallAnswered
-		if err := seedCalling.ApplyProviderFact(ctx, fact); err != nil {
+		if err := seedCallingWorker.ApplyProviderFact(ctx, fact); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -223,9 +226,9 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 	}
 	var metrics mixedLatencyLog
 	observer := observability.NewLogger(observability.RuntimeWorker, "worker-mixed-test", slog.New(slog.NewJSONHandler(&metrics, nil)))
-	newRuntime := func(role observability.RuntimeRole) (*pgxpool.Pool, *postgres.Executor) {
+	newRuntime := func(role observability.RuntimeRole, databaseRole testdb.Role) (*pgxpool.Pool, *postgres.Executor) {
 		runtimeObserver := observability.NewLogger(role, "mixed-test", slog.New(slog.NewJSONHandler(&metrics, nil)))
-		config := pool.Config().Copy()
+		config := db.As(databaseRole).Config()
 		config.MaxConns = 2
 		runtimePool, err := pgxpool.NewWithConfig(ctx, config)
 		if err != nil {
@@ -240,8 +243,8 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 		}
 		return runtimePool, database
 	}
-	workerPool, workerDatabase := newRuntime(observability.RuntimeWorker)
-	_, portalDatabase := newRuntime(observability.RuntimePortalAPI)
+	workerPool, workerDatabase := newRuntime(observability.RuntimeWorker, testdb.Worker)
+	_, portalDatabase := newRuntime(observability.RuntimePortalAPI, testdb.Portal)
 	provider := &mixedLatencyProvider{started: make(chan struct{}, 10), release: make(chan struct{}), effects: make(map[string]int)}
 	var releaseEffects sync.Once
 	calling := humancalling.New(workerDatabase, access.New(workerDatabase, time.Now), provider, humancalling.Config{Observer: observer}, time.Now)

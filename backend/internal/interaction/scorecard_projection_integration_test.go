@@ -13,7 +13,8 @@ import (
 
 func TestCloseoutProjectionRecordsScorecard(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.October, 7, 12, 0, 0, 0, time.UTC)
 	var practiceID, locationID string
 	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('scorecard-projection','Scorecard Projection') RETURNING id::text`).Scan(&practiceID); err != nil {
@@ -36,7 +37,7 @@ func TestCloseoutProjectionRecordsScorecard(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_receipts(service_subject,practice_id,location_id,source_call_id,kind,payload_fingerprint,payload) VALUES('agent',$1,$2,'scorecard-call',$3,$4,$5)`, practiceID, locationID, payload.Kind, fingerprint[:], raw); err != nil {
 		t.Fatal(err)
 	}
-	module := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
+	module := New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), func() time.Time { return now }), func() time.Time { return now })
 	if worked, err := module.ProcessNextReceipt(ctx); err != nil || !worked {
 		t.Fatalf("project closeout: worked=%v err=%v", worked, err)
 	}

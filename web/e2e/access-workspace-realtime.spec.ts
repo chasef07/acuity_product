@@ -42,6 +42,16 @@ const operatorAnalyticsFixture = {
       evaluatedCalls: 40,
       failedCalls: 6,
       unevaluatedCalls: 2,
+      paths: [
+        { intent: "existing_patient_booking", outcome: "resolved", evaluated: true, failures: [], calls: 21 },
+        { intent: "office_information", outcome: "resolved", evaluated: true, failures: [], calls: 8 },
+        { intent: "existing_patient_booking", outcome: "resolved", evaluated: true, failures: ["office_question_answered"], calls: 3 },
+        { intent: "existing_patient_booking", outcome: "transferred", evaluated: true, failures: [], calls: 3 },
+        { intent: "existing_patient_booking", outcome: "abandoned", evaluated: true, failures: ["call_ended_correctly"], calls: 2 },
+        { intent: "office_information", outcome: "transferred", evaluated: true, failures: [], calls: 2 },
+        { evaluated: false, failures: [], calls: 2 },
+        { intent: "existing_patient_booking", outcome: "resolved", evaluated: true, failures: ["call_ended_correctly", "office_question_answered"], calls: 1 },
+      ],
     },
     quality: {
       daily: [{
@@ -498,12 +508,13 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       fullPage: true,
     })
     await selectCommandCenterPage(operatorPage, "Breakdowns")
-    await expect(analyticsRegion.getByRole("region", { name: "Intents", exact: true })).toContainText("Existing patient booking")
-    await analyticsRegion.getByRole("button", { name: "Outcomes", exact: true }).click()
-    await expect(analyticsRegion.getByRole("region", { name: "Outcomes", exact: true })).toContainText("Resolved")
-    await analyticsRegion.getByRole("button", { name: "Judge failures", exact: true }).click()
-    await expect(analyticsRegion.getByRole("region", { name: "Judge failures", exact: true })).toContainText("7 flags across 6 calls")
-    await expect(analyticsRegion.getByText(/40 of 42 calls evaluated · 2 unevaluated/)).toBeVisible()
+    const callFlow = analyticsRegion.getByRole("region", { name: "Call flow", exact: true })
+    await expect(callFlow.getByText("All calls 42", { exact: true })).toBeVisible()
+    await callFlow.getByRole("button", { name: "List", exact: true }).click()
+    await expect(callFlow.locator('section[aria-label="Intents"]')).toContainText("Existing patient booking")
+    await expect(callFlow.locator('section[aria-label="Outcomes"]')).toContainText("Resolved")
+    await expect(callFlow.locator('section[aria-label="Judge results"]')).toContainText("Fail6 calls")
+    await expect(callFlow.locator('section[aria-label="Judge results"]')).toContainText("Not judged2 calls")
     await expect(operatorPage.getByRole("navigation", { name: "Command Center", exact: true }).getByRole("button", { name: "Quality", exact: true })).toHaveCount(0)
     await operatorPage.screenshot({ path: testInfo.outputPath("operator-analytics-breakdowns.png"), fullPage: true })
 

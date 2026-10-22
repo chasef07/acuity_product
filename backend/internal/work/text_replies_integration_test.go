@@ -13,11 +13,12 @@ import (
 
 func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	var thread string
 	if err := pool.QueryRow(ctx, `INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone,created_at,updated_at) VALUES($1,$2,'+15555550100','+15555550123',$3,$3) RETURNING id::text`, auth.Practice.ID, auth.Locations[0].ID, now).Scan(&thread); err != nil {
 		t.Fatal(err)
@@ -107,10 +108,11 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	insert(true)
 	apply(r, "FAILED")
 	assertOpen(1)
-	tx, err := pool.Begin(ctx)
+	tx, err := db.As(testdb.Worker).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err = m.EnsureAppointmentReview(ctx, tx, uuid.NewString(), auth.Practice.ID, auth.Locations[0].ID, "+15555550123", "synthetic-separate-obligation", "Review booked appointment", "Verify this synthetic appointment.", now); err != nil {
 		t.Fatal(err)
 	}

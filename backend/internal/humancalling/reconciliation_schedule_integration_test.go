@@ -40,14 +40,15 @@ func (p *scheduledObservationProvider) ObserveCall(
 }
 
 func TestOutgoingReconciliationBackoffIsDurableAndDoesNotStarveOtherCalls(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.September, 4, 13, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "observation-schedule", 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, now, "observation-schedule", 1)
 	legID := seedScheduledObservationLeg(t, pool, authorization, now.Add(-2*time.Minute), "failing")
 	provider := &scheduledObservationProvider{err: humancalling.ErrInvalidInput, healthyControlID: "healthy-control"}
 	for index, delay := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 15 * time.Minute, 15 * time.Minute} {
-		calling := humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
+		calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return now })
 		if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); !maintained || !errors.Is(err, humancalling.ErrInvalidInput) {
 			t.Fatalf("observation %d = maintained:%t err:%v", index+1, maintained, err)
 		}
@@ -85,7 +86,7 @@ func TestOutgoingReconciliationBackoffIsDurableAndDoesNotStarveOtherCalls(t *tes
 	}
 	now = now.Add(61 * time.Second)
 	provider.err = nil
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return now })
 	if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); !maintained || err != nil {
 		t.Fatalf("fresh durable state stayed behind old backoff: maintained:%t err:%v", maintained, err)
 	}
@@ -153,10 +154,11 @@ func TestOutgoingReconciliationLateObserverCannotOverwriteNewerFailure(t *testin
 
 func testLateObservation(t *testing.T, withCommand bool) {
 	t.Helper()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	initialTime := time.Date(2026, time.September, 4, 14, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return initialTime })
-	authorization, _ := provisionConcurrentStaff(t, accessModule, initialTime, "observation-fence", 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return initialTime })
+	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, initialTime, "observation-fence", 1)
 	legID := seedScheduledObservationLeg(t, pool, authorization, initialTime.Add(-2*time.Minute), "fenced")
 	if withCommand {
 		if _, err := pool.Exec(context.Background(), `
@@ -170,7 +172,7 @@ func testLateObservation(t *testing.T, withCommand bool) {
 		}
 	}
 	provider := &blockedObservationProvider{started: make(chan struct{}), release: make(chan struct{})}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return initialTime })
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return initialTime })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
@@ -189,7 +191,7 @@ func testLateObservation(t *testing.T, withCommand bool) {
 	}
 	newTime := initialTime.Add(62 * time.Second)
 	newProvider := &scheduledObservationProvider{err: humancalling.ErrDefinitiveProviderFailure}
-	newCalling := humancalling.New(pool, accessModule, newProvider, humancalling.Config{}, func() time.Time { return newTime })
+	newCalling := humancalling.New(db.As(testdb.Worker), accessModule, newProvider, humancalling.Config{}, func() time.Time { return newTime })
 	if maintained, err := newCalling.MaintainOutgoingCallLegs(ctx); !maintained || !errors.Is(err, humancalling.ErrDefinitiveProviderFailure) {
 		t.Fatalf("new observation = maintained:%t err:%v", maintained, err)
 	}
@@ -224,10 +226,11 @@ func testLateObservation(t *testing.T, withCommand bool) {
 }
 
 func TestOutgoingReconciliationPreservesEvidenceWindowAcrossFailure(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "observation-window", 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, now, "observation-window", 1)
 	updatedAt := now.Add(-2 * time.Minute)
 	var legID string
 	if err := pool.QueryRow(context.Background(), `
@@ -248,7 +251,7 @@ func TestOutgoingReconciliationPreservesEvidenceWindowAcrossFailure(t *testing.T
 		t.Fatal(err)
 	}
 	provider := &scheduledObservationProvider{err: humancalling.ErrAmbiguousEffect}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return now })
 	if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); !maintained || !errors.Is(err, humancalling.ErrAmbiguousEffect) {
 		t.Fatalf("first observation = maintained:%t err:%v", maintained, err)
 	}
@@ -261,7 +264,7 @@ func TestOutgoingReconciliationPreservesEvidenceWindowAcrossFailure(t *testing.T
 	}
 	now = now.Add(61 * time.Second)
 	provider.err = nil
-	calling = humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
+	calling = humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return now })
 	if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); !maintained || err != nil {
 		t.Fatalf("retry observation = maintained:%t err:%v", maintained, err)
 	}
@@ -295,13 +298,14 @@ func TestOutgoingReconciliationPreservesEvidenceWindowAcrossFailure(t *testing.T
 }
 
 func TestOutgoingReconciliationProviderDeadlinePreservesDurableBackoff(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.September, 8, 13, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "observation-deadline", 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, now, "observation-deadline", 1)
 	legID := seedScheduledObservationLeg(t, pool, authorization, now.Add(-2*time.Minute), "deadline")
 	provider := &blockedObservationProvider{started: make(chan struct{}), release: make(chan struct{})}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return now })
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_call_legs SET reconciliation_attempts = 1,
 			reconciliation_checked_at = $2 WHERE id = $1
@@ -334,13 +338,14 @@ func TestOutgoingReconciliationProviderDeadlinePreservesDurableBackoff(t *testin
 }
 
 func TestOutgoingReconciliationCancellationLeavesRecoverableLease(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.September, 8, 13, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "observation-cancel", 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, now, "observation-cancel", 1)
 	legID := seedScheduledObservationLeg(t, pool, authorization, now.Add(-2*time.Minute), "canceled")
 	provider := &blockedObservationProvider{started: make(chan struct{}), release: make(chan struct{})}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return now })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	result := make(chan error, 1)

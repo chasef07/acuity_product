@@ -18,7 +18,8 @@ import {
 } from "@/components/analytics/ai-diagnostics"
 import { OperatorJudges } from "./operator-judges"
 import { OverviewTrend } from "./overview-trend"
-import { BreakdownControls, CallBreakdowns, initialBreakdownSelection, type BreakdownSelection } from "./call-breakdowns"
+import { CallBreakdowns, type FlowMode } from "./call-breakdowns"
+import type { CallSelection } from "./call-paths"
 import { CostOverview } from "@/components/analytics/cost-overview"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -77,12 +78,10 @@ const ranges: Array<{
 
 export function OperatorAnalytics({
   tab,
-  revision = 0,
   practiceID,
   locationScopeID,
 }: {
   tab: AnalyticsTab
-  revision?: number
   practiceID: string
   locationScopeID: string
 }) {
@@ -91,25 +90,37 @@ export function OperatorAnalytics({
   const [intent, setIntent] = useState<IntentFilter>("all")
   const [outcome, setOutcome] = useState<OutcomeFilter>("all")
   const [judgeFlag, setJudgeFlag] = useState("any")
-  const [breakdownSelection, setBreakdownSelection] = useState<BreakdownSelection>(initialBreakdownSelection)
+  const [selection, setSelection] = useState<CallSelection>({})
+  const [flowMode, setFlowMode] = useState<FlowMode>("flow")
+  const breakdowns = tab === "breakdowns"
   const costView = tab === "cost"
   const reviewView = tab === "review"
-  const [requestVersion, setRequestVersion] = useState(0)
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
-  const requestKey = `${practiceID}:${locationID}:${range}:${intent}:${outcome}:${judgeFlag}:${revision}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${intent}:${outcome}:${judgeFlag}:${JSON.stringify(selection)}`
   const currentRequest = useAiCallAnalytics({
     practiceID,
     locationID,
     range,
-    revision: revision + requestVersion,
     enabled: !costView && !reviewView,
-    intent: tab === "breakdowns" ? (breakdownSelection.intent === "all" ? undefined : breakdownSelection.intent) : tab === "calls" && intent !== "all" ? intent : undefined,
-    outcome: tab === "breakdowns" ? (breakdownSelection.outcome === "all" ? undefined : breakdownSelection.outcome) : tab === "calls" && outcome !== "all" ? outcome : undefined,
-    failuresOnly: tab === "calls" && judgeFlag !== "all" ? true : undefined,
-    failingJudge: tab === "calls" && judgeFlag !== "all" && judgeFlag !== "any" ? judgeFlag : undefined,
+    intent: breakdowns ? selection.intent : tab === "calls" && intent !== "all" ? intent : undefined,
+    outcome: breakdowns ? selection.outcome : tab === "calls" && outcome !== "all" ? outcome : undefined,
+    failuresOnly: breakdowns ? selection.judge === "fail" || undefined : tab === "calls" && judgeFlag !== "all" ? true : undefined,
+    failingJudge: breakdowns ? selection.failure : tab === "calls" && judgeFlag !== "all" && judgeFlag !== "any" ? judgeFlag : undefined,
+    judgeResult: breakdowns && (selection.judge === "pass" || selection.judge === "unjudged") ? selection.judge : undefined,
+  })
+  const flowRequest = useAiCallAnalytics({
+    practiceID,
+    locationID,
+    range,
+    enabled: breakdowns,
   })
   const nextPageState = currentRequest.nextPage
+
+  function retryAnalytics() {
+    currentRequest.retry()
+    if (breakdowns) flowRequest.retry()
+  }
 
   async function loadNextPage() {
     const page = await currentRequest.loadNextPage()
@@ -158,7 +169,11 @@ export function OperatorAnalytics({
             </>}
             </div>}
           </div>
-        {tab === "breakdowns" && <BreakdownControls selection={breakdownSelection} onSelection={setBreakdownSelection} />}
+        {breakdowns && flowRequest.state !== "denied" && <section aria-label="Breakdowns" className="mb-5">
+          {flowRequest.state === "loading" ? <Skeleton className="h-[640px] w-full rounded-xl" /> : (
+            <CallBreakdowns data={flowRequest.data?.summary.distributions} selection={selection} onSelection={setSelection} mode={flowMode} onMode={setFlowMode} onRetry={retryAnalytics} />
+          )}
+        </section>}
         {reviewView ? (
           <CallReviewWorkspace key={practiceID} practiceID={practiceID} onOpenCall={(id) => selectCall(id)} />
         ) : costView ? (
@@ -180,7 +195,14 @@ export function OperatorAnalytics({
               <AnalyticsFailure
                 title="Analytics temporarily unavailable"
                 description="No call evidence was reconstructed. Retry when the analytics service is available."
-                onRetry={() => setRequestVersion((current) => current + 1)}
+                onRetry={retryAnalytics}
+              />
+            )}
+            {currentRequest.state === "ready" && (currentRequest.refreshFailed || (breakdowns && flowRequest.refreshFailed)) && (
+              <AnalyticsFailure
+                title="Analytics could not refresh"
+                description="Showing the last loaded call evidence. Retry when the analytics service is available."
+                onRetry={retryAnalytics}
               />
             )}
             {currentRequest.state === "ready" && tab === "calls" && (
@@ -193,9 +215,7 @@ export function OperatorAnalytics({
               <AnalyticsReady
                 key={requestKey}
                 data={currentRequest.data}
-                breakdownSelection={breakdownSelection}
-                onBreakdownSelection={setBreakdownSelection}
-                onRetry={() => setRequestVersion((current) => current + 1)}
+                onRetry={retryAnalytics}
                 tab={tab}
                 range={range}
                 nextPageState={nextPageState}
@@ -223,8 +243,6 @@ export function OperatorAnalytics({
 
 function AnalyticsReady({
   data,
-  breakdownSelection,
-  onBreakdownSelection,
   onRetry,
   tab,
   range,
@@ -233,8 +251,6 @@ function AnalyticsReady({
   onSelect,
 }: {
   data: AiCallAnalytics
-  breakdownSelection: BreakdownSelection
-  onBreakdownSelection: (selection: BreakdownSelection) => void
   onRetry: () => void
   tab: AnalyticsTab
   range: OperatorAiAnalyticsRange
@@ -245,10 +261,9 @@ function AnalyticsReady({
   return (
     <>
       {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
-      {tab === "breakdowns" && <CallBreakdowns data={data.summary.distributions} selection={breakdownSelection} onSelection={onBreakdownSelection} onRetry={onRetry} />}
       {tab === "judges" && <OperatorJudges report={data.summary.judges} onRetry={onRetry} />}
       {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
-      {tab === "calls" && data.calls.length === 0 ? (
+      {tab === "breakdowns" && data.summary.totalCalls === 0 ? null : (tab === "calls" || tab === "breakdowns") && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -256,12 +271,13 @@ function AnalyticsReady({
             </EmptyMedia>
             <EmptyTitle>No calls match these filters</EmptyTitle>
             <EmptyDescription>
-              Change judge flags, intent, outcome, time range, or workspace office to review another slice
-              of call evidence.
+              {tab === "breakdowns"
+                ? "Remove a selection chip, or change the date range or office."
+                : "Change judge flags, intent, outcome, time range, or workspace office to review another slice of call evidence."}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
-      ) : tab === "calls" ? (
+      ) : tab === "calls" || tab === "breakdowns" ? (
         <CallLedger
           calls={data.calls}
           totalCalls={data.summary.totalCalls}

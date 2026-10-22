@@ -31,6 +31,7 @@ GRANT SELECT ON TABLE
     public.access_practices,
     public.ai_interactions,
     public.human_calling_call_legs,
+    public.human_calling_call_states,
     public.human_calling_calls,
     public.human_calling_current_staff_owners,
     public.human_calling_credentials,
@@ -309,6 +310,7 @@ TO acuity_realtime;
 
 -- worker: durable receipt projection, command execution, and reconciliation.
 GRANT SELECT ON TABLE
+    public.access_abita_office_locations,
     public.access_calling_scopes,
     public.access_locations,
     public.access_membership_locations,

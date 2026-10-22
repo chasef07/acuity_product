@@ -7,11 +7,11 @@ import {
   readTask,
 } from "../api/generated/sdk.gen"
 import type { CallingCall, Task } from "../api/generated/types.gen"
+import { readFailure, useRead } from "../data/queries"
 import {
   type PortalFailure,
   type PortalOutcome,
   portalRequest,
-  usePortalQuery,
 } from "./portal-request"
 
 export type RecordingKind = "voicemail" | "call"
@@ -53,56 +53,53 @@ export type RecoverySource = {
 }
 
 export function useRecoverySource(
-  task: Pick<Task, "id" | "version" | "callId" | "interactions" | "relatedInteractionCount">,
-  revision: number,
+  task: Pick<Task, "id" | "callId" | "interactions" | "relatedInteractionCount">,
 ): RecoverySource {
-  const taskKey = `${task.id}:${task.version}:${task.callId ?? ""}:${revision}`
   const loaded = task.relatedInteractionCount > 0 &&
     task.interactions.length === task.relatedInteractionCount
-  const detail = usePortalQuery(
-    loaded ? null : taskKey,
-    (transport) => readTask({ ...transport, path: { taskId: task.id } }),
-    { keepPrevious: true },
-  )
+  const detail = useRead({
+    live: "task-detail",
+    name: "task",
+    identity: { taskID: task.id },
+    enabled: !loaded,
+    read: (identity, transport) => readTask({ ...transport, path: { taskId: identity.taskID } }),
+  })
   const interactions = loaded
     ? task.interactions
-    : detail.status === "loading" ? [] : (detail.data?.interactions ?? [])
+    : detail.status === "ready" ? detail.data.interactions : []
   const callID =
-    loaded || (detail.status === "ready" && !detail.refreshing)
+    loaded || detail.status === "ready"
       ? (newestRecoveryInteraction(interactions)?.callId ?? task.callId)
       : undefined
-  const call = usePortalQuery(
-    callID ? `${callID}:${taskKey}` : null,
-    (transport) => getCallingCall({ ...transport, path: { callId: callID ?? "" } }),
-    { keepPrevious: true },
-  )
-  const shownCall = call.status === "loading" ? undefined : call.data
-  const failure =
-    !loaded && detail.status === "failed"
-      ? detail.failure
-      : call.status === "failed"
-        ? call.failure
-        : undefined
+  const call = useRead({
+    live: "task-detail",
+    name: "calling-call",
+    identity: { callID },
+    enabled: Boolean(callID),
+    read: (identity, transport) =>
+      getCallingCall({ ...transport, path: { callId: identity.callID ?? "" } }),
+  })
+  const failure = (loaded ? undefined : readFailure(detail)) ?? readFailure(call)
   return {
     interactions,
-    ...(shownCall ? { call: shownCall } : {}),
+    ...(call.status === "ready" ? { call: call.data } : {}),
     ...(failure ? { failure } : {}),
   }
 }
 
 export function useTaskCallEligibility({
   task,
-  historyHint,
   enabled,
 }: {
-  task: Pick<Task, "id" | "version" | "state">
-  historyHint: number
+  task: Pick<Task, "id">
   enabled: boolean
 }) {
-  return usePortalQuery(
-    enabled ? `${task.id}:${task.state}:${task.version}:${historyHint}` : null,
-    (transport) =>
-      getTaskOutboundEligibility({ ...transport, path: { taskId: task.id } }),
-    { keepPrevious: true },
-  )
+  return useRead({
+    live: "task-detail",
+    name: "task-call-eligibility",
+    identity: { taskID: task.id },
+    enabled,
+    read: (identity, transport) =>
+      getTaskOutboundEligibility({ ...transport, path: { taskId: identity.taskID } }),
+  })
 }

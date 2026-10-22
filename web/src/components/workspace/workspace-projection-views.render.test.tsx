@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test, { type TestContext } from "node:test"
-import { act, type ComponentProps } from "react"
+import { act, type ComponentProps, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
@@ -8,15 +8,19 @@ import { JSDOM } from "jsdom"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
-import { TaskCallContext } from "./task-call-context.tsx"
+import { TaskCallContext, TaskCallAction } from "./task-call-context.tsx"
+import { CallingDock } from "./calling-dock.tsx"
 import { WorkEmptyState } from "./work-empty-state.tsx"
-import { RailButton } from "./workspace-rail-button.tsx"
+import { CallingRailControl, RailButton } from "./workspace-rail-button.tsx"
 import { WorkspaceRail } from "./workspace-rail.tsx"
 import { WorkspaceTopBar } from "./workspace-page-header.tsx"
 import { clearAccessToken } from "../../lib/auth-client.ts"
+import { DataProvider } from "../../lib/data/provider.tsx"
+import { useLiveRefresh } from "../../lib/data/queries.ts"
 import type {
   AiInteractionDetail,
   ConversationTimelineItem,
+  ConversationTimelinePage,
   Message,
   Task,
 } from "../../lib/api/generated/types.gen.ts"
@@ -25,6 +29,32 @@ import type {
   WorkspaceProjectionIntent,
   WorkspaceProjectionState,
 } from "../../lib/workspace-projection.ts"
+
+test("an accessible practice renders calling navigation and the Task call action", () => {
+  const markup = renderToStaticMarkup(
+    <DataProvider>
+    <SidebarProvider>
+      <CallingDock
+        actorSubject="calling-member"
+        practiceID="practice-1"
+        onTaskCallHandled={() => {}}
+        onCallScope={() => {}}
+        onCallConnected={() => {}}
+        onDisposition={() => {}}
+      >
+        {(_activeCall, occupied) => <>
+          <CallingRailControl workActive />
+          <TaskCallAction task={projectedTask()} canCall={!occupied} pending={false} onCall={() => {}} />
+        </>}
+      </CallingDock>
+    </SidebarProvider>
+    </DataProvider>,
+  )
+  assert.match(markup, /aria-label="Receive calls"/)
+  assert.match(markup, /role="switch"/)
+  assert.match(markup, /Checking Call route/)
+  assert.match(markup, /<audio/)
+})
 
 test("Task rail toggles the selected context while preserving the conversation", async () => {
   const task = projectedTask()
@@ -40,12 +70,12 @@ test("Task rail toggles the selected context while preserving the conversation",
     </SidebarProvider>,
   )
   const canvasMarkup = renderToStaticMarkup(
+    <DataProvider>
     <EngagementWorkspaceView
       practiceName="Synthetic Practice"
       engagement={projection.selection.engagement!}
       practiceID={projection.scope.practiceID}
       canMutate
-      revision={projection.detailRevision}
       selectedTaskID={projection.selection.task?.id}
       onTaskCreated={() => {}}
       onTaskOpen={() => {}}
@@ -53,12 +83,12 @@ test("Task rail toggles the selected context while preserving the conversation",
       onAIInteractionOpen={() => {}}
       calling={{
         callingOccupied: false,
-        callingEnabled: false,
         outboundPending: false,
         ownsSoftphone: false,
         startOutbound: async () => undefined,
       }}
-    />,
+    />
+    </DataProvider>,
   )
 
   assert.match(railMarkup, /Projected follow-up/)
@@ -268,11 +298,12 @@ test("conversation clears its unavailable alert after a successful refresh", asy
     task,
   }]
   await conversation.render(0)
+  await waitFor(() => /Projected follow-up/.test(conversation.host.textContent ?? ""))
   assert.equal(conversation.timelineRequests, 1)
-  assert.match(conversation.host.textContent ?? "", /Projected follow-up/)
 
   conversation.timelineStatus = 503
   await conversation.render(1)
+  await waitFor(() => Boolean(conversation.host.querySelector("[role='alert']")))
   assert.equal(conversation.timelineRequests, 2)
   assert.match(conversation.host.textContent ?? "", /Projected follow-up/)
   assert.match(
@@ -282,6 +313,7 @@ test("conversation clears its unavailable alert after a successful refresh", asy
 
   conversation.timelineStatus = 200
   await conversation.render(2)
+  await waitFor(() => !conversation.host.querySelector("[role='alert']"))
   assert.equal(conversation.timelineRequests, 3)
   assert.equal(
     Boolean(conversation.host.querySelector("[role='alert']")),
@@ -294,23 +326,23 @@ test("an unavailable conversation can be retried without showing an empty histor
   const conversation = conversationHarness(t)
   conversation.timelineStatus = 503
   await conversation.render(0)
-  assert.doesNotMatch(conversation.host.textContent ?? "", /No activity yet/)
-  const retry = Array.from(conversation.host.querySelectorAll("button")).find(
+  const retry = () => Array.from(conversation.host.querySelectorAll("button")).find(
     (button) => button.textContent === "Try again",
   )
-  assert.ok(retry, "A failed initial timeline load must offer a retry")
+  await waitFor(() => retry() !== undefined)
+  assert.doesNotMatch(conversation.host.textContent ?? "", /No activity yet/)
 
-  await act(async () => retry.click())
-  assert.equal(conversation.timelineRequests, 2)
+  await act(async () => retry()!.click())
+  await waitFor(() => conversation.timelineRequests === 2 && retry()?.disabled === false)
   assert.match(
     conversation.host.querySelector("[role='alert']")?.textContent ?? "",
     /The conversation could not be loaded\./,
   )
 
   conversation.timelineStatus = 200
-  await act(async () => retry.click())
+  await act(async () => retry()!.click())
+  await waitFor(() => !conversation.host.querySelector("[role='alert']"))
   assert.equal(conversation.timelineRequests, 3)
-  assert.equal(Boolean(conversation.host.querySelector("[role='alert']")), false)
   assert.match(conversation.host.textContent ?? "", /No activity yet/)
 })
 
@@ -318,19 +350,19 @@ test("a missing access token leaves a retryable conversation error instead of a 
   const conversation = conversationHarness(t)
   conversation.tokenStatus = 401
   await conversation.render(0)
+  const tryAgain = () => Array.from(conversation.host.querySelectorAll("button")).find(
+    (button) => button.textContent === "Try again",
+  )
+  await waitFor(() => tryAgain() !== undefined)
   assert.equal(conversation.timelineRequests, 0)
   assert.equal(
     Boolean(conversation.host.querySelector('[aria-label="Loading conversation"]')),
     false,
   )
-  const retry = Array.from(conversation.host.querySelectorAll("button")).find(
-    (button) => button.textContent === "Try again",
-  )
-  assert.ok(retry)
   conversation.tokenStatus = 200
-  await act(async () => retry.click())
+  await act(async () => tryAgain()!.click())
+  await waitFor(() => !conversation.host.querySelector("[role='alert']"))
   assert.equal(conversation.timelineRequests, 1)
-  assert.equal(Boolean(conversation.host.querySelector("[role='alert']")), false)
 })
 
 test("the sender office follows the offices of the selected Task", async (t) => {
@@ -341,7 +373,6 @@ test("the sender office follows the offices of the selected Task", async (t) => 
   const started: string[] = []
   const calling = {
     callingOccupied: false,
-    callingEnabled: true,
     outboundPending: false,
     ownsSoftphone: true,
     startOutbound: async (locationID: string) => {
@@ -421,17 +452,18 @@ test("the thread names the callback caller and marks which Task each entry descr
 test("the Task panel credits the callback caller and flags an open Task only with loaded evidence", () => {
   const { selected, review, history } = callbackFixture()
   const panel = (task: Task, numberHistory?: ConversationTimelineItem[]) => renderToStaticMarkup(
-    <TaskCallContext
-      task={task}
-      activeCall={undefined}
-      view="task"
-      canMutate
-      historyHint={0}
-      numberHistory={numberHistory}
-      taskCallError=""
-      onTaskUpdated={() => {}}
-      onReturnToCall={() => {}}
-    />,
+    <DataProvider>
+      <TaskCallContext
+        task={task}
+        activeCall={undefined}
+        view="task"
+        canMutate
+        numberHistory={numberHistory}
+        taskCallError=""
+        onTaskUpdated={() => {}}
+        onReturnToCall={() => {}}
+      />
+    </DataProvider>,
   )
   const open = panel(selected, history)
   assert.match(open, /caller@example\.test called this number \(no answer\) · .+\. This Task is still open\./)
@@ -451,16 +483,17 @@ test("an AI Task shows the missed handoff call attached to it", () => {
     interactions: [{ callId: "call-1", type: "VOICEMAIL", occurredAt: "2026-08-30T12:01:00Z" }],
   }
   const panel = (value: Task) => renderToStaticMarkup(
-    <TaskCallContext
-      task={value}
-      activeCall={undefined}
-      view="task"
-      canMutate
-      historyHint={0}
-      taskCallError=""
-      onTaskUpdated={() => {}}
-      onReturnToCall={() => {}}
-    />,
+    <DataProvider>
+      <TaskCallContext
+        task={value}
+        activeCall={undefined}
+        view="task"
+        canMutate
+        taskCallError=""
+        onTaskUpdated={() => {}}
+        onReturnToCall={() => {}}
+      />
+    </DataProvider>,
   )
   assert.match(panel(task), /aria-label="Call recovery source"/)
   assert.doesNotMatch(panel({ ...task, relatedInteractionCount: 0, interactions: [] }), /Call recovery source/)
@@ -480,18 +513,19 @@ test("completing a Task keeps Next task in place and holds Reopen until the chan
   const next: Task = { ...projectedTask(), id: "task-next", title: "Synthetic next Task" }
   const selected: string[] = []
   const render = (task: Task) => act(async () => root.render(
-    <TaskCallContext
-      task={task}
-      taskRows={[task, next]}
-      onSelectTask={(row) => selected.push(row.id)}
-      activeCall={undefined}
-      view="task"
-      canMutate
-      historyHint={0}
-      taskCallError=""
-      onTaskUpdated={() => {}}
-      onReturnToCall={() => {}}
-    />,
+    <DataProvider>
+      <TaskCallContext
+        task={task}
+        taskRows={[task, next]}
+        onSelectTask={(row) => selected.push(row.id)}
+        activeCall={undefined}
+        view="task"
+        canMutate
+        taskCallError=""
+        onTaskUpdated={() => {}}
+        onReturnToCall={() => {}}
+      />
+    </DataProvider>,
   ))
   const actions = () => [...host.querySelectorAll<HTMLButtonElement>("section[aria-label='Focused Task'] div.flex-col > button")]
   const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === name)
@@ -599,11 +633,104 @@ test("a refused send keeps its draft attempt and a sent Message reloads after it
   assert.equal(conversation.sends.length, 2)
   assert.equal(conversation.sends[0]!.destination, "+15551234567")
   assert.equal(conversation.sends[1]!.idempotencyKey, conversation.sends[0]!.idempotencyKey, "a retried draft reuses its idempotency key")
-  assert.match(conversation.host.querySelector('[aria-label="Conversation activity"]')?.textContent ?? "", /Synthetic reply/)
+  const activity = () => conversation.host.querySelector('[aria-label="Conversation activity"]')?.textContent ?? ""
+  assert.match(activity(), /Synthetic reply/)
   assert.equal(conversation.timelineRequests, 1)
+
+  await typeInto(textarea, "Second reply")
+  await submit()
+  assert.equal(conversation.sends.length, 3)
+  assert.match(activity(), /Synthetic reply/, "a second send keeps the first sent Message on screen")
+  assert.match(activity(), /Second reply/)
 
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 800)) })
   assert.equal(conversation.timelineRequests, 2, "the Sending Message reloads once its hold ends")
+})
+
+test("a live update while scrolled up keeps every loaded item and offers New activity", async (t) => {
+  const conversation = conversationHarness(t)
+  const task = projectedTask()
+  const entry = (id: string, day: number): ConversationTimelineItem => ({
+    type: "TASK", id, occurredAt: `2026-09-${String(day).padStart(2, "0")}T12:00:00Z`, taskActivity: "TASK_CREATED", task: { ...task, id, title: `Synthetic ${id}` },
+  })
+  let history = ["f", "e", "d", "c", "b", "a", "z", "y"].map((id, index) => entry(id, 16 - index))
+  conversation.timelinePage = (cursor) => {
+    const start = cursor ? history.findIndex((item) => item.id === cursor) + 1 : 0
+    const items = history.slice(start, start + 2)
+    return { items, nextCursor: start + 2 < history.length ? items.at(-1)!.id : "" }
+  }
+  const activity = () => conversation.host.querySelector('[aria-label="Conversation activity"]')?.textContent ?? ""
+  const button = (name: string) => Array.from(conversation.host.querySelectorAll("button")).find((element) => element.textContent?.trim() === name)
+  const viewport = () => conversation.host.querySelector<HTMLElement>('[data-testid="message-timeline"]')!
+  const scrollTo = (scrollTop: number) => act(async () => {
+    Object.defineProperties(viewport(), {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, value: scrollTop },
+    })
+    viewport().dispatchEvent(new window.Event("scroll"))
+  })
+  let release!: () => void
+  const gate = () => { conversation.timelineGate = new Promise<void>((resolve) => { release = resolve }) }
+  const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+
+  await conversation.render(0)
+  await waitFor(() => /Synthetic e/.test(activity()))
+  await act(async () => button("Earlier activity")!.click())
+  await waitFor(() => /Synthetic c/.test(activity()))
+
+  await scrollTo(0)
+  history = [entry("g", 17), ...history]
+  await conversation.render(1)
+  await waitFor(() => Boolean(button("New activity")))
+  for (const id of ["c", "d", "e", "f"]) assert.match(activity(), new RegExp(`Synthetic ${id}`), `loaded item ${id} stays while scrolled up`)
+  assert.doesNotMatch(activity(), /Synthetic g/)
+
+  await act(async () => button("Earlier activity")!.click())
+  await waitFor(() => /Synthetic a/.test(activity()))
+  assert.ok(button("New activity"), "loading earlier activity keeps the pending update")
+  assert.doesNotMatch(activity(), /Synthetic g/)
+
+  await scrollTo(800)
+  await waitFor(() => /Synthetic g/.test(activity()))
+  assert.equal(button("New activity"), undefined, "returning to the latest activity applies the update")
+
+  gate()
+  history = [entry("h", 18), ...history]
+  await conversation.render(2)
+  await scrollTo(0)
+  await waitFor(() => Boolean(button("New activity")))
+  await act(async () => release())
+  await settle()
+  assert.doesNotMatch(activity(), /Synthetic h/, "a refresh in flight when the reader scrolls up does not land")
+  assert.ok(button("New activity"))
+
+  conversation.timelineGate = undefined
+  await act(async () => button("New activity")!.click())
+  await waitFor(() => /Synthetic h/.test(activity()))
+  await scrollTo(0)
+  gate()
+  await act(async () => button("Earlier activity")!.click())
+  history = [entry("i", 19), ...history]
+  conversation.textTask = { ...task, version: 2 }
+  await conversation.render(3)
+  await act(async () => release())
+  await waitFor(() => /Synthetic a/.test(activity()))
+  assert.ok(button("New activity"), "a live update during loading earlier activity stays pending")
+  assert.doesNotMatch(activity(), /Synthetic i/)
+
+  conversation.timelineGate = undefined
+  conversation.timelineStatus = 503
+  const requests = conversation.timelineRequests
+  await act(async () => button("Earlier activity")!.click())
+  await waitFor(() => conversation.timelineRequests > requests && button("Earlier activity")?.disabled === false)
+  assert.ok(button("New activity"), "a failed earlier page keeps the pending update")
+  assert.doesNotMatch(activity(), /Synthetic z/)
+
+  conversation.timelineStatus = 200
+  await act(async () => button("New activity")!.click())
+  await waitFor(() => /Synthetic i/.test(activity()))
+  assert.equal(button("New activity"), undefined)
 })
 
 test("a sent Message does not reload its conversation after navigation", async (t) => {
@@ -652,6 +779,11 @@ const message: Message = {
   attachment: { id: "attachment-1", direction: "INBOUND", state: "Stored", fileName: "synthetic.png", contentType: "image/png", byteSize: 15, createdAt: timestamp, updatedAt: timestamp },
 }
 
+function LiveDetail({ revision, children }: { revision: number; children: ReactNode }) {
+  useLiveRefresh({ workspaceVersion: 0, taskCounts: "", detailRevision: revision })
+  return children
+}
+
 function conversationHarness(t: TestContext) {
   const dom = installDOM()
   const host = document.createElement("div")
@@ -675,6 +807,7 @@ function conversationHarness(t: TestContext) {
     sends: [] as { idempotencyKey: string; destination?: string; body: string }[],
     sendStatus: 201,
     items: [] as ConversationTimelineItem[],
+    timelinePage: ((): ConversationTimelinePage => ({ items: conversation.items, nextCursor: "" })) as (cursor: string) => ConversationTimelinePage,
     opened: [] as string[],
   }
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
@@ -711,7 +844,7 @@ function conversationHarness(t: TestContext) {
     conversation.timelineRequests += 1
     await conversation.timelineGate
     return conversation.timelineStatus === 200
-      ? Response.json({ items: conversation.items, nextCursor: "" })
+      ? Response.json(conversation.timelinePage(new URL(url).searchParams.get("cursor") ?? ""))
       : Response.json(
           { code: "UNAVAILABLE" },
           { status: conversation.timelineStatus },
@@ -724,6 +857,8 @@ function conversationHarness(t: TestContext) {
   ) {
     await act(async () => {
       root.render(
+        <DataProvider>
+        <LiveDetail revision={revision}>
         <EngagementWorkspaceView
           practiceName="Synthetic Practice"
           engagement={projection.selection.engagement!}
@@ -731,20 +866,20 @@ function conversationHarness(t: TestContext) {
           canMutate={false}
           textTask={conversation.textTask}
           onTextTaskUpdated={() => {}}
-          revision={revision}
           onTaskCreated={() => {}}
           onTaskOpen={(task) => conversation.opened.push(`task:${task.id}`)}
           onCallOpen={(id) => conversation.opened.push(`call:${id}`)}
           onAIInteractionOpen={(id) => conversation.opened.push(`ai:${id}`)}
           calling={{
             callingOccupied: false,
-            callingEnabled: false,
             outboundPending: false,
             ownsSoftphone: false,
             startOutbound: async () => undefined,
           }}
           {...overrides}
-        />,
+        />
+        </LiveDetail>
+        </DataProvider>,
       )
     })
     await act(async () => {
@@ -774,7 +909,7 @@ test("text completion requires a successful conversation reload for the current 
   await conversation.render(0)
   assert.equal(done().disabled, true, "a Task change during initial loading stays unreviewed")
   await act(async () => { release(); await conversation.timelineGate })
-  assert.equal(done().disabled, false)
+  await waitFor(() => !done().disabled)
 
   conversation.timelineGate = new Promise<void>((resolve) => { release = resolve })
   conversation.textTask = { ...task, version: 3 }
@@ -784,15 +919,23 @@ test("text completion requires a successful conversation reload for the current 
   assert.deepEqual(conversation.completions, [])
   conversation.timelineStatus = 503
   await act(async () => { release(); await conversation.timelineGate })
+  await waitFor(() => /The conversation could not be loaded\./.test(conversation.host.textContent ?? ""))
   assert.equal(done().disabled, true, "failed refresh must leave unseen work pending")
 
   conversation.timelineStatus = 200
   conversation.timelineGate = undefined
   await conversation.render(2)
-  assert.equal(done().disabled, false)
+  await waitFor(() => !done().disabled)
   await act(async () => done().click())
   assert.deepEqual(conversation.completions, [3], "completion submits the version whose conversation loaded")
 })
+
+async function waitFor(ready: () => boolean) {
+  for (let attempt = 0; attempt < 50 && !ready(); attempt++) {
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+  }
+  assert.ok(ready(), "condition was not reached")
+}
 
 function installDOM() {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", {
@@ -854,7 +997,6 @@ function projectedWorkspace(task: Task): WorkspaceProjectionState {
           id: "practice-1",
           name: "Example Eye Group",
           version: 1,
-          callingEnabled: false,
           membership: {
             id: "membership-1",
             role: "STAFF",

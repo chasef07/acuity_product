@@ -1,5 +1,56 @@
 # Changelog
 
+## [1.45.1](https://github.com/chasef07/acuity_product/compare/v1.45.0...v1.45.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **calling:** advance Call versions and send calling hints from the database ([#527](https://github.com/chasef07/acuity_product/issues/527)) ([9dea578](https://github.com/chasef07/acuity_product/commit/9dea578c6a2130e3372494f270d7abe19482da1a))
+* **calling:** derive the Calling state ETag from one batched read of the body ([#529](https://github.com/chasef07/acuity_product/issues/529)) ([f92a4ff](https://github.com/chasef07/acuity_product/commit/f92a4ff0bc8f92a9794e409548ad1029524bf26f))
+* **calling:** route provider facts through one total table with typed client-state kinds ([#531](https://github.com/chasef07/acuity_product/issues/531)) ([95eaf47](https://github.com/chasef07/acuity_product/commit/95eaf475b07c6d995e6fb1e155bf227b32eec9b2))
+* **calling:** stop late failures from rewriting Call outcomes and ENDED legs ([#526](https://github.com/chasef07/acuity_product/issues/526)) ([b5cde2c](https://github.com/chasef07/acuity_product/commit/b5cde2c1577436feb9366bd5d60606c58e6d6b2a))
+* **deps:** upgrade Next.js to 16.4.1 for GHSA-2464-fhr4-w9xw ([#530](https://github.com/chasef07/acuity_product/issues/530)) ([6f63691](https://github.com/chasef07/acuity_product/commit/6f63691daac4ce138e5de1eb4b6cd991aae76236))
+
+## [1.45.0](https://github.com/chasef07/acuity_product/compare/v1.44.1...v1.45.0) (2026-10-22)
+
+
+### Features
+
+* **calling:** observe illegal CallLeg and Call outcome moves ([#524](https://github.com/chasef07/acuity_product/issues/524)) ([0290ea2](https://github.com/chasef07/acuity_product/commit/0290ea2cff771e5d47f086c40ac960bf8d62baef))
+
+
+### Bug Fixes
+
+* **calling:** classify call state in one view that every reader uses ([#523](https://github.com/chasef07/acuity_product/issues/523)) ([7fc8892](https://github.com/chasef07/acuity_product/commit/7fc8892dfb6bf0433b4b507ea0c476e4dd617b18))
+
+## [1.44.1](https://github.com/chasef07/acuity_product/compare/v1.44.0...v1.44.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **api:** publish one CallState schema for every call state ([#517](https://github.com/chasef07/acuity_product/issues/517)) ([b335456](https://github.com/chasef07/acuity_product/commit/b3354564374ee5cdf4ea0119381af446ade226c4))
+* build with Go 1.26.10 and keep the Home mark animating every day ([#520](https://github.com/chasef07/acuity_product/issues/520)) ([628bc43](https://github.com/chasef07/acuity_product/commit/628bc4313d33995f2ca2ee58e938da07b80f7a8d))
+* **database:** run integration tests as runtime roles and grant worker office-route reads ([#521](https://github.com/chasef07/acuity_product/issues/521)) ([4e3a010](https://github.com/chasef07/acuity_product/commit/4e3a010cb975047a92f9a5a17690d7aa30c0d885))
+
+## [1.44.0](https://github.com/chasef07/acuity_product/compare/v1.43.2...v1.44.0) (2026-10-20)
+
+
+### Features
+
+* **breakdowns:** select calls from a call-flow Sankey ([#516](https://github.com/chasef07/acuity_product/issues/516)) ([c6e367b](https://github.com/chasef07/acuity_product/commit/c6e367b2fc4b3e6910a162cd7ea79eae3c84c66d))
+
+
+### Bug Fixes
+
+* **calling:** stabilize state validators and remove unused access paths ([#513](https://github.com/chasef07/acuity_product/issues/513)) ([9bfb1f8](https://github.com/chasef07/acuity_product/commit/9bfb1f8931d8f649e7bf48029664bf9c451b2a6e))
+
+## [1.43.2](https://github.com/chasef07/acuity_product/compare/v1.43.1...v1.43.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **calls:** keep Command Center stable during live updates ([#512](https://github.com/chasef07/acuity_product/issues/512)) ([8641b63](https://github.com/chasef07/acuity_product/commit/8641b63804cb608a5f509cdab003b321892596d8))
+
 ## [1.43.1](https://github.com/chasef07/acuity_product/compare/v1.43.0...v1.43.1) (2026-10-19)
 
 

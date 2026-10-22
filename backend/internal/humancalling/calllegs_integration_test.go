@@ -23,11 +23,12 @@ import (
 )
 
 func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 8, 12, 30, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	email := "multi-practice-revocation@synthetic.test"
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test", RequestedBy: "calling-revocation-test",
 		Practices: []access.PracticeProvision{
 			{
@@ -76,21 +77,29 @@ func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.
 	}
 
 	provider := &recordingProvider{}
+	callingConfig := humancalling.Config{
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		FromNumber:             "+14843336938",
+		RingbackURL:            "https://media.synthetic.test/ringback.wav",
+	}
 	calling := humancalling.New(
-		pool, accessModule, provider, humancalling.Config{
-			HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-			StaffSIPDomain:         "sip.telnyx.com",
-			RingWindowDuration:     20 * time.Second,
-			HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:          "staff-call-control-connection",
-			CredentialConnectionID: "staff-credential-connection",
-			FromNumber:             "+14843336938",
-			RingbackURL:            "https://media.synthetic.test/ringback.wav",
-		},
+		db.As(testdb.Portal), accessModule, provider, callingConfig,
 		func() time.Time { return now },
 	)
-	prepareCredentials(t, calling)
-	if err := calling.ProvisionLocationVoices(context.Background(),
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker), accessModule, provider, callingConfig,
+		func() time.Time { return now },
+	)
+	prepareCredentials(t, callingWorker)
+	if err := humancalling.New(
+		pool, accessModule, provider, callingConfig,
+		func() time.Time { return now },
+	).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "calling-remaining-practice",
 			LocationKey: "calling-remaining-location",
@@ -128,7 +137,7 @@ func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.
 	`, callID, identity.Subject, sessionID, now); err != nil {
 		t.Fatal(err)
 	}
-	before, err := calling.ReadCallingState(context.Background(), identity)
+	before, _, err := calling.ReadCallingStateConditionally(context.Background(), identity, "")
 	if err != nil || before.Softphone.ActiveCallID != callID || before.Bridged == nil {
 		t.Fatalf("Calling state before revocation = active:%q bridged:%#v err:%v",
 			before.Softphone.ActiveCallID, before.Bridged, err)
@@ -139,7 +148,7 @@ func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.
 	`, revoked.Membership.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	after, err := calling.ReadCallingState(context.Background(), identity)
+	after, _, err := calling.ReadCallingStateConditionally(context.Background(), identity, "")
 	if err != nil {
 		t.Fatalf("read remaining Calling access: %v", err)
 	}
@@ -185,17 +194,17 @@ func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.
 		CallSessionID: "remaining-inbound-caller-session",
 		From:          "+15555550100", To: "+14843989071",
 	}
-	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("admit remaining Practice inbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	caller.EventID = "remaining-inbound-answered"
 	caller.Type = humancalling.FactCallAnswered
 	caller.OccurredAt = now.Add(time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("fan out remaining Practice inbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if staffLegs := countStaffLegsForCaller(
 		t, pool, caller.CallControlID,
 	); staffLegs != 0 {
@@ -205,10 +214,11 @@ func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.
 }
 
 func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 8, 13, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "location-ring-test",
 		Practices: []access.PracticeProvision{{
@@ -245,9 +255,6 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 			practiceID = discovery.Practices[0].ID
 			sweetwater = discovery.Practices[0].Locations[0]
 		}
-		if !discovery.Practices[0].CallingEnabled {
-			t.Fatalf("portal CallingEnabled for %q = false", identity.Email)
-		}
 	}
 
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
@@ -260,7 +267,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 			CallLegID:     "admin-outbound-provider-leg",
 		},
 	}}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
@@ -269,8 +276,10 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 		CredentialConnectionID: "staff-credential-connection",
 		FromNumber:             "+14843336938",
 		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "location-ring-browser")
 
 	if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
@@ -290,17 +299,17 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 		CallSessionID: "location-ring-caller-session", From: "+15555550100",
 		To: "+14843989071",
 	}
-	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("admit Sweetwater caller: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	caller.EventID = "location-ring-answered"
 	caller.Type = humancalling.FactCallAnswered
 	caller.OccurredAt = now.Add(time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("fan out Sweetwater caller: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	var subjects []string
 	if err := pool.QueryRow(context.Background(), `
@@ -342,7 +351,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	if offeredSession != "location-ring-browser-1" {
 		t.Fatalf("inbound CallLeg transferred to Admin session %q", offeredSession)
 	}
-	adminAfterOffer, err := calling.ReadCallingState(context.Background(), staff[0])
+	adminAfterOffer, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(adminAfterOffer.Ringing) != 0 || adminAfterOffer.Bridged != nil ||
 		adminAfterOffer.Softphone.ActiveCallID != "" {
 		t.Fatalf("inbound Call remained projected after Staff became Admin = %#v, %v",
@@ -356,7 +365,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	`, staff[0].Subject, now.Add(2*time.Second)); err != nil {
 		t.Fatalf("advance stale inbound Staff leg to Bridged: %v", err)
 	}
-	adminAfterBridge, err := calling.ReadCallingState(context.Background(), staff[0])
+	adminAfterBridge, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || adminAfterBridge.Softphone.ActiveCallID != "" ||
 		adminAfterBridge.Softphone.Available || adminAfterBridge.Bridged != nil {
 		t.Fatalf("Bridged inbound Call leaked after Staff became Admin = %#v, %v",
@@ -380,14 +389,14 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	`, staff[0].Subject, now.Add(3*time.Second)); err != nil {
 		t.Fatalf("advance stale inbound Call to pending outcome: %v", err)
 	}
-	adminAfterOutcome, err := calling.ReadCallingState(context.Background(), staff[0])
+	adminAfterOutcome, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || adminAfterOutcome.Softphone.PendingOutcomeCallID != "" ||
 		adminAfterOutcome.Disposition != nil {
 		t.Fatalf("inbound outcome leaked after Staff became Admin = %#v, %v",
 			adminAfterOutcome, err)
 	}
 
-	if err := calling.ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "location-ring-practice", LocationKey: "sweetwater",
 			Number: "+14843336938", Enabled: true,
@@ -404,7 +413,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start Admin outbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	adminDial := provider.last(humancalling.CommandDialOutboundStaff)
 	adminClientState, _ := adminDial.Payload["client_state"].(string)
 	adminStaff := humancalling.ProviderFact{
@@ -414,16 +423,16 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 		CallLegID:     "admin-outbound-provider-leg",
 		CallSessionID: "admin-outbound-session", ClientState: adminClientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), adminStaff); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), adminStaff); err != nil {
 		t.Fatalf("project Admin outbound initiation: %v", err)
 	}
 	adminStaff.EventID = "admin-outbound-answered"
 	adminStaff.Type = humancalling.FactCallAnswered
 	adminStaff.OccurredAt = now.Add(3 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), adminStaff); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), adminStaff); err != nil {
 		t.Fatalf("project Admin outbound answer: %v", err)
 	}
-	adminState, err := calling.ReadCallingState(context.Background(), staff[2])
+	adminState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[2], "")
 	if err != nil || adminState.Softphone.ActiveCallID != adminCall.ID ||
 		len(adminState.Ringing) != 1 || adminState.Ringing[0].CallID != adminCall.ID {
 		t.Fatalf("Admin outbound media state = %#v, %v", adminState, err)
@@ -438,12 +447,13 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 }
 
 func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	currentTime := now
-	accessModule := access.New(pool, func() time.Time { return currentTime })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return currentTime })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, "call-leg-fanout", 2,
+		t, db.Owner, accessModule, now, "call-leg-fanout", 2,
 	)
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE access_practices SET
@@ -457,7 +467,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		{CallControlID: "staff-control-1", CallLegID: "staff-provider-leg-1"},
 		{CallControlID: "staff-control-2", CallLegID: "staff-provider-leg-2"},
 	}}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
@@ -466,9 +476,11 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		CredentialConnectionID: "staff-credential-connection",
 		FromNumber:             "+14843336938",
 		RingbackURL:            "https://media.synthetic.test/ringback.mp3",
-	}, func() time.Time { return currentTime })
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return currentTime })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return currentTime })
 
-	prepareCredentials(t, calling)
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "call-leg-browser")
 	handoff, err := calling.CreateHandoff(
 		context.Background(),
@@ -510,7 +522,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	wrongConnection := caller
 	wrongConnection.EventID = "caller-initiated-wrong-connection"
 	wrongConnection.ConnectionID = "unrelated-call-control-connection"
-	if err := calling.ApplyProviderFact(
+	if err := callingWorker.ApplyProviderFact(
 		context.Background(), wrongConnection,
 	); !errors.Is(err, humancalling.ErrInvalidHandoff) {
 		t.Fatalf("wrong-connection REFER error = %v", err)
@@ -527,22 +539,22 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		invalid := caller
 		invalid.EventID = fmt.Sprintf("caller-invalid-destination-%d", index)
 		invalid.To = destination
-		if err := calling.ApplyProviderFact(context.Background(), invalid); !errors.Is(err, humancalling.ErrInvalidHandoff) {
+		if err := callingWorker.ApplyProviderFact(context.Background(), invalid); !errors.Is(err, humancalling.ErrInvalidHandoff) {
 			t.Fatalf("unexpected admission for destination %q: %v", destination, err)
 		}
 	}
-	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("admit REFER caller: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	caller.EventID = "caller-answered"
 	caller.Type = humancalling.FactCallAnswered
 	caller.OccurredAt = now.Add(time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatalf("fan out caller answer: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	if provider.count(humancalling.CommandStartRingWindow) != 1 ||
 		provider.count(humancalling.CommandDialStaff) != 2 {
@@ -580,7 +592,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 			CallSessionID: fmt.Sprintf("staff-session-%d", index+1),
 			ClientState:   clientState,
 		}
-		if err := calling.ApplyProviderFact(context.Background(), initiated); err != nil {
+		if err := callingWorker.ApplyProviderFact(context.Background(), initiated); err != nil {
 			t.Fatalf("project Staff initiation %d: %v", index+1, err)
 		}
 		initiated.EventID = fmt.Sprintf("staff-answered-%d", index+1)
@@ -607,7 +619,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		answersDone.Add(1)
 		go func(fact humancalling.ProviderFact) {
 			defer answersDone.Done()
-			answerErrors <- calling.ApplyProviderFact(context.Background(), fact)
+			answerErrors <- callingWorker.ApplyProviderFact(context.Background(), fact)
 		}(answer)
 	}
 	answersDone.Wait()
@@ -619,7 +631,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	}
 	ringClientState, _ := ring.Payload["client_state"].(string)
 	currentTime = now.Add(6 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "ring-window-completed", Type: humancalling.FactPlaybackEnded,
 		OccurredAt: now.Add(4 * time.Second), CallControlID: "caller-control",
 		CallLegID: "caller-provider-leg", CallSessionID: "caller-session",
@@ -627,7 +639,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("complete ring window after provisional winner: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 
 	bridge := provider.last(humancalling.CommandBridge)
 	if bridge.CallLegID == "" || bridge.PeerCallLegID == "" ||
@@ -663,7 +675,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	`, bridge.CallLegID).Scan(&winnerControlID, &winnerProviderLegID, &winnerSessionID); err != nil {
 		t.Fatalf("read winning provider identity: %v", err)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "winner-bridge-mismatched", Type: humancalling.FactCallBridged,
 		OccurredAt: now.Add(5 * time.Second), CallControlID: winnerControlID,
 		CallLegID: "wrong-provider-leg", CallSessionID: winnerSessionID,
@@ -671,7 +683,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	}); !errors.Is(err, humancalling.ErrConflict) {
 		t.Fatalf("mismatched Bridge identity error = %v", err)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "winner-bridge-confirmed", Type: humancalling.FactCallBridged,
 		OccurredAt: now.Add(5 * time.Second), CallControlID: winnerControlID,
 		CallLegID: winnerProviderLegID, CallSessionID: winnerSessionID,
@@ -703,7 +715,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 			err,
 		)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "winner-recording-saved", Type: humancalling.FactRecordingSaved,
 		OccurredAt: now.Add(36 * time.Second), CallControlID: winnerControlID,
 		CallLegID: winnerProviderLegID, CallSessionID: winnerSessionID,
@@ -718,14 +730,14 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		recordedCall.Recording.DurationSeconds != 30 {
 		t.Fatalf("connected recording projection = %#v, err = %v", recordedCall.Recording, err)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "caller-bridge-confirmed", Type: humancalling.FactCallBridged,
 		OccurredAt: now.Add(5 * time.Second), CallControlID: "caller-control",
 		CallLegID: "caller-provider-leg", CallSessionID: "caller-session",
 	}); err != nil {
 		t.Fatalf("confirm caller Bridge: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	stop := provider.last(humancalling.CommandStopRingWindow)
 	if stop.Payload["stop"] != "all" {
 		t.Fatalf("Stop ring-window payload = %#v", stop.Payload)
@@ -756,7 +768,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	`).Scan(&loserControlID, &loserProviderLegID, &loserSessionID); err != nil {
 		t.Fatal(err)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "loser-cleanup-hangup", Type: humancalling.FactCallHangup,
 		OccurredAt: now.Add(6 * time.Second), CallControlID: loserControlID,
 		CallLegID: loserProviderLegID, CallSessionID: loserSessionID,
@@ -773,7 +785,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	if prematureTerminal != nil {
 		t.Fatalf("loser cleanup ended connected Call as %s", *prematureTerminal)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "winner-hangup", Type: humancalling.FactCallHangup,
 		OccurredAt: now.Add(6 * time.Second), CallControlID: winnerControlID,
 		CallLegID: winnerProviderLegID, CallSessionID: winnerSessionID,
@@ -792,9 +804,9 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		connectedCall.DispositionDeadline == nil {
 		t.Fatalf("completed connected Call = %#v, %v", connectedCall, err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	currentTime = now.Add(30 * time.Second)
-	if expired, err := calling.ExpireDispositions(context.Background()); err != nil || expired != 1 {
+	if expired, err := callingWorker.ExpireDispositions(context.Background()); err != nil || expired != 1 {
 		t.Fatalf("expire connected disposition = %d, %v", expired, err)
 	}
 	connectedCall, err = calling.ReadCall(context.Background(), staff[0], bridgedCallID)
@@ -802,7 +814,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		connectedCall.DispositionDeadline != nil {
 		t.Fatalf("auto-resolved connected Call = %#v, %v", connectedCall, err)
 	}
-	if _, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil {
+	if _, err := callingWorker.MaintainOutgoingCallLegs(context.Background()); err != nil {
 		t.Fatalf("recover interrupted commands: %v", err)
 	}
 	var connectedTasks, connectedAcknowledgements int
@@ -826,17 +838,20 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 }
 
 func TestInboundReferRejectsAmbiguousCallerReservations(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 5, 12, 30, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, _ := provisionConcurrentStaff(
-		t, accessModule, now, "ambiguous-handoff", 1,
+		t, db.Owner, accessModule, now, "ambiguous-handoff", 1,
 	)
-	calling := humancalling.New(pool, accessModule, &recordingProvider{}, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain: "synthetic.sip.telnyx.com",
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:    "staff-call-control-connection",
-	}, func() time.Time { return now })
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, &recordingProvider{}, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, &recordingProvider{}, callingConfig, func() time.Time { return now })
 	for _, suffix := range []string{"one", "two"} {
 		if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 			Service: humancalling.ServiceIdentity{
@@ -851,7 +866,7 @@ func TestInboundReferRejectsAmbiguousCallerReservations(t *testing.T) {
 		}
 	}
 
-	err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "ambiguous-caller-initiated", Type: humancalling.FactCallInitiated,
 		OccurredAt: now, ConnectionID: "staff-call-control-connection",
 		CallControlID: "ambiguous-caller-control", CallLegID: "ambiguous-caller-leg",
@@ -889,10 +904,10 @@ func newOutboundEndFixture(
 	provider humancalling.Provider,
 ) outboundEndFixture {
 	t.Helper()
-	pool := testdb.Open(t)
+	pool := testdb.OpenAsOwner(t)
 	accessModule := access.New(pool, func() time.Time { return now })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, prefix, 1,
+		t, pool, accessModule, now, prefix, 1,
 	)
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
@@ -1732,11 +1747,12 @@ func countStaffLegsForCaller(
 }
 
 func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 31, 15, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, "outbound-ringback", 1,
+		t, db.Owner, accessModule, now, "outbound-ringback", 1,
 	)
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE access_practices SET
@@ -1750,16 +1766,18 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 		{CallControlID: "ringback-staff-control", CallLegID: "ringback-staff-leg"},
 		{CallControlID: "ringback-destination-control", CallLegID: "ringback-destination-leg"},
 	}}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "outbound-ringback-browser")
-	if err := calling.ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "outbound-ringback-practice",
 			LocationKey: "outbound-ringback-location",
@@ -1779,7 +1797,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
 	staffClientState, _ := staffDial.Payload["client_state"].(string)
 	staffFact := humancalling.ProviderFact{
@@ -1788,16 +1806,16 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 		CallControlID: "ringback-staff-control", CallLegID: "ringback-staff-leg",
 		CallSessionID: "ringback-staff-session", ClientState: staffClientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff initiation: %v", err)
 	}
 	staffFact.EventID = "ringback-staff-answered"
 	staffFact.Type = humancalling.FactCallAnswered
 	staffFact.OccurredAt = now.Add(2 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff answer: %v", err)
 	}
-	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(callingState.Ringing) != 1 {
 		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
 	}
@@ -1808,7 +1826,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 		}); err != nil {
 		t.Fatalf("confirm outbound Staff media: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
 	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
 	destinationFact := humancalling.ProviderFact{
@@ -1817,10 +1835,10 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 		CallControlID: "ringback-destination-control", CallLegID: "ringback-destination-leg",
 		CallSessionID: "ringback-destination-session", ClientState: destinationClientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination initiation: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if provider.count(humancalling.CommandBridge) != 1 {
 		t.Fatalf("outbound ringing Bridge commands = %d, want 1", provider.count(humancalling.CommandBridge))
 	}
@@ -1849,14 +1867,14 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 			ClientState: bridge.Payload["client_state"].(string), PlaybackStatus: "completed",
 		},
 	} {
-		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+		if err := callingWorker.ApplyProviderFact(context.Background(), fact); err != nil {
 			t.Fatalf("project outbound ringtone %s: %v", fact.Type, err)
 		}
-		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+		if err := callingWorker.ApplyProviderFact(context.Background(), fact); err != nil {
 			t.Fatalf("replay outbound ringtone %s: %v", fact.Type, err)
 		}
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "ringback-playback-failed", Type: humancalling.FactPlaybackEnded,
 		OccurredAt: now.Add(3950 * time.Millisecond), CallControlID: staffFact.CallControlID,
 		CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
@@ -1895,7 +1913,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 			ClientState: bridge.Payload["client_state"].(string),
 		},
 	} {
-		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+		if err := callingWorker.ApplyProviderFact(context.Background(), fact); err != nil {
 			t.Fatalf("project outbound Bridge without answer webhook: %v", err)
 		}
 	}
@@ -1910,7 +1928,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 	`, call.ID).Scan(&recordingRows); err != nil || recordingRows != 1 {
 		t.Fatalf("bridged connected recording rows = %d, err = %v", recordingRows, err)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "ringback-recording-saved", Type: humancalling.FactRecordingSaved,
 		OccurredAt: now.Add(8 * time.Second), CallControlID: staffFact.CallControlID,
 		CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
@@ -1933,10 +1951,10 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 	destinationFact.EventID = "ringback-destination-answered"
 	destinationFact.Type = humancalling.FactCallAnswered
 	destinationFact.OccurredAt = now.Add(9 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination answer: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if provider.count(humancalling.CommandBridge) != 1 {
 		t.Fatalf("destination answer created duplicate Bridge: %#v", provider.commands)
 	}
@@ -1948,11 +1966,12 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 }
 
 func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 5, 13, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, "call-leg-outbound", 2,
+		t, db.Owner, accessModule, now, "call-leg-outbound", 2,
 	)
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE access_practices SET
@@ -1966,16 +1985,18 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 		{CallControlID: "outbound-staff-control", CallLegID: "outbound-staff-provider-leg"},
 		{CallControlID: "destination-control", CallLegID: "destination-provider-leg"},
 	}}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "outbound-browser")
-	if err := calling.ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "call-leg-outbound-practice",
 			LocationKey: "call-leg-outbound-location",
@@ -2002,7 +2023,7 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	`, call.ID).Scan(&callerLegs); err != nil || callerLegs != 1 {
 		t.Fatalf("outbound caller CallLegs = %d, err = %v", callerLegs, err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
 	staffClientState, _ := staffDial.Payload["client_state"].(string)
 	staffFact := humancalling.ProviderFact{
@@ -2011,16 +2032,16 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 		CallControlID: "outbound-staff-control", CallLegID: "outbound-staff-provider-leg",
 		CallSessionID: "outbound-staff-session", ClientState: staffClientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff initiation: %v", err)
 	}
 	staffFact.EventID = "outbound-staff-answered"
 	staffFact.Type = humancalling.FactCallAnswered
 	staffFact.OccurredAt = now.Add(2 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff answer: %v", err)
 	}
-	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(callingState.Ringing) != 1 {
 		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
 	}
@@ -2031,7 +2052,7 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 		}); err != nil {
 		t.Fatalf("confirm outbound Staff media: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
 	if destinationDial.Payload["bridge_on_answer"] != false ||
 		destinationDial.Payload["link_to"] != "outbound-staff-control" ||
@@ -2045,16 +2066,16 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 		CallControlID: "destination-control", CallLegID: "destination-provider-leg",
 		CallSessionID: "destination-session", ClientState: destinationClientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project reordered destination answer: %v", err)
 	}
 	destinationFact.EventID = "destination-initiated-after-answer"
 	destinationFact.Type = humancalling.FactCallInitiated
 	destinationFact.OccurredAt = now.Add(4 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project reordered destination initiation: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	bridge := provider.last(humancalling.CommandBridge)
 	if bridge.TargetID != "outbound-staff-control" ||
 		bridge.Payload["call_control_id"] != "destination-control" ||
@@ -2066,7 +2087,7 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 		bridge.Payload["record_track"] != "both" {
 		t.Fatalf("outbound explicit Bridge = %#v", bridge)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "outbound-destination-hangup-delivered-first", Type: humancalling.FactCallHangup,
 		OccurredAt: now.Add(6 * time.Second), CallControlID: "destination-control",
 		CallLegID: "destination-provider-leg", CallSessionID: "destination-session",
@@ -2074,14 +2095,14 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("project outbound Hangup before Bridge delivery: %v", err)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "outbound-bridge-confirmed", Type: humancalling.FactCallBridged,
 		OccurredAt: now.Add(5 * time.Second), CallControlID: "destination-control",
 		CallLegID: "destination-provider-leg", CallSessionID: "destination-session",
 	}); err != nil {
 		t.Fatalf("confirm outbound Bridge: %v", err)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "outbound-staff-bridge-confirmed", Type: humancalling.FactCallBridged,
 		OccurredAt: now.Add(5 * time.Second), CallControlID: "outbound-staff-control",
 		CallLegID: "outbound-staff-provider-leg", CallSessionID: "outbound-staff-session",
@@ -2090,10 +2111,10 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	}
 	destinationFact.EventID = "destination-initiated-after-bridge"
 	destinationFact.OccurredAt = now.Add(6 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project late destination initiation: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if provider.count(humancalling.CommandBridge) != 1 {
 		t.Fatalf("reordered destination facts created duplicate Bridge: %#v", provider.commands)
 	}
@@ -2119,11 +2140,12 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 }
 
 func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, "stale-bridged-outbound", 1,
+		t, db.Owner, accessModule, now, "stale-bridged-outbound", 1,
 	)
 	provider := &recordingProvider{
 		dialResults: []humancalling.ProviderResult{
@@ -2132,16 +2154,18 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 		},
 		observations: []humancalling.ProviderCallObservation{{Active: false}},
 	}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "stale-bridged-outbound-browser")
-	if err := calling.ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "stale-bridged-outbound-practice",
 			LocationKey: "stale-bridged-outbound-location",
@@ -2161,7 +2185,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
 	staffClientState, _ := staffDial.Payload["client_state"].(string)
 	staffFact := humancalling.ProviderFact{
@@ -2170,16 +2194,16 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 		CallControlID: "stale-bridged-staff-control", CallLegID: "stale-bridged-staff-leg",
 		CallSessionID: "stale-bridged-staff-session", ClientState: staffClientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff initiation: %v", err)
 	}
 	staffFact.EventID = "stale-bridged-staff-answered"
 	staffFact.Type = humancalling.FactCallAnswered
 	staffFact.OccurredAt = now.Add(2 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff answer: %v", err)
 	}
-	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(callingState.Ringing) != 1 {
 		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
 	}
@@ -2190,7 +2214,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 		}); err != nil {
 		t.Fatalf("confirm outbound Staff media: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
 	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
 	destinationFact := humancalling.ProviderFact{
@@ -2199,16 +2223,16 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 		CallControlID: "stale-bridged-destination-control", CallLegID: "stale-bridged-destination-leg",
 		CallSessionID: "stale-bridged-destination-session", ClientState: destinationClientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination initiation: %v", err)
 	}
 	destinationFact.EventID = "stale-bridged-destination-answered"
 	destinationFact.Type = humancalling.FactCallAnswered
 	destinationFact.OccurredAt = now.Add(4 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination answer: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	for _, fact := range []humancalling.ProviderFact{
 		{
 			EventID: "stale-bridged-destination-bridged", Type: humancalling.FactCallBridged,
@@ -2221,7 +2245,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 			CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
 		},
 	} {
-		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+		if err := callingWorker.ApplyProviderFact(context.Background(), fact); err != nil {
 			t.Fatalf("project outbound Bridge: %v", err)
 		}
 	}
@@ -2232,10 +2256,10 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 		t.Fatalf("age bridged Staff CallLeg: %v", err)
 	}
 
-	if _, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil {
+	if _, err := callingWorker.MaintainOutgoingCallLegs(context.Background()); err != nil {
 		t.Fatalf("reconcile stale bridged Staff CallLeg: %v", err)
 	}
-	callingState, err = calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err = calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil {
 		t.Fatalf("read connected Call after reconciliation: %v", err)
 	}
@@ -2344,11 +2368,12 @@ func prepareTerminalNeverStartedCaller(
 	provider humancalling.Provider,
 ) (*pgxpool.Pool, *humancalling.Module, string, string, string) {
 	t.Helper()
-	pool := testdb.Open(t)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionConcurrentStaff(t, accessModule, now, prefix, 1)
+	db := testdb.Open(t)
+	pool := db.Owner
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, now, prefix, 1)
 	calling := humancalling.New(
-		pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now },
+		db.As(testdb.Worker), accessModule, provider, humancalling.Config{}, func() time.Time { return now },
 	)
 
 	var terminalCallID, terminalLegID string
@@ -2692,16 +2717,17 @@ func TestTerminalActiveStaffHangupRetriesExactCleanup(t *testing.T) {
 }
 
 func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 10, 15, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "command-claim", 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, now, "command-claim", 1)
 	provider := &recordingProvider{
 		blockAction:  humancalling.CommandStopRingWindow,
 		blockStarted: make(chan struct{}),
 		blockRelease: make(chan struct{}),
 	}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
@@ -2710,7 +2736,9 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 		CredentialConnectionID: "staff-credential-connection",
 		FromNumber:             "+14843336938",
 		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
 
 	callIDs := make([]string, 2)
 	for index := range callIDs {
@@ -2726,7 +2754,7 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 		}); err != nil {
 			t.Fatalf("create command claim handoff %s: %v", suffix, err)
 		}
-		if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 			EventID: "command-claim-initiated-" + suffix,
 			Type:    humancalling.FactCallInitiated, OccurredAt: now,
 			ConnectionID:  "staff-call-control-connection",
@@ -2764,7 +2792,7 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 
 	firstDone := make(chan error, 1)
 	go func() {
-		processed, err := calling.ProcessNextCommand(context.Background())
+		processed, err := callingWorker.ProcessNextCommand(context.Background())
 		if err == nil && !processed {
 			err = errors.New("first worker found no command")
 		}
@@ -2776,7 +2804,7 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 		t.Fatal("first command did not reach provider barrier")
 	}
 
-	processed, secondErr := calling.ProcessNextCommand(context.Background())
+	processed, secondErr := callingWorker.ProcessNextCommand(context.Background())
 	close(provider.blockRelease)
 	if firstErr := <-firstDone; firstErr != nil {
 		t.Fatalf("first command worker: %v", firstErr)
@@ -2810,10 +2838,7 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 	`); err != nil {
 		t.Fatal(err)
 	}
-	workerConfig, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
+	workerConfig := pool.Config()
 	workerConfig.MaxConns = 2
 	workerPool, err := pgxpool.NewWithConfig(context.Background(), workerConfig)
 	if err != nil {
@@ -3122,10 +3147,11 @@ func TestConcurrentStaffDialsPreserveOneWinnerAndCleanUpLosers(t *testing.T) {
 }
 
 func TestCommandWorkerRetriesAfterLosingClaimRace(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 13, 10, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "lost-command-claim", 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, db.Owner, accessModule, now, "lost-command-claim", 1)
 
 	callIDs := make([]string, 2)
 	legIDs := make([]string, 2)
@@ -3166,10 +3192,7 @@ func TestCommandWorkerRetriesAfterLosingClaimRace(t *testing.T) {
 			close(claimRelease)
 		}
 	})
-	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := db.As(testdb.Worker).Config()
 	config.MaxConns = 1
 	config.ConnConfig.Tracer = &commandClaimTracer{
 		started: claimStarted,
@@ -3324,14 +3347,15 @@ func TestCredentialCommandExecutionExpiresInFailedQuarantine(t *testing.T) {
 		humancalling.CommandDisableCredential,
 	} {
 		t.Run(string(action), func(t *testing.T) {
-			pool := testdb.Open(t)
+			db := testdb.Open(t)
+			pool := db.Owner
 			now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
-			accessModule := access.New(pool, func() time.Time { return now })
+			accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 			authorization, staff := provisionConcurrentStaff(
-				t, accessModule, now, "expired-execution-"+strings.ToLower(string(action)), 1,
+				t, db.Owner, accessModule, now, "expired-execution-"+strings.ToLower(string(action)), 1,
 			)
 			provider := &credentialFailureProvider{executeErr: errors.New("synthetic provider timeout")}
-			calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+			calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
 				CredentialConnectionID: "staff-credential-connection",
 			}, func() time.Time { return now })
 			if err := calling.ReconcileCredentials(context.Background()); err != nil {
@@ -3404,14 +3428,15 @@ func TestCredentialReconciliationExpiresWithoutProviderLookup(t *testing.T) {
 		humancalling.CommandDisableCredential,
 	} {
 		t.Run(string(action), func(t *testing.T) {
-			pool := testdb.Open(t)
+			db := testdb.Open(t)
+			pool := db.Owner
 			now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
-			accessModule := access.New(pool, func() time.Time { return now })
+			accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 			_, staff := provisionConcurrentStaff(
-				t, accessModule, now, "expired-reconciliation-"+strings.ToLower(string(action)), 1,
+				t, db.Owner, accessModule, now, "expired-reconciliation-"+strings.ToLower(string(action)), 1,
 			)
 			provider := &credentialFailureProvider{lookupErr: errors.New("synthetic provider timeout")}
-			calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+			calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
 				CredentialConnectionID: "staff-credential-connection",
 			}, func() time.Time { return now })
 			if err := calling.ReconcileCredentials(context.Background()); err != nil {
@@ -3469,12 +3494,13 @@ func TestCredentialReconciliationExpiresWithoutProviderLookup(t *testing.T) {
 }
 
 func TestCredentialReconciliationRetriesFailedCreateForActiveStaff(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 15, 13, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, staff := provisionConcurrentStaff(t, accessModule, now, "failed-credential-retry", 1)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, staff := provisionConcurrentStaff(t, db.Owner, accessModule, now, "failed-credential-retry", 1)
 	provider := &credentialFailureProvider{executeErr: errors.New("synthetic provider rejection")}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
 		CredentialConnectionID: "staff-credential-connection",
 	}, func() time.Time { return now })
 	if err := calling.ReconcileCredentials(context.Background()); err != nil {
@@ -3522,16 +3548,17 @@ func TestCredentialReconciliationRetriesFailedCreateForActiveStaff(t *testing.T)
 }
 
 func TestCredentialReconciliationOwnsInterruptedCredentialRecovery(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 15, 12, 30, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	_, staff := provisionConcurrentStaff(
-		t, accessModule, now, "interrupted-credential-recovery", 1,
+		t, db.Owner, accessModule, now, "interrupted-credential-recovery", 1,
 	)
 	provider := &credentialFailureProvider{
 		lookupErr: errors.New("synthetic credential lookup interruption"),
 	}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
 		CredentialConnectionID: "staff-credential-connection",
 	}, func() time.Time { return now })
 	if err := calling.ReconcileCredentials(context.Background()); err != nil {
@@ -3574,13 +3601,14 @@ func TestCredentialReconciliationOwnsInterruptedCredentialRecovery(t *testing.T)
 }
 
 func TestCredentialMaintenanceRecoversOneInterruptedCommandPerTick(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 15, 12, 40, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	_, staff := provisionConcurrentStaff(
-		t, accessModule, now, "bounded-interrupted-credential-recovery", 2,
+		t, db.Owner, accessModule, now, "bounded-interrupted-credential-recovery", 2,
 	)
-	calling := humancalling.New(pool, accessModule, commandOnlyProvider{}, humancalling.Config{
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, commandOnlyProvider{}, humancalling.Config{
 		CredentialConnectionID: "staff-credential-connection",
 	}, func() time.Time { return now })
 	if err := calling.ReconcileCredentials(context.Background()); err != nil {
@@ -3639,15 +3667,16 @@ func assertCredentialRecoveryCounts(
 }
 
 func TestCredentialReconciliationRetriesLookupFailureBeforeDeadline(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	_, staff := provisionConcurrentStaff(
-		t, accessModule, now, "credential-lookup-retry", 1,
+		t, db.Owner, accessModule, now, "credential-lookup-retry", 1,
 	)
 	providerErr := errors.New("synthetic provider timeout")
 	provider := &credentialFailureProvider{lookupErr: providerErr}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	calling := humancalling.New(db.As(testdb.Worker), accessModule, provider, humancalling.Config{
 		CredentialConnectionID: "staff-credential-connection",
 	}, func() time.Time { return now })
 	if err := calling.ReconcileCredentials(context.Background()); err != nil {
@@ -3789,26 +3818,29 @@ func prepareTerminalStaffHangup(
 }
 
 func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 10, 13, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, "outbound-media-timeout", 1,
+		t, db.Owner, accessModule, now, "outbound-media-timeout", 1,
 	)
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
 		CallControlID: "outbound-media-timeout-control",
 		CallLegID:     "outbound-media-timeout-provider-leg",
 	}}}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		StaffSIPDomain:         "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "outbound-media-timeout-browser")
-	if err := calling.ProvisionLocationVoices(context.Background(),
+	if err := humancalling.New(pool, accessModule, provider, callingConfig, func() time.Time { return now }).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
 			PracticeKey: "outbound-media-timeout-practice",
 			LocationKey: "outbound-media-timeout-location",
@@ -3828,7 +3860,7 @@ func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	dial := provider.last(humancalling.CommandDialOutboundStaff)
 	clientState, _ := dial.Payload["client_state"].(string)
 	staffFact := humancalling.ProviderFact{
@@ -3838,22 +3870,22 @@ func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 		CallLegID:     "outbound-media-timeout-provider-leg",
 		CallSessionID: "outbound-media-timeout-session", ClientState: clientState,
 	}
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff initiation: %v", err)
 	}
 	staffFact.EventID = "outbound-media-timeout-answered"
 	staffFact.Type = humancalling.FactCallAnswered
 	staffFact.OccurredAt = now.Add(2 * time.Second)
-	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff answer: %v", err)
 	}
 
 	now = now.Add(21 * time.Second)
-	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+	if reconciled, err := callingWorker.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
 		t.Fatalf("early outbound media expiry = %t, %v", reconciled, err)
 	}
 	now = now.Add(2 * time.Second)
-	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+	if reconciled, err := callingWorker.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
 		t.Fatalf("expire unconfirmed outbound media = %t, %v", reconciled, err)
 	}
 	var outcome, termination, staffState, staffError, hangupTarget string
@@ -3888,21 +3920,22 @@ func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 	if err != nil || !readiness.Available || readiness.ActiveCallID != "" {
 		t.Fatalf("released outbound softphone = %#v, err = %v", readiness, err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	if provider.count(humancalling.CommandHangupLeg) != 1 {
 		t.Fatalf("expired outbound media Hangups = %#v", provider.commands)
 	}
 }
 
 func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 5, 14, 5, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, staff := provisionConcurrentStaff(
-		t, accessModule, now, "hangup-before-answer", 1,
+		t, db.Owner, accessModule, now, "hangup-before-answer", 1,
 	)
 	provider := &recordingProvider{}
-	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+	callingConfig := humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
@@ -3910,8 +3943,10 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 		CredentialConnectionID: "staff-credential-connection",
 		FromNumber:             "+14843336938",
 		RingbackURL:            "https://media.synthetic.test/ringback.wav",
-	}, func() time.Time { return now })
-	prepareCredentials(t, calling)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, provider, callingConfig, func() time.Time { return now })
+	callingWorker := humancalling.New(db.As(testdb.Worker), accessModule, provider, callingConfig, func() time.Time { return now })
+	prepareCredentials(t, callingWorker)
 	readyConcurrentStaff(t, calling, staff, "hangup-before-answer-browser")
 	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
@@ -3931,10 +3966,10 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 		CallSessionID: "hangup-before-answer-session", From: "+15555550100",
 		To: "+14843989071",
 	}
-	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatal(err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	answer := provider.last(humancalling.CommandAnswerCaller)
 	answerClientState, _ := answer.Payload["client_state"].(string)
 	if answerClientState == "" {
@@ -3945,17 +3980,17 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 	caller.OccurredAt = now.Add(2 * time.Second)
 	caller.HangupCause = "NORMAL_CLEARING"
 	caller.TerminationSource = "CALLER"
-	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatal(err)
 	}
 	caller.EventID = "hangup-before-answer-late-answer"
 	caller.Type = humancalling.FactCallAnswered
 	caller.OccurredAt = now.Add(time.Second)
 	caller.ClientState = answerClientState
-	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+	if err := callingWorker.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatal(err)
 	}
-	processAllCommands(t, calling)
+	processAllCommands(t, callingWorker)
 	var terminal, answerCommandState string
 	var staffLegs, recoveryTasks int
 	if err := pool.QueryRow(context.Background(), `
@@ -4338,11 +4373,26 @@ func TestBridgeWinnerCommitsCleanupWhenSendingLosingDialReturns(t *testing.T) {
 	prefix := "sending-loser"
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
 		{CallControlID: prefix + "-winner-control", CallLegID: prefix + "-winner-leg"},
-		{CallControlID: prefix + "-initial-loser-control", CallLegID: prefix + "-initial-loser-leg"},
 	}}
 	pool, calling, _, _ := prepareInboundFanout(t, now, prefix, provider, 2)
+	var loserLegID string
+	if err := pool.QueryRow(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET next_attempt_at = $1::timestamptz + interval '1 hour'
+		WHERE id = (
+			SELECT id FROM human_calling_provider_commands
+			WHERE action = 'DIAL_STAFF'
+			ORDER BY created_at DESC, id DESC LIMIT 1
+		)
+		RETURNING call_leg_id::text
+	`, now).Scan(&loserLegID); err != nil {
+		t.Fatal(err)
+	}
 	processAllCommands(t, calling)
 	dials := provider.all(humancalling.CommandDialStaff)
+	if len(dials) != 1 || dials[0].CallLegID == loserLegID {
+		t.Fatalf("only the winner should be dialed before the Bridge: %#v", dials)
+	}
 	winnerState, _ := dials[0].Payload["client_state"].(string)
 	winner := humancalling.ProviderFact{
 		EventID: prefix + "-winner-initiated", Type: humancalling.FactCallInitiated,
@@ -4362,18 +4412,10 @@ func TestBridgeWinnerCommitsCleanupWhenSendingLosingDialReturns(t *testing.T) {
 	bridge := provider.last(humancalling.CommandBridge)
 	bridgeState, _ := bridge.Payload["client_state"].(string)
 	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_call_legs
-		SET state = 'PENDING', provider_call_control_id = NULL,
-			provider_call_leg_id = NULL, provider_call_session_id = NULL
-		WHERE id = $1
-	`, dials[1].CallLegID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_provider_commands
-		SET state = 'PENDING', next_attempt_at = $2
+		SET next_attempt_at = $2
 		WHERE call_leg_id = $1 AND action = 'DIAL_STAFF'
-	`, dials[1].CallLegID, now); err != nil {
+	`, loserLegID, now); err != nil {
 		t.Fatal(err)
 	}
 	provider.mu.Lock()
@@ -4413,7 +4455,7 @@ func TestBridgeWinnerCommitsCleanupWhenSendingLosingDialReturns(t *testing.T) {
 		JOIN human_calling_provider_commands command
 			ON command.call_leg_id = leg.id AND command.action = 'HANGUP_LEG'
 		WHERE leg.id = $1 AND command.state = 'PENDING'
-	`, dials[1].CallLegID).Scan(&legState, &controlID, &hangupTarget); err != nil {
+	`, loserLegID).Scan(&legState, &controlID, &hangupTarget); err != nil {
 		t.Fatal(err)
 	}
 	if legState != "ENDING" || controlID != prefix+"-late-control" ||
@@ -4692,18 +4734,19 @@ func TestClosedHandoffAdmissionFailsBeforeDatabaseMutation(t *testing.T) {
 }
 
 func TestClosedHandoffAdmissionRejectsPreviouslyIssuedRefer(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 5, 14, 30, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	authorization, _ := provisionConcurrentStaff(
-		t, accessModule, now, "closed-refer-admission", 1,
+		t, db.Owner, accessModule, now, "closed-refer-admission", 1,
 	)
 	config := humancalling.Config{
 		HandoffSIPDomain: "synthetic.sip.telnyx.com",
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:    "staff-call-control-connection",
 	}
-	open := humancalling.New(pool, accessModule, &recordingProvider{}, config, func() time.Time {
+	open := humancalling.New(db.As(testdb.Portal), accessModule, &recordingProvider{}, config, func() time.Time {
 		return now
 	})
 	_, err := open.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
@@ -4720,7 +4763,7 @@ func TestClosedHandoffAdmissionRejectsPreviouslyIssuedRefer(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.HandoffAdmissionClosed = true
-	closed := humancalling.New(pool, accessModule, &recordingProvider{}, config, func() time.Time {
+	closed := humancalling.New(db.As(testdb.Worker), accessModule, &recordingProvider{}, config, func() time.Time {
 		return now
 	})
 	err = closed.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
@@ -5409,7 +5452,7 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
-	greetingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	greetingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil {
 		t.Fatalf("read live voicemail greeting state: %v", err)
 	}
@@ -5443,7 +5486,7 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
-	recordingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	recordingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil {
 		t.Fatalf("read live voicemail recording state: %v", err)
 	}
@@ -5507,7 +5550,7 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 			callOutcome, voicemailOutcome, audioState, taskTitle, taskOrigin, taskOutcome,
 			acknowledgementCount)
 	}
-	savedState, err := calling.ReadCallingState(context.Background(), staff[0])
+	savedState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil {
 		t.Fatalf("read saved voicemail state: %v", err)
 	}
@@ -5628,7 +5671,8 @@ func TestMissedHandoffAttachesToTheAITaskFromTheSameCall(t *testing.T) {
 }
 
 func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	createdAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
 	currentTime := createdAt
 	var metrics bytes.Buffer
@@ -5637,8 +5681,8 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 		"recording-retention-test",
 		slog.New(slog.NewJSONHandler(&metrics, nil)),
 	)
-	accessModule := access.New(pool, func() time.Time { return currentTime })
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return currentTime })
+	if _, err := access.New(pool, func() time.Time { return currentTime }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "recording-retention-test",
 		PlatformOperators: []string{"operator@example.test"},
@@ -5684,7 +5728,14 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 	}
 	provider := &recordingProvider{deletionErr: humancalling.ErrAmbiguousEffect}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
+		accessModule,
+		provider,
+		humancalling.Config{Observer: observer},
+		func() time.Time { return currentTime },
+	)
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker),
 		accessModule,
 		provider,
 		humancalling.Config{Observer: observer},
@@ -5705,7 +5756,7 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 	); !errors.Is(err, humancalling.ErrConflict) {
 		t.Fatalf("expired recording playback error = %v", err)
 	}
-	if err := calling.ReportReceiptQueue(context.Background()); err != nil {
+	if err := callingWorker.ReportReceiptQueue(context.Background()); err != nil {
 		t.Fatalf("report recording retention queue: %v", err)
 	}
 	for _, fragment := range []string{
@@ -5718,7 +5769,7 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 				fragment, metrics.String())
 		}
 	}
-	processed, err := calling.ProcessNextRecordingRetention(context.Background())
+	processed, err := callingWorker.ProcessNextRecordingRetention(context.Background())
 	if !errors.Is(err, humancalling.ErrAmbiguousEffect) || !processed {
 		t.Fatalf("failed recording retention = %t, %v", processed, err)
 	}
@@ -5737,7 +5788,7 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 	provider.deletionErr = nil
 	provider.mu.Unlock()
 	currentTime = nextDeletionAttempt
-	processed, err = calling.ProcessNextRecordingRetention(context.Background())
+	processed, err = callingWorker.ProcessNextRecordingRetention(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("retry recording retention = %t, %v", processed, err)
 	}
@@ -5766,7 +5817,8 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 }
 
 func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	endedAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
 	currentTime := endedAt.Add(3 * time.Minute)
 	var metrics bytes.Buffer
@@ -5775,8 +5827,8 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 		"recording-reconciliation-test",
 		slog.New(slog.NewJSONHandler(&metrics, nil)),
 	)
-	accessModule := access.New(pool, func() time.Time { return currentTime })
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return currentTime })
+	if _, err := access.New(pool, func() time.Time { return currentTime }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "recording-reconciliation-test",
 		PlatformOperators: []string{"recording-operator@example.test"},
@@ -5846,13 +5898,20 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 		recordingErr: humancalling.ErrProviderRecordingFailed,
 	}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		provider,
 		humancalling.Config{Observer: observer},
 		func() time.Time { return currentTime },
 	)
-	if err := calling.ReportReceiptQueue(context.Background()); err != nil {
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker),
+		accessModule,
+		provider,
+		humancalling.Config{Observer: observer},
+		func() time.Time { return currentTime },
+	)
+	if err := callingWorker.ReportReceiptQueue(context.Background()); err != nil {
 		t.Fatalf("report recording reconciliation queue: %v", err)
 	}
 	for _, fragment := range []string{
@@ -5865,7 +5924,7 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 				fragment, metrics.String())
 		}
 	}
-	processed, err := calling.ProcessNextRecordingReconciliation(context.Background())
+	processed, err := callingWorker.ProcessNextRecordingReconciliation(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("failed recording reconciliation = %t, %v", processed, err)
 	}
@@ -5896,7 +5955,7 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 	provider.recordingErr = humancalling.ErrAmbiguousEffect
 	provider.mu.Unlock()
 
-	processed, err = calling.ProcessNextRecordingReconciliation(context.Background())
+	processed, err = callingWorker.ProcessNextRecordingReconciliation(context.Background())
 	if !processed || !errors.Is(err, humancalling.ErrAmbiguousEffect) {
 		t.Fatalf("first recording reconciliation = %t, %v", processed, err)
 	}
@@ -5919,12 +5978,12 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 	if !strings.Contains(metrics.String(), `"outcome":"retry"`) {
 		t.Fatalf("recording retry metric missing: %s", metrics.String())
 	}
-	if processed, err := calling.ProcessNextRecordingReconciliation(context.Background()); err != nil || processed {
+	if processed, err := callingWorker.ProcessNextRecordingReconciliation(context.Background()); err != nil || processed {
 		t.Fatalf("early recording reconciliation retry = %t, %v", processed, err)
 	}
 	for expectedAttempts := 2; expectedAttempts <= 10; expectedAttempts++ {
 		currentTime = nextAttempt
-		processed, err = calling.ProcessNextRecordingReconciliation(context.Background())
+		processed, err = callingWorker.ProcessNextRecordingReconciliation(context.Background())
 		if !processed {
 			t.Fatalf("recording reconciliation attempt %d was not processed", expectedAttempts)
 		}
@@ -5976,7 +6035,7 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 		`{"v":2,"call":%q,"call_leg":%q,"role":"DESTINATION","kind":"bridge"}`,
 		callID, callLegID,
 	)))
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:            "late-recording-saved-after-reconciliation-exhaustion",
 		Type:               humancalling.FactRecordingSaved,
 		OccurredAt:         currentTime,
@@ -6259,9 +6318,9 @@ func prepareInboundFanout(
 	observers ...observability.Observer,
 ) (*pgxpool.Pool, *humancalling.Module, humancalling.ProviderFact, []access.Identity) {
 	t.Helper()
-	pool := testdb.Open(t)
+	pool := testdb.OpenAsOwner(t)
 	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, staff := provisionConcurrentStaff(t, accessModule, now, prefix, staffCount)
+	authorization, staff := provisionConcurrentStaff(t, pool, accessModule, now, prefix, staffCount)
 	var observer observability.Observer
 	if len(observers) > 0 {
 		observer = observers[0]
@@ -6359,6 +6418,7 @@ func prepareCredentials(t *testing.T, calling *humancalling.Module) {
 
 func provisionConcurrentStaff(
 	t *testing.T,
+	owner *pgxpool.Pool,
 	accessModule *access.Module,
 	now time.Time,
 	prefix string,
@@ -6378,7 +6438,7 @@ func provisionConcurrentStaff(
 			Email:   email, EmailVerified: true,
 		}
 	}
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(owner, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test", RequestedBy: prefix + "-test",
 		Practices: []access.PracticeProvision{{
 			Key: prefix + "-practice", Name: prefix + " practice",

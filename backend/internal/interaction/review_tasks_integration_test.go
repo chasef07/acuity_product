@@ -14,7 +14,8 @@ import (
 
 func TestAppointmentReceiptCommitsReviewWithSourceFacts(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	var practice, location string
 	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('review-receipt','Synthetic') RETURNING id::text`).Scan(&practice); err != nil {
@@ -35,7 +36,7 @@ func TestAppointmentReceiptCommitsReviewWithSourceFacts(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_receipts(service_subject,practice_id,location_id,source_call_id,kind,payload_fingerprint,payload) VALUES('synthetic',$1,$2,'synthetic-review-call','CLOSEOUT',$3,$4)`, practice, location, fingerprint[:], raw); err != nil {
 		t.Fatal(err)
 	}
-	module := New(pool, access.New(pool, nil), func() time.Time { return now })
+	module := New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), nil), func() time.Time { return now })
 	if processed, err := module.ProcessNextReceipt(ctx); err != nil || !processed {
 		t.Fatalf("project receipt: %v %v", processed, err)
 	}
@@ -98,7 +99,8 @@ func TestAppointmentReceiptCommitsReviewWithSourceFacts(t *testing.T) {
 
 func TestAppointmentReviewWordsOutcomeAndFollowsOneInteraction(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	var practice string
 	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('review-outcome','Synthetic') RETURNING id::text`).Scan(&practice); err != nil {
@@ -115,7 +117,7 @@ func TestAppointmentReviewWordsOutcomeAndFollowsOneInteraction(t *testing.T) {
 		}
 		locations[key] = id
 	}
-	module := New(pool, access.New(pool, nil), func() time.Time { return now })
+	module := New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), nil), func() time.Time { return now })
 	project := func(location string, payload storedReceiptPayload) {
 		t.Helper()
 		raw, err := json.Marshal(payload)

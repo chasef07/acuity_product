@@ -27,9 +27,9 @@ type connectedStaffTransferFixture struct {
 func prepareConnectedOutboundStaffTransfer(t *testing.T, prefix string) connectedStaffTransferFixture {
 	t.Helper()
 	now := time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC)
-	pool := testdb.Open(t)
+	pool := testdb.OpenAsOwner(t)
 	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, staff := provisionConcurrentStaff(t, accessModule, now, prefix, 2)
+	authorization, staff := provisionConcurrentStaff(t, pool, accessModule, now, prefix, 2)
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
 		{CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-provider-leg"},
 		{CallControlID: prefix + "-destination-control", CallLegID: prefix + "-destination-provider-leg"},
@@ -74,7 +74,7 @@ func prepareConnectedOutboundStaffTransfer(t *testing.T, prefix string) connecte
 	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatal(err)
 	}
-	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(callingState.Ringing) != 1 {
 		t.Fatalf("outbound media offer = %#v, %v", callingState, err)
 	}
@@ -400,11 +400,11 @@ func TestStaffTransferRequiresTargetAnswerAndBridgeEvidence(t *testing.T) {
 			`, fixture.callID).Scan(&recordingCount); err != nil || recordingCount != 1 {
 				t.Fatalf("connected recording evidence count = %d, %v", recordingCount, err)
 			}
-			sourceState, err := fixture.calling.ReadCallingState(context.Background(), fixture.staff[0])
+			sourceState, _, err := fixture.calling.ReadCallingStateConditionally(context.Background(), fixture.staff[0], "")
 			if err != nil || sourceState.Bridged != nil {
 				t.Fatalf("source Calling state after transfer = %#v, %v", sourceState, err)
 			}
-			targetCalling, err := fixture.calling.ReadCallingState(context.Background(), fixture.staff[1])
+			targetCalling, _, err := fixture.calling.ReadCallingStateConditionally(context.Background(), fixture.staff[1], "")
 			if err != nil || targetCalling.Bridged == nil ||
 				targetCalling.Bridged.CallLegID != transfer.TargetCallLegID {
 				t.Fatalf("target Calling state after transfer = %#v, %v", targetCalling, err)
@@ -551,7 +551,7 @@ func TestCallingStateHidesActiveStaffTransferAfterLocationAccessLoss(t *testing.
 		t.Fatal(err)
 	}
 
-	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.staff[0])
+	state, _, err := fixture.calling.ReadCallingStateConditionally(context.Background(), fixture.staff[0], "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -679,7 +679,7 @@ func TestStaffTransferFailurePathsPreserveSourceOwnership(t *testing.T) {
 					t.Fatalf("uncertain target command = %q control:%q, %v", commandState, targetControl, err)
 				}
 			}
-			state, err := fixture.calling.ReadCallingState(context.Background(), fixture.staff[0])
+			state, _, err := fixture.calling.ReadCallingStateConditionally(context.Background(), fixture.staff[0], "")
 			if err != nil || state.Bridged == nil || state.Bridged.CallLegID != fixture.sourceLeg {
 				t.Fatalf("source owner after %s = %#v, %v", test.name, state, err)
 			}
@@ -1049,7 +1049,7 @@ func TestChainedStaffTransfersKeepOneCurrentOwnerAndHistoryRow(t *testing.T) {
 	}
 	assertTransferLegStates(t, fixture.pool, second.ID, "COMPLETED", "ENDED", "BRIDGED")
 
-	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.staff[2])
+	state, _, err := fixture.calling.ReadCallingStateConditionally(context.Background(), fixture.staff[2], "")
 	if err != nil || state.Bridged == nil || state.Bridged.CallLegID != second.TargetCallLegID {
 		t.Fatalf("chained current owner = %#v, %v", state, err)
 	}

@@ -32,15 +32,17 @@ import (
 )
 
 func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	accessModuleRealtime := access.New(db.As(testdb.Realtime), func() time.Time { return now })
 	operator := access.Identity{
 		Subject:       "founder-subject",
 		Email:         "founder@acuity.test",
 		EmailVerified: true,
 	}
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "workspace-realtime-test",
 		PlatformOperators: []string{operator.Email},
@@ -81,7 +83,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		RevalidateInterval: 100 * time.Millisecond,
 		ReconnectMin:       10 * time.Millisecond,
 		ReconnectMax:       50 * time.Millisecond,
-	}, accessModule)
+	}, accessModuleRealtime)
 	if err != nil {
 		t.Fatalf("new realtime adapter: %v", err)
 	}
@@ -90,8 +92,8 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	handler, err := httpapi.NewRealtime(httpapi.Config{
 		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 500 * time.Millisecond,
-	}, pool, httpapi.RealtimeDependencies{
-		Access: accessModule,
+	}, db.As(testdb.Realtime), httpapi.RealtimeDependencies{
+		Access: accessModuleRealtime,
 		Authenticator: staticAuthenticator{
 			"operator-token": operator,
 			"member-token":   member,
@@ -178,15 +180,23 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	if event := readSSEEvent(t, callingReader); event.Event != "ready" || !event.Data.CallingHints {
 		t.Fatalf("Calling stream ready event = %#v", event)
 	}
+	callingConfig := humancalling.Config{
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:    "realtime-call-control-connection",
+	}
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		realtimeCallingProvider{},
-		humancalling.Config{
-			HandoffSIPDomain: "synthetic.sip.telnyx.com",
-			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-			CallControlID:    "realtime-call-control-connection",
-		},
+		callingConfig,
+		func() time.Time { return now },
+	)
+	callingWorker := humancalling.New(
+		db.As(testdb.Worker),
+		accessModule,
+		realtimeCallingProvider{},
+		callingConfig,
 		func() time.Time { return now },
 	)
 	_, err = calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
@@ -204,7 +214,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	if err != nil {
 		t.Fatalf("create realtime Call handoff: %v", err)
 	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+	if err := callingWorker.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "realtime-call-initiated",
 		Type:          humancalling.FactCallInitiated,
 		OccurredAt:    now,
@@ -232,8 +242,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	var callID string
 	if err := pool.QueryRow(context.Background(), `
 		UPDATE human_calling_calls
-		SET terminal_outcome = 'FOLLOW_UP_REQUIRED',
-			disposition_outcome = 'FOLLOW_UP_REQUIRED',
+		SET terminal_outcome = 'ENDED', disposition_deadline = $1,
 			ended_at = $1, updated_at = $1
 		WHERE id = (
 			SELECT call_id FROM human_calling_call_legs
@@ -242,9 +251,17 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		)
 		RETURNING id::text
 	`, now).Scan(&callID); err != nil {
-		t.Fatalf("prepare realtime Task Call: %v", err)
+		t.Fatalf("end realtime Task Call: %v", err)
 	}
-	workModule := work.New(pool, accessModule, func() time.Time { return now })
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET terminal_outcome = 'FOLLOW_UP_REQUIRED',
+			disposition_outcome = 'FOLLOW_UP_REQUIRED', disposition_deadline = NULL
+		WHERE id = $1
+	`, callID); err != nil {
+		t.Fatalf("disposition realtime Task Call: %v", err)
+	}
+	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	taskTx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})
 	if err != nil {
 		t.Fatalf("begin realtime Task creation: %v", err)
@@ -293,16 +310,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		renamed.Version != task.Version+1 {
 		t.Fatalf("Task rename hint = %#v, Task = %#v", renameHint, renamed)
 	}
-	if err := accessModule.RevokeMembership(
-		context.Background(),
-		access.RevokeMembershipCommand{
-			Identity:     operator,
-			PracticeID:   practice.ID,
-			MembershipID: memberAuthorization.Membership.ID,
-		},
-	); err != nil {
-		t.Fatalf("revoke streamed Membership: %v", err)
-	}
+	testaccess.SeedRevokedMembership(t, pool, memberAuthorization, now)
 	if _, err := workModule.ReadTask(
 		context.Background(),
 		member,
@@ -342,11 +350,12 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 }
 
 func TestRealtimeReconnectAndRevalidationBurstStaysAvailableDuringUnrelatedOperatorBinding(t *testing.T) {
-	ownerPool := testdb.Open(t)
+	db := testdb.Open(t)
+	ownerPool := db.Owner
 	now := time.Date(2026, time.August, 18, 15, 38, 57, 0, time.UTC)
 	_, identity, authorization := provisionRealtimeMember(
 		t,
-		ownerPool,
+		db,
 		now,
 		"realtime-reconnect-contention",
 	)
@@ -357,10 +366,7 @@ func TestRealtimeReconnectAndRevalidationBurstStaysAvailableDuringUnrelatedOpera
 		"realtime-contention-test",
 		slog.New(slog.NewJSONHandler(&metrics, nil)),
 	)
-	poolConfig, err := pgxpool.ParseConfig(testDatabaseURL(t))
-	if err != nil {
-		t.Fatalf("parse realtime production pool: %v", err)
-	}
+	poolConfig := db.As(testdb.Realtime).Config()
 	poolConfig.MaxConns = 1
 	poolConfig.MinConns = 0
 	runtimePool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
@@ -579,7 +585,8 @@ func TestRealtimeReconnectAndRevalidationBurstStaysAvailableDuringUnrelatedOpera
 }
 
 func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
 	var metrics bytes.Buffer
 	observer := observability.NewLogger(
@@ -587,8 +594,9 @@ func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 		"realtime-test",
 		slog.New(slog.NewJSONHandler(&metrics, nil)),
 	)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	accessModuleRealtime := access.New(db.As(testdb.Realtime), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "realtime-burst-test",
 		Practices: []access.PracticeProvision{{
@@ -624,7 +632,7 @@ func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 		ReconnectMin:       10 * time.Millisecond,
 		ReconnectMax:       50 * time.Millisecond,
 		Observer:           observer,
-	}, accessModule)
+	}, accessModuleRealtime)
 	if err != nil {
 		t.Fatalf("new realtime burst adapter: %v", err)
 	}
@@ -721,10 +729,12 @@ func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 }
 
 func TestRealtimeListenerDeathClosesStreamsAndRecoveryAcceptsFreshStreams(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	accessModuleRealtime := access.New(db.As(testdb.Realtime), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "realtime-listener-recovery-test",
 		Practices: []access.PracticeProvision{{
@@ -759,7 +769,7 @@ func TestRealtimeListenerDeathClosesStreamsAndRecoveryAcceptsFreshStreams(t *tes
 		RevalidateInterval: time.Second,
 		ReconnectMin:       10 * time.Millisecond,
 		ReconnectMax:       50 * time.Millisecond,
-	}, accessModule)
+	}, accessModuleRealtime)
 	if err != nil {
 		t.Fatalf("new realtime listener adapter: %v", err)
 	}
@@ -838,11 +848,11 @@ func TestRealtimeListenerDeathClosesStreamsAndRecoveryAcceptsFreshStreams(t *tes
 }
 
 func TestRealtimePlannedRotationIsJitteredAcrossConcurrentClients(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
 	now := time.Date(2026, time.July, 31, 13, 0, 0, 0, time.UTC)
 	accessModule, identity, authorization := provisionRealtimeMember(
 		t,
-		pool,
+		db,
 		now,
 		"realtime-rotation",
 	)
@@ -918,9 +928,11 @@ func TestRealtimePlannedRotationIsJitteredAcrossConcurrentClients(t *testing.T) 
 }
 
 func TestRealtimeCallingHintsStayScopedToTheStreamedPractice(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	accessModuleRealtime := access.New(db.As(testdb.Realtime), func() time.Time { return now })
 	email := "multi-practice@realtime.test"
 	practice := func(key string, grant bool) access.PracticeProvision {
 		provision := access.PracticeProvision{
@@ -938,7 +950,7 @@ func TestRealtimeCallingHintsStayScopedToTheStreamedPractice(t *testing.T) {
 		}
 		return provision
 	}
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "realtime-multi-practice",
 		Practices: []access.PracticeProvision{
@@ -977,7 +989,7 @@ func TestRealtimeCallingHintsStayScopedToTheStreamedPractice(t *testing.T) {
 		RevalidateInterval: time.Second,
 		ReconnectMin:       10 * time.Millisecond,
 		ReconnectMax:       50 * time.Millisecond,
-	}, accessModule)
+	}, accessModuleRealtime)
 	if err != nil {
 		t.Fatalf("new multi-practice realtime adapter: %v", err)
 	}
@@ -1051,14 +1063,14 @@ func (writer pipeSSEWriter) Flush() {}
 
 func provisionRealtimeMember(
 	t *testing.T,
-	pool *pgxpool.Pool,
+	db *testdb.DB,
 	now time.Time,
 	key string,
 ) (*access.Module, access.Identity, access.Authorization) {
 	t.Helper()
-	accessModule := access.New(pool, func() time.Time { return now })
+	clock := func() time.Time { return now }
 	email := key + "@realtime.test"
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := access.New(db.Owner, clock).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: key,
 		Practices: []access.PracticeProvision{{
@@ -1081,8 +1093,8 @@ func provisionRealtimeMember(
 		Email:         email,
 		EmailVerified: true,
 	}
-	authorization := testaccess.Activate(t, accessModule, identity)
-	return accessModule, identity, authorization
+	authorization := testaccess.Activate(t, access.New(db.As(testdb.Portal), clock), identity)
+	return access.New(db.As(testdb.Realtime), clock), identity, authorization
 }
 
 func waitForHubReady(t *testing.T, hub *realtime.Hub) {

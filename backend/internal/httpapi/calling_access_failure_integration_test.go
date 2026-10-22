@@ -227,7 +227,8 @@ func newCallingAccessFailureFixture(
 	provider humancalling.Provider,
 ) *callingAccessFailureFixture {
 	t.Helper()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	fixture := &callingAccessFailureFixture{
 		t:     t,
 		pool:  pool,
@@ -244,8 +245,8 @@ func newCallingAccessFailureFixture(
 		Email:         "outsider@calling-access-failure.test",
 		EmailVerified: true,
 	}
-	accessModule := access.New(pool, fixture.now)
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), fixture.now)
+	if _, err := access.New(pool, fixture.now).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "calling-access-failure-test",
 		PlatformOperators: []string{"operator@calling-access-failure.test"},
@@ -265,7 +266,7 @@ func newCallingAccessFailureFixture(
 	}
 	fixture.authorization = testaccess.Activate(t, accessModule, fixture.staff)
 
-	fixture.database = &accessLookupFaultDatabase{Database: pool}
+	fixture.database = &accessLookupFaultDatabase{Database: db.As(testdb.Portal)}
 	calling := humancalling.New(
 		fixture.database,
 		access.New(fixture.database, fixture.now),
@@ -276,7 +277,7 @@ func newCallingAccessFailureFixture(
 	handler, err := newPortalHandlerWithCalling(
 		t,
 		httpapi.Config{AcquireTimeout: time.Second},
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		staticAuthenticator{"staff-token": fixture.staff, "outsider-token": outsider},
 		calling,

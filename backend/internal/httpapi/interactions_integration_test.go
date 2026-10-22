@@ -27,10 +27,11 @@ import (
 )
 
 func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 8, 9, 30, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "ai-interaction-http-test",
 		Practices: []access.PracticeProvision{{
@@ -124,11 +125,11 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create AI Interaction service authenticator: %v", err)
 	}
-	workModule := work.New(pool, accessModule, func() time.Time {
+	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time {
 		return now.Add(10 * time.Minute)
 	})
-	callingModule := humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil)
-	if err := callingModule.ProvisionLocationVoices(context.Background(),
+	callingModule := humancalling.New(db.As(testdb.Portal), accessModule, httpCallingProvider{}, humancalling.Config{}, nil)
+	if err := humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil).ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{
 			{
 				PracticeKey: "abita-eye-group",
@@ -146,10 +147,11 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("provision AI Interaction voice route: %v", err)
 	}
 	interactionClock := now
-	interactionModule := interaction.New(pool, accessModule, func() time.Time { return interactionClock })
+	interactionModule := interaction.New(db.As(testdb.Portal), accessModule, func() time.Time { return interactionClock })
+	interactionModuleWorker := interaction.New(db.As(testdb.Worker), accessModule, func() time.Time { return interactionClock })
 	handler, err := httpapi.NewPortal(
 		httpapi.Config{AcquireTimeout: time.Second},
-		pool,
+		db.As(testdb.Portal),
 		httpapi.PortalDependencies{
 			Access: accessModule,
 			Authenticator: staticAuthenticator{
@@ -159,9 +161,9 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			},
 			Calling:              callingModule,
 			Interactions:         interactionModule,
-			Messaging:            messaging.New(pool, accessModule, workModule, nil, messaging.Config{}, nil),
+			Messaging:            messaging.New(db.As(testdb.Portal), accessModule, workModule, nil, messaging.Config{}, nil),
 			Work:                 workModule,
-			Workspace:            workspace.New(pool, accessModule),
+			Workspace:            workspace.New(db.As(testdb.Portal), accessModule),
 			ServiceAuthenticator: serviceAuth,
 		},
 	)
@@ -1025,7 +1027,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("remove AI Interaction projection failure: %v", err)
 	}
-	processed, err := interactionModule.ProcessNextReceipt(context.Background())
+	processed, err := interactionModuleWorker.ProcessNextReceipt(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("recover pending AI Interaction receipt = %t, %v", processed, err)
 	}

@@ -19,7 +19,7 @@ func TestCallingChangesPublishPracticeScopedCallingHints(t *testing.T) {
 	listener := listenForHints(t, pool)
 
 	processAllCommands(t, calling)
-	state, err := calling.ReadCallingState(context.Background(), staff[0])
+	state, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil {
 		t.Fatalf("read ringing Calling state: %v", err)
 	}

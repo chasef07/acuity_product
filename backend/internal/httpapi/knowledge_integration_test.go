@@ -13,11 +13,8 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/knowledge"
-	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type knowledgeEmbeddingDouble struct {
@@ -47,10 +44,11 @@ func (a knowledgeServiceAuth) AuthenticateService(_ context.Context, token strin
 	return access.ServiceIdentity{}, access.ErrDenied
 }
 func TestKnowledgeHTTPServiceScopeAndRuntimeDatabaseRole(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	a := access.New(pool, time.Now)
-	_, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "knowledge-test", Practices: []access.PracticeProvision{{Key: "synthetic-knowledge", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{"office-a", "office-b"}}}}}})
+	a := access.New(db.As(testdb.Portal), time.Now)
+	_, err := access.New(pool, time.Now).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "knowledge-test", Practices: []access.PracticeProvision{{Key: "synthetic-knowledge", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{"office-a", "office-b"}}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +57,7 @@ func TestKnowledgeHTTPServiceScopeAndRuntimeDatabaseRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	embeddings := &knowledgeEmbeddingDouble{}
-	module, err := knowledge.New(pool, a, embeddings, knowledge.Config{MinSimilarity: .52})
+	module, err := knowledge.New(db.As(testdb.Portal), a, embeddings, knowledge.Config{MinSimilarity: .52})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,30 +65,7 @@ func TestKnowledgeHTTPServiceScopeAndRuntimeDatabaseRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, role := range []string{"acuity_portal", "acuity_provider", "acuity_realtime", "acuity_worker", "acuity_auth", "acuity_migrate"} {
-		var exists bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)`, role).Scan(&exists); err != nil {
-			t.Fatal(err)
-		}
-		if !exists {
-			if _, err := pool.Exec(ctx, "CREATE ROLE "+pgx.Identifier{role}.Sanitize()+" NOLOGIN"); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if err := migrations.ApplyRuntimeGrants(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	config := pool.Config().Copy()
-	config.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
-		_, err := c.Exec(ctx, `SET ROLE acuity_portal`)
-		return err
-	}
-	runtimePool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer runtimePool.Close()
+	runtimePool := db.As(testdb.Portal)
 	module, err = knowledge.New(runtimePool, access.New(runtimePool, time.Now), embeddings, knowledge.Config{MinSimilarity: .52})
 	if err != nil {
 		t.Fatal(err)

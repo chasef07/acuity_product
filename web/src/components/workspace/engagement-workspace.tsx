@@ -7,6 +7,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
 } from "react"
@@ -135,7 +136,6 @@ type EngagementWorkspaceProps = {
   practiceID: string
   practiceName: string
   canMutate: boolean
-  revision: number
   selectedTaskID?: string
   selectedCallID?: string
   selectedAIInteractionID?: string
@@ -153,7 +153,6 @@ type EngagementWorkspaceProps = {
 type EngagementWorkspaceCalling = Pick<
   ReturnType<typeof useCallingNavigation>,
   | "callingOccupied"
-  | "callingEnabled"
   | "outboundPending"
   | "ownsSoftphone"
   | "startOutbound"
@@ -169,7 +168,6 @@ export function EngagementWorkspaceView({
   practiceID,
   practiceName,
   canMutate,
-  revision,
   selectedTaskID,
   selectedCallID,
   selectedAIInteractionID,
@@ -196,7 +194,6 @@ export function EngagementWorkspaceView({
   const [copyState, setCopyState] = useCopyState()
   const {
     callingOccupied,
-    callingEnabled,
     outboundPending,
     ownsSoftphone,
     startOutbound,
@@ -262,7 +259,6 @@ export function EngagementWorkspaceView({
             title={`Call ${formatUSPhone(engagement.phone)}`}
             disabled={
               !canMutate ||
-              !callingEnabled ||
               !route ||
               !ownsSoftphone ||
               callingOccupied
@@ -324,7 +320,6 @@ export function EngagementWorkspaceView({
         onTaskReviewed={setReviewedTextTask}
         initialDestination={engagement.phone}
         canMutate={canMutate}
-        revision={revision}
         selectedTaskID={selectedTaskID}
         selectedCallID={selectedCallID}
         selectedAIInteractionID={selectedAIInteractionID}
@@ -346,7 +341,6 @@ function MessageConversation({
   locationID,
   initialDestination,
   canMutate,
-  revision,
   selectedTaskID,
   selectedCallID,
   selectedAIInteractionID,
@@ -363,7 +357,6 @@ function MessageConversation({
   locationID: string
   initialDestination?: string
   canMutate: boolean
-  revision: number
   selectedTaskID?: string
   selectedCallID?: string
   selectedAIInteractionID?: string
@@ -373,73 +366,68 @@ function MessageConversation({
   onAIInteractionOpen?: (interactionID: string) => void
   onHistoryChange?: (history: NumberHistory) => void
 }) {
+  const [awayFromLatest, setAwayFromLatest] = useState(false)
   const {
     items,
     nextCursor: cursor,
     loading,
+    refreshing,
     loadingOlder,
     failure,
     sent,
+    requestedAt,
+    behind,
     refresh,
     showOlder,
     showSent,
-  } = useEngagementTimeline(timelineSource)
+  } = useEngagementTimeline({ ...timelineSource, hold: awayFromLatest })
   const error = failure ? "The conversation could not be loaded." : ""
-  const [newActivity, setNewActivity] = useState(false)
-  const requested = useRef(false)
   const scroller = useRef<HTMLDivElement | null>(null)
-  const atLatest = useRef(true)
   const currentReviewTask = useRef(reviewTask)
+  const reviewSeenAt = useRef(0)
   useEffect(() => { currentReviewTask.current = reviewTask }, [reviewTask])
   const historyPhone = timelineSource.phone
   useEffect(() => {
     onHistoryChange?.({ phone: historyPhone, items })
   }, [historyPhone, items, onHistoryChange])
 
-  const loadLatest = useCallback(
-    async (scroll = false) => {
-      requested.current = true
-      const reviewedTask = currentReviewTask.current
-      if (!(await refresh())) return
-      onTaskReviewed(reviewedTask)
-      setNewActivity(false)
-      if (scroll) {
-        window.requestAnimationFrame(() =>
-          scroller.current?.scrollTo({
-            top: scroller.current.scrollHeight,
-            behavior: "smooth",
-          }),
-        )
-      }
-    },
-    [refresh, onTaskReviewed],
-  )
-
   const sentVisibleUntil = sent?.visibleUntil
   useEffect(() => {
     if (sentVisibleUntil === undefined) return
     const timeout = window.setTimeout(
-      () => void loadLatest(true),
+      () => void refresh(),
       Math.max(0, sentVisibleUntil - Date.now()),
     )
     return () => window.clearTimeout(timeout)
-  }, [loadLatest, sentVisibleUntil])
+  }, [refresh, sentVisibleUntil])
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      void loadLatest(true)
-    }, 0)
-    return () => window.clearTimeout(timeout)
-  }, [loadLatest])
+  function loadLatest() {
+    setAwayFromLatest(false)
+    void refresh()
+  }
 
+  const reviewKey = reviewTask ? `${reviewTask.id}:${reviewTask.version}` : ""
+  const seenReviewKey = useRef(reviewKey)
   useEffect(() => {
-    if (!requested.current) return
-    if (atLatest.current) {
-      void loadLatest(true)
-    } else {
-      setNewActivity(true)
-    }
-  }, [loadLatest, revision, reviewTask?.id, reviewTask?.version])
+    if (seenReviewKey.current === reviewKey) return
+    seenReviewKey.current = reviewKey
+    reviewSeenAt.current = Date.now()
+    void refresh()
+  }, [refresh, reviewKey])
+
+  const showLatest = useEffectEvent((requestedAt: number) => {
+    if (awayFromLatest) return
+    if (requestedAt >= reviewSeenAt.current) onTaskReviewed(currentReviewTask.current)
+    window.requestAnimationFrame(() =>
+      scroller.current?.scrollTo({
+        top: scroller.current.scrollHeight,
+        behavior: "smooth",
+      }),
+    )
+  })
+  useEffect(() => {
+    if (requestedAt) showLatest(requestedAt)
+  }, [requestedAt])
 
   const conversationThread = items.find(
     (item) => item.message?.thread.locationId === locationID,
@@ -462,9 +450,10 @@ function MessageConversation({
             className="px-4 py-6 sm:px-6"
             onScroll={(event) => {
               const element = event.currentTarget
-              atLatest.current =
-                element.scrollHeight - element.scrollTop - element.clientHeight <
-                72
+              setAwayFromLatest(
+                element.scrollHeight - element.scrollTop - element.clientHeight >=
+                  72,
+              )
             }}
           >
             <MessageScrollerContent className="mx-auto max-w-2xl gap-2">
@@ -520,7 +509,7 @@ function MessageConversation({
                       item={item}
                       contextLocationID={locationID}
                       canMutate={canMutate}
-                      onChanged={() => void loadLatest(true)}
+                      onChanged={loadLatest}
                       onTaskCreated={onTaskCreated}
                       onTaskOpen={onTaskOpen}
                       onCallOpen={onCallOpen}
@@ -546,15 +535,12 @@ function MessageConversation({
               )}
             </MessageScrollerContent>
           </MessageScrollerViewport>
-          {newActivity ? (
+          {behind ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
               <Button
                 size="sm"
                 className="pointer-events-auto shadow-lg"
-                onClick={() => {
-                  atLatest.current = true
-                  void loadLatest(true)
-                }}
+                onClick={loadLatest}
               >
                 New activity
               </Button>
@@ -572,10 +558,10 @@ function MessageConversation({
             <Button
               size="sm"
               variant="outline"
-              disabled={loading}
-              onClick={() => void loadLatest(true)}
+              disabled={loading || refreshing}
+              onClick={loadLatest}
             >
-              {loading && <Spinner />}
+              {(loading || refreshing) && <Spinner />}
               Try again
             </Button>
           </AlertDescription>
@@ -601,7 +587,7 @@ function MessageConversation({
                 : ""
         }
         onSent={(message) => {
-          atLatest.current = true
+          setAwayFromLatest(false)
           showSent(message)
         }}
       />

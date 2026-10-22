@@ -14,13 +14,14 @@ import (
 )
 
 func TestCallLabelsQueriesFilterBeforePaginationAndPreserveScope(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
-	am := access.New(pool, func() time.Time { return now })
+	am := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	staff := access.Identity{Subject: "labels-staff", Email: "staff@labels.test", EmailVerified: true}
 	operator := access.Identity{Subject: "labels-operator", Email: "operator@labels.test", EmailVerified: true}
-	_, err := am.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{operator.Email}, Practices: []access.PracticeProvision{{Key: "labels", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed"}, {Key: "denied", Name: "Denied"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"allowed"}}}}}})
+	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{operator.Email}, Practices: []access.PracticeProvision{{Key: "labels", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed"}, {Key: "denied", Name: "Denied"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"allowed"}}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestCallLabelsQueriesFilterBeforePaginationAndPreserveScope(t *testing.T) {
 	insert(allowed, "different-outcome", 4, "existing_patient_booking", "abandoned")
 	second := insert(allowed, "second-match", 5, "existing_patient_booking", "resolved")
 	forbidden := insert(denied, "forbidden", 1, "existing_patient_booking", "resolved")
-	m := New(pool, am, func() time.Time { return now })
+	m := New(db.As(testdb.Portal), am, func() time.Time { return now })
 	cmd := QueryAnalyticsCommand{Identity: staff, PracticeID: practice, Range: AnalyticsRange7Days, Limit: 1, Intent: "existing_patient_booking", Outcome: "resolved"}
 	page, err := m.QueryAgentCalls(ctx, QueryAgentCallsCommand{QueryAnalyticsCommand: cmd})
 	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != first || page.NextCursor == "" {
@@ -168,12 +169,13 @@ func TestCallLabelsQueriesFilterBeforePaginationAndPreserveScope(t *testing.T) {
 }
 
 func TestAnalyticsJudgeFailuresFilterBeforePagination(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
-	am := access.New(pool, func() time.Time { return now })
+	am := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	operator := access.Identity{Subject: "failure-operator", Email: "operator@failures.test", EmailVerified: true}
-	_, err := am.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{operator.Email}, Practices: []access.PracticeProvision{{Key: "failures", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed"}, {Key: "other", Name: "Other"}}}}})
+	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{operator.Email}, Practices: []access.PracticeProvision{{Key: "failures", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed"}, {Key: "other", Name: "Other"}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +212,7 @@ func TestAnalyticsJudgeFailuresFilterBeforePagination(t *testing.T) {
 	second := insert("second", allowed, 10, "office_rules_grounded", legacyJudgeVersion, "judge", false, "office_information", "resolved")
 	third := insert("third", allowed, 11, "office_question_answered", legacyJudgeVersion, "judge", false, "office_information", "resolved")
 	insert("other-location", other, 1, "office_question_answered", ScorecardJudgeVersion, "judge", false, "office_information", "resolved")
-	m := New(pool, am, func() time.Time { return now })
+	m := New(db.As(testdb.Portal), am, func() time.Time { return now })
 	cmd := QueryAnalyticsCommand{Identity: operator, PracticeID: practice, LocationID: allowed, Range: AnalyticsRange7Days, Limit: 1, Intent: "office_information", Outcome: "resolved", FailuresOnly: true}
 	page, err := m.QueryAnalytics(ctx, cmd)
 	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != first || page.NextCursor == "" {

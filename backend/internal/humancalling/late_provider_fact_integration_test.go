@@ -31,7 +31,7 @@ func TestLateBridgeAndRingtoneFactsAfterOutboundHangupAreTerminal(t *testing.T) 
 	if err := calling.ApplyProviderFact(ctx, staff); err != nil {
 		t.Fatal(err)
 	}
-	state, err := calling.ReadCallingState(ctx, fixture.identity)
+	state, _, err := calling.ReadCallingStateConditionally(ctx, fixture.identity, "")
 	if err != nil || len(state.Ringing) != 1 {
 		t.Fatalf("read media token: ringing=%d err=%v", len(state.Ringing), err)
 	}

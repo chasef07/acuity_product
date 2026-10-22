@@ -143,10 +143,9 @@ export function CallReviewWorkspace({
 
 
 function ReviewQueue({ practiceID, date }: { practiceID: string; date: string }) {
-  const [revision, setRevision] = useState(0)
-  const queue = useReviewQueue(practiceID, date, revision)
+  const queue = useReviewQueue(practiceID, date)
   const [selected, setSelected] = useState("")
-  const calls = queue.status === "ready" || (queue.status === "failed" && queue.data) ? (queue.data?.calls ?? []) : []
+  const calls = queue.status === "ready" ? queue.data.calls : []
   const selectedID = selected || calls.find((call) => !call.completedAt)?.interactionId || calls[0]?.interactionId || ""
   const index = calls.findIndex((call) => call.interactionId === selectedID)
 
@@ -166,7 +165,7 @@ function ReviewQueue({ practiceID, date }: { practiceID: string; date: string })
   if (queue.status === "loading") {
     return <Skeleton className="h-[32rem] rounded-xl" />
   }
-  if (queue.status === "failed" && !queue.data) {
+  if (queue.status === "failed") {
     return (
       <Alert variant="destructive" className="max-w-2xl">
         <CircleAlertIcon aria-hidden="true" />
@@ -194,6 +193,17 @@ function ReviewQueue({ practiceID, date }: { practiceID: string; date: string })
   const done = calls.filter((call) => call.completedAt).length
   const selectedCall = calls[index]
   return (
+    <>
+    {queue.status === "ready" && queue.refreshFailure && (
+      <Alert variant="destructive" className="mb-3 max-w-2xl">
+        <CircleAlertIcon aria-hidden="true" />
+        <AlertTitle>Review queue could not refresh</AlertTitle>
+        <AlertDescription>
+          <p>These are the day&apos;s calls as last loaded.</p>
+          <Button className="mt-3" size="sm" variant="outline" onClick={queue.retry}>Retry</Button>
+        </AlertDescription>
+      </Alert>
+    )}
     <div className="grid h-[calc(100dvh-18rem)] min-h-[34rem] grid-cols-1 overflow-hidden rounded-xl border bg-card lg:grid-cols-[15rem_minmax(0,1fr)_22rem]">
       <aside aria-label="Calls to review" className="flex min-h-0 flex-col border-b lg:border-r lg:border-b-0">
         <div className="border-b px-4 py-3">
@@ -222,11 +232,12 @@ function ReviewQueue({ practiceID, date }: { practiceID: string; date: string })
           onNext={index < calls.length - 1 ? () => setSelected(calls[index + 1].interactionId) : undefined}
           onSaved={() => {
             setSelected(selectedCall.interactionId)
-            setRevision((value) => value + 1)
+            void queue.retry()
           }}
         />
       )}
     </div>
+    </>
   )
 }
 

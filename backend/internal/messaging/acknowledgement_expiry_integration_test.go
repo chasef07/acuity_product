@@ -16,16 +16,16 @@ func TestAutomaticAcknowledgementExpiresWithoutChangingPatientTask(t *testing.T)
 			if !configuration {
 				for minute := 0; minute < 5; minute++ {
 					*fixture.clock = fixture.now.Add(time.Duration(minute) * time.Minute)
-					if processed, err := fixture.module.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+					if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
 						t.Fatalf("configuration retry at minute %d = %t, %v", minute, processed, err)
 					}
-					if processed, err := fixture.module.QueueNextTaskAcknowledgement(ctx); err != nil || processed {
+					if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || processed {
 						t.Fatalf("retry before due time = %t, %v", processed, err)
 					}
 				}
 			}
 			*fixture.clock = fixture.now.Add(5 * time.Minute)
-			if processed, err := fixture.module.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+			if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
 				t.Fatalf("expire acknowledgement = %t, %v", processed, err)
 			}
 			var state, failure, taskState string
@@ -48,17 +48,17 @@ func TestAutomaticAcknowledgementExpiresWithoutChangingPatientTask(t *testing.T)
 			if state != "NOT_NEEDED" || failure != wantFailure || !completed || !noRetry || !noMessage || taskState != "OPEN" {
 				t.Fatalf("expiry = state %s, reason %s, completed %v, no retry %v, no message %v, Task %s", state, failure, completed, noRetry, noMessage, taskState)
 			}
-			if err := fixture.module.Provision(ctx, []messaging.LocationProvision{{
+			if err := messaging.New(fixture.pool, nil, nil, nil, messaging.Config{}, nil).Provision(ctx, []messaging.LocationProvision{{
 				PracticeKey: "automatic-acknowledgement-scenarios", LocationKey: "main",
 				Sender: "+17275550100", MessagingProfileID: "automatic-acknowledgement-profile",
 			}}); err != nil {
 				t.Fatal(err)
 			}
 			*fixture.clock = fixture.now.Add(24 * time.Hour)
-			if processed, err := fixture.module.QueueNextTaskAcknowledgement(ctx); err != nil || processed {
+			if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || processed {
 				t.Fatalf("expired acknowledgement replay = %t, %v", processed, err)
 			}
-			if processed, err := fixture.module.ProcessNextCommand(ctx); err != nil || processed || len(fixture.provider.commands) != 0 {
+			if processed, err := fixture.worker.ProcessNextCommand(ctx); err != nil || processed || len(fixture.provider.commands) != 0 {
 				t.Fatalf("expired acknowledgement provider effect = %t, %v, %d commands", processed, err, len(fixture.provider.commands))
 			}
 		})
@@ -71,11 +71,11 @@ func TestAutomaticAcknowledgementDeadlineAlsoAppliesToQueuedProviderCommand(t *t
 			fixture := newAutomaticAcknowledgementTestFixture(t, true)
 			ctx := context.Background()
 			*fixture.clock = fixture.now.Add(4 * time.Minute)
-			if processed, err := fixture.module.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+			if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
 				t.Fatalf("queue acknowledgement = %t, %v", processed, err)
 			}
 			*fixture.clock = fixture.now.Add(elapsed)
-			if processed, err := fixture.module.ProcessNextCommand(ctx); err != nil || !processed {
+			if processed, err := fixture.worker.ProcessNextCommand(ctx); err != nil || !processed {
 				t.Fatalf("process queued acknowledgement = %t, %v", processed, err)
 			}
 			var delivery, failure, commandState string
@@ -94,7 +94,7 @@ func TestAutomaticAcknowledgementDeadlineAlsoAppliesToQueuedProviderCommand(t *t
 			} else if delivery != "FAILED" || failure != "ACKNOWLEDGEMENT_EXPIRED" || commandState != "FAILED" || len(fixture.provider.commands) != 0 {
 				t.Fatalf("expired acknowledgement = %s, %s, %s, %d provider calls", delivery, failure, commandState, len(fixture.provider.commands))
 			}
-			if processed, err := fixture.module.ProcessNextCommand(ctx); err != nil || processed {
+			if processed, err := fixture.worker.ProcessNextCommand(ctx); err != nil || processed {
 				t.Fatalf("replay terminal command = %t, %v", processed, err)
 			}
 		})
@@ -104,7 +104,7 @@ func TestAutomaticAcknowledgementDeadlineAlsoAppliesToQueuedProviderCommand(t *t
 func TestAcknowledgementRetryNeverExtendsItsOriginalDeadline(t *testing.T) {
 	fixture := newAutomaticAcknowledgementTestFixture(t, false)
 	*fixture.clock = fixture.now.Add(4*time.Minute + 30*time.Second)
-	if processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err != nil || !processed {
+	if processed, err := fixture.worker.QueueNextTaskAcknowledgement(context.Background()); err != nil || !processed {
 		t.Fatalf("late configuration retry = %t, %v", processed, err)
 	}
 	var nextAttempt time.Time
@@ -130,7 +130,7 @@ func TestAcknowledgementDeadlineDoesNotExpireStaffMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	*fixture.clock = fixture.now.Add(6 * time.Minute)
-	if processed, err := fixture.module.ProcessNextCommand(ctx); err != nil || !processed || len(fixture.provider.commands) != 1 {
+	if processed, err := fixture.worker.ProcessNextCommand(ctx); err != nil || !processed || len(fixture.provider.commands) != 1 {
 		t.Fatalf("Staff message after acknowledgement deadline = %t, %v, %d provider calls", processed, err, len(fixture.provider.commands))
 	}
 	if fixture.provider.commands[0].MessageID != message.ID {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 
 import {
   createMessageFollowUpTask,
@@ -11,140 +11,94 @@ import {
 } from "../api/generated/sdk.gen"
 import type {
   ConversationTimelineItem,
+  ConversationTimelinePage,
   Message,
   UploadMessageAttachmentRequest,
 } from "../api/generated/types.gen"
-import { presentTimeline } from "../workspace-history"
-import { type PortalFailure, portalRequest } from "./portal-request"
+import { readFailure, usePages } from "../data/queries"
+import { portalRequest } from "./portal-request"
 
 const sentMessageHoldMilliseconds = 750
 
-export type EngagementTimeline = {
-  items: ConversationTimelineItem[]
-  nextCursor: string
-  loading: boolean
-  loadingOlder: boolean
-  failure?: PortalFailure
-  sent?: { id: string; visibleUntil: number }
-}
+const noItems: ConversationTimelineItem[] = []
+
+type SentMessage = { item: ConversationTimelineItem; visibleUntil: number }
 
 export function useEngagementTimeline({
   practiceID,
   phone,
+  hold,
 }: {
   practiceID: string
   phone: string
+  hold: boolean
 }) {
-  const [timeline, setTimeline] = useState<EngagementTimeline>({
-    items: [],
-    nextCursor: "",
-    loading: true,
-    loadingOlder: false,
-  })
-  const latest = useRef<AbortController>(undefined)
-  const older = useRef<AbortController>(undefined)
-  useEffect(
-    () => () => {
-      latest.current?.abort()
-      older.current?.abort()
+  const timeline = usePages({
+    live: "task-detail",
+    name: "engagement-timeline",
+    identity: { practiceID, phone },
+    hold,
+    read: async (identity, cursor, transport) => {
+      const requestedAt = Date.now()
+      const result = await getEngagementTimeline({
+        ...transport,
+        path: { phone: identity.phone },
+        query: {
+          practiceId: identity.practiceID,
+          groupCalls: true,
+          ...(cursor ? { cursor } : {}),
+          limit: 50,
+        },
+      })
+      return { ...result, data: result.data && { ...result.data, requestedAt } }
     },
-    [],
-  )
-
-  const readPage = useCallback(
-    (cursor: string, signal: AbortSignal) =>
-      portalRequest(
-        (transport) =>
-          getEngagementTimeline({
-            ...transport,
-            path: { phone },
-            query: {
-              practiceId: practiceID,
-              groupCalls: true,
-              ...(cursor ? { cursor } : {}),
-              limit: 50,
-            },
-          }),
-        signal,
-      ),
-    [practiceID, phone],
-  )
-
-  const refresh = useCallback(async () => {
-    latest.current?.abort()
-    older.current?.abort()
-    const controller = new AbortController()
-    latest.current = controller
-    setTimeline((current) => ({ ...current, loading: true }))
-    const outcome = await readPage("", controller.signal).catch(() => undefined)
-    if (!outcome) return false
-    if (!outcome.ok) {
-      setTimeline((current) => ({
-        ...current,
-        loading: false,
-        failure: outcome.failure,
-      }))
-      return false
-    }
-    const page = outcome.data
-    setTimeline((current) => {
-      const { sent } = current
-      const held =
-        sent && Date.now() < sent.visibleUntil
-          ? current.items.find((item) => item.id === sent.id)
-          : undefined
-      return {
-        items: held
-          ? [...page.items.filter((item) => item.id !== held.id), held]
-          : page.items,
-        nextCursor: page.nextCursor,
-        loading: false,
-        loadingOlder: current.loadingOlder,
-        ...(held ? { sent } : {}),
-      }
-    })
-    return true
-  }, [readPage])
-
-  async function showOlder() {
-    const cursor = timeline.nextCursor
-    if (!cursor || timeline.loadingOlder) return
-    const controller = new AbortController()
-    older.current = controller
-    setTimeline((current) => ({ ...current, loadingOlder: true }))
-    const outcome = await readPage(cursor, controller.signal).catch(() => undefined)
-    setTimeline((current) =>
-      outcome?.ok
-        ? {
-            ...current,
-            items: presentTimeline([...current.items, ...outcome.data.items]),
-            nextCursor: outcome.data.nextCursor,
-            loadingOlder: false,
-          }
-        : { ...current, loadingOlder: false },
-    )
-  }
-
+    combine: combineTimelinePages,
+  })
+  const [sent, setSent] = useState<SentMessage[]>([])
+  const loaded = timeline.status === "ready" ? timeline.data : undefined
+  const requestedAt = loaded?.requestedAt ?? 0
+  const items = useMemo(() => {
+    const held = sent.filter((message) => requestedAt < message.visibleUntil)
+    const heldIDs = new Set(held.map((message) => message.item.id))
+    const shown = loaded?.items ?? noItems
+    return held.length === 0
+      ? shown
+      : [...shown.filter((item) => !heldIDs.has(item.id)), ...held.map((message) => message.item)]
+  }, [loaded?.items, requestedAt, sent])
   const showSent = useCallback((message: Message) => {
-    setTimeline((current) => ({
-      ...current,
-      items: [
-        ...current.items.filter((item) => item.id !== message.id),
-        { type: "MESSAGE", id: message.id, occurredAt: message.createdAt, message },
-      ],
-      loading: false,
-      ...(message.delivery === "Sending"
-        ? {
-            sent: {
-              id: message.id,
-              visibleUntil: Date.now() + sentMessageHoldMilliseconds,
-            },
-          }
-        : {}),
-    }))
+    const visibleUntil =
+      Date.now() + (message.delivery === "Sending" ? sentMessageHoldMilliseconds : 0)
+    setSent((current) => [
+      ...current.filter((entry) => entry.item.id !== message.id),
+      {
+        item: { type: "MESSAGE", id: message.id, occurredAt: message.createdAt, message },
+        visibleUntil,
+      },
+    ])
   }, [])
+  const sending = sent.filter((entry) => entry.item.message?.delivery === "Sending").at(-1)
+  return {
+    items,
+    nextCursor: loaded?.nextCursor ?? "",
+    loading: timeline.status === "loading",
+    refreshing: timeline.status === "ready" && timeline.refreshing,
+    behind: timeline.behind,
+    loadingOlder: timeline.loadingMore,
+    requestedAt,
+    failure: readFailure(timeline),
+    ...(sending ? { sent: { id: sending.item.id, visibleUntil: sending.visibleUntil } } : {}),
+    refresh: timeline.retry,
+    showOlder: () => void timeline.loadMore(),
+    showSent,
+  }
+}
 
-  return { ...timeline, refresh, showOlder, showSent }
+function combineTimelinePages(pages: (ConversationTimelinePage & { requestedAt: number })[]) {
+  return {
+    items: pages.flatMap((page) => page.items),
+    nextCursor: pages.at(-1)!.nextCursor,
+    requestedAt: pages[0].requestedAt,
+  }
 }
 
 export function createFollowUpTask(message: Pick<Message, "id">) {

@@ -3,6 +3,7 @@ import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { TaskCallContext } from "./task-call-context.tsx"
+import { DataProvider } from "../../lib/data/provider.tsx"
 import type { Task } from "../../lib/api/generated/types.gen.ts"
 
 const task: Task = {
@@ -27,17 +28,18 @@ const task: Task = {
 
 function panel(props: Partial<Parameters<typeof TaskCallContext>[0]>) {
   return renderToStaticMarkup(
-    <TaskCallContext
-      task={task}
-      activeCall={undefined}
-      view="task"
-      canMutate
-      historyHint={0}
-      taskCallError=""
-      onTaskUpdated={() => {}}
-      onReturnToCall={() => {}}
-      {...props}
-    />,
+    <DataProvider>
+      <TaskCallContext
+        task={task}
+        activeCall={undefined}
+        view="task"
+        canMutate
+        taskCallError=""
+        onTaskUpdated={() => {}}
+        onReturnToCall={() => {}}
+        {...props}
+      />
+    </DataProvider>,
   )
 }
 

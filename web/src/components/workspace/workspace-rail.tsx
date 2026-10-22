@@ -425,8 +425,6 @@ export function WorkspaceRail({
                     locationID={projection.scope.locationScopeID}
                     search={projection.search.applied}
                     kind={folder.section}
-                    revision={projection.workspace?.version ?? 0}
-                    count={folder.count}
                     renderTask={renderTask}
                   />
                 )}

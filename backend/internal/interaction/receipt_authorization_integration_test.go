@@ -15,10 +15,11 @@ import (
 
 func TestReceiptOfficeAuthorizationIndependentOfStaffVoice(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	am := access.New(pool, nil)
-	_, err := am.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "synthetic", Practices: []access.PracticeProvision{
+	am := access.New(db.As(testdb.Portal), nil)
+	_, err := access.New(pool, nil).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "synthetic", Practices: []access.PracticeProvision{
 		{Key: "clinical", Name: "Synthetic Practice", Locations: []access.LocationProvision{
 			{Key: "medical", Name: "Medical", AbitaOfficeKeys: []string{"medical"}},
 			{Key: "optical", Name: "Optical", AbitaOfficeKeys: []string{"optical"}},
@@ -39,13 +40,13 @@ func TestReceiptOfficeAuthorizationIndependentOfStaffVoice(t *testing.T) {
 		}
 		locations[key], practices[key] = location, practice
 	}
-	calling := humancalling.New(pool, am, nil, humancalling.Config{HandoffSIPDomain: "synthetic.example"}, nil)
-	if err := calling.ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{PracticeKey: "clinical", LocationKey: "medical", Number: "+15555550100", Enabled: true}}); err != nil {
+	calling := humancalling.New(db.As(testdb.Portal), am, nil, humancalling.Config{HandoffSIPDomain: "synthetic.example"}, nil)
+	if err := humancalling.New(pool, am, nil, humancalling.Config{HandoffSIPDomain: "synthetic.example"}, nil).ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{PracticeKey: "clinical", LocationKey: "medical", Number: "+15555550100", Enabled: true}}); err != nil {
 		t.Fatal(err)
 	}
 	service := access.ServiceIdentity{Subject: "synthetic-agent", PracticeID: practices["medical"], LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityIngestAIInteraction, access.ServiceCapabilityCreateTask, access.ServiceCapabilityHumanHandoff}}
-	module := New(pool, am, func() time.Time { return now })
-	wm := work.New(pool, am, nil)
+	module := New(db.As(testdb.Portal), am, func() time.Time { return now })
+	wm := work.New(db.As(testdb.Portal), am, nil)
 	for _, scenario := range []struct{ name, key, phone, location string }{
 		{"inbound-alias", "medical", "+15555550101", "medical"},
 		{"no-staff-voice", "optical", "+15555550102", "optical"},

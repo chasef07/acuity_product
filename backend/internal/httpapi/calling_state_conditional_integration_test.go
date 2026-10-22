@@ -18,19 +18,19 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
-func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *testing.T) {
-	pool := testdb.Open(t)
+func TestConditionalCallingStateReturnsNotModifiedUntilTheBodyChanges(t *testing.T) {
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	identity := access.Identity{
 		Subject:       "conditional-calling-state-staff",
 		Email:         "staff@conditional-calling-state.test",
 		EmailVerified: true,
 	}
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
-		Environment:       "test",
-		RequestedBy:       "conditional-calling-state-test",
-		PlatformOperators: []string{"operator@conditional-calling-state.test"},
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "conditional-calling-state-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "conditional-calling-state",
 			Name:      "Conditional Calling State",
@@ -71,7 +71,7 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 	}
 
 	calling := humancalling.New(
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		httpCallingProvider{},
 		humancalling.Config{},
@@ -80,7 +80,7 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 	handler, err := newPortalHandlerWithCalling(
 		t,
 		httpapi.Config{AcquireTimeout: 100 * time.Millisecond},
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		staticAuthenticator{"conditional-token": identity},
 		calling,
@@ -104,54 +104,33 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 	}
 	etag := initial.Header.Get("ETag")
 	_ = initial.Body.Close()
-	if etag == "" {
-		t.Fatal("initial Calling state omitted ETag")
+	if !strings.HasPrefix(etag, `W/"`) {
+		t.Fatalf("Calling state ETag = %q, want a weak validator", etag)
 	}
 
-	lock, err := pool.Acquire(context.Background())
-	if err != nil {
-		t.Fatalf("acquire full-state lock connection: %v", err)
+	now = now.Add(4 * time.Second)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_softphone_leases
+		SET lease_expires_at = lease_expires_at + interval '4 seconds',
+			readiness_updated_at = $2, version = version + 1, updated_at = $2
+		WHERE user_subject = $1
+	`, identity.Subject, now); err != nil {
+		t.Fatalf("renew conditional Calling lease: %v", err)
 	}
-	transaction, err := lock.Begin(context.Background())
-	if err != nil {
-		lock.Release()
-		t.Fatalf("begin full-state lock: %v", err)
-	}
-	t.Cleanup(func() {
-		if transaction != nil {
-			_ = transaction.Rollback(context.Background())
-		}
-		if lock != nil {
-			lock.Release()
-		}
-	})
-	if _, err := transaction.Exec(
-		context.Background(),
-		`LOCK TABLE human_calling_handoffs IN ACCESS EXCLUSIVE MODE`,
-	); err != nil {
-		t.Fatalf("lock full-state table: %v", err)
-	}
-
 	assertCallingStateNotModified(
 		t,
 		server.Client(),
 		server.URL+"/v1/calling/state",
 		"conditional-token",
 		etag,
-		"unchanged state",
+		"lease heartbeat",
 	)
-	if err := transaction.Rollback(context.Background()); err != nil {
-		t.Fatalf("release full-state table lock: %v", err)
-	}
-	transaction = nil
-	lock.Release()
-	lock = nil
 
 	taskTransaction, err := pool.Begin(context.Background())
 	if err != nil {
 		t.Fatalf("begin unrelated Task creation: %v", err)
 	}
-	if _, err := work.New(pool, accessModule, func() time.Time { return now }).EnsureCallFollowUp(
+	if _, err := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }).EnsureCallFollowUp(
 		context.Background(),
 		taskTransaction,
 		work.EnsureCallFollowUpCommand{
@@ -230,18 +209,7 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 		t.Fatalf("expired-lease softphone = %#v, want no ownership or availability", expiredState.Softphone)
 	}
 
-	operator := access.Identity{
-		Subject:       "conditional-calling-state-operator",
-		Email:         "operator@conditional-calling-state.test",
-		EmailVerified: true,
-	}
-	if err := accessModule.RevokeMembership(context.Background(), access.RevokeMembershipCommand{
-		Identity:     operator,
-		PracticeID:   authorization.Practice.ID,
-		MembershipID: authorization.Membership.ID,
-	}); err != nil {
-		t.Fatalf("revoke conditional Calling Membership: %v", err)
-	}
+	testaccess.SeedRevokedMembership(t, pool, authorization, now)
 	revokedRequest, err := http.NewRequest(
 		http.MethodGet,
 		server.URL+"/v1/calling/state",
@@ -268,15 +236,16 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 }
 
 func TestCallingStateLogsTheBrowserCallingChangeReport(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.October, 13, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	identity := access.Identity{
 		Subject:       "calling-change-report-staff",
 		Email:         "staff@calling-change-report.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "calling-change-report-test",
 		PlatformOperators: []string{"operator@calling-change-report.test"},
@@ -307,11 +276,11 @@ func TestCallingStateLogsTheBrowserCallingChangeReport(t *testing.T) {
 				slog.New(slog.NewJSONHandler(&metrics, nil)),
 			),
 		},
-		pool,
+		db.As(testdb.Portal),
 		accessModule,
 		staticAuthenticator{"change-report-token": identity},
 		humancalling.New(
-			pool,
+			db.As(testdb.Portal),
 			accessModule,
 			httpCallingProvider{},
 			humancalling.Config{},

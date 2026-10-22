@@ -5,21 +5,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestWorkerProjectsCloseoutAndPreservesHistoricalSummaryReceipt(t *testing.T) {
-	pool := testdb.Open(t)
-	createDatabaseRoles(t, pool)
-	applyDatabaseGrants(t, pool)
+	db := testdb.Open(t)
+	pool := db.Owner
 
 	ctx := context.Background()
 	now := time.Date(2026, time.August, 11, 8, 0, 0, 0, time.UTC)
@@ -80,19 +76,7 @@ func TestWorkerProjectsCloseoutAndPreservesHistoricalSummaryReceipt(t *testing.T
 		t.Fatalf("seed pending receipt: %v", err)
 	}
 
-	config, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
-	if err != nil {
-		t.Fatalf("parse worker database config: %v", err)
-	}
-	config.AfterConnect = func(ctx context.Context, connection *pgx.Conn) error {
-		_, err := connection.Exec(ctx, "SET ROLE acuity_worker")
-		return err
-	}
-	workerPool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatalf("open worker pool: %v", err)
-	}
-	t.Cleanup(workerPool.Close)
+	workerPool := db.As(testdb.Worker)
 	module := interaction.New(
 		workerPool,
 		access.New(workerPool, func() time.Time { return now }),

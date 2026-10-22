@@ -16,10 +16,11 @@ import (
 )
 
 func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 15, 14, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "workspace-queue-order-test",
 		Practices: []access.PracticeProvision{{
@@ -47,7 +48,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		EmailVerified: true,
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
-	workModule := work.New(pool, accessModule, func() time.Time { return now })
+	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	service := access.ServiceIdentity{
 		Subject:       "workspace-queue-service",
 		PracticeID:    authorization.Practice.ID,
@@ -82,7 +83,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 	normalNew := create("normal-new", "Routine surgery records", work.TaskUrgencyNormal, work.TaskCategoryDocumentation)
 	nonUrgent := create("non-urgent", "Optional follow-up", work.TaskUrgencyNonUrgent, work.TaskCategoryDocumentation)
 
-	reads := workspace.New(pool, accessModule)
+	reads := workspace.New(db.As(testdb.Portal), accessModule)
 	first, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity: identity, PracticeID: authorization.Practice.ID, Limit: 2,
 	})

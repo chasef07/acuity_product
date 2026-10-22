@@ -24,20 +24,20 @@ import {
 } from "./workspace-sync/workspace-request-budget.ts"
 import type { TaskCategoryFilter } from "./workspace-triage.ts"
 
-export type WorkspaceLoadState =
+type WorkspaceLoadState =
   | "loading"
   | "ready"
   | "unauthenticated"
   | "unauthorized"
   | "unavailable"
 
-export type WorkspaceConnectionState =
+type WorkspaceConnectionState =
   | "connecting"
   | "connected"
   | "degraded"
 
 export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics" | "manage-agent"
-export type WorkspaceContextView = "task" | "call" | "ai-call"
+type WorkspaceContextView = "task" | "call" | "ai-call"
 export type ManageAgentPage = "home" | "transcripts" | "knowledge" | "insurance"
 
 export function isWorkView(view: WorkspaceView) {
@@ -45,7 +45,7 @@ export function isWorkView(view: WorkspaceView) {
 }
 export type WorkspaceRailSection = "tasks" | "calls" | "appointments" | "texts" | "completed"
 
-export type WorkspaceRailState = {
+type WorkspaceRailState = {
   expanded: WorkspaceRailSection[]
   taskResponsibility?: "mine" | "all"
   taskCategory: TaskCategoryFilter
@@ -60,13 +60,13 @@ export type EngagementSummary = {
   openTaskCount: number
 }
 
-export type WorkspaceScope = {
+type WorkspaceScope = {
   practiceID: string
   locationID: string
   locationScopeID: string
 }
 
-export type WorkspaceQueryWindow<T> = {
+type WorkspaceQueryWindow<T> = {
   items: T[]
   nextCursor: string
   loading: boolean
@@ -110,7 +110,7 @@ export type WorkspaceProjectionState = {
   rail: WorkspaceRailState
 }
 
-export type WorkspaceAuthentication =
+type WorkspaceAuthentication =
   | { status: "authenticated"; token: string }
   | { status: "unauthenticated" | "unavailable" }
 
@@ -183,7 +183,7 @@ export type WorkspaceRealtimeCallbacks = {
   onUnauthorized: () => void
 }
 
-export type WorkspaceRealtimeController = {
+type WorkspaceRealtimeController = {
   setScope: (scope?: { practiceID: string; locationID: string }) => void
   refresh: () => Promise<void>
   visibilityChanged: () => void

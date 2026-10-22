@@ -23,12 +23,13 @@ import (
 
 func TestReceiptClaimHoldsEachCallSessionBehindItsInFlightReceipt(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
 	currentTime := now
-	calling := humancalling.New(pool, access.New(pool, time.Now), nil, humancalling.Config{},
+	calling := humancalling.New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), time.Now), nil, humancalling.Config{},
 		func() time.Time { return currentTime })
-	insertSessionReceipt := newSignedReceiptIngress(t, pool)
+	insertSessionReceipt := newSignedReceiptIngress(t, db)
 
 	insertSessionReceipt("session-1-first", "session-1", now.Add(-3*time.Second), now.Add(-3*time.Second))
 	insertSessionReceipt("session-1-second", "session-1", now.Add(-2*time.Second), now.Add(-2*time.Second))
@@ -85,10 +86,11 @@ func TestReceiptClaimHoldsEachCallSessionBehindItsInFlightReceipt(t *testing.T) 
 func TestConcurrentReceiptWorkersApplyEachCallSessionInArrivalOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool := testdb.Open(t)
-	database := &claimTimingDatabase{Database: pool, claimed: map[string]time.Time{}}
-	calling := humancalling.New(database, access.New(pool, time.Now), nil, humancalling.Config{}, time.Now)
-	insertSessionReceipt := newSignedReceiptIngress(t, pool)
+	db := testdb.Open(t)
+	pool := db.Owner
+	database := &claimTimingDatabase{Database: db.As(testdb.Worker), claimed: map[string]time.Time{}}
+	calling := humancalling.New(database, access.New(db.As(testdb.Worker), time.Now), nil, humancalling.Config{}, time.Now)
+	insertSessionReceipt := newSignedReceiptIngress(t, db)
 	const sessions, perSession, workers = 4, 8, 4
 	receivedAt := time.Now().Add(-time.Minute)
 	for index := range sessions * perSession {
@@ -169,7 +171,7 @@ func TestConcurrentReceiptWorkersApplyEachCallSessionInArrivalOrder(t *testing.T
 
 func newSignedReceiptIngress(
 	t *testing.T,
-	pool *pgxpool.Pool,
+	db *testdb.DB,
 ) func(eventID, session string, receivedAt, nextAttemptAt time.Time) {
 	t.Helper()
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -187,7 +189,7 @@ func newSignedReceiptIngress(
 		if err != nil {
 			t.Fatal(err)
 		}
-		ingress := humancalling.New(pool, nil, nil, humancalling.Config{WebhookPublicKeys: [][]byte{publicKey}},
+		ingress := humancalling.New(db.As(testdb.Provider), nil, nil, humancalling.Config{WebhookPublicKeys: [][]byte{publicKey}},
 			func() time.Time { return receivedAt })
 		timestamp := strconv.FormatInt(receivedAt.Unix(), 10)
 		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, append([]byte(timestamp+"|"), raw...)))
@@ -195,7 +197,7 @@ func newSignedReceiptIngress(
 			t.Fatalf("signed receipt=%+v error=%v", receipt, err)
 		}
 		var stored string
-		if err := pool.QueryRow(ctx, `
+		if err := db.Owner.QueryRow(ctx, `
 			UPDATE human_calling_provider_receipts SET next_attempt_at = $2
 			WHERE event_id = $1
 			RETURNING call_session_id

@@ -10,7 +10,7 @@ import (
 )
 
 func TestBookingPatientClassificationUsesSuccessfulRegistration(t *testing.T) {
-	pool := testdb.Open(t)
+	pool := testdb.Open(t).Owner
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
  INSERT INTO access_practices(id,provisioning_key,name) VALUES('00000000-0000-0000-0000-000000000101','classification','Synthetic');

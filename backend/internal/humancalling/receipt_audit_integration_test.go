@@ -15,7 +15,8 @@ import (
 )
 
 func TestProviderReceiptAuditAttributesTerminalFailuresWithoutIdentifiers(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.August, 11, 9, 0, 0, 0, time.UTC)
 	ctx := context.Background()
 	const (
@@ -84,17 +85,21 @@ func TestProviderReceiptAuditAttributesTerminalFailuresWithoutIdentifiers(t *tes
 	}
 
 	var metrics bytes.Buffer
-	calling := humancalling.New(pool, nil, nil, humancalling.Config{
+	callingConfig := humancalling.Config{
 		Observer: observability.NewLogger(
 			observability.RuntimeWorker,
 			"worker-receipt-audit-test",
 			slog.New(slog.NewJSONHandler(&metrics, nil)),
 		),
-	}, func() time.Time {
+	}
+	calling := humancalling.New(db.As(testdb.Portal), nil, nil, callingConfig, func() time.Time {
+		return now
+	})
+	callingWorker := humancalling.New(db.As(testdb.Worker), nil, nil, callingConfig, func() time.Time {
 		return now
 	})
 	for range 2 {
-		processed, err := calling.ProcessNextReceipt(ctx)
+		processed, err := callingWorker.ProcessNextReceipt(ctx)
 		if err != nil || !processed {
 			t.Fatalf("process terminal receipt failure: processed=%t err=%v", processed, err)
 		}
@@ -155,7 +160,7 @@ func TestProviderReceiptAuditAttributesTerminalFailuresWithoutIdentifiers(t *tes
 			t.Fatalf("receipt audit exposed %q: %s", secret, encoded)
 		}
 	}
-	if err := calling.ReportReceiptQueue(ctx); err != nil {
+	if err := callingWorker.ReportReceiptQueue(ctx); err != nil {
 		t.Fatalf("report provider receipt queue: %v", err)
 	}
 	for _, field := range []string{

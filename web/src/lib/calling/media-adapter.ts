@@ -12,7 +12,7 @@ export type MediaFailure =
   | "browser"
   | "network"
   | "provider"
-export type MediaAttachmentOutcome = "attached" | "ended"
+type MediaAttachmentOutcome = "attached" | "ended"
 
 export type IncomingMediaLeg = {
   providerLegID: string

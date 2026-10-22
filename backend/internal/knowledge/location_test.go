@@ -14,10 +14,11 @@ import (
 )
 
 func TestReadLocationReturnsTheCurrentRevisionForAnAuthorizedLocation(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	a := access.New(pool, time.Now)
-	if _, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{
+	a := access.New(db.As(testdb.Portal), time.Now)
+	if _, err := access.New(pool, time.Now).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{
 		Key:  "knowledge-read-test",
 		Name: "Synthetic practice",
 		Locations: []access.LocationProvision{
@@ -42,7 +43,7 @@ func TestReadLocationReturnsTheCurrentRevisionForAnAuthorizedLocation(t *testing
 		locations[location.Name] = location.ID
 	}
 	practiceID := authorization.Practice.ID
-	m, err := New(pool, a, &testEmbedder{}, Config{})
+	m, err := New(db.As(testdb.Portal), a, &testEmbedder{}, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

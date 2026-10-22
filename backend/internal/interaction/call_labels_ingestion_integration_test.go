@@ -12,10 +12,11 @@ import (
 )
 
 func TestCloseoutReceiptProjectsSuppliedLabelsWithoutRejectingUnavailableClassification(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	practice, location := seedRetryLocation(t, pool, "label-receipts")
-	module := New(pool, access.New(pool, nil), nil)
+	module := New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), nil), nil)
 	ended := time.Now().UTC().Truncate(time.Second)
 	for _, c := range []struct{ source, closeout, intent, outcome, status string }{
 		{"complete", `{"evaluation":{"status":"incomplete","classification":{"version":"call-labels-v1","model":"typesafe/jev-1.14","status":"complete","intent":"office_information","outcome":"resolved","answers":{"private":true}}}}`, "office_information", "resolved", "complete"},

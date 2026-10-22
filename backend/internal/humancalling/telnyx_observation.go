@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -151,10 +152,7 @@ func (adapter *TelnyxAdapter) ObserveCall(ctx context.Context, connectionID, cal
 }
 
 func (event telnyxReadEvent) fact(legID, sessionID string) (ProviderFact, bool, error) {
-	switch FactType(event.Name) {
-	case FactCallInitiated, FactCallAnswered, FactCallBridged, FactCallHangup,
-		FactPlaybackStarted, FactPlaybackEnded, FactSpeakStarted, FactSpeakEnded, FactRecordingSaved, FactRecordingError:
-	default:
+	if !slices.Contains(providerFactTypes, FactType(event.Name)) {
 		return ProviderFact{}, false, nil
 	}
 	current := event.LegID != "" || event.SessionID != "" || event.OccurredAt != "" || len(event.Payload) != 0

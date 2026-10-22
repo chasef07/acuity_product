@@ -14,15 +14,16 @@ import (
 )
 
 func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Date(2026, 10, 7, 15, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
-	accessModule := access.New(pool, clock)
+	accessModule := access.New(db.As(testdb.Portal), clock)
 	first := access.Identity{Subject: "review-first", Email: "first@review.test", EmailVerified: true}
 	second := access.Identity{Subject: "review-second", Email: "second@review.test", EmailVerified: true}
 	staff := access.Identity{Subject: "review-staff", Email: "staff@review.test", EmailVerified: true}
-	if _, err := accessModule.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{first.Email, second.Email}, Practices: []access.PracticeProvision{{Key: "review", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "main", Name: "Main"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleAdmin, LocationScope: access.LocationScopeAll}}}}}); err != nil {
+	if _, err := access.New(pool, clock).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{first.Email, second.Email}, Practices: []access.PracticeProvision{{Key: "review", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "main", Name: "Main"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleAdmin, LocationScope: access.LocationScopeAll}}}}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, identity := range []access.Identity{first, second, staff} {
@@ -65,7 +66,7 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		{"list_available_appointments", `{}`, "success: Openings found.\nslot-1 – Monday"},
 	}, map[string]float64{"new_booking_requested": 0.95, "time_offered": 0.2, "promises_backed": 0.9, "ended_while_caller_active": 0.3, "office_question_answered": 0.9, "office_rules_grounded": 0.9})
 
-	module := New(pool, accessModule, clock)
+	module := New(db.As(testdb.Portal), accessModule, clock)
 	backfill, err := module.BackfillScorecards(ctx, time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC), 7)
 	if err != nil || backfill.Calls != 32 {
 		t.Fatalf("backfill: %+v %v", backfill, err)

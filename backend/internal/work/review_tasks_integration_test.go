@@ -11,16 +11,16 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSharedReviewTasksPreserveEvidenceAndRejectStaleCompletion(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	practice, location := auth.Practice.ID, auth.Locations[0].ID
 	var thread string
 	if err := pool.QueryRow(ctx, `INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone,created_at,updated_at) VALUES($1,$2,'+15555550100','+15555550123',$3,$3) RETURNING id::text`, practice, location, now).Scan(&thread); err != nil {
@@ -92,13 +92,14 @@ func TestSharedReviewTasksPreserveEvidenceAndRejectStaleCompletion(t *testing.T)
 
 func TestAppointmentReviewIsOneSpringHillTaskPerInteraction(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	practice, springHill, otherOffice := auth.Practice.ID, auth.Locations[0].ID, auth.Locations[1].ID
-	ensure, reviews := appointmentReviewHarness(t, pool, m, practice)
+	ensure, reviews := appointmentReviewHarness(t, db, m, practice)
 
 	ensure(otherOffice, "synthetic-other-office", "Review booked appointment", "Verify insurance and provider for this appointment.", now)
 	if got := reviews(); len(got) != 0 {
@@ -146,12 +147,12 @@ type appointmentReview struct {
 	version                   int64
 }
 
-func appointmentReviewHarness(t *testing.T, pool *pgxpool.Pool, m *work.Module, practice string) (func(string, string, string, string, time.Time), func() []appointmentReview) {
+func appointmentReviewHarness(t *testing.T, db *testdb.DB, m *work.Module, practice string) (func(string, string, string, string, time.Time), func() []appointmentReview) {
 	ctx := context.Background()
 	interactionID := uuid.NewString()
 	ensure := func(locationID, sourceCallID, title, message string, at time.Time) {
 		t.Helper()
-		tx, err := pool.Begin(ctx)
+		tx, err := db.As(testdb.Worker).Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -165,7 +166,7 @@ func appointmentReviewHarness(t *testing.T, pool *pgxpool.Pool, m *work.Module, 
 	}
 	reviews := func() []appointmentReview {
 		t.Helper()
-		rows, _ := pool.Query(ctx, `SELECT id::text,title,source_message,state,version FROM work_tasks WHERE origin='APPOINTMENT_REVIEW' ORDER BY created_at,state,id`)
+		rows, _ := db.Owner.Query(ctx, `SELECT id::text,title,source_message,state,version FROM work_tasks WHERE origin='APPOINTMENT_REVIEW' ORDER BY created_at,state,id`)
 		result, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (appointmentReview, error) {
 			var item appointmentReview
 			return item, row.Scan(&item.id, &item.title, &item.message, &item.state, &item.version)
@@ -180,12 +181,12 @@ func appointmentReviewHarness(t *testing.T, pool *pgxpool.Pool, m *work.Module, 
 
 func TestCompletedCheckpointReviewCannotHideSameTimeCloseoutEvidence(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
-	ensure, reviews := appointmentReviewHarness(t, pool, m, auth.Practice.ID)
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
+	ensure, reviews := appointmentReviewHarness(t, db, m, auth.Practice.ID)
 	location, occurredAt := auth.Locations[0].ID, now.Add(-time.Minute)
 
 	ensure(location, "synthetic-same-time", "Check appointment booking", "The agent could not confirm the booking.", occurredAt)

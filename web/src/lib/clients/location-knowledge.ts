@@ -5,7 +5,8 @@ import {
   readLocationKnowledgeRevision,
 } from "../api/generated/sdk.gen"
 import type { KnowledgePublication } from "../api/generated/types.gen"
-import { portalRequest, usePortalQuery } from "./portal-request"
+import { useRead } from "../data/queries"
+import { portalRequest } from "./portal-request"
 
 type LocationScope = {
   practiceID: string
@@ -13,27 +14,28 @@ type LocationScope = {
 }
 
 export function useLocationKnowledge({ practiceID, locationID }: LocationScope) {
-  return usePortalQuery(
-    locationID
-      ? JSON.stringify(["location-knowledge", practiceID, locationID])
-      : null,
-    (transport) =>
+  return useRead({
+    name: "location-knowledge",
+    identity: { practiceID, locationID },
+    enabled: Boolean(locationID),
+    read: (identity, transport) =>
       queryLocationKnowledge({
         ...transport,
-        body: { practiceId: practiceID, locationId: locationID },
+        body: { practiceId: identity.practiceID, locationId: identity.locationID },
       }),
-  )
+  })
 }
 
 export function useLocationKnowledgeHistory({ practiceID, locationID }: LocationScope) {
-  return usePortalQuery(
-    JSON.stringify(["location-knowledge-history", practiceID, locationID]),
-    (transport) =>
+  return useRead({
+    name: "location-knowledge-history",
+    identity: { practiceID, locationID },
+    read: (identity, transport) =>
       queryLocationKnowledgeHistory({
         ...transport,
-        body: { practiceId: practiceID, locationId: locationID },
+        body: { practiceId: identity.practiceID, locationId: identity.locationID },
       }),
-  )
+  })
 }
 
 export function useLocationKnowledgeRevision({
@@ -41,16 +43,20 @@ export function useLocationKnowledgeRevision({
   locationID,
   revisionID,
 }: LocationScope & { revisionID: string | undefined }) {
-  return usePortalQuery(
-    revisionID
-      ? JSON.stringify(["location-knowledge-revision", practiceID, locationID, revisionID])
-      : null,
-    (transport) =>
+  return useRead({
+    name: "location-knowledge-revision",
+    identity: { practiceID, locationID, revisionID },
+    enabled: Boolean(revisionID),
+    read: (identity, transport) =>
       readLocationKnowledgeRevision({
         ...transport,
-        body: { practiceId: practiceID, locationId: locationID, revisionId: revisionID! },
+        body: {
+          practiceId: identity.practiceID,
+          locationId: identity.locationID,
+          revisionId: identity.revisionID ?? "",
+        },
       }),
-  )
+  })
 }
 
 export function publishLocationKnowledge(publication: KnowledgePublication) {

@@ -100,7 +100,7 @@ func (m *Module) finishEndedCallLeg(
 		); err != nil {
 			return err
 		}
-		if err := m.recordCallingChange(ctx, tx, ended.practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, ended.practiceID); err != nil {
 			return err
 		}
 		return nil
@@ -140,7 +140,7 @@ func (m *Module) finishEndedCallLeg(
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_calls
 				SET terminal_outcome = COALESCE(terminal_outcome, 'ABANDONED'),
-					ended_at = COALESCE(ended_at, $2), version = version + 1, updated_at = $3
+					ended_at = COALESCE(ended_at, $2), updated_at = $3
 				WHERE id = $1
 			`, ended.callID, fact.OccurredAt, m.now()); err != nil {
 				return fmt.Errorf("mark caller abandonment: %w", err)
@@ -156,7 +156,7 @@ func (m *Module) finishEndedCallLeg(
 			SET terminal_outcome = COALESCE(terminal_outcome, 'ENDED'),
 				ended_at = COALESCE(ended_at, $2),
 				disposition_deadline = COALESCE(disposition_deadline, $4),
-				version = version + 1, updated_at = $3
+				updated_at = $3
 			WHERE id = $1
 		`, ended.callID, fact.OccurredAt, m.now(), m.now().Add(m.config.DispositionDuration)); err != nil {
 			return fmt.Errorf("end connected Call: %w", err)
@@ -168,7 +168,7 @@ func (m *Module) finishEndedCallLeg(
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_calls
 			SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
-				version = version + 1, updated_at = $3
+				updated_at = $3
 			WHERE id = $1 AND terminal_outcome IS NULL
 		`, ended.callID, fact.OccurredAt, m.now()); err != nil {
 			return fmt.Errorf("end unanswered outbound Call: %w", err)
@@ -191,7 +191,7 @@ func (m *Module) finishEndedCallLeg(
 		sanitizeCode(fact.HangupCause), fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, ended.practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, ended.practiceID); err != nil {
 		return err
 	}
 	return nil
@@ -247,7 +247,7 @@ func (m *Module) startCallLegVoicemail(
 			"voice":    "female",
 			"language": "en-US",
 			"client_state": encodeCallLegClientState(
-				callID, callerLegID, "CALLER", "voicemail_greeting",
+				callID, callerLegID, roleCaller, kindVoicemailGreeting,
 			),
 		},
 		"",
@@ -410,7 +410,7 @@ func (m *Module) endCallLegs(
 			ctx, tx, callID, leg.id, "", leg.subject, CommandHangupLeg,
 			leg.controlID,
 			map[string]any{"client_state": encodeCallLegClientState(
-				callID, leg.id, leg.role, "cleanup",
+				callID, leg.id, callLegRole(leg.role), kindCleanup,
 			)},
 			"",
 		); err != nil {
@@ -427,13 +427,20 @@ func (m *Module) failRoutingCall(
 	errorCode string,
 ) error {
 	var callerLegID, callerControlID string
+	var terminal bool
 	if err := tx.QueryRow(ctx, `
-		SELECT id::text, COALESCE(provider_call_control_id, '')
-		FROM human_calling_call_legs
-		WHERE call_id = $1 AND role = 'CALLER'
-		FOR UPDATE
-	`, callID).Scan(&callerLegID, &callerControlID); err != nil {
+		SELECT caller.id::text, COALESCE(caller.provider_call_control_id, ''),
+			call.terminal_outcome IS NOT NULL
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs caller
+			ON caller.call_id = call.id AND caller.role = 'CALLER'
+		WHERE call.id = $1
+		FOR UPDATE OF call, caller
+	`, callID).Scan(&callerLegID, &callerControlID, &terminal); err != nil {
 		return fmt.Errorf("lock routing-failure caller: %w", err)
+	}
+	if terminal {
+		return nil
 	}
 	if _, err := m.ensureRecoveryOutcome(ctx, tx, callID, RecoveryMissedCall,
 		"ROUTING_FAILED", ProviderFact{OccurredAt: m.now()}); err != nil {
@@ -447,7 +454,7 @@ func (m *Module) failRoutingCall(
 			ctx, tx, callID, callerLegID, "", "", CommandHangupLeg,
 			callerControlID,
 			map[string]any{"client_state": encodeCallLegClientState(
-				callID, callerLegID, "CALLER", "routing_failure",
+				callID, callerLegID, roleCaller, kindRoutingFailure,
 			)},
 			"",
 		); err != nil {

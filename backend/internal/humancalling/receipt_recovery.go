@@ -51,8 +51,8 @@ func (m *Module) RecoverQuarantinedRingtone(
 	fact, supported, err := normalizeTelnyxFact(raw)
 	state, hasState := parseCallLegClientState(fact.ClientState)
 	if err != nil || !supported || !hasState || fact.EventID != eventID || state.CallID != callID ||
-		fact.Type != FactPlaybackEnded || fact.PlaybackStatus != "call_hangup" || state.Role != "STAFF" ||
-		!hangupClientState(state.Kind) {
+		fact.Type != FactPlaybackEnded || fact.PlaybackStatus != "call_hangup" || state.Role != roleStaff ||
+		!hangupRequested(state.Kind) {
 		return ErrConflict
 	}
 	var terminal bool
@@ -80,8 +80,12 @@ func (m *Module) RecoverQuarantinedRingtone(
 	`, callID, eventID).Scan(&active); err != nil || active {
 		return ErrConflict
 	}
-	if err := requireOutboundRingtoneFact(ctx, tx, fact, state); err != nil {
+	expected, err := requireOutboundRingtoneFact(ctx, tx, fact, state)
+	if err != nil {
 		return err
+	}
+	if !expected {
+		return ErrConflict
 	}
 	if _, err := claimProviderFact(ctx, tx, fact, m.now()); err != nil {
 		return err

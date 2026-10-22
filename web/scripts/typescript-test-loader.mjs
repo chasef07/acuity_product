@@ -31,6 +31,9 @@ export async function resolve(specifier, context, nextResolve) {
 }
 
 export async function load(url, context, nextLoad) {
+  if (url.startsWith("file:") && url.endsWith(".module.css")) {
+    return { format: "module", source: "export default {}", shortCircuit: true }
+  }
   if (url.startsWith("file:") && /\.tsx?$/.test(url)) {
     const filename = fileURLToPath(url)
     const source = await readFile(filename, "utf8")

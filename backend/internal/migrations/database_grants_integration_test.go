@@ -2,14 +2,11 @@ package migrations_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
-	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
-	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -23,9 +20,7 @@ var runtimeRoles = []string{
 }
 
 func TestPortalCanLockServiceVoiceAuthorization(t *testing.T) {
-	pool := testdb.Open(t)
-	createDatabaseRoles(t, pool)
-	applyDatabaseGrants(t, pool)
+	pool := testdb.Open(t).Owner
 
 	ctx := context.Background()
 	var practiceID, locationID string
@@ -86,74 +81,8 @@ func TestPortalCanLockServiceVoiceAuthorization(t *testing.T) {
 	}
 }
 
-func TestPortalCreatesAITask(t *testing.T) {
-	pool := testdb.Open(t)
-	createDatabaseRoles(t, pool)
-	applyDatabaseGrants(t, pool)
-
-	ctx := context.Background()
-	var practiceID string
-	if err := pool.QueryRow(ctx, `
-		WITH practice AS (
-			INSERT INTO access_practices (provisioning_key, name)
-			VALUES ('ai-task-grant', 'AI Task Grant')
-			RETURNING id
-		), location AS (
-			INSERT INTO access_locations (practice_id, provisioning_key, name)
-			SELECT id, 'main', 'Main' FROM practice
-			RETURNING practice_id, id
-		)
-		INSERT INTO access_abita_office_locations (practice_id, office_key, location_id)
-		SELECT practice_id, 'main', id FROM location
-		RETURNING practice_id::text
-	`).Scan(&practiceID); err != nil {
-		t.Fatalf("seed AI Task office: %v", err)
-	}
-
-	config, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
-	if err != nil {
-		t.Fatalf("parse portal database config: %v", err)
-	}
-	config.AfterConnect = func(ctx context.Context, connection *pgx.Conn) error {
-		_, err := connection.Exec(ctx, "SET ROLE acuity_portal")
-		return err
-	}
-	portalPool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatalf("open portal pool: %v", err)
-	}
-	t.Cleanup(portalPool.Close)
-	now := time.Date(2026, time.October, 14, 13, 40, 0, 0, time.UTC)
-	module := work.New(
-		portalPool,
-		access.New(portalPool, func() time.Time { return now }),
-		func() time.Time { return now },
-	)
-	if _, _, err := module.CreateAITask(ctx, work.CreateAITaskCommand{
-		Service: access.ServiceIdentity{
-			Subject:       "abita-agent",
-			PracticeID:    practiceID,
-			LocationScope: access.LocationScopeAll,
-			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
-		},
-		OfficeKey:      "main",
-		OfficePhone:    "+17275550112",
-		SourceCallID:   "ai-task-grant-call",
-		IdempotencyKey: "ai-task-grant-call",
-		Phone:          "+17275550111",
-		Summary:        "Caller asked for a callback.",
-		Message:        "Caller asked the office to call back about an appointment.",
-		Category:       work.TaskCategoryAppointments,
-		Urgency:        work.TaskUrgencyNormal,
-	}); err != nil {
-		t.Fatalf("create AI Task as acuity_portal: %v", err)
-	}
-}
-
 func TestDatabaseGrantsMatchRuntimeAuthority(t *testing.T) {
-	pool := testdb.Open(t)
-	createDatabaseRoles(t, pool)
-	applyDatabaseGrants(t, pool)
+	pool := testdb.Open(t).Owner
 	assertRepresentativeRuntimeQueries(t, pool)
 	createFutureMigrationTables(t, pool)
 	assertSequencePrivileges(t, pool)
@@ -574,35 +503,6 @@ func seedDeferredHangupTarget(
 	return target
 }
 
-func createDatabaseRoles(t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-	for _, role := range append(runtimeRoles, "acuity_migrate") {
-		var exists bool
-		if err := pool.QueryRow(context.Background(),
-			`SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`,
-			role,
-		).Scan(&exists); err != nil {
-			t.Fatalf("check database role %s: %v", role, err)
-		}
-		if exists {
-			continue
-		}
-		if _, err := pool.Exec(
-			context.Background(),
-			"CREATE ROLE "+pgx.Identifier{role}.Sanitize()+" NOLOGIN",
-		); err != nil {
-			t.Fatalf("create database role %s: %v", role, err)
-		}
-	}
-}
-
-func applyDatabaseGrants(t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-	if err := migrations.ApplyRuntimeGrants(context.Background(), pool); err != nil {
-		t.Fatalf("apply database grant contract: %v", err)
-	}
-}
-
 func createFutureMigrationTables(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(), `
@@ -714,6 +614,7 @@ func expectedTablePrivileges() map[string]bool {
 		"access_practices",
 		"ai_interactions",
 		"human_calling_call_legs",
+		"human_calling_call_states",
 		"human_calling_calls",
 		"human_calling_current_staff_owners",
 		"human_calling_credentials",
@@ -794,6 +695,7 @@ func expectedTablePrivileges() map[string]bool {
 	)
 
 	grant("acuity_worker", "SELECT",
+		"access_abita_office_locations",
 		"access_calling_scopes",
 		"access_locations",
 		"access_membership_locations",

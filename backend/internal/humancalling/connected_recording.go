@@ -33,10 +33,10 @@ type CallRecording struct {
 func (m *Module) applyConnectedCallRecordingSaved(
 	ctx context.Context,
 	fact ProviderFact,
-) error {
-	state, ok := connectedRecordingSavedCandidateState(fact)
-	if !ok || !fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
-		return ErrConflict
+	state callLegClientState,
+) (factVerdict, error) {
+	if !fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
+		return factConflict, nil
 	}
 	if fact.RecordingID == "" {
 		var alreadyApplied bool
@@ -45,18 +45,18 @@ func (m *Module) applyConnectedCallRecordingSaved(
 				SELECT 1 FROM human_calling_projected_facts WHERE event_id = $1
 			)
 		`, fact.EventID).Scan(&alreadyApplied); err != nil {
-			return fmt.Errorf("check connected recording callback replay: %w", err)
+			return "", fmt.Errorf("check connected recording callback replay: %w", err)
 		}
 		if alreadyApplied {
-			return nil
+			return factApplied, nil
 		}
 		provider, ok := m.provider.(RecordingStateProvider)
 		if !ok {
-			return fmt.Errorf("%w: provider cannot resolve recording", ErrAmbiguousEffect)
+			return "", fmt.Errorf("%w: provider cannot resolve recording", ErrAmbiguousEffect)
 		}
 		recording, err := provider.ResolveRecording(ctx, fact.CallLegID, fact.CallSessionID)
 		if err != nil {
-			return err
+			return "", err
 		}
 		fact.RecordingID = recording.ID
 		fact.CallControlID = recording.CallControlID
@@ -65,22 +65,22 @@ func (m *Module) applyConnectedCallRecordingSaved(
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin connected recording save: %w", err)
+		return "", fmt.Errorf("begin connected recording save: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
-	}
-	practiceID, bridged, err := m.requireExactConnectedRecordingLeg(ctx, tx, state, fact)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if !bridged {
-		return ErrConflict
+	if !claimed {
+		return commitFact(ctx, tx)
+	}
+	practiceID, exact, bridged, err := m.requireExactConnectedRecordingLeg(ctx, tx, state, fact)
+	if err != nil {
+		return "", err
+	}
+	if !exact || !bridged {
+		return factConflict, nil
 	}
 	var audioState, providerRecordingID string
 	var retentionDays int
@@ -90,15 +90,15 @@ func (m *Module) applyConnectedCallRecordingSaved(
 		WHERE call_id = $1 FOR UPDATE
 	`, state.CallID).Scan(&audioState, &retentionDays, &providerRecordingID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrConflict
+			return factConflict, nil
 		}
-		return fmt.Errorf("lock connected recording: %w", err)
+		return "", fmt.Errorf("lock connected recording: %w", err)
 	}
 	if providerRecordingID != "" && providerRecordingID != fact.RecordingID {
-		return ErrConflict
+		return factConflict, nil
 	}
 	if audioState == string(RecordingReady) || audioState == string(RecordingDeleted) {
-		return tx.Commit(ctx)
+		return commitFact(ctx, tx)
 	}
 	duration := fact.RecordingEndedAt.Sub(fact.RecordingStartedAt)
 	contentExpiresAt := fact.RecordingEndedAt.Add(
@@ -115,48 +115,42 @@ func (m *Module) applyConnectedCallRecordingSaved(
 		WHERE call_id = $1
 	`, state.CallID, fact.RecordingID, fact.RecordingStartedAt,
 		fact.RecordingEndedAt, contentExpiresAt, duration.Milliseconds(), m.now()); err != nil {
-		return fmt.Errorf("commit connected recording evidence: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, state.CallID, m.now()); err != nil {
-		return err
+		return "", fmt.Errorf("commit connected recording evidence: %w", err)
 	}
 	if err := appendTimeline(ctx, tx, state.CallID, practiceID,
 		"call.recording.ready", "", fact.EventID, "",
 		opaqueReference(fact.RecordingID), "", fact.OccurredAt); err != nil {
-		return err
+		return "", err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
-		return err
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
 func (m *Module) applyConnectedCallRecordingError(
 	ctx context.Context,
 	fact ProviderFact,
-) error {
-	state, ok := connectedRecordingState(fact)
-	if !ok {
-		return ErrConflict
-	}
+	state callLegClientState,
+) (factVerdict, error) {
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin connected recording failure: %w", err)
+		return "", fmt.Errorf("begin connected recording failure: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
-	}
-	practiceID, _, err := m.requireExactConnectedRecordingLeg(ctx, tx, state, fact)
 	if err != nil {
-		return err
+		return "", err
+	}
+	if !claimed {
+		return commitFact(ctx, tx)
+	}
+	practiceID, exact, _, err := m.requireExactConnectedRecordingLeg(ctx, tx, state, fact)
+	if err != nil {
+		return "", err
+	}
+	if !exact {
+		return factConflict, nil
 	}
 	result, err := tx.Exec(ctx, `
 		UPDATE human_calling_call_recordings SET
@@ -169,39 +163,20 @@ func (m *Module) applyConnectedCallRecordingError(
 		WHERE call_id = $1 AND audio_state IN ('PROCESSING', 'UNAVAILABLE')
 	`, state.CallID, m.now())
 	if err != nil {
-		return fmt.Errorf("commit connected recording failure: %w", err)
+		return "", fmt.Errorf("commit connected recording failure: %w", err)
 	}
 	if result.RowsAffected() == 0 {
-		return tx.Commit(ctx)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, state.CallID, m.now()); err != nil {
-		return err
+		return commitFact(ctx, tx)
 	}
 	if err := appendTimeline(ctx, tx, state.CallID, practiceID,
 		"call.recording.unavailable", "", fact.EventID, "",
 		opaqueReference(fact.CallLegID), "RECORDING_FAILED", fact.OccurredAt); err != nil {
-		return err
+		return "", err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
-		return err
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return "", err
 	}
-	return tx.Commit(ctx)
-}
-
-func connectedRecordingState(fact ProviderFact) (callLegClientState, bool) {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	connectedKind := state.Kind == "bridge" ||
-		state.Kind == callLegClientStateStaffHangup
-	return state, ok && connectedKind &&
-		(state.Role == "STAFF" || state.Role == "DESTINATION")
-}
-
-func connectedRecordingSavedCandidateState(fact ProviderFact) (callLegClientState, bool) {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	return state, ok && (state.Role == "STAFF" || state.Role == "DESTINATION")
+	return commitFact(ctx, tx)
 }
 
 func (m *Module) ProcessNextRecordingReconciliation(
@@ -213,7 +188,8 @@ func (m *Module) ProcessNextRecordingReconciliation(
 		return false, fmt.Errorf("begin recording reconciliation claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var callID, callLegID, role string
+	var callID, callLegID string
+	var role callLegRole
 	var providerCallLegID, callSessionID string
 	var attempts int
 	err = tx.QueryRow(ctx, `
@@ -295,9 +271,9 @@ func (m *Module) ProcessNextRecordingReconciliation(
 				OccurredAt:    failedAt,
 				CallLegID:     providerCallLegID,
 				CallSessionID: callSessionID,
-				ClientState:   encodeCallLegClientState(callID, callLegID, role, "bridge"),
+				ClientState:   encodeCallLegClientState(callID, callLegID, role, kindBridge),
 			}
-			if applyErr := m.applyConnectedCallRecordingError(ctx, fact); applyErr != nil {
+			if applyErr := m.ApplyProviderFact(ctx, fact); applyErr != nil {
 				return m.failRecordingReconciliation(
 					ctx, callID, now, attempts, applyErr,
 				)
@@ -316,11 +292,11 @@ func (m *Module) ProcessNextRecordingReconciliation(
 		Type:    FactRecordingSaved, OccurredAt: recording.EndedAt,
 		CallControlID: recording.CallControlID, CallLegID: recording.CallLegID,
 		CallSessionID: recording.CallSessionID,
-		ClientState:   encodeCallLegClientState(callID, callLegID, role, "bridge"),
+		ClientState:   encodeCallLegClientState(callID, callLegID, role, kindBridge),
 		RecordingID:   recording.ID, RecordingStartedAt: recording.StartedAt,
 		RecordingEndedAt: recording.EndedAt,
 	}
-	if err := m.applyConnectedCallRecordingSaved(ctx, fact); err != nil {
+	if err := m.ApplyProviderFact(ctx, fact); err != nil {
 		return m.failRecordingReconciliation(ctx, callID, now, attempts, err)
 	}
 	m.recordRecordingMaintenance(
@@ -389,6 +365,9 @@ func (m *Module) exhaustRecordingReconciliation(
 		return true, fmt.Errorf("begin recording reconciliation exhaustion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockCall(ctx, tx, callID); err != nil {
+		return true, err
+	}
 	var practiceID string
 	err = tx.QueryRow(ctx, `
 		UPDATE human_calling_call_recordings SET
@@ -408,12 +387,6 @@ func (m *Module) exhaustRecordingReconciliation(
 	if err != nil {
 		return true, fmt.Errorf("exhaust recording reconciliation: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, callID, claimedAt); err != nil {
-		return true, err
-	}
 	if err := appendTimeline(
 		ctx,
 		tx,
@@ -429,7 +402,7 @@ func (m *Module) exhaustRecordingReconciliation(
 	); err != nil {
 		return true, err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return true, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -519,6 +492,9 @@ func (m *Module) ProcessNextRecordingRetention(
 		return true, fmt.Errorf("begin recording retention completion: %w", err)
 	}
 	defer func() { _ = completion.Rollback(ctx) }()
+	if err := lockCall(ctx, completion, callID); err != nil {
+		return true, err
+	}
 	result, err := completion.Exec(ctx, `
 		UPDATE human_calling_call_recordings
 		SET audio_state = 'DELETED', content_deleted_at = $3,
@@ -533,18 +509,12 @@ func (m *Module) ProcessNextRecordingRetention(
 	if result.RowsAffected() == 0 {
 		return true, ErrConflict
 	}
-	if _, err := completion.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, callID, now); err != nil {
-		return true, err
-	}
 	if err := appendTimeline(ctx, completion, callID, practiceID,
 		"call.recording.content_deleted", "", "", "",
 		opaqueReference(recordingID), "", now); err != nil {
 		return true, err
 	}
-	if err := m.recordCallingChange(ctx, completion, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, completion, practiceID); err != nil {
 		return true, err
 	}
 	if err := completion.Commit(ctx); err != nil {
@@ -563,6 +533,15 @@ func (m *Module) ProcessNextRecordingRetention(
 	return true, nil
 }
 
+func lockCall(ctx context.Context, tx pgx.Tx, callID string) error {
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM human_calling_calls WHERE id = $1 FOR UPDATE
+	`, callID).Scan(&callID); err != nil {
+		return fmt.Errorf("lock Call: %w", err)
+	}
+	return nil
+}
+
 func recordingMaintenanceBackoff(attempts int) time.Duration {
 	if attempts < 1 {
 		attempts = 1
@@ -579,7 +558,7 @@ func (m *Module) requireExactConnectedRecordingLeg(
 	tx pgx.Tx,
 	state callLegClientState,
 	fact ProviderFact,
-) (string, bool, error) {
+) (string, bool, bool, error) {
 	var practiceID, controlID, legID, sessionID string
 	var bridged bool
 	if err := tx.QueryRow(ctx, `
@@ -594,11 +573,9 @@ func (m *Module) requireExactConnectedRecordingLeg(
 	`, state.CallID, state.CallLegID, state.Role).Scan(
 		&practiceID, &controlID, &legID, &sessionID, &bridged,
 	); err != nil {
-		return "", false, fmt.Errorf("lock connected recording CallLeg: %w", err)
+		return "", false, false, fmt.Errorf("lock connected recording CallLeg: %w", err)
 	}
-	if (fact.CallControlID != "" && fact.CallControlID != controlID) ||
-		fact.CallLegID != legID || fact.CallSessionID != sessionID {
-		return "", false, ErrConflict
-	}
-	return practiceID, bridged, nil
+	exact := (fact.CallControlID == "" || fact.CallControlID == controlID) &&
+		fact.CallLegID == legID && fact.CallSessionID == sessionID
+	return practiceID, exact, bridged, nil
 }

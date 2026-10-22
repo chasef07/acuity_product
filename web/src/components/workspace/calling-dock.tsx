@@ -40,8 +40,6 @@ type CallingDockProps = {
     activeCall: CallingCall | undefined,
     callingOccupied: boolean,
   ) => ReactNode
-  callingEnabled: boolean
-  callingRuntimeEnabled: boolean
   actorSubject: string
   practiceID: string
   taskCallRequest?: { id: string; taskID: string }
@@ -61,7 +59,6 @@ type CallingNavigationContext = {
   available: boolean
   ownsSoftphone: boolean
   outboundPending: boolean
-  callingEnabled: boolean
   recoverCalling: () => void
   setAvailability: (available: boolean) => void
   startOutbound: (
@@ -94,8 +91,6 @@ export function CallingFailureStatus() {
 
 export function CallingDock({
   children,
-  callingEnabled,
-  callingRuntimeEnabled,
   actorSubject,
   practiceID,
   taskCallRequest,
@@ -111,7 +106,6 @@ export function CallingDock({
     runtime.getSnapshot,
   )
   const handledTaskCallRef = useRef("")
-  const keepRuntimeRunning = callingRuntimeEnabled || snapshot.occupied
   const callingCardVisible = Boolean(
     snapshot.activeCall ??
       snapshot.pendingCall ??
@@ -135,15 +129,11 @@ export function CallingDock({
   })
 
   useEffect(() => {
-    if (!keepRuntimeRunning) {
-      void runtime.stop()
-      return
-    }
     void runtime.start()
     return () => {
       void runtime.stop()
     }
-  }, [keepRuntimeRunning, runtime])
+  }, [runtime])
 
   useEffect(() => {
     if (scopedPracticeID && scopedLocationID) {
@@ -160,7 +150,6 @@ export function CallingDock({
 
   useEffect(() => {
     if (
-      !callingEnabled ||
       !taskCallRequest ||
       handledTaskCallRef.current === taskCallRequest.id
     ) {
@@ -178,7 +167,7 @@ export function CallingDock({
           runtime.getSnapshot().failure?.message,
         )
       })
-  }, [callingEnabled, onTaskCallHandled, runtime, taskCallRequest])
+  }, [onTaskCallHandled, runtime, taskCallRequest])
 
   async function startNumberCall(locationID: string, destination: string) {
     await runtime.startOutbound({
@@ -208,7 +197,6 @@ export function CallingDock({
         ownsSoftphone: snapshot.lease?.owner ?? false,
         outboundPending:
           snapshot.pendingCall?.direction === "OUTBOUND" || snapshot.pending.retry,
-        callingEnabled,
         recoverCalling: () => void runtime.recover(),
         setAvailability: (available) => void runtime.setAvailability(available),
         startOutbound: startNumberCall,
@@ -216,7 +204,7 @@ export function CallingDock({
     >
       {children(snapshot.activeCall, snapshot.occupied)}
       <audio id={remoteAudioElementID} autoPlay className="hidden" />
-      {(callingEnabled || snapshot.lease?.owner) && callingCardVisible && (
+      {callingCardVisible && (
         <div className="fixed inset-x-3 bottom-28 z-40 md:left-auto md:right-5 md:w-[23rem]">
           <CallingCard
             snapshot={snapshot}

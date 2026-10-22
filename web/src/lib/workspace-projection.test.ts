@@ -800,7 +800,6 @@ function accessDiscovery(): AccessDiscovery {
     practices: [
       {
         ...practice(),
-        callingEnabled: true,
         membership: {
           id: "membership-1",
           role: "STAFF",

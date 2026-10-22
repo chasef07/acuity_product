@@ -14,12 +14,13 @@ import (
 )
 
 func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	a := access.New(pool, nil)
+	a := access.New(db.As(testdb.Portal), nil)
 	admin := access.Identity{Subject: "staff-report-admin", Email: "admin@staff.test", EmailVerified: true}
 	staff := access.Identity{Subject: "staff-report-person", Email: "person@staff.test", EmailVerified: true}
-	_, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "staff-analytics", Practices: []access.PracticeProvision{
+	_, err := access.New(pool, nil).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "staff-analytics", Practices: []access.PracticeProvision{
 		{Key: "staff-report", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "a", Name: "A"}, {Key: "b", Name: "B"}}, AccessGrants: []access.AccessGrantProvision{
 			{Key: "admin", Email: admin.Email, Role: access.RoleAdmin, LocationScope: access.LocationScopeAll},
 			{Key: "person", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
@@ -113,7 +114,7 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	module := workspace.New(pool, a)
+	module := workspace.New(db.As(testdb.Portal), a)
 	command := workspace.QueryStaffAnalyticsCommand{Identity: admin, PracticeID: practice, LocationID: locA, Days: 7, TimeZone: "UTC"}
 	report, err := module.QueryStaffAnalytics(ctx, command)
 	if err != nil {
@@ -145,8 +146,8 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 	if err != nil || allReport.Total.TextsSent != 4 {
 		t.Fatalf("all-Location texts: %+v, %v", allReport.Total, err)
 	}
-	incompleteCall := insertCall(locA, "INBOUND", []int{120}, true)
-	if _, err := pool.Exec(ctx, `UPDATE human_calling_call_legs SET state='ENDING', ended_at=NULL WHERE call_id=$1`, incompleteCall); err != nil {
+	incompleteCall := insertCall(locA, "INBOUND", nil, true)
+	if _, err := pool.Exec(ctx, `INSERT INTO human_calling_call_legs(call_id,role,sequence,staff_subject,state,answered_at,bridge_pending_at,bridged_at) VALUES($1,'STAFF',1,$2,'ENDING',$3,$3,$3)`, incompleteCall, staff.Subject, day); err != nil {
 		t.Fatal(err)
 	}
 	report, err = module.QueryStaffAnalytics(ctx, command)

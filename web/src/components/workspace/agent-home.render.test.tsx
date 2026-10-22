@@ -7,6 +7,7 @@ import { JSDOM } from "jsdom"
 
 import { AgentHome } from "./agent-home"
 import { clearAccessToken } from "../../lib/auth-client"
+import { DataProvider } from "../../lib/data/provider"
 
 test("Home hydrates its greeting and shows knowledge status without loading call gaps", async (context) => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace" })
@@ -38,7 +39,7 @@ test("Home hydrates its greeting and shows knowledge status without loading call
   })
   const host = document.createElement("div")
   document.body.append(host)
-  const home = <AgentHome practiceID="practice-1" locationID="office-1" onPage={() => {}} />
+  const home = <DataProvider><AgentHome practiceID="practice-1" locationID="office-1" onPage={() => {}} /></DataProvider>
   host.innerHTML = renderToString(home)
   assert.equal(host.querySelector("h1")?.textContent, "Welcome,")
   assert.equal(host.querySelector("header time")?.textContent, "")
@@ -52,6 +53,9 @@ test("Home hydrates its greeting and shows knowledge status without loading call
   assert.deepEqual(hydrationErrors, [])
   assert.notEqual(host.querySelector("header time")?.textContent, "")
   await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Knowledge base"]')!.click())
+  for (let attempt = 0; attempt < 50 && !/No knowledge published yet/.test(host.textContent ?? ""); attempt++) {
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+  }
   assert.match(host.textContent ?? "", /No knowledge published yet/)
   assert.doesNotMatch(host.textContent ?? "", /Needs knowledge|Load more calls|office question went unanswered/i)
 })

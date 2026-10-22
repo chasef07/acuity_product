@@ -21,10 +21,11 @@ import (
 )
 
 func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	_, err := accessModule.Provision(
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(
 		context.Background(),
 		access.Provisioning{
 			Environment: "test",
@@ -98,21 +99,21 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 			AllowedOrigins: []string{"http://localhost:3000"},
 			AcquireTimeout: 500 * time.Millisecond,
 		},
-		pool,
+		db.As(testdb.Portal),
 		httpapi.PortalDependencies{
 			Access:        accessModule,
 			Authenticator: staticAuthenticator{"staff-token": staffIdentity},
 			Calling: humancalling.New(
-				pool,
+				db.As(testdb.Portal),
 				accessModule,
 				httpCallingProvider{},
 				humancalling.Config{},
 				nil,
 			),
-			Interactions:         interaction.New(pool, accessModule, func() time.Time { return now }),
-			Messaging:            messaging.New(pool, accessModule, work.New(pool, accessModule, nil), nil, messaging.Config{}, nil),
-			Work:                 work.New(pool, accessModule, func() time.Time { return now }),
-			Workspace:            workspace.New(pool, accessModule),
+			Interactions:         interaction.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }),
+			Messaging:            messaging.New(db.As(testdb.Portal), accessModule, work.New(db.As(testdb.Portal), accessModule, nil), nil, messaging.Config{}, nil),
+			Work:                 work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now }),
+			Workspace:            workspace.New(db.As(testdb.Portal), accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)

@@ -92,6 +92,19 @@ test("an unanswered outbound call reads as no answer instead of a missed call", 
   assert.deepEqual(result.details, ["No answer", "Office"])
 })
 
+test("in-flight calls in number history say what is happening", () => {
+  const detailFor = (outcome: string, direction: "INBOUND" | "OUTBOUND") => {
+    const entry = unansweredCallback.entries![0]
+    return callHistoryPresentation({
+      ...unansweredCallback,
+      entries: [{ ...entry, call: { ...entry.call!, direction, outcome } }],
+    } as ConversationTimelineItem).details[0]
+  }
+  assert.equal(detailFor("PREPARING", "OUTBOUND"), "Preparing call")
+  assert.equal(detailFor("VOICEMAIL_GREETING", "INBOUND"), "Playing voicemail greeting")
+  assert.equal(detailFor("VOICEMAIL_RECORDING", "INBOUND"), "Recording voicemail")
+})
+
 test("a callback-attempt completion credits the caller only with its exact Activity evidence", () => {
   assert.equal(callbackCompletionLabel([callbackCompletion], review), "Missed call review completed after caller@example.test's callback attempt")
   assert.equal(callbackCompletionLabel([], review), undefined)

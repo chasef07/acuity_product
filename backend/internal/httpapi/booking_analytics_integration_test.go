@@ -18,13 +18,14 @@ import (
 )
 
 func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	accessModule := access.New(pool, nil)
+	accessModule := access.New(db.As(testdb.Portal), nil)
 	admin := access.Identity{Subject: "booking-admin", Email: "booking-admin@acuity.test", EmailVerified: true}
 	staff := access.Identity{Subject: "booking-staff", Email: "booking-staff@acuity.test", EmailVerified: true}
 	operator := access.Identity{Subject: "booking-operator", Email: "booking-operator@acuity.test", EmailVerified: true}
-	_, err := accessModule.Provision(ctx, access.Provisioning{
+	_, err := access.New(pool, nil).Provision(ctx, access.Provisioning{
 		Environment: "test", RequestedBy: "booking-analytics-test", PlatformOperators: []string{operator.Email},
 		Practices: []access.PracticeProvision{
 			{Key: "booking", Name: "Booking Practice", Locations: []access.LocationProvision{{Key: "north", Name: "North"}, {Key: "south", Name: "South"}}, AccessGrants: []access.AccessGrantProvision{
@@ -93,7 +94,7 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	handler, err := newPortalHandler(t, httpapi.Config{AcquireTimeout: time.Second}, pool, accessModule, staticAuthenticator{"admin": admin, "staff": staff, "operator": operator})
+	handler, err := newPortalHandler(t, httpapi.Config{AcquireTimeout: time.Second}, db.As(testdb.Portal), accessModule, staticAuthenticator{"admin": admin, "staff": staff, "operator": operator})
 	if err != nil {
 		t.Fatal(err)
 	}

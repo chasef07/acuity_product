@@ -3,12 +3,12 @@ import {
   type CallingHintSink,
 } from "../calling/calling-hints.ts"
 
-export type WorkspaceSyncScope = {
+type WorkspaceSyncScope = {
   practiceID: string
   locationID: string
 }
 
-export type WorkspaceSyncState = "connecting" | "connected" | "degraded"
+type WorkspaceSyncState = "connecting" | "connected" | "degraded"
 
 type Reconciliation = {
   version: number

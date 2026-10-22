@@ -16,13 +16,14 @@ import (
 )
 
 func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	staff := access.Identity{Subject: "agent-review-staff", Email: "staff@agent-review.test", EmailVerified: true}
 	operator := access.Identity{Subject: "agent-review-operator", Email: "operator@agent-review.test", EmailVerified: true}
-	_, err := accessModule.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{operator.Email}, Practices: []access.PracticeProvision{{Key: "agent-review", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed"}, {Key: "denied", Name: "Denied"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"allowed"}}}}}})
+	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", PlatformOperators: []string{operator.Email}, Practices: []access.PracticeProvision{{Key: "agent-review", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "allowed", Name: "Allowed"}, {Key: "denied", Name: "Denied"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"allowed"}}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 	first := insert(allowed, "first", now.Add(-time.Minute))
 	second := insert(allowed, "second", now.Add(-2*time.Minute))
 	forbidden := insert(denied, "forbidden", now.Add(-30*time.Second))
-	module := New(pool, accessModule, func() time.Time { return now })
+	module := New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	command := QueryAgentCallsCommand{QueryAnalyticsCommand: QueryAnalyticsCommand{Identity: staff, PracticeID: practice, Range: AnalyticsRange7Days, Limit: 1}}
 	page, err := module.QueryAgentCalls(ctx, command)
 	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != first || page.NextCursor == "" {
@@ -198,12 +199,13 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 }
 
 func TestAgentCallsNeedingKnowledgeFollowTheJudge(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
-	accessModule := access.New(pool, func() time.Time { return now })
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	staff := access.Identity{Subject: "knowledge-gap-staff", Email: "staff@knowledge-gap.test", EmailVerified: true}
-	_, err := accessModule.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "knowledge-gap", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "office", Name: "Office"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeAll}}}}})
+	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "knowledge-gap", Name: "Synthetic Practice", Locations: []access.LocationProvision{{Key: "office", Name: "Office"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: staff.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeAll}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +240,7 @@ func TestAgentCallsNeedingKnowledgeFollowTheJudge(t *testing.T) {
 	score(searchedButHandled, "knowledge_answered", "code", false, map[string]any{"queries": []string{"fax number"}})
 	insert("unjudged", now.Add(-3*time.Minute))
 
-	module := New(pool, accessModule, func() time.Time { return now })
+	module := New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	command := QueryAgentCallsCommand{QueryAnalyticsCommand: QueryAnalyticsCommand{Identity: staff, PracticeID: practice, Range: AnalyticsRange7Days, Limit: 50}, NeedsKnowledgeOnly: true}
 	page, err := module.QueryAgentCalls(ctx, command)
 	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != unanswered {

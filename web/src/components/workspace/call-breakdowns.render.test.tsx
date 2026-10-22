@@ -2,53 +2,66 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
-import { CallBreakdowns, BreakdownView, initialBreakdownSelection } from "./call-breakdowns.tsx"
+import { CallBreakdowns } from "./call-breakdowns.tsx"
+import type { CallSelection } from "./call-paths.ts"
 
+const paths = [
+  { intent: "new_patient_booking" as const, outcome: "abandoned" as const, evaluated: true, failures: [], calls: 12 },
+  { intent: "new_patient_booking" as const, outcome: "resolved" as const, evaluated: true, failures: ["knowledge_available"], calls: 16 },
+  { intent: "cancel_appointment" as const, outcome: "abandoned" as const, evaluated: true, failures: [], calls: 2 },
+  { evaluated: false, failures: [], calls: 5 },
+]
 const data = {
-  totalCalls: 10,
+  totalCalls: 35,
   daily: [],
-  intents: [{ intent: "office_information" as const, calls: 2 }, { intent: "existing_patient_booking" as const, calls: 5 }],
-  outcomes: [{ outcome: "resolved" as const, calls: 6 }],
-  unlabeledIntentCalls: 3,
-  unlabeledOutcomeCalls: 4,
-  failures: [{ key: "unmet", label: "Unmet request", calls: 2 }, { key: "wrong", label: "Wrong information", calls: 1 }],
-  evaluatedCalls: 4,
-  failedCalls: 2,
-  unevaluatedCalls: 6,
+  intents: [],
+  outcomes: [],
+  failures: [{ key: "knowledge_available", label: "Office knowledge had the answer", calls: 16 }],
+  unlabeledIntentCalls: 5,
+  unlabeledOutcomeCalls: 5,
+  evaluatedCalls: 30,
+  failedCalls: 16,
+  unevaluatedCalls: 5,
+  paths,
 }
 
-function render(value = data, totalCalls = 10) {
-  return new JSDOM(renderToStaticMarkup(totalCalls ? <>{(["intents", "outcomes", "failures"] as const).map((kind) => <BreakdownView key={kind} data={{ ...value, totalCalls }} kind={kind} />)}</> : <CallBreakdowns data={{ ...value, totalCalls }} selection={initialBreakdownSelection} onSelection={() => {}} onRetry={() => {}} />)).window.document
+function render(selection: CallSelection, value = data) {
+  return new JSDOM(renderToStaticMarkup(<CallBreakdowns data={value} selection={selection} onSelection={() => {}} mode="flow" onMode={() => {}} onRetry={() => {}} />)).window.document
 }
 
-test("breakdowns include unlabeled calls in label denominators and distinguish failure flags from calls", () => {
-  const document = render()
-  const intents = document.querySelector('[aria-label="Intents"]')!
-  assert.equal(intents.querySelector("dt")!.textContent, "Existing patient booking")
-  assert.match(intents.textContent!, /5 calls50%/)
-  assert.match(intents.textContent!, /Unlabeled3 calls30%/)
-  const outcomes = document.querySelector('[aria-label="Outcomes"]')!
-  assert.match(outcomes.textContent!, /Resolved6 calls60%/)
-  assert.match(outcomes.textContent!, /Unlabeled4 calls40%/)
-  const failures = document.querySelector('[aria-label="Judge failures"]')!
-  assert.match(failures.textContent!, /3 flags across 2 calls/)
-  assert.match(failures.textContent!, /Unmet request2 calls66.7%/)
-  assert.match(failures.textContent!, /4 of 10 calls evaluated · 6 unevaluated/)
+test("biggest gaps lead the page, skipping intents with too few calls", () => {
+  const gaps = [...render({}).querySelector('[aria-label="Biggest gaps"]')!.querySelectorAll("button")].map((button) => button.textContent)
+  assert.deepEqual(gaps, [
+    "New patient booking · Failed: Office knowledge had the answer · 57%",
+    "New patient booking · Abandoned · 43%",
+  ])
 })
 
-test("no evaluation is distinct from evaluated calls with no failures", () => {
-  const noScores = render({ ...data, evaluatedCalls: 0, failedCalls: 0, unevaluatedCalls: 10, failures: [] })
-  assert.match(noScores.querySelector('[aria-label="Judge failures"]')!.textContent!, /No evaluated calls/)
-  const noFailures = render({ ...data, failedCalls: 0, failures: [] })
-  assert.match(noFailures.querySelector('[aria-label="Judge failures"]')!.textContent!, /No judge failures recorded/)
-  assert.doesNotMatch(noFailures.body.textContent!, /All calls passed/)
+test("with no selection every call shows, and unlabeled calls stay in the totals without a link", () => {
+  const page = render({})
+  assert.match(page.querySelector('[aria-label="Selection"]')!.textContent!, /ShowingAll calls/)
+  const intents = page.querySelector('section[aria-label="Intents"]')!
+  assert.match(intents.textContent!, /New patient booking28 calls80%/)
+  assert.match(intents.textContent!, /Unlabeled5 calls14.3%/)
+  assert.equal(intents.querySelector('[aria-label="Select Unlabeled"]'), null)
+  assert.ok(intents.querySelector('[aria-label="Select New patient booking"]'))
+})
+
+test("a selection shows removable chips and narrows every list to its calls", () => {
+  const page = render({ intent: "new_patient_booking", failure: "knowledge_available" })
+  const chips = page.querySelector('[aria-label="Selection"]')!
+  assert.ok(chips.querySelector('[aria-label="Remove Intent: New patient booking"]'))
+  assert.ok(chips.querySelector('[aria-label="Remove Failed: Office knowledge had the answer"]'))
+  assert.match(page.querySelector('section[aria-label="Outcomes"]')!.textContent!, /^Outcomes.*Resolved16 calls100%$/)
+  assert.match(page.querySelector('section[aria-label="Judge results"]')!.textContent!, /Fail16 calls100%/)
 })
 
 test("missing distribution data is unavailable, and an empty window has no fabricated percentages", () => {
-  const missing = renderToStaticMarkup(<CallBreakdowns selection={initialBreakdownSelection} onSelection={() => {}} onRetry={() => {}} />)
+  const missing = renderToStaticMarkup(<CallBreakdowns selection={{}} onSelection={() => {}} mode="flow" onMode={() => {}} onRetry={() => {}} />)
   assert.match(missing, /Breakdowns unavailable/)
   assert.match(missing, /Retry/)
-  const empty = render(data, 0)
-  assert.match(empty.body.textContent!, /No calls in this selection/)
-  assert.doesNotMatch(empty.body.textContent!, /NaN|Infinity|0%/)
+  const empty = render({ intent: "cancel_appointment" }, { ...data, totalCalls: 0, paths: [] })
+  assert.match(empty.body.textContent!, /No calls in this date range/)
+  assert.ok(empty.querySelector('[aria-label="Remove Intent: Cancel appointment"]'))
+  assert.doesNotMatch(empty.body.textContent!, /NaN|Infinity|%/)
 })

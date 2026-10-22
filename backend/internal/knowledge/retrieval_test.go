@@ -32,16 +32,17 @@ func TestSelectPassagesPreservesRestrictionsAndBudget(t *testing.T) {
 }
 
 func TestHybridSearchNamesAndIrrelevantQueries(t *testing.T) {
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	ctx := context.Background()
-	a := access.New(pool, time.Now)
-	_, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "hybrid", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{"office"}}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: "staff@example.com", Role: access.RoleStaff, LocationScope: access.LocationScopeAll}}}}})
+	a := access.New(db.As(testdb.Portal), time.Now)
+	_, err := access.New(pool, time.Now).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "hybrid", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{"office"}}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: "staff@example.com", Role: access.RoleStaff, LocationScope: access.LocationScopeAll}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	authorization := testaccess.Activate(t, a, access.Identity{Subject: "staff", Email: "staff@example.com", EmailVerified: true})
 	provider := &testEmbedder{}
-	m, err := New(pool, a, provider, Config{})
+	m, err := New(db.As(testdb.Portal), a, provider, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

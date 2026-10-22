@@ -15,10 +15,11 @@ import (
 
 func TestTextAttentionExpiresWithoutCompletingWorkAndReturnsOnInbound(t *testing.T) {
 	ctx := context.Background()
-	pool := testdb.Open(t)
+	db := testdb.Open(t)
+	pool := db.Owner
 	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	_, err := a.Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "text-age-test", Practices: []access.PracticeProvision{{Key: "text-age", Name: "Synthetic Text Age", Locations: []access.LocationProvision{{Key: "office", Name: "Synthetic Office"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: "staff@text-age.test", Role: access.RoleAdmin, LocationScope: access.LocationScopeAll}}}}})
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "text-age-test", Practices: []access.PracticeProvision{{Key: "text-age", Name: "Synthetic Text Age", Locations: []access.LocationProvision{{Key: "office", Name: "Synthetic Office"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: "staff@text-age.test", Role: access.RoleAdmin, LocationScope: access.LocationScopeAll}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestTextAttentionExpiresWithoutCompletingWorkAndReturnsOnInbound(t *testing
 	if err := pool.QueryRow(ctx, `INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone) VALUES($1,$2,'+15555550100','+15555550123') RETURNING id::text`, auth.Practice.ID, locationID).Scan(&threadID); err != nil {
 		t.Fatal(err)
 	}
-	m := work.New(pool, a, func() time.Time { return now })
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	addMessage := func(direction string, at time.Time) {
 		t.Helper()
 		tx, err := pool.Begin(ctx)
@@ -53,7 +54,7 @@ func TestTextAttentionExpiresWithoutCompletingWorkAndReturnsOnInbound(t *testing
 		}
 	}
 	addMessage("INBOUND", now.Add(-120*time.Hour-time.Minute))
-	reads := workspace.New(pool, a)
+	reads := workspace.New(db.As(testdb.Portal), a)
 	check := func(want int) {
 		t.Helper()
 		for _, grouped := range []bool{false, true} {
