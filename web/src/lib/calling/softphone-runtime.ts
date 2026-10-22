@@ -1780,6 +1780,11 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     if (!stopped) await signalRefresh()
   }
 
+  function refuseOutbound(failure: SoftphoneFailure) {
+    if (!live(operations.get("outbound"))) fail(open("outbound"), failure)
+    return failure
+  }
+
   function signalStaffIntent() {
     void signalRefresh()
   }
@@ -2374,22 +2379,18 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     },
     async startOutbound(input) {
       if (!snapshot.lease?.owner || snapshot.readiness.mediaState !== "ready") {
-        const failure: SoftphoneFailure = {
+        return refuseOutbound({
           kind: "technical-readiness",
           message: "Reconnect calling before starting a Call.",
           recoverable: true,
-        }
-        fail(open("outbound"), failure)
-        return failure
+        })
       }
       if (snapshot.occupied) {
-        const failure: SoftphoneFailure = {
+        return refuseOutbound({
           kind: "conflict",
           message: "Finish the current Call before starting another.",
           recoverable: true,
-        }
-        fail(open("outbound"), failure)
-        return failure
+        })
       }
       const outbound = open("outbound", {}, {
         call: { stage: "dialing", pending: pendingOutboundCall(input) },
@@ -2407,7 +2408,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         )
         if (!live(outbound)) {
           await reconcileStaleCommand()
-          return
+          return snapshot.failure
         }
         settle(outbound, {
           call: { ...trackCall(snapshot.call, call.id), pending: undefined },
@@ -2418,7 +2419,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       } catch (error) {
         if (!live(outbound)) {
           await reconcileStaleCommand()
-          return
+          return snapshot.failure
         }
         if (
           await commandFailed(outbound, error, () =>
@@ -2429,7 +2430,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             call: withoutPending(snapshot.call),
           })
         }
+        const superseded = !live(outbound)
         settle(outbound, { call: withoutPending(snapshot.call) })
+        if (superseded) return snapshot.failure
       }
     },
     async answer(callLegID) {

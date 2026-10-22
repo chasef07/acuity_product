@@ -4770,11 +4770,45 @@ test("an outbound Call reports its own result while an unrelated refresh failure
   }
 
   const started = await runtime.startOutbound({ ...request, idempotencyKey: "outbound-own-result" })
-  const blocked = await runtime.startOutbound({ ...request, idempotencyKey: "outbound-while-occupied" })
 
   assert.equal(started, undefined)
   assert.equal(runtime.getSnapshot().activeCall?.id, outbound.id)
+  assert.equal(runtime.getSnapshot().failure?.source, "refresh")
+  const blocked = await runtime.startOutbound({ ...request, idempotencyKey: "outbound-while-occupied" })
   assert.equal(blocked?.message, "Finish the current Call before starting another.")
+})
+
+test("a start refused while another Call is dialing leaves the dialing start in charge of its result", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const response = deferred<CallingCall>()
+  backend.startOutboundHandler = async () => response.promise
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const request = {
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  }
+  const dialing = runtime.startOutbound({ ...request, idempotencyKey: "first-while-dialing" })
+  await eventually(() => assert.notEqual(runtime.getSnapshot().pendingCall, undefined))
+
+  const refused = await runtime.startOutbound({ ...request, idempotencyKey: "second-while-dialing" })
+  response.reject(new SoftphoneAdapterError("conflict", "Another Call is pending or active."))
+  const failure = await dialing
+
+  assert.equal(refused?.message, "Finish the current Call before starting another.")
+  assert.equal(failure?.message, "Another Call is pending or active.")
+  assert.equal(runtime.getSnapshot().pendingCall, undefined)
+  assert.equal(runtime.getSnapshot().occupied, false)
 })
 
 test("a disposition whose commit a refresh observed first still returns its result", async () => {
