@@ -547,6 +547,58 @@ test("completing a Task keeps Next task in place and holds Reopen until the chan
   }
 })
 
+test("the focused Task shows each projected version and completes only the version the operator reviewed", async (t) => {
+  const dom = installDOM()
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  const previousAPIURL = process.env.NEXT_PUBLIC_PORTAL_API_URL
+  process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
+  clearAccessToken()
+  const completions: number[] = []
+  const reviewed: Task = { ...projectedTask(), origin: "APPOINTMENT_REVIEW", title: "Synthetic booking v1" }
+  const changed: Task = { ...reviewed, title: "Synthetic booking v2", version: 2 }
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+    if (url === "/api/auth/token") return Response.json({ token: "synthetic-token" })
+    assert.match(url, /\/v1\/tasks\/[^/]+\/complete$/)
+    const body = await (input as Request).json()
+    completions.push(body.expectedVersion)
+    return Response.json({ ...changed, state: "COMPLETED", version: 3 })
+  })
+  const render = (task: Task) => act(async () => root.render(
+    <DataProvider>
+      <TaskCallContext
+        task={task}
+        activeCall={undefined}
+        view="task"
+        canMutate
+        taskCallError=""
+        onTaskUpdated={() => {}}
+        onReturnToCall={() => {}}
+      />
+    </DataProvider>,
+  ))
+  const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === name)
+  try {
+    await render(reviewed)
+    assert.equal(button("Verify & next")?.disabled, false)
+    await render(changed)
+    assert.equal(host.querySelector("h2")?.textContent, changed.title, "the panel shows the projected Task, not a held copy")
+    assert.equal(button("Verify & next")?.disabled, true, "a version the operator has not reviewed cannot be completed")
+    await act(async () => button("Review latest")!.click())
+    assert.equal(button("Verify & next")?.disabled, false)
+    await act(async () => button("Verify & next")!.click())
+    assert.deepEqual(completions, [changed.version], "completion submits the projected version")
+  } finally {
+    await act(async () => root.unmount())
+    clearAccessToken()
+    if (previousAPIURL === undefined) delete process.env.NEXT_PUBLIC_PORTAL_API_URL
+    else process.env.NEXT_PUBLIC_PORTAL_API_URL = previousAPIURL
+    dom.window.close()
+  }
+})
+
 test("a text conversation keeps Reopen away from Mark done and holds it until the change settles", async (t) => {
   const conversation = conversationHarness(t)
   const task = { ...projectedTask(), origin: "INBOUND_MESSAGE_REVIEW" as const }
