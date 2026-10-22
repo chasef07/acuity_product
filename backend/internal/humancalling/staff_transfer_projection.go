@@ -334,6 +334,15 @@ func (m *Module) failStaffTransferTx(
 	if err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `
+		SELECT call.id
+		FROM human_calling_staff_transfers transfer
+		JOIN human_calling_calls call ON call.id = transfer.call_id
+		WHERE transfer.id = $1
+		FOR UPDATE OF call
+	`, transferID); err != nil {
+		return err
+	}
 	var transfer StaffTransfer
 	var sourceState, targetState, targetControl, recipientSession, commandState string
 	var targetAnsweredAt *time.Time

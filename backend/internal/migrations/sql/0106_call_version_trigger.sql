@@ -1,7 +1,7 @@
 SET LOCAL lock_timeout = '1s';
 
 CREATE FUNCTION human_calling_advance_call_version() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 BEGIN
     NEW.version := OLD.version;
     IF NOT EXISTS (
@@ -15,7 +15,7 @@ END;
 $$;
 
 CREATE FUNCTION human_calling_publish_call_change() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 BEGIN
     IF TG_OP = 'INSERT' OR NEW.version <> OLD.version THEN
         PERFORM pg_notify(
@@ -28,7 +28,7 @@ END;
 $$;
 
 CREATE FUNCTION human_calling_touch_call() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 DECLARE
     child jsonb := to_jsonb(NEW);
 BEGIN
@@ -44,7 +44,7 @@ END;
 $$;
 
 CREATE FUNCTION human_calling_publish_softphone_takeover() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 BEGIN
     PERFORM pg_notify(
         'acuity_calling_hints',
