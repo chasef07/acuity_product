@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.44.1](https://github.com/chasef07/acuity_product/compare/v1.44.0...v1.44.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **api:** publish one CallState schema for every call state ([#517](https://github.com/chasef07/acuity_product/issues/517)) ([b335456](https://github.com/chasef07/acuity_product/commit/b3354564374ee5cdf4ea0119381af446ade226c4))
+* build with Go 1.26.10 and keep the Home mark animating every day ([#520](https://github.com/chasef07/acuity_product/issues/520)) ([628bc43](https://github.com/chasef07/acuity_product/commit/628bc4313d33995f2ca2ee58e938da07b80f7a8d))
+* **database:** run integration tests as runtime roles and grant worker office-route reads ([#521](https://github.com/chasef07/acuity_product/issues/521)) ([4e3a010](https://github.com/chasef07/acuity_product/commit/4e3a010cb975047a92f9a5a17690d7aa30c0d885))
+
 ## [1.44.0](https://github.com/chasef07/acuity_product/compare/v1.43.2...v1.44.0) (2026-10-20)
 
 
