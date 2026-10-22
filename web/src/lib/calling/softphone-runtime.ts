@@ -538,11 +538,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   }
 
   function live(operation: Operation | undefined): operation is Operation {
-    return (
-      current(operation) &&
-      !operation.closed &&
-      operation.identity === fenceIdentity(operation.slot, snapshot)
-    )
+    return current(operation) && !operation.closed
   }
 
   function close(operation: Operation | undefined) {
