@@ -1581,7 +1581,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             clearFailures(resolvedByHealthyReadiness)
           }
           settle(readiness)
-          reportLease(visibleLease, visibleLease.owner
+          const released = reportLease(visibleLease, visibleLease.owner
             ? undefined
             : ownershipFailure(visibleLease), {
             call: visibleLease.owner ? snapshot.call : idleCall,
@@ -1590,7 +1590,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
               ? snapshot.recoveryMedia
               : persistMediaCorrelation(undefined),
           })
-          if (!visibleLease.owner) await releaseLocalMedia()
+          if (released) await released
         } catch (error) {
           if (!live(readiness)) continue
           const failure = await failRequest(readiness, error)
@@ -2244,19 +2244,17 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         ),
         options.sessionID,
       )
-      if (!live(acquisition)) {
-        await reconcileStaleCommand()
-        return
-      }
-      settle(acquisition)
-      const released = reportLease(
-        lease,
-        lease.owner ? undefined : ownershipFailure(lease),
-        { call: claimedCall(lease) },
-      )
-      if (!lease.owner) {
-        await released
-        return
+      if (live(acquisition)) {
+        settle(acquisition)
+        const released = reportLease(
+          lease,
+          lease.owner ? undefined : ownershipFailure(lease),
+          { call: claimedCall(lease) },
+        )
+        if (!lease.owner) {
+          await released
+          return
+        }
       }
       await signalRefresh()
       await connectMedia()
