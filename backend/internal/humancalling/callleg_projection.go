@@ -927,9 +927,9 @@ func (m *Module) applyBridge(
 		FROM human_calling_call_legs leg
 		WHERE leg.role = 'STAFF' AND leg.id <> $1
 			AND leg.state IN ('PENDING', 'DIALING', 'RINGING')
-			AND (leg.call_id = $2 OR leg.staff_subject = $3)
+			AND (leg.call_id = $2 OR (NOT $4 AND leg.staff_subject = $3))
 		FOR UPDATE
-	`, state.CallLegID, state.CallID, winnerSubject)
+	`, state.CallLegID, state.CallID, winnerSubject, historicalBridge)
 	if err != nil {
 		return "", fmt.Errorf("lock losing Staff CallLegs: %w", err)
 	}
@@ -1264,7 +1264,7 @@ func (m *Module) applyHangupWithObservation(
 		FOR UPDATE OF call, leg
 	`
 	args := []any{fact.CallControlID, fact.CallLegID}
-	if state.Role != "" {
+	if state.Role != (callLegRole{}) {
 		query = `
 			SELECT leg.id::text, leg.provider_call_control_id,
 				leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, ''),

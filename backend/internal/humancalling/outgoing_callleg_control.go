@@ -499,7 +499,8 @@ func (m *Module) finishCallLegCommand(
 		`, command.CallLegID, result.CallControlID, result.CallLegID, m.now()); err != nil {
 				return fmt.Errorf("record accepted Staff Dial: %w", err)
 			}
-			var callID, role, subject, legState, terminal string
+			var callID, subject, legState, terminal string
+			var role callLegRole
 			if err := tx.QueryRow(ctx, `
 			SELECT leg.call_id::text, leg.role, COALESCE(leg.staff_subject, ''),
 				leg.state,
@@ -518,7 +519,7 @@ func (m *Module) finishCallLegCommand(
 					ctx, tx, callID, command.CallLegID, "", subject, CommandHangupLeg,
 					result.CallControlID,
 					map[string]any{"client_state": encodeCallLegClientState(
-						callID, command.CallLegID, callLegRole(role), kindLateDialCleanup,
+						callID, command.CallLegID, role, kindLateDialCleanup,
 					)},
 					"",
 				); err != nil {
@@ -704,7 +705,8 @@ func (m *Module) failBridgeCallLeg(
 	`, callLegID, m.now(), errorCode); err != nil {
 		return fmt.Errorf("release rejected Bridge: %w", err)
 	}
-	var callID, role, subject, controlID string
+	var callID, subject, controlID string
+	var role callLegRole
 	if err := tx.QueryRow(ctx, `
 		SELECT call_id::text, role, COALESCE(staff_subject, ''), provider_call_control_id
 		FROM human_calling_call_legs WHERE id = $1
@@ -722,13 +724,13 @@ func (m *Module) failBridgeCallLeg(
 	if _, err := m.insertCallLegCommand(
 		ctx, tx, callID, callLegID, "", subject, CommandHangupLeg, controlID,
 		map[string]any{"client_state": encodeCallLegClientState(
-			callID, callLegID, callLegRole(role), kindCleanup,
+			callID, callLegID, role, kindCleanup,
 		)},
 		"",
 	); err != nil {
 		return err
 	}
-	if role != "DESTINATION" {
+	if role != roleDestination {
 		return m.maybeStartVoicemailAfterRingCompleted(ctx, tx, callID)
 	}
 	if _, err := tx.Exec(ctx, `

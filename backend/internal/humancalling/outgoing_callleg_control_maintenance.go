@@ -348,7 +348,8 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		return false, fmt.Errorf("begin stale CallLeg reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var callID, practiceID, legID, role, direction, legState, terminalOutcome string
+	var callID, practiceID, legID, direction, legState, terminalOutcome string
+	var role callLegRole
 	var connectionID string
 	var controlID, providerLegID, sessionID string
 	var commandID, providerClientState string
@@ -415,7 +416,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		}
 		return false, nil
 	}
-	clientState := encodeCallLegClientState(callID, legID, callLegRole(role), kindReconciled)
+	clientState := encodeCallLegClientState(callID, legID, role, kindReconciled)
 	if providerClientState == "" {
 		providerClientState = clientState
 	} else if commandAction == CommandTransferStaff {
@@ -460,7 +461,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 	observedInitiation := false
 	observedHangup := false
 	for _, event := range observation.Events {
-		if event.Type == FactCallInitiated && role == "CALLER" {
+		if event.Type == FactCallInitiated && role == roleCaller {
 			continue
 		}
 		if event.Type == FactCallInitiated {
@@ -479,9 +480,9 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		}
 		if event.Type == FactCallBridged &&
 			event.ClientState == "" &&
-			(role == "DESTINATION" ||
-				(role == "STAFF" && direction == string(CallInbound))) {
-			factClientState = encodeCallLegClientState(callID, legID, callLegRole(role), kindBridge)
+			(role == roleDestination ||
+				(role == roleStaff && direction == string(CallInbound))) {
+			factClientState = encodeCallLegClientState(callID, legID, role, kindBridge)
 		}
 		fact := event
 		if fact.ConnectionID == "" {
@@ -596,7 +597,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		CallControlID:     controlID,
 		CallLegID:         providerLegID,
 		CallSessionID:     sessionID,
-		ClientState:       encodeCallLegClientState(callID, legID, callLegRole(role), kindReconciledAbsent),
+		ClientState:       encodeCallLegClientState(callID, legID, role, kindReconciledAbsent),
 		HangupCause:       "CALL_DOES_NOT_EXIST",
 		TerminationSource: "RECONCILER",
 	}
@@ -1004,7 +1005,8 @@ func (m *Module) rejectUnobservedCommand(
 			ctx, tx, commandID, callLegID, errorCode,
 		)
 	case CommandHangupLeg:
-		var callID, role, subject, targetID string
+		var callID, subject, targetID string
+		var role callLegRole
 		if queryErr := tx.QueryRow(ctx, `
 			SELECT command.call_id::text, leg.role,
 				COALESCE(leg.staff_subject, ''), command.target_id
@@ -1019,7 +1021,7 @@ func (m *Module) rejectUnobservedCommand(
 		_, err = m.insertCallLegCommand(
 			ctx, tx, callID, callLegID, "", subject, CommandHangupLeg, targetID,
 			map[string]any{"client_state": encodeCallLegClientState(
-				callID, callLegID, callLegRole(role), kindCleanupRetry,
+				callID, callLegID, role, kindCleanupRetry,
 			)},
 			"",
 		)

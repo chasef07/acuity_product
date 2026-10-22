@@ -37,14 +37,14 @@ func TestEveryProviderFactRouteIsDecided(t *testing.T) {
 func TestUnknownClientStateKindParsesAsUnrecognized(t *testing.T) {
 	state, ok := parseCallLegClientState(encodeCallLegClientState(
 		"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002",
-		roleStaff, "kind_from_a_newer_release",
+		roleStaff, clientStateKind{"kind_from_a_newer_release"},
 	))
 	if !ok || state.Kind != kindUnrecognized {
 		t.Fatalf("parsed client state = %+v, %t; want an unrecognized kind", state, ok)
 	}
 	if _, ok := parseCallLegClientState(encodeCallLegClientState(
 		"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002",
-		"OPERATOR", kindDial,
+		callLegRole{"OPERATOR"}, kindDial,
 	)); ok {
 		t.Fatal("client state with an unknown role parsed")
 	}
@@ -71,48 +71,82 @@ func TestEveryDeclaredKindAndFactTypeIsRouted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	declared := map[string][]string{}
+	listed := map[string][]string{"clientStateKind": {kindUnrecognized.name}}
+	for _, kind := range clientStateKinds {
+		listed["clientStateKind"] = append(listed["clientStateKind"], kind.name)
+	}
+	for _, role := range callLegRoles {
+		listed["callLegRole"] = append(listed["callLegRole"], role.name)
+	}
+	fix := map[string]string{
+		"clientStateKind": "declare it once beside the other kinds in fact_routes.go, " +
+			"list it in clientStateKinds, and route it in routeProviderFacts",
+		"callLegRole": "use roleCaller, roleStaff, or roleDestination",
+	}
+	fset := token.NewFileSet()
+	var facts []string
 	for _, path := range paths {
 		if strings.HasSuffix(path, "_test.go") {
 			continue
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, declaration := range file.Decls {
-			constants, ok := declaration.(*ast.GenDecl)
-			if !ok || constants.Tok != token.CONST {
-				continue
-			}
-			for _, spec := range constants.Specs {
-				value := spec.(*ast.ValueSpec)
-				typeName, ok := value.Type.(*ast.Ident)
-				if !ok || (typeName.Name != "clientStateKind" && typeName.Name != "FactType") {
-					continue
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch node := node.(type) {
+			case *ast.CompositeLit:
+				typeName, ok := node.Type.(*ast.Ident)
+				if !ok || listed[typeName.Name] == nil || len(node.Elts) == 0 {
+					return true
 				}
-				for _, literal := range value.Values {
-					text, err := strconv.Unquote(literal.(*ast.BasicLit).Value)
-					if err != nil {
-						t.Fatal(err)
+				name, ok := stringLiteral(node.Elts[0])
+				if !ok {
+					t.Errorf("%s: %s is built from a non-literal; %s", fset.Position(node.Pos()), typeName.Name,
+						fix[typeName.Name])
+				} else if !slices.Contains(listed[typeName.Name], name) {
+					t.Errorf("%s: %s %q is not a declared member; %s", fset.Position(node.Pos()), typeName.Name,
+						name, fix[typeName.Name])
+				}
+			case *ast.GenDecl:
+				if node.Tok != token.CONST {
+					return true
+				}
+				for _, spec := range node.Specs {
+					value := spec.(*ast.ValueSpec)
+					if typeName, ok := value.Type.(*ast.Ident); !ok || typeName.Name != "FactType" {
+						continue
 					}
-					declared[typeName.Name] = append(declared[typeName.Name], text)
+					for _, expression := range value.Values {
+						name, ok := stringLiteral(expression)
+						if !ok {
+							t.Errorf("%s: FactType constant is not a string literal", fset.Position(expression.Pos()))
+						}
+						facts = append(facts, name)
+					}
 				}
 			}
-		}
+			return true
+		})
 	}
-	for _, kind := range declared["clientStateKind"] {
-		if clientStateKind(kind) != kindUnrecognized && !slices.Contains(clientStateKinds, clientStateKind(kind)) {
-			t.Errorf("client state kind %q is declared but not listed in clientStateKinds", kind)
-		}
-	}
-	for _, fact := range declared["FactType"] {
+	for _, fact := range facts {
 		if !slices.Contains(providerFactTypes, FactType(fact)) {
 			t.Errorf("fact type %q is declared but not listed in providerFactTypes", fact)
 		}
 	}
-	if len(declared["clientStateKind"]) != len(clientStateKinds)+1 || len(declared["FactType"]) != len(providerFactTypes) {
-		t.Errorf("declared kinds=%d facts=%d, listed kinds=%d facts=%d", len(declared["clientStateKind"]),
-			len(declared["FactType"]), len(clientStateKinds), len(providerFactTypes))
+	if len(facts) != len(providerFactTypes) {
+		t.Errorf("declared facts=%d, listed facts=%d", len(facts), len(providerFactTypes))
 	}
+}
+
+func stringLiteral(expression ast.Expr) (string, bool) {
+	if field, ok := expression.(*ast.KeyValueExpr); ok {
+		expression = field.Value
+	}
+	literal, ok := expression.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return "", false
+	}
+	text, err := strconv.Unquote(literal.Value)
+	return text, err == nil
 }

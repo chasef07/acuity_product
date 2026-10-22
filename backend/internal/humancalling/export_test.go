@@ -7,7 +7,7 @@ import (
 
 func RouteClientStateKindLike(t testing.TB, kind, like string) {
 	t.Helper()
-	added, existing := clientStateKind(kind), clientStateKind(like)
+	added, existing := clientStateKind{kind}, clientStateKind{like}
 	if slices.Contains(clientStateKinds, added) || !slices.Contains(clientStateKinds, existing) {
 		t.Fatalf("cannot route client state kind %q like %q", kind, like)
 	}
