@@ -546,9 +546,9 @@ func (m *Module) ProcessNextRecordingRetention(
 }
 
 func lockCall(ctx context.Context, tx pgx.Tx, callID string) error {
-	if _, err := tx.Exec(ctx, `
-		SELECT 1 FROM human_calling_calls WHERE id = $1 FOR UPDATE
-	`, callID); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM human_calling_calls WHERE id = $1 FOR UPDATE
+	`, callID).Scan(&callID); err != nil {
 		return fmt.Errorf("lock Call: %w", err)
 	}
 	return nil

@@ -110,7 +110,11 @@ FOR EACH ROW WHEN (
         'START_RING_WINDOW', 'DIAL_OUTBOUND_STAFF',
         'SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING'
     )
-    AND (OLD.state, OLD.sent_at) IS DISTINCT FROM (NEW.state, NEW.sent_at)
+    AND (
+        OLD.sent_at IS DISTINCT FROM NEW.sent_at
+        OR (OLD.state IN ('SENT', 'RECONCILED')) <> (NEW.state IN ('SENT', 'RECONCILED'))
+        OR (OLD.state = 'FAILED') <> (NEW.state = 'FAILED')
+    )
 )
 EXECUTE FUNCTION human_calling_touch_call();
 

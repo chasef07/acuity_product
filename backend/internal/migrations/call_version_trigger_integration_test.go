@@ -112,10 +112,45 @@ func TestCallVersionAdvancesOncePerTransactionForClientVisibleChanges(t *testing
 			`INSERT INTO human_calling_provider_commands (call_id, action, target_id)
 			VALUES ($1, 'START_RING_WINDOW', 'synthetic-control')`,
 		}, true},
+		{"ring window command claimed", []string{
+			`UPDATE human_calling_provider_commands SET state = 'SENDING', attempts = 1
+			WHERE call_id = $1 AND action = 'START_RING_WINDOW'`,
+		}, false},
 		{"ring window command sent", []string{
 			`UPDATE human_calling_provider_commands SET state = 'SENT', sent_at = now()
 			WHERE call_id = $1 AND action = 'START_RING_WINDOW'`,
 		}, true},
+		{"ring window command unobserved", []string{
+			`UPDATE human_calling_provider_commands SET state = 'AMBIGUOUS'
+			WHERE call_id = $1 AND action = 'START_RING_WINDOW'`,
+		}, true},
+		{"recording reserved", []string{
+			`INSERT INTO human_calling_call_recordings (
+				call_id, practice_id, location_id, audio_state, retention_days, created_at, updated_at
+			) SELECT id, practice_id, location_id, 'PROCESSING', 30, now(), now()
+			FROM human_calling_calls WHERE id = $1`,
+		}, true},
+		{"recording reconciliation bookkeeping", []string{
+			`UPDATE human_calling_call_recordings SET reconciliation_attempts = 1,
+				reconciliation_claimed_at = now(), next_reconciliation_attempt_at = now(),
+				reconciliation_error_code = 'SYNTHETIC', updated_at = now()
+			WHERE call_id = $1`,
+		}, false},
+		{"recording ready", []string{
+			`UPDATE human_calling_call_recordings SET audio_state = 'READY',
+				provider_recording_id = 'synthetic-recording',
+				recording_started_at = now() - interval '1 minute', recording_ended_at = now(),
+				content_expires_at = now() + interval '30 days', duration_millis = 60000,
+				reconciliation_claimed_at = NULL, next_reconciliation_attempt_at = NULL,
+				reconciliation_error_code = NULL
+			WHERE call_id = $1`,
+		}, true},
+		{"recording deletion bookkeeping", []string{
+			`UPDATE human_calling_call_recordings SET deletion_attempts = 1,
+				deletion_claimed_at = now(), next_deletion_attempt_at = now(),
+				deletion_error_code = 'SYNTHETIC', updated_at = now()
+			WHERE call_id = $1`,
+		}, false},
 		{"Hangup request", []string{
 			`INSERT INTO human_calling_timeline (call_id, practice_id, kind, occurred_at)
 			SELECT id, practice_id, 'call.hangup.requested', now() FROM human_calling_calls WHERE id = $1`,
