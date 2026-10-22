@@ -17,11 +17,13 @@ import {
   type CallingHintSource,
 } from "./calling-hints.ts"
 import { createCallingChangeMetric } from "./calling-change-metric.ts"
-import type {
-  CallingMediaAdapter,
-  IncomingMediaLeg,
-  MediaFailure,
-  MediaState,
+import {
+  mediaKey,
+  type CallingMediaAdapter,
+  type IncomingMediaLeg,
+  type MediaFailure,
+  type MediaKey,
+  type MediaState,
 } from "./media-adapter.ts"
 
 export type SoftphoneFailureKind =
@@ -62,16 +64,6 @@ export type RuntimeMediaCorrelation = {
   callLegID?: string
   providerLegID: string
   mediaToken: string
-}
-
-function sameMediaIdentity(
-  left: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">,
-  right: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">,
-) {
-  return (
-    left.providerLegID === right.providerLegID &&
-    left.mediaToken === right.mediaToken
-  )
 }
 
 export type SoftphoneRuntimeSnapshot = {
@@ -352,8 +344,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     | {
         callID: string
         callLegID: string
-        providerLegID: string
-        mediaToken: string
+        media: MediaKey
     }
     | undefined
   const ignoredCallIDs = new Set<string>()
@@ -721,11 +712,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     attachment: RuntimeMediaCorrelation,
     leg: IncomingMediaLeg,
   ) {
-    if (attachedLeg !== leg) return
+    const key = mediaKey(leg)
+    if (!attachedLeg || mediaKey(attachedLeg) !== key) return
     incomingMedia.delete(attachment.mediaToken)
     const purge = rejectSafely(leg)
     void purge.then((released) => {
-      if (attachedLeg !== leg) return
+      if (!attachedLeg || mediaKey(attachedLeg) !== key) return
       if (!released) {
         void handleMediaFailure("provider")
         return
@@ -734,11 +726,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       if (answeredInbound?.callID === attachment.callID) {
         answeredInbound = undefined
       }
-      if (
-        snapshot.mediaAttachment?.callID === attachment.callID &&
-        snapshot.mediaAttachment.providerLegID === attachment.providerLegID &&
-        snapshot.mediaAttachment.mediaToken === attachment.mediaToken
-      ) {
+      const current = snapshot.mediaAttachment
+      if (current?.callID === attachment.callID && mediaKey(current) === key) {
         publish({ mediaAttachment: undefined, muted: false })
       }
     })
@@ -775,9 +764,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         ? snapshot.mediaAttachment
         : undefined
     const settledLeg =
-      settledMedia &&
-      attachedLeg?.providerLegID === settledMedia.providerLegID &&
-      attachedLeg.mediaToken === settledMedia.mediaToken
+      settledMedia && attachedLeg && mediaKey(attachedLeg) === mediaKey(settledMedia)
         ? attachedLeg
         : undefined
     if (settledMedia) {
@@ -1009,7 +996,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           : snapshot.activeCallLegID
       let answeredLegLost = false
       if (answeredInbound) {
-        const answeredIdentity = answeredInbound
+        const answeredKey = answeredInbound.media
         const exactBridge =
           state.bridged?.callId === answeredInbound.callID &&
           state.bridged.callLegId === answeredInbound.callLegID
@@ -1025,7 +1012,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         if ((exactBridge || exactDisposition) && !stillRinging) {
           const losingLegs = [...incomingMedia.values()].filter(
             (leg) =>
-              !exactBridge || !sameMediaIdentity(answeredIdentity, leg),
+              !exactBridge || mediaKey(leg) !== answeredKey,
           )
           incomingMedia.clear()
           void Promise.all(losingLegs.map(rejectSafely))
@@ -1037,8 +1024,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           const losingMedia =
             losingLeg &&
             losingAttachment &&
-            losingLeg.providerLegID === losingAttachment.providerLegID &&
-            losingLeg.mediaToken === losingAttachment.mediaToken
+            mediaKey(losingLeg) === mediaKey(losingAttachment)
               ? { attachment: losingAttachment, leg: losingLeg }
               : undefined
           if (!losingMedia) attachedLeg = undefined
@@ -1065,8 +1051,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           if (
             dispositionLeg &&
             dispositionAttachment &&
-            dispositionLeg.providerLegID === dispositionAttachment.providerLegID &&
-            dispositionLeg.mediaToken === dispositionAttachment.mediaToken
+            mediaKey(dispositionLeg) === mediaKey(dispositionAttachment)
           ) {
             purgeAttachedMedia(dispositionAttachment, dispositionLeg)
           } else {
@@ -1098,14 +1083,11 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         !snapshot.pendingCall &&
         !snapshot.activeCall &&
         !snapshot.pendingDisposition
-        ? state.ringing
-            .filter(
+        ? offersWithMedia(
+            state.ringing.filter(
               (offer) => new Date(offer.deadline).getTime() > clock.now,
-            )
-            .map((offer) => ({
-              ...offer,
-              answerReady: exactIncomingLeg(offer) !== undefined,
-            }))
+            ),
+          )
         : []
       publish({
         lease,
@@ -1588,21 +1570,13 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             },
             onEnded: (leg) => {
               if (!connectionCurrent()) return
+              const key = mediaKey(leg)
               const remembered = incomingMedia.get(leg.mediaToken)
-              if (remembered?.providerLegID === leg.providerLegID) {
+              if (remembered && mediaKey(remembered) === key) {
                 incomingMedia.delete(leg.mediaToken)
-                publish({
-                  offers: snapshot.offers.map((offer) =>
-                    offer.mediaToken === leg.mediaToken
-                      ? { ...offer, answerReady: false }
-                      : offer,
-                  ),
-                })
+                publishOffers(snapshot.offers)
               }
-              if (
-                attachedLeg?.providerLegID === leg.providerLegID &&
-                attachedLeg.mediaToken === leg.mediaToken
-              ) {
+              if (attachedLeg && mediaKey(attachedLeg) === key) {
                 attachedLeg = undefined
                 publish({ mediaAttachment: undefined, muted: false })
               }
@@ -1731,9 +1705,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       await rejectSafely(leg)
       return
     }
+    const key = mediaKey(leg)
     if (attachedLeg) {
-      const recoversCurrent =
-        leg.recovery && sameMediaIdentity(attachedLeg, leg)
+      const recoversCurrent = leg.recovery && mediaKey(attachedLeg) === key
       if (!recoversCurrent) {
         await rejectSafely(leg)
         return
@@ -1791,7 +1765,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       return
     }
     const existing = incomingMedia.get(leg.mediaToken)
-    if (existing && existing.providerLegID !== leg.providerLegID) {
+    if (existing && mediaKey(existing) !== key) {
       await rejectSafely(leg)
       return
     }
@@ -1805,18 +1779,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       await discardStaleMedia(leg)
       return
     }
-    if (
-      answeredInbound &&
-      (answeredInbound.providerLegID !== leg.providerLegID ||
-        answeredInbound.mediaToken !== leg.mediaToken)
-    ) {
-      return
-    }
+    if (answeredInbound && answeredInbound.media !== key) return
     if (attachedLeg) {
-      if (
-        sameMediaIdentity(attachedLeg, leg) &&
-        incomingMedia.get(leg.mediaToken) === leg
-      ) {
+      if (mediaKey(attachedLeg) === key && incomingMedia.get(leg.mediaToken) === leg) {
         incomingMedia.delete(leg.mediaToken)
       }
       return
@@ -1828,20 +1793,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       await attachExpectedMedia(leg, generation)
       return
     }
-    const matchingOffer = snapshot.offers.find(
-      (offer) => offer.mediaToken === leg.mediaToken,
-    )
-    if (matchingOffer) {
-      publish({
-        offers: snapshot.offers.map((offer) =>
-          offer.callLegId === matchingOffer.callLegId
-            ? { ...offer, answerReady: true }
-            : offer,
-        ),
-      })
-      return
-    }
-    return
+    publishOffers(snapshot.offers)
   }
 
   async function attachExpectedMedia(
@@ -1862,8 +1814,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       snapshot.recoveryMedia?.callID === callID &&
       Boolean(snapshot.activeCallLegID) &&
       snapshot.recoveryMedia.callLegID === snapshot.activeCallLegID &&
-      snapshot.recoveryMedia.providerLegID === leg.providerLegID &&
-      snapshot.recoveryMedia.mediaToken === leg.mediaToken
+      mediaKey(snapshot.recoveryMedia) === mediaKey(leg)
     if (!callID) {
       incomingMedia.delete(leg.mediaToken)
       await rejectSafely(leg)
@@ -2428,8 +2379,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       const answering = {
         callID: offer.callId,
         callLegID: offer.callLegId,
-        providerLegID: leg.providerLegID,
-        mediaToken: leg.mediaToken,
+        media: mediaKey(leg),
       }
       const generation = microphoneGeneration
       answeredInbound = answering
@@ -2457,12 +2407,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         if (mediaEffectTimedOut(error)) {
           publish({
             pendingCall: undefined,
-            offers: [
+            offers: offersWithMedia([
               ...snapshot.offers.filter(
                 (candidate) => candidate.callLegId !== offer.callLegId,
               ),
-              { ...offer, answerReady: false },
-            ],
+              offer,
+            ]),
           })
           await commitReadiness(false)
           setFailure(error, "media")
@@ -2473,12 +2423,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         incomingMedia.set(offer.mediaToken, leg)
         publish({
           pendingCall: undefined,
-          offers: [
+          offers: offersWithMedia([
             ...snapshot.offers.filter(
               (candidate) => candidate.callLegId !== offer.callLegId,
             ),
-            { ...offer, answerReady: true },
-          ],
+            offer,
+          ]),
         })
         setFailure(error, "media")
         return
@@ -2869,6 +2819,20 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
 
   function exactIncomingLeg(offer: Pick<RingingCallLeg, "mediaToken">) {
     return incomingMedia.get(offer.mediaToken)
+  }
+
+  function offersWithMedia(offers: readonly RingingCallLeg[]): RuntimeOffer[] {
+    return offers.map((offer) => ({
+      ...offer,
+      answerReady: exactIncomingLeg(offer) !== undefined,
+    }))
+  }
+
+  function publishOffers(offers: readonly RuntimeOffer[]) {
+    const next = offersWithMedia(offers)
+    if (next.some((offer, index) => offer.answerReady !== offers[index].answerReady)) {
+      publish({ offers: next })
+    }
   }
 
   function persistMediaCorrelation(

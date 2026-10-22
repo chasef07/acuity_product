@@ -14,6 +14,14 @@ export type MediaFailure =
   | "provider"
 type MediaAttachmentOutcome = "attached" | "ended"
 
+export type MediaKey = string & { readonly __brand: "MediaKey" }
+
+export function mediaKey(
+  leg: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">,
+) {
+  return JSON.stringify([leg.providerLegID, leg.mediaToken]) as MediaKey
+}
+
 export type IncomingMediaLeg = {
   providerLegID: string
   mediaToken: string
@@ -207,8 +215,7 @@ export function applyMicrophoneFence(
 type MediaSession = {
   call: SDKCall
   remoteStream?: MediaStream
-  providerLegID: string
-  mediaToken: string
+  key: MediaKey
   desiredMuted: boolean
   attachmentCurrent: boolean
 }
@@ -217,17 +224,6 @@ type MediaIdentity = Pick<
   IncomingMediaLeg,
   "providerLegID" | "mediaToken"
 >
-
-function matchesMediaSession(
-  session: MediaSession | undefined,
-  providerLegID: string,
-  mediaToken: string,
-): session is MediaSession {
-  return (
-    session?.providerLegID === providerLegID &&
-    session.mediaToken === mediaToken
-  )
-}
 
 class TelnyxMediaAdapter implements CallingMediaAdapter {
   private readonly keypadFeedback = createKeypadFeedback()
@@ -384,6 +380,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         return
       }
       this.mediaIdentity.set(call, { providerLegID, mediaToken })
+      const key = mediaKey({ providerLegID, mediaToken })
       callbacks.onIncoming({
         providerLegID,
         mediaToken,
@@ -392,18 +389,11 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
           if (this.terminalCalls.has(call)) return "ended"
           this.keypadFeedback.stop()
           const current = this.activeSession
-          const recoversActiveLeg = matchesMediaSession(
-            current,
-            providerLegID,
-            mediaToken,
-          )
-          const desiredMuted = recoversActiveLeg
-            ? current.desiredMuted
-            : false
+          const desiredMuted =
+            current?.key === key ? current.desiredMuted : false
           const session: MediaSession = {
             call,
-            providerLegID,
-            mediaToken,
+            key,
             desiredMuted,
             attachmentCurrent: false,
           }
@@ -443,16 +433,12 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         reject: () => rejectMediaCall(call),
         mute: () => {
           const current = this.activeSession
-          if (matchesMediaSession(current, providerLegID, mediaToken)) {
-            current.desiredMuted = true
-          }
+          if (current?.key === key) current.desiredMuted = true
           call.muteAudio()
         },
         unmute: () => {
           const current = this.activeSession
-          if (matchesMediaSession(current, providerLegID, mediaToken)) {
-            current.desiredMuted = false
-          }
+          if (current?.key === key) current.desiredMuted = false
           call.unmuteAudio()
         },
         sendDTMF: (digit) => {
@@ -462,7 +448,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
             !/^[0-9A-D*#]$/.test(digit) ||
             call.state !== "active" ||
             !current?.attachmentCurrent ||
-            !matchesMediaSession(current, providerLegID, mediaToken)
+            current.key !== key
           ) {
             return false
           }
