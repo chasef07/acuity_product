@@ -247,7 +247,7 @@ func (m *Module) startCallLegVoicemail(
 			"voice":    "female",
 			"language": "en-US",
 			"client_state": encodeCallLegClientState(
-				callID, callerLegID, "CALLER", "voicemail_greeting",
+				callID, callerLegID, roleCaller, kindVoicemailGreeting,
 			),
 		},
 		"",
@@ -410,7 +410,7 @@ func (m *Module) endCallLegs(
 			ctx, tx, callID, leg.id, "", leg.subject, CommandHangupLeg,
 			leg.controlID,
 			map[string]any{"client_state": encodeCallLegClientState(
-				callID, leg.id, leg.role, "cleanup",
+				callID, leg.id, callLegRole(leg.role), kindCleanup,
 			)},
 			"",
 		); err != nil {
@@ -454,7 +454,7 @@ func (m *Module) failRoutingCall(
 			ctx, tx, callID, callerLegID, "", "", CommandHangupLeg,
 			callerControlID,
 			map[string]any{"client_state": encodeCallLegClientState(
-				callID, callerLegID, "CALLER", "routing_failure",
+				callID, callerLegID, roleCaller, kindRoutingFailure,
 			)},
 			"",
 		); err != nil {

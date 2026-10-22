@@ -518,7 +518,7 @@ func (m *Module) finishCallLegCommand(
 					ctx, tx, callID, command.CallLegID, "", subject, CommandHangupLeg,
 					result.CallControlID,
 					map[string]any{"client_state": encodeCallLegClientState(
-						callID, command.CallLegID, role, "late_dial_cleanup",
+						callID, command.CallLegID, callLegRole(role), kindLateDialCleanup,
 					)},
 					"",
 				); err != nil {
@@ -722,7 +722,7 @@ func (m *Module) failBridgeCallLeg(
 	if _, err := m.insertCallLegCommand(
 		ctx, tx, callID, callLegID, "", subject, CommandHangupLeg, controlID,
 		map[string]any{"client_state": encodeCallLegClientState(
-			callID, callLegID, role, "cleanup",
+			callID, callLegID, callLegRole(role), kindCleanup,
 		)},
 		"",
 	); err != nil {

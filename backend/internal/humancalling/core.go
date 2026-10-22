@@ -52,6 +52,12 @@ const (
 	FactRecordingError  FactType = "call.recording.error"
 )
 
+var providerFactTypes = []FactType{
+	FactCallInitiated, FactCallAnswered, FactCallBridged, FactCallHangup,
+	FactPlaybackStarted, FactPlaybackEnded, FactSpeakStarted, FactSpeakEnded,
+	FactRecordingSaved, FactRecordingError,
+}
+
 type CommandAction string
 
 const (
@@ -459,108 +465,6 @@ func New(
 		module.work = work.New(database, accessModule, now)
 	}
 	return module
-}
-
-func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error {
-	if fact.EventID == "" || fact.Type == "" || fact.OccurredAt.IsZero() {
-		return ErrInvalidInput
-	}
-	if fact.Type == FactCallBridged {
-		state, hasState := parseCallLegClientState(fact.ClientState)
-		if fact.ClientState == "" ||
-			(hasState && state.Role == "STAFF" && state.Kind == "outbound_media") {
-			var err error
-			fact, err = m.correlateBridgeFact(ctx, fact)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	state, hasState := parseCallLegClientState(fact.ClientState)
-	switch fact.Type {
-	case FactCallInitiated:
-		if hasState && state.Kind == staffTransferTargetKind {
-			return m.applyStaffTransferTargetFact(ctx, fact)
-		}
-		if hasState && state.Role == "STAFF" {
-			return m.applyStaffInitiated(ctx, fact, state.CallID)
-		}
-		if hasState && state.Role == "DESTINATION" {
-			return m.applyOutboundDestinationFact(ctx, fact, state.CallID)
-		}
-		if hasState {
-			return ErrConflict
-		}
-		return m.admitHandoff(ctx, fact)
-	case FactCallAnswered:
-		if hasState && state.Kind == staffTransferTargetKind {
-			return m.applyStaffTransferTargetFact(ctx, fact)
-		}
-		if hasState && state.Role == "STAFF" {
-			return m.applyStaffInitiated(ctx, fact, state.CallID)
-		}
-		if hasState && state.Role == "DESTINATION" {
-			return m.applyOutboundDestinationFact(ctx, fact, state.CallID)
-		}
-		if hasState && state.Role == "CALLER" {
-			obsolete, err := m.terminalCleanupFailedCallLeg(ctx, state)
-			if err != nil {
-				return err
-			}
-			if obsolete {
-				return errTerminalOrObsoleteProviderFact
-			}
-		}
-		return m.applyCallerAnswered(ctx, fact)
-	case FactCallBridged:
-		if hasState && (state.Kind == staffTransferTargetKind ||
-			state.Kind == staffTransferSourceKind) {
-			if state.Kind == staffTransferTargetKind {
-				return m.applyStaffTransferTargetFact(ctx, fact)
-			}
-			return m.applyStaffTransferBridge(ctx, fact)
-		}
-		if hasState && state.Role == "DESTINATION" {
-			return m.applyOutboundBridge(ctx, fact)
-		}
-		if hasState && state.Role == "CALLER" {
-			return m.applyCallerBridge(ctx, fact)
-		}
-		if hasState && state.Role == "STAFF" && state.Kind != "bridge" {
-			return m.applyOutboundStaffBridge(ctx, fact)
-		}
-		return m.applyBridge(ctx, fact)
-	case FactCallHangup:
-		return m.applyHangup(ctx, fact)
-	case FactPlaybackStarted:
-		if hasState && state.Role == "STAFF" &&
-			(state.Kind == "outbound_media" || hangupClientState(state.Kind)) {
-			return m.applyOutboundRingtoneFact(ctx, fact, state)
-		}
-		return m.applyRingbackStarted(ctx, fact)
-	case FactPlaybackEnded:
-		if hasState && state.Role == "STAFF" &&
-			(state.Kind == "outbound_media" || hangupClientState(state.Kind)) {
-			return m.applyOutboundRingtoneFact(ctx, fact, state)
-		}
-		return m.applyRingWindowEnded(ctx, fact)
-	case FactSpeakStarted:
-		return m.applyVoicemailGreetingStarted(ctx, fact)
-	case FactSpeakEnded:
-		return m.applyVoicemailGreetingEnded(ctx, fact)
-	case FactRecordingSaved:
-		if _, connected := connectedRecordingSavedCandidateState(fact); connected {
-			return m.applyConnectedCallRecordingSaved(ctx, fact)
-		}
-		return m.applyVoicemailRecordingSaved(ctx, fact)
-	case FactRecordingError:
-		if _, connected := connectedRecordingState(fact); connected {
-			return m.applyConnectedCallRecordingError(ctx, fact)
-		}
-		return m.applyVoicemailRecordingError(ctx, fact)
-	default:
-		return ErrInvalidInput
-	}
 }
 
 func (m *Module) staffMediaToken(callID string, callLegID string) string {

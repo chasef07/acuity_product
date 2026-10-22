@@ -210,45 +210,23 @@ type playbackClaims struct {
 	Nonce     string       `json:"nonce"`
 }
 
-func (m *Module) applyVoicemailGreetingStarted(
-	ctx context.Context,
-	fact ProviderFact,
-) error {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Role != "CALLER" || state.Kind != "voicemail_greeting" {
-		return ErrConflict
-	}
-	return m.applyVoicemailSpeechFact(ctx, fact, state, false)
-}
-
-func (m *Module) applyVoicemailGreetingEnded(
-	ctx context.Context,
-	fact ProviderFact,
-) error {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Role != "CALLER" || state.Kind != "voicemail_greeting" {
-		return ErrConflict
-	}
-	return m.applyVoicemailSpeechFact(ctx, fact, state, true)
-}
-
 func (m *Module) applyVoicemailSpeechFact(
 	ctx context.Context,
 	fact ProviderFact,
 	state callLegClientState,
-	ended bool,
-) error {
+) (factVerdict, error) {
+	ended := fact.Type == FactSpeakEnded
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin voicemail speech projection: %w", err)
+		return "", fmt.Errorf("begin voicemail speech projection: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !claimed {
+		return commitFact(ctx, tx)
 	}
 	var practiceID, callerControlID, callerLegID, callerSessionID, terminal string
 	if err := tx.QueryRow(ctx, `
@@ -263,14 +241,14 @@ func (m *Module) applyVoicemailSpeechFact(
 	`, state.CallID, state.CallLegID).Scan(
 		&practiceID, &callerControlID, &callerLegID, &callerSessionID, &terminal,
 	); err != nil {
-		return fmt.Errorf("lock voicemail caller: %w", err)
+		return "", fmt.Errorf("lock voicemail caller: %w", err)
 	}
 	if fact.CallControlID != callerControlID || fact.CallLegID != callerLegID ||
 		fact.CallSessionID != callerSessionID {
-		return ErrConflict
+		return factConflict, nil
 	}
 	if terminal != "" && terminal != "VOICEMAIL" {
-		return errTerminalOrObsoleteProviderFact
+		return factObsolete, nil
 	}
 	if ended && fact.PlaybackStatus == "completed" {
 		if _, err := tx.Exec(ctx, `
@@ -279,7 +257,7 @@ func (m *Module) applyVoicemailSpeechFact(
 			WHERE call_leg_id = $1 AND action = 'SPEAK_VOICEMAIL'
 				AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 		`, state.CallLegID, fact.OccurredAt, m.now()); err != nil {
-			return fmt.Errorf("reconcile voicemail Speak: %w", err)
+			return "", fmt.Errorf("reconcile voicemail Speak: %w", err)
 		}
 		if _, err := m.insertCallLegCommand(ctx, tx, state.CallID,
 			state.CallLegID, "", "", CommandStartVoicemailRecording,
@@ -288,10 +266,10 @@ func (m *Module) applyVoicemailSpeechFact(
 				"recording_track": "inbound", "transcription": false,
 				"play_beep": true, "max_length": int(voicemailRecordingMaximum.Seconds()),
 				"client_state": encodeCallLegClientState(
-					state.CallID, state.CallLegID, "CALLER", "voicemail_recording",
+					state.CallID, state.CallLegID, roleCaller, kindVoicemailRecording,
 				),
 			}, ""); err != nil {
-			return err
+			return "", err
 		}
 	} else if ended && terminal == "" {
 		if _, err := tx.Exec(ctx, `
@@ -300,14 +278,14 @@ func (m *Module) applyVoicemailSpeechFact(
 			WHERE call_leg_id = $1 AND action = 'SPEAK_VOICEMAIL'
 				AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 		`, state.CallLegID, "SPEAK_"+strings.ToUpper(fact.PlaybackStatus), m.now()); err != nil {
-			return fmt.Errorf("fail voicemail Speak: %w", err)
+			return "", fmt.Errorf("fail voicemail Speak: %w", err)
 		}
 		if _, err := m.ensureRecoveryOutcome(ctx, tx, state.CallID,
 			RecoveryMissedCall, "MISSED", fact); err != nil {
-			return err
+			return "", err
 		}
 		if err := m.endVoicemailCaller(ctx, tx, state.CallID, state.CallLegID); err != nil {
-			return err
+			return "", err
 		}
 	}
 	kind := "voicemail.greeting.started"
@@ -319,19 +297,18 @@ func (m *Module) applyVoicemailSpeechFact(
 	if err := appendTimeline(ctx, tx, state.CallID, practiceID, kind, "",
 		fact.EventID, "", opaqueReference(fact.CallLegID), fact.PlaybackStatus,
 		fact.OccurredAt); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
 func (m *Module) applyVoicemailRecordingSaved(
 	ctx context.Context,
 	fact ProviderFact,
-) error {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Role != "CALLER" ||
-		!fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
-		return ErrConflict
+	state callLegClientState,
+) (factVerdict, error) {
+	if !fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
+		return factConflict, nil
 	}
 	if fact.RecordingID == "" {
 		var alreadyApplied bool
@@ -340,18 +317,18 @@ func (m *Module) applyVoicemailRecordingSaved(
 				SELECT 1 FROM human_calling_projected_facts WHERE event_id = $1
 			)
 		`, fact.EventID).Scan(&alreadyApplied); err != nil {
-			return fmt.Errorf("check recording callback replay: %w", err)
+			return "", fmt.Errorf("check recording callback replay: %w", err)
 		}
 		if alreadyApplied {
-			return nil
+			return factApplied, nil
 		}
 		provider, ok := m.provider.(RecordingStateProvider)
 		if !ok {
-			return fmt.Errorf("%w: provider cannot resolve recording", ErrAmbiguousEffect)
+			return "", fmt.Errorf("%w: provider cannot resolve recording", ErrAmbiguousEffect)
 		}
 		recording, err := provider.ResolveRecording(ctx, fact.CallLegID, fact.CallSessionID)
 		if err != nil {
-			return err
+			return "", err
 		}
 		fact.RecordingID = recording.ID
 		fact.CallControlID = recording.CallControlID
@@ -360,18 +337,22 @@ func (m *Module) applyVoicemailRecordingSaved(
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin voicemail recording save: %w", err)
+		return "", fmt.Errorf("begin voicemail recording save: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+	if err != nil {
+		return "", err
 	}
-	if err := m.requireExactVoicemailCaller(ctx, tx, state, fact); err != nil {
-		return err
+	if !claimed {
+		return commitFact(ctx, tx)
+	}
+	exact, err := m.requireExactVoicemailCaller(ctx, tx, state, fact)
+	if err != nil {
+		return "", err
+	}
+	if !exact {
+		return factConflict, nil
 	}
 	var recordingOwned bool
 	if err := tx.QueryRow(ctx, `
@@ -388,10 +369,10 @@ func (m *Module) applyVoicemailRecordingSaved(
 	`, state.CallID, state.CallLegID, fact.ConnectionID,
 		fact.RecordingStartedAt,
 		voicemailRecordingStartTolerance.String()).Scan(&recordingOwned); err != nil {
-		return fmt.Errorf("read voicemail recording ownership: %w", err)
+		return "", fmt.Errorf("read voicemail recording ownership: %w", err)
 	}
 	if !recordingOwned {
-		return ErrConflict
+		return factConflict, nil
 	}
 	var existingAudioState string
 	err = tx.QueryRow(ctx, `
@@ -400,14 +381,14 @@ func (m *Module) applyVoicemailRecordingSaved(
 		FOR UPDATE
 	`, state.CallID).Scan(&existingAudioState)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("lock voicemail outcome: %w", err)
+		return "", fmt.Errorf("lock voicemail outcome: %w", err)
 	}
 	if existingAudioState == string(VoicemailReady) {
-		return tx.Commit(ctx)
+		return commitFact(ctx, tx)
 	}
 	if _, err := m.ensureRecoveryOutcome(ctx, tx, state.CallID,
 		RecoveryVoicemail, "VOICEMAIL", fact); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands SET state = 'RECONCILED',
@@ -415,60 +396,61 @@ func (m *Module) applyVoicemailRecordingSaved(
 		WHERE call_leg_id = $1 AND action = 'START_VOICEMAIL_RECORDING'
 			AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 	`, state.CallLegID, fact.OccurredAt, m.now()); err != nil {
-		return err
+		return "", err
 	}
 	if err := m.endVoicemailCaller(ctx, tx, state.CallID, state.CallLegID); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
 func (m *Module) applyVoicemailRecordingError(
 	ctx context.Context,
 	fact ProviderFact,
-) error {
-	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Role != "CALLER" || state.Kind != "voicemail_recording" {
-		return ErrConflict
-	}
+	state callLegClientState,
+) (factVerdict, error) {
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin voicemail recording failure: %w", err)
+		return "", fmt.Errorf("begin voicemail recording failure: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil || !claimed {
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+	if err != nil {
+		return "", err
 	}
-	if err := m.requireExactVoicemailCaller(ctx, tx, state, fact); err != nil {
-		return err
+	if !claimed {
+		return commitFact(ctx, tx)
+	}
+	exact, err := m.requireExactVoicemailCaller(ctx, tx, state, fact)
+	if err != nil {
+		return "", err
+	}
+	if !exact {
+		return factConflict, nil
 	}
 	var terminal bool
 	if err := tx.QueryRow(ctx, `
 		SELECT terminal_outcome IS NOT NULL FROM human_calling_calls WHERE id = $1
 	`, state.CallID).Scan(&terminal); err != nil {
-		return fmt.Errorf("read voicemail recording failure Call: %w", err)
+		return "", fmt.Errorf("read voicemail recording failure Call: %w", err)
 	}
 	if terminal {
-		return tx.Commit(ctx)
+		return commitFact(ctx, tx)
 	}
 	if _, err := m.ensureRecoveryOutcome(ctx, tx, state.CallID,
 		RecoveryMissedCall, "MISSED", fact); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_voicemails SET audio_state = 'UNAVAILABLE',
 			last_error_code = 'RECORDING_FAILED', updated_at = $2 WHERE call_id = $1
 	`, state.CallID, m.now()); err != nil {
-		return err
+		return "", err
 	}
 	if err := m.endVoicemailCaller(ctx, tx, state.CallID, state.CallLegID); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit(ctx)
+	return commitFact(ctx, tx)
 }
 
 func (m *Module) requireExactVoicemailCaller(
@@ -476,7 +458,7 @@ func (m *Module) requireExactVoicemailCaller(
 	tx pgx.Tx,
 	state callLegClientState,
 	fact ProviderFact,
-) error {
+) (bool, error) {
 	var controlID, legID, sessionID string
 	if err := tx.QueryRow(ctx, `
 		SELECT caller.provider_call_control_id, caller.provider_call_leg_id,
@@ -487,14 +469,10 @@ func (m *Module) requireExactVoicemailCaller(
 		WHERE call.id = $1
 		FOR UPDATE OF call, caller
 	`, state.CallID, state.CallLegID).Scan(&controlID, &legID, &sessionID); err != nil {
-		return fmt.Errorf("lock voicemail recording caller: %w", err)
+		return false, fmt.Errorf("lock voicemail recording caller: %w", err)
 	}
-	if (fact.CallControlID != "" && fact.CallControlID != controlID) ||
-		fact.CallLegID != legID ||
-		fact.CallSessionID != sessionID {
-		return ErrConflict
-	}
-	return nil
+	return (fact.CallControlID == "" || fact.CallControlID == controlID) &&
+		fact.CallLegID == legID && fact.CallSessionID == sessionID, nil
 }
 
 func (m *Module) ensureRecoveryOutcome(
@@ -605,7 +583,7 @@ func (m *Module) endVoicemailCaller(
 	_, err := m.insertCallLegCommand(ctx, tx, callID, callerLegID, "", "",
 		CommandHangupLeg, controlID, map[string]any{
 			"client_state": encodeCallLegClientState(
-				callID, callerLegID, "CALLER", "voicemail_complete",
+				callID, callerLegID, roleCaller, kindVoicemailComplete,
 			),
 		}, "")
 	return err
