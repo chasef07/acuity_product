@@ -18,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type CallState string
@@ -109,6 +110,7 @@ var (
 		"%w: terminal or obsolete provider fact",
 		ErrConflict,
 	)
+	ErrIllegalCallTransition     = fmt.Errorf("%w: illegal Call transition", ErrConflict)
 	errRelatedFactPending        = errors.New("related provider fact is pending")
 	ErrHandoffAdmissionClosed    = errors.New("human calling handoff admission is closed")
 	ErrAmbiguousEffect           = errors.New("provider effect is ambiguous")
@@ -118,6 +120,16 @@ var (
 	ErrInvalidWebhook            = errors.New("invalid provider webhook")
 	ErrProviderCapabilityMissing = errors.New("provider capability is unavailable")
 )
+
+const illegalCallTransitionCode = "ILLEGAL_CALL_TRANSITION"
+
+func illegalCallTransition(err error) error {
+	var guard *pgconn.PgError
+	if errors.As(err, &guard) && (guard.Code == "HC001" || guard.Code == "HC002") {
+		return fmt.Errorf("%w: %w", ErrIllegalCallTransition, err)
+	}
+	return err
+}
 
 func callingAccessError(err error) error {
 	if errors.Is(err, access.ErrDenied) {
