@@ -26,6 +26,7 @@ import type {
   StaffTaskDay,
 } from "@/lib/api/generated/types.gen"
 import { formatDay, formatPercent } from "@/lib/booking-analytics"
+import { formatDuration } from "@/lib/vocabulary"
 import { dailyTotalComparison } from "@/lib/analytics-trend"
 import styles from "./booking-overview.module.css"
 import { useReducedMotion } from "@/lib/reduced-motion"
@@ -41,8 +42,7 @@ const count = (value: number) => value.toLocaleString("en-US")
 
 function averageCallTime(seconds: number, calls: number, missing: number) {
   if (calls === 0 || missing > 0) return "—"
-  const average = Math.round(seconds / calls)
-  return `${Math.floor(average / 60)}m ${String(average % 60).padStart(2, "0")}s`
+  return formatDuration(seconds / calls)
 }
 
 function TaskTooltip({

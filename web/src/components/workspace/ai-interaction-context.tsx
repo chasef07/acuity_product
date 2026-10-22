@@ -7,13 +7,15 @@ import type {
   AiAppointmentFacts,
   AiInteractionDetail,
 } from "@/lib/api/generated/types.gen"
-import {
-  aiCallTimelinePresentation,
-  appointmentOutcomeTitle,
-} from "@/lib/ai-interactions"
-import { formatElapsedSeconds } from "@/lib/format"
+import { aiCallTimelinePresentation } from "@/lib/ai-interactions"
 import { formatAppointmentDateTime, formatTimestamp } from "@/lib/format-time"
-import { formatUSPhone } from "@/lib/phone"
+import {
+  appointmentOutcomeTitles,
+  formatDurationBetween,
+  formatPhone,
+  hasAppointmentFacts,
+  visitLabel,
+} from "@/lib/vocabulary"
 
 export function AIInteractionContext({
   detail,
@@ -53,7 +55,7 @@ export function AIInteractionContext({
 function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
   const hasAppointmentOutcome = detail.appointmentOutcome !== "INDETERMINATE"
   const title = hasAppointmentOutcome
-    ? appointmentOutcomeTitle(detail.appointmentOutcome)
+    ? appointmentOutcomeTitles[detail.appointmentOutcome]
     : aiCallTimelinePresentation(detail.appointmentOutcome, detail.status).title
   const exception = aiCallException(detail)
   return (
@@ -69,7 +71,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
           <p className="mt-3 text-sm leading-6">{detail.summary}</p>
         )}
         <p className="mt-3 text-xs tabular-nums text-muted-foreground">
-          {formatUSPhone(detail.phone)} · {detail.locationName}
+          {formatPhone(detail.phone)} · {detail.locationName}
         </p>
       </section>
 
@@ -97,7 +99,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
           />
           <DetailValue
             label="Call length"
-            value={formatDuration(detail.startedAt, detail.endedAt)}
+            value={formatDurationBetween(detail.startedAt, detail.endedAt)}
           />
         </dl>
       </details>
@@ -215,27 +217,6 @@ function appointmentFactLine(facts: AiAppointmentFacts) {
   ]
     .filter(Boolean)
     .join(" · ")
-}
-
-function hasAppointmentFacts(facts: AiAppointmentFacts) {
-  return Object.values(facts).some(Boolean)
-}
-
-function visitLabel(facts: AiAppointmentFacts) {
-  if (facts.appointmentTypeName) return facts.appointmentTypeName
-  if (facts.careLane === "medical_md") return "Medical"
-  if (facts.careLane === "routine_od") return "Routine vision"
-  return "—"
-}
-
-function formatDuration(startedAt: string, endedAt?: string) {
-  if (!endedAt) return "In progress"
-  const seconds = Math.max(
-    0,
-    Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000),
-  )
-  if (!Number.isFinite(seconds)) return "—"
-  return formatElapsedSeconds(seconds)
 }
 
 function ReceiptEvidence({

@@ -62,19 +62,12 @@ import {
   useAiCallAnalytics,
 } from "@/lib/clients/agent-calls"
 import { formatTimestamp } from "@/lib/format-time"
-import { formatUSPhoneDigits } from "@/lib/phone"
+import { analyticsRangeLabels, formatDuration, formatPhone, labelOptions } from "@/lib/vocabulary"
 
 type AnalyticsNextPageState = AiCallLedger["nextPage"]
 type AnalyticsTab = CommandCenterPage
 
-const ranges: Array<{
-  value: OperatorAiAnalyticsRange
-  label: string
-}> = [
-  { value: "24h", label: "Last 24 hours" },
-  { value: "7d", label: "Last 7 days" },
-  { value: "30d", label: "Last 30 days" },
-]
+const ranges = labelOptions(analyticsRangeLabels)
 
 export function OperatorAnalytics({
   tab,
@@ -389,7 +382,7 @@ function CallLedger({
                     </button>
                   </TableCell>
                   <TableCell className="tabular-nums">
-                    {formatUSPhoneDigits(call.phone)}
+                    {formatPhone(call.phone)}
                     <ReviewReasons reasons={call.reviewReasons} />
                   </TableCell>
                   <TableCell>{call.locationName}</TableCell>
@@ -426,7 +419,7 @@ function CallLedger({
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-semibold tabular-nums">{formatUSPhoneDigits(call.phone)}</p>
+                <p className="text-sm font-semibold tabular-nums">{formatPhone(call.phone)}</p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   {formatTimestamp(call.startedAt)} · {call.locationName}
                 </p>
@@ -602,11 +595,6 @@ function CompactValue({
       {note && <dd className="mt-0.5 truncate text-[0.625rem] text-muted-foreground">{note}</dd>}
     </div>
   )
-}
-
-function formatDuration(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "—"
-  return `${Math.floor(seconds / 60)}m ${Math.max(0, Math.round(seconds)) % 60}s`
 }
 
 function formatRate(value: number): string {

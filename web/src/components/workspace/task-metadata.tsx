@@ -15,7 +15,7 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import type { StaffTaskCategory, Task } from "@/lib/api/generated/types.gen"
 import { changeTaskCategory } from "@/lib/clients/tasks"
-import { taskGroups, taskGroupLabel } from "@/lib/task-groups"
+import { taskGroups, taskGroupLabel } from "@/lib/vocabulary"
 
 export function TaskMetadata({ task, onUpdated, compact = false }: {
   task: Task

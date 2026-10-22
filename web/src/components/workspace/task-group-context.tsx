@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import type { Task } from "@/lib/api/generated/types.gen"
 import { completeTask, completeTaskGroup } from "@/lib/clients/tasks"
 import { formatTimestamp } from "@/lib/format-time"
-import { taskGroupLabel } from "@/lib/task-groups"
+import { taskGroupLabel, taskUrgencyLabels } from "@/lib/vocabulary"
 import { TaskMetadata } from "./task-metadata"
 
 export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdated }: {
@@ -77,7 +77,7 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
                 <h3 className="text-sm font-semibold leading-5">{member.title}</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {member.callerName ?? "Caller name not provided"} · {formatTimestamp(member.createdAt)}
-                  {member.urgency === "high_priority" && <span className="font-medium text-destructive"> · High priority</span>}
+                  {member.urgency === "high_priority" && <span className="font-medium text-destructive"> · {taskUrgencyLabels.high_priority}</span>}
                 </p>
               </div>
               <p className="whitespace-pre-wrap break-words text-sm leading-5 text-muted-foreground">{member.sourceMessage}</p>

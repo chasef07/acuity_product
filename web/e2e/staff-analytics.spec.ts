@@ -118,7 +118,7 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
         .filter({ hasText: "selected@abita.test" })
         .getByRole("cell"),
     ).toHaveText([
-      "selected@abita.testStaff", "21m 30s avg/call", "15m 00s avg/call",
+      "selected@abita.testStaff", "21m 30s avg/call", "15m 0s avg/call",
       "3m", "5m", "3", "2",
     ])
     await expect(
@@ -131,7 +131,7 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       "0m", "0m", "0", "0",
     ])
     await expect(accounts.getByRole("row").last().getByRole("cell")).toHaveText([
-      "Total", "21m 30s avg/call", "15m 00s avg/call", "3m", "5m", "3", "2",
+      "Total", "21m 30s avg/call", "15m 0s avg/call", "3m", "5m", "3", "2",
     ])
     await expect(accounts.getByRole("row").nth(1)).toContainText(
       "selected@abita.test",
@@ -237,7 +237,7 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
         .filter({ hasText: "selected@abita.test" })
         .getByRole("cell"),
     ).toHaveText([
-      "selected@abita.testStaff", "2— avg/call", "15m 00s avg/call",
+      "selected@abita.testStaff", "2— avg/call", "15m 0s avg/call",
       "—", "5m", "3", "2",
     ])
     await selectAnalyticsPage(page, "Bookings")

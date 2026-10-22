@@ -17,7 +17,6 @@ import {
 import {
   AgentCallPanel,
   AppointmentActions,
-  callDuration,
 } from "./agent-call-panel"
 import { AgentHome } from "./agent-home"
 import { InsuranceList } from "./insurance-list"
@@ -31,14 +30,10 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { useAgentCalls } from "@/lib/clients/agent-calls"
 import { formatClockTime, formatDate, formatTimestamp } from "@/lib/format-time"
-import { formatUSPhone } from "@/lib/phone"
+import { analyticsRangeLabels, formatClock, formatPhone, labelOptions } from "@/lib/vocabulary"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 
-const ranges: { value: AgentCallsQuery["range"]; label: string }[] = [
-  { value: "24h", label: "Last 24 hours" },
-  { value: "7d", label: "Last 7 days" },
-  { value: "30d", label: "Last 30 days" },
-]
+const ranges = labelOptions(analyticsRangeLabels)
 
 export function ManageAgent({
   actorSubject,
@@ -192,7 +187,7 @@ function AgentCalls({
                           event.stopPropagation()
                           setSelectedID(call.id)
                         }}
-                        aria-label={`Open call from ${formatUSPhone(call.phone)} at ${formatTimestamp(call.startedAt)}`}
+                        aria-label={`Open call from ${formatPhone(call.phone)} at ${formatTimestamp(call.startedAt)}`}
                       >
                         <span className="block">
                           {formatDate(call.startedAt)}
@@ -204,7 +199,7 @@ function AgentCalls({
                     </TableCell>
                     <TableCell>
                       <span className="inline-flex items-center gap-2 tabular-nums">
-                        {formatUSPhone(call.phone)}
+                        {formatPhone(call.phone)}
                         {call.issueFlagged && (
                           <FlagIcon
                             className="size-3.5 text-muted-foreground"
@@ -223,7 +218,7 @@ function AgentCalls({
                       <AppointmentActions call={call} />
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {callDuration(call.durationSeconds)}
+                      {formatClock(call.durationSeconds)}
                     </TableCell>
                     <TableCell className="text-right">
                       {call.transferred ? (

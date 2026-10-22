@@ -1,11 +1,13 @@
 "use client"
 
-import type {
-  InsuranceCoverage,
-  InsuranceOutcome,
-  InsurancePlanRule,
-} from "@/lib/api/generated/types.gen"
+import type { InsuranceCoverage, InsurancePlanRule } from "@/lib/api/generated/types.gen"
 import { useInsurancePlans } from "@/lib/clients/insurance-plans"
+import {
+  insuranceCoverageLabels,
+  insuranceOutcomeLabels,
+  insuranceRequirementLabels,
+  labelOptions,
+} from "@/lib/vocabulary"
 import {
   AgentPage,
   AgentQueryBody,
@@ -14,22 +16,8 @@ import {
   type AgentLocationProps,
 } from "./manage-agent-page"
 
-const coverages: { value: InsuranceCoverage; label: string }[] = [
-  { value: "medical", label: "Medical" },
-  { value: "routine_vision", label: "Routine vision" },
-]
-
-const groups: { outcome: InsuranceOutcome; title: string }[] = [
-  { outcome: "accepted", title: "Accepted" },
-  { outcome: "needs_staff_task", title: "Staff confirms" },
-  { outcome: "not_accepted", title: "Not accepted" },
-]
-
-const requirements: Record<InsurancePlanRule["requirements"][number], string> = {
-  prior_authorization: "Prior auth",
-  pcp_referral: "PCP referral",
-  staff_verify: "Staff verifies",
-}
+const coverages = labelOptions(insuranceCoverageLabels)
+const groups = labelOptions(insuranceOutcomeLabels)
 
 const list = new Intl.ListFormat("en", { type: "conjunction" })
 
@@ -42,7 +30,7 @@ export function InsuranceList({
   onCoverage: (coverage: InsuranceCoverage) => void
 }) {
   const plans = useInsurancePlans({ ...props, coverage })
-  const coverageLabel = coverages.find((item) => item.value === coverage)!.label
+  const coverageLabel = insuranceCoverageLabels[coverage]
 
   return (
     <AgentPage
@@ -72,12 +60,12 @@ export function InsuranceList({
           <div className="flex flex-col gap-4">
             {groups.map((group) => {
               const rows = data.plans
-                .filter((plan) => plan.outcome === group.outcome)
+                .filter((plan) => plan.outcome === group.value)
                 .sort((left, right) =>
                   left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
                 )
               return rows.length ? (
-                <DisclosureRow key={group.outcome} group title={group.title} detail={rows.length}>
+                <DisclosureRow key={group.value} group title={group.label} detail={rows.length}>
                   <ul className="mt-1 divide-y overflow-hidden rounded-lg border bg-card">
                     {rows.map((plan) => (
                       <PlanRow key={plan.planId} plan={plan} />
@@ -126,7 +114,7 @@ function planSummary(plan: InsurancePlanRule) {
   if (plan.outcome === "accepted") return plan.allowedProviders.join(", ")
   if (plan.outcome === "needs_staff_task")
     return plan.requirements.length > 0
-      ? plan.requirements.map((item) => requirements[item]).join(", ")
+      ? plan.requirements.map((item) => insuranceRequirementLabels[item]).join(", ")
       : "Pending on the sheet"
   if (plan.acceptedAt.length > 0)
     return `${list.format(plan.acceptedAt)} ${plan.acceptedAt.length === 1 ? "takes it" : "take it"}`

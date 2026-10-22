@@ -1,5 +1,5 @@
 import type { CallIntent, CallOutcome, OperatorAiPathCount } from "@/lib/api/generated/types.gen"
-import { intentLabels, outcomeLabels } from "./call-labels"
+import { intentLabels, outcomeLabels } from "@/lib/vocabulary"
 
 const knowledgeGapKey = "knowledge_available"
 

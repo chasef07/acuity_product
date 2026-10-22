@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { createWorkspaceSync } from "./workspace-sync/workspace-sync.ts"
+import type { PortalFailure } from "./clients/portal-request.ts"
 import type { WorkspaceLocation } from "./workspace-location.ts"
 
 import type {
@@ -710,16 +711,16 @@ function success<T>(data: T): WorkspaceAuthorityResult<T> {
   return { kind: "success", data }
 }
 
-function missing(): { kind: "missing" } {
-  return { kind: "missing" }
+function missing(): PortalFailure {
+  return { kind: "missing", retryable: false, status: 404 }
 }
 
-function unavailable(): { kind: "unavailable" } {
-  return { kind: "unavailable" }
+function unavailable(): PortalFailure {
+  return { kind: "unavailable", retryable: true, status: 503 }
 }
 
-function unauthorizedResult(): { kind: "unauthorized" } {
-  return { kind: "unauthorized" }
+function unauthorizedResult(): PortalFailure {
+  return { kind: "unauthorized", retryable: false, status: 403 }
 }
 
 function deterministicRealtime() {

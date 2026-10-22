@@ -45,7 +45,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Spinner } from "@/components/ui/spinner"
-import { appointmentOutcomeTitle } from "@/lib/ai-interactions"
 import type {
   AiAppointmentFacts,
   OperatorAiInteractionAnalytics,
@@ -54,7 +53,14 @@ import type {
 import { useAiCallEvidence } from "@/lib/clients/agent-calls"
 import { useScorecardQuestions } from "@/lib/clients/call-review"
 import { formatAppointmentDateTime, formatTimestamp } from "@/lib/format-time"
-import { formatUSPhoneDigits } from "@/lib/phone"
+import {
+  appointmentOutcomeTitles,
+  formatClock,
+  formatDurationBetween,
+  formatPhone,
+  hasAppointmentFacts,
+  visitLabel,
+} from "@/lib/vocabulary"
 import { CallLabels } from "./call-labels"
 
 export function OperatorAnalyticsDetailSheet({
@@ -191,13 +197,13 @@ function OperatorAnalyticsDetailView({
   return (
     <>
       <section className="shrink-0 border-b px-5 py-4 sm:px-6">
-        <p className="text-sm font-medium">{formatUSPhoneDigits(detail.phone)}</p>
+        <p className="text-sm font-medium">{formatPhone(detail.phone)}</p>
         <p className="mt-1 text-sm text-muted-foreground">
           {detail.locationName}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           {formatTimestamp(detail.startedAt)} ·{" "}
-          {formatDuration(detail.startedAt, detail.endedAt)}
+          {formatDurationBetween(detail.startedAt, detail.endedAt)}
         </p>
         <div className="mt-3"><CallLabels call={detail} /></div>
         {detail.summary ? (
@@ -436,7 +442,7 @@ function AppointmentEvidence({
         <div className="rounded-lg border bg-card px-4 py-3">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium">
-              {appointmentOutcomeTitle(detail.appointmentOutcome)}
+              {appointmentOutcomeTitles[detail.appointmentOutcome]}
             </p>
             <Badge variant={receipts.length > 0 ? "secondary" : "outline"}>
               {receipts.length > 0 ? "Receipt backed" : "No provider receipt"}
@@ -754,24 +760,8 @@ function EvidenceValue({ label, value }: { label: string; value: string }) {
   )
 }
 
-function hasAppointmentFacts(facts: AiAppointmentFacts) {
-  return Object.values(facts).some(Boolean)
-}
-
-function visitLabel(facts: AiAppointmentFacts) {
-  if (facts.appointmentTypeName) return facts.appointmentTypeName
-  if (facts.careLane === "medical_md") return "Medical"
-  if (facts.careLane === "routine_od") return "Routine vision"
-  return "—"
-}
-
-export function formatOffset(value: string, startedAt: string): string {
-  const seconds = Math.max(
-    0,
-    Math.floor((new Date(value).getTime() - new Date(startedAt).getTime()) / 1000),
-  )
-  if (!Number.isFinite(seconds)) return "—"
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+export function formatOffset(value: string, startedAt: string) {
+  return formatClock((Date.parse(value) - Date.parse(startedAt)) / 1_000)
 }
 
 function formatTime(value: string): string {
@@ -782,18 +772,6 @@ function formatTime(value: string): string {
     minute: "2-digit",
     second: "2-digit",
   }).format(date)
-}
-
-function formatDuration(startedAt: string, endedAt?: string): string {
-  if (!endedAt) return "In progress"
-  const seconds = Math.max(
-    0,
-    Math.round(
-      (new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000,
-    ),
-  )
-  if (!Number.isFinite(seconds)) return "Unknown"
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
 function formatLatency(value?: number): string {

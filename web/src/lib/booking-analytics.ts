@@ -21,12 +21,6 @@ export function canViewPracticeAnalytics(
   )
 }
 
-export function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "—"
-  const rounded = Math.round(seconds)
-  return `${Math.floor(rounded / 60)}m ${String(rounded % 60).padStart(2, "0")}s`
-}
-
 export function formatPercent(value: number | null): string {
   return value === null ? "—" : `${value.toFixed(1)}%`
 }

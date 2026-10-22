@@ -7,7 +7,7 @@ import {
   renameTask as renameTaskRequest,
   reopenTask as reopenTaskRequest,
 } from "../api/generated/sdk.gen"
-import type { StaffTaskCategory, Task } from "../api/generated/types.gen"
+import type { StaffTaskCategory, Task, TaskQueryRequest } from "../api/generated/types.gen"
 import { appendUniqueByID } from "../workspace-ordering"
 import { usePages } from "../data/queries"
 import { portalRequest } from "./portal-request"
@@ -76,7 +76,7 @@ export function changeTaskCategory(task: TaskVersion, category: StaffTaskCategor
   )
 }
 
-export type ReviewFolderKind = "texts" | "calls" | "appointments"
+export type ReviewFolderKind = Exclude<TaskQueryRequest["kind"], "follow_up" | undefined>
 
 export function useReviewFolder({
   practiceID,

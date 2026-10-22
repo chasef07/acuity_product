@@ -9,9 +9,9 @@ import {
   readTask,
 } from "./api/generated/sdk.gen"
 import { getAccessTokenResult } from "./auth-client"
+import { portalFailure } from "./clients/portal-request"
 import {
   type WorkspaceAuthorityAdapter,
-  type WorkspaceAuthorityFailure,
   type WorkspaceAuthorityResult,
   type WorkspaceRealtimeAdapter,
   WorkspaceProjectionAccessError,
@@ -124,18 +124,10 @@ export function createWorkspaceRealtimeAdapter(): WorkspaceRealtimeAdapter {
 }
 
 function authorityResult<T>(
-  result: { data?: T; response?: Response } | undefined,
+  result: { data?: T; error?: unknown; response?: Response } | undefined,
 ): WorkspaceAuthorityResult<T> {
   if (result?.data !== undefined) {
     return { kind: "success", data: result.data }
   }
-  return authorityFailure(result?.response?.status)
-}
-
-function authorityFailure(status?: number): WorkspaceAuthorityFailure {
-  if (status === 401) return { kind: "unauthenticated" }
-  if (status === 403) return { kind: "unauthorized" }
-  if (status === 404) return { kind: "missing" }
-  if (status === 409) return { kind: "conflict" }
-  return { kind: "unavailable" }
+  return portalFailure(result?.response?.status, result?.error)
 }

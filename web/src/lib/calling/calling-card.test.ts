@@ -550,3 +550,14 @@ test("Close waits while a retry or terminal media purge is pending", () => {
     dispositions: [],
   })
 })
+
+test("a connected card shows its elapsed time on the shared clock", () => {
+  const connected = { ...outboundCall, state: "CONNECTED" as const, connectedAt: "2026-08-26T15:00:00Z" }
+  const elapsed = (call: CallingCardCall, at: number) => {
+    const view = projectCallingCard(snapshot(call), at)
+    return view?.kind === "call" ? view.elapsed : undefined
+  }
+  assert.equal(elapsed(connected, now), "0:30")
+  assert.equal(elapsed(connected, Date.parse("2026-08-26T16:02:05Z")), "1:02:05")
+  assert.equal(elapsed({ ...connected, connectedAt: undefined }, now), "0:00")
+})
