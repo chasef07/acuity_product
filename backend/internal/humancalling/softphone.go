@@ -171,7 +171,7 @@ func (m *Module) AcquireSoftphone(
 	}
 	if previousSessionID != "" && previousSessionID != sessionID {
 		for _, practiceID := range practiceIDs {
-			if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+			if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 				return SoftphoneState{}, err
 			}
 		}

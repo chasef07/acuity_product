@@ -51,7 +51,7 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		WITH calls AS (
-			SELECT id, row_number() OVER (ORDER BY created_at) n
+			SELECT id, updated_at, row_number() OVER (ORDER BY created_at) n
 			FROM human_calling_calls
 		)
 		INSERT INTO human_calling_call_legs (
@@ -60,7 +60,7 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 		)
 		SELECT id, CASE WHEN ordinal = 1 THEN 'CALLER' ELSE 'STAFF' END,
 			ordinal, CASE WHEN ordinal > 1 THEN 'synthetic-staff-' || ordinal END,
-			'ENDED', $1, $1, $1
+			'ENDED', $1, $1, calls.updated_at
 		FROM calls
 		CROSS JOIN LATERAL generate_series(1, CASE WHEN n <= 3529 THEN 4 ELSE 3 END) ordinal
 	`, now); err != nil {

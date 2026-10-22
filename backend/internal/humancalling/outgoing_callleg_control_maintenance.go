@@ -319,14 +319,7 @@ func (m *Module) reconcileNeverStartedTerminalCallLeg(
 	); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, callID, cleanedAt); err != nil {
-		return false, fmt.Errorf("advance terminal Call cleanup version: %w", err)
-	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -559,17 +552,10 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		return true, nil
 	}
 	if observation.Active {
-		if commandID != "" && commandAction == CommandStopRingWindow {
-			if err := m.markUnobservedStopRingWindowAmbiguous(
-				ctx, commandID, legID, commandCreatedAt, checkedAt,
-			); err != nil {
-				return true, err
-			}
-			return true, nil
-		}
-		if commandID != "" && commandAction == CommandStartRingWindow {
-			if err := m.markUnobservedCommandAmbiguous(
-				ctx, commandID, commandAction, commandCreatedAt, checkedAt,
+		if commandID != "" &&
+			(commandAction == CommandStopRingWindow || commandAction == CommandStartRingWindow) {
+			if err := m.markUnobservedRingWindowAmbiguous(
+				ctx, commandID, legID, commandAction, commandCreatedAt, checkedAt,
 			); err != nil {
 				return true, err
 			}
@@ -669,48 +655,50 @@ func (m *Module) finishCallLegObservation(
 	return tx.Commit(ctx)
 }
 
-func (m *Module) markUnobservedStopRingWindowAmbiguous(
+func (m *Module) markUnobservedRingWindowAmbiguous(
 	ctx context.Context,
 	commandID string,
 	callLegID string,
+	action CommandAction,
 	commandCreatedAt time.Time,
 	observedAt time.Time,
 ) error {
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin unobserved Stop ring-window result: %w", err)
+		return fmt.Errorf("begin unobserved ring-window result: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockCallThenCallLegForCommandMutation(ctx, tx, callLegID); err != nil {
 		return err
 	}
-	errorCode := string(CommandStopRingWindow) + "_EVENT_ABSENT"
+	errorCode := string(action) + "_EVENT_ABSENT"
 	tag, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = 'AMBIGUOUS', last_error_code = $2, updated_at = $3
-		WHERE id = $1 AND call_leg_id = $4 AND action = 'STOP_RING_WINDOW'
+		WHERE id = $1 AND call_leg_id = $4 AND action = $5
 			AND state IN ('SENDING', 'SENT')
-	`, commandID, errorCode, observedAt, callLegID)
+	`, commandID, errorCode, observedAt, callLegID, action)
 	if err != nil {
-		return fmt.Errorf("mark unobserved Stop ring-window ambiguous: %w", err)
+		return fmt.Errorf("mark unobserved ring-window ambiguous: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return tx.Commit(ctx)
-	}
-	if err := m.recordDegradedCallerAudio(
-		ctx, tx, commandID, callLegID, errorCode,
-	); err != nil {
-		return err
+	if tag.RowsAffected() > 0 && action == CommandStopRingWindow {
+		if err := m.recordDegradedCallerAudio(
+			ctx, tx, commandID, callLegID, errorCode,
+		); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit unobserved Stop ring-window result: %w", err)
+		return fmt.Errorf("commit unobserved ring-window result: %w", err)
 	}
-	m.recordProviderCommand(
-		ProviderCommand{Action: CommandStopRingWindow, createdAt: commandCreatedAt},
-		"AMBIGUOUS",
-		observedAt,
-		0,
-	)
+	if tag.RowsAffected() > 0 {
+		m.recordProviderCommand(
+			ProviderCommand{Action: action, createdAt: commandCreatedAt},
+			"AMBIGUOUS",
+			observedAt,
+			0,
+		)
+	}
 	return nil
 }
 
@@ -767,7 +755,7 @@ func (m *Module) quarantineStaleCallLeg(
 	); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -912,7 +900,7 @@ func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, erro
 		SET terminal_outcome = 'UNANSWERED',
 			provider_termination = 'MEDIA_READINESS_FAILED',
 			ended_at = COALESCE(ended_at, $2),
-			version = version + 1, updated_at = $2
+			updated_at = $2
 		WHERE id = $1 AND terminal_outcome IS NULL
 	`, callID, m.now()); err != nil {
 		return false, fmt.Errorf("end expired outbound media Call: %w", err)
@@ -933,40 +921,13 @@ func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, erro
 		opaqueReference(staffLegID), "MEDIA_READINESS_FAILED", m.now()); err != nil {
 		return false, err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit outbound media expiry: %w", err)
 	}
 	return true, nil
-}
-
-func (m *Module) markUnobservedCommandAmbiguous(
-	ctx context.Context,
-	commandID string,
-	action CommandAction,
-	commandCreatedAt time.Time,
-	observedAt time.Time,
-) error {
-	tag, err := m.database.Exec(ctx, `
-		UPDATE human_calling_provider_commands
-		SET state = 'AMBIGUOUS', last_error_code = $2, updated_at = $3
-		WHERE id = $1 AND state IN ('SENDING', 'SENT')
-	`, commandID, string(action)+"_EVENT_ABSENT", observedAt)
-	if err != nil {
-		return fmt.Errorf("mark unobserved provider command ambiguous: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return nil
-	}
-	m.recordProviderCommand(
-		ProviderCommand{Action: action, createdAt: commandCreatedAt},
-		"AMBIGUOUS",
-		observedAt,
-		0,
-	)
-	return nil
 }
 
 func (m *Module) rejectUnobservedCommand(

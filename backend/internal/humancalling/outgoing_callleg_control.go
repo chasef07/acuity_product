@@ -595,11 +595,6 @@ func (m *Module) finishCallLegCommand(
 			return fmt.Errorf("converge absent Hangup target: %w", err)
 		}
 	}
-	if command.CallLegID != "" && state != "PENDING" {
-		if err := publishCallLegCallingHint(ctx, tx, command.CallLegID); err != nil {
-			return err
-		}
-	}
 	return tx.Commit(ctx)
 }
 
@@ -684,7 +679,7 @@ func (m *Module) failDialCallLeg(
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_calls
 		SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
-			version = version + 1, updated_at = $2
+			updated_at = $2
 		WHERE id = $1 AND terminal_outcome IS NULL
 	`, callID, m.now()); err != nil {
 		return fmt.Errorf("end rejected outbound Dial: %w", err)
@@ -739,7 +734,7 @@ func (m *Module) failBridgeCallLeg(
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_calls
 		SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
-			version = version + 1, updated_at = $2
+			updated_at = $2
 		WHERE id = $1 AND terminal_outcome IS NULL
 	`, callID, m.now()); err != nil {
 		return fmt.Errorf("end rejected outbound Bridge: %w", err)

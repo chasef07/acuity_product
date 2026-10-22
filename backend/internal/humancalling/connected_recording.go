@@ -117,18 +117,12 @@ func (m *Module) applyConnectedCallRecordingSaved(
 		fact.RecordingEndedAt, contentExpiresAt, duration.Milliseconds(), m.now()); err != nil {
 		return fmt.Errorf("commit connected recording evidence: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, state.CallID, m.now()); err != nil {
-		return err
-	}
 	if err := appendTimeline(ctx, tx, state.CallID, practiceID,
 		"call.recording.ready", "", fact.EventID, "",
 		opaqueReference(fact.RecordingID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -174,18 +168,12 @@ func (m *Module) applyConnectedCallRecordingError(
 	if result.RowsAffected() == 0 {
 		return tx.Commit(ctx)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, state.CallID, m.now()); err != nil {
-		return err
-	}
 	if err := appendTimeline(ctx, tx, state.CallID, practiceID,
 		"call.recording.unavailable", "", fact.EventID, "",
 		opaqueReference(fact.CallLegID), "RECORDING_FAILED", fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -389,6 +377,9 @@ func (m *Module) exhaustRecordingReconciliation(
 		return true, fmt.Errorf("begin recording reconciliation exhaustion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockCall(ctx, tx, callID); err != nil {
+		return true, err
+	}
 	var practiceID string
 	err = tx.QueryRow(ctx, `
 		UPDATE human_calling_call_recordings SET
@@ -408,12 +399,6 @@ func (m *Module) exhaustRecordingReconciliation(
 	if err != nil {
 		return true, fmt.Errorf("exhaust recording reconciliation: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, callID, claimedAt); err != nil {
-		return true, err
-	}
 	if err := appendTimeline(
 		ctx,
 		tx,
@@ -429,7 +414,7 @@ func (m *Module) exhaustRecordingReconciliation(
 	); err != nil {
 		return true, err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return true, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -519,6 +504,9 @@ func (m *Module) ProcessNextRecordingRetention(
 		return true, fmt.Errorf("begin recording retention completion: %w", err)
 	}
 	defer func() { _ = completion.Rollback(ctx) }()
+	if err := lockCall(ctx, completion, callID); err != nil {
+		return true, err
+	}
 	result, err := completion.Exec(ctx, `
 		UPDATE human_calling_call_recordings
 		SET audio_state = 'DELETED', content_deleted_at = $3,
@@ -533,18 +521,12 @@ func (m *Module) ProcessNextRecordingRetention(
 	if result.RowsAffected() == 0 {
 		return true, ErrConflict
 	}
-	if _, err := completion.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, callID, now); err != nil {
-		return true, err
-	}
 	if err := appendTimeline(ctx, completion, callID, practiceID,
 		"call.recording.content_deleted", "", "", "",
 		opaqueReference(recordingID), "", now); err != nil {
 		return true, err
 	}
-	if err := m.recordCallingChange(ctx, completion, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, completion, practiceID); err != nil {
 		return true, err
 	}
 	if err := completion.Commit(ctx); err != nil {
@@ -561,6 +543,15 @@ func (m *Module) ProcessNextRecordingRetention(
 		attempts,
 	)
 	return true, nil
+}
+
+func lockCall(ctx context.Context, tx pgx.Tx, callID string) error {
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM human_calling_calls WHERE id = $1 FOR UPDATE
+	`, callID).Scan(&callID); err != nil {
+		return fmt.Errorf("lock Call: %w", err)
+	}
+	return nil
 }
 
 func recordingMaintenanceBackoff(attempts int) time.Duration {
