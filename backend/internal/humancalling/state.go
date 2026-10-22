@@ -364,16 +364,10 @@ func (m *Module) readScopedVoicemailState(
 	err := m.database.QueryRow(ctx, `
 		SELECT call.id::text, caller.id::text, call.practice_id::text,
 			call.location_id::text, location.name,
-			CASE
-				WHEN call.terminal_outcome = 'VOICEMAIL' THEN 'VOICEMAIL'
-				WHEN EXISTS (
-					SELECT 1 FROM human_calling_provider_commands recording
-					WHERE recording.call_id = call.id
-						AND recording.action = 'START_VOICEMAIL_RECORDING'
-						AND recording.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
-				) THEN 'VOICEMAIL_RECORDING'
-				ELSE 'VOICEMAIL_GREETING'
-			END,
+			(
+				SELECT call_state.state FROM human_calling_call_states call_state
+				WHERE call_state.call_id = call.id
+			),
 			call.version
 		FROM human_calling_calls call
 		JOIN human_calling_call_legs caller

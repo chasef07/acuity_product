@@ -62,7 +62,17 @@ export function callHistoryPresentation(item: ConversationTimelineItem) {
       case "CONNECTING":
         details.push("Connecting")
         break
+      case "PREPARING":
+        details.push("Preparing call")
+        break
+      case "VOICEMAIL_GREETING":
+        details.push("Playing voicemail greeting")
+        break
+      case "VOICEMAIL_RECORDING":
+        details.push("Recording voicemail")
+        break
       default:
+        call.outcome satisfies never
         details.push("Call outcome unknown")
     }
   }

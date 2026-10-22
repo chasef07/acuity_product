@@ -278,26 +278,17 @@ const callProjectionSQL = `
 		) ELSE '' END,
 		COALESCE(handoff.transfer_reason, ''),
 		COALESCE(handoff.source_call_id, ''),
-		CASE
-			WHEN call.disposition_outcome IN ('FOLLOW_UP_REQUIRED', 'CREATE_TASK')
-				THEN 'FOLLOW_UP_REQUIRED'
-			WHEN call.disposition_outcome IS NOT NULL THEN 'RESOLVED'
-			WHEN call.terminal_outcome = 'VOICEMAIL' THEN 'VOICEMAIL'
-			WHEN call.terminal_outcome IN ('MISSED', 'ABANDONED') THEN 'MISSED'
-			WHEN call.terminal_outcome IS NOT NULL AND bridged_staff.id IS NOT NULL
-				THEN 'NEEDS_DISPOSITION'
-			WHEN call.terminal_outcome IS NOT NULL THEN 'UNANSWERED'
-			WHEN bridged_staff.state = 'BRIDGED' THEN 'CONNECTED'
-			WHEN bridged_staff.state = 'BRIDGE_PENDING' THEN 'CONNECTING'
-			ELSE 'RINGING'
-		END
+		(
+			SELECT call_state.state FROM human_calling_call_states call_state
+			WHERE call_state.call_id = call.id
+		)
 	FROM human_calling_calls call
 	LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 	JOIN access_locations location
 		ON location.practice_id = call.practice_id
 		AND location.id = call.location_id
 	LEFT JOIN LATERAL (
-		SELECT leg.id, leg.staff_subject, leg.state, leg.bridged_at
+		SELECT leg.staff_subject, leg.bridged_at
 		FROM human_calling_call_legs leg
 		WHERE leg.call_id = call.id AND leg.role = 'STAFF'
 			AND leg.bridged_at IS NOT NULL

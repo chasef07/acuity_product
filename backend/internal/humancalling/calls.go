@@ -13,15 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type callProjection struct {
-	call             Call
-	terminalOutcome  string
-	disposition      string
-	staffState       string
-	destinationState string
-	voicemailPhase   string
-}
-
 const staffEndedBeforeProviderStartErrorCode = "STAFF_ENDED_BEFORE_PROVIDER_START"
 
 func (m *Module) ReadCall(
@@ -37,7 +28,7 @@ func (m *Module) ReadCall(
 		return Call{}, fmt.Errorf("begin Call read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	projection, err := m.loadCallProjection(ctx, tx, callID)
+	call, err := m.loadCallProjection(ctx, tx, callID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Call{}, ErrDenied
 	}
@@ -45,14 +36,14 @@ func (m *Module) ReadCall(
 		return Call{}, err
 	}
 	if _, err := m.access.LockReadAuthorization(
-		ctx, tx, identity, projection.call.PracticeID, projection.call.LocationID,
+		ctx, tx, identity, call.PracticeID, call.LocationID,
 	); err != nil {
 		return Call{}, callingAccessError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Call{}, fmt.Errorf("commit Call read: %w", err)
 	}
-	return projection.call, nil
+	return call, nil
 }
 
 func (m *Module) loadCallProjection(
@@ -61,9 +52,8 @@ func (m *Module) loadCallProjection(
 		QueryRow(context.Context, string, ...any) pgx.Row
 	},
 	callID string,
-) (callProjection, error) {
-	var result callProjection
-	var connectedAt *time.Time
+) (Call, error) {
+	var call Call
 	err := querier.QueryRow(ctx, `
 		SELECT call.id::text, call.practice_id::text, call.location_id::text,
 			location.name, call.direction, call.entry_point,
@@ -74,47 +64,21 @@ func (m *Module) loadCallProjection(
 			COALESCE(handoff.display_name, ''), COALESCE(handoff.name_source, ''),
 			COALESCE(handoff.transfer_reason, ''), COALESCE(handoff.reason_source, ''),
 			COALESCE(call.provider_termination, ''), call.version,
-			COALESCE(call.terminal_outcome, ''),
+			(
+				SELECT call_state.state FROM human_calling_call_states call_state
+				WHERE call_state.call_id = call.id
+			),
 			EXISTS (
 				SELECT 1 FROM human_calling_timeline timeline
 				WHERE timeline.call_id = call.id
 					AND timeline.kind = 'call.hangup.requested'
 			),
-			COALESCE(call.disposition_outcome, ''), call.disposition_deadline,
+			call.disposition_deadline,
 			COALESCE(call.retry_of_call_id::text, ''),
 			(
 				SELECT min(leg.bridged_at) FROM human_calling_call_legs leg
 				WHERE leg.call_id = call.id AND leg.bridged_at IS NOT NULL
 			),
-			COALESCE((
-				SELECT leg.state FROM human_calling_call_legs leg
-				WHERE leg.call_id = call.id AND leg.role = 'STAFF'
-				ORDER BY CASE leg.state
-					WHEN 'BRIDGED' THEN 1 WHEN 'BRIDGE_PENDING' THEN 2
-					WHEN 'ENDING' THEN 3 WHEN 'RINGING' THEN 4
-					WHEN 'DIALING' THEN 5 ELSE 6 END, leg.updated_at DESC
-				LIMIT 1
-			), ''),
-			COALESCE((
-				SELECT leg.state FROM human_calling_call_legs leg
-				WHERE leg.call_id = call.id AND leg.role = 'DESTINATION'
-				ORDER BY leg.sequence DESC LIMIT 1
-			), ''),
-			COALESCE((
-				SELECT CASE command.action
-					WHEN 'START_VOICEMAIL_RECORDING' THEN 'VOICEMAIL_RECORDING'
-					ELSE 'VOICEMAIL_GREETING'
-				END
-				FROM human_calling_provider_commands command
-				WHERE command.call_id = call.id
-					AND command.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
-					AND command.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
-				ORDER BY
-					CASE command.action WHEN 'START_VOICEMAIL_RECORDING' THEN 1 ELSE 2 END,
-					command.created_at DESC,
-					command.id DESC
-				LIMIT 1
-			), ''),
 			COALESCE(voicemail.outcome, ''), COALESCE(voicemail.audio_state, ''),
 			COALESCE(voicemail.task_id::text, ''),
 			COALESCE(voicemail.duration_millis / 1000, 0),
@@ -133,88 +97,24 @@ func (m *Module) loadCallProjection(
 		LEFT JOIN human_calling_call_recordings recording ON recording.call_id = call.id
 		WHERE call.id = $1
 	`, callID, m.now()).Scan(
-		&result.call.ID, &result.call.PracticeID, &result.call.LocationID,
-		&result.call.LocationName, &result.call.Direction, &result.call.EntryPoint,
-		&result.call.TaskID, &result.call.Phone, &result.call.CallerID,
-		&result.call.PhoneSource, &result.call.DisplayName, &result.call.NameSource,
-		&result.call.TransferReason, &result.call.ReasonSource,
-		&result.call.ProviderTermination, &result.call.Version,
-		&result.terminalOutcome, &result.call.EndRequested, &result.disposition,
-		&result.call.DispositionDeadline, &result.call.RetryOfCallID,
-		&connectedAt, &result.staffState, &result.destinationState,
-		&result.voicemailPhase,
-		&result.call.Voicemail.Outcome, &result.call.Voicemail.AudioState,
-		&result.call.Voicemail.TaskID, &result.call.Voicemail.DurationSeconds,
-		&result.call.Recording.AudioState, &result.call.Recording.DurationSeconds,
+		&call.ID, &call.PracticeID, &call.LocationID,
+		&call.LocationName, &call.Direction, &call.EntryPoint,
+		&call.TaskID, &call.Phone, &call.CallerID,
+		&call.PhoneSource, &call.DisplayName, &call.NameSource,
+		&call.TransferReason, &call.ReasonSource,
+		&call.ProviderTermination, &call.Version, &call.State,
+		&call.EndRequested, &call.DispositionDeadline, &call.RetryOfCallID,
+		&call.ConnectedAt,
+		&call.Voicemail.Outcome, &call.Voicemail.AudioState,
+		&call.Voicemail.TaskID, &call.Voicemail.DurationSeconds,
+		&call.Recording.AudioState, &call.Recording.DurationSeconds,
 	)
 	if err != nil {
-		return callProjection{}, fmt.Errorf("read Call projection: %w", err)
+		return Call{}, fmt.Errorf("read Call projection: %w", err)
 	}
-	result.call.ConnectedAt = connectedAt
-	result.call.State = deriveCallState(result.terminalOutcome, result.disposition,
-		result.staffState, result.destinationState, result.voicemailPhase,
-		result.call.Direction,
-		connectedAt != nil)
-	result.call.RetryAllowed = result.call.Direction == CallOutbound &&
-		(result.call.State == CallUnanswered || result.call.State == CallMissed)
-	return result, nil
-}
-
-func deriveCallState(
-	terminalOutcome string,
-	disposition string,
-	staffState string,
-	destinationState string,
-	voicemailPhase string,
-	direction CallDirection,
-	connected bool,
-) CallState {
-	if disposition != "" {
-		switch disposition {
-		case string(DispositionFollowUpRequired), string(DispositionCreateTask):
-			return CallFollowUpRequired
-		default:
-			return CallResolved
-		}
-	}
-	if terminalOutcome != "" {
-		switch terminalOutcome {
-		case "VOICEMAIL":
-			return CallVoicemail
-		case "MISSED", "ABANDONED":
-			return CallMissed
-		case "RESOLVED":
-			return CallResolved
-		case "FOLLOW_UP_REQUIRED":
-			return CallFollowUpRequired
-		case "ENDED":
-			if connected {
-				return CallNeedsDisposition
-			}
-			return CallUnanswered
-		default:
-			return CallUnanswered
-		}
-	}
-	if voicemailPhase == string(CallVoicemailRecording) {
-		return CallVoicemailRecording
-	}
-	if voicemailPhase == string(CallVoicemailGreeting) {
-		return CallVoicemailGreeting
-	}
-	if staffState == "BRIDGED" || destinationState == "BRIDGED" {
-		return CallConnected
-	}
-	if staffState == "ANSWERED" || staffState == "BRIDGE_PENDING" {
-		return CallConnecting
-	}
-	if staffState != "" {
-		return CallRinging
-	}
-	if direction == CallOutbound {
-		return CallPreparing
-	}
-	return CallRinging
+	call.RetryAllowed = call.Direction == CallOutbound &&
+		(call.State == CallUnanswered || call.State == CallMissed)
+	return call, nil
 }
 
 func (m *Module) RequestHangup(
@@ -671,13 +571,13 @@ func (m *Module) ReadOperatorTimeline(
 	if err != nil || !discovery.PlatformOperator {
 		return OperatorTimeline{}, ErrDenied
 	}
-	projection, err := m.loadCallProjection(ctx, m.database, callID)
+	call, err := m.loadCallProjection(ctx, m.database, callID)
 	if err != nil {
 		return OperatorTimeline{}, ErrDenied
 	}
 	result := OperatorTimeline{
-		CallID: callID, PracticeID: projection.call.PracticeID,
-		State: projection.call.State, Version: projection.call.Version,
+		CallID: callID, PracticeID: call.PracticeID,
+		State: call.State, Version: call.Version,
 		Entries: []TimelineEntry{},
 	}
 	rows, err := m.database.Query(ctx, `
