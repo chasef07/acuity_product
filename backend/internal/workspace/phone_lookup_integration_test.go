@@ -135,15 +135,15 @@ func TestPhoneLookupPreservesResultsAndUsesIndexes(t *testing.T) {
 		{"call history roots", phoneHistoryRootsSQL, append(append([]any{}, args...), nil, nil, 51)},
 		{"timeline call projection", callProjectionSQL, append(append([]any{}, args...), nil, nil, 51, nil)},
 	}
-	baselines := make([]measurement, len(cases))
-	for i, c := range cases {
-		baselines[i] = explain(strings.ReplaceAll(c.sql, newPredicate, oldPredicate), c.args)
-	}
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatalf("repeat migration: %v", err)
+	}
+	baselines := make([]measurement, len(cases))
+	for i, c := range cases {
+		baselines[i] = explain(strings.ReplaceAll(c.sql, newPredicate, oldPredicate), c.args)
 	}
 	if got := readIDs(phoneCallIDsSQL); !reflect.DeepEqual(before, got) {
 		t.Fatalf("indexed lookup changed results: %v", got)
@@ -156,7 +156,7 @@ func TestPhoneLookupPreservesResultsAndUsesIndexes(t *testing.T) {
 	}
 	for i, c := range cases {
 		after := explain(c.sql, c.args)
-		t.Logf("40,000 calls, %s: before %.3fms / %.0f buffers; after %.3fms / %.0f buffers", c.name, baselines[i].milliseconds, baselines[i].blocks, after.milliseconds, after.blocks)
+		t.Logf("40,000 calls, %s: legacy predicate %.3fms / %.0f buffers; indexed predicate %.3fms / %.0f buffers", c.name, baselines[i].milliseconds, baselines[i].blocks, after.milliseconds, after.blocks)
 		if after.blocks >= baselines[i].blocks {
 			t.Fatalf("%s did not reduce buffer work: %s", c.name, after.plan)
 		}

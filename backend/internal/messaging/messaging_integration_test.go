@@ -1630,7 +1630,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		if item.Type == "CALL" {
 			callLocations[item.Call.LocationID] = true
 			if item.Call.Direction != "INBOUND" ||
-				item.Call.Outcome != humancalling.CallUnanswered ||
+				item.Call.Outcome != humancalling.CallResolved ||
 				item.Call.AnsweredByEmail != "" {
 				t.Fatalf("conversation Call card = %#v", item)
 			}

@@ -31,6 +31,7 @@ GRANT SELECT ON TABLE
     public.access_practices,
     public.ai_interactions,
     public.human_calling_call_legs,
+    public.human_calling_call_states,
     public.human_calling_calls,
     public.human_calling_current_staff_owners,
     public.human_calling_credentials,
