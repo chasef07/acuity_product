@@ -510,7 +510,7 @@ test("outbound intent cannot replace an Outcome before disposition commits", asy
   })
   await runtime.start()
 
-  const refused = await runtime.startOutbound({
+  await runtime.startOutbound({
     idempotencyKey: "before-disposition",
     practiceId: "practice-1",
     locationId: "location-1",
@@ -520,7 +520,7 @@ test("outbound intent cannot replace an Outcome before disposition commits", asy
   assert.equal(outboundStarts, 0)
   assert.equal(runtime.getSnapshot().pendingDisposition?.id, pending.id)
   assert.equal(runtime.getSnapshot().pendingCall, undefined)
-  assert.equal(refused?.kind, "conflict")
+  assert.equal(runtime.getSnapshot().failure?.kind, "conflict")
 })
 
 test("availability becomes true only after every technical readiness fact is current", async () => {
@@ -4775,10 +4775,62 @@ test("an outbound Call reports its own result while an unrelated refresh failure
   assert.equal(started, undefined)
   assert.equal(runtime.getSnapshot().activeCall?.id, outbound.id)
   assert.equal(blocked?.message, "Finish the current Call before starting another.")
-  assert.equal(runtime.getSnapshot().failure?.source, "refresh")
-  backend.readStateHandler = undefined
+})
+
+test("a disposition whose commit a refresh observed first still returns its result", async () => {
+  const backend = new DeterministicBackend()
+  const pending = call({
+    id: "call-disposition-observed",
+    state: "NEEDS_DISPOSITION",
+    version: 3,
+  })
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: {
+      ...stateCall(pending.id, "disposition-observed-leg", pending.version),
+      state: "NEEDS_DISPOSITION",
+    },
+  })
+  backend.calls.set(pending.id, pending)
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const response = deferred<CallingDispositionResult>()
+  backend.disposeHandler = async () => response.promise
+  const disposing = runtime.dispose("RESOLVED")
+  await drainMicrotasks()
+
+  const resolved = call({ id: pending.id, state: "RESOLVED", version: 4 })
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.calls.set(resolved.id, resolved)
   await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().pendingDisposition, undefined)
+  response.resolve({ call: resolved })
+
+  assert.deepEqual(await disposing, { call: resolved })
+  assert.equal(runtime.getSnapshot().pending.disposition, false)
   assert.equal(runtime.getSnapshot().failure, undefined)
+})
+
+test("an audio failure retires once a healthy readiness write is confirmed", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-audio-issue-retired")
+  fixture.media.emitAudioIssue()
+  assert.equal(fixture.runtime.getSnapshot().failure?.kind, "media")
+
+  await fixture.clock.advance(4_000)
+
+  await eventually(() =>
+    assert.equal(fixture.runtime.getSnapshot().failure, undefined),
+  )
+  assert.notEqual(fixture.runtime.getSnapshot().mediaAttachment, undefined)
 })
 
 function callingHintFixture(
