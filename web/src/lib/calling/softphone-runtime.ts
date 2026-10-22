@@ -308,7 +308,7 @@ export type SoftphoneRuntime = {
   setAvailability(available: boolean): Promise<void>
   startOutbound(
     input: Omit<StartOutboundCallRequest, "sessionId">,
-  ): Promise<void>
+  ): Promise<SoftphoneFailure | undefined>
   answer(callLegID: string): Promise<void>
   loadTransferCandidates(): Promise<void>
   requestTransfer(
@@ -2353,20 +2353,18 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     },
     async startOutbound(input) {
       if (!snapshot.lease?.owner || snapshot.readiness.mediaState !== "ready") {
-        fail(open("outbound"), {
+        return {
           kind: "technical-readiness",
           message: "Reconnect calling before starting a Call.",
           recoverable: true,
-        })
-        return
+        }
       }
       if (snapshot.occupied) {
-        fail(open("outbound"), {
+        return {
           kind: "conflict",
           message: "Finish the current Call before starting another.",
           recoverable: true,
-        })
-        return
+        }
       }
       const outbound = open("outbound", {}, {
         call: { stage: "dialing", pending: pendingOutboundCall(input) },
@@ -2398,7 +2396,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           return
         }
         if (await failureOutlivesRefresh(outbound, error)) {
-          await failRequest(outbound, error, "temporary-request", {
+          return failRequest(outbound, error, "temporary-request", {
             call: withoutPending(snapshot.call),
           })
         }

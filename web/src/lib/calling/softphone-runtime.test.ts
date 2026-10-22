@@ -510,7 +510,7 @@ test("outbound intent cannot replace an Outcome before disposition commits", asy
   })
   await runtime.start()
 
-  await runtime.startOutbound({
+  const refused = await runtime.startOutbound({
     idempotencyKey: "before-disposition",
     practiceId: "practice-1",
     locationId: "location-1",
@@ -520,7 +520,7 @@ test("outbound intent cannot replace an Outcome before disposition commits", asy
   assert.equal(outboundStarts, 0)
   assert.equal(runtime.getSnapshot().pendingDisposition?.id, pending.id)
   assert.equal(runtime.getSnapshot().pendingCall, undefined)
-  assert.equal(runtime.getSnapshot().failure?.kind, "conflict")
+  assert.equal(refused?.kind, "conflict")
 })
 
 test("availability becomes true only after every technical readiness fact is current", async () => {
@@ -4740,6 +4740,45 @@ test("a transfer request failure for a Call that ended does not surface on its O
 
   assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
   assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+})
+
+test("an outbound Call reports its own result while an unrelated refresh failure stays visible", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  backend.readStateHandler = async () => {
+    throw new SoftphoneAdapterError("temporary-request", "Calling refresh is unavailable.", true)
+  }
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().failure?.source, "refresh")
+  const outbound = call({ id: "outbound-own-result", state: "PREPARING" })
+  backend.calls.set(outbound.id, outbound)
+  backend.startOutboundHandler = async () => outbound
+  const request = {
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  }
+
+  const started = await runtime.startOutbound({ ...request, idempotencyKey: "outbound-own-result" })
+  const blocked = await runtime.startOutbound({ ...request, idempotencyKey: "outbound-while-occupied" })
+
+  assert.equal(started, undefined)
+  assert.equal(runtime.getSnapshot().activeCall?.id, outbound.id)
+  assert.equal(blocked?.message, "Finish the current Call before starting another.")
+  assert.equal(runtime.getSnapshot().failure?.source, "refresh")
+  backend.readStateHandler = undefined
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().failure, undefined)
 })
 
 function callingHintFixture(
