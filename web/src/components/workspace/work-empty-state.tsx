@@ -7,7 +7,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { workspaceFolders } from "@/components/workspace/workspace-rail"
+import { workspaceFolders } from "@/components/workspace/workspace-rail-folders"
 import type { WorkspaceProjectionState } from "@/lib/workspace-projection"
 
 export function WorkEmptyState({ projection }: { projection: WorkspaceProjectionState }) {
