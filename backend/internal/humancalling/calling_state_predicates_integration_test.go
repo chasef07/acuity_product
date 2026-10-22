@@ -21,7 +21,7 @@ func TestCallingStateETagIncludesNewVoicemailGreeting(t *testing.T) {
 	if _, err := calling.AcquireSoftphone(ctx, identities[0], "voicemail-etag-session", false); err != nil {
 		t.Fatal(err)
 	}
-	before, err := calling.ReadCallingState(ctx, identities[0])
+	before, _, err := calling.ReadCallingStateConditionally(ctx, identities[0], "")
 	if err != nil {
 		t.Fatal(err)
 	}

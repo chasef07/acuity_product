@@ -96,7 +96,7 @@ func (m *Module) AcquireSoftphone(
 			return SoftphoneState{}, fmt.Errorf("commit connected Call lease refusal: %w", err)
 		}
 		var state SoftphoneState
-		if err := m.loadCurrentCallCapacity(ctx, identity.Subject, &state); err != nil {
+		if err := loadCurrentCallCapacity(ctx, m.database, identity.Subject, &state); err != nil {
 			return SoftphoneState{}, err
 		}
 		return state, nil
@@ -135,7 +135,7 @@ func (m *Module) AcquireSoftphone(
 		if err := tx.Commit(ctx); err != nil {
 			return SoftphoneState{}, fmt.Errorf("commit losing lease acquisition: %w", err)
 		}
-		if err := m.loadCurrentCallCapacity(ctx, identity.Subject, &state); err != nil {
+		if err := loadCurrentCallCapacity(ctx, m.database, identity.Subject, &state); err != nil {
 			return SoftphoneState{}, err
 		}
 		return state, nil
@@ -180,7 +180,7 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, fmt.Errorf("commit softphone lease acquisition: %w", err)
 	}
 	state.Owner = true
-	if err := m.loadCurrentCallCapacity(ctx, identity.Subject, &state); err != nil {
+	if err := loadCurrentCallCapacity(ctx, m.database, identity.Subject, &state); err != nil {
 		return SoftphoneState{}, err
 	}
 	return state, nil
@@ -292,19 +292,42 @@ func (m *Module) SetReadiness(
 		return SoftphoneState{}, fmt.Errorf("commit calling readiness: %w", err)
 	}
 	state.Owner = true
-	if err := m.loadCurrentCallCapacity(ctx, command.Identity.Subject, &state); err != nil {
+	if err := loadCurrentCallCapacity(ctx, m.database, command.Identity.Subject, &state); err != nil {
 		return SoftphoneState{}, err
 	}
 	return state, nil
 }
 
-func (m *Module) loadCurrentCallCapacity(
+func loadCurrentCallCapacity(
 	ctx context.Context,
+	querier interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	},
 	subject string,
 	state *SoftphoneState,
 ) error {
-	var globallyOccupied bool
-	if err := m.database.QueryRow(ctx, `
+	if err := scanOccupiedCall(
+		querier.QueryRow(ctx, occupiedCallQuery("$2"), subject, state.SessionID), state,
+	); err != nil {
+		return err
+	}
+	return scanPendingOutcomeCall(querier.QueryRow(ctx, pendingOutcomeCallQuery, subject), state)
+}
+
+func queueLeasedCallCapacity(batch *pgx.Batch, subject string, state *SoftphoneState) {
+	batch.Queue(occupiedCallQuery(`(
+		SELECT lease.session_id FROM human_calling_softphone_leases lease
+		WHERE lease.user_subject = $1
+	)`), subject).QueryRow(func(row pgx.Row) error {
+		return scanOccupiedCall(row, state)
+	})
+	batch.Queue(pendingOutcomeCallQuery, subject).QueryRow(func(row pgx.Row) error {
+		return scanPendingOutcomeCall(row, state)
+	})
+}
+
+func occupiedCallQuery(sessionID string) string {
+	return `
 		WITH occupied AS (
 			SELECT call.id, call.practice_id, call.location_id, call.direction,
 				leg.staff_session_id, leg.state, leg.answered_at, leg.updated_at
@@ -344,17 +367,14 @@ func (m *Module) loadCurrentCallCapacity(
 					occupied.direction <> 'OUTBOUND'
 					OR occupied.state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 					OR (occupied.state = 'ENDING' AND occupied.answered_at IS NOT NULL)
-					OR occupied.staff_session_id = $2
+					OR occupied.staff_session_id = ` + sessionID + `
 				)
 			ORDER BY occupied.updated_at DESC, occupied.id LIMIT 1
 		), ''), EXISTS (SELECT 1 FROM occupied)
-	`, subject, state.SessionID).Scan(&state.ActiveCallID, &globallyOccupied); err != nil {
-		return fmt.Errorf("read occupied Call: %w", err)
-	}
-	if globallyOccupied {
-		state.Available = false
-	}
-	if err := m.database.QueryRow(ctx, `
+	`
+}
+
+const pendingOutcomeCallQuery = `
 		SELECT COALESCE((
 			SELECT call.id::text
 			FROM human_calling_calls call
@@ -381,7 +401,21 @@ func (m *Module) loadCurrentCallCapacity(
 				AND call.disposition_at IS NULL
 			ORDER BY call.updated_at DESC, call.id LIMIT 1
 		), '')
-	`, subject).Scan(&state.PendingOutcomeCallID); err != nil {
+	`
+
+func scanOccupiedCall(row pgx.Row, state *SoftphoneState) error {
+	var globallyOccupied bool
+	if err := row.Scan(&state.ActiveCallID, &globallyOccupied); err != nil {
+		return fmt.Errorf("read occupied Call: %w", err)
+	}
+	if globallyOccupied {
+		state.Available = false
+	}
+	return nil
+}
+
+func scanPendingOutcomeCall(row pgx.Row, state *SoftphoneState) error {
+	if err := row.Scan(&state.PendingOutcomeCallID); err != nil {
 		return fmt.Errorf("read pending Call outcome: %w", err)
 	}
 	return nil

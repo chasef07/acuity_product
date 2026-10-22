@@ -18,7 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
-func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *testing.T) {
+func TestConditionalCallingStateReturnsNotModifiedUntilTheBodyChanges(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
@@ -108,44 +108,23 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 		t.Fatalf("Calling state ETag = %q, want a weak validator", etag)
 	}
 
-	lock, err := pool.Acquire(context.Background())
-	if err != nil {
-		t.Fatalf("acquire full-state lock connection: %v", err)
+	now = now.Add(4 * time.Second)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_softphone_leases
+		SET lease_expires_at = lease_expires_at + interval '4 seconds',
+			readiness_updated_at = $2, version = version + 1, updated_at = $2
+		WHERE user_subject = $1
+	`, identity.Subject, now); err != nil {
+		t.Fatalf("renew conditional Calling lease: %v", err)
 	}
-	transaction, err := lock.Begin(context.Background())
-	if err != nil {
-		lock.Release()
-		t.Fatalf("begin full-state lock: %v", err)
-	}
-	t.Cleanup(func() {
-		if transaction != nil {
-			_ = transaction.Rollback(context.Background())
-		}
-		if lock != nil {
-			lock.Release()
-		}
-	})
-	if _, err := transaction.Exec(
-		context.Background(),
-		`LOCK TABLE human_calling_handoffs IN ACCESS EXCLUSIVE MODE`,
-	); err != nil {
-		t.Fatalf("lock full-state table: %v", err)
-	}
-
 	assertCallingStateNotModified(
 		t,
 		server.Client(),
 		server.URL+"/v1/calling/state",
 		"conditional-token",
 		etag,
-		"unchanged state",
+		"lease heartbeat",
 	)
-	if err := transaction.Rollback(context.Background()); err != nil {
-		t.Fatalf("release full-state table lock: %v", err)
-	}
-	transaction = nil
-	lock.Release()
-	lock = nil
 
 	taskTransaction, err := pool.Begin(context.Background())
 	if err != nil {

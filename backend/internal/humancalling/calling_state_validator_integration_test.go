@@ -39,7 +39,7 @@ func TestCallingStateValidatorTracksSoftphoneChangesButNotHeartbeats(t *testing.
 	}
 	readState := func(t *testing.T) humancalling.CallingState {
 		t.Helper()
-		state, err := calling.ReadCallingState(ctx, staff)
+		state, _, err := calling.ReadCallingStateConditionally(ctx, staff, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +111,7 @@ func TestCallingStateValidatorTracksSoftphoneChangesButNotHeartbeats(t *testing.
 	})
 }
 
-func TestCallingStateValidatorAvoidsSequentialScansAtVolume(t *testing.T) {
+func TestCallingStateReadAvoidsSequentialScansAtVolume(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	ctx := context.Background()
@@ -167,6 +167,15 @@ func TestCallingStateValidatorAvoidsSequentialScansAtVolume(t *testing.T) {
 		identities[1].Subject); err != nil {
 		t.Fatal(err)
 	}
+	for _, identity := range identities {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO human_calling_softphone_leases (
+				user_subject, session_id, lease_expires_at, readiness_updated_at
+			) VALUES ($1, $1 || '-session', $2, $3)
+		`, identity.Subject, now.Add(time.Minute), now); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, table := range []string{
 		"human_calling_calls", "human_calling_call_legs", "human_calling_provider_commands",
 	} {
@@ -188,29 +197,32 @@ func TestCallingStateValidatorAvoidsSequentialScansAtVolume(t *testing.T) {
 		humancalling.Config{}, func() time.Time { return now },
 	)
 	for _, identity := range identities {
-		if _, err := calling.ReadCallingState(ctx, identity); err != nil {
+		trace.statements = nil
+		if _, _, err := calling.ReadCallingStateConditionally(ctx, identity, ""); err != nil {
 			t.Fatal(err)
 		}
-		if trace.sql == "" {
-			t.Fatal("Calling validator query not captured")
+		if len(trace.statements) < 8 {
+			t.Fatalf("captured %d Calling state statements, want the full read of 8", len(trace.statements))
 		}
-		var rawPlan []byte
-		if err := pool.QueryRow(ctx,
-			"EXPLAIN (FORMAT JSON) "+trace.sql, trace.args...,
-		).Scan(&rawPlan); err != nil {
-			t.Fatal(err)
-		}
-		var plans []struct {
-			Plan planNode `json:"Plan"`
-		}
-		if err := json.Unmarshal(rawPlan, &plans); err != nil || len(plans) != 1 {
-			t.Fatalf("decode Calling validator plan: %v", err)
-		}
-		for _, relation := range plans[0].Plan.sequentialScans() {
-			switch relation {
-			case "human_calling_calls", "human_calling_provider_commands":
-				t.Errorf("%s: Calling validator sequentially scans %s; plan: %s",
-					identity.Subject, relation, rawPlan)
+		for _, statement := range trace.statements {
+			var rawPlan []byte
+			if err := pool.QueryRow(ctx,
+				"EXPLAIN (FORMAT JSON) "+statement.sql, statement.args...,
+			).Scan(&rawPlan); err != nil {
+				t.Fatal(err)
+			}
+			var plans []struct {
+				Plan planNode `json:"Plan"`
+			}
+			if err := json.Unmarshal(rawPlan, &plans); err != nil || len(plans) != 1 {
+				t.Fatalf("decode Calling state plan: %v", err)
+			}
+			for _, relation := range plans[0].Plan.sequentialScans() {
+				switch relation {
+				case "human_calling_calls", "human_calling_provider_commands":
+					t.Errorf("%s: Calling state read sequentially scans %s; plan: %s",
+						identity.Subject, relation, rawPlan)
+				}
 			}
 		}
 	}
@@ -233,7 +245,7 @@ func (node planNode) sequentialScans() []string {
 	return relations
 }
 
-func TestCallingStateValidatorTracksOnlyLiveOrUndisposedOwnCallLegs(t *testing.T) {
+func TestCallingStateETagFollowsOwnCallLegBodies(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	ctx := context.Background()
@@ -246,6 +258,9 @@ func TestCallingStateValidatorTracksOnlyLiveOrUndisposedOwnCallLegs(t *testing.T
 	calling := humancalling.New(db.As(testdb.Portal), accessModule, nil,
 		humancalling.Config{}, func() time.Time { return now },
 	)
+	if _, err := calling.AcquireSoftphone(ctx, staff, "own-legs-session", false); err != nil {
+		t.Fatal(err)
+	}
 
 	insertCall := func(terminalOutcome string, disposed bool) string {
 		t.Helper()
@@ -286,20 +301,27 @@ func TestCallingStateValidatorTracksOnlyLiveOrUndisposedOwnCallLegs(t *testing.T
 	}
 
 	type ownLegCase struct {
-		name    string
-		callID  string
-		tracked bool
+		name        string
+		callID      string
+		changesBody bool
 	}
 	cases := []ownLegCase{}
-	add := func(name string, tracked bool, terminalOutcome string, disposed bool,
+	add := func(name string, changesBody bool, terminalOutcome string, disposed bool,
 		subject, state string, answered, bridged bool,
 	) {
 		callID := insertCall(terminalOutcome, disposed)
 		insertStaffLeg(callID, subject, state, answered, bridged)
-		cases = append(cases, ownLegCase{name: name, callID: callID, tracked: tracked})
+		cases = append(cases, ownLegCase{name: name, callID: callID, changesBody: changesBody})
 	}
-	add("ringing own leg", true, "", false, staff.Subject, "RINGING", false, false)
-	add("answered ending own leg", true, "", false, staff.Subject, "ENDING", true, false)
+	add("ringing own leg in its ring window", true, "", false, staff.Subject, "RINGING", false, false)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_provider_commands (call_id, action, state, sent_at)
+		VALUES ($1, 'START_RING_WINDOW', 'SENT', $2)
+	`, cases[len(cases)-1].callID, now); err != nil {
+		t.Fatal(err)
+	}
+	add("ringing own leg without a ring window", false, "", false, staff.Subject, "RINGING", false, false)
+	add("answered ending own leg", false, "", false, staff.Subject, "ENDING", true, false)
 	add("unanswered ending own leg", false, "", false, staff.Subject, "ENDING", false, false)
 	add("bridged own leg awaiting disposition", true, "ENDED", false, staff.Subject, "ENDED", true, true)
 	add("bridged own leg after disposition", false, "ENDED", true, staff.Subject, "ENDED", true, true)
@@ -308,25 +330,19 @@ func TestCallingStateValidatorTracksOnlyLiveOrUndisposedOwnCallLegs(t *testing.T
 	add("other staff ringing leg", false, "", false, other.Subject, "RINGING", false, false)
 	add("other staff leg awaiting disposition", false, "ENDED", false, other.Subject, "ENDED", true, true)
 
-	state, err := calling.ReadCallingState(ctx, staff)
-	if err != nil {
-		t.Fatal(err)
-	}
+	observations := []callingStateObservation{observeCallingState(t, calling, staff, "seeded", nil)}
 	for _, testCase := range cases {
 		if _, err := pool.Exec(ctx, `
 			UPDATE human_calling_calls SET version = version + 1 WHERE id = $1
 		`, testCase.callID); err != nil {
 			t.Fatal(err)
 		}
-		next, notModified, err := calling.ReadCallingStateConditionally(ctx, staff, state.ETag)
-		if err != nil {
-			t.Fatal(err)
+		previous := observations[len(observations)-1]
+		next := observeCallingState(t, calling, staff, testCase.name, &previous)
+		if (next.body != previous.body) != testCase.changesBody {
+			t.Errorf("%s: body changed=%t, want %t", testCase.name, next.body != previous.body, testCase.changesBody)
 		}
-		if notModified == testCase.tracked {
-			t.Errorf("%s: validator changed=%t, want %t", testCase.name, !notModified, testCase.tracked)
-		}
-		if !notModified {
-			state = next
-		}
+		observations = append(observations, next)
 	}
+	assertETagsMatchExactlyWhenBodiesMatch(t, observations)
 }

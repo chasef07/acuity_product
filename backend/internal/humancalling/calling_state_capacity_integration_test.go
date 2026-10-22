@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
+func TestCallingStateReadOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	ctx := context.Background()
@@ -102,33 +102,38 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 		humancalling.Config{}, func() time.Time { return now },
 	)
 	started := time.Now()
-	state, err := calling.ReadCallingState(ctx, identities[0])
+	state, _, err := calling.ReadCallingStateConditionally(ctx, identities[0], "")
 	if err != nil || state.Voicemail == nil {
 		t.Fatalf("initial Calling state: voicemail=%v err=%v", state.Voicemail, err)
 	}
 	t.Logf("initial Calling state: %s", time.Since(started))
-	if trace.sql == "" {
-		t.Fatal("Calling validator query not captured")
+	if len(trace.statements) == 0 {
+		t.Fatal("Calling state read not captured")
 	}
-	var snapshot string
-	if err := pool.QueryRow(ctx, trace.sql, trace.args...).Scan(&snapshot); err != nil {
+	var executionTime float64
+	for _, statement := range trace.statements {
+		var rawPlan []byte
+		if err := pool.QueryRow(ctx,
+			"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+statement.sql, statement.args...,
+		).Scan(&rawPlan); err != nil {
+			t.Fatal(err)
+		}
+		var plans []struct {
+			ExecutionTime float64 `json:"Execution Time"`
+		}
+		if err := json.Unmarshal(rawPlan, &plans); err != nil || len(plans) != 1 {
+			t.Fatalf("decode Calling state plan: %v", err)
+		}
+		executionTime += plans[0].ExecutionTime
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
 		t.Fatal(err)
 	}
-	var rawPlan []byte
-	if err := pool.QueryRow(ctx,
-		"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+trace.sql, trace.args...,
-	).Scan(&rawPlan); err != nil {
-		t.Fatal(err)
-	}
-	var plans []struct {
-		ExecutionTime float64 `json:"Execution Time"`
-	}
-	if err := json.Unmarshal(rawPlan, &plans); err != nil || len(plans) != 1 {
-		t.Fatalf("decode Calling validator plan: %v", err)
-	}
-	t.Logf("Calling validator: %d snapshot bytes, %.2f ms execution", len(snapshot), plans[0].ExecutionTime)
-	if len(snapshot) >= 64*1024 {
-		t.Fatalf("Calling validator loaded %d bytes for one visible voicemail, want less than 64 KiB", len(snapshot))
+	t.Logf("Calling state: %d body bytes from %d statements, %.2f ms execution",
+		len(body), len(trace.statements), executionTime)
+	if len(body) >= 64*1024 {
+		t.Fatalf("Calling state hashed %d bytes for one visible voicemail, want less than 64 KiB", len(body))
 	}
 
 	readConditionally := func(previous humancalling.CallingState, unchanged bool) humancalling.CallingState {
@@ -165,7 +170,7 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 	`, state.Voicemail.CallID); err != nil {
 		t.Fatal(err)
 	}
-	state = readConditionally(state, false)
+	readConditionally(state, true)
 	if _, err := pool.Exec(ctx, `
 		UPDATE human_calling_calls SET updated_at = $2, version = version + 1 WHERE id = $1
 	`, hiddenCallID, now); err != nil {
@@ -248,7 +253,7 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 	`, authorization.Membership.ID, authorization.Practice.ID, authorization.Locations[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	state = readConditionally(state, false)
+	readConditionally(state, true)
 	var excludedLocationID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO access_locations (practice_id, provisioning_key, name)
@@ -291,18 +296,41 @@ func TestCallingStateValidatorOnlyLoadsVisibleVoicemailHistory(t *testing.T) {
 }
 
 type callingStateQueryTrace struct {
+	statements []tracedStatement
+}
+
+type tracedStatement struct {
 	sql  string
 	args []any
+}
+
+func (trace *callingStateQueryTrace) record(sql string, args []any) {
+	if strings.Contains(sql, "human_calling_") {
+		trace.statements = append(trace.statements, tracedStatement{
+			sql: sql, args: append([]any(nil), args...),
+		})
+	}
 }
 
 func (trace *callingStateQueryTrace) TraceQueryStart(
 	ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData,
 ) context.Context {
-	if strings.Contains(data.SQL, "WITH relevant_call_ids AS MATERIALIZED") {
-		trace.sql = data.SQL
-		trace.args = append([]any(nil), data.Args...)
-	}
+	trace.record(data.SQL, data.Args)
 	return ctx
 }
 
 func (*callingStateQueryTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func (*callingStateQueryTrace) TraceBatchStart(
+	ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData,
+) context.Context {
+	return ctx
+}
+
+func (trace *callingStateQueryTrace) TraceBatchQuery(
+	_ context.Context, _ *pgx.Conn, data pgx.TraceBatchQueryData,
+) {
+	trace.record(data.SQL, data.Args)
+}
+
+func (*callingStateQueryTrace) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}

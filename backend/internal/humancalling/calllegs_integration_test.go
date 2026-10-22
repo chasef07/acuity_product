@@ -137,7 +137,7 @@ func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.
 	`, callID, identity.Subject, sessionID, now); err != nil {
 		t.Fatal(err)
 	}
-	before, err := calling.ReadCallingState(context.Background(), identity)
+	before, _, err := calling.ReadCallingStateConditionally(context.Background(), identity, "")
 	if err != nil || before.Softphone.ActiveCallID != callID || before.Bridged == nil {
 		t.Fatalf("Calling state before revocation = active:%q bridged:%#v err:%v",
 			before.Softphone.ActiveCallID, before.Bridged, err)
@@ -148,7 +148,7 @@ func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.
 	`, revoked.Membership.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	after, err := calling.ReadCallingState(context.Background(), identity)
+	after, _, err := calling.ReadCallingStateConditionally(context.Background(), identity, "")
 	if err != nil {
 		t.Fatalf("read remaining Calling access: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	if offeredSession != "location-ring-browser-1" {
 		t.Fatalf("inbound CallLeg transferred to Admin session %q", offeredSession)
 	}
-	adminAfterOffer, err := calling.ReadCallingState(context.Background(), staff[0])
+	adminAfterOffer, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(adminAfterOffer.Ringing) != 0 || adminAfterOffer.Bridged != nil ||
 		adminAfterOffer.Softphone.ActiveCallID != "" {
 		t.Fatalf("inbound Call remained projected after Staff became Admin = %#v, %v",
@@ -365,7 +365,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	`, staff[0].Subject, now.Add(2*time.Second)); err != nil {
 		t.Fatalf("advance stale inbound Staff leg to Bridged: %v", err)
 	}
-	adminAfterBridge, err := calling.ReadCallingState(context.Background(), staff[0])
+	adminAfterBridge, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || adminAfterBridge.Softphone.ActiveCallID != "" ||
 		adminAfterBridge.Softphone.Available || adminAfterBridge.Bridged != nil {
 		t.Fatalf("Bridged inbound Call leaked after Staff became Admin = %#v, %v",
@@ -389,7 +389,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	`, staff[0].Subject, now.Add(3*time.Second)); err != nil {
 		t.Fatalf("advance stale inbound Call to pending outcome: %v", err)
 	}
-	adminAfterOutcome, err := calling.ReadCallingState(context.Background(), staff[0])
+	adminAfterOutcome, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || adminAfterOutcome.Softphone.PendingOutcomeCallID != "" ||
 		adminAfterOutcome.Disposition != nil {
 		t.Fatalf("inbound outcome leaked after Staff became Admin = %#v, %v",
@@ -432,7 +432,7 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	if err := callingWorker.ApplyProviderFact(context.Background(), adminStaff); err != nil {
 		t.Fatalf("project Admin outbound answer: %v", err)
 	}
-	adminState, err := calling.ReadCallingState(context.Background(), staff[2])
+	adminState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[2], "")
 	if err != nil || adminState.Softphone.ActiveCallID != adminCall.ID ||
 		len(adminState.Ringing) != 1 || adminState.Ringing[0].CallID != adminCall.ID {
 		t.Fatalf("Admin outbound media state = %#v, %v", adminState, err)
@@ -1815,7 +1815,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff answer: %v", err)
 	}
-	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(callingState.Ringing) != 1 {
 		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
 	}
@@ -2041,7 +2041,7 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff answer: %v", err)
 	}
-	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(callingState.Ringing) != 1 {
 		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
 	}
@@ -2203,7 +2203,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 	if err := callingWorker.ApplyProviderFact(context.Background(), staffFact); err != nil {
 		t.Fatalf("project outbound Staff answer: %v", err)
 	}
-	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil || len(callingState.Ringing) != 1 {
 		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
 	}
@@ -2259,7 +2259,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 	if _, err := callingWorker.MaintainOutgoingCallLegs(context.Background()); err != nil {
 		t.Fatalf("reconcile stale bridged Staff CallLeg: %v", err)
 	}
-	callingState, err = calling.ReadCallingState(context.Background(), staff[0])
+	callingState, _, err = calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil {
 		t.Fatalf("read connected Call after reconciliation: %v", err)
 	}
@@ -5452,7 +5452,7 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
-	greetingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	greetingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil {
 		t.Fatalf("read live voicemail greeting state: %v", err)
 	}
@@ -5486,7 +5486,7 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
-	recordingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	recordingState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil {
 		t.Fatalf("read live voicemail recording state: %v", err)
 	}
@@ -5550,7 +5550,7 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 			callOutcome, voicemailOutcome, audioState, taskTitle, taskOrigin, taskOutcome,
 			acknowledgementCount)
 	}
-	savedState, err := calling.ReadCallingState(context.Background(), staff[0])
+	savedState, _, err := calling.ReadCallingStateConditionally(context.Background(), staff[0], "")
 	if err != nil {
 		t.Fatalf("read saved voicemail state: %v", err)
 	}

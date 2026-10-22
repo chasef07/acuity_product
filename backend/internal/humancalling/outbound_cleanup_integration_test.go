@@ -153,7 +153,7 @@ func TestConcurrentOutboundOutcomesConvergeAndCleanUp(t *testing.T) {
 	}
 	for _, leg := range staffLegs {
 		identity := identityBySubject[leg.subject]
-		state, err := calling.ReadCallingState(ctx, identity)
+		state, _, err := calling.ReadCallingStateConditionally(ctx, identity, "")
 		if err != nil || len(state.Ringing) != 1 || state.Ringing[0].CallID != leg.callID {
 			t.Fatalf("read concurrent outbound media state: %#v err=%v", state, err)
 		}
