@@ -288,5 +288,6 @@ func (m *Module) applyProviderFact(ctx context.Context, fact ProviderFact) (fact
 	if !routed {
 		return "", fmt.Errorf("%w: unsupported provider fact %s", ErrInvalidInput, fact.Type)
 	}
-	return handler(m, ctx, fact, state)
+	verdict, err := handler(m, ctx, fact, state)
+	return verdict, illegalCallTransition(err)
 }

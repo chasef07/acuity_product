@@ -298,6 +298,10 @@ func (m *Module) executeCallLegCommand(
 	)
 	defer cancel()
 	if err := m.finishCallLegCommand(persistCtx, command, result, executeErr); err != nil {
+		err = illegalCallTransition(err)
+		if errors.Is(err, ErrIllegalCallTransition) {
+			err = m.failIllegalCommandResult(persistCtx, command, claimedAt, err)
+		}
 		return ProviderResult{}, err
 	}
 	var state string
@@ -321,6 +325,26 @@ func (m *Module) executeCallLegCommand(
 		return result, nil
 	}
 	return result, executeErr
+}
+
+func (m *Module) failIllegalCommandResult(
+	ctx context.Context,
+	command ProviderCommand,
+	claimedAt time.Time,
+	err error,
+) error {
+	tag, failErr := m.database.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = $2, updated_at = $3
+		WHERE id = $1 AND state = 'SENDING'
+	`, command.ID, illegalCallTransitionCode, m.now())
+	if failErr != nil {
+		return errors.Join(err, fmt.Errorf("fail illegal provider command result: %w", failErr))
+	}
+	if tag.RowsAffected() == 1 {
+		m.recordProviderCommand(command, "FAILED", claimedAt, m.now().Sub(claimedAt))
+	}
+	return err
 }
 
 func (m *Module) providerCommandResult(
