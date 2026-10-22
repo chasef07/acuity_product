@@ -1264,7 +1264,7 @@ func (m *Module) applyHangupWithObservation(
 		FOR UPDATE OF call, leg
 	`
 	args := []any{fact.CallControlID, fact.CallLegID}
-	if state.Role != "" {
+	if state.Role != (callLegRole{}) {
 		query = `
 			SELECT leg.id::text, leg.provider_call_control_id,
 				leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, ''),

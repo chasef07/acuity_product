@@ -350,8 +350,9 @@ func (m *Module) endCallLegs(
 		return fmt.Errorf("lock remaining CallLegs: %w", err)
 	}
 	type remainingLeg struct {
-		id, role, subject, controlID string
-		identityless                 bool
+		id, subject, controlID string
+		role                   callLegRole
+		identityless           bool
 	}
 	remaining := []remainingLeg{}
 	for rows.Next() {
@@ -375,7 +376,7 @@ func (m *Module) endCallLegs(
 		}
 		if leg.controlID == "" {
 			errorCode := "CALL_TERMINATED"
-			if leg.role == "CALLER" && leg.identityless {
+			if leg.role == roleCaller && leg.identityless {
 				errorCode = "CALL_TERMINATED_BEFORE_PROVIDER_START"
 			}
 			if _, err := tx.Exec(ctx, `
@@ -410,7 +411,7 @@ func (m *Module) endCallLegs(
 			ctx, tx, callID, leg.id, "", leg.subject, CommandHangupLeg,
 			leg.controlID,
 			map[string]any{"client_state": encodeCallLegClientState(
-				callID, leg.id, callLegRole(leg.role), kindCleanup,
+				callID, leg.id, leg.role, kindCleanup,
 			)},
 			"",
 		); err != nil {

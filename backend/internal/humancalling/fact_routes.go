@@ -2,6 +2,7 @@ package humancalling
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,41 +11,67 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type callLegRole string
+type callLegRole struct{ name string }
 
-const (
-	roleCaller      callLegRole = "CALLER"
-	roleStaff       callLegRole = "STAFF"
-	roleDestination callLegRole = "DESTINATION"
+var (
+	roleCaller      = callLegRole{"CALLER"}
+	roleStaff       = callLegRole{"STAFF"}
+	roleDestination = callLegRole{"DESTINATION"}
 )
 
 var callLegRoles = []callLegRole{roleCaller, roleStaff, roleDestination}
 
-type clientStateKind string
+func (role callLegRole) MarshalText() ([]byte, error) {
+	return []byte(role.name), nil
+}
 
-const (
-	kindAnswer                  clientStateKind = "answer"
-	kindRingWindow              clientStateKind = "ring_window"
-	kindDial                    clientStateKind = "dial"
-	kindOutboundMedia           clientStateKind = "outbound_media"
-	kindBridge                  clientStateKind = "bridge"
-	kindVoicemailGreeting       clientStateKind = "voicemail_greeting"
-	kindVoicemailRecording      clientStateKind = "voicemail_recording"
-	kindStaffTransferTarget     clientStateKind = "staff_transfer_target"
-	kindStaffTransferSource     clientStateKind = "staff_transfer_source"
-	kindReconciled              clientStateKind = "reconciled"
-	kindReconciledAbsent        clientStateKind = "reconciled_absent"
-	kindCleanup                 clientStateKind = "cleanup"
-	kindStaffHangup             clientStateKind = "staff_hangup"
-	kindCleanupRetry            clientStateKind = "cleanup_retry"
-	kindLateDialCleanup         clientStateKind = "late_dial_cleanup"
-	kindLateFactCleanup         clientStateKind = "late_fact_cleanup"
-	kindRoutingFailure          clientStateKind = "routing_failure"
-	kindVoicemailComplete       clientStateKind = "voicemail_complete"
-	kindTransferTerminalCleanup clientStateKind = "transfer_terminal_cleanup"
-	kindTransferredCleanup      clientStateKind = "transferred_cleanup"
-	kindTransferFailedCleanup   clientStateKind = "transfer_failed_cleanup"
-	kindUnrecognized            clientStateKind = "unrecognized"
+func (role *callLegRole) UnmarshalText(text []byte) error {
+	for _, known := range callLegRoles {
+		if known.name == string(text) {
+			*role = known
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown CallLeg role %q", text)
+}
+
+func (role callLegRole) Value() (driver.Value, error) {
+	return role.name, nil
+}
+
+func (role *callLegRole) Scan(value any) error {
+	name, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("scan CallLeg role from %T", value)
+	}
+	return role.UnmarshalText([]byte(name))
+}
+
+type clientStateKind struct{ name string }
+
+var (
+	kindAnswer                  = clientStateKind{"answer"}
+	kindRingWindow              = clientStateKind{"ring_window"}
+	kindDial                    = clientStateKind{"dial"}
+	kindOutboundMedia           = clientStateKind{"outbound_media"}
+	kindBridge                  = clientStateKind{"bridge"}
+	kindVoicemailGreeting       = clientStateKind{"voicemail_greeting"}
+	kindVoicemailRecording      = clientStateKind{"voicemail_recording"}
+	kindStaffTransferTarget     = clientStateKind{"staff_transfer_target"}
+	kindStaffTransferSource     = clientStateKind{"staff_transfer_source"}
+	kindReconciled              = clientStateKind{"reconciled"}
+	kindReconciledAbsent        = clientStateKind{"reconciled_absent"}
+	kindCleanup                 = clientStateKind{"cleanup"}
+	kindStaffHangup             = clientStateKind{"staff_hangup"}
+	kindCleanupRetry            = clientStateKind{"cleanup_retry"}
+	kindLateDialCleanup         = clientStateKind{"late_dial_cleanup"}
+	kindLateFactCleanup         = clientStateKind{"late_fact_cleanup"}
+	kindRoutingFailure          = clientStateKind{"routing_failure"}
+	kindVoicemailComplete       = clientStateKind{"voicemail_complete"}
+	kindTransferTerminalCleanup = clientStateKind{"transfer_terminal_cleanup"}
+	kindTransferredCleanup      = clientStateKind{"transferred_cleanup"}
+	kindTransferFailedCleanup   = clientStateKind{"transfer_failed_cleanup"}
+	kindUnrecognized            = clientStateKind{"unrecognized"}
 )
 
 var clientStateKinds = []clientStateKind{
@@ -54,6 +81,20 @@ var clientStateKinds = []clientStateKind{
 	kindCleanup, kindStaffHangup, kindCleanupRetry, kindLateDialCleanup,
 	kindLateFactCleanup, kindRoutingFailure, kindVoicemailComplete,
 	kindTransferTerminalCleanup, kindTransferredCleanup, kindTransferFailedCleanup,
+}
+
+func (kind clientStateKind) MarshalText() ([]byte, error) {
+	return []byte(kind.name), nil
+}
+
+func (kind *clientStateKind) UnmarshalText(text []byte) error {
+	*kind = kindUnrecognized
+	for _, known := range clientStateKinds {
+		if known.name == string(text) {
+			*kind = known
+		}
+	}
+	return nil
 }
 
 var hangupRequestedKinds = []clientStateKind{
@@ -71,7 +112,7 @@ type callLegClientState struct {
 	CallID     string          `json:"call"`
 	CallLegID  string          `json:"call_leg"`
 	Role       callLegRole     `json:"role"`
-	Kind       clientStateKind `json:"kind,omitempty"`
+	Kind       clientStateKind `json:"kind,omitzero"`
 	TransferID string          `json:"transfer,omitempty"`
 }
 
@@ -107,14 +148,11 @@ func parseCallLegClientState(value string) (callLegClientState, bool) {
 	if err != nil || len(decoded) > 512 {
 		return callLegClientState{}, false
 	}
-	var state callLegClientState
+	state := callLegClientState{Kind: kindUnrecognized}
 	if err := json.Unmarshal(decoded, &state); err != nil ||
 		state.Version != 2 || state.CallID == "" || state.CallLegID == "" ||
-		!slices.Contains(callLegRoles, state.Role) {
+		state.Role == (callLegRole{}) {
 		return callLegClientState{}, false
-	}
-	if !slices.Contains(clientStateKinds, state.Kind) {
-		state.Kind = kindUnrecognized
 	}
 	return state, true
 }
@@ -177,7 +215,7 @@ func routeProviderFacts() map[factRoute]factHandler {
 		}
 	}
 	withoutClientState := func(handler factHandler, facts ...FactType) {
-		add(handler, facts, []callLegRole{""}, []clientStateKind{""})
+		add(handler, facts, []callLegRole{{}}, []clientStateKind{{}})
 	}
 	facts := func(facts ...FactType) []FactType { return facts }
 	roles := func(roles ...callLegRole) []callLegRole { return roles }
