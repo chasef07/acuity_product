@@ -29,7 +29,7 @@ import {
 import { useSidebar } from "@/components/ui/sidebar"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { RailButton } from "@/components/workspace/workspace-rail-button"
-import { workspaceFolders } from "@/components/workspace/workspace-rail"
+import { workspaceFolders } from "@/components/workspace/workspace-rail-folders"
 import { authClient } from "@/lib/auth-client"
 import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
 import {
