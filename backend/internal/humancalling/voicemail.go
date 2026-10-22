@@ -566,7 +566,7 @@ func (m *Module) ensureRecoveryOutcome(
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_calls SET terminal_outcome = $2,
-			ended_at = COALESCE(ended_at, $3), version = version + 1, updated_at = $3
+			ended_at = COALESCE(ended_at, $3), updated_at = $3
 		WHERE id = $1
 	`, callID, terminalOutcome, fact.OccurredAt); err != nil {
 		return "", fmt.Errorf("commit recovery outcome: %w", err)
@@ -574,9 +574,6 @@ func (m *Module) ensureRecoveryOutcome(
 	if err := appendTimeline(ctx, tx, callID, practiceID,
 		"call.recovery_task_created", "", fact.EventID, "",
 		opaqueReference(task.ID), string(outcome), fact.OccurredAt); err != nil {
-		return "", err
-	}
-	if err := publishCallingHint(ctx, tx, practiceID); err != nil {
 		return "", err
 	}
 	return task.ID, nil

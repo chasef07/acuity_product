@@ -374,10 +374,10 @@ func (m *Module) StartOutboundCall(
 			id, practice_id, location_id, direction, entry_point, task_id,
 			destination_phone, outbound_caller_id, initiating_subject,
 			outbound_idempotency_key, outbound_input_fingerprint,
-			retry_of_call_id, version, created_at, updated_at
+			retry_of_call_id, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, 'OUTBOUND', $4, NULLIF($5, '')::uuid,
-			$6, $7, $8, $9, $10, NULLIF($11, '')::uuid, 1, $12, $12
+			$6, $7, $8, $9, $10, NULLIF($11, '')::uuid, $12, $12
 		)
 	`, callID, practiceID, locationID, entryPoint, taskID, destination,
 		callerID, command.Identity.Subject, command.IdempotencyKey,
@@ -431,7 +431,7 @@ func (m *Module) StartOutboundCall(
 		command.Identity.Subject, "", commandID, "", "", now); err != nil {
 		return Call{}, err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return Call{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -606,11 +606,6 @@ func (m *Module) ConfirmOutboundMedia(
 	if err != nil {
 		return Call{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2 WHERE id = $1
-	`, command.CallID, m.now()); err != nil {
-		return Call{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return Call{}, fmt.Errorf("commit outbound media confirmation: %w", err)
 	}
@@ -763,17 +758,12 @@ func (m *Module) applyOutboundDestinationFact(
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2 WHERE id = $1
-	`, callID, m.now()); err != nil {
-		return err
-	}
 	if err := appendTimeline(ctx, tx, callID, practiceID,
 		"provider.destination."+strings.TrimPrefix(string(fact.Type), "call."), "",
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -847,11 +837,6 @@ func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) err
 	if err := m.reserveConnectedCallRecording(ctx, tx, state.CallID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2 WHERE id = $1
-	`, state.CallID, m.now()); err != nil {
-		return err
-	}
 	if staffState == "BRIDGED" || historicalUpgrade {
 		if err := appendTimeline(ctx, tx, state.CallID, practiceID, "call.connected",
 			"", fact.EventID, "", opaqueReference(fact.CallLegID), "",
@@ -859,7 +844,7 @@ func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) err
 			return err
 		}
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -939,12 +924,7 @@ func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2 WHERE id = $1
-	`, state.CallID, m.now()); err != nil {
-		return err
-	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

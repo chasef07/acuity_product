@@ -288,18 +288,12 @@ func (m *Module) RequestStaffTransfer(
 		now.Add(m.config.StaffTransferDuration), now); err != nil {
 		return StaffTransfer{}, fmt.Errorf("create staff transfer: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET version = version + 1, updated_at = $2 WHERE id = $1
-	`, command.CallID, now); err != nil {
-		return StaffTransfer{}, err
-	}
 	if err := appendTimeline(ctx, tx, command.CallID, practiceID,
 		"staff_transfer.requested", command.Identity.Subject, "", commandID,
 		opaqueReference(transferID), "", now); err != nil {
 		return StaffTransfer{}, err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return StaffTransfer{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -319,14 +319,7 @@ func (m *Module) reconcileNeverStartedTerminalCallLeg(
 	); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, callID, cleanedAt); err != nil {
-		return false, fmt.Errorf("advance terminal Call cleanup version: %w", err)
-	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -569,7 +562,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 		}
 		if commandID != "" && commandAction == CommandStartRingWindow {
 			if err := m.markUnobservedCommandAmbiguous(
-				ctx, commandID, commandAction, commandCreatedAt, checkedAt,
+				ctx, commandID, legID, commandAction, commandCreatedAt, checkedAt,
 			); err != nil {
 				return true, err
 			}
@@ -767,7 +760,7 @@ func (m *Module) quarantineStaleCallLeg(
 	); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -912,7 +905,7 @@ func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, erro
 		SET terminal_outcome = 'UNANSWERED',
 			provider_termination = 'MEDIA_READINESS_FAILED',
 			ended_at = COALESCE(ended_at, $2),
-			version = version + 1, updated_at = $2
+			updated_at = $2
 		WHERE id = $1 AND terminal_outcome IS NULL
 	`, callID, m.now()); err != nil {
 		return false, fmt.Errorf("end expired outbound media Call: %w", err)
@@ -933,7 +926,7 @@ func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, erro
 		opaqueReference(staffLegID), "MEDIA_READINESS_FAILED", m.now()); err != nil {
 		return false, err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -945,20 +938,32 @@ func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, erro
 func (m *Module) markUnobservedCommandAmbiguous(
 	ctx context.Context,
 	commandID string,
+	callLegID string,
 	action CommandAction,
 	commandCreatedAt time.Time,
 	observedAt time.Time,
 ) error {
-	tag, err := m.database.Exec(ctx, `
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin unobserved provider command result: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockCallThenCallLegForCommandMutation(ctx, tx, callLegID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = 'AMBIGUOUS', last_error_code = $2, updated_at = $3
-		WHERE id = $1 AND state IN ('SENDING', 'SENT')
-	`, commandID, string(action)+"_EVENT_ABSENT", observedAt)
+		WHERE id = $1 AND call_leg_id = $4 AND state IN ('SENDING', 'SENT')
+	`, commandID, string(action)+"_EVENT_ABSENT", observedAt, callLegID)
 	if err != nil {
 		return fmt.Errorf("mark unobserved provider command ambiguous: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return nil
+		return tx.Commit(ctx)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit unobserved provider command result: %w", err)
 	}
 	m.recordProviderCommand(
 		ProviderCommand{Action: action, createdAt: commandCreatedAt},

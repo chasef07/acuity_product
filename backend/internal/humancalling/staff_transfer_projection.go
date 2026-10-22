@@ -447,16 +447,8 @@ func (m *Module) failStaffTransferTx(
 		transfer.ProviderCommandID, opaqueReference(transfer.ID), errorCode, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, transfer.CallID, now); err != nil {
-		return err
-	}
-	if err := m.recordCallingChange(ctx, tx, transfer.PracticeID); err != nil {
-		return err
-	}
-	return nil
+	_, err = m.access.RecordWorkspaceChange(ctx, tx, transfer.PracticeID)
+	return err
 }
 
 func staffTransferTimelineSuffix(state StaffTransferState) (string, error) {
@@ -573,18 +565,12 @@ func (m *Module) advanceStaffTransferProjection(
 	practiceID string,
 	fact ProviderFact,
 ) error {
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, callID, m.now()); err != nil {
-		return err
-	}
 	kind := "staff_transfer.provider." + string(fact.Type)
 	if err := appendTimeline(ctx, tx, callID, practiceID, kind, "", fact.EventID,
 		"", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	err := m.recordCallingChange(ctx, tx, practiceID)
+	_, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID)
 	return err
 }
 

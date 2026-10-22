@@ -100,7 +100,7 @@ func (m *Module) finishEndedCallLeg(
 		); err != nil {
 			return err
 		}
-		if err := m.recordCallingChange(ctx, tx, ended.practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, ended.practiceID); err != nil {
 			return err
 		}
 		return nil
@@ -140,7 +140,7 @@ func (m *Module) finishEndedCallLeg(
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_calls
 				SET terminal_outcome = COALESCE(terminal_outcome, 'ABANDONED'),
-					ended_at = COALESCE(ended_at, $2), version = version + 1, updated_at = $3
+					ended_at = COALESCE(ended_at, $2), updated_at = $3
 				WHERE id = $1
 			`, ended.callID, fact.OccurredAt, m.now()); err != nil {
 				return fmt.Errorf("mark caller abandonment: %w", err)
@@ -156,7 +156,7 @@ func (m *Module) finishEndedCallLeg(
 			SET terminal_outcome = COALESCE(terminal_outcome, 'ENDED'),
 				ended_at = COALESCE(ended_at, $2),
 				disposition_deadline = COALESCE(disposition_deadline, $4),
-				version = version + 1, updated_at = $3
+				updated_at = $3
 			WHERE id = $1
 		`, ended.callID, fact.OccurredAt, m.now(), m.now().Add(m.config.DispositionDuration)); err != nil {
 			return fmt.Errorf("end connected Call: %w", err)
@@ -168,7 +168,7 @@ func (m *Module) finishEndedCallLeg(
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_calls
 			SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
-				version = version + 1, updated_at = $3
+				updated_at = $3
 			WHERE id = $1 AND terminal_outcome IS NULL
 		`, ended.callID, fact.OccurredAt, m.now()); err != nil {
 			return fmt.Errorf("end unanswered outbound Call: %w", err)
@@ -191,7 +191,7 @@ func (m *Module) finishEndedCallLeg(
 		sanitizeCode(fact.HangupCause), fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, ended.practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, ended.practiceID); err != nil {
 		return err
 	}
 	return nil

@@ -207,9 +207,9 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO human_calling_calls (
 			id, source_handoff_id, practice_id, location_id, direction,
-			entry_point, caller_phone, version, created_at, updated_at
+			entry_point, caller_phone, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, 'INBOUND', 'AI_HANDOFF', NULLIF($5, ''), 1, $6, $6)
+		VALUES ($1, $2, $3, $4, 'INBOUND', 'AI_HANDOFF', NULLIF($5, ''), $6, $6)
 	`, callID, handoffID, practiceID, locationID, callerPhone, m.now()); err != nil {
 		return fmt.Errorf("create admitted Call: %w", err)
 	}
@@ -261,7 +261,7 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -487,18 +487,11 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, callID, m.now()); err != nil {
-		return fmt.Errorf("advance fan-out Call version: %w", err)
-	}
 	if err := appendTimeline(ctx, tx, callID, practiceID, "provider.caller.answered", "",
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -771,12 +764,6 @@ func (m *Module) applyStaffInitiated(
 			}
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, callID, m.now()); err != nil {
-		return fmt.Errorf("advance Staff fact Call version: %w", err)
-	}
 	kind := "provider.staff.initiated"
 	if fact.Type == FactCallAnswered {
 		kind = "provider.staff.answered"
@@ -785,7 +772,7 @@ func (m *Module) applyStaffInitiated(
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -923,7 +910,7 @@ func (m *Module) recordRingWindowFact(
 			return err
 		}
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -1095,12 +1082,6 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
-		WHERE id = $1
-	`, state.CallID, m.now()); err != nil {
-		return fmt.Errorf("advance bridged Call version: %w", err)
-	}
 	if callerState == "BRIDGED" || historicalUpgrade {
 		if err := appendTimeline(ctx, tx, state.CallID, practiceID, "call.connected",
 			winnerSubject, fact.EventID, "", opaqueReference(fact.CallLegID), "",
@@ -1123,7 +1104,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			return err
 		}
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1229,7 +1210,6 @@ func (m *Module) upgradeHistoricalConnectedCall(
 				disposition_deadline,
 				$4::timestamptz + $5::interval
 			),
-			version = version + 1,
 			updated_at = $4
 		WHERE id = $1
 			AND (terminal_outcome IS NULL OR terminal_outcome IN ('ABANDONED', 'UNANSWERED'))
@@ -1318,12 +1298,7 @@ func (m *Module) applyCallerBridge(ctx context.Context, fact ProviderFact) error
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2 WHERE id = $1
-	`, state.CallID, m.now()); err != nil {
-		return err
-	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

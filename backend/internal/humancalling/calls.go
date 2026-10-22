@@ -305,15 +305,11 @@ func (m *Module) RequestHangup(
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_calls
 			SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
-				version = version + 1, updated_at = $2
+				updated_at = $2
 			WHERE id = $1 AND terminal_outcome IS NULL
 		`, callID, m.now()); err != nil {
 			return Call{}, fmt.Errorf("end outbound Call before provider start: %w", err)
 		}
-	} else if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls SET version = version + 1, updated_at = $2 WHERE id = $1
-	`, callID, m.now()); err != nil {
-		return Call{}, err
 	}
 	if err := appendTimeline(ctx, tx, callID, practiceID, "call.hangup.requested",
 		identity.Subject, "", "", "", "", m.now()); err != nil {
@@ -427,7 +423,7 @@ func (m *Module) RecordDisposition(
 		UPDATE human_calling_calls SET disposition_actor_subject = $2,
 			disposition_at = $3, disposition_outcome = $4,
 			disposition_deadline = NULL, terminal_outcome = $5,
-			version = version + 1, updated_at = $3 WHERE id = $1
+			updated_at = $3 WHERE id = $1
 	`, callID, identity.Subject, now, disposition, terminalOutcome); err != nil {
 		return DispositionResult{}, fmt.Errorf("record Call disposition: %w", err)
 	}
@@ -435,7 +431,7 @@ func (m *Module) RecordDisposition(
 		identity.Subject, "", "", "", "", now); err != nil {
 		return DispositionResult{}, err
 	}
-	if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return DispositionResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -490,7 +486,7 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 			UPDATE human_calling_calls
 			SET disposition_actor_subject = $2, disposition_at = $3,
 				disposition_outcome = 'RESOLVED', disposition_deadline = NULL,
-				terminal_outcome = 'RESOLVED', version = version + 1, updated_at = $3
+				terminal_outcome = 'RESOLVED', updated_at = $3
 			WHERE id = $1 AND terminal_outcome = 'ENDED'
 				AND disposition_outcome IS NULL
 		`, item.callID, item.subject, now); err != nil {
@@ -503,7 +499,7 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 		practices[item.practiceID] = true
 	}
 	for _, practiceID := range slices.Sorted(maps.Keys(practices)) {
-		if err := m.recordCallingChange(ctx, tx, practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 			return 0, err
 		}
 	}
