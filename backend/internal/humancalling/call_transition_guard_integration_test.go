@@ -78,9 +78,16 @@ func TestIllegalOutcomeMoveQuarantinesReceiptOnFirstAttempt(t *testing.T) {
 	if outcome := call.terminalOutcome(t); outcome != "ABANDONED" {
 		t.Fatalf("quarantined outcome move left %s", outcome)
 	}
+	audit, err := call.worker.AuditProviderReceipts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit.Quarantine) != 1 || audit.Quarantine[0].ErrorCode != "ILLEGAL_CALL_TRANSITION" {
+		t.Fatalf("receipt audit quarantine = %+v", audit.Quarantine)
+	}
 }
 
-func TestIllegalLegMoveHoldsProviderCommandWithoutResending(t *testing.T) {
+func TestIllegalLegMoveFailsProviderCommandWithoutResending(t *testing.T) {
 	call := admitInboundCall(t, "illegal-leg")
 	ctx := context.Background()
 	call.provider.mu.Lock()
@@ -128,13 +135,21 @@ func TestIllegalLegMoveHoldsProviderCommandWithoutResending(t *testing.T) {
 	`).Scan(&legState, &outcome, &commandState, &commandCode); err != nil {
 		t.Fatal(err)
 	}
-	if legState != "RINGING" || outcome != "" || commandState != "AMBIGUOUS" ||
+	if legState != "RINGING" || outcome != "" || commandState != "FAILED" ||
 		commandCode != "ILLEGAL_CALL_TRANSITION" {
 		t.Fatalf("illegal CallLeg move = leg:%s outcome:%q command:%s/%s",
 			legState, outcome, commandState, commandCode)
 	}
+	if _, err := call.db.Owner.Exec(ctx, `
+		UPDATE human_calling_provider_commands SET updated_at = $1 WHERE action = 'ANSWER_CALLER'
+	`, call.now.Add(-31*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call.worker.MaintainOutgoingCallLegs(ctx); err != nil {
+		t.Fatalf("recover interrupted commands: %v", err)
+	}
 	if processed, err := call.worker.ProcessNextCommand(ctx); err != nil || processed {
-		t.Fatalf("held Answer command processed again = %t, %v", processed, err)
+		t.Fatalf("failed Answer command processed again = %t, %v", processed, err)
 	}
 	if answers := len(call.provider.all(humancalling.CommandAnswerCaller)); answers != 1 {
 		t.Fatalf("Answer sent %d times, want 1", answers)

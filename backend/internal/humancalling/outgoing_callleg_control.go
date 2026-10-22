@@ -298,7 +298,11 @@ func (m *Module) executeCallLegCommand(
 	)
 	defer cancel()
 	if err := m.finishCallLegCommand(persistCtx, command, result, executeErr); err != nil {
-		return ProviderResult{}, m.holdIllegalCommandResult(persistCtx, command.ID, illegalCallTransition(err))
+		err = illegalCallTransition(err)
+		if errors.Is(err, ErrIllegalCallTransition) {
+			err = m.failIllegalCommandResult(persistCtx, command, claimedAt, err)
+		}
+		return ProviderResult{}, err
 	}
 	var state string
 	if err := m.database.QueryRow(persistCtx, `
@@ -323,16 +327,22 @@ func (m *Module) executeCallLegCommand(
 	return result, executeErr
 }
 
-func (m *Module) holdIllegalCommandResult(ctx context.Context, commandID string, err error) error {
-	if !errors.Is(err, ErrIllegalCallTransition) {
-		return err
-	}
-	if _, holdErr := m.database.Exec(ctx, `
+func (m *Module) failIllegalCommandResult(
+	ctx context.Context,
+	command ProviderCommand,
+	claimedAt time.Time,
+	err error,
+) error {
+	tag, failErr := m.database.Exec(ctx, `
 		UPDATE human_calling_provider_commands
-		SET state = 'AMBIGUOUS', last_error_code = $2, updated_at = $3
+		SET state = 'FAILED', last_error_code = $2, updated_at = $3
 		WHERE id = $1 AND state = 'SENDING'
-	`, commandID, illegalCallTransitionCode, m.now()); holdErr != nil {
-		return errors.Join(err, fmt.Errorf("hold illegal provider command result: %w", holdErr))
+	`, command.ID, illegalCallTransitionCode, m.now())
+	if failErr != nil {
+		return errors.Join(err, fmt.Errorf("fail illegal provider command result: %w", failErr))
+	}
+	if tag.RowsAffected() == 1 {
+		m.recordProviderCommand(command, "FAILED", claimedAt, m.now().Sub(claimedAt))
 	}
 	return err
 }
