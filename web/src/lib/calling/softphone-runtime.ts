@@ -1631,6 +1631,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
 
   async function connectMediaOnce(signal: AbortSignal) {
     if (
+      stopped ||
       accessBlocked ||
       !snapshot.lease?.owner ||
       snapshot.readiness.mediaState !== "unavailable"
@@ -2256,6 +2257,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           return
         }
       }
+      if (stopped) return
       await signalRefresh()
       await connectMedia()
     } catch (error) {

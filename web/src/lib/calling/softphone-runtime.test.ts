@@ -5120,6 +5120,69 @@ test("a takeover fenced out after a readiness write reported its ownership still
   await runtime.stop()
 })
 
+test("stop during a fenced takeover's refresh leaves media untouched and a restart connects", async () => {
+  for (let delay = 0; delay < 40; delay += 1) {
+    const backend = new DeterministicBackend()
+    backend.lease = lease({ sessionId: "other-session", owner: true })
+    backend.state = callingState({ softphone: backend.lease })
+    const media = new DeterministicMedia()
+    let stopped = false
+    let startsAfterStop = 0
+    const runtime = createSoftphoneRuntime({
+      sessionID: "session-1",
+      backend,
+      media,
+      microphone: {
+        start: async () => {
+          if (stopped) startsAfterStop += 1
+          return { stop: () => {} }
+        },
+      },
+      clock: new ManualClock(),
+      visibility: visible(),
+    })
+    await runtime.start()
+    const acquisition = deferred<SoftphoneState>()
+    backend.acquireLeaseHandler = async () => acquisition.promise
+    const recovering = runtime.recover()
+    await drainMicrotasks()
+    backend.lease = lease({ owner: true })
+    backend.state = callingState({ softphone: backend.lease })
+    await runtime.setAvailability(false)
+    backend.readStateHandler = async (_input, signal) => {
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new Error("aborted")))
+      })
+      return { status: "not-modified" as const }
+    }
+
+    acquisition.resolve(backend.lease)
+    for (let tick = 0; tick < delay; tick += 1) await Promise.resolve()
+    const stopping = runtime.stop()
+    stopped = true
+    await stopping
+    await recovering.catch(() => undefined)
+    for (let round = 0; round < 5; round += 1) await drainMicrotasks()
+
+    assert.equal(startsAfterStop, 0, `microphone started after stop at delay ${delay}`)
+    assert.notEqual(
+      runtime.getSnapshot().readiness.mediaState,
+      "registering",
+      `stopped snapshot left registering at delay ${delay}`,
+    )
+
+    backend.readStateHandler = undefined
+    stopped = false
+    const connects = media.connects
+    await runtime.start()
+    await eventually(() =>
+      assert.equal(runtime.getSnapshot().readiness.mediaState, "ready"),
+    )
+    assert.equal(media.connects, connects + 1)
+    await runtime.stop()
+  }
+})
+
 test("a start refused after a refresh observed the dialing start's Call leaves that start in charge of its result", async () => {
   const backend = new DeterministicBackend()
   backend.lease = lease({ owner: true })
