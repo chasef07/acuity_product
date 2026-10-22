@@ -1,6 +1,6 @@
 import { queryInsurancePlans } from "../api/generated/sdk.gen"
 import type { InsuranceCoverage } from "../api/generated/types.gen"
-import { usePortalQuery } from "./portal-request"
+import { useRead } from "../data/queries"
 
 export function useInsurancePlans({
   practiceID,
@@ -11,14 +11,18 @@ export function useInsurancePlans({
   locationID: string
   coverage: InsuranceCoverage
 }) {
-  return usePortalQuery(
-    locationID
-      ? JSON.stringify(["insurance-plans", practiceID, locationID, coverage])
-      : null,
-    (transport) =>
+  return useRead({
+    name: "insurance-plans",
+    identity: { practiceID, locationID, coverage },
+    enabled: Boolean(locationID),
+    read: (identity, transport) =>
       queryInsurancePlans({
         ...transport,
-        body: { practiceId: practiceID, locationId: locationID, coverage },
+        body: {
+          practiceId: identity.practiceID,
+          locationId: identity.locationID,
+          coverage: identity.coverage,
+        },
       }),
-  )
+  })
 }

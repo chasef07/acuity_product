@@ -47,14 +47,12 @@ export function ManageAgent({
   locations,
   page,
   onPage,
-  revision = 0,
 }: {
   actorSubject: string
   practiceID: string
   locationScopeID: string
   locations: Location[]
   page: ManageAgentPage
-  revision?: number
   onPage: (page: ManageAgentPage) => void
 }) {
   const [coverage, setCoverage] = useState<InsuranceCoverage>("medical")
@@ -71,7 +69,7 @@ export function ManageAgent({
       ) : page === "insurance" ? (
         <InsuranceList {...location} coverage={coverage} onCoverage={setCoverage} />
       ) : (
-        <AgentCalls practiceID={practiceID} locationScopeID={locationScopeID} revision={revision} />
+        <AgentCalls practiceID={practiceID} locationScopeID={locationScopeID} />
       )}
     </div>
   )
@@ -80,11 +78,9 @@ export function ManageAgent({
 function AgentCalls({
   practiceID,
   locationScopeID,
-  revision,
 }: {
   practiceID: string
   locationScopeID: string
-  revision: number
 }) {
   const [range, setRange] = useState<AgentCallsQuery["range"]>("24h")
   const [phoneInput, setPhoneInput] = useState("")
@@ -92,7 +88,6 @@ function AgentCalls({
   const [flaggedOnly, setFlaggedOnly] = useState(false)
   const [intent, setIntent] = useState<IntentFilter>("all")
   const [outcome, setOutcome] = useState<OutcomeFilter>("all")
-  const [version, setVersion] = useState(0)
   const [selectedID, setSelectedID] = useState("")
   const current = useAgentCalls({
     practiceID,
@@ -102,7 +97,6 @@ function AgentCalls({
     flaggedOnly,
     intent: intent === "all" ? undefined : intent,
     outcome: outcome === "all" ? undefined : outcome,
-    revision: revision + version,
   })
   const calls = current.status === "ready" ? current.data.calls : []
   const nextCursor = current.status === "ready" ? current.data.nextCursor : ""
@@ -164,7 +158,7 @@ function AgentCalls({
         query={current}
         subject="calls"
         unavailable="Calls aren't available right now."
-        onRetry={() => setVersion((value) => value + 1)}
+        onRetry={current.retry}
         isEmpty={(data) => data.calls.length === 0}
         emptyTitle={flaggedOnly ? "No flagged calls" : "No calls found"}
         emptyDescription="Try another date range, office, phone number, intent, or outcome."

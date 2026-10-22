@@ -5,6 +5,8 @@ import { createRoot } from "react-dom/client"
 import { JSDOM } from "jsdom"
 
 import { clearAccessToken } from "../auth-client.ts"
+import { DataProvider } from "../data/provider.tsx"
+import { useLiveRefresh } from "../data/queries.ts"
 import {
   flagAgentCallIssue,
   useAgentCalls,
@@ -26,7 +28,7 @@ const summary = { totalCalls: 3 }
 test("transcript intent and outcome filters reset pagination when only labels change", async (t) => {
   const backend = fakeBackend(t, (_, body) => Response.json({ calls: [call(String(body.intent ?? "all"))], nextCursor: "next" }))
   const view = mountHook(t, useAgentCalls)
-  const filters = { practiceID: "practice-1", locationID: "", range: "7d", phone: "", flaggedOnly: false, revision: 0, intent: "prescription_or_refill", outcome: "transferred" } as const
+  const filters = { practiceID: "practice-1", locationID: "", range: "7d", phone: "", flaggedOnly: false, intent: "prescription_or_refill", outcome: "transferred" } as const
   await view.render(filters)
   await waitFor(() => view.latest().status === "ready")
   assert.equal(backend.requests[0].body?.intent, "prescription_or_refill")
@@ -43,7 +45,7 @@ test("transcript intent and outcome filters reset pagination when only labels ch
 test("diagnostics label filters are sent on every page and reset when outcome changes", async (t) => {
   const backend = fakeBackend(t, () => Response.json({ summary, calls: [call("labeled")], nextCursor: "next" }))
   const view = mountHook(t, useAiCallAnalytics)
-  const filters = { practiceID: "practice-1", locationID: "location-1", range: "24h", revision: 0, enabled: true, intent: "existing_patient_booking", outcome: "resolved" } as const
+  const filters = { practiceID: "practice-1", locationID: "location-1", range: "24h", enabled: true, intent: "existing_patient_booking", outcome: "resolved" } as const
   await view.render(filters)
   await waitFor(() => view.latest().state === "ready")
   assert.equal(backend.requests[0].body?.intent, "existing_patient_booking")
@@ -60,7 +62,7 @@ test("diagnostics label filters are sent on every page and reset when outcome ch
 test("Command Center failure filters intersect labels on every page and reset the cursor when the judge changes", async (t) => {
   const backend = fakeBackend(t, () => Response.json({ summary, calls: [call("failed")], nextCursor: "next" }))
   const view = mountHook(t, useAiCallAnalytics)
-  const filters = { practiceID: "practice-1", locationID: "", range: "24h", revision: 0, enabled: true, failuresOnly: true, failingJudge: "transfer_policy_followed", intent: "speak_to_staff", outcome: "resolved" } as const
+  const filters = { practiceID: "practice-1", locationID: "", range: "24h", enabled: true, failuresOnly: true, failingJudge: "transfer_policy_followed", intent: "speak_to_staff", outcome: "resolved" } as const
   await view.render(filters)
   await waitFor(() => view.latest().state === "ready")
   assert.equal(backend.requests[0].body?.failuresOnly, true)
@@ -90,7 +92,7 @@ test("recent calls page by cursor and a filter change abandons the old page", as
     return page.promise
   })
   const view = mountHook(t, useAgentCalls)
-  const filters = { practiceID: "practice-1", locationID: "", range: "7d", phone: "", flaggedOnly: false, revision: 0 } as const
+  const filters = { practiceID: "practice-1", locationID: "", range: "7d", phone: "", flaggedOnly: false } as const
   await view.render(filters)
   await waitFor(() => view.latest().status === "ready")
   assert.deepEqual(backend.requests[0], {
@@ -100,7 +102,7 @@ test("recent calls page by cursor and a filter change abandons the old page", as
 
   await act(async () => void view.latest().loadMore())
   await waitFor(() => pages.has("all-page"))
-  assert.equal(view.latest().loadingMore, true)
+  await waitFor(() => view.latest().loadingMore)
 
   await view.render({ ...filters, flaggedOnly: true })
   await waitFor(() => view.latest().status === "ready")
@@ -131,11 +133,13 @@ test("recent calls page by cursor and a filter change abandons the old page", as
       calls: shown.calls.map((item) => ({ ...item, issueFlagged: item.id === "flagged-2" })),
     })),
   )
-  const updated = view.latest()
-  assert.equal(updated.status === "ready" && updated.data.calls[1].issueFlagged, true)
+  await waitFor(() => {
+    const updated = view.latest()
+    return updated.status === "ready" && updated.data.calls[1].issueFlagged
+  })
 })
 
-test("call refresh retains rows, cancels old pagination, and clears rows on scope changes and denial", async (t) => {
+test("call refresh retains rows, cancels old pagination, loads more after the refresh, and clears rows on scope changes and denial", async (t) => {
   const pending: ReturnType<typeof deferred<Response>>[] = []
   const backend = fakeBackend(t, () => {
     const response = deferred<Response>()
@@ -143,7 +147,7 @@ test("call refresh retains rows, cancels old pagination, and clears rows on scop
     return response.promise
   })
   const view = mountHook(t, useAgentCalls)
-  const filters = { practiceID: "practice-1", locationID: "office-1", range: "24h", phone: "", flaggedOnly: false, revision: 0 } as const
+  const filters = { practiceID: "practice-1", locationID: "office-1", range: "24h", phone: "", flaggedOnly: false } as const
   await view.render(filters)
   await waitFor(() => pending.length === 1)
   assert.equal(view.latest().status, "loading")
@@ -152,33 +156,40 @@ test("call refresh retains rows, cancels old pagination, and clears rows on scop
 
   await act(async () => void view.latest().loadMore())
   await waitFor(() => pending.length === 2)
-  assert.equal(view.latest().loadingMore, true)
-  await view.render({ ...filters, revision: 1 })
+  await waitFor(() => view.latest().loadingMore)
+  await view.render(filters, 1)
   await waitFor(() => pending.length === 3)
   assert.equal(backend.aborted, 1)
   const refreshing = view.latest()
   assert.equal(refreshing.status, "ready")
   assert.equal(refreshing.status === "ready" && refreshing.data.calls[0].id, "original")
   assert.equal(refreshing.loadingMore, false)
-  await act(async () => void refreshing.loadMore())
-  assert.equal(pending.length, 3)
+  let pageAfterRefresh: Promise<unknown> = Promise.resolve()
+  await act(async () => {
+    pageAfterRefresh = refreshing.loadMore()
+  })
+  assert.equal(pending.length, 3, "load more waits for the refresh instead of racing it")
   pending[1].resolve(Response.json({ calls: [call("stale-page")], nextCursor: "" }))
   pending[2].resolve(Response.json({ calls: [call("new"), call("original")], nextCursor: "next-new" }))
+  await waitFor(() => pending.length === 4)
+  assert.equal(backend.requests.at(-1)?.body?.cursor, "next-new")
+  pending[3].resolve(Response.json({ calls: [call("older")], nextCursor: "" }))
   await waitFor(() => {
     const current = view.latest()
-    return current.status === "ready" && current.data.calls[0].id === "new"
+    return current.status === "ready" && current.data.calls.length === 3
   })
   const updated = view.latest()
-  assert.deepEqual(updated.status === "ready" && updated.data.calls.map((item) => item.id), ["new", "original"])
+  assert.deepEqual(updated.status === "ready" && updated.data.calls.map((item) => item.id), ["new", "original", "older"])
+  assert.deepEqual(await pageAfterRefresh, { calls: [call("older")], nextCursor: "" })
 
-  await view.render({ ...filters, locationID: "office-2", revision: 2 })
-  await waitFor(() => pending.length === 4)
-  assert.equal(view.latest().status, "loading")
-  pending[3].resolve(Response.json({ calls: [call("other-office")], nextCursor: "" }))
-  await waitFor(() => view.latest().status === "ready")
-  await view.render({ ...filters, locationID: "office-2", revision: 3 })
+  await view.render({ ...filters, locationID: "office-2" }, 2)
   await waitFor(() => pending.length === 5)
-  pending[4].resolve(new Response("", { status: 403 }))
+  assert.equal(view.latest().status, "loading")
+  pending[4].resolve(Response.json({ calls: [call("other-office")], nextCursor: "" }))
+  await waitFor(() => view.latest().status === "ready")
+  await view.render({ ...filters, locationID: "office-2" }, 3)
+  await waitFor(() => pending.length === 6)
+  pending[5].resolve(new Response("", { status: 403 }))
   await waitFor(() => view.latest().status === "failed")
   assert.equal("data" in view.latest(), false)
 })
@@ -192,7 +203,6 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
     practiceID: "practice-1",
     locationID: "location-1",
     range: "24h",
-    revision: 0,
     enabled: true,
   } as const
 
@@ -201,15 +211,14 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   assert.equal(view.latest().state, "unavailable")
 
   answer = () => new Response("{}", { status: 403 })
-  await view.render({ ...filters, revision: 1 })
-  await waitFor(() => view.latest().state !== "loading")
-  assert.equal(view.latest().state, "denied")
+  await view.render(filters, 1)
+  await waitFor(() => view.latest().state === "denied")
 
   answer = (body) =>
     body.cursor
       ? new Response("{}", { status: 503 })
       : Response.json({ summary, calls: [call("ai-1")], nextCursor: "next" })
-  await view.render({ ...filters, revision: 2 })
+  await view.render(filters, 2)
   await waitFor(() => view.latest().state === "ready")
   assert.deepEqual(backend.requests.at(-1)?.body, {
     practiceId: "practice-1",
@@ -219,25 +228,25 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   })
 
   await act(async () => void (await view.latest().loadNextPage()))
+  await waitFor(() => view.latest().nextPage === "unavailable")
   assert.equal(view.latest().state, "ready")
-  assert.equal(view.latest().nextPage, "unavailable")
 
   answer = (body) =>
     body.cursor
       ? new Response("{}", { status: 401 })
       : Response.json({ summary, calls: [call("ai-1")], nextCursor: "next" })
   await act(async () => void (await view.latest().loadNextPage()))
-  assert.equal(view.latest().state, "denied")
+  await waitFor(() => view.latest().state === "denied")
   assert.equal(view.latest().data, undefined)
 
-  await view.render({ ...filters, revision: 3 })
+  await view.render(filters, 3)
   await waitFor(() => view.latest().state === "ready")
   const sent = backend.requests.length
-  await view.render({ ...filters, revision: 3, enabled: false })
+  await view.render({ ...filters, enabled: false }, 3)
   await settle()
   assert.equal(backend.requests.length, sent)
   assert.equal(view.latest().state, "ready")
-  await view.render({ ...filters, revision: 3 })
+  await view.render(filters, 3)
   assert.equal(view.latest().state, "ready")
   await waitFor(() => backend.requests.length === sent + 1)
 })
@@ -251,13 +260,13 @@ test("analytics stays denied through a pending refresh after pagination loses au
     return Response.json({ summary, calls: [call("original")], nextCursor: "next" })
   })
   const view = mountHook(t, useAiCallAnalytics)
-  const filters = { practiceID: "practice-1", locationID: "office-1", range: "24h", revision: 0, enabled: true } as const
+  const filters = { practiceID: "practice-1", locationID: "office-1", range: "24h", enabled: true } as const
   await view.render(filters)
   await waitFor(() => view.latest().state === "ready")
   await act(async () => void (await view.latest().loadNextPage()))
-  assert.equal(view.latest().state, "denied")
+  await waitFor(() => view.latest().state === "denied")
   assert.equal(view.latest().data, undefined)
-  await view.render({ ...filters, revision: 1 })
+  await view.render(filters, 1)
   await waitFor(() => firstPageRequests === 2)
   assert.equal(view.latest().state, "denied")
   assert.equal(view.latest().data, undefined)
@@ -328,12 +337,14 @@ function mountHook<P, R>(t: TestContext, useHook: (props: P) => R) {
     dom.window.close()
   })
   const seen: R[] = []
-  function Probe({ props }: { props: P }) {
+  function Probe({ props, live }: { props: P; live: number }) {
+    useLiveRefresh({ workspaceVersion: live, taskCounts: "", detailRevision: live })
     seen.push(useHook(props))
     return null
   }
   return {
-    render: (props: P) => act(async () => root.render(<Probe props={props} />)),
+    render: (props: P, live = 0) =>
+      act(async () => root.render(<DataProvider><Probe props={props} live={live} /></DataProvider>)),
     latest: () => seen.at(-1)!,
   }
 }

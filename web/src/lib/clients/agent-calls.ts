@@ -1,5 +1,3 @@
-import { useEffect, useEffectEvent, useState } from "react"
-
 import {
   flagAgentCallIssue as flagAgentCallIssueRequest,
   getAgentCall,
@@ -18,14 +16,8 @@ import type {
   OperatorAiAnalyticsSummary,
   OperatorAiCallIssueOutcome,
 } from "../api/generated/types.gen"
-import {
-  type PortalFailure,
-  type PortalQuery,
-  type PortalResult,
-  type PortalTransport,
-  portalRequest,
-  usePortalQuery,
-} from "./portal-request"
+import { readFailure, usePages, useRead } from "../data/queries"
+import { portalRequest } from "./portal-request"
 
 export function useAgentCalls({
   practiceID,
@@ -36,7 +28,6 @@ export function useAgentCalls({
   needsKnowledgeOnly = false,
   intent,
   outcome,
-  revision,
 }: {
   practiceID: string
   locationID: string
@@ -46,39 +37,38 @@ export function useAgentCalls({
   needsKnowledgeOnly?: boolean
   intent?: CallIntent
   outcome?: CallOutcome
-  revision: number
 }) {
-  return useCallPages<AgentCallsPage>(
-    JSON.stringify([practiceID, locationID, range, phone, flaggedOnly, needsKnowledgeOnly, intent, outcome]),
-    true,
-    (transport, cursor) =>
+  return usePages({
+    live: "workspace",
+    name: "agent-calls",
+    identity: { practiceID, locationID, range, phone, flaggedOnly, needsKnowledgeOnly, intent, outcome },
+    read: (identity, cursor, transport) =>
       queryAgentCalls({
         ...transport,
         body: {
-          practiceId: practiceID,
-          locationId: locationID || undefined,
-          range,
-          phone,
-          flaggedOnly,
-          needsKnowledgeOnly,
-          intent,
-          outcome,
+          practiceId: identity.practiceID,
+          locationId: identity.locationID || undefined,
+          range: identity.range,
+          phone: identity.phone,
+          flaggedOnly: identity.flaggedOnly,
+          needsKnowledgeOnly: identity.needsKnowledgeOnly,
+          intent: identity.intent,
+          outcome: identity.outcome,
           limit: 50,
-          cursor,
+          cursor: cursor || undefined,
         },
       }),
-    (shown, next) => ({
-      calls: [...shown.calls, ...next.calls],
-      nextCursor: next.nextCursor,
-    }),
-    revision,
-  )
+    combine: combineCallPages<AgentCallsPage>,
+  })
 }
 
 export function useAgentCall(interactionID: string) {
-  return usePortalQuery(`agent-call:${interactionID}`, (transport) =>
-    getAgentCall({ ...transport, path: { interactionId: interactionID } }),
-  )
+  return useRead({
+    name: "agent-call",
+    identity: { interactionID },
+    read: (identity, transport) =>
+      getAgentCall({ ...transport, path: { interactionId: identity.interactionID } }),
+  })
 }
 
 export function flagAgentCallIssue(
@@ -102,16 +92,17 @@ export type AiCallAnalytics = OperatorAiAnalyticsPage & {
 export type AiCallLedger = {
   state: "loading" | "ready" | "denied" | "unavailable"
   data?: AiCallAnalytics
+  refreshFailed: boolean
   nextPage: "idle" | "loading" | "unavailable"
   loadNextPage: () => Promise<OperatorAiAnalyticsPage | undefined>
   update: (change: (shown: OperatorAiAnalyticsPage) => OperatorAiAnalyticsPage) => void
+  retry: () => void
 }
 
 export function useAiCallAnalytics({
   practiceID,
   locationID,
   range,
-  revision,
   enabled,
   intent,
   outcome,
@@ -122,7 +113,6 @@ export function useAiCallAnalytics({
   practiceID: string
   locationID: string
   range: OperatorAiAnalyticsRange
-  revision: number
   enabled: boolean
   intent?: CallIntent
   outcome?: CallOutcome
@@ -130,39 +120,36 @@ export function useAiCallAnalytics({
   failingJudge?: string
   judgeResult?: "pass" | "unjudged"
 }): AiCallLedger {
-  const pages = useCallPages<OperatorAiAnalyticsPage>(
-    JSON.stringify([practiceID, locationID, range, intent, outcome, failuresOnly, failingJudge, judgeResult]),
-    Boolean(practiceID) && enabled,
-    (transport, cursor) =>
+  const pages = usePages({
+    live: "workspace",
+    name: "ai-call-analytics",
+    identity: { practiceID, locationID, range, intent, outcome, failuresOnly, failingJudge, judgeResult },
+    enabled: Boolean(practiceID) && enabled,
+    read: (identity, cursor, transport) =>
       queryOperatorAiAnalytics({
         ...transport,
         body: {
-          practiceId: practiceID,
-          locationId: locationID || undefined,
-          range,
-          intent,
-          outcome,
-          failuresOnly: failuresOnly || undefined,
-          failingJudge: failingJudge || undefined,
-          judgeResult,
-          cursor,
+          practiceId: identity.practiceID,
+          locationId: identity.locationID || undefined,
+          range: identity.range,
+          intent: identity.intent,
+          outcome: identity.outcome,
+          failuresOnly: identity.failuresOnly || undefined,
+          failingJudge: identity.failingJudge || undefined,
+          judgeResult: identity.judgeResult,
+          cursor: cursor || undefined,
           limit: 50,
         },
       }),
-    (shown, next) => ({
-      ...shown,
-      calls: [...shown.calls, ...next.calls],
-      nextCursor: next.nextCursor,
-    }),
-    revision,
-  )
+    combine: combineCallPages<OperatorAiAnalyticsPage>,
+  })
+  const failure = readFailure(pages)
   const denied =
-    pages.status === "failed"
-      ? pages.failure.kind === "signedOut" ||
-        pages.failure.kind === "unauthenticated" ||
-        pages.failure.kind === "unauthorized"
-      : pages.moreFailure?.kind === "signedOut" ||
-        pages.moreFailure?.kind === "unauthenticated"
+    failure?.kind === "signedOut" ||
+    failure?.kind === "unauthenticated" ||
+    failure?.kind === "unauthorized" ||
+    pages.moreFailure?.kind === "signedOut" ||
+    pages.moreFailure?.kind === "unauthenticated"
   const data: AiCallAnalytics | undefined =
     pages.status === "ready" && pages.data.summary && !denied
       ? { ...pages.data, summary: pages.data.summary }
@@ -177,6 +164,7 @@ export function useAiCallAnalytics({
             ? "ready"
             : "unavailable",
     data,
+    refreshFailed: Boolean(data) && pages.status === "ready" && Boolean(pages.refreshFailure),
     nextPage: pages.loadingMore
       ? "loading"
       : pages.moreFailure
@@ -184,13 +172,21 @@ export function useAiCallAnalytics({
         : "idle",
     loadNextPage: pages.loadMore,
     update: pages.update,
+    retry: pages.retry,
   }
 }
 
 export function useAiCallEvidence(interactionID: string) {
-  return usePortalQuery(interactionID ? `ai-call:${interactionID}` : null, (transport) =>
-    getOperatorAiInteractionAnalytics({ ...transport, path: { interactionId: interactionID } }),
-  )
+  return useRead({
+    name: "ai-call",
+    identity: { interactionID },
+    enabled: Boolean(interactionID),
+    read: (identity, transport) =>
+      getOperatorAiInteractionAnalytics({
+        ...transport,
+        path: { interactionId: identity.interactionID },
+      }),
+  })
 }
 
 export function reviewCallIssue(interactionID: string, outcome: OperatorAiCallIssueOutcome) {
@@ -203,101 +199,10 @@ export function reviewCallIssue(interactionID: string, outcome: OperatorAiCallIs
   )
 }
 
-type CallPages<P> = PortalQuery<P> & {
-  loadingMore: boolean
-  moreFailure?: PortalFailure
-  loadMore: () => Promise<P | undefined>
-  update: (change: (shown: P) => P) => void
-}
-
-function useCallPages<P extends { nextCursor: string }>(
-  key: string,
-  enabled: boolean,
-  send: (transport: PortalTransport, cursor?: string) => Promise<PortalResult<P>>,
-  append: (shown: P, next: P) => P,
-  revision = 0,
-): CallPages<P> {
-  const [snapshot, setSnapshot] = useState<{
-    key: string
-    controller: AbortController
-    revision: number
-    query: PortalQuery<P>
-  }>()
-  const [more, setMore] = useState<{
-    key: string
-    loading: boolean
-    failure?: PortalFailure
-  }>()
-  const request = useEffectEvent((signal: AbortSignal) =>
-    portalRequest((transport) => send(transport), signal),
-  )
-  useEffect(() => {
-    if (!enabled) return
-    const controller = new AbortController()
-    request(controller.signal).then(
-      (outcome) => {
-        setSnapshot({
-          key,
-          controller,
-          revision,
-          query: outcome.ok
-            ? { status: "ready", data: outcome.data }
-            : { status: "failed", failure: outcome.failure },
-        })
-        setMore({ key, loading: false })
-      },
-      () => undefined,
-    )
-    return () => controller.abort()
-  }, [key, enabled, revision])
-
-  const current = snapshot?.key === key ? snapshot : undefined
-  const currentMore = more?.key === key ? more : undefined
-
-  async function loadMore() {
-    if (current?.query.status !== "ready" || currentMore?.loading) return
-    const { controller } = current
-    const cursor = current.query.data.nextCursor
-    if (!cursor || controller.signal.aborted) return
-    setMore({ key, loading: true })
-    const outcome = await portalRequest(
-      (transport) => send(transport, cursor),
-      controller.signal,
-    ).catch(() => undefined)
-    if (!outcome) return
-    if (!outcome.ok) {
-      setMore({ key, loading: false, failure: outcome.failure })
-      return
-    }
-    const next = outcome.data
-    setSnapshot((previous) =>
-      previous?.controller === controller && previous.query.status === "ready"
-        ? {
-            ...previous,
-            query: { status: "ready", data: append(previous.query.data, next) },
-          }
-        : previous,
-    )
-    setMore({ key, loading: false })
-    return next
-  }
-
-  function update(change: (shown: P) => P) {
-    setSnapshot((previous) =>
-      previous?.query.status === "ready"
-        ? {
-            ...previous,
-            query: { status: "ready", data: change(previous.query.data) },
-          }
-        : previous,
-    )
-  }
-
+function combineCallPages<P extends { calls: unknown[]; nextCursor: string }>(pages: P[]): P {
   return {
-    ...(current?.query ?? { status: "loading" }),
-    loadingMore: Boolean(currentMore?.loading) && current?.revision === revision,
-    moreFailure: currentMore?.failure,
-    loadMore,
-    update,
+    ...pages[0],
+    calls: pages.flatMap((page) => page.calls),
+    nextCursor: pages.at(-1)!.nextCursor,
   }
 }

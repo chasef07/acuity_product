@@ -6,6 +6,8 @@ import { JSDOM } from "jsdom"
 
 import type { Task } from "../api/generated/types.gen.ts"
 import { clearAccessToken } from "../auth-client.ts"
+import { DataProvider } from "../data/provider.tsx"
+import { useLiveRefresh } from "../data/queries.ts"
 import {
   issueRecordingPlayback,
   useRecoverySource,
@@ -55,8 +57,8 @@ test("recovery source loads the newest voicemail and keeps it through a failed r
       ? Response.json({ interactions })
       : Response.json({ id: url.pathname.split("/").at(-1) }),
   )
-  const view = mount(t, (revision: number) => useRecoverySource(recoveryTask, revision))
-  await view.render(0)
+  const view = mount(t, () => useRecoverySource(recoveryTask))
+  await view.render(undefined)
   await waitFor(() => view.latest().call !== undefined)
   assert.deepEqual(view.latest(), { interactions, call: { id: "call-voicemail" } })
   assert.deepEqual(backend.requests, [
@@ -68,7 +70,7 @@ test("recovery source loads the newest voicemail and keeps it through a failed r
     url.pathname.startsWith("/v1/tasks/")
       ? Response.json({ interactions })
       : new Response("", { status: 503 })
-  await view.render(1)
+  await view.render(undefined, 1)
   await waitFor(() => view.latest().failure !== undefined)
   assert.deepEqual(view.latest(), {
     interactions,
@@ -81,14 +83,14 @@ test("recovery source loads the newest voicemail and keeps it through a failed r
   ])
 })
 
-test("recovery source uses the authoritative Task it is given and reads only the Call per revision", async (t) => {
+test("recovery source uses the authoritative Task it is given and reads only the Call on a live refresh", async (t) => {
   const backend = fakeBackend(t, (url) => Response.json({ id: url.pathname.split("/").at(-1) }))
   const detailed = { ...recoveryTask, interactions } as typeof recoveryTask
-  const view = mount(t, (revision: number) => useRecoverySource(detailed, revision))
-  await view.render(0)
+  const view = mount(t, () => useRecoverySource(detailed))
+  await view.render(undefined)
   await waitFor(() => view.latest().call !== undefined)
   assert.deepEqual(view.latest(), { interactions, call: { id: "call-voicemail" } })
-  await view.render(1)
+  await view.render(undefined, 1)
   await waitFor(() => backend.requests.length === 2)
   assert.deepEqual(backend.requests, [
     "GET /v1/calling/calls/call-voicemail",
@@ -98,15 +100,15 @@ test("recovery source uses the authoritative Task it is given and reads only the
 
 test("call eligibility waits until enabled and keeps its answer while rechecking", async (t) => {
   const backend = fakeBackend(t, () => Response.json({ eligible: true, reason: "Ready to call." }))
-  const view = mount(t, (props: { enabled: boolean; historyHint: number }) =>
+  const view = mount(t, (props: { enabled: boolean }) =>
     useTaskCallEligibility({ task: recoveryTask, ...props }),
   )
-  await view.render({ enabled: false, historyHint: 0 })
+  await view.render({ enabled: false })
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
   assert.equal(view.latest().status, "loading")
   assert.deepEqual(backend.requests, [])
 
-  await view.render({ enabled: true, historyHint: 0 })
+  await view.render({ enabled: true })
   await waitFor(() => view.latest().status !== "loading")
   const answer = { eligible: true, reason: "Ready to call." }
   const ready = view.latest()
@@ -118,11 +120,21 @@ test("call eligibility waits until enabled and keeps its answer while rechecking
     await recheck
     return new Response("", { status: 503 })
   }
-  await view.render({ enabled: true, historyHint: 1 })
-  assert.equal(view.latest().status, "ready")
-  assert.equal(view.latest().refreshing, true)
+  await view.render({ enabled: true }, 1)
+  await waitFor(() => {
+    const checking = view.latest()
+    return checking.status === "ready" && checking.refreshing
+  })
   answer503()
-  await waitFor(() => view.latest().status === "failed")
+  await waitFor(() => {
+    const checked = view.latest()
+    return checked.status === "ready" && checked.refreshFailure !== undefined
+  })
+  const checked = view.latest()
+  assert.deepEqual(checked.status === "ready" && [checked.data, checked.refreshFailure], [
+    answer,
+    { kind: "unavailable", retryable: true, status: 503 },
+  ])
   assert.deepEqual(backend.requests, [
     "GET /v1/calling/tasks/task-1/eligibility",
     "GET /v1/calling/tasks/task-1/eligibility",
@@ -158,12 +170,14 @@ function mount<P, R>(t: TestContext, hook: (props: P) => R) {
     dom.window.close()
   })
   const seen: R[] = []
-  function Probe({ props }: { props: P }) {
+  function Probe({ props, live }: { props: P; live: number }) {
+    useLiveRefresh({ workspaceVersion: live, taskCounts: "", detailRevision: live })
     seen.push(hook(props))
     return null
   }
   return {
-    render: (props: P) => act(async () => root.render(<Probe props={props} />)),
+    render: (props: P, live = 0) =>
+      act(async () => root.render(<DataProvider><Probe props={props} live={live} /></DataProvider>)),
     latest: () => seen.at(-1) as R,
   }
 }

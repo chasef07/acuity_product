@@ -4,13 +4,12 @@ import { act, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import { JSDOM } from "jsdom"
 
-import { SidebarProvider } from "@/components/ui/sidebar"
-import { InsuranceList } from "./insurance-list.tsx"
-import { KnowledgeHistory } from "./knowledge-base.tsx"
-import { ManageAgent } from "./manage-agent.tsx"
 import { authClient, clearAccessToken } from "../../lib/auth-client.ts"
+import { DataProvider } from "../../lib/data/provider.tsx"
+import { useLiveRefresh } from "../../lib/data/queries.ts"
 import { homeDay, homeGreeting } from "../../lib/home-greeting.ts"
 import type {
+  AgentCallDetail,
   AgentCallsPage,
   AgentCallsQuery,
   InsuranceCoverage,
@@ -25,6 +24,12 @@ import type {
   LocationKnowledgeQuery,
   LocationKnowledgeRevisionQuery,
 } from "../../lib/api/generated/types.gen.ts"
+
+Object.defineProperty(globalThis, "document", { configurable: true, value: new JSDOM("").window.document })
+const { SidebarProvider } = await import("@/components/ui/sidebar")
+const { InsuranceList } = await import("./insurance-list.tsx")
+const { KnowledgeHistory } = await import("./knowledge-base.tsx")
+const { ManageAgent } = await import("./manage-agent.tsx")
 
 const locations: Location[] = [
   { id: "00000000-0000-4000-8000-000000000001", name: "Hollywood" },
@@ -223,7 +228,7 @@ test("Calls updates automatically without replacing the table while refreshing a
   const page = harness(t)
   const original = { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }
   page.agentCalls = { calls: [original], nextCursor: "" }
-  const show = (revision: number) => page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} revision={revision} />)
+  const show = (version: number) => page.render(<LiveWorkspace version={version}><ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} /></LiveWorkspace>)
   await show(1)
   await waitFor(() => page.host.querySelectorAll("tbody tr").length === 1)
   assert.equal(page.host.querySelector("button[aria-label='Refresh calls']"), null)
@@ -247,6 +252,104 @@ test("Calls updates automatically without replacing the table while refreshing a
   await page.click("Try again")
   await waitFor(() => page.host.querySelectorAll("tbody tr").length === 2)
   assert.deepEqual(page.agentCallsRequests.map((request) => request.locationId), Array(4).fill(locations[0].id))
+  await page.unmount()
+})
+
+test("a live refresh keeps every loaded page of calls", async (t) => {
+  const page = harness(t)
+  const first = agentCall("call-1", "+15555550111")
+  const second = agentCall("call-2", "+15555550222")
+  page.agentCallsFor = (body) => body.cursor === "page-2" ? { calls: [second], nextCursor: "" } : { calls: [first], nextCursor: "page-2" }
+  const show = (version: number) => page.render(<LiveWorkspace version={version}><ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} /></LiveWorkspace>)
+  await show(1)
+  await waitFor(() => page.callPhones().length === 1)
+  await page.click("Load more calls")
+  await waitFor(() => page.callPhones().length === 2)
+  const newest = agentCall("call-0", "+15555550100")
+  page.agentCallsFor = (body) => body.cursor === "page-2" ? { calls: [second], nextCursor: "" } : { calls: [newest, first], nextCursor: "page-2" }
+  await show(2)
+  await waitFor(() => page.callPhones().includes("(555) 555-0100"))
+  assert.deepEqual(page.callPhones(), ["(555) 555-0100", "(555) 555-0111", "(555) 555-0222"])
+  assert.deepEqual(page.agentCallsRequests.map((request) => request.cursor), [undefined, "page-2", undefined, "page-2"])
+  assert.equal(page.host.querySelector('[aria-label="Loading calls"]'), null)
+  await page.unmount()
+})
+
+test("a failed live refresh keeps the loaded calls visible beside a refresh error", async (t) => {
+  const page = harness(t)
+  const first = agentCall("call-1", "+15555550111")
+  const second = agentCall("call-2", "+15555550222")
+  page.agentCallsFor = (body) => body.cursor === "page-2" ? { calls: [second], nextCursor: "" } : { calls: [first], nextCursor: "page-2" }
+  const show = (version: number) => page.render(<LiveWorkspace version={version}><ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} /></LiveWorkspace>)
+  await show(1)
+  await waitFor(() => page.callPhones().length === 1)
+  await page.click("Load more calls")
+  await waitFor(() => page.callPhones().length === 2)
+  page.agentCallsStatus = 503
+  await show(2)
+  await waitFor(() => page.alert().includes("Calls aren't available right now."))
+  assert.deepEqual(page.callPhones(), ["(555) 555-0111", "(555) 555-0222"])
+  page.agentCallsStatus = 200
+  await page.click("Try again")
+  await waitFor(() => page.alert() === "")
+  assert.deepEqual(page.callPhones(), ["(555) 555-0111", "(555) 555-0222"])
+  await page.unmount()
+})
+
+test("a call that never loaded shows its error, and a failed reload after a flag conflict keeps the transcript beside a refresh error", async (t) => {
+  const page = harness(t)
+  const call = agentCall("call-1", "+15555550111")
+  page.agentCalls = { calls: [call], nextCursor: "" }
+  page.callDetail = {
+    call,
+    locationName: "Hollywood",
+    messages: [{ speaker: "Caller", text: "Synthetic caller question", occurredAt: "2026-10-13T15:00:05Z" }],
+    scorecard: [],
+  }
+  page.callStatus = 503
+  await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} />)
+  await waitFor(() => page.callPhones().length === 1)
+  await act(async () => page.host.querySelector<HTMLElement>("button[aria-label^='Open call from']")!.click())
+  await waitFor(() => page.sheetAlerts().some((alert) => alert.startsWith("Call unavailable")))
+  assert.doesNotMatch(page.sheetText(), /Synthetic caller question/)
+
+  page.callStatus = 200
+  await page.sheetClick("Try again")
+  await waitFor(() => /Synthetic caller question/.test(page.sheetText()))
+  assert.deepEqual(page.sheetAlerts(), [])
+
+  await page.sheetClick("Flag an issue")
+  await act(async () => {
+    const trigger = page.sheet()!.querySelector<HTMLElement>("[role='combobox']")!
+    trigger.dispatchEvent(new window.MouseEvent("mousedown", { button: 0, bubbles: true }))
+    trigger.click()
+  })
+  const other = Array.from(document.querySelectorAll<HTMLElement>("[role='option']")).find((item) => item.textContent === "Other")
+  assert.ok(other)
+  await act(async () => other.click())
+  page.flagStatus = 409
+  page.callStatus = 503
+  let finishReload!: () => void
+  page.callGate = new Promise<void>((resolve) => { finishReload = resolve })
+  await page.sheetClick("Flag issue")
+  await waitFor(() => page.callReads.length === 3)
+  assert.match(page.sheetText(), /Saving…/)
+  assert.ok(Array.from(page.sheet()!.querySelectorAll("button")).every((button) => button.textContent !== "Flag an issue" || button.disabled))
+  await act(async () => finishReload())
+  await waitFor(() => page.sheetAlerts().length === 1)
+  assert.deepEqual(page.flagRequests, ["call-1"])
+  assert.match(page.sheetAlerts()[0], /^Call could not refresh/)
+  assert.match(page.sheetText(), /Synthetic caller question/)
+  assert.doesNotMatch(page.sheetText(), /Call unavailable|Flag an issue/)
+
+  page.callStatus = 200
+  page.callDetail = { ...page.callDetail, issue: { reason: "WRONG_APPOINTMENT_TYPE", note: "Synthetic first report", createdAt: "2026-10-13T16:00:00Z" } }
+  await page.sheetClick("Try again")
+  await waitFor(() => page.sheetAlerts().length === 0)
+  assert.match(page.sheetText(), /Issue flagged.*Wrong Appointment Type.*Synthetic first report/)
+  assert.match(page.sheetText(), /Synthetic caller question/)
+  assert.deepEqual(page.callReads, ["call-1", "call-1", "call-1", "call-1"])
+  assert.ok(page.host.querySelector("tbody [aria-label='Issue flagged']"))
   await page.unmount()
 })
 
@@ -562,7 +665,7 @@ test("editing an entry and publishing with a reason sends the full list, stays l
   await page.render(insuranceList())
   await waitFor(() => page.groups().length === 3)
   await page.render(knowledgeBase(), "returned")
-  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined && /Office hours/.test(page.text()))
   assert.equal(page.maybeButton("Publishing…")!.closest("fieldset")?.disabled, true)
 
   release()
@@ -824,6 +927,15 @@ function knowledgeBase(locationScopeID = locations[0].id, actorSubject = "staff-
   return <ManageAgent actorSubject={actorSubject} practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" onPage={() => {}} />
 }
 
+function LiveWorkspace({ version, children }: { version: number; children: ReactNode }) {
+  useLiveRefresh({ workspaceVersion: version, taskCounts: "", detailRevision: 0 })
+  return children
+}
+
+function agentCall(id: string, phone: string): AgentCallsPage["calls"][number] {
+  return { id, phone, startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }
+}
+
 function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {
   return { names: [], allowedProviders: [], requirements: [], acceptedAt: [], ...change }
 }
@@ -884,10 +996,26 @@ function harness(t: TestContext) {
     agentCalls: { calls: [], nextCursor: "" } as AgentCallsPage,
     agentCallsStatus: 200,
     agentCallsGate: Promise.resolve(),
+    agentCallsFor: ((): AgentCallsPage => page.agentCalls) as (body: AgentCallsQuery) => AgentCallsPage,
+    callReads: [] as string[],
+    callStatus: 200,
+    callGate: Promise.resolve(),
+    callDetail: undefined as AgentCallDetail | undefined,
+    flagRequests: [] as string[],
+    flagStatus: 200,
+    sheet: () => document.querySelector("[data-slot='sheet-content']"),
+    sheetText: () => page.sheet()?.textContent ?? "",
+    sheetAlerts: () => Array.from(page.sheet()?.querySelectorAll("[role='alert']") ?? [], (alert) => alert.textContent ?? ""),
+    sheetClick: async (name: string) => {
+      const button = Array.from(page.sheet()?.querySelectorAll("button") ?? []).find((item) => item.textContent === name)
+      assert.ok(button, name)
+      await act(async () => button.click())
+    },
+    callPhones: () => Array.from(host.querySelectorAll("tbody tr td:nth-child(2)"), (cell) => cell.textContent ?? ""),
     historyRows: () => Array.from(host.querySelectorAll("li"), (row) => row.textContent ?? ""),
     publishGate: Promise.resolve(),
     render: (element: ReactNode, key = "first") =>
-      act(async () => root.render(<SidebarProvider key={key}>{element}</SidebarProvider>)),
+      act(async () => root.render(<DataProvider><SidebarProvider key={key}>{element}</SidebarProvider></DataProvider>)),
     unmount: () => act(async () => root.unmount()),
     text: () => host.textContent ?? "",
     panel: (trigger: Element) => {
@@ -989,10 +1117,21 @@ function harness(t: TestContext) {
       if (page.afterPublishHistory) page.history = page.afterPublishHistory
       return Response.json(page.publishResult)
     }
+    const callPath = /^\/v1\/agent-calls\/([^/]+)(\/issue)?$/.exec(url.pathname)
+    if (callPath && request.method !== "POST") {
+      if (callPath[2]) {
+        page.flagRequests.push(callPath[1])
+        return new Response("{}", { status: page.flagStatus })
+      }
+      page.callReads.push(callPath[1])
+      await page.callGate
+      return page.callStatus === 200 ? Response.json(page.callDetail) : new Response("", { status: page.callStatus })
+    }
     assert.equal(url.pathname, "/v1/agent-calls/query")
-    page.agentCallsRequests.push((await request.json()) as AgentCallsQuery)
+    const agentCallsQuery = (await request.json()) as AgentCallsQuery
+    page.agentCallsRequests.push(agentCallsQuery)
     await page.agentCallsGate
-    return page.agentCallsStatus === 200 ? Response.json(page.agentCalls) : new Response("", { status: page.agentCallsStatus })
+    return page.agentCallsStatus === 200 ? Response.json(page.agentCallsFor(agentCallsQuery)) : new Response("", { status: page.agentCallsStatus })
   })
   return page
 }

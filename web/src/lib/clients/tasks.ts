@@ -1,5 +1,3 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-
 import {
   changeTaskCategory as changeTaskCategoryRequest,
   completeTask as completeTaskRequest,
@@ -11,7 +9,8 @@ import {
 } from "../api/generated/sdk.gen"
 import type { StaffTaskCategory, Task } from "../api/generated/types.gen"
 import { appendUniqueByID } from "../workspace-ordering"
-import { type PortalFailure, portalRequest } from "./portal-request"
+import { usePages } from "../data/queries"
+import { portalRequest } from "./portal-request"
 
 type TaskVersion = Pick<Task, "id" | "version">
 
@@ -79,102 +78,45 @@ export function changeTaskCategory(task: TaskVersion, category: StaffTaskCategor
 
 export type ReviewFolderKind = "texts" | "calls" | "appointments"
 
-export type ReviewFolderPage = {
-  items: Task[]
-  nextCursor: string
-  loading: boolean
-  failure?: PortalFailure
-}
-
 export function useReviewFolder({
   practiceID,
   locationID,
   search,
   kind,
-  revision,
-  count,
 }: {
   practiceID: string
   locationID: string
   search: string
   kind: ReviewFolderKind
-  revision: number
-  count: number
-}): ReviewFolderPage & { retry: () => void; showMore: () => void } {
-  const [page, setPage] = useState<ReviewFolderPage>({
-    items: [],
-    nextCursor: "",
-    loading: true,
+}) {
+  return usePages({
+    live: "review-folders",
+    name: "review-folder",
+    identity: { practiceID, locationID, search, kind },
+    read: (identity, cursor, transport) =>
+      queryTasks({
+        ...transport,
+        body: {
+          practiceId: identity.practiceID,
+          ...(identity.locationID ? { locationId: identity.locationID } : {}),
+          ...(identity.search ? { search: identity.search } : {}),
+          kind: identity.kind,
+          state: "OPEN",
+          ordering: "recent",
+          responsibility: "all",
+          grouped: false,
+          includeCounts: false,
+          limit: 50,
+          ...(cursor ? { cursor } : {}),
+        },
+      }),
+    combine: combineTaskPages,
   })
-  const depth = useRef(0)
-  const request = useRef<AbortController | null>(null)
-  const load = useCallback(
-    async (cursor = "") => {
-      request.current?.abort()
-      const controller = new AbortController()
-      request.current = controller
-      const { signal } = controller
-      setPage((current) => ({ ...current, loading: true, failure: undefined }))
-      const fail = (failure: PortalFailure) =>
-        setPage((current) =>
-          cursor
-            ? { ...current, loading: false, failure }
-            : { items: [], nextCursor: "", loading: false, failure },
-        )
-      try {
-        const items: Task[] = []
-        let nextCursor = cursor
-        do {
-          const outcome = await portalRequest(
-            (transport) =>
-              queryTasks({
-                ...transport,
-                body: {
-                  practiceId: practiceID,
-                  ...(locationID ? { locationId: locationID } : {}),
-                  ...(search ? { search } : {}),
-                  kind,
-                  state: "OPEN",
-                  ordering: "recent",
-                  responsibility: "all",
-                  grouped: false,
-                  includeCounts: false,
-                  limit: 50,
-                  ...(nextCursor ? { cursor: nextCursor } : {}),
-                },
-              }),
-            signal,
-          )
-          if (!outcome.ok) {
-            fail(outcome.failure)
-            return
-          }
-          items.push(...outcome.data.items)
-          nextCursor = outcome.data.nextCursor
-        } while (!cursor && nextCursor && items.length < depth.current)
-        setPage((current) => {
-          const combined = cursor ? appendUniqueByID(current.items, items) : items
-          depth.current = combined.length
-          return { items: combined, nextCursor, loading: false }
-        })
-      } catch {
-        if (!signal.aborted) fail({ kind: "unavailable", retryable: true })
-      }
-    },
-    [practiceID, locationID, search, kind],
-  )
+}
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0)
-    return () => {
-      window.clearTimeout(timer)
-      request.current?.abort()
-    }
-  }, [load, revision, count])
-
+function combineTaskPages(pages: { items: Task[]; nextCursor: string }[]) {
   return {
-    ...page,
-    retry: () => void load(),
-    showMore: () => void load(page.nextCursor),
+    items: pages.reduce<Task[]>((items, page) => appendUniqueByID(items, page.items), []),
+    nextCursor: pages.at(-1)!.nextCursor,
   }
 }

@@ -18,7 +18,8 @@ import {
   useLocationKnowledgeHistory,
   useLocationKnowledgeRevision,
 } from "@/lib/clients/location-knowledge"
-import type { PortalFailure, PortalQuery } from "@/lib/clients/portal-request"
+import type { PortalFailure } from "@/lib/clients/portal-request"
+import { type PortalQuery, readFailure } from "@/lib/data/queries"
 import { formatTimestamp } from "@/lib/format-time"
 import {
   knowledgeDraftKey,
@@ -159,7 +160,7 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
       >
         {(data) => (
           <KnowledgeEditor
-            key={draftKey}
+            key={`${draftKey}:${data.revision?.id ?? ""}`}
             draftKey={draftKey}
             stored={draft}
             loaded={data}
@@ -518,12 +519,12 @@ function RevisionDetail({
   const scope = { practiceID, locationID }
   const revision = useLocationKnowledgeRevision({ ...scope, revisionID: row.id })
   const previous = useLocationKnowledgeRevision({ ...scope, revisionID: row.previousRevisionId })
-  const failed = [revision, previous].find((query) => query.status === "failed")
+  const failure = readFailure(revision) ?? readFailure(previous)
   const compared: PortalQuery<{ before: KnowledgeSection[]; after: KnowledgeSection[] }> =
-    failed?.status === "failed"
-      ? { status: "failed", failure: failed.failure }
+    failure
+      ? { status: "failed", failure }
       : revision.status === "ready" && (!row.previousRevisionId || previous.status === "ready")
-        ? { status: "ready", data: { after: revision.data.sections, before: previous.status === "ready" ? previous.data.sections : [] } }
+        ? { status: "ready", refreshing: false, data: { after: revision.data.sections, before: previous.status === "ready" ? previous.data.sections : [] } }
         : { status: "loading" }
 
   return (
@@ -540,8 +541,8 @@ function RevisionDetail({
         subject="knowledge version"
         unavailable="This version isn't available right now."
         onRetry={() => {
-          revision.retry()
-          previous.retry()
+          void revision.retry()
+          void previous.retry()
         }}
         isEmpty={() => false}
         emptyTitle=""

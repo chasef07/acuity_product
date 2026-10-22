@@ -1,10 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { act } from "react"
+import { act, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import { JSDOM } from "jsdom"
 
 import { clearAccessToken } from "../../lib/auth-client"
+import { DataProvider } from "../../lib/data/provider"
+import { useLiveRefresh } from "../../lib/data/queries"
 
 test("Command Center keeps the same call table during and after automatic refresh", async (t) => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace?view=operator-analytics" })
@@ -39,8 +41,12 @@ test("Command Center keeps the same call table during and after automatic refres
     await act(async () => root.unmount())
     dom.window.close()
   })
-  const render = (revision: number, locationID = "office-1") => act(async () => root.render(
-    <OperatorAnalytics practiceID="practice-1" locationScopeID={locationID} tab="calls" revision={revision} />,
+  const render = (version: number, locationID = "office-1") => act(async () => root.render(
+    <DataProvider>
+      <LiveWorkspace version={version}>
+        <OperatorAnalytics practiceID="practice-1" locationScopeID={locationID} tab="calls" />
+      </LiveWorkspace>
+    </DataProvider>,
   ))
   const result = (ids: string[]) => Response.json({
     summary: { totalCalls: ids.length },
@@ -70,6 +76,11 @@ test("Command Center keeps the same call table during and after automatic refres
   await waitFor(() => host.textContent!.includes("Analytics access unavailable"))
   assert.equal(host.querySelector("table"), null)
 })
+
+function LiveWorkspace({ version, children }: { version: number; children: ReactNode }) {
+  useLiveRefresh({ workspaceVersion: version, taskCounts: "", detailRevision: 0 })
+  return children
+}
 
 async function waitFor(ready: () => boolean) {
   for (let attempt = 0; attempt < 50 && !ready(); attempt++) {

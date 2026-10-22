@@ -55,6 +55,7 @@ import { authClient } from "@/lib/auth-client"
 import { workspaceScopeForCall } from "@/lib/calling/workspace-scope"
 import { cn } from "@/lib/utils"
 import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
+import { useLiveRefresh } from "@/lib/data/queries"
 import {
   parseWorkspaceLocation,
   workspaceLocationSearch,
@@ -149,6 +150,11 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
   const [numberHistory, setNumberHistory] = useState<NumberHistory>()
   const [commandCenterPage, setCommandCenterPage] = useState<CommandCenterPage>("calls")
   const [analyticsPage, setAnalyticsPage] = useState<PracticeAnalyticsPage>("bookings")
+  useLiveRefresh({
+    workspaceVersion: state.workspace?.version,
+    taskCounts: JSON.stringify(state.tasks.counts),
+    detailRevision: state.detailRevision,
+  })
 
   useEffect(() => {
     if (session.isPending) return
@@ -389,7 +395,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
               />
             ) : view === "manage-agent" ? (
               <ManageAgent
-                revision={workspace.version}
                 key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
                 actorSubject={discovery.actor.subject}
                 practiceID={state.scope.practiceID}
@@ -400,7 +405,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
               />
             ) : view === "operator-analytics" && discovery.platformOperator ? (
               <OperatorAnalytics
-                revision={workspace.version}
                 tab={commandCenterPage}
                 practiceID={state.scope.practiceID}
                 locationScopeID={state.scope.locationScopeID}
@@ -414,7 +418,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                     practiceID={state.scope.practiceID}
                     practiceName={practice.name}
                     canMutate
-                    revision={state.detailRevision}
                     selectedTaskID={
                       contextPanelOpen && contextView === "task"
                         ? selectedTask?.id
@@ -431,7 +434,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         : undefined
                     }
                     callAction={!state.selection.taskGroup && selectedTask && selectedTask.state === "OPEN" && contextView === "task" ? (
-                      <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={!callingOccupied} historyHint={state.detailRevision} pending={Boolean(taskCallRequest)} onCall={(task) => {
+                      <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={!callingOccupied} pending={Boolean(taskCallRequest)} onCall={(task) => {
                         setTaskCallError("")
                         void projection.dispatch({ type: "remember-return-task", taskID: task.id })
                         setTaskCallRequest({ id: window.crypto.randomUUID(), taskID: task.id })
@@ -517,7 +520,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         activeCall={historicalCall ?? activeCall}
                         view={contextView}
                         canMutate
-                        historyHint={state.detailRevision}
                         numberHistory={
                           numberHistory && numberHistory.phone === selectedTask?.phone
                             ? numberHistory.items

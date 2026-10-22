@@ -6,33 +6,40 @@ import {
   submitOperatorCallReview,
 } from "../api/generated/sdk.gen"
 import type { OperatorCallReviewSubmission } from "../api/generated/types.gen"
-import { portalRequest, usePortalQuery } from "./portal-request"
+import { useRead } from "../data/queries"
+import { portalRequest } from "./portal-request"
 
 export function useScorecardQuestions(version?: string) {
   const supportedVersion = version === "typesafe-scorecard-v6" || version === "typesafe-scorecard-v7" || version === "typesafe-scorecard-v8" ? version : undefined
-  return usePortalQuery(`scorecard-questions:${supportedVersion ?? "current"}`, (transport) =>
-    getOperatorScorecardQuestions({ ...transport, query: { version: supportedVersion } }),
-  )
+  return useRead({
+    name: "scorecard-questions",
+    identity: { scorecard: supportedVersion },
+    read: (identity, transport) =>
+      getOperatorScorecardQuestions({ ...transport, query: { version: identity.scorecard } }),
+  })
 }
 
-export function useReviewQueue(practiceID: string, date: string, revision: number) {
-  return usePortalQuery(
-    practiceID && date ? `review-queue:${practiceID}:${date}:${revision}` : null,
-    (transport) =>
+export function useReviewQueue(practiceID: string, date: string) {
+  return useRead({
+    name: "review-queue",
+    identity: { practiceID, date },
+    enabled: Boolean(practiceID && date),
+    read: (identity, transport) =>
       openOperatorCallReviewQueue({
         ...transport,
-        body: { practiceId: practiceID, date },
+        body: { practiceId: identity.practiceID, date: identity.date },
       }),
-    { keepPrevious: true },
-  )
+  })
 }
 
 export function useCallReview(interactionID: string) {
-  return usePortalQuery(
-    interactionID ? `call-review:${interactionID}` : null,
-    (transport) =>
-      getOperatorCallReview({ ...transport, path: { interactionId: interactionID } }),
-  )
+  return useRead({
+    name: "call-review",
+    identity: { interactionID },
+    enabled: Boolean(interactionID),
+    read: (identity, transport) =>
+      getOperatorCallReview({ ...transport, path: { interactionId: identity.interactionID } }),
+  })
 }
 
 export function submitCallReview(interactionID: string, body: OperatorCallReviewSubmission) {
@@ -46,9 +53,11 @@ export function submitCallReview(interactionID: string, body: OperatorCallReview
 }
 
 export function useJudgeAccuracy(practiceID: string) {
-  return usePortalQuery(
-    practiceID ? `judge-accuracy:${practiceID}` : null,
-    (transport) =>
-      queryOperatorJudgeAccuracy({ ...transport, body: { practiceId: practiceID } }),
-  )
+  return useRead({
+    name: "judge-accuracy",
+    identity: { practiceID },
+    enabled: Boolean(practiceID),
+    read: (identity, transport) =>
+      queryOperatorJudgeAccuracy({ ...transport, body: { practiceId: identity.practiceID } }),
+  })
 }
