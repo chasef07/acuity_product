@@ -18,9 +18,12 @@ test("a read shows loading per identity, aborts a superseded read, keeps data th
   assert.deepEqual(view.latest(), { status: "loading" })
   await waitFor(() => backend.requests.length === 1)
 
-  backend.gate = undefined
+  const second = deferred()
+  backend.gate = second.promise
   await view.render({ taskID: "task-2" })
   assert.deepEqual(view.latest(), { status: "loading" })
+  backend.gate = undefined
+  second.resolve()
   await waitFor(() => view.latest().status === "ready")
   assert.deepEqual(view.latest(), { status: "ready", data: { id: "task-2" }, refreshing: false })
   assert.equal(backend.aborted, 1)
