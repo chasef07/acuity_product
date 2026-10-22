@@ -25,7 +25,6 @@ import type {
   AgentCallMessage,
 } from "@/lib/api/generated/types.gen"
 import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
-import { readFailure } from "@/lib/data/queries"
 import { formatClockTime, formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
@@ -191,25 +190,25 @@ function CallContent({
   const [reason, setReason] = useState<AgentCallIssueReason | null>(null)
   const [note, setNote] = useState("")
   const [saveError, setSaveError] = useState("")
-  const failure = readFailure(call)
   const detail =
-    call.status === "ready" && !failure
+    call.status === "ready"
       ? { ...call.data, issue: call.data.issue ?? flagged }
       : undefined
-  const error = failure ? "This call could not be loaded. Try again." : ""
+  const refreshFailed = call.status === "ready" && Boolean(call.refreshFailure)
 
   async function flagIssue() {
     if (!reason || saving) return
     onSavingChange(true)
     setSaveError("")
     const outcome = await flagAgentCallIssue(id, reason, note)
-    onSavingChange(false)
     if (!outcome.ok && outcome.failure.kind !== "conflict") {
+      onSavingChange(false)
       setSaveError("Your issue could not be saved. Try again.")
       return
     }
     if (outcome.ok) setFlagged(outcome.data)
-    else call.retry()
+    else await call.retry()
+    onSavingChange(false)
     setReporting(false)
     onFlagged(id)
   }
@@ -221,7 +220,7 @@ function CallContent({
           <SheetTitle>
             {detail ? formatUSPhone(detail.call.phone) : "Call transcript"}
           </SheetTitle>
-          {detail && !detail.issue && (
+          {detail && !detail.issue && !refreshFailed && (
             <Button
               variant="outline"
               size="sm"
@@ -250,11 +249,11 @@ function CallContent({
           </div>
         )}
       </SheetHeader>
-      {error ? (
+      {call.status === "failed" ? (
         <div className="p-6">
           <Alert variant="destructive">
             <AlertTitle>Call unavailable</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>This call could not be loaded. Try again.</AlertDescription>
             <Button
               variant="outline"
               className="mt-3 w-fit"
@@ -281,6 +280,21 @@ function CallContent({
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 scrollbar-thin"
         >
           <div className="flex flex-col gap-6">
+            {refreshFailed && (
+              <Alert variant="destructive">
+                <AlertTitle>Call could not refresh</AlertTitle>
+                <AlertDescription>
+                  This is the call as last loaded.
+                </AlertDescription>
+                <Button
+                  variant="outline"
+                  className="mt-3 w-fit"
+                  onClick={call.retry}
+                >
+                  Try again
+                </Button>
+              </Alert>
+            )}
             <section aria-label="Call flow" className="@container text-xs">
               <CallFlow call={detail.call} result={detail.checkResult} />
             </section>
