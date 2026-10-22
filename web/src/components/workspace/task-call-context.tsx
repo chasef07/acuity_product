@@ -51,7 +51,6 @@ type TaskCallContextProps = {
   activeCall: CallingCall | undefined
   view: "none" | "task" | "call"
   canMutate: boolean
-  historyHint: number
   numberHistory?: ConversationTimelineItem[]
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
@@ -66,7 +65,6 @@ export function TaskCallContext({
   activeCall,
   view,
   canMutate,
-  historyHint,
   numberHistory,
   taskCallError,
   onTaskUpdated,
@@ -102,7 +100,6 @@ export function TaskCallContext({
           ? () => onSelectTask(taskRows.find((row) => row.id !== task.id)!) : undefined}
         activeCall={activeCall}
         canMutate={canMutate}
-        historyHint={historyHint}
         numberHistory={numberHistory}
         taskCallError={taskCallError}
         onTaskUpdated={onTaskUpdated}
@@ -118,7 +115,6 @@ function TaskWorkspace({
   onNextTask,
   activeCall,
   canMutate,
-  historyHint,
   numberHistory = [],
   taskCallError,
   onTaskUpdated,
@@ -128,7 +124,6 @@ function TaskWorkspace({
   onNextTask?: () => void
   activeCall: CallingCall | undefined
   canMutate: boolean
-  historyHint: number
   numberHistory?: ConversationTimelineItem[]
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
@@ -348,7 +343,7 @@ function TaskWorkspace({
         </Alert>
       )}
       {(recovery || task.relatedInteractionCount > (task.callId ? 1 : 0)) && (
-        <RecoveryTaskSource task={task} revision={historyHint} onUpdated={onTaskUpdated} />
+        <RecoveryTaskSource task={task} onUpdated={onTaskUpdated} />
       )}
       <details className="group mt-4 border-t pt-4">
         <summary className="cursor-pointer text-sm font-medium">
@@ -401,14 +396,12 @@ function TaskSourceDetails({ task }: { task: Task }) {
 
 function RecoveryTaskSource({
   task,
-  revision,
   onUpdated,
 }: {
   task: Task
-  revision: number
   onUpdated: (task: Task, advance?: boolean) => void
 }) {
-  const { call, interactions, failure } = useRecoverySource(task, revision)
+  const { call, interactions, failure } = useRecoverySource(task)
   const error =
     failure && failure.kind !== "signedOut"
       ? "Recovery source is temporarily unavailable."
@@ -769,26 +762,26 @@ function formatEntryPoint(entryPoint: CallingCall["entryPoint"]) {
   }
 }
 
-export function TaskCallAction({ task, canCall, historyHint, pending, onCall }: {
+export function TaskCallAction({ task, canCall, pending, onCall }: {
   task: Task
   canCall: boolean
-  historyHint: number
   pending: boolean
   onCall: (task: Task) => void
 }) {
-  const eligibility = useTaskCallEligibility({ task, historyHint, enabled: canCall })
+  const eligibility = useTaskCallEligibility({ task, enabled: canCall })
   const answer =
     eligibility.status === "loading" ||
     (eligibility.status === "failed" && eligibility.failure.kind === "signedOut")
       ? undefined
       : eligibility
-  const taskCallingEligible = canCall && answer?.status === "ready" && answer.data.eligible
+  const current = answer?.status === "ready" && !answer.refreshFailure ? answer.data : undefined
+  const taskCallingEligible = canCall && Boolean(current?.eligible)
   const taskCallingReason = !canCall
     ? "Calling is not enabled for this account."
     : !answer
       ? "Checking Call route…"
-      : answer.status === "ready"
-        ? answer.data.reason
+      : current
+        ? current.reason
         : "Call eligibility is temporarily unavailable."
 
   return <Button variant="outline" size="sm" className="h-7 shadow-xs" disabled={!taskCallingEligible || pending} title={taskCallingEligible ? "Call this Task" : taskCallingReason} onClick={() => onCall(task)}>

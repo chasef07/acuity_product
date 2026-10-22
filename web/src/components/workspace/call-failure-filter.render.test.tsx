@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client"
 import { JSDOM } from "jsdom"
 
 import { clearAccessToken } from "../../lib/auth-client"
+import { DataProvider } from "../../lib/data/provider"
 import type { OperatorScorecardQuestion } from "../../lib/api/generated/types.gen"
 
 const question = (key: string, label: string, source: "judge" | "code" = "judge", failure = true): OperatorScorecardQuestion => ({
@@ -31,12 +32,13 @@ test("judge filter offers unique current and historical failures using current l
 test("a failed historical catalog is visible and retry recovers its missing judges", async (t) => {
   const view = await harness(t, "typesafe-scorecard-v7")
   await view.render()
+  await waitFor(() => /Judge list unavailable/.test(view.host.textContent ?? ""))
   const retry = Array.from(view.host.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent === "Retry judge list")
   assert.ok(retry, "A failed historical catalog must expose retry")
   assert.match(view.host.textContent ?? "", /Judge list unavailable/)
   view.recover()
   await act(async () => retry.click())
-  assert.doesNotMatch(view.host.textContent ?? "", /Judge list unavailable/)
+  await waitFor(() => !/Judge list unavailable/.test(view.host.textContent ?? ""))
   assert.equal(view.requests.filter((version) => version === "typesafe-scorecard-v7").length, 2)
   assert.equal(view.requests.filter((version) => version === "current").length, 1)
   await view.open()
@@ -82,7 +84,7 @@ async function harness(t: TestContext, failedVersion = "") {
   })
   return {
     host, requests,
-    render: () => act(async () => root.render(<CallFailureFilter value="any" onChange={(value) => { selected = value }} />)),
+    render: () => act(async () => root.render(<DataProvider><CallFailureFilter value="any" onChange={(value) => { selected = value }} /></DataProvider>)),
     open: () => act(async () => {
       const trigger = host.querySelector<HTMLElement>("[role='combobox']")!
       trigger.dispatchEvent(new window.MouseEvent("mousedown", { button: 0, bubbles: true }))
@@ -92,4 +94,11 @@ async function harness(t: TestContext, failedVersion = "") {
     recover: () => { failedVersion = "" },
     selected: () => selected,
   }
+}
+
+async function waitFor(ready: () => boolean) {
+  for (let attempt = 0; attempt < 50 && !ready(); attempt++) {
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+  }
+  assert.ok(ready(), "condition was not reached")
 }

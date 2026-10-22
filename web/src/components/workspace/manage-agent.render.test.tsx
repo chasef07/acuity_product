@@ -9,6 +9,8 @@ import { InsuranceList } from "./insurance-list.tsx"
 import { KnowledgeHistory } from "./knowledge-base.tsx"
 import { ManageAgent } from "./manage-agent.tsx"
 import { authClient, clearAccessToken } from "../../lib/auth-client.ts"
+import { DataProvider } from "../../lib/data/provider.tsx"
+import { useLiveRefresh } from "../../lib/data/queries.ts"
 import { homeDay, homeGreeting } from "../../lib/home-greeting.ts"
 import type {
   AgentCallsPage,
@@ -223,7 +225,7 @@ test("Calls updates automatically without replacing the table while refreshing a
   const page = harness(t)
   const original = { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }
   page.agentCalls = { calls: [original], nextCursor: "" }
-  const show = (revision: number) => page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} revision={revision} />)
+  const show = (version: number) => page.render(<LiveWorkspace version={version}><ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} /></LiveWorkspace>)
   await show(1)
   await waitFor(() => page.host.querySelectorAll("tbody tr").length === 1)
   assert.equal(page.host.querySelector("button[aria-label='Refresh calls']"), null)
@@ -247,6 +249,47 @@ test("Calls updates automatically without replacing the table while refreshing a
   await page.click("Try again")
   await waitFor(() => page.host.querySelectorAll("tbody tr").length === 2)
   assert.deepEqual(page.agentCallsRequests.map((request) => request.locationId), Array(4).fill(locations[0].id))
+  await page.unmount()
+})
+
+test("a live refresh keeps every loaded page of calls", async (t) => {
+  const page = harness(t)
+  const first = agentCall("call-1", "+15555550111")
+  const second = agentCall("call-2", "+15555550222")
+  page.agentCallsFor = (body) => body.cursor === "page-2" ? { calls: [second], nextCursor: "" } : { calls: [first], nextCursor: "page-2" }
+  const show = (version: number) => page.render(<LiveWorkspace version={version}><ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} /></LiveWorkspace>)
+  await show(1)
+  await waitFor(() => page.callPhones().length === 1)
+  await page.click("Load more calls")
+  await waitFor(() => page.callPhones().length === 2)
+  const newest = agentCall("call-0", "+15555550100")
+  page.agentCallsFor = (body) => body.cursor === "page-2" ? { calls: [second], nextCursor: "" } : { calls: [newest, first], nextCursor: "page-2" }
+  await show(2)
+  await waitFor(() => page.callPhones().includes("(555) 555-0100"))
+  assert.deepEqual(page.callPhones(), ["(555) 555-0100", "(555) 555-0111", "(555) 555-0222"])
+  assert.deepEqual(page.agentCallsRequests.map((request) => request.cursor), [undefined, "page-2", undefined, "page-2"])
+  assert.equal(page.host.querySelector('[aria-label="Loading calls"]'), null)
+  await page.unmount()
+})
+
+test("a failed live refresh keeps the loaded calls visible beside a refresh error", async (t) => {
+  const page = harness(t)
+  const first = agentCall("call-1", "+15555550111")
+  const second = agentCall("call-2", "+15555550222")
+  page.agentCallsFor = (body) => body.cursor === "page-2" ? { calls: [second], nextCursor: "" } : { calls: [first], nextCursor: "page-2" }
+  const show = (version: number) => page.render(<LiveWorkspace version={version}><ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} /></LiveWorkspace>)
+  await show(1)
+  await waitFor(() => page.callPhones().length === 1)
+  await page.click("Load more calls")
+  await waitFor(() => page.callPhones().length === 2)
+  page.agentCallsStatus = 503
+  await show(2)
+  await waitFor(() => page.alert().includes("Calls aren't available right now."))
+  assert.deepEqual(page.callPhones(), ["(555) 555-0111", "(555) 555-0222"])
+  page.agentCallsStatus = 200
+  await page.click("Try again")
+  await waitFor(() => page.alert() === "")
+  assert.deepEqual(page.callPhones(), ["(555) 555-0111", "(555) 555-0222"])
   await page.unmount()
 })
 
@@ -562,7 +605,7 @@ test("editing an entry and publishing with a reason sends the full list, stays l
   await page.render(insuranceList())
   await waitFor(() => page.groups().length === 3)
   await page.render(knowledgeBase(), "returned")
-  await waitFor(() => page.maybeButton("Publishing…") !== undefined)
+  await waitFor(() => page.maybeButton("Publishing…") !== undefined && /Office hours/.test(page.text()))
   assert.equal(page.maybeButton("Publishing…")!.closest("fieldset")?.disabled, true)
 
   release()
@@ -824,6 +867,15 @@ function knowledgeBase(locationScopeID = locations[0].id, actorSubject = "staff-
   return <ManageAgent actorSubject={actorSubject} practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="knowledge" onPage={() => {}} />
 }
 
+function LiveWorkspace({ version, children }: { version: number; children: ReactNode }) {
+  useLiveRefresh({ workspaceVersion: version, taskCounts: "", detailRevision: 0 })
+  return children
+}
+
+function agentCall(id: string, phone: string): AgentCallsPage["calls"][number] {
+  return { id, phone, startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }
+}
+
 function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {
   return { names: [], allowedProviders: [], requirements: [], acceptedAt: [], ...change }
 }
@@ -884,10 +936,12 @@ function harness(t: TestContext) {
     agentCalls: { calls: [], nextCursor: "" } as AgentCallsPage,
     agentCallsStatus: 200,
     agentCallsGate: Promise.resolve(),
+    agentCallsFor: ((): AgentCallsPage => page.agentCalls) as (body: AgentCallsQuery) => AgentCallsPage,
+    callPhones: () => Array.from(host.querySelectorAll("tbody tr td:nth-child(2)"), (cell) => cell.textContent ?? ""),
     historyRows: () => Array.from(host.querySelectorAll("li"), (row) => row.textContent ?? ""),
     publishGate: Promise.resolve(),
     render: (element: ReactNode, key = "first") =>
-      act(async () => root.render(<SidebarProvider key={key}>{element}</SidebarProvider>)),
+      act(async () => root.render(<DataProvider><SidebarProvider key={key}>{element}</SidebarProvider></DataProvider>)),
     unmount: () => act(async () => root.unmount()),
     text: () => host.textContent ?? "",
     panel: (trigger: Element) => {
@@ -990,9 +1044,10 @@ function harness(t: TestContext) {
       return Response.json(page.publishResult)
     }
     assert.equal(url.pathname, "/v1/agent-calls/query")
-    page.agentCallsRequests.push((await request.json()) as AgentCallsQuery)
+    const agentCallsQuery = (await request.json()) as AgentCallsQuery
+    page.agentCallsRequests.push(agentCallsQuery)
     await page.agentCallsGate
-    return page.agentCallsStatus === 200 ? Response.json(page.agentCalls) : new Response("", { status: page.agentCallsStatus })
+    return page.agentCallsStatus === 200 ? Response.json(page.agentCallsFor(agentCallsQuery)) : new Response("", { status: page.agentCallsStatus })
   })
   return page
 }

@@ -11,7 +11,8 @@ import type {
   OperatorAiCostAnalytics,
   StaffAnalytics,
 } from "../api/generated/types.gen"
-import { type PortalQuery, usePortalQuery } from "./portal-request"
+import { type PortalQuery, useRead } from "../data/queries"
+import type { PortalResult } from "./portal-request"
 
 export type AnalyticsReport<T extends object> = (
   | { state: "loading" | "denied" | "busy" | "unavailable" }
@@ -34,24 +35,25 @@ export function usePracticeReport({
   kind: PracticeReport["kind"]
 }): AnalyticsReport<PracticeReport> {
   const timeZone = useBrowserTimeZone()
-  const body = {
-    practiceId: practiceID,
-    locationId: locationID || undefined,
-    days,
-    timeZone,
-  }
   return analyticsReport(
-    usePortalQuery<PracticeReport>(
-      `${practiceID}:${locationID}:${days}:${timeZone}:${kind}`,
-      async (transport) => {
-        if (kind === "staff") {
+    useRead({
+      name: "practice-report",
+      identity: { practiceID, locationID, days, timeZone, kind },
+      read: async (identity, transport): Promise<PortalResult<PracticeReport>> => {
+        const body = {
+          practiceId: identity.practiceID,
+          locationId: identity.locationID || undefined,
+          days: identity.days,
+          timeZone: identity.timeZone,
+        }
+        if (identity.kind === "staff") {
           const result = await queryStaffAnalytics({ ...transport, body })
-          return { ...result, data: result.data && { kind, report: result.data } }
+          return { ...result, data: result.data && { kind: "staff", report: result.data } }
         }
         const result = await queryBookingAnalytics({ ...transport, body })
-        return { ...result, data: result.data && { kind, report: result.data } }
+        return { ...result, data: result.data && { kind: "bookings", report: result.data } }
       },
-    ),
+    }),
   )
 }
 
@@ -66,21 +68,22 @@ export function useAiCostReport({
 }): AnalyticsReport<{ report: OperatorAiCostAnalytics }> {
   const timeZone = useBrowserTimeZone()
   return analyticsReport(
-    usePortalQuery<{ report: OperatorAiCostAnalytics }>(
-      `${practiceID}:${locationID}:${range}:${timeZone}`,
-      async (transport) => {
+    useRead({
+      name: "ai-cost-report",
+      identity: { practiceID, locationID, range, timeZone },
+      read: async (identity, transport) => {
         const result = await queryOperatorAiCosts({
           ...transport,
           body: {
-            practiceId: practiceID,
-            locationId: locationID || undefined,
-            range,
-            timeZone,
+            practiceId: identity.practiceID,
+            locationId: identity.locationID || undefined,
+            range: identity.range,
+            timeZone: identity.timeZone,
           },
         })
         return { ...result, data: result.data && { report: result.data } }
       },
-    ),
+    }),
   )
 }
 

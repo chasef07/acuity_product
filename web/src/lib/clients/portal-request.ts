@@ -1,5 +1,3 @@
-import { useCallback, useEffect, useEffectEvent, useState } from "react"
-
 import { portalClient } from "../api/client"
 import type { ErrorEnvelope } from "../api/generated/types.gen"
 import { getAccessTokenResult } from "../auth-client"
@@ -65,56 +63,6 @@ export async function portalRequest<T>(
   signal?.throwIfAborted()
   if (result?.data !== undefined) return { ok: true, data: result.data }
   return failed(portalFailure(result?.response?.status, result?.error))
-}
-
-export type PortalQuery<T> =
-  | { status: "loading" }
-  | { status: "ready"; data: T }
-  | { status: "failed"; failure: PortalFailure; data?: T }
-
-export function usePortalQuery<T>(
-  key: string | null,
-  send: PortalSend<T>,
-  { keepPrevious = false }: { keepPrevious?: boolean } = {},
-): PortalQuery<T> & { retry: () => void; refreshing: boolean } {
-  const [attempt, setAttempt] = useState(0)
-  const [settled, setSettled] = useState<{
-    key: string
-    attempt: number
-    query: PortalQuery<T>
-    ready?: T
-  }>()
-  const request = useEffectEvent((signal: AbortSignal) =>
-    portalRequest(send, signal),
-  )
-  useEffect(() => {
-    if (key === null) return
-    const controller = new AbortController()
-    request(controller.signal).then(
-      (outcome) =>
-        setSettled((previous) =>
-          outcome.ok
-            ? { key, attempt, query: { status: "ready", data: outcome.data }, ready: outcome.data }
-            : {
-                key,
-                attempt,
-                query: { status: "failed", failure: outcome.failure },
-                ready: previous?.ready,
-              },
-        ),
-      () => undefined,
-    )
-    return () => controller.abort()
-  }, [key, attempt])
-  const retry = useCallback(() => setAttempt((value) => value + 1), [])
-  const current = settled?.key === key && settled.attempt === attempt
-  const shown = current || keepPrevious ? settled : undefined
-  const query: PortalQuery<T> = !shown
-    ? { status: "loading" }
-    : keepPrevious && shown.query.status === "failed" && shown.ready !== undefined
-      ? { ...shown.query, data: shown.ready }
-      : shown.query
-  return { ...query, retry, refreshing: Boolean(shown) && !current && key !== null }
 }
 
 function failed(failure: PortalFailure): { ok: false; failure: PortalFailure } {

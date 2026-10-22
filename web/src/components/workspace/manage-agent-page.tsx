@@ -25,7 +25,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { PortalFailure, PortalQuery } from "@/lib/clients/portal-request"
+import type { PortalFailure } from "@/lib/clients/portal-request"
+import type { PortalQuery } from "@/lib/data/queries"
 import { WorkspacePageHeader } from "./workspace-page-header"
 
 export type AgentLocationProps = {
@@ -124,21 +125,39 @@ export function AgentQueryBody<T>({
     )
   }
   if (query.status === "failed") {
-    return (
-      <Alert variant="destructive" className="my-6">
-        <AlertTitle>{failureMessage(query.failure, subject, unavailable)}</AlertTitle>
-        {query.failure.retryable && (
-          <Button className="mt-3 w-fit" variant="outline" onClick={onRetry}>
-            Try again
-          </Button>
-        )}
-      </Alert>
-    )
+    return <QueryFailure failure={query.failure} subject={subject} unavailable={unavailable} onRetry={onRetry} />
   }
-  if (isEmpty(query.data)) {
-    return <AgentEmpty title={emptyTitle} description={emptyDescription} />
-  }
-  return children(query.data)
+  return (
+    <>
+      {query.refreshFailure && (
+        <QueryFailure failure={query.refreshFailure} subject={subject} unavailable={unavailable} onRetry={onRetry} />
+      )}
+      {isEmpty(query.data) ? <AgentEmpty title={emptyTitle} description={emptyDescription} /> : children(query.data)}
+    </>
+  )
+}
+
+function QueryFailure({
+  failure,
+  subject,
+  unavailable,
+  onRetry,
+}: {
+  failure: PortalFailure
+  subject: string
+  unavailable: string
+  onRetry: () => void
+}) {
+  return (
+    <Alert variant="destructive" className="my-6">
+      <AlertTitle>{failureMessage(failure, subject, unavailable)}</AlertTitle>
+      {failure.retryable && (
+        <Button className="mt-3 w-fit" variant="outline" onClick={onRetry}>
+          Try again
+        </Button>
+      )}
+    </Alert>
+  )
 }
 
 function failureMessage(failure: PortalFailure, subject: string, unavailable: string) {

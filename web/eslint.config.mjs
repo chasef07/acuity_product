@@ -23,6 +23,16 @@ const transportBoundary = {
   ],
 };
 
+const dataBoundary = {
+  patterns: [
+    {
+      group: ["@tanstack/*"],
+      message:
+        "Only src/lib/data may import TanStack Query. Read through a hook from @/lib/clients/ or @/lib/data/ (see web/README.md).",
+    },
+  ],
+};
+
 const directiveComment =
   /^\s*(?:eslint-disable|eslint-enable|@ts-expect-error|@ts-ignore|@ts-nocheck|\/\s*<reference\s)/;
 
@@ -66,6 +76,12 @@ const eslintConfig = defineConfig([
     files: ["src/components/**", "src/app/**"],
     rules: {
       "@typescript-eslint/no-restricted-imports": ["error", transportBoundary],
+    },
+  },
+  {
+    ignores: ["src/lib/data/**"],
+    rules: {
+      "no-restricted-imports": ["error", dataBoundary],
     },
   },
   globalIgnores([

@@ -25,6 +25,7 @@ import type {
   AgentCallMessage,
 } from "@/lib/api/generated/types.gen"
 import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
+import { readFailure } from "@/lib/data/queries"
 import { formatClockTime, formatTimestamp } from "@/lib/format-time"
 import { formatUSPhone } from "@/lib/phone"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
@@ -190,12 +191,12 @@ function CallContent({
   const [reason, setReason] = useState<AgentCallIssueReason | null>(null)
   const [note, setNote] = useState("")
   const [saveError, setSaveError] = useState("")
+  const failure = readFailure(call)
   const detail =
-    call.status === "ready"
+    call.status === "ready" && !failure
       ? { ...call.data, issue: call.data.issue ?? flagged }
       : undefined
-  const error =
-    call.status === "failed" ? "This call could not be loaded. Try again." : ""
+  const error = failure ? "This call could not be loaded. Try again." : ""
 
   async function flagIssue() {
     if (!reason || saving) return

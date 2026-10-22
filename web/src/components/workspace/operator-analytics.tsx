@@ -78,12 +78,10 @@ const ranges: Array<{
 
 export function OperatorAnalytics({
   tab,
-  revision = 0,
   practiceID,
   locationScopeID,
 }: {
   tab: AnalyticsTab
-  revision?: number
   practiceID: string
   locationScopeID: string
 }) {
@@ -97,7 +95,6 @@ export function OperatorAnalytics({
   const breakdowns = tab === "breakdowns"
   const costView = tab === "cost"
   const reviewView = tab === "review"
-  const [requestVersion, setRequestVersion] = useState(0)
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
   const requestKey = `${practiceID}:${locationID}:${range}:${intent}:${outcome}:${judgeFlag}:${JSON.stringify(selection)}`
@@ -105,7 +102,6 @@ export function OperatorAnalytics({
     practiceID,
     locationID,
     range,
-    revision: revision + requestVersion,
     enabled: !costView && !reviewView,
     intent: breakdowns ? selection.intent : tab === "calls" && intent !== "all" ? intent : undefined,
     outcome: breakdowns ? selection.outcome : tab === "calls" && outcome !== "all" ? outcome : undefined,
@@ -117,10 +113,14 @@ export function OperatorAnalytics({
     practiceID,
     locationID,
     range,
-    revision: revision + requestVersion,
     enabled: breakdowns,
   })
   const nextPageState = currentRequest.nextPage
+
+  function retryAnalytics() {
+    currentRequest.retry()
+    if (breakdowns) flowRequest.retry()
+  }
 
   async function loadNextPage() {
     const page = await currentRequest.loadNextPage()
@@ -171,7 +171,7 @@ export function OperatorAnalytics({
           </div>
         {breakdowns && flowRequest.state !== "denied" && <section aria-label="Breakdowns" className="mb-5">
           {flowRequest.state === "loading" ? <Skeleton className="h-[640px] w-full rounded-xl" /> : (
-            <CallBreakdowns data={flowRequest.data?.summary.distributions} selection={selection} onSelection={setSelection} mode={flowMode} onMode={setFlowMode} onRetry={() => setRequestVersion((current) => current + 1)} />
+            <CallBreakdowns data={flowRequest.data?.summary.distributions} selection={selection} onSelection={setSelection} mode={flowMode} onMode={setFlowMode} onRetry={retryAnalytics} />
           )}
         </section>}
         {reviewView ? (
@@ -195,7 +195,14 @@ export function OperatorAnalytics({
               <AnalyticsFailure
                 title="Analytics temporarily unavailable"
                 description="No call evidence was reconstructed. Retry when the analytics service is available."
-                onRetry={() => setRequestVersion((current) => current + 1)}
+                onRetry={retryAnalytics}
+              />
+            )}
+            {currentRequest.state === "ready" && (currentRequest.refreshFailed || (breakdowns && flowRequest.refreshFailed)) && (
+              <AnalyticsFailure
+                title="Analytics could not refresh"
+                description="Showing the last loaded call evidence. Retry when the analytics service is available."
+                onRetry={retryAnalytics}
               />
             )}
             {currentRequest.state === "ready" && tab === "calls" && (
@@ -208,7 +215,7 @@ export function OperatorAnalytics({
               <AnalyticsReady
                 key={requestKey}
                 data={currentRequest.data}
-                onRetry={() => setRequestVersion((current) => current + 1)}
+                onRetry={retryAnalytics}
                 tab={tab}
                 range={range}
                 nextPageState={nextPageState}
