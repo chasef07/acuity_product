@@ -50,7 +50,12 @@ filters, ids, search); TypeScript rejects identity fields named like
 components as props: `useLiveRefresh` in the workspace invalidates the reads
 that a workspace version, task counts, or detail refresh affects, and the cache
 refetches them while keeping loaded pages on screen. A failed refresh keeps the
-data and reports `refreshFailure`; lost access hides the data.
+data and reports `refreshFailure`; lost access hides the data. While `usePages`
+gets `hold`, live updates and retries only mark the loaded pages `behind`, and
+releasing the hold refetches them. The conversation holds while the reader is
+scrolled away from the latest activity and shows `behind` as "New activity".
+`DataProvider` wraps only `/workspace` (`src/app/workspace/layout.tsx`), so
+marketing pages ship without TanStack Query.
 
 Code carries no comments. `pnpm lint` rejects them in TypeScript, JavaScript,
 and CSS, allowing only tool directives such as `eslint-disable`.

@@ -20,6 +20,7 @@ import { useLiveRefresh } from "../../lib/data/queries.ts"
 import type {
   AiInteractionDetail,
   ConversationTimelineItem,
+  ConversationTimelinePage,
   Message,
   Task,
 } from "../../lib/api/generated/types.gen.ts"
@@ -646,6 +647,92 @@ test("a refused send keeps its draft attempt and a sent Message reloads after it
   assert.equal(conversation.timelineRequests, 2, "the Sending Message reloads once its hold ends")
 })
 
+test("a live update while scrolled up keeps every loaded item and offers New activity", async (t) => {
+  const conversation = conversationHarness(t)
+  const task = projectedTask()
+  const entry = (id: string, day: number): ConversationTimelineItem => ({
+    type: "TASK", id, occurredAt: `2026-09-${String(day).padStart(2, "0")}T12:00:00Z`, taskActivity: "TASK_CREATED", task: { ...task, id, title: `Synthetic ${id}` },
+  })
+  let history = ["f", "e", "d", "c", "b", "a", "z", "y"].map((id, index) => entry(id, 16 - index))
+  conversation.timelinePage = (cursor) => {
+    const start = cursor ? history.findIndex((item) => item.id === cursor) + 1 : 0
+    const items = history.slice(start, start + 2)
+    return { items, nextCursor: start + 2 < history.length ? items.at(-1)!.id : "" }
+  }
+  const activity = () => conversation.host.querySelector('[aria-label="Conversation activity"]')?.textContent ?? ""
+  const button = (name: string) => Array.from(conversation.host.querySelectorAll("button")).find((element) => element.textContent?.trim() === name)
+  const viewport = () => conversation.host.querySelector<HTMLElement>('[data-testid="message-timeline"]')!
+  const scrollTo = (scrollTop: number) => act(async () => {
+    Object.defineProperties(viewport(), {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, value: scrollTop },
+    })
+    viewport().dispatchEvent(new window.Event("scroll"))
+  })
+  let release!: () => void
+  const gate = () => { conversation.timelineGate = new Promise<void>((resolve) => { release = resolve }) }
+  const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+
+  await conversation.render(0)
+  await waitFor(() => /Synthetic e/.test(activity()))
+  await act(async () => button("Earlier activity")!.click())
+  await waitFor(() => /Synthetic c/.test(activity()))
+
+  await scrollTo(0)
+  history = [entry("g", 17), ...history]
+  await conversation.render(1)
+  await waitFor(() => Boolean(button("New activity")))
+  for (const id of ["c", "d", "e", "f"]) assert.match(activity(), new RegExp(`Synthetic ${id}`), `loaded item ${id} stays while scrolled up`)
+  assert.doesNotMatch(activity(), /Synthetic g/)
+
+  await act(async () => button("Earlier activity")!.click())
+  await waitFor(() => /Synthetic a/.test(activity()))
+  assert.ok(button("New activity"), "loading earlier activity keeps the pending update")
+  assert.doesNotMatch(activity(), /Synthetic g/)
+
+  await scrollTo(800)
+  await waitFor(() => /Synthetic g/.test(activity()))
+  assert.equal(button("New activity"), undefined, "returning to the latest activity applies the update")
+
+  gate()
+  history = [entry("h", 18), ...history]
+  await conversation.render(2)
+  await scrollTo(0)
+  await waitFor(() => Boolean(button("New activity")))
+  await act(async () => release())
+  await settle()
+  assert.doesNotMatch(activity(), /Synthetic h/, "a refresh in flight when the reader scrolls up does not land")
+  assert.ok(button("New activity"))
+
+  conversation.timelineGate = undefined
+  await act(async () => button("New activity")!.click())
+  await waitFor(() => /Synthetic h/.test(activity()))
+  await scrollTo(0)
+  gate()
+  await act(async () => button("Earlier activity")!.click())
+  history = [entry("i", 19), ...history]
+  conversation.textTask = { ...task, version: 2 }
+  await conversation.render(3)
+  await act(async () => release())
+  await waitFor(() => /Synthetic a/.test(activity()))
+  assert.ok(button("New activity"), "a live update during loading earlier activity stays pending")
+  assert.doesNotMatch(activity(), /Synthetic i/)
+
+  conversation.timelineGate = undefined
+  conversation.timelineStatus = 503
+  const requests = conversation.timelineRequests
+  await act(async () => button("Earlier activity")!.click())
+  await waitFor(() => conversation.timelineRequests > requests && button("Earlier activity")?.disabled === false)
+  assert.ok(button("New activity"), "a failed earlier page keeps the pending update")
+  assert.doesNotMatch(activity(), /Synthetic z/)
+
+  conversation.timelineStatus = 200
+  await act(async () => button("New activity")!.click())
+  await waitFor(() => /Synthetic i/.test(activity()))
+  assert.equal(button("New activity"), undefined)
+})
+
 test("a sent Message does not reload its conversation after navigation", async (t) => {
   const conversation = conversationHarness(t)
   await conversation.render(0, { canMutate: true })
@@ -720,6 +807,7 @@ function conversationHarness(t: TestContext) {
     sends: [] as { idempotencyKey: string; destination?: string; body: string }[],
     sendStatus: 201,
     items: [] as ConversationTimelineItem[],
+    timelinePage: ((): ConversationTimelinePage => ({ items: conversation.items, nextCursor: "" })) as (cursor: string) => ConversationTimelinePage,
     opened: [] as string[],
   }
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
@@ -756,7 +844,7 @@ function conversationHarness(t: TestContext) {
     conversation.timelineRequests += 1
     await conversation.timelineGate
     return conversation.timelineStatus === 200
-      ? Response.json({ items: conversation.items, nextCursor: "" })
+      ? Response.json(conversation.timelinePage(new URL(url).searchParams.get("cursor") ?? ""))
       : Response.json(
           { code: "UNAVAILABLE" },
           { status: conversation.timelineStatus },

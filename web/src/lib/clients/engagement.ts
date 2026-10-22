@@ -27,14 +27,17 @@ type SentMessage = { item: ConversationTimelineItem; visibleUntil: number }
 export function useEngagementTimeline({
   practiceID,
   phone,
+  hold,
 }: {
   practiceID: string
   phone: string
+  hold: boolean
 }) {
   const timeline = usePages({
     live: "task-detail",
     name: "engagement-timeline",
     identity: { practiceID, phone },
+    hold,
     read: async (identity, cursor, transport) => {
       const requestedAt = Date.now()
       const result = await getEngagementTimeline({
@@ -79,6 +82,7 @@ export function useEngagementTimeline({
     nextCursor: loaded?.nextCursor ?? "",
     loading: timeline.status === "loading",
     refreshing: timeline.status === "ready" && timeline.refreshing,
+    behind: timeline.behind,
     loadingOlder: timeline.loadingMore,
     requestedAt,
     failure: readFailure(timeline),

@@ -7,6 +7,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
 } from "react"
@@ -365,6 +366,7 @@ function MessageConversation({
   onAIInteractionOpen?: (interactionID: string) => void
   onHistoryChange?: (history: NumberHistory) => void
 }) {
+  const [awayFromLatest, setAwayFromLatest] = useState(false)
   const {
     items,
     nextCursor: cursor,
@@ -374,14 +376,13 @@ function MessageConversation({
     failure,
     sent,
     requestedAt,
+    behind,
     refresh,
     showOlder,
     showSent,
-  } = useEngagementTimeline(timelineSource)
+  } = useEngagementTimeline({ ...timelineSource, hold: awayFromLatest })
   const error = failure ? "The conversation could not be loaded." : ""
-  const [newActivity, setNewActivity] = useState(false)
   const scroller = useRef<HTMLDivElement | null>(null)
-  const atLatest = useRef(true)
   const currentReviewTask = useRef(reviewTask)
   const reviewSeenAt = useRef(0)
   useEffect(() => { currentReviewTask.current = reviewTask }, [reviewTask])
@@ -401,7 +402,7 @@ function MessageConversation({
   }, [refresh, sentVisibleUntil])
 
   function loadLatest() {
-    atLatest.current = true
+    setAwayFromLatest(false)
     void refresh()
   }
 
@@ -411,20 +412,11 @@ function MessageConversation({
     if (seenReviewKey.current === reviewKey) return
     seenReviewKey.current = reviewKey
     reviewSeenAt.current = Date.now()
-    if (atLatest.current) {
-      void refresh()
-    } else {
-      setNewActivity(true)
-    }
+    void refresh()
   }, [refresh, reviewKey])
 
-  useEffect(() => {
-    if (!requestedAt) return
-    if (!atLatest.current) {
-      setNewActivity(true)
-      return
-    }
-    setNewActivity(false)
+  const showLatest = useEffectEvent((requestedAt: number) => {
+    if (awayFromLatest) return
     if (requestedAt >= reviewSeenAt.current) onTaskReviewed(currentReviewTask.current)
     window.requestAnimationFrame(() =>
       scroller.current?.scrollTo({
@@ -432,7 +424,10 @@ function MessageConversation({
         behavior: "smooth",
       }),
     )
-  }, [requestedAt, onTaskReviewed])
+  })
+  useEffect(() => {
+    if (requestedAt) showLatest(requestedAt)
+  }, [requestedAt])
 
   const conversationThread = items.find(
     (item) => item.message?.thread.locationId === locationID,
@@ -455,9 +450,10 @@ function MessageConversation({
             className="px-4 py-6 sm:px-6"
             onScroll={(event) => {
               const element = event.currentTarget
-              atLatest.current =
-                element.scrollHeight - element.scrollTop - element.clientHeight <
-                72
+              setAwayFromLatest(
+                element.scrollHeight - element.scrollTop - element.clientHeight >=
+                  72,
+              )
             }}
           >
             <MessageScrollerContent className="mx-auto max-w-2xl gap-2">
@@ -539,7 +535,7 @@ function MessageConversation({
               )}
             </MessageScrollerContent>
           </MessageScrollerViewport>
-          {newActivity ? (
+          {behind ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
               <Button
                 size="sm"
@@ -591,7 +587,7 @@ function MessageConversation({
                 : ""
         }
         onSent={(message) => {
-          atLatest.current = true
+          setAwayFromLatest(false)
           showSent(message)
         }}
       />

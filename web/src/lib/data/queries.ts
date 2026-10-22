@@ -1,11 +1,13 @@
 import {
   type InfiniteData,
   type QueryKey,
+  type QueryState,
+  hashKey,
   useInfiniteQuery,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query"
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import {
   type PortalFailure,
@@ -41,6 +43,7 @@ export type PortalQuery<T> =
 type PortalRead<T> = PortalQuery<T> & { retry: () => Promise<void> }
 
 type PortalPages<T, P> = PortalRead<T> & {
+  behind: boolean
   loadingMore: boolean
   moreFailure?: PortalFailure
   loadMore: () => Promise<P | undefined>
@@ -78,14 +81,17 @@ export function usePages<const I extends Identity, P extends { nextCursor: strin
   name,
   identity,
   enabled = true,
+  hold,
   read,
   combine,
 }: ReadOptions<I> & {
+  hold?: boolean
   read: (identity: I, cursor: string, transport: PortalTransport) => Promise<PortalResult<P>>
   combine: (pages: P[]) => T
 }): PortalPages<T, P> {
   const client = useQueryClient()
   const queryKey = [live ?? "manual", name, identity]
+  const queryHash = hashKey(queryKey)
   const select = useCallback((data: InfiniteData<P, string>) => combine(data.pages), [combine])
   const query = useInfiniteQuery({
     queryKey,
@@ -93,11 +99,36 @@ export function usePages<const I extends Identity, P extends { nextCursor: strin
       settle((transport) => read(identity, pageParam, transport), signal),
     initialPageParam: "",
     getNextPageParam: (page: P) => page.nextCursor || undefined,
-    enabled,
+    enabled: (cached) => enabled && !(hold && cached.state.data !== undefined),
+    ...(hold === undefined ? {} : { staleTime: Infinity }),
     select,
   })
-  const retry = useRetry(query.refetch, queryKey, enabled)
+  const refetch = useRetry(query.refetch, queryKey, enabled)
   const pages = () => client.getQueryData<InfiniteData<P, string>>(queryKey)?.pages
+  const holding = Boolean(hold) && query.data !== undefined
+  const [behindHash, setBehindHash] = useState<string>()
+  const behind = behindHash === queryHash
+  const markBehind = useCallback(async () => setBehindHash(queryHash), [queryHash])
+
+  useEffect(() => {
+    if (!holding) return
+    const cache = client.getQueryCache()
+    const held = cache.get(queryHash)
+    if (held && refreshInFlight(held.state)) void held.cancel({ revert: true }).then(markBehind)
+    return cache.subscribe((event) => {
+      if (event.type === "updated" && event.action.type === "invalidate" && event.query.queryHash === queryHash) {
+        void markBehind()
+      }
+    })
+  }, [client, holding, markBehind, queryHash])
+
+  useEffect(() => {
+    if (holding || !behind) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- releasing the hold ends this behind mark
+    setBehindHash(undefined)
+    if (refreshInFlight(client.getQueryCache().get(queryHash)?.state)) return
+    void client.invalidateQueries({ predicate: (cached) => cached.queryHash === queryHash })
+  }, [behind, client, holding, queryHash])
 
   async function loadMore() {
     if (query.isFetchingNextPage) return undefined
@@ -111,7 +142,8 @@ export function usePages<const I extends Identity, P extends { nextCursor: strin
 
   return {
     ...portalQuery(query, query.isFetching && !query.isFetchingNextPage, query.isRefetchError),
-    retry,
+    retry: holding ? markBehind : refetch,
+    behind: holding && behind,
     loadingMore: query.isFetchingNextPage,
     ...(query.isFetchNextPageError ? { moreFailure: failureOf(query.error) } : {}),
     loadMore,
@@ -162,6 +194,10 @@ function useRetry(refetch: () => Promise<unknown>, queryKey: QueryKey, enabled: 
     await client.cancelQueries({ queryKey: current.current.queryKey, exact: true })
     await refetch()
   }, [client, refetch])
+}
+
+function refreshInFlight(state: QueryState | undefined) {
+  return state?.fetchStatus === "fetching" && !state.fetchMeta?.fetchMore
 }
 
 class PortalReadError extends Error {
