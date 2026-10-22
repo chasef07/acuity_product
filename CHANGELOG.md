@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.46.1](https://github.com/chasef07/acuity_product/compare/v1.46.0...v1.46.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **calling:** fence softphone results by lease, Call, and leg identity ([#540](https://github.com/chasef07/acuity_product/issues/540)) ([261727d](https://github.com/chasef07/acuity_product/commit/261727d63b2af15471957a0a6df64767e104113e))
+* **calling:** keep a stopped softphone from touching media after a fenced takeover ([#541](https://github.com/chasef07/acuity_product/issues/541)) ([a163707](https://github.com/chasef07/acuity_product/commit/a163707593da0656f5aea4ae6cee2fa6216e2cba))
+
 ## [1.46.0](https://github.com/chasef07/acuity_product/compare/v1.45.1...v1.46.0) (2026-10-22)
 
 
