@@ -46,6 +46,10 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   ).toBeVisible()
   await expect(page.getByText("Data security + HIPAA safeguards")).toBeVisible()
 
+  await page.getByRole("banner").getByRole("link", { name: "Integrations", exact: true }).click()
+  await expect(page).toHaveURL(/\/integrations$/)
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Integrations and partners built around the systems your practice already uses.")
+
   await page.getByRole("link", { name: "Who We Are" }).first().click()
   await expect(page).toHaveURL(/\/who-we-are$/)
   await expect(
@@ -164,6 +168,8 @@ test("legacy SEO routes redirect only to equivalent current pages", async ({ req
     ["/about", "/who-we-are"],
     ["/advancedmd-ai-receptionist", "/integrations/advancedmd"],
     ["/partners/advancedmd", "/integrations/advancedmd"],
+    ["/partners", "/integrations"],
+    ["/partnerships", "/integrations"],
   ] as const
 
   for (const [source, destination] of redirects) {
@@ -269,9 +275,9 @@ test("public pages expose canonical metadata and browser identity assets", async
     {
       route: "/integrations",
       canonical: "https://acuityhealth.io/integrations",
-      title: "EHR, PMS & Insurance Eligibility Integrations | Acuity Health",
+      title: "Partnerships & EHR Integrations | Acuity Health",
       description:
-        "Connect patient access with your EHR, PMS, and insurance eligibility workflows through Acuity Health’s AdvancedMD and Stedi partnerships.",
+        "Acuity Health’s AI receptionist connects to AdvancedMD, is available on the ModMed SynapSYS Marketplace, checks insurance eligibility through Stedi, and runs on LiveKit voice AI.",
     },
     {
       route: "/integrations/stedi",
@@ -511,8 +517,10 @@ test("working-session form submits to Formspree and confirms in place", async ({
 
 test("integrations lead to Stedi eligibility details and the header contact link", async ({ page }) => {
   await page.goto("/integrations")
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Built around the systems your practice already uses.")
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Integrations and partners built around the systems your practice already uses.")
   await expect(page.getByRole("link", { name: "View Acuity on Stedi" })).toHaveAttribute("href", "https://www.stedi.com/platform-partners#acuity-health")
+  await expect(page.getByRole("link", { name: "View our ModMed SynapSYS Marketplace listing" })).toHaveAttribute("href", "https://modmed.my.site.com/synapsysmarketplace/s/partner-app/a9YUW000000jfGj2AI/data-buddies-solutions-llc")
+  await expect(page.getByRole("link", { name: "Read how Acuity Health transforms patient access with LiveKit" })).toHaveAttribute("href", "https://livekit.com/blog/how-acuity-health-transforms-patient-access-with-livekit-voice-agents")
   await page.getByRole("link", { name: "Explore insurance eligibility" }).click()
   await expect(page).toHaveURL(/\/integrations\/stedi$/)
   for (const name of ["Medical eligibility", "Vision eligibility", "Medicare eligibility"]) {

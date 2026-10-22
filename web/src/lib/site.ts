@@ -29,6 +29,8 @@ export const siteStructuredData = {
       sameAs: [
         "https://www.linkedin.com/company/acuityhealth/",
         "https://www.advancedmd.com/integrations/marketplace/acuity-health/",
+        "https://www.stedi.com/platform-partners#acuity-health",
+        "https://modmed.my.site.com/synapsysmarketplace/s/partner-app/a9YUW000000jfGj2AI/data-buddies-solutions-llc",
       ],
       logo: {
         "@type": "ImageObject",
