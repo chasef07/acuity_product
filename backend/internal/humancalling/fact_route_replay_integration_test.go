@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,6 +142,37 @@ func (replay receiptReplay) requireSettledOnFirstAttempt(t *testing.T, want map[
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func (replay receiptReplay) receiptOutcome(t *testing.T, eventID string) (string, int) {
+	t.Helper()
+	var outcome string
+	var attempts int
+	if err := replay.db.Owner.QueryRow(context.Background(), `
+		SELECT state || '/' || COALESCE(projection_error_code, ''), projection_attempts
+		FROM human_calling_provider_receipts WHERE event_id = $1
+	`, eventID).Scan(&outcome, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	return outcome, attempts
+}
+
+func withClientStateKind(t *testing.T, clientState string, kind string) string {
+	t.Helper()
+	decoded, err := base64.StdEncoding.DecodeString(clientState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(decoded, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["kind"] = kind
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(encoded)
 }
 
 func (replay receiptReplay) callState(t *testing.T) string {
@@ -426,34 +458,132 @@ func TestReceiptReplayDelayedStaffHangupBeforeLocalEndingApplies(t *testing.T) {
 }
 
 func TestReceiptReplayInboundStaffHangupDuringBridgeSettles(t *testing.T) {
-	call := answerInboundReplay(t, "replay-unrouted")
+	for _, kind := range []string{"staff_hangup", "cleanup_retry", "late_dial_cleanup", "transfer_terminal_cleanup"} {
+		t.Run(kind, func(t *testing.T) {
+			prefix := "replay-unrouted-" + strings.ReplaceAll(kind, "_", "-")
+			call := answerInboundReplay(t, prefix)
+			call.deliver(t, call.fact(call.staffLeg, "staff", humancalling.FactCallAnswered, 3000))
+			call.settle(t)
+			*call.current = call.now.Add(4 * time.Second)
+			call.requestHangup(t)
+			processAllCommands(t, call.worker)
+			hangups := call.clientStates(humancalling.CommandHangupLeg)
+			staff, caller := call.staffLeg, call.callerLeg
+			staff.ClientState = withClientStateKind(t, hangups[call.staffLeg.CallControlID], kind)
+			caller.ClientState = hangups[call.callerLeg.CallControlID]
+			ringWindowEnded := call.fact(caller, "ring-window", humancalling.FactPlaybackEnded, 4300)
+			ringWindowEnded.PlaybackStatus = "call_hangup"
+			call.deliver(t,
+				call.fact(staff, "staff", humancalling.FactCallBridged, 4200),
+				call.fact(caller, "caller", humancalling.FactCallBridged, 4200),
+				ringWindowEnded,
+				call.fact(staff, "staff", humancalling.FactCallHangup, 4400),
+				call.fact(caller, "caller", humancalling.FactCallHangup, 4400),
+			)
+			call.settle(t)
+
+			obsolete := "FAILED/TERMINAL_OR_OBSOLETE_PROVIDER_FACT"
+			call.requireSettledOnFirstAttempt(t, map[string]string{
+				prefix + "-staff-call.bridged":              obsolete,
+				prefix + "-caller-call.bridged":             obsolete,
+				prefix + "-ring-window-call.playback.ended": obsolete,
+			})
+			if state := call.callState(t); state != "MISSED" {
+				t.Fatalf("Call state = %s, want MISSED", state)
+			}
+		})
+	}
+}
+
+func TestReceiptReplayUnrecognizedKindWaitsForNewerWorker(t *testing.T) {
+	call := answerInboundReplay(t, "replay-newer-kind")
 	call.deliver(t, call.fact(call.staffLeg, "staff", humancalling.FactCallAnswered, 3000))
 	call.settle(t)
-	*call.current = call.now.Add(4 * time.Second)
-	call.requestHangup(t)
-	processAllCommands(t, call.worker)
-	hangups := call.clientStates(humancalling.CommandHangupLeg)
-	staff, caller := call.staffLeg, call.callerLeg
-	staff.ClientState, caller.ClientState = hangups[call.staffLeg.CallControlID], hangups[call.callerLeg.CallControlID]
-	ringWindowEnded := call.fact(caller, "ring-window", humancalling.FactPlaybackEnded, 4300)
-	ringWindowEnded.PlaybackStatus = "call_hangup"
+	bridgedStaff := call.staffLeg
+	bridgedStaff.ClientState = withClientStateKind(t,
+		call.clientStates(humancalling.CommandBridge)[call.staffLeg.CallControlID], "bridge_from_a_newer_release")
 	call.deliver(t,
-		call.fact(staff, "staff", humancalling.FactCallBridged, 4200),
-		call.fact(caller, "caller", humancalling.FactCallBridged, 4200),
-		ringWindowEnded,
-		call.fact(staff, "staff", humancalling.FactCallHangup, 4400),
-		call.fact(caller, "caller", humancalling.FactCallHangup, 4400),
+		call.fact(call.callerLeg, "caller", humancalling.FactCallBridged, 4000),
+		call.fact(bridgedStaff, "staff", humancalling.FactCallBridged, 4000),
+	)
+	call.settle(t)
+	waiting, attempts := call.receiptOutcome(t, "replay-newer-kind-staff-call.bridged")
+	if waiting != "PENDING/WAITING_FOR_RELATED_FACT_SLOW_RETRY" {
+		t.Fatalf("unrecognized kind receipt = %s after %d attempts, want a slow related-fact wait", waiting, attempts)
+	}
+	before := call.callState(t)
+
+	humancalling.RouteClientStateKindLike(t, "bridge_from_a_newer_release", "bridge")
+	*call.current = call.current.Add(time.Hour)
+	call.settle(t)
+
+	if outcome, _ := call.receiptOutcome(t, "replay-newer-kind-staff-call.bridged"); outcome != "APPLIED/" {
+		t.Fatalf("receipt once its kind is routed = %s, want APPLIED", outcome)
+	}
+	if after := call.callState(t); before == after || after != "CONNECTED" {
+		t.Fatalf("Call state = %s while waiting, %s once routed; want CONNECTED only once routed", before, after)
+	}
+}
+
+func TestReceiptReplayOutboundRecordingErrorApplies(t *testing.T) {
+	call := dialOutboundReplay(t, "replay-recording-error")
+	call.deliver(t, call.fact(call.destinationLeg, "destination", humancalling.FactCallAnswered, 3800))
+	bridgedDestination, bridgedStaff := call.destinationLeg, call.staffLeg
+	bridgedDestination.ClientState, bridgedStaff.ClientState = "", ""
+	call.deliver(t,
+		call.fact(bridgedDestination, "destination", humancalling.FactCallBridged, 4000),
+		call.fact(bridgedStaff, "staff", humancalling.FactCallBridged, 4000),
 	)
 	call.settle(t)
 
-	obsolete := "FAILED/TERMINAL_OR_OBSOLETE_PROVIDER_FACT"
-	call.requireSettledOnFirstAttempt(t, map[string]string{
-		"replay-unrouted-staff-call.bridged":              obsolete,
-		"replay-unrouted-caller-call.bridged":             obsolete,
-		"replay-unrouted-ring-window-call.playback.ended": obsolete,
+	call.deliver(t, call.fact(call.ringtone, "staff", humancalling.FactRecordingError, 5000))
+	call.settle(t)
+
+	call.requireSettledOnFirstAttempt(t, nil)
+	read, err := call.portal.ReadCall(context.Background(), call.staff[0], call.callID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Recording.AudioState != humancalling.RecordingUnavailable {
+		t.Fatalf("recording = %s after outbound recording error, want UNAVAILABLE", read.Recording.AudioState)
+	}
+}
+
+func TestStaleLegReconcilerSkipsObsoleteObservation(t *testing.T) {
+	call := dialOutboundReplay(t, "replay-stale-obsolete")
+	staff, _ := call.hangUp(t, 6000)
+	if _, err := call.db.Owner.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE provider_call_control_id = $1
+	`, call.staffLeg.CallControlID, call.current.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	lateRingtone := call.fact(staff, "late-ringtone", humancalling.FactPlaybackStarted, 6500)
+	call.provider.mu.Lock()
+	call.provider.observations = append(call.provider.observations, humancalling.ProviderCallObservation{
+		Active: true, CallControlID: staff.CallControlID, CallLegID: staff.CallLegID,
+		CallSessionID: staff.CallSessionID, Events: []humancalling.ProviderFact{lateRingtone},
 	})
-	if state := call.callState(t); state != "MISSED" {
-		t.Fatalf("Call state = %s, want MISSED", state)
+	call.provider.mu.Unlock()
+
+	if reconciled, err := call.worker.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile stale Staff leg = %t, %v", reconciled, err)
+	}
+
+	var legState, legCode string
+	var quarantined int
+	if err := call.db.Owner.QueryRow(context.Background(), `
+		SELECT leg.state, COALESCE(leg.error_code, ''),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = leg.call_id
+					AND timeline.kind = 'call_leg.reconciliation_quarantined')
+		FROM human_calling_call_legs leg
+		WHERE leg.provider_call_control_id = $1
+	`, call.staffLeg.CallControlID).Scan(&legState, &legCode, &quarantined); err != nil {
+		t.Fatal(err)
+	}
+	if legState != "ENDING" || legCode != "" || quarantined != 0 {
+		t.Fatalf("stale Staff leg after an obsolete observation = %s/%s quarantined:%d; want ENDING without quarantine",
+			legState, legCode, quarantined)
 	}
 }
 

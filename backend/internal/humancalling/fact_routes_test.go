@@ -1,6 +1,7 @@
 package humancalling
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -46,6 +47,22 @@ func TestUnknownClientStateKindParsesAsUnrecognized(t *testing.T) {
 		"OPERATOR", kindDial,
 	)); ok {
 		t.Fatal("client state with an unknown role parsed")
+	}
+}
+
+func TestUnrecognizedKindWaitsForANewerWorker(t *testing.T) {
+	for _, fact := range providerFactTypes {
+		if fact == FactCallHangup {
+			continue
+		}
+		for _, role := range callLegRoles {
+			state := callLegClientState{Role: role, Kind: kindUnrecognized}
+			verdict, err := providerFactRoutes[factRoute{fact: fact, role: role, kind: kindUnrecognized}](
+				nil, context.Background(), ProviderFact{Type: fact}, state)
+			if err != nil || verdict != factWaiting {
+				t.Errorf("%s for %s with an unrecognized kind = %q, %v; want %q", fact, role, verdict, err, factWaiting)
+			}
+		}
 	}
 }
 
