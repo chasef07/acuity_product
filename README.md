@@ -376,3 +376,30 @@ deploy/              Runtime contracts, release automation, and operational cont
 Before changing behavior, read the relevant issue with all its comments.
 GitHub Issues own committed product work. Use synthetic, PHI-free data
 in tests and evidence, and state what remains unverified when handing off work.
+
+### Rules and the checks that enforce them
+
+Each enforced rule fails the named check; read its failure message for the fix.
+
+| Rule | Enforced by |
+| --- | --- |
+| Call legs only move forward; call outcomes only take listed upgrades | [0105 triggers](backend/internal/migrations/sql/0105_call_transition_guard.sql) raise `HC001`/`HC002`; [`testdb`](backend/internal/testdb/testdb.go) fails any test that receives an `HC00` warning |
+| Never set `human_calling_calls.version` or send the calling NOTIFY by hand | [0106 triggers](backend/internal/migrations/sql/0106_call_version_trigger.sql); [`call_version_test.go`](backend/internal/architecture/call_version_test.go) |
+| Call state comes only from the `human_calling_call_states` view | [`call_state_test.go`](backend/internal/architecture/call_state_test.go) |
+| The published `CallState` schema matches the Go constants | `TestCallStateMatchesPublishedSchema` in [`call_state_test.go`](backend/internal/architecture/call_state_test.go) |
+| Integration tests run module SQL as its runtime role | `testdb.Open` runtime-role pools; owner-run baseline in [`testdb_test.go`](backend/internal/architecture/testdb_test.go) |
+| Modules import only across allowed boundaries | [`imports_test.go`](backend/internal/architecture/imports_test.go) |
+| Each SQL table has one owning module | [`tables_test.go`](backend/internal/architecture/tables_test.go) |
+| Migrations bound locks and build indexes concurrently | [`migrations_test.go`](backend/internal/architecture/migrations_test.go) |
+| Go, TypeScript, JavaScript, and CSS carry no comments | [`comments_test.go`](backend/internal/architecture/comments_test.go); `acuity/no-comments` in [`eslint.config.mjs`](web/eslint.config.mjs) and [`check-comments.mjs`](web/scripts/check-comments.mjs), both in `pnpm lint` |
+| Components and app routes never import transport or generated client values; only `src/lib/data` imports TanStack Query | ESLint import bans in [`eslint.config.mjs`](web/eslint.config.mjs) |
+| A read's identity never carries `revision`, `version`, `*Hint`, or `*Generation` | `tsc`, via the identity type in [`queries.ts`](web/src/lib/data/queries.ts) |
+| No unused files, exports, or dependencies | knip ([`knip.json`](web/knip.json)) in `pnpm lint` |
+| Generated contracts match `api/openapi.yaml` | `contracts` job in [`verify.yml`](.github/workflows/verify.yml) |
+| `main` only takes green PRs | Not enforced: branch protection on `main` is off (owner setting) |
+
+Two rules have no check and are judgment calls:
+
+- Tests assert user-visible behavior, not internal classes or request counts.
+- Before changing provider (Telnyx) behavior, add a test that replays a
+  recorded receipt.
