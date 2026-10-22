@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.46.0](https://github.com/chasef07/acuity_product/compare/v1.45.1...v1.46.0) (2026-10-22)
+
+
+### Features
+
+* **marketing:** add LiveKit and ModMed partners and tighten integrations SEO ([#518](https://github.com/chasef07/acuity_product/issues/518)) ([43c99b5](https://github.com/chasef07/acuity_product/commit/43c99b559e80b370baefbc5fdf810a303fc00e6d))
+* **web:** one vocabulary for generated enum labels, formatters, and portal failures ([#538](https://github.com/chasef07/acuity_product/issues/538)) ([1ba01c4](https://github.com/chasef07/acuity_product/commit/1ba01c478ee1a50d38b561409c1397337790f7e4))
+
+
+### Bug Fixes
+
+* **calling:** close client-state types, keep historical bridges to their Call, and quarantine outbound Calls ([#539](https://github.com/chasef07/acuity_product/issues/539)) ([3affc15](https://github.com/chasef07/acuity_product/commit/3affc153e0342dc7f182c7502c3cd64fc73e01dc))
+
 ## [1.45.1](https://github.com/chasef07/acuity_product/compare/v1.45.0...v1.45.1) (2026-10-22)
 
 
