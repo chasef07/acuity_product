@@ -32,7 +32,16 @@ import {
 } from "@/lib/clients/calls"
 import { completeTask, readTask, renameTask, reopenTask } from "@/lib/clients/tasks"
 import { formatTimestamp } from "@/lib/format-time"
-import { formatUSPhone } from "@/lib/phone"
+import {
+  callDirectionLabels,
+  callEntryPointLabels,
+  callStateLabels,
+  formatClock,
+  formatPhone,
+  taskGroupLabel,
+  taskOriginLabels,
+  taskUrgencyLabels,
+} from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 import {
@@ -278,7 +287,7 @@ function TaskWorkspace({
       {(task.urgency === "high_priority" || !canMutate) && (
         <div className="mt-3 flex flex-wrap gap-2">
           {task.urgency === "high_priority" && (
-            <Badge variant="destructive">High priority</Badge>
+            <Badge variant="destructive">{taskUrgencyLabels.high_priority}</Badge>
           )}
           {!canMutate && <Badge variant="outline">Read only</Badge>}
         </div>
@@ -382,11 +391,11 @@ function TaskWorkspace({
 function TaskSourceDetails({ task }: { task: Task }) {
   return (
     <>
-      <Metadata label="Source" value={taskSourceLabel(task)} />
+      <Metadata label="Source" value={taskOriginLabels[task.origin]} />
       {task.category && (
-        <Metadata label="Category" value={formatCategory(task.category)} />
+        <Metadata label="Category" value={taskGroupLabel(task.category)} />
       )}
-      <Metadata label="Urgency" value={formatUrgency(task.urgency)} />
+      <Metadata label="Urgency" value={taskUrgencyLabels[task.urgency]} />
       {task.callerName && (
         <Metadata label="Sourced name" value={task.callerName} />
       )}
@@ -430,7 +439,7 @@ function RecoveryTaskSource({
           <ul className="mt-2 space-y-1 pl-4">
             {otherInteractions.map((interaction) => (
               <li key={interaction.callId}>
-                {interaction.type === "VOICEMAIL" ? "Voicemail" : "Missed call"}
+                {callStateLabels[interaction.type === "VOICEMAIL" ? "VOICEMAIL" : "MISSED"]}
                 {" · "}
                 {formatTimestamp(interaction.occurredAt)}
               </li>
@@ -564,7 +573,7 @@ function RecordingSource({
           <h2 className="text-sm font-semibold">{presentation.title}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {stateLabel}
-            {durationSeconds > 0 && ` · ${formatDuration(durationSeconds)}`}
+            {durationSeconds > 0 && ` · ${formatClock(durationSeconds)}`}
           </p>
         </div>
         {audioState === "READY" && !audioURL && (
@@ -601,40 +610,6 @@ function actorLabel(actor: Task["createdBy"]) {
   return actor.kind === "SERVICE" ? "Abita AI" : actor.subject
 }
 
-function formatCategory(category: NonNullable<Task["category"]>) {
-  return category.charAt(0).toUpperCase() + category.slice(1)
-}
-
-function formatUrgency(urgency: Task["urgency"]) {
-  switch (urgency) {
-    case "high_priority":
-      return "High priority"
-    case "non_urgent":
-      return "Non-urgent"
-    default:
-      return "Normal"
-  }
-}
-
-function taskSourceLabel(task: Task) {
-  switch (task.origin) {
-    case "ABITA_AI":
-      return "Created by AI"
-    case "APPOINTMENT_REVIEW":
-      return "Appointment verification"
-    case "INBOUND_MESSAGE_REVIEW":
-      return "Incoming text"
-    case "STAFF_MESSAGE_FOLLOW_UP":
-      return "Message follow-up"
-    case "VOICEMAIL_RECOVERY":
-      return "Voicemail follow-up"
-    case "MISSED_CALL_RECOVERY":
-      return "Missed-call follow-up"
-    default:
-      return "Call follow-up"
-  }
-}
-
 function CallWorkspace({
   call,
   returnTask,
@@ -646,7 +621,7 @@ function CallWorkspace({
   onReturnToTask: (() => void) | undefined
   onOpenRecoveryTask: (taskID: string) => void
 }) {
-  const formattedPhone = formatUSPhone(call.phone)
+  const formattedPhone = formatPhone(call.phone)
   const contactName =
     call.displayName &&
     call.displayName !== call.phone &&
@@ -665,7 +640,7 @@ function CallWorkspace({
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="px-5 py-5 pr-12">
         <h2 className="text-base font-medium leading-snug">
-          {callContextTitle(call.state)}
+          {callStateLabels[call.state]}
         </h2>
         {contactName && <p className="mt-3 font-medium">{contactName}</p>}
         <p className="mt-1 text-sm tabular-nums text-muted-foreground">
@@ -691,8 +666,8 @@ function CallWorkspace({
       <details className="group border-t px-5 py-4">
         <summary className="cursor-pointer text-sm font-medium">Details</summary>
         <div className="mt-3 flex flex-col gap-3">
-          <Metadata label="Direction" value={formatDirection(call.direction)} />
-          <Metadata label="Started from" value={formatEntryPoint(call.entryPoint)} />
+          <Metadata label="Direction" value={callDirectionLabels[call.direction]} />
+          <Metadata label="Started from" value={callEntryPointLabels[call.entryPoint]} />
           {call.connectedAt && (
             <Metadata label="Connected" value={formatTimestamp(call.connectedAt)} />
           )}
@@ -711,55 +686,6 @@ function Metadata({ label, value }: { label: string; value: string }) {
       <span className="mt-1 block truncate text-foreground">{value}</span>
     </div>
   )
-}
-
-function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60)
-  const remainder = seconds % 60
-  return `${minutes}:${String(remainder).padStart(2, "0")}`
-}
-
-function callContextTitle(state: CallingCall["state"]) {
-  switch (state) {
-    case "PREPARING":
-      return "Preparing call"
-    case "RINGING":
-      return "Calling"
-    case "CONNECTING":
-      return "Connecting"
-    case "CONNECTED":
-      return "Call connected"
-    case "VOICEMAIL_GREETING":
-    case "VOICEMAIL_RECORDING":
-      return "Leaving voicemail"
-    case "UNANSWERED":
-      return "Unanswered call"
-    case "VOICEMAIL":
-      return "Voicemail"
-    case "MISSED":
-      return "Missed call"
-    case "NEEDS_DISPOSITION":
-      return "Call ended"
-    case "FOLLOW_UP_REQUIRED":
-      return "Follow-up required"
-    default:
-      return "Call resolved"
-  }
-}
-
-function formatDirection(direction: CallingCall["direction"]) {
-  return direction === "INBOUND" ? "Inbound call" : "Outbound call"
-}
-
-function formatEntryPoint(entryPoint: CallingCall["entryPoint"]) {
-  switch (entryPoint) {
-    case "AI_HANDOFF":
-      return "AI handoff"
-    case "TASK":
-      return "Task"
-    default:
-      return "Phone number"
-  }
 }
 
 export function TaskCallAction({ task, canCall, pending, onCall }: {

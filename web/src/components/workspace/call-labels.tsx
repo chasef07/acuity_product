@@ -1,29 +1,7 @@
 import type { CallIntent, CallOutcome, CallLabelingStatus } from "@/lib/api/generated/types.gen"
 import { Badge } from "@/components/ui/badge"
+import { intentLabels, labelOptions, outcomeLabels } from "@/lib/vocabulary"
 import { OptionSelect } from "./manage-agent-page"
-
-export const intentLabels: Record<CallIntent, string> = {
-  new_patient_booking: "New patient booking",
-  existing_patient_booking: "Existing patient booking",
-  reschedule_appointment: "Reschedule appointment",
-  cancel_appointment: "Cancel appointment",
-  appointment_information: "Appointment confirmation/details",
-  office_information: "Office information",
-  insurance_question: "Insurance question",
-  billing_question: "Billing question",
-  prescription_or_refill: "Prescription/refill",
-  records_or_forms: "Records/forms",
-  glasses_or_contacts: "Glasses/contact lenses",
-  returning_call: "Returning a missed call",
-  speak_to_staff: "Speak to staff",
-  other: "Other",
-}
-
-export const outcomeLabels: Record<CallOutcome, string> = {
-  resolved: "Resolved",
-  transferred: "Transferred",
-  abandoned: "Abandoned",
-}
 
 type Labels = {
   intent?: CallIntent
@@ -35,11 +13,11 @@ export type OutcomeFilter = CallOutcome | "all"
 
 const intents: { value: IntentFilter; label: string }[] = [
   { value: "all", label: "All intents" },
-  ...Object.entries(intentLabels).map(([value, label]) => ({ value: value as CallIntent, label })),
+  ...labelOptions(intentLabels),
 ]
 const outcomes: { value: OutcomeFilter; label: string }[] = [
   { value: "all", label: "All outcomes" },
-  ...Object.entries(outcomeLabels).map(([value, label]) => ({ value: value as CallOutcome, label })),
+  ...labelOptions(outcomeLabels),
 ]
 
 export function CallLabelFilters({ intent, outcome, onIntent, onOutcome }: {

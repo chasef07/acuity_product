@@ -68,9 +68,14 @@ import { ReviewFolder } from "./review-folder"
 import { AnalyticsNavigation, commandCenterPages, practiceAnalyticsPages, type CommandCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { Task, TaskFolderCounts } from "@/lib/api/generated/types.gen"
-import { formatUSPhone } from "@/lib/phone"
+import {
+  formatPhone,
+  formatRelativeTime,
+  taskFilterLabels,
+  taskGroups,
+  taskUrgencyLabels,
+} from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
-import { taskGroups } from "@/lib/task-groups"
 import {
   isWorkView,
   type ManageAgentPage,
@@ -81,6 +86,7 @@ import {
 import {
   taskCountForCategory,
   type TaskCategoryFilter,
+  type TaskResponsibility,
 } from "@/lib/workspace-triage"
 
 export const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
@@ -90,20 +96,10 @@ export const manageAgentPages: Array<{ value: ManageAgentPage; label: string; ic
   { value: "insurance", label: "Insurance list", icon: ShieldCheckIcon },
 ]
 
-const taskFilterLabels: Partial<Record<TaskCategoryFilter, string>> = {
-  appointments: "Scheduling follow-up",
-  documentation: "Medical records",
-  medication: "Clinical & pharmacy",
-  insurance: "Insurance",
-  optical: "Optical",
-}
 const taskCategoryOptions: Array<{ value: TaskCategoryFilter; label: string }> =
   [
     { value: "all", label: "All categories" },
-    ...taskGroups.map((group) => ({
-      ...group,
-      label: taskFilterLabels[group.value] ?? group.label,
-    })),
+    ...taskGroups.map(({ value }) => ({ value, label: taskFilterLabels[value] })),
   ]
 
 type WorkspaceRailProps = {
@@ -630,8 +626,8 @@ function TaskResponsibilityToggle({
   responsibility,
   onChange,
 }: {
-  responsibility: "mine" | "all"
-  onChange: (value: "mine" | "all") => void
+  responsibility: TaskResponsibility
+  onChange: (value: TaskResponsibility) => void
 }) {
   return (
     <ToggleGroup
@@ -663,7 +659,7 @@ function TaskCategoryMenu({
   onCategoryChange,
 }: {
   category: TaskCategoryFilter
-  responsibility: "mine" | "all"
+  responsibility: TaskResponsibility
   counts: TaskFolderCounts
   onCategoryChange: (value: TaskCategoryFilter) => void
 }) {
@@ -682,7 +678,7 @@ function TaskCategoryMenu({
           <Button
             variant="ghost"
             size="sm"
-            aria-label={`Filter ${viewLabel}${category === "all" ? "" : ` · ${taskCategoryLabel(category)}`}`}
+            aria-label={`Filter ${viewLabel}${category === "all" ? "" : ` · ${taskFilterLabels[category]}`}`}
             title="Filter by type"
             className={cn("size-8 shrink-0 p-0 text-muted-foreground", category !== "all" && "text-foreground")}
           />
@@ -725,7 +721,7 @@ function TaskCategoryChip({
   onClear: () => void
 }) {
   if (category === "all") return null
-  const label = taskCategoryLabel(category)
+  const label = taskFilterLabels[category]
   return (
     <SidebarMenuItem className="px-1 pb-1">
       <span className="inline-flex h-6 items-center gap-1 rounded-full bg-sidebar-accent pr-1 pl-2.5 text-xs text-sidebar-foreground">
@@ -740,14 +736,6 @@ function TaskCategoryChip({
         </button>
       </span>
     </SidebarMenuItem>
-  )
-}
-
-function taskCategoryLabel(category: TaskCategoryFilter) {
-  return (
-    taskFilterLabels[category] ??
-    taskCategoryOptions.find((option) => option.value === category)?.label ??
-    "All types"
   )
 }
 
@@ -770,7 +758,7 @@ function TaskRow({
 }) {
   const textReview = task.origin === "INBOUND_MESSAGE_REVIEW"
   const rowTitle = textReview
-    ? (task.callerName ?? formatUSPhone(task.phone))
+    ? (task.callerName ?? formatPhone(task.phone))
     : task.title
   const groupCount = task.groupMembers?.length ?? 0
   const grouped = groupCount > 1
@@ -787,7 +775,7 @@ function TaskRow({
         title={textReview && task.preview ? task.preview : task.title}
         phone={task.phone}
         office={task.locationName}
-        meta={`${taskUrgencyLabel(task.urgency)} · Updated ${relativeTime(taskRelativeAt(task))}`}
+        meta={`${taskUrgencyLabels[task.urgency]} · Updated ${formatRelativeTime(taskRelativeAt(task))}`}
       >
         <SidebarMenuButton
           aria-label={
@@ -823,7 +811,7 @@ function TaskRow({
           className={`absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
           dateTime={taskRelativeAt(task)}
         >
-          {relativeTime(taskRelativeAt(task))}
+          {formatRelativeTime(taskRelativeAt(task))}
         </time>
         {task.state === "OPEN" &&
           task.origin !== "APPOINTMENT_REVIEW" &&
@@ -905,7 +893,7 @@ function RailHoverDetails({
           <HoverDetail
             icon={<PhoneIcon />}
             label="Phone"
-            value={formatUSPhone(phone)}
+            value={formatPhone(phone)}
             tabular
           />
           <HoverDetail icon={<Building2Icon />} label="Office" value={office} />
@@ -988,27 +976,6 @@ function RailShowMore({
       </button>
     </SidebarMenuItem>
   )
-}
-
-function relativeTime(value: string) {
-  const elapsed = Date.now() - new Date(value).getTime()
-  const minutes = Math.max(0, Math.floor(elapsed / 60_000))
-  if (minutes < 1) return "now"
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-  return `${Math.floor(hours / 24)}d`
-}
-
-function taskUrgencyLabel(urgency: Task["urgency"]) {
-  switch (urgency) {
-    case "high_priority":
-      return "High priority"
-    case "non_urgent":
-      return "Non-urgent"
-    default:
-      return "Normal priority"
-  }
 }
 
 function taskRelativeAt(task: Task) {

@@ -1,6 +1,7 @@
-import type { ConversationTimelineItem, Task } from "@/lib/api/generated/types.gen"
-import { appointmentOutcomeTitle } from "./ai-interactions.ts"
+import type { CallState, ConversationTimelineItem, Task } from "@/lib/api/generated/types.gen"
+import { isSettledCallState } from "./calling/call-state.ts"
 import { sameLocalDay } from "./format-time.ts"
+import { appointmentOutcomeTitles, callDirectionLabels, callStateLabels } from "./vocabulary.ts"
 import { newestFirst, oldestFirst } from "./workspace-ordering.ts"
 
 export function presentTimeline(items: ConversationTimelineItem[]) {
@@ -20,7 +21,7 @@ export function callHistoryPresentation(item: ConversationTimelineItem) {
   const details: string[] = []
   for (const interaction of ai) {
     if (interaction.appointmentOutcome !== "INDETERMINATE") {
-      details.push(appointmentOutcomeTitle(interaction.appointmentOutcome))
+      details.push(appointmentOutcomeTitles[interaction.appointmentOutcome])
     } else if (interaction.status === "COMPLETED") {
       details.push("No appointment action recorded")
     }
@@ -34,52 +35,25 @@ export function callHistoryPresentation(item: ConversationTimelineItem) {
     const inbound = call.direction === "INBOUND"
     switch (call.outcome) {
       case "CONNECTED":
-        details.push(inbound ? "Connected to staff" : "Connected")
+        details.push(inbound ? "Connected to staff" : callStateLabels.CONNECTED)
         break
       case "NEEDS_DISPOSITION":
-        details.push("Connected · Outcome needed")
-        break
-      case "RESOLVED":
-        details.push("Resolved on call")
-        break
-      case "FOLLOW_UP_REQUIRED":
-        details.push("Follow-up needed")
-        break
-      case "VOICEMAIL":
-        details.push("Voicemail received")
+        details.push(`${callStateLabels.CONNECTED} · ${callStateLabels.NEEDS_DISPOSITION}`)
         break
       case "MISSED":
       case "UNANSWERED":
         details.push(
           ai.length && inbound
             ? "Staff not reached"
-            : inbound ? "Missed call" : "No answer",
+            : callStateLabels[inbound ? "MISSED" : "UNANSWERED"],
         )
         break
-      case "RINGING":
-        details.push("Ringing")
-        break
-      case "CONNECTING":
-        details.push("Connecting")
-        break
-      case "PREPARING":
-        details.push("Preparing call")
-        break
-      case "VOICEMAIL_GREETING":
-        details.push("Playing voicemail greeting")
-        break
-      case "VOICEMAIL_RECORDING":
-        details.push("Recording voicemail")
-        break
       default:
-        call.outcome satisfies never
-        details.push("Call outcome unknown")
+        details.push(callStateLabels[call.outcome] ?? "Call outcome unknown")
     }
   }
   return {
-    title: ai.length
-      ? "AI call"
-      : calls[0]?.direction === "OUTBOUND" ? "Outbound call" : "Inbound call",
+    title: ai.length ? "AI call" : callDirectionLabels[calls[0]?.direction ?? "INBOUND"],
     details: [...new Set([
       ...details,
       ...ai.map((value) => value.locationName),
@@ -89,20 +63,14 @@ export function callHistoryPresentation(item: ConversationTimelineItem) {
   }
 }
 
+const noticeOutcomes: Partial<Record<CallState, CallState>> = {
+  NEEDS_DISPOSITION: "CONNECTED",
+  MISSED: "UNANSWERED",
+}
+
 export type NumberHistory = {
   phone: string
   items: ConversationTimelineItem[]
-}
-
-type TimelineCall = NonNullable<ConversationTimelineItem["call"]>
-
-const endedCallOutcomes: Partial<Record<TimelineCall["outcome"], string>> = {
-  UNANSWERED: "no answer",
-  MISSED: "no answer",
-  VOICEMAIL: "voicemail",
-  NEEDS_DISPOSITION: "connected",
-  RESOLVED: "resolved on call",
-  FOLLOW_UP_REQUIRED: "follow-up needed",
 }
 
 function taskKindLabel(task: Pick<Task, "origin">) {
@@ -220,7 +188,7 @@ export function openTaskCallbackNotice(
     evidence.flatMap((item) =>
       item.call &&
       item.call.direction === "OUTBOUND" &&
-      endedCallOutcomes[item.call.outcome] &&
+      isSettledCallState(item.call.outcome) &&
       Date.parse(item.call.startedAt) > openedAt
         ? [item.call]
         : [],
@@ -228,7 +196,7 @@ export function openTaskCallbackNotice(
     (value) => value.startedAt,
   )[0]
   if (!call) return undefined
-  const attempt = `(${endedCallOutcomes[call.outcome]}) · ${formatTime(call.startedAt)}`
+  const attempt = `(${callStateLabels[noticeOutcomes[call.outcome] ?? call.outcome].toLowerCase()}) · ${formatTime(call.startedAt)}`
   return call.placedByEmail
     ? `${call.placedByEmail} called this number ${attempt}. This Task is still open.`
     : `This number was called ${attempt}. This Task is still open.`

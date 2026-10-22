@@ -2,6 +2,7 @@ import { ScorecardFlow, checkLabels, type FlowCall } from "./scorecard-flow"
 import { checkState } from "@/lib/scorecard-flow"
 import { Badge } from "@/components/ui/badge"
 import type { AgentCallVerdict, OperatorScorecardQuestion } from "@/lib/api/generated/types.gen"
+import { verdictLabels } from "@/lib/vocabulary"
 
 const evaluationLabels: Record<string, string> = {
   request_understood: "Caller request understood",
@@ -36,7 +37,6 @@ const scorecardChecks = [
   "appointment_datetime_correct",
   "office_rules_grounded",
 ]
-const verdictLabels: Record<AgentCallVerdict["answer"], string> = { yes: "Yes", no: "No" }
 const notApplicableReasons: Record<string, string> = {
   no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
   no_appointment_action: "No booking, rescheduling, or cancellation was attempted.",

@@ -101,7 +101,7 @@ test("in-flight calls in number history say what is happening", () => {
     } as ConversationTimelineItem).details[0]
   }
   assert.equal(detailFor("PREPARING", "OUTBOUND"), "Preparing call")
-  assert.equal(detailFor("VOICEMAIL_GREETING", "INBOUND"), "Playing voicemail greeting")
+  assert.equal(detailFor("VOICEMAIL_GREETING", "INBOUND"), "Voicemail greeting")
   assert.equal(detailFor("VOICEMAIL_RECORDING", "INBOUND"), "Recording voicemail")
 })
 
@@ -125,6 +125,12 @@ test("an open Task names a later callback attempt only when that call is loaded"
   const ringing = structuredClone(unansweredCallback)
   ringing.entries![0]!.call!.outcome = "RINGING"
   assert.equal(openTaskCallbackNotice([ringing], followUp, at), undefined)
+  const connected = structuredClone(unansweredCallback)
+  connected.entries![0]!.call!.outcome = "NEEDS_DISPOSITION"
+  assert.equal(
+    openTaskCallbackNotice([connected], followUp, at),
+    "caller@example.test called this number (connected) · 13:55. This Task is still open.",
+  )
   const unattributed = structuredClone(unansweredCallback)
   delete unattributed.entries![0]!.call!.placedByEmail
   assert.equal(

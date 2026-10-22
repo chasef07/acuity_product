@@ -419,7 +419,7 @@ test("linked call history stays brief and opens its existing detail panels", asy
   assert.equal(timeline.querySelectorAll("button[aria-expanded]").length, 0)
   const call = timeline.querySelector<HTMLButtonElement>('button[aria-label="View AI call: Appointment booked"]')!
   assert.ok(call)
-  assert.match(call.textContent!, /Voicemail received/)
+  assert.match(call.textContent!, /Voicemail · Office/)
   assert.match(call.textContent!, /Projected follow-up/)
   for (const label of ["View AI call", "View voicemail", "View task"]) {
     const button = [...timeline.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label")?.startsWith(label))

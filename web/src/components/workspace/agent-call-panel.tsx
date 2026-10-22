@@ -26,7 +26,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { flagAgentCallIssue, useAgentCall } from "@/lib/clients/agent-calls"
 import { formatClockTime, formatTimestamp } from "@/lib/format-time"
-import { formatUSPhone } from "@/lib/phone"
+import { appointmentActionLabels, formatClock, formatPhone, issueReasons } from "@/lib/vocabulary"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import {
   Empty,
@@ -48,24 +48,12 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Badge } from "@/components/ui/badge"
 import { CallFlow } from "./scorecard-flow"
 
-const actions = {
-  BOOKED: "Booked",
-  RESCHEDULED: "Rescheduled",
-  CANCELLED: "Cancelled",
-}
-
-export const issueReasons: Record<AgentCallIssueReason, string> = {
-  WRONG_APPOINTMENT_TYPE: "Wrong Appointment Type",
-  INSURANCE_ISSUE: "Insurance Issue",
-  OTHER: "Other",
-}
-
 export function AppointmentActions({ call }: { call: AgentCall }) {
   return call.appointmentActions.length ? (
     <span className="flex flex-wrap gap-1">
       {call.appointmentActions.map((action) => (
         <Badge key={action} variant="secondary">
-          {actions[action]}
+          {appointmentActionLabels[action]}
         </Badge>
       ))}
     </span>
@@ -77,11 +65,6 @@ export function AppointmentActions({ call }: { call: AgentCall }) {
       —
     </span>
   )
-}
-
-export function callDuration(seconds?: number) {
-  if (seconds === undefined) return "—"
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
 }
 
 export function AgentCallPanel({
@@ -218,7 +201,7 @@ function CallContent({
       <SheetHeader className="shrink-0 border-b p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SheetTitle>
-            {detail ? formatUSPhone(detail.call.phone) : "Call transcript"}
+            {detail ? formatPhone(detail.call.phone) : "Call transcript"}
           </SheetTitle>
           {detail && !detail.issue && !refreshFailed && (
             <Button
@@ -241,7 +224,7 @@ function CallContent({
           <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
             <AppointmentActions call={detail.call} />
             <span className="text-muted-foreground">
-              {callDuration(detail.call.durationSeconds)}
+              {formatClock(detail.call.durationSeconds)}
             </span>
             <span className="text-muted-foreground">
               Transferred: {detail.call.transferred ? "Yes" : "No"}

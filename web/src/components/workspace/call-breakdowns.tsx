@@ -10,7 +10,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
-import { intentLabels, outcomeLabels } from "./call-labels"
+import { intentLabels, outcomeLabels } from "@/lib/vocabulary"
 import { breakdownLists, callFlow, judgeLabels, matchesSelection, mergeSelection, rankProblems, type BreakdownRow, type CallSelection, type FlowLink, type FlowNode, type FlowTone } from "./call-paths"
 
 const minGapIntentCalls = 10

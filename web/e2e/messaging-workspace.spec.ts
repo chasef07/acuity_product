@@ -692,7 +692,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toBeVisible()
   await expect(contextPanel).toHaveCSS("width", "288px")
   await expect(contextPanel.getByText("Task context", { exact: true })).toHaveCount(0)
-  await expect(contextPanel.getByText("Normal", { exact: true })).toBeHidden()
+  await expect(contextPanel.getByText("Normal priority", { exact: true })).toBeHidden()
   await page.screenshot({
     path: testInfo.outputPath("task-context.png"),
     fullPage: true,
@@ -903,6 +903,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   const taskHoverDetails = page.getByTestId("rail-hover-details")
   await expect(taskHoverDetails).toContainText("(727) 555-0196")
   await expect(taskHoverDetails).toContainText("Fixture Location 1")
+  await expect(taskHoverDetails).toContainText("Normal priority · Updated")
   await expect(completeTask).toHaveCSS("opacity", "1")
   await expect(relativeTime).toHaveCSS("opacity", "0")
   expect(await taskRow.boundingBox()).toEqual(beforeHover)

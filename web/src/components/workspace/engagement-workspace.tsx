@@ -101,9 +101,14 @@ import {
   useEngagementTimeline,
 } from "@/lib/clients/engagement"
 import { completeTask, reopenTask } from "@/lib/clients/tasks"
-import { formatElapsedSeconds } from "@/lib/format"
 import { formatClockTime, formatDate } from "@/lib/format-time"
-import { formatUSPhone } from "@/lib/phone"
+import {
+  callDirectionLabels,
+  callStateLabels,
+  formatDuration,
+  formatPhone,
+  messageAttachmentTypes,
+} from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
 import type { EngagementSummary } from "@/lib/workspace-projection"
 import {
@@ -117,13 +122,7 @@ import {
 
 const maximumMessageLength = 1_600
 const maximumAttachmentBytes = 600 * 1_024
-const acceptedAttachmentTypes = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "application/pdf",
-])
+const acceptedAttachmentTypes = new Set(messageAttachmentTypes)
 
 type TimelineSource = {
   kind: "engagement"
@@ -208,7 +207,7 @@ export function EngagementWorkspaceView({
             </span>
             <span aria-hidden="true" className="hidden text-muted-foreground sm:inline">/</span>
             <h1 className="shrink-0 whitespace-nowrap text-base font-medium tracking-tight tabular-nums md:text-sm">
-              {formatUSPhone(engagement.phone)}
+              {formatPhone(engagement.phone)}
             </h1>
           </div>
           <Tooltip>
@@ -256,7 +255,7 @@ export function EngagementWorkspaceView({
             type="button"
             size="sm"
             variant="outline"
-            title={`Call ${formatUSPhone(engagement.phone)}`}
+            title={`Call ${formatPhone(engagement.phone)}`}
             disabled={
               !canMutate ||
               !route ||
@@ -1502,29 +1501,29 @@ function MessageComposer({
 }
 
 function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
-  const duration = call.durationSeconds > 0 ? formatElapsedSeconds(call.durationSeconds) : ""
+  const duration = call.durationSeconds > 0 ? formatDuration(call.durationSeconds) : ""
   if (call.direction === "OUTBOUND") {
     const unanswered = call.outcome === "MISSED" || call.outcome === "UNANSWERED"
     return {
-      label: call.placedByEmail ? `Outbound call by ${call.placedByEmail}` : "Outbound call",
-      detail: [unanswered ? "No answer" : sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
+      label: call.placedByEmail ? `${callDirectionLabels.OUTBOUND} by ${call.placedByEmail}` : callDirectionLabels.OUTBOUND,
+      detail: [callStateLabels[unanswered ? "UNANSWERED" : call.outcome], duration].filter(Boolean).join(" · "),
     }
   }
   if (call.outcome === "VOICEMAIL") {
     return {
-      label: "Voicemail",
+      label: callStateLabels.VOICEMAIL,
       detail: duration,
     }
   }
   if (call.outcome === "MISSED" || call.outcome === "UNANSWERED") {
     return {
-      label: "Missed call",
+      label: callStateLabels.MISSED,
       detail: duration,
     }
   }
   return {
-    label: "Inbound call",
-    detail: [sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
+    label: callDirectionLabels.INBOUND,
+    detail: [callStateLabels[call.outcome], duration].filter(Boolean).join(" · "),
   }
 }
 
@@ -1536,11 +1535,6 @@ function useCopyState() {
     return () => window.clearTimeout(timer)
   }, [copyState])
   return [copyState, setCopyState] as const
-}
-
-function sentenceCase(value: string) {
-  const normalized = value.replaceAll("_", " ").toLowerCase()
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
 }
 
 function formatBytes(bytes: number) {

@@ -1,6 +1,11 @@
-import type { CallingCall } from "../api/generated/types.gen.ts"
+import type {
+  CallingCall,
+  CallingDispositionRequest,
+  RingingCallLeg,
+  StaffTransfer,
+} from "../api/generated/types.gen.ts"
 import { isSettledCallState } from "./call-state.ts"
-import { formatUSPhone } from "../phone.ts"
+import { callStateLabels, formatClock, formatPhone } from "../vocabulary.ts"
 
 export type CallingCardCall = Pick<CallingCall, "direction" | "entryPoint" | "state"> & {
   id: string
@@ -23,7 +28,7 @@ export type CallingCardOffer = {
   transferReason: string
   deadline: string
   answerReady: boolean
-  offerKind?: "INBOUND_OFFER" | "STAFF_TRANSFER"
+  offerKind?: RingingCallLeg["offerKind"]
   staffTransferId?: string
   originatorEmail?: string
   handoffNote?: string
@@ -39,7 +44,7 @@ export type CallingCardSnapshot = {
     callId: string
     sourceCallLegId: string
     recipientEmail: string
-    state: "REQUESTED" | "ACCEPTED" | "COMPLETED" | "DECLINED" | "EXPIRED" | "CANCELED" | "FAILED"
+    state: StaffTransfer["state"]
   }>
   transferCandidates: ReadonlyArray<{ subject: string; email: string }>
   activeCallLegID: string
@@ -154,13 +159,7 @@ export type CallingCardFailureView = {
   }
 }
 
-export type CallingDispositionOutcome =
-  | "RESOLVED"
-  | "FOLLOW_UP_REQUIRED"
-  | "COMPLETE_TASK"
-  | "KEEP_OPEN"
-  | "CREATE_TASK"
-  | "NO_FOLLOW_UP"
+export type CallingDispositionOutcome = CallingDispositionRequest["outcome"]
 
 type CallingCardActions = {
   dispositions: Array<{
@@ -207,7 +206,7 @@ export function projectCallingCard(
         ? { failure: projectCallingFailure(snapshot.failure) }
         : {}),
       offers: activeOffers.map((offer) => {
-        const phone = formatUSPhone(offer.phone) || "Phone unavailable"
+        const phone = formatPhone(offer.phone) || "Phone unavailable"
         const identity = callIdentity(offer, "INBOUND")
         if (offer.offerKind === "STAFF_TRANSFER") {
           if (offer.originatorEmail) {
@@ -258,7 +257,7 @@ export function projectCallingCard(
       : call.state === "CONNECTED" ? "connected" : "calling",
     status: callStatus(call),
     ...(call.state === "CONNECTED"
-      ? { elapsed: elapsedTime(call.connectedAt, _now) }
+      ? { elapsed: formatClock(call.connectedAt ? (_now - Date.parse(call.connectedAt)) / 1_000 : 0) }
       : {}),
     identity: callIdentity(call, call.direction),
     controls: {
@@ -474,7 +473,7 @@ function callIdentity(
   >,
   direction: CallingCardCall["direction"],
 ): CallingCardIdentity {
-  const phone = formatUSPhone(call.phone)
+  const phone = formatPhone(call.phone)
   const name = meaningfulName(call.displayName)
   const primary = name || phone || (direction === "INBOUND" ? "Caller" : "Destination")
   return {
@@ -492,7 +491,11 @@ function meaningfulName(displayName: string) {
 
 function callStatus(call: CallingCardCall) {
   switch (call.state) {
-    case "CONNECTED": return "Connected"
+    case "CONNECTED":
+    case "MISSED":
+    case "VOICEMAIL":
+    case "VOICEMAIL_GREETING":
+    case "VOICEMAIL_RECORDING": return callStateLabels[call.state]
     case "UNANSWERED":
       if (call.endRequested) return "Call ended"
       switch (call.providerTermination) {
@@ -500,28 +503,13 @@ function callStatus(call: CallingCardCall) {
         case "DECLINED": return "Call declined"
         case "FAILED":
         case "MEDIA_READINESS_FAILED": return "Call couldn’t connect"
-        default: return "No answer"
+        default: return callStateLabels.UNANSWERED
       }
-    case "MISSED": return "Missed call"
-    case "VOICEMAIL": return "Voicemail"
-    case "VOICEMAIL_GREETING": return "Voicemail greeting"
-    case "VOICEMAIL_RECORDING": return "Recording voicemail"
     case "NEEDS_DISPOSITION":
     case "RESOLVED":
     case "FOLLOW_UP_REQUIRED": return "Call ended"
     default: return call.direction === "OUTBOUND" ? "Calling…" : "Connecting…"
   }
-}
-
-function elapsedTime(connectedAt: string | undefined, now: number) {
-  if (!connectedAt) return "00:00"
-  const elapsedSeconds = Math.max(
-    0,
-    Math.floor((now - new Date(connectedAt).getTime()) / 1_000),
-  )
-  const minutes = String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")
-  const seconds = String(elapsedSeconds % 60).padStart(2, "0")
-  return `${minutes}:${seconds}`
 }
 
 function secondsRemaining(deadline: string, now: number) {

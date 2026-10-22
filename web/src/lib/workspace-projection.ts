@@ -9,6 +9,7 @@ import type {
   TaskQueryRequest,
   WorkspaceSnapshot,
 } from "./api/generated/types.gen.ts"
+import type { PortalFailure } from "./clients/portal-request.ts"
 import { appendUniqueByID } from "./workspace-ordering.ts"
 import { canViewPracticeAnalytics } from "./booking-analytics.ts"
 import {
@@ -22,7 +23,8 @@ import {
   createWorkspaceRequestBudget,
   type WorkspaceRequestBudget,
 } from "./workspace-sync/workspace-request-budget.ts"
-import type { TaskCategoryFilter } from "./workspace-triage.ts"
+import type { TaskCategoryFilter, TaskResponsibility } from "./workspace-triage.ts"
+import { taskGroups } from "./vocabulary.ts"
 
 type WorkspaceLoadState =
   | "loading"
@@ -47,7 +49,7 @@ export type WorkspaceRailSection = "tasks" | "calls" | "appointments" | "texts" 
 
 type WorkspaceRailState = {
   expanded: WorkspaceRailSection[]
-  taskResponsibility?: "mine" | "all"
+  taskResponsibility?: TaskResponsibility
   taskCategory: TaskCategoryFilter
   scrollTop: number
 }
@@ -114,17 +116,9 @@ type WorkspaceAuthentication =
   | { status: "authenticated"; token: string }
   | { status: "unauthenticated" | "unavailable" }
 
-export type WorkspaceAuthorityFailure =
-  | { kind: "authentication-unavailable" }
-  | { kind: "unauthenticated" }
-  | { kind: "unauthorized" }
-  | { kind: "missing" }
-  | { kind: "conflict" }
-  | { kind: "unavailable" }
-
 export type WorkspaceAuthorityResult<T> =
   | { kind: "success"; data: T }
-  | WorkspaceAuthorityFailure
+  | PortalFailure
 
 export type WorkspaceAuthorityAdapter = {
   authenticate: () => Promise<WorkspaceAuthentication>
@@ -256,7 +250,7 @@ export type WorkspaceProjectionIntent =
   | { type: "call-disposition"; result: CallingDispositionResult }
   | { type: "toggle-rail-section"; section: WorkspaceRailSection }
   | { type: "set-task-category"; category: TaskCategoryFilter }
-  | { type: "set-task-filters"; responsibility?: "mine" | "all"; category?: TaskCategoryFilter }
+  | { type: "set-task-filters"; responsibility?: TaskResponsibility; category?: TaskCategoryFilter }
   | { type: "remember-rail-scroll"; scrollTop: number }
   | { type: "navigation-changed" }
 
@@ -391,9 +385,9 @@ export function createWorkspaceProjection({
     const authentication = await authority.authenticate()
     switch (authentication.status) {
       case "unauthenticated":
-        return { kind: "unauthenticated" }
+        return { kind: "unauthenticated", retryable: false }
       case "unavailable":
-        return { kind: "authentication-unavailable" }
+        return { kind: "unavailable", retryable: true }
       case "authenticated":
         return request(authentication.token, signal)
     }
@@ -1200,7 +1194,7 @@ export function createWorkspaceProjection({
         task.id,
         result.kind === "conflict"
           ? "This Task changed elsewhere. Open it to review the latest state, then retry."
-          : result.kind === "authentication-unavailable"
+          : result.kind === "unavailable" && result.status === undefined
             ? "Task completion is temporarily unavailable. Retry in a moment."
             : "This Task could not be completed. Retry from the row or open its details.",
       )
@@ -1466,10 +1460,10 @@ export function createWorkspaceProjection({
     if (failIfAccessLost(result)) return
     const tasks = requireTaskCounts(result.kind === "success"
       ? result.data.tasks
-      : ({ kind: "unavailable" } as const))
+      : ({ kind: "unavailable", retryable: true } as const))
     const completedTasks = result.kind === "success"
       ? result.data.completedTasks
-      : ({ kind: "unavailable" } as const)
+      : ({ kind: "unavailable", retryable: true } as const)
     patch((current) => ({
       ...current,
       tasks:
@@ -1580,16 +1574,7 @@ export function createWorkspaceProjection({
 
 const railSections: WorkspaceRailSection[] = ["tasks", "calls", "appointments", "texts", "completed"]
 
-const taskCategories: TaskCategoryFilter[] = [
-  "all",
-  "insurance", "pre_op", "post_op",
-  "appointments",
-  "documentation",
-  "optical",
-  "medication",
-  "referrals",
-  "other",
-]
+const taskCategories: TaskCategoryFilter[] = ["all", ...taskGroups.map((group) => group.value)]
 
 function emptyRailState(): WorkspaceRailState {
   return {
@@ -1806,6 +1791,6 @@ function requireTaskCounts(
   result: WorkspaceAuthorityResult<TaskPage>,
 ): WorkspaceAuthorityResult<TaskPage & { counts: TaskFolderCounts }> {
   if (result.kind !== "success") return result
-  if (!result.data.counts) return { kind: "unavailable" }
+  if (!result.data.counts) return { kind: "unavailable", retryable: true }
   return { kind: "success", data: { ...result.data, counts: result.data.counts } }
 }

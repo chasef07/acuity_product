@@ -71,3 +71,14 @@ test("the group panel keeps its office and caller names without repeating the nu
   assert.match(markup, /Blair Example/)
   assert.match(markup, /Complete all 2 requests/)
 })
+
+test("the Task panel names urgency with the rail's words", () => {
+  for (const [urgency, label] of [
+    ["high_priority", "High priority"],
+    ["normal", "Normal priority"],
+    ["non_urgent", "Non-urgent"],
+  ] as const) {
+    const markup = panel({ task: { ...task, urgency } })
+    assert.equal(markup.match(/>Urgency<\/span><span[^>]*>([^<]*)</)?.[1], label)
+  }
+})

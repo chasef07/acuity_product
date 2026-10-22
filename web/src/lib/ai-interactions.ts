@@ -2,14 +2,7 @@ import type {
   AiAppointmentOutcome,
   AiInteractionCallStatus,
 } from "@/lib/api/generated/types.gen"
-
-const appointmentTitles: Record<AiAppointmentOutcome, string> = {
-  BOOKING: "Appointment booked",
-  CANCELLATION: "Appointment cancelled",
-  RESCHEDULE: "Appointment rescheduled",
-  PARTIAL: "Appointment change needs review",
-  INDETERMINATE: "AI call",
-}
+import { appointmentOutcomeTitles } from "./vocabulary.ts"
 
 export function aiCallTimelinePresentation(
   outcome: AiAppointmentOutcome,
@@ -17,7 +10,7 @@ export function aiCallTimelinePresentation(
 ) {
   if (outcome !== "INDETERMINATE") {
     return {
-      title: appointmentOutcomeTitle(outcome),
+      title: appointmentOutcomeTitles[outcome],
       detail: aiCallTimelineDetail(status),
     }
   }
@@ -45,8 +38,4 @@ function aiCallTimelineDetail(status: AiInteractionCallStatus) {
     default:
       return "AI call in progress"
   }
-}
-
-export function appointmentOutcomeTitle(outcome: AiAppointmentOutcome) {
-  return appointmentTitles[outcome]
 }

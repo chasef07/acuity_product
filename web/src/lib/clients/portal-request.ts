@@ -69,7 +69,7 @@ function failed(failure: PortalFailure): { ok: false; failure: PortalFailure } {
   return { ok: false, failure }
 }
 
-function portalFailure(status: number | undefined, error: unknown): PortalFailure {
+export function portalFailure(status: number | undefined, error: unknown): PortalFailure {
   const kind = failureKind(status)
   const envelope = errorEnvelope(error)
   return {

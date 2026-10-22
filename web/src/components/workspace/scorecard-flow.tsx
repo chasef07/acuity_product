@@ -3,7 +3,7 @@ import { ArrowRightIcon, CheckIcon, ChevronRightIcon, CircleHelpIcon, XIcon } fr
 
 import { CallLabel } from "./call-labels"
 import type { CallIntent, CallOutcome, CallLabelingStatus } from "@/lib/api/generated/types.gen"
-import { flowResult, type CheckState } from "@/lib/scorecard-flow"
+import { flowResult, type CheckState, type FlowResult } from "@/lib/scorecard-flow"
 
 export type FlowCall = { intent?: CallIntent; outcome?: CallOutcome; labelingStatus?: CallLabelingStatus }
 
@@ -50,7 +50,7 @@ export function ScorecardFlow({ call = {}, checks, complete = true, children }: 
   )
 }
 
-export function CallFlow({ call, result = "unknown" }: { call: FlowCall; result?: "pass" | "fail" | "unknown" }) {
+export function CallFlow({ call, result = "unknown" }: { call: FlowCall; result?: FlowResult }) {
   return (
     <div className="grid grid-cols-1 @min-[24rem]:grid-cols-[minmax(0,1fr)_1rem_minmax(0,1fr)_1rem_minmax(0,1fr)] items-center gap-1.5 [&_[data-slot=badge]]:h-auto [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:wrap-anywhere [&_[data-slot=badge]]:bg-transparent [&_[data-slot=badge]]:px-0 [&_[data-slot=badge]]:text-left [&_[data-slot=badge]]:leading-4">
       <div className="min-w-0 self-stretch rounded-lg border bg-card p-2.5">

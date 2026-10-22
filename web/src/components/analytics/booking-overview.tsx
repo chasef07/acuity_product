@@ -23,7 +23,6 @@ import {
 } from "@/components/ui/table"
 import {
   formatDay,
-  formatDuration,
   formatPercent,
   type BookingDay,
   type BookingAnalytics,
@@ -31,6 +30,7 @@ import {
   type BookingSummary,
   type PatientGroup,
 } from "@/lib/booking-analytics"
+import { formatDuration } from "@/lib/vocabulary"
 import { useReducedMotion } from "@/lib/reduced-motion"
 import { dailyTotalComparison } from "@/lib/analytics-trend"
 import styles from "./booking-overview.module.css"

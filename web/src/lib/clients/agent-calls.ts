@@ -12,6 +12,7 @@ import type {
   AgentCallIssueReason,
   AgentCallsPage,
   OperatorAiAnalyticsPage,
+  OperatorAiAnalyticsQueryRequest,
   OperatorAiAnalyticsRange,
   OperatorAiAnalyticsSummary,
   OperatorAiCallIssueOutcome,
@@ -118,7 +119,7 @@ export function useAiCallAnalytics({
   outcome?: CallOutcome
   failuresOnly?: boolean
   failingJudge?: string
-  judgeResult?: "pass" | "unjudged"
+  judgeResult?: OperatorAiAnalyticsQueryRequest["judgeResult"]
 }): AiCallLedger {
   const pages = usePages({
     live: "workspace",

@@ -70,6 +70,7 @@ import {
   useScorecardQuestions,
 } from "@/lib/clients/call-review"
 import { formatTimestamp } from "@/lib/format-time"
+import { formatDuration } from "@/lib/vocabulary"
 import { latestReviewDay } from "@/lib/review-day"
 
 const silenceSeconds = 8
@@ -718,6 +719,3 @@ function Stat({ label, value, note }: { label: string; value: string; note: stri
   )
 }
 
-function formatDuration(seconds: number) {
-  return `${Math.floor(seconds / 60)}m ${Math.max(0, Math.round(seconds)) % 60}s`
-}
