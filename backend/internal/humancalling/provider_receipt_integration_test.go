@@ -1047,27 +1047,9 @@ func TestVoicemailRecordingSavedAfterRoutingFailureWithCompletedTaskAppliesImmed
 	pool, setupCalling, caller, staff := prepareInboundFanout(t, now, prefix, provider, 1)
 	processAllCommands(t, setupCalling)
 
-	withKind := func(encoded, kind string) string {
-		t.Helper()
-		decoded, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil {
-			t.Fatalf("decode Caller client state: %v", err)
-		}
-		var state map[string]any
-		if err := json.Unmarshal(decoded, &state); err != nil {
-			t.Fatalf("parse Caller client state: %v", err)
-		}
-		state["kind"] = kind
-		updated, err := json.Marshal(state)
-		if err != nil {
-			t.Fatalf("encode Caller client state: %v", err)
-		}
-		return base64.StdEncoding.EncodeToString(updated)
-	}
-
 	answerState, _ := provider.last(humancalling.CommandAnswerCaller).
 		Payload["client_state"].(string)
-	unownedLaterState := withKind(answerState, "routing_failure")
+	unownedLaterState := withClientStateKind(t, answerState, "routing_failure")
 	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:            prefix + "-unowned-recording",
 		Type:               humancalling.FactRecordingSaved,
@@ -1564,20 +1546,7 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		t.Fatal("destination Hangup omitted client_state")
 	}
 	if recordingClientStateKind != "" {
-		decoded, err := base64.StdEncoding.DecodeString(recordingClientState)
-		if err != nil {
-			t.Fatalf("decode destination Hangup client_state: %v", err)
-		}
-		var state map[string]any
-		if err := json.Unmarshal(decoded, &state); err != nil {
-			t.Fatalf("parse destination Hangup client_state: %v", err)
-		}
-		state["kind"] = recordingClientStateKind
-		encoded, err := json.Marshal(state)
-		if err != nil {
-			t.Fatalf("encode destination Hangup client_state: %v", err)
-		}
-		recordingClientState = base64.StdEncoding.EncodeToString(encoded)
+		recordingClientState = withClientStateKind(t, recordingClientState, recordingClientStateKind)
 	}
 	var providerCommandRowsBefore int
 	if err := pool.QueryRow(context.Background(), `
