@@ -161,22 +161,19 @@ export function CallingDock({
         idempotencyKey: taskCallRequest.id,
         taskId: taskCallRequest.taskID,
       })
-      .then(() => {
-        onTaskCallHandled(
-          taskCallRequest.id,
-          runtime.getSnapshot().failure?.message,
-        )
+      .then((failure) => {
+        onTaskCallHandled(taskCallRequest.id, failure?.message)
       })
   }, [onTaskCallHandled, runtime, taskCallRequest])
 
   async function startNumberCall(locationID: string, destination: string) {
-    await runtime.startOutbound({
+    const failure = await runtime.startOutbound({
       idempotencyKey: window.crypto.randomUUID(),
       practiceId: practiceID,
       locationId: locationID,
       destination,
     })
-    return runtime.getSnapshot().failure?.message
+    return failure?.message
   }
 
   async function dispose(

@@ -4631,6 +4631,777 @@ test("state reads report calling changes the poll found without a hint as missed
   await fixture.runtime.stop()
 })
 
+test("a delayed outbound response cannot repaint a Call after the lease was lost and regained", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const response = deferred<CallingCall>()
+  backend.startOutboundHandler = async () => response.promise
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const starting = runtime.startOutbound({
+    idempotencyKey: "outbound-across-lease-regain",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  })
+  await eventually(() => assert.notEqual(runtime.getSnapshot().pendingCall, undefined))
+
+  backend.lease = lease({ sessionId: "other-session", owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().lease?.owner, false)
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+
+  const stale = call({ id: "outbound-across-lease-regain", state: "PREPARING" })
+  backend.calls.set(stale.id, stale)
+  response.resolve(stale)
+  await starting
+
+  assert.equal(runtime.getSnapshot().expectedCallID, "")
+  assert.equal(runtime.getSnapshot().activeCall, undefined)
+  assert.equal(runtime.getSnapshot().pendingCall, undefined)
+  assert.equal(runtime.getSnapshot().occupied, false)
+})
+
+test("a Call detail read cannot repaint the Call after a readiness write lost the lease", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-detail-after-lease-loss")
+  const detail = deferred<CallingCall>()
+  let detailReads = 0
+  fixture.backend.readCallHandler = async () => {
+    detailReads += 1
+    return detail.promise
+  }
+  let repaintedAfterLeaseLoss = false
+  fixture.runtime.subscribe(() => {
+    const snapshot = fixture.runtime.getSnapshot()
+    if (snapshot.lease?.owner === false && (snapshot.activeCall || snapshot.expectedCallID)) {
+      repaintedAfterLeaseLoss = true
+    }
+  })
+  const refreshing = fixture.runtime.signalRefresh()
+  await eventually(() => assert.equal(detailReads, 1))
+
+  fixture.backend.writeReadinessHandler = () =>
+    lease({ sessionId: "other-session", owner: true })
+  await fixture.clock.advance(4_000)
+  await eventually(() => assert.equal(fixture.runtime.getSnapshot().lease?.owner, false))
+
+  detail.resolve(fixture.connected)
+  await refreshing
+
+  assert.equal(fixture.runtime.getSnapshot().activeCall, undefined)
+  assert.equal(fixture.runtime.getSnapshot().expectedCallID, "")
+  assert.equal(repaintedAfterLeaseLoss, false)
+})
+
+test("a transfer candidate failure for a Call that ended does not surface on its Outcome", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-transfer-candidates-failed-after-end")
+  const candidates = deferred<[]>()
+  fixture.backend.listTransferCandidatesHandler = () => candidates.promise
+  const loading = fixture.runtime.loadTransferCandidates()
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, true)
+
+  const terminal = setAttachedOutboundTerminal(fixture)
+  await fixture.runtime.signalRefresh()
+  assert.equal(fixture.runtime.getSnapshot().pendingDisposition?.id, terminal.id)
+  candidates.reject(
+    new SoftphoneAdapterError("temporary-request", "Transfer options could not be loaded. Try again.", true),
+  )
+  await loading
+
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+  assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+})
+
+test("a transfer request failure for a Call that ended does not surface on its Outcome", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-transfer-request-failed-after-end")
+  const request = deferred<StaffTransfer>()
+  fixture.backend.requestTransferHandler = () => request.promise
+  const requesting = fixture.runtime.requestTransfer("target-subject", "", "transfer-after-end-key")
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, true)
+
+  const terminal = setAttachedOutboundTerminal(fixture)
+  await fixture.runtime.signalRefresh()
+  assert.equal(fixture.runtime.getSnapshot().pendingDisposition?.id, terminal.id)
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+  request.reject(new SoftphoneAdapterError("conflict", "The Call or recipient availability changed before transfer."))
+  await requesting
+
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+  assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+})
+
+test("an outbound Call reports its own result while an unrelated refresh failure stays visible", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  backend.readStateHandler = async () => {
+    throw new SoftphoneAdapterError("temporary-request", "Calling refresh is unavailable.", true)
+  }
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().failure?.source, "refresh")
+  const outbound = call({ id: "outbound-own-result", state: "PREPARING" })
+  backend.calls.set(outbound.id, outbound)
+  backend.startOutboundHandler = async () => outbound
+  const request = {
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  }
+
+  const started = await runtime.startOutbound({ ...request, idempotencyKey: "outbound-own-result" })
+
+  assert.equal(started, undefined)
+  assert.equal(runtime.getSnapshot().activeCall?.id, outbound.id)
+  assert.equal(runtime.getSnapshot().failure?.source, "refresh")
+  const blocked = await runtime.startOutbound({ ...request, idempotencyKey: "outbound-while-occupied" })
+  assert.equal(blocked?.message, "Finish the current Call before starting another.")
+})
+
+test("a start refused while another Call is dialing leaves the dialing start in charge of its result", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const response = deferred<CallingCall>()
+  backend.startOutboundHandler = async () => response.promise
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const request = {
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  }
+  const dialing = runtime.startOutbound({ ...request, idempotencyKey: "first-while-dialing" })
+  await eventually(() => assert.notEqual(runtime.getSnapshot().pendingCall, undefined))
+
+  const refused = await runtime.startOutbound({ ...request, idempotencyKey: "second-while-dialing" })
+  response.reject(new SoftphoneAdapterError("conflict", "Another Call is pending or active."))
+  const failure = await dialing
+
+  assert.equal(refused?.message, "Finish the current Call before starting another.")
+  assert.equal(failure?.message, "Another Call is pending or active.")
+  assert.equal(runtime.getSnapshot().pendingCall, undefined)
+  assert.equal(runtime.getSnapshot().occupied, false)
+})
+
+test("a disposition whose commit a refresh observed first still returns its result", async () => {
+  const backend = new DeterministicBackend()
+  const pending = call({
+    id: "call-disposition-observed",
+    state: "NEEDS_DISPOSITION",
+    version: 3,
+  })
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: {
+      ...stateCall(pending.id, "disposition-observed-leg", pending.version),
+      state: "NEEDS_DISPOSITION",
+    },
+  })
+  backend.calls.set(pending.id, pending)
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const response = deferred<CallingDispositionResult>()
+  backend.disposeHandler = async () => response.promise
+  const disposing = runtime.dispose("RESOLVED")
+  await drainMicrotasks()
+
+  const resolved = call({ id: pending.id, state: "RESOLVED", version: 4 })
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.calls.set(resolved.id, resolved)
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().pendingDisposition, undefined)
+  response.resolve({ call: resolved })
+
+  assert.deepEqual(await disposing, { call: resolved })
+  assert.equal(runtime.getSnapshot().pending.disposition, false)
+  assert.equal(runtime.getSnapshot().failure, undefined)
+})
+
+test("an audio failure retires once a healthy readiness write is confirmed", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-audio-issue-retired")
+  fixture.media.emitAudioIssue()
+  assert.equal(fixture.runtime.getSnapshot().failure?.kind, "media")
+
+  await fixture.clock.advance(4_000)
+
+  await eventually(() =>
+    assert.equal(fixture.runtime.getSnapshot().failure, undefined),
+  )
+  assert.notEqual(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+})
+
+test("a lapsed-lease reclaim cannot strand media after Staff's own takeover wins the lease", async () => {
+  const clock = new ManualClock()
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock,
+    visibility: visible(),
+    availabilityIntent: false,
+  })
+  await runtime.start()
+  backend.lease = lease({ owner: false })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.acquireLeaseHandler = async () => {
+    throw new SoftphoneAdapterError("temporary-request", "Calling is waking up.", true)
+  }
+  await runtime.signalRefresh()
+  for (let drain = 0; drain < 10; drain += 1) await drainMicrotasks()
+
+  const takeover = deferred<SoftphoneState>()
+  const reclaim = deferred<SoftphoneState>()
+  backend.acquireLeaseHandler = async (input) =>
+    input.takeover ? takeover.promise : reclaim.promise
+  const availability = runtime.setAvailability(true)
+  await drainMicrotasks()
+  await runtime.signalRefresh()
+  for (let drain = 0; drain < 10; drain += 1) await drainMicrotasks()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  takeover.resolve(backend.lease)
+  await runtime.signalRefresh()
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().readiness.mediaState, "ready"),
+  )
+  reclaim.resolve(lease({ sessionId: "other-tab", owner: true }))
+  for (let drain = 0; drain < 10; drain += 1) await drainMicrotasks()
+  await availability
+
+  const ringing = offer({ callId: "call-reclaim", callLegId: "leg-reclaim", mediaToken: "token-reclaim" })
+  backend.lease = lease({ owner: true, available: true })
+  backend.state = callingState({ softphone: backend.lease, ringing: [ringing] })
+  await runtime.signalRefresh()
+  await clock.settle(5_000)
+  const leg = mediaLeg({ providerLegID: "provider-reclaim", mediaToken: ringing.mediaToken })
+  media.emitIncoming(leg)
+  for (let drain = 0; drain < 10; drain += 1) await drainMicrotasks()
+
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+  assert.deepEqual(runtime.getSnapshot().offers.map((current) => current.answerReady), [true])
+  assert.equal(leg.rejections, 0)
+  assert.deepEqual(backend.leaseRequests.map((request) => request.takeover), [false, false, true])
+
+  await clock.settle(60_000)
+  const later = mediaLeg({ providerLegID: "provider-reclaim-later", mediaToken: "token-reclaim-later" })
+  backend.state = callingState({
+    softphone: backend.lease,
+    ringing: [offer({
+      callId: "call-reclaim-later",
+      callLegId: "leg-reclaim-later",
+      mediaToken: later.mediaToken,
+      deadline: "2026-08-27T00:05:00Z",
+    })],
+  })
+  media.emitIncoming(later)
+  for (let drain = 0; drain < 10; drain += 1) await drainMicrotasks()
+
+  assert.equal(later.rejections, 0)
+  assert.deepEqual(runtime.getSnapshot().offers.map((current) => current.answerReady), [true])
+  await runtime.stop()
+})
+
+test("a stale lease acquisition cannot strand media after a refresh made this browser owner", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ sessionId: "other-session", owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const acquisition = deferred<SoftphoneState>()
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  backend.acquireLeaseHandler = async () => acquisition.promise
+  const recovering = runtime.recover()
+  await drainMicrotasks()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().readiness.mediaState, "ready"),
+  )
+
+  acquisition.resolve(lease({ sessionId: "other-session", owner: true }))
+  await recovering
+  const ringing = offer({ callId: "call-stale-acquisition", callLegId: "leg-stale-acquisition", mediaToken: "token-stale-acquisition" })
+  backend.state = callingState({ softphone: backend.lease, ringing: [ringing] })
+  await runtime.signalRefresh()
+  const leg = mediaLeg({ providerLegID: "provider-stale-acquisition", mediaToken: ringing.mediaToken })
+  media.emitIncoming(leg)
+  for (let drain = 0; drain < 10; drain += 1) await drainMicrotasks()
+
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+  assert.deepEqual(runtime.getSnapshot().offers.map((current) => current.answerReady), [true])
+  assert.equal(leg.rejections, 0)
+  assert.equal(media.connects, 1)
+  assert.equal(media.disconnects, 0)
+  await runtime.stop()
+})
+
+test("a lease acquisition that reports ownership moved releases local media so it reconnects when ownership returns", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.startOutboundHandler = async () => {
+    throw new SoftphoneAdapterError("ownership", "Calling ownership moved to another browser.", true)
+  }
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  await runtime.startOutbound({
+    idempotencyKey: "outbound-ownership-moved",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  })
+  assert.equal(runtime.getSnapshot().failure?.kind, "ownership")
+
+  backend.lease = lease({ sessionId: "other-session", owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  media.disconnectDeferred = deferred<void>()
+  let recovered = false
+  const recovering = runtime.recover().then(() => {
+    recovered = true
+  })
+  await eventually(() => assert.equal(media.disconnects, 1))
+  for (let drain = 0; drain < 5; drain += 1) await drainMicrotasks()
+  assert.equal(recovered, false)
+  media.disconnectDeferred.resolve()
+  media.disconnectDeferred = undefined
+  await recovering
+  assert.equal(runtime.getSnapshot().lease?.owner, false)
+  assert.equal(runtime.getSnapshot().readiness.mediaState, "unavailable")
+
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().readiness.mediaState, "ready"),
+  )
+  const ringing = offer({ callId: "call-ownership-returned", callLegId: "leg-ownership-returned", mediaToken: "token-ownership-returned" })
+  backend.state = callingState({ softphone: backend.lease, ringing: [ringing] })
+  await runtime.signalRefresh()
+  const leg = mediaLeg({ providerLegID: "provider-ownership-returned", mediaToken: ringing.mediaToken })
+  media.emitIncoming(leg)
+  for (let drain = 0; drain < 10; drain += 1) await drainMicrotasks()
+
+  assert.deepEqual(runtime.getSnapshot().offers.map((current) => current.answerReady), [true])
+  assert.equal(leg.rejections, 0)
+  await runtime.stop()
+})
+
+test("a takeover fenced out by an ownership change reconciles instead of leaving the old ownership failure", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.startOutboundHandler = async () => {
+    throw new SoftphoneAdapterError("ownership", "Calling ownership moved to another browser.", true)
+  }
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  await runtime.startOutbound({
+    idempotencyKey: "outbound-before-fenced-takeover",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  })
+  const acquisition = deferred<SoftphoneState>()
+  backend.acquireLeaseHandler = async () => acquisition.promise
+  const recovering = runtime.recover()
+  await drainMicrotasks()
+  backend.lease = lease({ sessionId: "other-session", owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().lease?.owner, false)
+
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  acquisition.resolve(backend.lease)
+  await recovering
+
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+  assert.equal(runtime.getSnapshot().failure, undefined)
+  await runtime.stop()
+})
+
+test("a takeover fenced out after a readiness write reported its ownership still connects media", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ sessionId: "other-session", owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  assert.equal(runtime.getSnapshot().failure?.kind, "ownership")
+  const acquisition = deferred<SoftphoneState>()
+  backend.acquireLeaseHandler = async () => acquisition.promise
+  const recovering = runtime.recover()
+  await drainMicrotasks()
+
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.setAvailability(false)
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+  acquisition.resolve(backend.lease)
+  await recovering
+
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().readiness.mediaState, "ready"),
+  )
+  assert.equal(media.connects, 1)
+  assert.equal(runtime.getSnapshot().failure, undefined)
+  await runtime.stop()
+})
+
+test("a start refused after a refresh observed the dialing start's Call leaves that start in charge of its result", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const response = deferred<CallingCall>()
+  backend.startOutboundHandler = async () => response.promise
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const request = {
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  }
+  const dialing = runtime.startOutbound({ ...request, idempotencyKey: "observed-while-dialing" })
+  await eventually(() => assert.notEqual(runtime.getSnapshot().pendingCall, undefined))
+  const started = call({ id: "call-observed-while-dialing", state: "PREPARING" })
+  backend.calls.set(started.id, started)
+  backend.lease = lease({ owner: true, activeCallId: started.id })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().expectedCallID, started.id)
+
+  const refused = await runtime.startOutbound({ ...request, idempotencyKey: "refused-after-observed" })
+  response.resolve(started)
+
+  assert.equal(refused?.message, "Finish the current Call before starting another.")
+  assert.equal(await dialing, undefined)
+  assert.equal(runtime.getSnapshot().activeCall?.id, started.id)
+  await runtime.stop()
+})
+
+test("a disposition committed while the lease was lost and regained still returns its result", async () => {
+  const backend = new DeterministicBackend()
+  const pending = call({ id: "call-disposition-regained", state: "NEEDS_DISPOSITION", version: 3 })
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: {
+      ...stateCall(pending.id, "disposition-regained-leg", pending.version),
+      state: "NEEDS_DISPOSITION",
+    },
+  })
+  backend.calls.set(pending.id, pending)
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const response = deferred<CallingDispositionResult>()
+  backend.disposeHandler = async () => response.promise
+  const disposing = runtime.dispose("RESOLVED")
+  await drainMicrotasks()
+
+  const awaitingDisposition = backend.state
+  backend.lease = lease({ sessionId: "other-session", owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().lease?.owner, false)
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = { ...awaitingDisposition, softphone: backend.lease }
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().lease?.owner, true)
+
+  const resolved = call({ id: pending.id, state: "RESOLVED", version: 4 })
+  backend.calls.set(resolved.id, resolved)
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  response.resolve({ call: resolved })
+
+  assert.deepEqual(await disposing, { call: resolved })
+  assert.equal(runtime.getSnapshot().pendingDisposition, undefined)
+  assert.equal(runtime.getSnapshot().pending.disposition, false)
+  await runtime.stop()
+})
+
+test("a disposition failure for a Call whose Outcome another Call replaced does not surface on it", async () => {
+  const backend = new DeterministicBackend()
+  const first = call({ id: "call-disposition-replaced", state: "NEEDS_DISPOSITION", version: 3 })
+  const next = call({ id: "call-disposition-next", state: "NEEDS_DISPOSITION", version: 2 })
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: first.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: {
+      ...stateCall(first.id, "disposition-replaced-leg", first.version),
+      state: "NEEDS_DISPOSITION",
+    },
+  })
+  backend.calls.set(first.id, first)
+  backend.calls.set(next.id, next)
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const response = deferred<CallingDispositionResult>()
+  backend.disposeHandler = async () => response.promise
+  const disposing = runtime.dispose("RESOLVED")
+  await drainMicrotasks()
+  assert.equal(runtime.getSnapshot().pending.disposition, true)
+
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: next.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: {
+      ...stateCall(next.id, "disposition-next-leg", next.version),
+      state: "NEEDS_DISPOSITION",
+    },
+  })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().pendingDisposition?.id, next.id)
+  assert.equal(runtime.getSnapshot().pending.disposition, false)
+  assert.equal(runtime.getSnapshot().controls.canDispose, true)
+
+  response.reject(new SoftphoneAdapterError("temporary-request", "Disposition did not reach calling.", true))
+  assert.equal(await disposing, undefined)
+
+  assert.equal(runtime.getSnapshot().pendingDisposition?.id, next.id)
+  assert.equal(runtime.getSnapshot().failure, undefined)
+  await runtime.stop()
+})
+
+test("dismissing an Outcome clears its failed retry and refused start", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true, activeCallId: "call-retry-dismissed" })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.calls.set(
+    "call-retry-dismissed",
+    call({ id: "call-retry-dismissed", state: "UNANSWERED", retryAllowed: true, version: 3 }),
+  )
+  backend.retryHandler = async () => {
+    throw new SoftphoneAdapterError("conflict", "Retry was refused.")
+  }
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.retry("retry-dismissed")
+  assert.equal(runtime.getSnapshot().failure?.message, "Retry was refused.")
+  const refused = await runtime.startOutbound({
+    idempotencyKey: "outbound-over-outcome",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  })
+  assert.equal(runtime.getSnapshot().failure?.message, refused?.message)
+  backend.writeReadinessHandler = () => {
+    throw new SoftphoneAdapterError("temporary-request", "Calling readiness is unavailable.", true)
+  }
+
+  runtime.dismissOutcome()
+  for (let drain = 0; drain < 2; drain += 1) await drainMicrotasks()
+
+  assert.equal(runtime.getSnapshot().activeCall, undefined)
+  assert.equal(runtime.getSnapshot().failure?.message, "Calling readiness is unavailable.")
+  assert.equal(runtime.getSnapshot().failure?.source, "readiness")
+  await runtime.stop()
+})
+
+test("an expired session outranks an earlier outbound refusal", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-session-expired")
+  const refused = await fixture.runtime.startOutbound({
+    idempotencyKey: "outbound-while-connected",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  })
+  assert.equal(refused?.message, "Finish the current Call before starting another.")
+  fixture.backend.writeReadinessHandler = () => {
+    throw new SoftphoneAdapterError("authentication", "Session expired", false)
+  }
+  fixture.backend.readStateHandler = async () => {
+    throw new SoftphoneAdapterError("authentication", "Session expired", false)
+  }
+
+  await fixture.clock.settle(20_000)
+
+  assert.equal(fixture.runtime.getSnapshot().failure?.kind, "authentication")
+  assert.equal(fixture.runtime.getSnapshot().failure?.message, "Session expired")
+  await fixture.runtime.stop()
+})
+
+test("a refusal after a failed start replaces that start's failure", async () => {
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.startOutboundHandler = async () => {
+    throw new SoftphoneAdapterError("conflict", "Destination is not allowed.")
+  }
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const request = {
+    practiceId: "practice-1",
+    locationId: "location-1",
+    destination: "+15551234567",
+  }
+  await runtime.startOutbound({ ...request, idempotencyKey: "failed-start" })
+  assert.equal(runtime.getSnapshot().failure?.message, "Destination is not allowed.")
+  backend.state = callingState({ softphone: backend.lease, ringing: [offer({})] })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().occupied, true)
+
+  const refused = await runtime.startOutbound({ ...request, idempotencyKey: "refused-start" })
+
+  assert.equal(refused?.message, "Finish the current Call before starting another.")
+  assert.equal(runtime.getSnapshot().failure?.message, "Finish the current Call before starting another.")
+  await runtime.stop()
+})
+
+test("a hangup failure for a Call that a retry replaced does not mark the new Call", async () => {
+  const backend = new DeterministicBackend()
+  const ringingCall = call({ id: "call-hangup-replaced", state: "RINGING", version: 2 })
+  backend.lease = lease({ owner: true, activeCallId: ringingCall.id })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.calls.set(ringingCall.id, ringingCall)
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  assert.equal(runtime.getSnapshot().activeCall?.id, ringingCall.id)
+  const hangupResponse = deferred<CallingCall>()
+  backend.hangupHandler = async () => hangupResponse.promise
+  const hangingUp = runtime.hangup()
+  await drainMicrotasks()
+
+  const unanswered = call({ id: ringingCall.id, state: "UNANSWERED", retryAllowed: true, version: 3 })
+  backend.calls.set(unanswered.id, unanswered)
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().activeCall?.state, "UNANSWERED")
+  const retried = call({ id: "call-hangup-retried", state: "PREPARING", version: 1 })
+  backend.retryHandler = async () => {
+    backend.lease = lease({ owner: true, activeCallId: retried.id })
+    backend.state = callingState({ softphone: backend.lease })
+    backend.calls.set(retried.id, retried)
+    return retried
+  }
+  await runtime.retry("retry-after-hangup")
+  assert.equal(runtime.getSnapshot().activeCall?.id, retried.id)
+
+  hangupResponse.reject(new SoftphoneAdapterError("temporary-request", "End did not reach calling.", true))
+  await hangingUp
+
+  assert.equal(runtime.getSnapshot().activeCall?.id, retried.id)
+  assert.equal(runtime.getSnapshot().failure, undefined)
+  await runtime.stop()
+})
+
 function callingHintFixture(
   state: CallingState,
   visibility: { isHidden(): boolean; subscribe(listener: () => void): () => void } = visible(),
