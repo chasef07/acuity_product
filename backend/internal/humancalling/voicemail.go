@@ -293,7 +293,7 @@ func (m *Module) applyVoicemailSpeechFact(
 			}, ""); err != nil {
 			return err
 		}
-	} else if ended {
+	} else if ended && terminal == "" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_provider_commands SET state = 'FAILED',
 				last_error_code = $2, updated_at = $3
@@ -446,16 +446,13 @@ func (m *Module) applyVoicemailRecordingError(
 	if err := m.requireExactVoicemailCaller(ctx, tx, state, fact); err != nil {
 		return err
 	}
-	var existingAudioState string
-	err = tx.QueryRow(ctx, `
-		SELECT audio_state FROM human_calling_voicemails
-		WHERE call_id = $1
-		FOR UPDATE
-	`, state.CallID).Scan(&existingAudioState)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("lock voicemail outcome: %w", err)
+	var terminal bool
+	if err := tx.QueryRow(ctx, `
+		SELECT terminal_outcome IS NOT NULL FROM human_calling_calls WHERE id = $1
+	`, state.CallID).Scan(&terminal); err != nil {
+		return fmt.Errorf("read voicemail recording failure Call: %w", err)
 	}
-	if existingAudioState == string(VoicemailReady) {
+	if terminal {
 		return tx.Commit(ctx)
 	}
 	if _, err := m.ensureRecoveryOutcome(ctx, tx, state.CallID,
