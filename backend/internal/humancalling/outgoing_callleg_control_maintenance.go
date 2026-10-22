@@ -497,6 +497,9 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, re
 			fact.TerminationSource = "RECONCILER"
 		}
 		if err := m.ApplyProviderFact(ctx, fact); err != nil {
+			if errors.Is(err, errTerminalOrObsoleteProviderFact) {
+				continue
+			}
 			if errors.Is(err, ErrConflict) {
 				if quarantineErr := m.quarantineStaleCallLeg(
 					ctx, callID, practiceID, legID, commandID,

@@ -214,36 +214,33 @@ func routeProviderFacts() map[factRoute]factHandler {
 	add((*Module).applyCallerAnswered, facts(FactCallAnswered), caller, notTransferTarget)
 	add(unexpectedProviderFact, facts(FactCallInitiated), caller, notTransferTarget)
 	add(unexpectedProviderFact, dialed, roles(roleCaller, roleDestination), kinds(kindStaffTransferTarget))
-	add(unexpectedProviderFact, dialed, callLegRoles, unrecognized)
 
 	add((*Module).applyStaffTransferBridge, bridged, callLegRoles, kinds(kindStaffTransferSource))
 	add((*Module).applyBridge, bridged, staff, kinds(kindBridge))
-	add((*Module).applyCorrelatedBridge, bridged, staff, kinds(kindOutboundMedia), connectedHangupKinds)
-	add((*Module).applyOutboundStaffBridge, bridged, staff, callerKinds, kinds(kindDial), reconcilerKinds,
-		otherHangupKinds)
+	add((*Module).applyCorrelatedBridge, bridged, staff, kinds(kindOutboundMedia), hangupRequestedKinds)
+	add((*Module).applyOutboundStaffBridge, bridged, staff, callerKinds, kinds(kindDial), reconcilerKinds)
 	add((*Module).applyCallerBridge, bridged, caller, callerKinds, dialKinds, kinds(kindBridge), reconcilerKinds, hangupRequestedKinds)
 	add((*Module).applyOutboundBridge, bridged, destination, kinds(kindBridge, kindDial), connectedHangupKinds)
 	add(unexpectedProviderFact, bridged, destination,
 		callerKinds, kinds(kindOutboundMedia, kindStaffTransferTarget), reconcilerKinds, otherHangupKinds)
 	add(unexpectedProviderFact, bridged, caller, kinds(kindStaffTransferTarget))
-	add(unexpectedProviderFact, bridged, callLegRoles, unrecognized)
 
 	add((*Module).applyHangup, facts(FactCallHangup), callLegRoles, everyKind, unrecognized)
 
 	add((*Module).applyRingWindowFact, playback, caller, kinds(kindRingWindow))
 	add(obsoleteAfterHangupRequest, playback, caller, hangupRequestedKinds)
 	add(unexpectedProviderFact, playback, caller, kinds(kindAnswer, kindVoicemailGreeting, kindVoicemailRecording),
-		dialKinds, kinds(kindBridge), transferKinds, reconcilerKinds, unrecognized)
+		dialKinds, kinds(kindBridge), transferKinds, reconcilerKinds)
 	add((*Module).applyOutboundRingtoneFact, playback, staff, kinds(kindOutboundMedia), hangupRequestedKinds)
 	add(unexpectedProviderFact, playback, staff, callerKinds, kinds(kindDial, kindBridge),
-		transferKinds, reconcilerKinds, unrecognized)
-	add(unexpectedProviderFact, playback, destination, everyKind, unrecognized)
+		transferKinds, reconcilerKinds)
+	add(unexpectedProviderFact, playback, destination, everyKind)
 
 	add((*Module).applyVoicemailSpeechFact, speech, caller, kinds(kindVoicemailGreeting))
 	add(obsoleteAfterHangupRequest, speech, caller, hangupRequestedKinds)
 	add(unexpectedProviderFact, speech, caller, kinds(kindAnswer, kindRingWindow, kindVoicemailRecording),
-		dialKinds, kinds(kindBridge), transferKinds, reconcilerKinds, unrecognized)
-	add(unexpectedProviderFact, speech, roles(roleStaff, roleDestination), everyKind, unrecognized)
+		dialKinds, kinds(kindBridge), transferKinds, reconcilerKinds)
+	add(unexpectedProviderFact, speech, roles(roleStaff, roleDestination), everyKind)
 
 	add((*Module).applyVoicemailRecordingSaved, facts(FactRecordingSaved), caller, everyKind)
 	add((*Module).applyVoicemailRecordingError, facts(FactRecordingError), caller, kinds(kindVoicemailRecording))
@@ -252,14 +249,22 @@ func routeProviderFacts() map[factRoute]factHandler {
 	add((*Module).applyConnectedCallRecordingSaved, facts(FactRecordingSaved), roles(roleStaff, roleDestination), everyKind)
 	add((*Module).applyConnectedCallRecordingError, facts(FactRecordingError), roles(roleStaff, roleDestination),
 		kinds(kindBridge, kindStaffHangup))
-	add(unexpectedProviderFact, facts(FactRecordingError), roles(roleStaff, roleDestination), callerKinds, dialKinds,
-		transferKinds, reconcilerKinds, kinds(kindCleanup), otherHangupKinds)
-	add(unexpectedProviderFact, facts(FactRecordingSaved, FactRecordingError), callLegRoles, unrecognized)
+	add((*Module).applyConnectedCallRecordingError, facts(FactRecordingError), staff, kinds(kindOutboundMedia))
+	add(unexpectedProviderFact, facts(FactRecordingError), destination, kinds(kindOutboundMedia))
+	add(unexpectedProviderFact, facts(FactRecordingError), roles(roleStaff, roleDestination), callerKinds,
+		kinds(kindDial), transferKinds, reconcilerKinds, kinds(kindCleanup), otherHangupKinds)
+
+	add(waitForNewerRelease, slices.Concat(dialed, bridged, playback, speech,
+		facts(FactRecordingSaved, FactRecordingError)), callLegRoles, unrecognized)
 	return routes
 }
 
 func unexpectedProviderFact(*Module, context.Context, ProviderFact, callLegClientState) (factVerdict, error) {
 	return factConflict, nil
+}
+
+func waitForNewerRelease(*Module, context.Context, ProviderFact, callLegClientState) (factVerdict, error) {
+	return factWaiting, nil
 }
 
 func obsoleteAfterHangupRequest(*Module, context.Context, ProviderFact, callLegClientState) (factVerdict, error) {
