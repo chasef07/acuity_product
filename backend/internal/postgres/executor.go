@@ -224,20 +224,12 @@ func (executor *Executor) BeginTx(
 	}
 	statementContext, cancel := executor.statementContext(operationContext)
 	started := time.Now()
+	options.BeginQuery = beginWithStatementTimeout(options, executor.config.StatementTimeout)
 	transaction, err := connection.BeginTx(statementContext, options)
 	cancel()
 	if err != nil {
 		finish()
 		return nil, executor.finishOperation(err, statementContext, started)
-	}
-	if _, err := transaction.Exec(
-		operationContext,
-		`SELECT set_config('statement_timeout', $1, true)`,
-		fmt.Sprintf("%dms", max(executor.config.StatementTimeout.Milliseconds(), 1)),
-	); err != nil {
-		_ = transaction.Rollback(operationContext)
-		finish()
-		return nil, executor.finishOperation(err, operationContext, started)
 	}
 	executor.record("", time.Since(started))
 	return &ownedTx{
@@ -246,6 +238,24 @@ func (executor *Executor) BeginTx(
 		ctx:      operationContext,
 		finish:   finish,
 	}, nil
+}
+
+func beginWithStatementTimeout(options pgx.TxOptions, statementTimeout time.Duration) string {
+	begin := options.BeginQuery
+	if begin == "" {
+		begin = "BEGIN"
+		if options.IsoLevel != "" {
+			begin += " ISOLATION LEVEL " + string(options.IsoLevel)
+		}
+		if options.AccessMode != "" {
+			begin += " " + string(options.AccessMode)
+		}
+		if options.DeferrableMode != "" {
+			begin += " " + string(options.DeferrableMode)
+		}
+	}
+	return fmt.Sprintf("%s; SET LOCAL statement_timeout = '%dms'",
+		begin, max(statementTimeout.Milliseconds(), 1))
 }
 
 func (executor *Executor) acquire(

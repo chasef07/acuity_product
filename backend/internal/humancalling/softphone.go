@@ -306,8 +306,28 @@ func loadCurrentCallCapacity(
 	subject string,
 	state *SoftphoneState,
 ) error {
-	var globallyOccupied bool
-	if err := querier.QueryRow(ctx, `
+	if err := scanOccupiedCall(
+		querier.QueryRow(ctx, occupiedCallQuery("$2"), subject, state.SessionID), state,
+	); err != nil {
+		return err
+	}
+	return scanPendingOutcomeCall(querier.QueryRow(ctx, pendingOutcomeCallQuery, subject), state)
+}
+
+func queueLeasedCallCapacity(batch *pgx.Batch, subject string, state *SoftphoneState) {
+	batch.Queue(occupiedCallQuery(`(
+		SELECT lease.session_id FROM human_calling_softphone_leases lease
+		WHERE lease.user_subject = $1
+	)`), subject).QueryRow(func(row pgx.Row) error {
+		return scanOccupiedCall(row, state)
+	})
+	batch.Queue(pendingOutcomeCallQuery, subject).QueryRow(func(row pgx.Row) error {
+		return scanPendingOutcomeCall(row, state)
+	})
+}
+
+func occupiedCallQuery(sessionID string) string {
+	return `
 		WITH occupied AS (
 			SELECT call.id, call.practice_id, call.location_id, call.direction,
 				leg.staff_session_id, leg.state, leg.answered_at, leg.updated_at
@@ -347,17 +367,14 @@ func loadCurrentCallCapacity(
 					occupied.direction <> 'OUTBOUND'
 					OR occupied.state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 					OR (occupied.state = 'ENDING' AND occupied.answered_at IS NOT NULL)
-					OR occupied.staff_session_id = $2
+					OR occupied.staff_session_id = ` + sessionID + `
 				)
 			ORDER BY occupied.updated_at DESC, occupied.id LIMIT 1
 		), ''), EXISTS (SELECT 1 FROM occupied)
-	`, subject, state.SessionID).Scan(&state.ActiveCallID, &globallyOccupied); err != nil {
-		return fmt.Errorf("read occupied Call: %w", err)
-	}
-	if globallyOccupied {
-		state.Available = false
-	}
-	if err := querier.QueryRow(ctx, `
+	`
+}
+
+const pendingOutcomeCallQuery = `
 		SELECT COALESCE((
 			SELECT call.id::text
 			FROM human_calling_calls call
@@ -384,7 +401,21 @@ func loadCurrentCallCapacity(
 				AND call.disposition_at IS NULL
 			ORDER BY call.updated_at DESC, call.id LIMIT 1
 		), '')
-	`, subject).Scan(&state.PendingOutcomeCallID); err != nil {
+	`
+
+func scanOccupiedCall(row pgx.Row, state *SoftphoneState) error {
+	var globallyOccupied bool
+	if err := row.Scan(&state.ActiveCallID, &globallyOccupied); err != nil {
+		return fmt.Errorf("read occupied Call: %w", err)
+	}
+	if globallyOccupied {
+		state.Available = false
+	}
+	return nil
+}
+
+func scanPendingOutcomeCall(row pgx.Row, state *SoftphoneState) error {
+	if err := row.Scan(&state.PendingOutcomeCallID); err != nil {
 		return fmt.Errorf("read pending Call outcome: %w", err)
 	}
 	return nil

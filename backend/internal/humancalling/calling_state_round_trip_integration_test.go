@@ -61,6 +61,53 @@ func TestConditionalCallingStateReadUsesThreeDatabaseRoundTrips(t *testing.T) {
 	}
 }
 
+func TestCallingStateWithoutLeaseOmitsStaffCalls(t *testing.T) {
+	db := testdb.Open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 22, 16, 30, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	accessModule := access.New(db.As(testdb.Portal), clock)
+	authorization, identities := provisionConcurrentStaff(t, db.Owner, accessModule, now, "no-lease", 1)
+	staff := identities[0]
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, nil, humancalling.Config{}, clock)
+	if _, err := db.Owner.Exec(ctx, `
+		WITH call AS (
+			INSERT INTO human_calling_calls (
+				practice_id, location_id, direction, entry_point, created_at, updated_at
+			) VALUES ($1, $2, 'INBOUND', 'STANDALONE', $3, $3)
+			RETURNING id
+		)
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, staff_subject, state,
+			answered_at, bridge_pending_at, bridged_at, created_at, updated_at
+		)
+		SELECT call.id, leg.role, leg.sequence, leg.staff_subject, 'BRIDGED', $3, $3, $3, $3, $3
+		FROM call
+		CROSS JOIN (VALUES ('CALLER', 1, NULL), ('STAFF', 2, $4)) leg (role, sequence, staff_subject)
+	`, authorization.Practice.ID, authorization.Locations[0].ID, now, staff.Subject); err != nil {
+		t.Fatal(err)
+	}
+
+	unleased, _, err := calling.ReadCallingStateConditionally(ctx, staff, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unleased.Softphone != (humancalling.SoftphoneState{}) || unleased.Bridged != nil {
+		t.Fatalf("Calling state without a lease exposed Staff Calls: softphone=%+v bridged=%+v",
+			unleased.Softphone, unleased.Bridged)
+	}
+	if _, err := calling.AcquireSoftphone(ctx, staff, "no-lease-session", false); err != nil {
+		t.Fatal(err)
+	}
+	leased, _, err := calling.ReadCallingStateConditionally(ctx, staff, unleased.ETag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leased.Bridged == nil || leased.Softphone.ActiveCallID != leased.Bridged.CallID {
+		t.Fatalf("leased Calling state: softphone=%+v bridged=%+v", leased.Softphone, leased.Bridged)
+	}
+}
+
 type roundTripCounter struct {
 	count atomic.Int64
 }

@@ -118,3 +118,41 @@ func TestExecutorRecoversPoolAfterConnectionLossWithoutReplayingTransaction(t *t
 		t.Fatal("pool reused terminated connection")
 	}
 }
+
+func TestExecutorStartsTransactionsWithOptionsAndLocalStatementTimeout(t *testing.T) {
+	pool := openExecutorPool(t, 1)
+	executor := newTestExecutor(t, pool, time.Second, 5*time.Second, 1500*time.Millisecond)
+	ctx := context.Background()
+	var outside string
+	if err := executor.QueryRow(ctx, `SHOW statement_timeout`).Scan(&outside); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := executor.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var timeout, isolation, readOnly string
+	if err := tx.QueryRow(ctx, `
+		SELECT current_setting('statement_timeout'),
+			current_setting('transaction_isolation'),
+			current_setting('transaction_read_only')
+	`).Scan(&timeout, &isolation, &readOnly); err != nil {
+		t.Fatal(err)
+	}
+	if timeout != "1500ms" || isolation != "repeatable read" || readOnly != "on" {
+		t.Fatalf("transaction settings = timeout %q, isolation %q, read only %q", timeout, isolation, readOnly)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var after string
+	if err := executor.QueryRow(ctx, `SHOW statement_timeout`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != outside {
+		t.Fatalf("statement timeout after rollback = %q, want session value %q", after, outside)
+	}
+}

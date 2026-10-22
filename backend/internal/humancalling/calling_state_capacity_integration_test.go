@@ -304,15 +304,33 @@ type tracedStatement struct {
 	args []any
 }
 
+func (trace *callingStateQueryTrace) record(sql string, args []any) {
+	if strings.Contains(sql, "human_calling_") {
+		trace.statements = append(trace.statements, tracedStatement{
+			sql: sql, args: append([]any(nil), args...),
+		})
+	}
+}
+
 func (trace *callingStateQueryTrace) TraceQueryStart(
 	ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData,
 ) context.Context {
-	if strings.Contains(data.SQL, "human_calling_") {
-		trace.statements = append(trace.statements, tracedStatement{
-			sql: data.SQL, args: append([]any(nil), data.Args...),
-		})
-	}
+	trace.record(data.SQL, data.Args)
 	return ctx
 }
 
 func (*callingStateQueryTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func (*callingStateQueryTrace) TraceBatchStart(
+	ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData,
+) context.Context {
+	return ctx
+}
+
+func (trace *callingStateQueryTrace) TraceBatchQuery(
+	_ context.Context, _ *pgx.Conn, data pgx.TraceBatchQueryData,
+) {
+	trace.record(data.SQL, data.Args)
+}
+
+func (*callingStateQueryTrace) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}

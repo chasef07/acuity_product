@@ -124,7 +124,9 @@ func (m *Module) readCallingState(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	state := CallingState{Ringing: []RingingCallLeg{}, Transfers: []StaffTransfer{}}
-	if err := tx.QueryRow(ctx, `
+	leased := true
+	batch := &pgx.Batch{}
+	batch.Queue(`
 		SELECT session_id, lease_expires_at,
 			lease_expires_at > $2,
 			(desired_available AND registered AND microphone_ready
@@ -132,22 +134,25 @@ func (m *Module) readCallingState(
 				AND lease_expires_at > $2)
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1
-	`, staffSubject, m.now()).Scan(
-		&state.Softphone.SessionID,
-		&state.Softphone.LeaseExpiresAt,
-		&state.Softphone.Owner,
-		&state.Softphone.Available,
-	); err != nil {
+	`, staffSubject, m.now()).QueryRow(func(row pgx.Row) error {
+		err := row.Scan(
+			&state.Softphone.SessionID,
+			&state.Softphone.LeaseExpiresAt,
+			&state.Softphone.Owner,
+			&state.Softphone.Available,
+		)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return state, nil
+			leased = false
+			return nil
 		}
-		return CallingState{}, fmt.Errorf("read Calling lease state: %w", err)
-	}
-	if err := loadCurrentCallCapacity(ctx, tx, staffSubject, &state.Softphone); err != nil {
-		return CallingState{}, err
-	}
+		if err != nil {
+			return fmt.Errorf("read Calling lease state: %w", err)
+		}
+		return nil
+	})
+	queueLeasedCallCapacity(batch, staffSubject, &state.Softphone)
 
-	rows, err := tx.Query(ctx, `
+	batch.Queue(`
 		SELECT call.id::text, leg.id::text, call.practice_id::text,
 			call.location_id::text, location.name,
 			COALESCE(handoff.display_name, ''),
@@ -204,38 +209,31 @@ func (m *Module) readCallingState(
 			)
 			AND `+callingScopeLocationFilter("operational_scope", "call")+`
 		ORDER BY leg.created_at, leg.id
-	`, staffSubject, m.config.RingWindowDuration.String())
-	if err != nil {
-		return CallingState{}, fmt.Errorf("read ringing CallLegs: %w", err)
-	}
-	for rows.Next() {
-		var leg RingingCallLeg
-		if err := rows.Scan(
-			&leg.CallID, &leg.CallLegID, &leg.PracticeID, &leg.LocationID,
-			&leg.LocationName, &leg.DisplayName, &leg.Phone, &leg.TransferReason,
-			&leg.State, &leg.Version, &leg.CreatedAt, &leg.Deadline,
-			&leg.OfferKind, &leg.StaffTransferID, &leg.OriginatorEmail,
-			&leg.HandoffNote,
-		); err != nil {
-			rows.Close()
-			return CallingState{}, fmt.Errorf("scan ringing CallLeg: %w", err)
+	`, staffSubject, m.config.RingWindowDuration.String()).Query(func(rows pgx.Rows) error {
+		for rows.Next() {
+			var leg RingingCallLeg
+			if err := rows.Scan(
+				&leg.CallID, &leg.CallLegID, &leg.PracticeID, &leg.LocationID,
+				&leg.LocationName, &leg.DisplayName, &leg.Phone, &leg.TransferReason,
+				&leg.State, &leg.Version, &leg.CreatedAt, &leg.Deadline,
+				&leg.OfferKind, &leg.StaffTransferID, &leg.OriginatorEmail,
+				&leg.HandoffNote,
+			); err != nil {
+				return fmt.Errorf("scan ringing CallLeg: %w", err)
+			}
+			leg.MediaToken = m.staffMediaToken(leg.CallID, leg.CallLegID)
+			state.Ringing = append(state.Ringing, leg)
 		}
-		leg.MediaToken = m.staffMediaToken(leg.CallID, leg.CallLegID)
-		state.Ringing = append(state.Ringing, leg)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return CallingState{}, fmt.Errorf("iterate ringing CallLegs: %w", err)
-	}
-	rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("read ringing CallLegs: %w", err)
+		}
+		return nil
+	})
 
-	state.Bridged, err = readStaffStateCall(ctx, tx, staffSubject, `
+	queueCallingStateCall(batch, "Staff Calling state", staffStateCallQuery(`
 		leg.state = 'BRIDGED' AND call.terminal_outcome IS NULL
-	`)
-	if err != nil {
-		return CallingState{}, err
-	}
-	state.Disposition, err = readStaffStateCall(ctx, tx, staffSubject, `
+	`), staffSubject, &state.Bridged)
+	queueCallingStateCall(batch, "Staff Calling state", staffStateCallQuery(`
 		leg.bridged_at IS NOT NULL AND call.terminal_outcome = 'ENDED'
 		AND call.disposition_at IS NULL
 		AND leg.id = (
@@ -243,15 +241,9 @@ func (m *Module) readCallingState(
 			FROM human_calling_current_staff_owners owner
 			WHERE owner.call_id = call.id
 		)
-	`)
-	if err != nil {
-		return CallingState{}, err
-	}
-	state.Voicemail, err = readScopedVoicemailState(ctx, tx, staffSubject)
-	if err != nil {
-		return CallingState{}, err
-	}
-	transferRows, err := tx.Query(ctx, staffTransferSelect+`
+	`), staffSubject, &state.Disposition)
+	queueCallingStateCall(batch, "scoped voicemail state", scopedVoicemailQuery, staffSubject, &state.Voicemail)
+	batch.Queue(staffTransferSelect+`
 		JOIN access_calling_scopes calling_scope
 			ON calling_scope.practice_id = transfer.practice_id
 			AND calling_scope.user_subject = $1
@@ -259,24 +251,26 @@ func (m *Module) readCallingState(
 			AND transfer.state IN ('REQUESTED', 'ACCEPTED')
 			AND `+callingScopeLocationFilter("calling_scope", "transfer")+`
 		ORDER BY transfer.created_at, transfer.id
-	`, staffSubject)
-	if err != nil {
-		return CallingState{}, fmt.Errorf("read active staff transfers: %w", err)
-	}
-	for transferRows.Next() {
-		transfer, err := scanStaffTransfer(transferRows)
-		if err != nil {
-			transferRows.Close()
-			return CallingState{}, err
+	`, staffSubject).Query(func(rows pgx.Rows) error {
+		for rows.Next() {
+			transfer, err := scanStaffTransfer(rows)
+			if err != nil {
+				return err
+			}
+			state.Transfers = append(state.Transfers, transfer)
 		}
-		state.Transfers = append(state.Transfers, transfer)
-	}
-	if err := transferRows.Err(); err != nil {
-		transferRows.Close()
-		return CallingState{}, err
-	}
-	transferRows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("read active staff transfers: %w", err)
+		}
+		return nil
+	})
 
+	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+		return CallingState{}, fmt.Errorf("read Calling state: %w", err)
+	}
+	if !leased {
+		return CallingState{Ringing: []RingingCallLeg{}, Transfers: []StaffTransfer{}}, nil
+	}
 	return state, nil
 }
 
@@ -284,13 +278,8 @@ func hasOperationalCallingAccess(discovery access.Discovery) bool {
 	return len(discovery.Practices) > 0
 }
 
-func readStaffStateCall(
-	ctx context.Context,
-	tx pgx.Tx,
-	staffSubject string,
-	predicate string,
-) (*CallingStateCall, error) {
-	query := `
+func staffStateCallQuery(predicate string) string {
+	return `
 		SELECT call.id::text, leg.id::text, call.practice_id::text,
 			call.location_id::text, location.name, leg.state, call.version
 		FROM human_calling_call_legs leg
@@ -312,27 +301,9 @@ func readStaffStateCall(
 		ORDER BY call.updated_at DESC, call.id
 		LIMIT 1
 	`
-	var result CallingStateCall
-	err := tx.QueryRow(ctx, query, staffSubject).Scan(
-		&result.CallID, &result.CallLegID, &result.PracticeID,
-		&result.LocationID, &result.LocationName, &result.State, &result.Version,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read Staff Calling state: %w", err)
-	}
-	return &result, nil
 }
 
-func readScopedVoicemailState(
-	ctx context.Context,
-	tx pgx.Tx,
-	staffSubject string,
-) (*CallingStateCall, error) {
-	var result CallingStateCall
-	err := tx.QueryRow(ctx, `
+var scopedVoicemailQuery = `
 		SELECT call.id::text, caller.id::text, call.practice_id::text,
 			call.location_id::text, location.name,
 			(
@@ -362,18 +333,31 @@ func readScopedVoicemailState(
 			)
 		)
 			AND call.disposition_at IS NULL
-			AND `+callingScopeLocationFilter("calling_scope", "call")+`
+			AND ` + callingScopeLocationFilter("calling_scope", "call") + `
 		ORDER BY call.updated_at DESC, call.id
 		LIMIT 1
-	`, staffSubject).Scan(
-		&result.CallID, &result.CallLegID, &result.PracticeID,
-		&result.LocationID, &result.LocationName, &result.State, &result.Version,
-	)
-	if err != nil {
+	`
+
+func queueCallingStateCall(
+	batch *pgx.Batch,
+	name string,
+	query string,
+	staffSubject string,
+	destination **CallingStateCall,
+) {
+	batch.Queue(query, staffSubject).QueryRow(func(row pgx.Row) error {
+		var result CallingStateCall
+		err := row.Scan(
+			&result.CallID, &result.CallLegID, &result.PracticeID,
+			&result.LocationID, &result.LocationName, &result.State, &result.Version,
+		)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
+			return nil
 		}
-		return nil, fmt.Errorf("read scoped voicemail state: %w", err)
-	}
-	return &result, nil
+		if err != nil {
+			return fmt.Errorf("read %s: %w", name, err)
+		}
+		*destination = &result
+		return nil
+	})
 }
