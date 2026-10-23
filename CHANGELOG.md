@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.46.2](https://github.com/chasef07/acuity_product/compare/v1.46.1...v1.46.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** move runtimes to Node 26, pnpm 12, and Go 1.27 ([32a44cc](https://github.com/chasef07/acuity_product/commit/32a44cc5ea181b633739b95bc622603616d19148))
+* **deps:** pin zod 4.6.7 for GHSA-mrhx-c7xc-m3w5 ([#545](https://github.com/chasef07/acuity_product/issues/545)) ([3139374](https://github.com/chasef07/acuity_product/commit/31393743b5f19df8eb30560d80a3520f03513354))
+
 ## [1.46.1](https://github.com/chasef07/acuity_product/compare/v1.46.0...v1.46.1) (2026-10-22)
 
 
