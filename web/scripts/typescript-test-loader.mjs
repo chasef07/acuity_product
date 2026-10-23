@@ -1,15 +1,18 @@
-import { readFile, stat } from "node:fs/promises"
+import { readFileSync, statSync } from "node:fs"
+import { registerHooks } from "node:module"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
-import { loadBindings, transform } from "next/dist/build/swc/index.js"
+import { loadBindings, transformSync } from "next/dist/build/swc/index.js"
 
 await loadBindings()
 
 const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url))
 const sourceExtensions = [".ts", ".tsx"]
 
-export async function resolve(specifier, context, nextResolve) {
+registerHooks({ resolve, load })
+
+function resolve(specifier, context, nextResolve) {
   if (specifier === "next/navigation") {
     return {
       url: new URL("./test-stubs/next-navigation.mjs", import.meta.url).href,
@@ -22,7 +25,7 @@ export async function resolve(specifier, context, nextResolve) {
       ? fileURLToPath(new URL(specifier, context.parentURL))
       : undefined
   if (candidate) {
-    const resolved = await resolveSource(candidate)
+    const resolved = resolveSource(candidate)
     if (resolved) {
       return { url: pathToFileURL(resolved).href, shortCircuit: true }
     }
@@ -30,14 +33,14 @@ export async function resolve(specifier, context, nextResolve) {
   return nextResolve(specifier, context)
 }
 
-export async function load(url, context, nextLoad) {
+function load(url, context, nextLoad) {
   if (url.startsWith("file:") && url.endsWith(".module.css")) {
     return { format: "module", source: "export default {}", shortCircuit: true }
   }
   if (url.startsWith("file:") && /\.tsx?$/.test(url)) {
     const filename = fileURLToPath(url)
-    const source = await readFile(filename, "utf8")
-    const result = await transform(source, {
+    const source = readFileSync(filename, "utf8")
+    const result = transformSync(source, {
       filename,
       jsc: {
         parser: { syntax: "typescript", tsx: filename.endsWith(".tsx") },
@@ -51,19 +54,12 @@ export async function load(url, context, nextLoad) {
   return nextLoad(url, context)
 }
 
-async function resolveSource(candidate) {
+function resolveSource(candidate) {
   for (const pathCandidate of [
     candidate,
     ...sourceExtensions.map((extension) => `${candidate}${extension}`),
     ...sourceExtensions.map((extension) => path.join(candidate, `index${extension}`)),
   ]) {
-    if (await exists(pathCandidate)) return pathCandidate
+    if (statSync(pathCandidate, { throwIfNoEntry: false })?.isFile()) return pathCandidate
   }
-}
-
-async function exists(candidate) {
-  return stat(candidate).then(
-    (value) => value.isFile(),
-    () => false,
-  )
 }
