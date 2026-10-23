@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-go@v7
         id: go
         with:
-          go-version: "1.26.10"
+          go-version: "1.27.3"
           cache: false
       # Separate workloads cannot overwrite each other's partial Go caches.
       - uses: actions/cache@v5
@@ -92,10 +92,10 @@ jobs:
           ref: ${{ inputs.release_sha }}
       - uses: pnpm/action-setup@v4
         with:
-          version: "10.34.5"
+          version: "12.15.0"
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.20.0"
+          node-version: "26.12.1"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -132,7 +132,7 @@ jobs:
       - uses: actions/setup-go@v7
         id: go
         with:
-          go-version: "1.26.10"
+          go-version: "1.27.3"
           cache: false
       # Separate workloads cannot overwrite each other's partial Go caches.
       - uses: actions/cache@v5
@@ -145,10 +145,10 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-contracts-${{ hashFiles('go.mod', 'go.sum') }}-
       - uses: pnpm/action-setup@v4
         with:
-          version: "10.34.5"
+          version: "12.15.0"
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.20.0"
+          node-version: "26.12.1"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -193,7 +193,7 @@ jobs:
       - uses: actions/setup-go@v7
         id: go
         with:
-          go-version: "1.26.10"
+          go-version: "1.27.3"
           cache: false
       # Separate workloads cannot overwrite each other's partial Go caches.
       - uses: actions/cache@v5
@@ -206,10 +206,10 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-browser-${{ hashFiles('go.mod', 'go.sum') }}-
       - uses: pnpm/action-setup@v4
         with:
-          version: "10.34.5"
+          version: "12.15.0"
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.20.0"
+          node-version: "26.12.1"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile

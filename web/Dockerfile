@@ -1,6 +1,6 @@
-FROM node:24.4.1-alpine AS base
+FROM node:26.12.1-alpine AS base
 
-RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
+RUN npm install --global pnpm@12.15.0
 
 FROM base AS dependencies
 
@@ -20,7 +20,7 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 RUN pnpm build
 
-FROM node:24.4.1-alpine AS runtime
+FROM node:26.12.1-alpine AS runtime
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
