@@ -34,7 +34,6 @@ type Config struct {
 	APIAudience             string
 	ProvisioningInput       string
 	ProvisioningOutput      string
-	LocationVoiceProvision  LocationVoiceProvisionConfig
 	Realtime                RealtimeConfig
 	Service                 ServiceConfig
 	HumanCalling            HumanCallingConfig
@@ -47,12 +46,6 @@ type Config struct {
 type MiddlewareConfig struct {
 	BaseURL   string
 	APISecret string
-}
-
-type LocationVoiceProvisionConfig struct {
-	PracticeKey string
-	LocationKey string
-	Number      string
 }
 
 type ServiceConfig struct {
@@ -263,39 +256,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if role == RoleMigrate && (config.ProvisioningInput == "") != (config.ProvisioningOutput == "") {
 		return Config{}, fmt.Errorf("PROVISIONING_INPUT and PROVISIONING_OUTPUT must be set together")
 	}
-	if role == RoleMigrate {
-		config.LocationVoiceProvision, err = loadLocationVoiceProvision(getenv)
-		if err != nil {
-			return Config{}, err
-		}
-	}
 	return config, nil
-}
-
-func loadLocationVoiceProvision(
-	getenv func(string) string,
-) (LocationVoiceProvisionConfig, error) {
-	result := LocationVoiceProvisionConfig{
-		PracticeKey: strings.TrimSpace(getenv("MIGRATE_VOICE_PRACTICE_KEY")),
-		LocationKey: strings.TrimSpace(getenv("MIGRATE_VOICE_LOCATION_KEY")),
-		Number:      strings.TrimSpace(getenv("MIGRATE_VOICE_NUMBER")),
-	}
-	configured := 0
-	for _, value := range []string{
-		result.PracticeKey,
-		result.LocationKey,
-		result.Number,
-	} {
-		if value != "" {
-			configured++
-		}
-	}
-	if configured != 0 && configured != 3 {
-		return LocationVoiceProvisionConfig{}, fmt.Errorf(
-			"MIGRATE_VOICE_PRACTICE_KEY, MIGRATE_VOICE_LOCATION_KEY, and MIGRATE_VOICE_NUMBER must be set together",
-		)
-	}
-	return result, nil
 }
 
 func loadHandoffConfig(getenv func(string) string) (HumanCallingConfig, error) {

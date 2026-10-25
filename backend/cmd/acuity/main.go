@@ -477,20 +477,9 @@ func runMigrate(
 	if err := migrations.ApplyRuntimeGrants(ctx, pool); err != nil {
 		return err
 	}
-	voiceProvision := config.LocationVoiceProvision
 	if config.ProvisioningInput == "" {
-		if err := provisionConfiguredLocationVoice(ctx, config, pool); err != nil {
-			return err
-		}
-		slog.Info(
-			"migrations_applied",
-			"provisioning", false,
-			"location_voice_provisioned", voiceProvision.Number != "",
-		)
+		slog.Info("migrations_applied", "provisioning", false)
 		return nil
-	}
-	if voiceProvision.Number != "" {
-		return fmt.Errorf("one-time provisioning cannot use legacy Location voice configuration")
 	}
 
 	inputFile, err := os.Open(config.ProvisioningInput)
@@ -622,32 +611,6 @@ func runMigrate(
 		"provisioning", true,
 		"access_grant_count", provisioned.AccessGrantCount,
 	)
-	return nil
-}
-
-func provisionConfiguredLocationVoice(
-	ctx context.Context,
-	config app.Config,
-	pool *pgxpool.Pool,
-) error {
-	voiceProvision := config.LocationVoiceProvision
-	if voiceProvision.Number == "" {
-		return nil
-	}
-	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
-		ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
-			PracticeKey: voiceProvision.PracticeKey,
-			LocationKey: voiceProvision.LocationKey,
-			Number:      voiceProvision.Number,
-			Enabled:     true,
-		}}); err != nil {
-		return fmt.Errorf(
-			"provision Location voice %q/%q: %w",
-			voiceProvision.PracticeKey,
-			voiceProvision.LocationKey,
-			err,
-		)
-	}
 	return nil
 }
 
