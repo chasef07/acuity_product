@@ -25,7 +25,6 @@ type AgentCall struct {
 	AppointmentActions []AppointmentAction `json:"appointmentActions"`
 	Transferred        bool                `json:"transferred"`
 	IssueFlagged       bool                `json:"issueFlagged"`
-	KnowledgeGaps      []string            `json:"knowledgeGaps"`
 }
 type AgentCallIssueReason string
 
@@ -67,15 +66,13 @@ type AgentCallsPage struct {
 }
 type QueryAgentCallsCommand struct {
 	QueryAnalyticsCommand
-	Phone              string
-	FlaggedOnly        bool
-	NeedsKnowledgeOnly bool
+	Phone       string
+	FlaggedOnly bool
 }
 type agentCallsCursor struct {
 	analyticsCursor
-	Phone              string `json:"phone"`
-	FlaggedOnly        bool   `json:"flaggedOnly"`
-	NeedsKnowledgeOnly bool   `json:"needsKnowledgeOnly"`
+	Phone       string `json:"phone"`
+	FlaggedOnly bool   `json:"flaggedOnly"`
 }
 
 func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCommand) (AgentCallsPage, error) {
@@ -98,7 +95,7 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	var id any
 	if command.Cursor != "" {
 		var cursor agentCallsCursor
-		if !decodeCursor(command.QueryAnalyticsCommand, &cursor, &cursor.analyticsCursor, through) || cursor.Phone != phone || cursor.FlaggedOnly != command.FlaggedOnly || cursor.NeedsKnowledgeOnly != command.NeedsKnowledgeOnly {
+		if !decodeCursor(command.QueryAnalyticsCommand, &cursor, &cursor.analyticsCursor, through) || cursor.Phone != phone || cursor.FlaggedOnly != command.FlaggedOnly {
 			return AgentCallsPage{}, ErrInvalidInput
 		}
 		through, startedAt, id = cursor.Through, cursor.StartedAt, cursor.ID
@@ -112,25 +109,19 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
   SELECT i.id::text, i.phone, i.started_at, i.ended_at, i.status,
    i.appointment_outcome, i.booking_result, i.cancellation_result,
    i.closeout_payload -> 'domainOutcomes', issue.interaction_id IS NOT NULL,
-   classification.intent, classification.outcome, classification.status, gaps.detail
+   classification.intent, classification.outcome, classification.status
   FROM ai_interactions i
   LEFT JOIN ai_interaction_issues issue ON issue.interaction_id = i.id
   LEFT JOIN ai_interaction_classifications classification ON classification.interaction_id = i.id
-  LEFT JOIN ai_interaction_scorecard_answers gaps ON gaps.interaction_id = i.id AND gaps.question = 'knowledge_answered'
   WHERE i.practice_id = $1 AND i.location_id = ANY($2::uuid[])
    AND i.started_at >= $3 AND i.started_at <= $4
    AND ($5::timestamptz IS NULL OR (i.started_at, i.id) < ($5, $6::uuid))
    AND ($7 = '' OR strpos(i.phone, $7) > 0)
    AND (NOT $8 OR issue.interaction_id IS NOT NULL)
-   AND (NOT $9 OR EXISTS (
-    SELECT 1 FROM ai_interaction_scorecard_answers judged
-    WHERE judged.interaction_id = i.id AND NOT judged.answer AND (
-     (judged.scorecard_version = 'typesafe-scorecard-v8' AND judged.question = 'knowledge_available') OR
-     (judged.scorecard_version <> 'typesafe-scorecard-v8' AND judged.question = 'office_question_answered'))))
-   AND ($11 = '' OR classification.intent = $11)
-   AND ($12 = '' OR classification.outcome = $12)
-  ORDER BY i.started_at DESC, i.id DESC LIMIT $10
- `, command.PracticeID, locations, through.Add(-duration), through, startedAt, id, phone, command.FlaggedOnly, command.NeedsKnowledgeOnly, command.Limit+1, command.Intent, command.Outcome)
+   AND ($10 = '' OR classification.intent = $10)
+   AND ($11 = '' OR classification.outcome = $11)
+  ORDER BY i.started_at DESC, i.id DESC LIMIT $9
+ `, command.PracticeID, locations, through.Add(-duration), through, startedAt, id, phone, command.FlaggedOnly, command.Limit+1, command.Intent, command.Outcome)
 	if err != nil {
 		return AgentCallsPage{}, err
 	}
@@ -139,13 +130,12 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 		var stored Interaction
 		var receipts json.RawMessage
 		var flagged bool
-		var gaps json.RawMessage
 		var labels callLabelProjection
-		if err := rows.Scan(&stored.ID, &stored.Phone, &stored.StartedAt, &stored.EndedAt, &stored.Status, &stored.AppointmentOutcome, &stored.BookingResult, &stored.CancellationResult, &receipts, &flagged, &labels.Intent, &labels.Outcome, &labels.LabelingStatus, &gaps); err != nil {
+		if err := rows.Scan(&stored.ID, &stored.Phone, &stored.StartedAt, &stored.EndedAt, &stored.Status, &stored.AppointmentOutcome, &stored.BookingResult, &stored.CancellationResult, &receipts, &flagged, &labels.Intent, &labels.Outcome, &labels.LabelingStatus); err != nil {
 			rows.Close()
 			return AgentCallsPage{}, err
 		}
-		call := agentCall(stored, receipts, flagged, gaps)
+		call := agentCall(stored, receipts, flagged)
 		call.Intent, call.Outcome, call.LabelingStatus = labels.Intent, labels.Outcome, labels.LabelingStatus
 		page.Calls = append(page.Calls, call)
 	}
@@ -156,7 +146,7 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	if len(page.Calls) > command.Limit {
 		page.Calls = page.Calls[:command.Limit]
 		last := page.Calls[len(page.Calls)-1]
-		page.NextCursor, err = encodeCursor(agentCallsCursor{analyticsCursor: newAnalyticsCursor(command.QueryAnalyticsCommand, last.StartedAt, last.ID, through), Phone: phone, FlaggedOnly: command.FlaggedOnly, NeedsKnowledgeOnly: command.NeedsKnowledgeOnly})
+		page.NextCursor, err = encodeCursor(agentCallsCursor{analyticsCursor: newAnalyticsCursor(command.QueryAnalyticsCommand, last.StartedAt, last.ID, through), Phone: phone, FlaggedOnly: command.FlaggedOnly})
 		if err != nil {
 			return AgentCallsPage{}, err
 		}
@@ -167,7 +157,7 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	return page, nil
 }
 
-func agentCall(stored Interaction, receipts json.RawMessage, flagged bool, knowledgeGaps json.RawMessage) AgentCall {
+func agentCall(stored Interaction, receipts json.RawMessage, flagged bool) AgentCall {
 	actions := []AppointmentAction{}
 	add := func(action AppointmentAction) {
 		if !slices.Contains(actions, action) {
@@ -219,7 +209,7 @@ func agentCall(stored Interaction, receipts json.RawMessage, flagged bool, knowl
 			}
 		}
 	}
-	call := AgentCall{ID: stored.ID, Phone: stored.Phone, StartedAt: stored.StartedAt, AppointmentActions: actions, Transferred: stored.Status == CallEscalated, IssueFlagged: flagged, KnowledgeGaps: knowledgeGapQueries(knowledgeGaps)}
+	call := AgentCall{ID: stored.ID, Phone: stored.Phone, StartedAt: stored.StartedAt, AppointmentActions: actions, Transferred: stored.Status == CallEscalated, IssueFlagged: flagged}
 	if stored.EndedAt != nil {
 		seconds := max(0, int(stored.EndedAt.Sub(stored.StartedAt).Seconds()))
 		call.DurationSeconds = &seconds
@@ -246,17 +236,12 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 	if err == nil {
 		detail.Issue = &issue
 	}
-	var gaps json.RawMessage
-	err = tx.QueryRow(ctx, `SELECT detail FROM ai_interaction_scorecard_answers WHERE interaction_id = $1 AND question = 'knowledge_answered'`, id).Scan(&gaps)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return AgentCallDetail{}, err
-	}
 	var closeout struct {
 		DomainOutcomes json.RawMessage `json:"domainOutcomes"`
 		Evaluation     json.RawMessage `json:"evaluation"`
 	}
 	_ = json.Unmarshal(stored.CloseoutPayload, &closeout)
-	detail.Call = agentCall(stored, closeout.DomainOutcomes, detail.Issue != nil, gaps)
+	detail.Call = agentCall(stored, closeout.DomainOutcomes, detail.Issue != nil)
 	labels, err := readCallLabelProjection(ctx, tx, id)
 	if err != nil {
 		return AgentCallDetail{}, err
@@ -282,20 +267,6 @@ func (m *Module) ReadAgentCall(ctx context.Context, identity access.Identity, id
 		return AgentCallDetail{}, err
 	}
 	return detail, nil
-}
-
-func knowledgeGapQueries(detail json.RawMessage) []string {
-	var recorded struct {
-		Queries []string `json:"queries"`
-	}
-	_ = json.Unmarshal(detail, &recorded)
-	queries := []string{}
-	for _, query := range recorded.Queries {
-		if query = strings.TrimSpace(query); query != "" {
-			queries = append(queries, query)
-		}
-	}
-	return queries
 }
 
 func agentCallCheckResult(evaluation json.RawMessage) string {

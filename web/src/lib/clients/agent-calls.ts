@@ -26,7 +26,6 @@ export function useAgentCalls({
   range,
   phone,
   flaggedOnly,
-  needsKnowledgeOnly = false,
   intent,
   outcome,
 }: {
@@ -35,14 +34,13 @@ export function useAgentCalls({
   range: OperatorAiAnalyticsRange
   phone: string
   flaggedOnly: boolean
-  needsKnowledgeOnly?: boolean
   intent?: CallIntent
   outcome?: CallOutcome
 }) {
   return usePages({
     live: "workspace",
     name: "agent-calls",
-    identity: { practiceID, locationID, range, phone, flaggedOnly, needsKnowledgeOnly, intent, outcome },
+    identity: { practiceID, locationID, range, phone, flaggedOnly, intent, outcome },
     read: (identity, cursor, transport) =>
       queryAgentCalls({
         ...transport,
@@ -52,7 +50,6 @@ export function useAgentCalls({
           range: identity.range,
           phone: identity.phone,
           flaggedOnly: identity.flaggedOnly,
-          needsKnowledgeOnly: identity.needsKnowledgeOnly,
           intent: identity.intent,
           outcome: identity.outcome,
           limit: 50,

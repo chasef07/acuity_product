@@ -189,7 +189,7 @@ test("each page keeps its title, actions, and filters inside the panel", async (
   const page = harness(t)
   page.knowledge = syntheticKnowledge
   page.agentCalls = {
-    calls: [{ id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }],
+    calls: [{ id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }],
     nextCursor: "",
   }
   const showPage = (selected: "home" | "transcripts" | "knowledge" | "insurance") =>
@@ -226,7 +226,7 @@ test("each page keeps its title, actions, and filters inside the panel", async (
 
 test("Calls updates automatically without replacing the table while refreshing and keeps retry available", async (t) => {
   const page = harness(t)
-  const original = { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }
+  const original = { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }
   page.agentCalls = { calls: [original], nextCursor: "" }
   const show = (version: number) => page.render(<LiveWorkspace version={version}><ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} /></LiveWorkspace>)
   await show(1)
@@ -933,7 +933,7 @@ function LiveWorkspace({ version, children }: { version: number; children: React
 }
 
 function agentCall(id: string, phone: string): AgentCallsPage["calls"][number] {
-  return { id, phone, startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false, knowledgeGaps: [] }
+  return { id, phone, startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }
 }
 
 function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {

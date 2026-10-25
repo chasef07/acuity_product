@@ -37,7 +37,6 @@ func (server *Server) QueryAgentCalls(w http.ResponseWriter, r *http.Request) {
 			Outcome:    stringValue(body.Outcome),
 		},
 		Phone: stringValue(body.Phone), FlaggedOnly: body.FlaggedOnly != nil && *body.FlaggedOnly,
-		NeedsKnowledgeOnly: body.NeedsKnowledgeOnly != nil && *body.NeedsKnowledgeOnly,
 	})
 	if err != nil {
 		server.writeInteractionError(w, r, err)

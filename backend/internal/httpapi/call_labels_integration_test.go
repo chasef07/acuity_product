@@ -123,4 +123,15 @@ func TestCallLabelsHTTPFiltersAndPublicProjection(t *testing.T) {
 			t.Fatalf("private evidence leaked: %s", raw)
 		}
 	}
+	for _, needsKnowledgeOnly := range []bool{false, true} {
+		body, _ := json.Marshal(map[string]any{"practiceId": practice, "range": "7d", "needsKnowledgeOnly": needsKnowledgeOnly})
+		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/agent-calls/query", "staff", body)
+		raw := readBody(t, response)
+		var page struct {
+			Calls []api.AgentCall `json:"calls"`
+		}
+		if response.StatusCode != 200 || json.Unmarshal([]byte(raw), &page) != nil || len(page.Calls) != 1 || page.Calls[0].Id.String() != id {
+			t.Fatalf("previous web bundle needsKnowledgeOnly=%v must still list every call: %d %s", needsKnowledgeOnly, response.StatusCode, raw)
+		}
+	}
 }

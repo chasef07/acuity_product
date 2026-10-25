@@ -273,7 +273,6 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
     appointmentActions: [],
     transferred: false,
     issueFlagged: false,
-    knowledgeGaps: [],
   }))
   let failNextPage = true
   let firstCallReported = false
