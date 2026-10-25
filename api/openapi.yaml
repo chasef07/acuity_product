@@ -5310,6 +5310,13 @@ components:
         durationMs: {type: integer, minimum: 0}
         httpStatus: {type: integer, minimum: 100, maximum: 599}
         code: {type: string, pattern: '^-?[0-9]{1,6}$'}
+    OperatorAILegacyScorecardCheck:
+      type: object
+      additionalProperties: false
+      required: [check, needsReview]
+      properties:
+        check: {type: string}
+        needsReview: {type: boolean}
     OperatorAIInteractionAnalytics:
       type: object
       additionalProperties: false
@@ -5347,6 +5354,11 @@ components:
           type: object
           additionalProperties: true
           description: Complete stored evaluator result, including version, status, answers and usage.
+        legacyScorecard:
+          type: array
+          description: For a typesafe-scorecard-v1 to v5 evaluation, each check that version defines, in display order, with the backend's review flag. The same reading produces the ledger's reviewReasons.
+          items:
+            $ref: "#/components/schemas/OperatorAILegacyScorecardCheck"
         id:
           type: string
           format: uuid

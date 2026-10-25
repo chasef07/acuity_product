@@ -1,7 +1,7 @@
 import { ScorecardFlow, checkLabels, type FlowCall } from "./scorecard-flow"
 import { checkState, currentScorecardVersion, isJuryScorecard } from "@/lib/scorecard-flow"
 import { Badge } from "@/components/ui/badge"
-import type { AgentCallVerdict, OperatorScorecardQuestion } from "@/lib/api/generated/types.gen"
+import type { AgentCallVerdict, OperatorAiLegacyScorecardCheck, OperatorScorecardQuestion } from "@/lib/api/generated/types.gen"
 import { verdictLabels } from "@/lib/vocabulary"
 
 const evaluationLabels: Record<string, string> = {
@@ -33,10 +33,6 @@ function title(value: string): string {
   return value.replaceAll("_", " ")
 }
 
-const scorecardChecks = [
-  "appointment_datetime_correct",
-  "office_rules_grounded",
-]
 const notApplicableReasons: Record<string, string> = {
   no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
   no_appointment_action: "No booking, rescheduling, or cancellation was attempted.",
@@ -49,20 +45,12 @@ const unknownReasons: Record<string, string> = {
   no_confirmed_appointment_action: "An appointment action was attempted, but no confirmed result established the appointment date and time.",
 }
 
-function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
+function Scorecard({ evaluation, checks }: { evaluation: Record<string, unknown>; checks: OperatorAiLegacyScorecardCheck[] }) {
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
-  const version = evaluation.evaluatorVersion
-  const checks = [
-    ...(version !== "typesafe-scorecard-v5" ? ["request_understood"] : []),
-    ...scorecardChecks,
-    ...(version !== "typesafe-scorecard-v4" && version !== "typesafe-scorecard-v5" ? ["results_reported_truthfully"] : []),
-    ...(version !== "typesafe-scorecard-v1" ? ["conversation_responsive"] : []),
-    "expressed_sentiment",
-  ]
   return <>
     <dl className="mt-4 divide-y rounded-lg border px-3">
-      {checks.map((name) => {
+      {[...checks, { check: "expressed_sentiment", needsReview: false }].map(({ check: name, needsReview }) => {
         const answer = record(record(record(results[name]).answers)[name])
         const failed = Object.hasOwn(errors, name)
         const reason = record(results[name]).reason
@@ -74,8 +62,6 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
         const maximum = sentiment ? 4 : 1
         const valid = !failed && answer.type === (sentiment ? "score" : "noul") &&
           typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum
-        const needsReview = valid && !notApplicable && !sentiment && value <= 0.4 &&
-          (evaluation.status === "complete" || evaluation.status === "incomplete")
         const probabilities = record(answer.probabilities)
         return <div key={name} className="py-3 text-xs">
           <div className="flex items-start justify-between gap-3">
@@ -97,7 +83,7 @@ function Scorecard({ evaluation }: { evaluation: Record<string, unknown> }) {
         </div>
       })}
     </dl>
-    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. Checks at 0.4 or lower are highlighted for review. Sentiment and inapplicable checks do not trigger review alerts.</p>
+    <p className="mt-3 text-xs text-muted-foreground">Model estimates, not verified outcomes. Higher check scores indicate stronger support for the criterion. Sentiment reflects caller language across the whole call, not vocal tone. Checks flagged for review are highlighted. Sentiment and inapplicable checks do not trigger review alerts.</p>
   </>
 }
 
@@ -171,10 +157,9 @@ function JuryScorecard({ evaluation, verdicts, questions, call }: { evaluation: 
   </>
 }
 
-export function CallEvaluation({ evaluation, verdicts = [], questions = [], call }: { evaluation?: Record<string, unknown>; verdicts?: AgentCallVerdict[]; questions?: OperatorScorecardQuestion[]; call?: FlowCall }) {
+export function CallEvaluation({ evaluation, legacyScorecard, verdicts = [], questions = [], call }: { evaluation?: Record<string, unknown>; legacyScorecard?: OperatorAiLegacyScorecardCheck[]; verdicts?: AgentCallVerdict[]; questions?: OperatorScorecardQuestion[]; call?: FlowCall }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
-  const scorecard = evaluation?.evaluatorVersion === "typesafe-scorecard-v1" || evaluation?.evaluatorVersion === "typesafe-scorecard-v2" || evaluation?.evaluatorVersion === "typesafe-scorecard-v3" || evaluation?.evaluatorVersion === "typesafe-scorecard-v4" || evaluation?.evaluatorVersion === "typesafe-scorecard-v5"
   return (
     <section aria-label="AI evaluation" className="border-b px-5 py-4 sm:px-6">
       <div className="flex flex-wrap items-center gap-2">
@@ -188,7 +173,7 @@ export function CallEvaluation({ evaluation, verdicts = [], questions = [], call
           ))}
         </dl>}
         {typeof evaluation.reason === "string" && <p className="mt-3 text-xs">{evaluation.status === "incomplete" ? "Evaluation incomplete" : "Evaluation unavailable"}: {title(evaluation.reason)}</p>}
-        {isJuryScorecard(evaluation.evaluatorVersion) ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} call={call} /> : scorecard ? <Scorecard evaluation={evaluation} /> : <>
+        {isJuryScorecard(evaluation.evaluatorVersion) ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} call={call} /> : legacyScorecard ? <Scorecard evaluation={evaluation} checks={legacyScorecard} /> : <>
         {!currentVersion && <p className="mt-3 text-xs text-muted-foreground">This evaluator version is shown as recorded. Automatic red highlights apply only to typesafe-trace-v4.</p>}
         {Object.entries(results).map(([group, raw]) => {
           const result = record(raw)

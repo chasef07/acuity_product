@@ -3519,6 +3519,13 @@ func operatorAIInteractionAnalyticsResponse(
 			Answer:   api.AgentCallVerdictAnswer(verdict.Answer),
 		})
 	}
+	if detail.LegacyScorecard != nil {
+		checks := make([]api.OperatorAILegacyScorecardCheck, 0, len(detail.LegacyScorecard))
+		for _, check := range detail.LegacyScorecard {
+			checks = append(checks, api.OperatorAILegacyScorecardCheck{Check: check.Check, NeedsReview: check.NeedsReview})
+		}
+		response.LegacyScorecard = &checks
+	}
 	for _, item := range detail.Timeline {
 		payload := item.Payload
 		response.Timeline = append(response.Timeline, api.OperatorAITimelineItem{

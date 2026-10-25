@@ -467,6 +467,38 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		t.Fatalf("persisted middleware diagnostics were lost: %+v", requests)
 	}
 
+	legacyEvaluation := `{"evaluatorVersion":"typesafe-scorecard-v1","status":"complete","results":{"office_rules_grounded":{"answers":{"office_rules_grounded":{"type":"noul","noul":0.9}}},"conversation_responsive":{"answers":{"conversation_responsive":{"type":"noul","noul":0.3}}}}}`
+	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET closeout_payload=jsonb_set(closeout_payload,'{evaluation}',$2::jsonb) WHERE id=$1::uuid`, richID, legacyEvaluation); err != nil {
+		t.Fatal(err)
+	}
+	ledgerResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "operator-token", allLocationsBody)
+	var ledger struct {
+		Calls []struct {
+			ID            string   `json:"id"`
+			ReviewReasons []string `json:"reviewReasons"`
+		} `json:"calls"`
+	}
+	decode(t, ledgerResponse, &ledger)
+	legacyDetailResponse := request(t, server.Client(), http.MethodGet, server.URL+"/v1/operator/ai-interactions/"+richID+"/analytics", "operator-token", nil)
+	var legacyDetail struct {
+		LegacyScorecard []api.OperatorAILegacyScorecardCheck `json:"legacyScorecard"`
+	}
+	decode(t, legacyDetailResponse, &legacyDetail)
+	var reasons, flagged []string
+	for _, call := range ledger.Calls {
+		if call.ID == richID {
+			reasons = call.ReviewReasons
+		}
+	}
+	for _, check := range legacyDetail.LegacyScorecard {
+		if check.NeedsReview {
+			flagged = append(flagged, check.Check)
+		}
+	}
+	if len(legacyDetail.LegacyScorecard) != 5 || !slices.Equal(flagged, []string{"conversation_responsive"}) || !slices.Equal(reasons, []string{"Conversation responsive needs review · 0.30"}) {
+		t.Fatalf("legacy detail %+v disagrees with ledger reasons %v", legacyDetail.LegacyScorecard, reasons)
+	}
+
 	deniedDetail := request(t, server.Client(), http.MethodGet,
 		server.URL+"/v1/operator/ai-interactions/"+richID+"/analytics", "admin-token", nil)
 	if deniedDetail.StatusCode != http.StatusForbidden {
