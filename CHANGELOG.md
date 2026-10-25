@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.48.0](https://github.com/chasef07/acuity_product/compare/v1.47.0...v1.48.0) (2026-10-25)
+
+
+### Features
+
+* **knowledge:** show staff what Abita sees and cap office knowledge at 20,000 characters ([#556](https://github.com/chasef07/acuity_product/issues/556)) ([f55e529](https://github.com/chasef07/acuity_product/commit/f55e5296071e862774cbdcfa199c3fb565147ca8))
+
+
+### Bug Fixes
+
+* **analytics:** precompute per-call AI analytics facts so 30-day summaries fit the budget ([#558](https://github.com/chasef07/acuity_product/issues/558)) ([d96b6c3](https://github.com/chasef07/acuity_product/commit/d96b6c31ee5d900107fb3f1d3ea8adb94d2ddd4b))
+
 ## [1.47.0](https://github.com/chasef07/acuity_product/compare/v1.46.2...v1.47.0) (2026-10-25)
 
 
