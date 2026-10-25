@@ -2,6 +2,8 @@ package interaction
 
 import (
 	"encoding/json"
+	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -93,5 +95,61 @@ func TestScorecardV4IgnoresRemovedTruthfulnessJudge(t *testing.T) {
 		if got := EvaluationReviewReasons(raw); len(got) != tc.want {
 			t.Fatalf("version=%s reasons=%v want %d", tc.version, got, tc.want)
 		}
+	}
+}
+
+func TestLegacyScorecardDetailAgreesWithLedger(t *testing.T) {
+	all := []string{"request_understood", "appointment_datetime_correct", "office_rules_grounded", "results_reported_truthfully", "conversation_responsive"}
+	for _, tc := range []struct {
+		version string
+		checks  []string
+	}{
+		{"typesafe-scorecard-v1", all},
+		{"typesafe-scorecard-v2", all},
+		{"typesafe-scorecard-v3", all},
+		{"typesafe-scorecard-v4", []string{"request_understood", "appointment_datetime_correct", "office_rules_grounded", "conversation_responsive"}},
+		{"typesafe-scorecard-v5", []string{"appointment_datetime_correct", "office_rules_grounded", "conversation_responsive"}},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			results := map[string]any{"expressed_sentiment": map[string]any{"answers": map[string]any{"expressed_sentiment": map[string]any{"type": "score", "score": 0.0}}}}
+			for _, name := range all {
+				score := 0.3
+				if name == "appointment_datetime_correct" {
+					score = 0.9
+				}
+				results[name] = map[string]any{"answers": map[string]any{name: map[string]any{"type": "noul", "noul": score}}}
+			}
+			raw, err := json.Marshal(map[string]any{"evaluatorVersion": tc.version, "status": "complete", "results": results})
+			if err != nil {
+				t.Fatal(err)
+			}
+			detail := legacyScorecardChecks(raw)
+			var shown, flagged, ledger []string
+			for _, check := range detail {
+				shown = append(shown, check.Check)
+				if check.NeedsReview {
+					flagged = append(flagged, check.Check)
+				}
+			}
+			for _, flag := range readEvaluation(raw).Flags {
+				ledger = append(ledger, flag.Check)
+			}
+			if !reflect.DeepEqual(shown, tc.checks) {
+				t.Fatalf("detail checks = %v, want %v", shown, tc.checks)
+			}
+			want := slices.DeleteFunc(slices.Clone(tc.checks), func(check string) bool { return check == "appointment_datetime_correct" })
+			if !reflect.DeepEqual(flagged, want) || !reflect.DeepEqual(ledger, want) || len(EvaluationReviewReasons(raw)) != len(want) {
+				t.Fatalf("detail flags %v and ledger %v (%v), want %v", flagged, ledger, EvaluationReviewReasons(raw), want)
+			}
+		})
+	}
+	for _, raw := range []string{`{"evaluatorVersion":"typesafe-scorecard-v6","status":"complete","jurors":["a"]}`, `{"evaluatorVersion":"typesafe-trace-v4","status":"complete"}`, `null`} {
+		if got := legacyScorecardChecks(json.RawMessage(raw)); got != nil {
+			t.Fatalf("non-legacy evaluation %s produced legacy checks %v", raw, got)
+		}
+	}
+	failed := legacyScorecardChecks(json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v2","status":"failed","results":{"office_rules_grounded":{"answers":{"office_rules_grounded":{"type":"noul","noul":0.1}}}}}`))
+	if len(failed) != 5 || slices.ContainsFunc(failed, func(check LegacyScorecardCheck) bool { return check.NeedsReview }) {
+		t.Fatalf("failed legacy evaluation must list its checks without review flags: %v", failed)
 	}
 }

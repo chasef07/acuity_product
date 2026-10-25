@@ -1846,6 +1846,11 @@ export type ProviderErrorDiagnostic = {
     code?: string;
 };
 
+export type OperatorAiLegacyScorecardCheck = {
+    check: string;
+    needsReview: boolean;
+};
+
 export type OperatorAiInteractionAnalytics = {
     intent?: CallIntent;
     outcome?: CallOutcome;
@@ -1861,6 +1866,10 @@ export type OperatorAiInteractionAnalytics = {
     evaluation?: {
         [key: string]: unknown;
     };
+    /**
+     * For a typesafe-scorecard-v1 to v5 evaluation, each check that version defines, in display order, with the backend's review flag. The same reading produces the ledger's reviewReasons.
+     */
+    legacyScorecard?: Array<OperatorAiLegacyScorecardCheck>;
     id: string;
     practiceId: string;
     locationId: string;
