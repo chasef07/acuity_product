@@ -5,9 +5,10 @@ import { createRoot } from "react-dom/client"
 import { JSDOM } from "jsdom"
 
 import { clearAccessToken } from "../../lib/auth-client"
+import { DataProvider } from "../../lib/data/provider"
+import { useLiveRefresh } from "../../lib/data/queries"
 
 test("Command Center keeps the same call table during and after automatic refresh", async (t) => {
-  t.mock.timers.enable({ apis: ["setInterval"] })
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace?view=operator-analytics" })
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: dom.window },
@@ -33,7 +34,6 @@ test("Command Center keeps the same call table during and after automatic refres
     return new Promise<Response>((resolve) => pending.push(resolve))
   })
   const { OperatorAnalytics } = await import("./operator-analytics")
-  const { DataProvider, LiveWorkspace } = await loadDataAfterDomGlobals()
   const host = document.createElement("div")
   document.body.append(host)
   const root = createRoot(host)
@@ -60,11 +60,8 @@ test("Command Center keeps the same call table during and after automatic refres
   const table = host.querySelector("table")
   const originalRow = host.querySelector("tbody tr")
   await render(2)
-  await settle()
-  assert.equal(pending.length, 1, "a workspace change must not recompute the range summary")
-  await act(async () => t.mock.timers.tick(60_000))
   await waitFor(() => pending.length === 2)
-  assert.equal(host.querySelector("table") === table, true, "periodic refresh must not replace the table with loading placeholders")
+  assert.equal(host.querySelector("table") === table, true, "live update must not replace the table with loading placeholders")
   assert.equal(host.querySelector("tbody tr") === originalRow, true)
   await act(async () => pending[1](result(["new", "original"])))
   await waitFor(() => host.querySelectorAll("tbody tr").length === 2)
@@ -80,7 +77,7 @@ test("Command Center keeps the same call table during and after automatic refres
   assert.equal(host.querySelector("table"), null)
 })
 
-test("Breakdowns reads one range summary and keeps it across workspace changes", async (t) => {
+test("Breakdowns reads one range summary and refreshes it once per workspace change", async (t) => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace?view=operator-analytics" })
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: dom.window },
@@ -106,7 +103,6 @@ test("Breakdowns reads one range summary and keeps it across workspace changes",
     return new Promise<Response>((resolve) => pending.push(resolve))
   })
   const { OperatorAnalytics } = await import("./operator-analytics")
-  const { DataProvider, LiveWorkspace } = await loadDataAfterDomGlobals()
   const host = document.createElement("div")
   document.body.append(host)
   const root = createRoot(host)
@@ -135,8 +131,9 @@ test("Breakdowns reads one range summary and keeps it across workspace changes",
   assert.equal(pending.length, 2, "one retry must send one summary request")
   await act(async () => pending[1](Response.json({ summary: { totalCalls: 0, distributions: { totalCalls: 0, intents: [], outcomes: [], failures: [], paths: [], daily: [] } }, calls: [], nextCursor: "" })))
   await render(2)
+  await waitFor(() => pending.length >= 3)
   await settle()
-  assert.equal(pending.length, 2, "a workspace change must not recompute the range summary")
+  assert.equal(pending.length, 3, "a workspace change must refresh the shared summary once")
 })
 
 async function settle() {
@@ -145,13 +142,9 @@ async function settle() {
   }
 }
 
-async function loadDataAfterDomGlobals() {
-  const [{ DataProvider }, { useLiveRefresh }] = await Promise.all([import("../../lib/data/provider"), import("../../lib/data/queries")])
-  function LiveWorkspace({ version, children }: { version: number; children: ReactNode }) {
-    useLiveRefresh({ workspaceVersion: version, taskCounts: "", detailRevision: 0 })
-    return children
-  }
-  return { DataProvider, LiveWorkspace }
+function LiveWorkspace({ version, children }: { version: number; children: ReactNode }) {
+  useLiveRefresh({ workspaceVersion: version, taskCounts: "", detailRevision: 0 })
+  return children
 }
 
 async function waitFor(ready: () => boolean) {

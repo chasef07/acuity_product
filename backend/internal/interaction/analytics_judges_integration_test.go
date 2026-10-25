@@ -53,7 +53,6 @@ func TestAnalyticsJudgesCoverFullWindowAndIgnoreLabelFilters(t *testing.T) {
 	insert(practice, location, "future", now.Add(time.Second), raw)
 	module := New(db.As(testdb.Portal), access.New(db.As(testdb.Portal), func() time.Time { return now }), func() time.Time { return now })
 	cmd := QueryAnalyticsCommand{Identity: access.Identity{Subject: "judges", Email: "judges@example.test", EmailVerified: true}, PracticeID: practice, LocationID: location, Range: AnalyticsRange7Days, Limit: 50}
-	drainAnalyticsFacts(t, module)
 	page, err := module.QueryAnalytics(ctx, cmd)
 	if err != nil {
 		t.Fatal(err)

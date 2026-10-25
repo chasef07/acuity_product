@@ -92,7 +92,6 @@ func TestCallLabelsQueriesFilterBeforePaginationAndPreserveScope(t *testing.T) {
 	cmd.Identity = operator
 	cmd.Cursor = ""
 	cmd.LocationID = allowed
-	drainAnalyticsFacts(t, m)
 	analytics, err := m.QueryAnalytics(ctx, cmd)
 	if err != nil || len(analytics.Calls) != 1 || analytics.Calls[0].ID != first || analytics.NextCursor == "" {
 		t.Fatalf("filtered operator first page: %+v %v", analytics, err)
@@ -165,7 +164,6 @@ func TestAnalyticsJudgeFailuresFilterBeforePagination(t *testing.T) {
 	insert("other-location", other, 1, "office_question_answered", ScorecardJudgeVersion, "judge", false, "office_information", "resolved")
 	m := New(db.As(testdb.Portal), am, func() time.Time { return now })
 	cmd := QueryAnalyticsCommand{Identity: operator, PracticeID: practice, LocationID: allowed, Range: AnalyticsRange7Days, Limit: 1, Intent: "office_information", Outcome: "resolved", FailuresOnly: true}
-	drainAnalyticsFacts(t, m)
 	page, err := m.QueryAnalytics(ctx, cmd)
 	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != first || page.NextCursor == "" {
 		t.Fatalf("first failures page: %+v %v", page, err)

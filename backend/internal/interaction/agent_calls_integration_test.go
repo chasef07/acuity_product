@@ -151,7 +151,6 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	analytics := QueryAnalyticsCommand{Identity: operator, PracticeID: practice, Range: AnalyticsRange24Hours}
-	drainAnalyticsFacts(t, module)
 	diagnostics, err := module.QueryAnalytics(ctx, analytics)
 	if err != nil || len(diagnostics.PendingIssues) != 2 || diagnostics.PendingIssues[0].InteractionID != old || diagnostics.PendingIssues[0].ReportedBy != staff.Email {
 		t.Fatalf("pending issues: %+v %v", diagnostics.PendingIssues, err)

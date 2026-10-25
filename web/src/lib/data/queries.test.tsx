@@ -109,6 +109,26 @@ test("a live refresh keeps the data shown, reports a failed refresh beside it, a
   })
 })
 
+test("analytics refresh on the first workspace change and coalesce later changes into one trailing refresh", async (t) => {
+  const backend = fakeBackend(t, (url) => Response.json({ id: url.pathname.split("/").at(-1) }))
+  const view = mountTask(t, "analytics")
+  await view.render({ taskID: "task-1" })
+  await waitFor(() => view.latest().status === "ready")
+  assert.equal(backend.requests.length, 1)
+
+  await view.render({ taskID: "task-1" }, 1)
+  await waitFor(() => backend.requests.length === 2)
+  await view.render({ taskID: "task-1" }, 2)
+  await view.render({ taskID: "task-1" }, 3)
+  await settle()
+  assert.equal(backend.requests.length, 2, "changes inside the window wait for one trailing refresh")
+
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 5_100)))
+  await waitFor(() => backend.requests.length === 3)
+  await settle()
+  assert.equal(backend.requests.length, 3)
+})
+
 test("a query identity carrying a refresh field does not compile", () => {
   assert.equal(typeof useRefreshFieldsAsIdentity, "function")
 })
@@ -164,7 +184,7 @@ function fakeBackend(t: TestContext, respond: (url: URL) => Response) {
   return backend
 }
 
-function mountTask(t: TestContext) {
+function mountTask(t: TestContext, refreshClass: "workspace" | "analytics" = "workspace") {
   const dom = new JSDOM("<!doctype html><html><body></body></html>")
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: dom.window },
@@ -176,7 +196,7 @@ function mountTask(t: TestContext) {
   const seen: ReturnType<typeof useTask>[] = []
   function Probe({ taskID, enabled, live }: { taskID: string; enabled: boolean; live: number }) {
     useLiveRefresh({ workspaceVersion: live, taskCounts: "", detailRevision: live })
-    seen.push(useTask(taskID, enabled))
+    seen.push(useTask(taskID, enabled, refreshClass))
     return null
   }
   return {
@@ -194,9 +214,9 @@ function mountTask(t: TestContext) {
   }
 }
 
-function useTask(taskID: string, enabled: boolean) {
+function useTask(taskID: string, enabled: boolean, refreshClass: "workspace" | "analytics") {
   return useRead({
-    live: "workspace",
+    live: refreshClass,
     name: "task",
     identity: { taskID },
     enabled,

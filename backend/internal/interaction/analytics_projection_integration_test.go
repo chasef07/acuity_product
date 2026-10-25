@@ -193,7 +193,6 @@ func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 			}
 		}
 	}
-	drainAnalyticsFacts(t, New(db.As(testdb.Worker), nil, nil))
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

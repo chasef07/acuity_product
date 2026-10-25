@@ -303,7 +303,7 @@ func queryAnalyticsSummary(
 			AND interaction.started_at >= $3
 			AND interaction.started_at <= $4
 		ORDER BY interaction.started_at, interaction.id
-	`, command.PracticeID, locationIDs, from, to, judgeFailureKeys(""))
+	`, command.PracticeID, locationIDs, from, to, judgeFailureKeys(""), analyticsFactsVersion)
 	if err != nil {
 		return AnalyticsSummary{}, fmt.Errorf("query operator AI analytics summary: %w", err)
 	}
@@ -318,6 +318,7 @@ func queryAnalyticsSummary(
 	for _, day := range summary.Daily {
 		dailyDistributions[day.Date] = newDistributionAccumulator()
 	}
+	staleCalls := 0
 	for rows.Next() {
 		if summary.TotalCalls == analyticsRowLimit {
 			return AnalyticsSummary{}, errors.New("operator AI analytics exceeds bounded reporting window")
@@ -346,6 +347,13 @@ func queryAnalyticsSummary(
 			return AnalyticsSummary{}, fmt.Errorf("scan operator AI analytics summary: %w", err)
 		}
 		facts, err := stored.facts(len(judges.summary.Questions))
+		if errors.Is(err, errAnalyticsFactsIncomplete) {
+			staleCalls++
+			if staleCalls > analyticsStaleFactsLimit {
+				return AnalyticsSummary{}, fmt.Errorf("%w: more than %d calls in range await the facts worker", errAnalyticsFactsIncomplete, analyticsStaleFactsLimit)
+			}
+			facts, err = stored.staleEvidence.facts(projection.call.StartedAt), nil
+		}
 		if err != nil {
 			return AnalyticsSummary{}, err
 		}

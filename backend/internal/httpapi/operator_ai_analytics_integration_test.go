@@ -270,7 +270,6 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	}
 	_ = invalidCost.Body.Close()
 
-	drainAnalyticsFacts(t, db)
 	queryBody, _ := json.Marshal(map[string]any{
 		"practiceId": practiceID,
 		"locationId": northID,
@@ -473,6 +472,9 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledgerResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "operator-token", allLocationsBody)
+	if ledgerResponse.StatusCode != http.StatusOK {
+		t.Fatalf("ledger after legacy evaluation = %d: %s", ledgerResponse.StatusCode, readBody(t, ledgerResponse))
+	}
 	var ledger struct {
 		Calls []struct {
 			ID            string   `json:"id"`
@@ -642,18 +644,4 @@ func nullJSON(encoded []byte, value map[string]any) any {
 		return nil
 	}
 	return json.RawMessage(encoded)
-}
-
-func drainAnalyticsFacts(t *testing.T, db *testdb.DB) {
-	t.Helper()
-	module := interaction.New(db.As(testdb.Worker), nil, nil)
-	for {
-		projected, err := module.ProjectNextAnalyticsFacts(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !projected {
-			return
-		}
-	}
 }

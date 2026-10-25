@@ -197,7 +197,7 @@ func (runner *Runner) Run(ctx context.Context) error {
 	}()
 	go func() {
 		defer lanes.Done()
-		runner.runQueueLaneWithIdleMaximum(ctx, 1, "ai_analytics_facts_projection_failed", runner.interactions.ProjectNextAnalyticsFacts, time.Minute, true)
+		runner.runQueueLaneWithIdleMaximum(ctx, 1, "ai_analytics_facts_projection_failed", runner.interactions.ProjectNextAnalyticsFacts, runner.config.IdleBackoffMax, true)
 	}()
 	go func() {
 		defer lanes.Done()

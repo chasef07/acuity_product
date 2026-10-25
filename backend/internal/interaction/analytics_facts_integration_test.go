@@ -108,7 +108,7 @@ func TestAnalyticsSummaryFromFactsMatchesSummaryFromEvidence(t *testing.T) {
 	}
 }
 
-func TestAnalyticsFactsGoStaleWhenTheirSourceChanges(t *testing.T) {
+func TestAnalyticsSummaryDerivesStaleFactsUntilTheWorkerCatchesUp(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.Open(t)
 	pool := db.Owner
@@ -134,13 +134,31 @@ func TestAnalyticsFactsGoStaleWhenTheirSourceChanges(t *testing.T) {
 		defer func() { _ = tx.Rollback(ctx) }()
 		return queryAnalyticsSummary(ctx, tx, QueryAnalyticsCommand{PracticeID: practiceID}, []string{locationID}, now.Add(-24*time.Hour), now)
 	}
-	if _, err := summarize(); !errors.Is(err, errAnalyticsFactsIncomplete) {
-		t.Fatalf("summary without facts = %v, want incomplete", err)
+	stale := func() bool {
+		t.Helper()
+		var version *int
+		if err := pool.QueryRow(ctx, `SELECT analytics_facts_version FROM ai_interactions WHERE id=$1`, id).Scan(&version); err != nil {
+			t.Fatal(err)
+		}
+		return version == nil || *version != analyticsFactsVersion
 	}
-	drainAnalyticsFacts(t, worker)
-	if summary, err := summarize(); err != nil || summary.ToolCallCount != 0 {
-		t.Fatalf("summary=%+v err=%v", summary, err)
+	consistent := func(step string) AnalyticsSummary {
+		t.Helper()
+		if !stale() {
+			t.Fatalf("%s left current facts in place", step)
+		}
+		derived, err := summarize()
+		if err != nil {
+			t.Fatalf("%s: summary over stale facts: %v", step, err)
+		}
+		drainAnalyticsFacts(t, worker)
+		stored, err := summarize()
+		if err != nil || stale() || !reflect.DeepEqual(derived, stored) {
+			t.Fatalf("%s: derived %+v differs from stored %+v (%v)", step, derived, stored, err)
+		}
+		return stored
 	}
+	consistent("insert")
 
 	for _, update := range []string{
 		`transcript='{"items":[{"type":"function_call","call_id":"a","name":"lookup"}]}'`,
@@ -152,23 +170,28 @@ func TestAnalyticsFactsGoStaleWhenTheirSourceChanges(t *testing.T) {
 		if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET `+update+` WHERE id=$1`, id); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := summarize(); !errors.Is(err, errAnalyticsFactsIncomplete) {
-			t.Fatalf("after %s summary error = %v, want incomplete", update, err)
+		if summary := consistent(update); summary.ToolCallCount != 1 {
+			t.Fatalf("after %s the corrected transcript was ignored: %+v", update, summary)
 		}
-		drainAnalyticsFacts(t, worker)
-		if _, err := summarize(); err != nil {
-			t.Fatalf("after %s and reprojection: %v", update, err)
-		}
-	}
-	if summary, err := summarize(); err != nil || summary.ToolCallCount != 1 {
-		t.Fatalf("reprojected facts ignored the corrected transcript: %+v %v", summary, err)
 	}
 
 	if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET summary='unrelated', lifecycle_stage=3 WHERE id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := summarize(); err != nil {
-		t.Fatalf("an update that changes no fact source invalidated facts: %v", err)
+	if stale() {
+		t.Fatal("an update that changes no fact source invalidated facts")
+	}
+
+	if _, err := pool.Exec(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript,closeout_payload)
+ SELECT 'agent',$1,$2,'backlog-'||n,'+15555550101','+15555550102',$3,$3,'COMPLETED',3,'{"items":[]}','{"domainOutcomes":[]}' FROM generate_series(1,$4) AS n`, practiceID, locationID, now.Add(-2*time.Hour), analyticsStaleFactsLimit+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := summarize(); !errors.Is(err, errAnalyticsFactsIncomplete) {
+		t.Fatalf("summary over a backlog beyond the limit = %v, want incomplete", err)
+	}
+	drainAnalyticsFacts(t, worker)
+	if summary, err := summarize(); err != nil || summary.TotalCalls != analyticsStaleFactsLimit+2 {
+		t.Fatalf("summary after the worker caught up = %+v, %v", summary, err)
 	}
 }
 

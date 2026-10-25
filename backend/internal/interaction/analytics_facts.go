@@ -15,6 +15,8 @@ const analyticsFactsVersion = 1
 
 const analyticsFactsBatchSize = 100
 
+const analyticsStaleFactsLimit = 500
+
 type analyticsFacts struct {
 	executions []ToolExecution
 	evaluation evaluationReading
@@ -23,20 +25,17 @@ type analyticsFacts struct {
 	jury       juryFacts
 }
 
-func deriveAnalyticsFacts(
-	startedAt time.Time,
-	transcript json.RawMessage,
-	closeout json.RawMessage,
-	evaluation json.RawMessage,
-	footprint json.RawMessage,
-	usage json.RawMessage,
-) analyticsFacts {
+type analyticsEvidence struct {
+	transcript, closeout, evaluation, footprint, usage json.RawMessage
+}
+
+func (evidence analyticsEvidence) facts(startedAt time.Time) analyticsFacts {
 	return analyticsFacts{
-		executions: normalizeToolExecutions(transcript, closeout, startedAt),
-		evaluation: readEvaluation(evaluation),
-		usage:      callTokenUsage(usage),
-		footprint:  contextFootprint(footprint),
-		jury:       readJuryFacts(evaluation),
+		executions: normalizeToolExecutions(evidence.transcript, evidence.closeout, startedAt),
+		evaluation: readEvaluation(evidence.evaluation),
+		usage:      callTokenUsage(evidence.usage),
+		footprint:  contextFootprint(evidence.footprint),
+		jury:       readJuryFacts(evidence.evaluation),
 	}
 }
 
@@ -95,21 +94,20 @@ func projectAnalyticsFacts(ctx context.Context, tx pgx.Tx, ids []string) error {
 		return fmt.Errorf("read AI analytics evidence: %w", err)
 	}
 	type source struct {
-		id                                                 string
-		startedAt                                          time.Time
-		transcript, closeout, evaluation, footprint, usage json.RawMessage
+		id        string
+		startedAt time.Time
+		evidence  analyticsEvidence
 	}
 	sources, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (source, error) {
 		var value source
-		err := row.Scan(&value.id, &value.startedAt, &value.transcript, &value.closeout, &value.evaluation, &value.footprint, &value.usage)
+		err := row.Scan(&value.id, &value.startedAt, &value.evidence.transcript, &value.evidence.closeout, &value.evidence.evaluation, &value.evidence.footprint, &value.evidence.usage)
 		return value, err
 	})
 	if err != nil {
 		return fmt.Errorf("read AI analytics evidence: %w", err)
 	}
 	for _, source := range sources {
-		facts := deriveAnalyticsFacts(source.startedAt, source.transcript, source.closeout, source.evaluation, source.footprint, source.usage)
-		if err := writeAnalyticsFacts(ctx, tx, source.id, facts); err != nil {
+		if err := writeAnalyticsFacts(ctx, tx, source.id, source.evidence.facts(source.startedAt)); err != nil {
 			return err
 		}
 	}
@@ -179,6 +177,7 @@ type analyticsFactsRow struct {
 	inputTokens, cachedTokens, outputTokens *float64
 	footprint                               []int
 	juryModels, juryResults, juryVotes      []string
+	staleEvidence                           analyticsEvidence
 }
 
 const analyticsFactsColumns = `
@@ -197,7 +196,12 @@ const analyticsFactsColumns = `
 	interaction.analytics_footprint,
 	interaction.analytics_jury_models,
 	interaction.analytics_jury_results,
-	interaction.analytics_jury_votes`
+	interaction.analytics_jury_votes,
+	CASE WHEN interaction.analytics_facts_version IS DISTINCT FROM $6::smallint THEN interaction.analytics_evidence -> 'transcript' END,
+	CASE WHEN interaction.analytics_facts_version IS DISTINCT FROM $6::smallint THEN interaction.analytics_evidence -> 'closeout' END,
+	CASE WHEN interaction.analytics_facts_version IS DISTINCT FROM $6::smallint THEN interaction.closeout_payload -> 'evaluation' END,
+	CASE WHEN interaction.analytics_facts_version IS DISTINCT FROM $6::smallint THEN interaction.closeout_payload -> 'contextFootprint' END,
+	CASE WHEN interaction.analytics_facts_version IS DISTINCT FROM $6::smallint THEN interaction.cost_usage_evidence END`
 
 func (row *analyticsFactsRow) targets() []any {
 	return []any{
@@ -205,6 +209,7 @@ func (row *analyticsFactsRow) targets() []any {
 		&row.evaluated, &row.scored, &row.flagged, &row.sentiment,
 		&row.inputTokens, &row.cachedTokens, &row.outputTokens, &row.footprint,
 		&row.juryModels, &row.juryResults, &row.juryVotes,
+		&row.staleEvidence.transcript, &row.staleEvidence.closeout, &row.staleEvidence.evaluation, &row.staleEvidence.footprint, &row.staleEvidence.usage,
 	}
 }
 
