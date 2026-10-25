@@ -28,11 +28,9 @@ import {
 
 export function MessageAttachmentView({
   attachment,
-  canMutate,
   onChanged,
 }: {
   attachment: MessageAttachment
-  canMutate: boolean
   onChanged: () => void
 }) {
   const [objectURL, setObjectURL] = useState("")
@@ -162,7 +160,7 @@ export function MessageAttachmentView({
               {pending ? <Spinner /> : <DownloadIcon data-icon="inline-start" />}
             </AttachmentAction>
           )}
-          {((attachment.state === "Attachment unavailable" && canMutate) || (attachment.state === "Stored" && !isPDF && !objectURL)) && (
+          {(attachment.state === "Attachment unavailable" || (attachment.state === "Stored" && !isPDF && !objectURL)) && (
             <AttachmentAction
               aria-label={`Retry ${attachment.fileName}`}
               disabled={pending}

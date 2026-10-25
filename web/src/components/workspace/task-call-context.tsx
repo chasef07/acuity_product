@@ -20,7 +20,6 @@ type TaskCallContextProps = {
   onSelectTask?: (task: Task) => void
   activeCall: CallingCall | undefined
   view: "none" | "task" | "call"
-  canMutate: boolean
   numberHistory?: ConversationTimelineItem[]
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
@@ -34,7 +33,6 @@ export function TaskCallContext({
   onSelectTask,
   activeCall,
   view,
-  canMutate,
   numberHistory,
   taskCallError,
   onTaskUpdated,
@@ -59,7 +57,7 @@ export function TaskCallContext({
     )
   }
   if (view === "task" && task && group && onSelectTask) {
-    return <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} canMutate={canMutate} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
+    return <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
   }
   if (view === "task" && task) {
     return (
@@ -69,7 +67,6 @@ export function TaskCallContext({
         onNextTask={onSelectTask && taskRows?.some((row) => row.id !== task.id)
           ? () => onSelectTask(taskRows.find((row) => row.id !== task.id)!) : undefined}
         activeCall={activeCall}
-        canMutate={canMutate}
         numberHistory={numberHistory}
         taskCallError={taskCallError}
         onTaskUpdated={onTaskUpdated}

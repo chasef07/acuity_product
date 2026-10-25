@@ -25,7 +25,6 @@ type EngagementWorkspaceProps = {
   engagement: EngagementSummary
   practiceID: string
   practiceName: string
-  canMutate: boolean
   selectedTaskID?: string
   selectedCallID?: string
   selectedAIInteractionID?: string
@@ -57,7 +56,6 @@ export function EngagementWorkspaceView({
   engagement,
   practiceID,
   practiceName,
-  canMutate,
   selectedTaskID,
   selectedCallID,
   selectedAIInteractionID,
@@ -149,7 +147,6 @@ export function EngagementWorkspaceView({
             variant="outline"
             title={`Call ${formatPhone(engagement.phone)}`}
             disabled={
-              !canMutate ||
               !route ||
               !ownsSoftphone ||
               callingOccupied
@@ -210,7 +207,6 @@ export function EngagementWorkspaceView({
         reviewKey={textTaskKey}
         onReviewed={setReviewedTextTaskKey}
         initialDestination={engagement.phone}
-        canMutate={canMutate}
         selectedTaskID={selectedTaskID}
         selectedCallID={selectedCallID}
         selectedAIInteractionID={selectedAIInteractionID}

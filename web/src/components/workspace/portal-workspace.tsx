@@ -419,7 +419,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                     engagement={selectedEngagement}
                     practiceID={state.scope.practiceID}
                     practiceName={practice.name}
-                    canMutate
                     selectedTaskID={
                       contextPanelOpen && contextView === "task"
                         ? selectedTask?.id
@@ -521,7 +520,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         onSelectTask={(task) => sendIntent({ type: "select-task", task })}
                         activeCall={historicalCall ?? activeCall}
                         view={contextView}
-                        canMutate
                         numberHistory={
                           numberHistory && numberHistory.phone === selectedTask?.phone
                             ? numberHistory.items
