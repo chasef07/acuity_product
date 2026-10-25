@@ -30,3 +30,5 @@ func RouteClientStateKindLike(t testing.TB, kind, like string) {
 		}
 	})
 }
+
+const StaleCallLegCandidateQuery = staleCallLegCandidateQuery

@@ -167,7 +167,27 @@ const staleCallLegCandidateQuery = `
 		ORDER BY pending.created_at, pending.id
 		LIMIT 1
 	) command ON true
-	WHERE (
+	WHERE leg.id IN (
+			SELECT live.id FROM human_calling_call_legs live
+			WHERE live.state NOT IN ('ENDED', 'FAILED')
+			UNION ALL
+			SELECT open_leg.id
+			FROM human_calling_calls open_call
+			JOIN human_calling_call_legs open_leg ON open_leg.call_id = open_call.id
+			WHERE open_call.terminal_outcome IS NULL
+			UNION ALL
+			SELECT terminal.call_leg_id
+			FROM human_calling_provider_commands terminal
+			WHERE terminal.call_leg_id IS NOT NULL
+				AND (
+					(
+						terminal.action IN ('HANGUP_LEG', 'STOP_RING_WINDOW')
+						AND terminal.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+					)
+					OR (terminal.action = 'STOP_RING_WINDOW' AND terminal.state = 'FAILED')
+				)
+		)
+		AND (
 			call.terminal_outcome IS NULL
 			OR leg.state = 'ENDING'
 			OR command.id IS NOT NULL

@@ -167,6 +167,26 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 			"DISABLE_CREDENTIAL",
 			"state = 'SENDING'::text",
 		},
+		"human_calling_open_calls_idx": {
+			"(id)",
+			"terminal_outcome IS NULL",
+		},
+		"human_calling_terminal_leg_commands_idx": {
+			"(call_leg_id)",
+			"call_leg_id IS NOT NULL",
+			"HANGUP_LEG",
+			"state = 'FAILED'::text",
+		},
+		"human_calling_ambiguous_credential_commands_idx": {
+			"(updated_at, id)",
+			"state = 'AMBIGUOUS'::text",
+			"CREATE_CREDENTIAL",
+			"DISABLE_CREDENTIAL",
+		},
+		"human_calling_provider_commands_call_leg_idx": {
+			"(call_leg_id)",
+			"call_leg_id IS NOT NULL",
+		},
 	} {
 		var definition string
 		if err := pool.QueryRow(ctx, `
