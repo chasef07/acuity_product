@@ -1,14 +1,17 @@
 "use client"
 
 import {
+  BookOpenIcon,
   CalendarCheck2Icon,
   ChartNoAxesCombinedIcon,
   Clock3Icon,
   CoinsIcon,
+  HouseIcon,
   ListChecksIcon,
   LayoutDashboardIcon,
   PhoneIcon,
   ScaleIcon,
+  ShieldCheckIcon,
   ChartNoAxesColumnIncreasingIcon,
   UsersIcon,
   WrenchIcon,
@@ -22,6 +25,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { type ManageAgentPage } from "@/lib/workspace-projection"
 
 export type CommandCenterPage = "calls" | "overview" | "breakdowns" | "tools" | "cost" | "review" | "judges"
 
@@ -42,6 +46,13 @@ export const practiceAnalyticsPages: Array<{ value: PracticeAnalyticsPage; label
   { value: "conversion", label: "Conversion", icon: ChartNoAxesCombinedIcon },
   { value: "duration", label: "Duration", icon: Clock3Icon },
   { value: "staff", label: "Staff", icon: UsersIcon },
+]
+
+export const manageAgentPages: Array<{ value: ManageAgentPage; label: string; icon: typeof BookOpenIcon }> = [
+  { value: "home", label: "Home", icon: HouseIcon },
+  { value: "transcripts", label: "Calls", icon: PhoneIcon },
+  { value: "knowledge", label: "Knowledge base", icon: BookOpenIcon },
+  { value: "insurance", label: "Insurance list", icon: ShieldCheckIcon },
 ]
 
 export function AnalyticsNavigation<Page extends string>({
