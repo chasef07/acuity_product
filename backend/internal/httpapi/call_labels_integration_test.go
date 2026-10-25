@@ -53,23 +53,17 @@ func TestCallLabelsHTTPFiltersAndPublicProjection(t *testing.T) {
 	if len(intents) == 0 || len(outcomes) == 0 {
 		t.Fatal("generated CallIntent and CallOutcome schemas must list enum values")
 	}
-	var filters []struct{ intent, outcome string }
+	var filters []map[string]any
 	for _, value := range intents {
-		filters = append(filters, struct{ intent, outcome string }{intent: value.(string)})
+		filters = append(filters, map[string]any{"intent": value})
 	}
 	for _, value := range outcomes {
-		filters = append(filters, struct{ intent, outcome string }{outcome: value.(string)})
+		filters = append(filters, map[string]any{"outcome": value})
 	}
-	query := func(path, token, intent, outcome string, want int) []byte {
+	query := func(path, token string, labels map[string]any, want int) []byte {
 		t.Helper()
-		filters := map[string]any{"practiceId": practice, "range": "7d"}
-		if intent != "" {
-			filters["intent"] = intent
-		}
-		if outcome != "" {
-			filters["outcome"] = outcome
-		}
-		body, _ := json.Marshal(filters)
+		labels["practiceId"], labels["range"] = practice, "7d"
+		body, _ := json.Marshal(labels)
 		response := request(t, server.Client(), http.MethodPost, server.URL+path, token, body)
 		raw := readBody(t, response)
 		if response.StatusCode != want {
@@ -78,7 +72,7 @@ func TestCallLabelsHTTPFiltersAndPublicProjection(t *testing.T) {
 		return []byte(raw)
 	}
 	for _, scope := range []struct{ path, token string }{{"/v1/agent-calls/query", "staff"}, {"/v1/operator/ai-analytics/query", "operator"}} {
-		raw := query(scope.path, scope.token, "office_information", "resolved", 200)
+		raw := query(scope.path, scope.token, map[string]any{"intent": "office_information", "outcome": "resolved"}, 200)
 		var page struct {
 			Calls []api.AgentCall `json:"calls"`
 		}
@@ -91,27 +85,27 @@ func TestCallLabelsHTTPFiltersAndPublicProjection(t *testing.T) {
 		if strings.Contains(string(raw), "private-label-evidence") || strings.Contains(string(raw), "private-error") {
 			t.Fatalf("private evidence leaked: %s", raw)
 		}
-		for _, invalid := range [][2]string{{"invalid", "resolved"}, {"office_information", "invalid"}} {
-			raw := query(scope.path, scope.token, invalid[0], invalid[1], 400)
+		for _, invalid := range []map[string]any{{"intent": "invalid", "outcome": "resolved"}, {"intent": "office_information", "outcome": "invalid"}, {"intent": ""}, {"outcome": ""}} {
+			raw := query(scope.path, scope.token, invalid, 400)
 			if !strings.Contains(string(raw), `"code":"INVALID_REQUEST"`) {
 				t.Fatalf("invalid label filter %v error code: %s", invalid, raw)
 			}
 		}
 		for _, filter := range filters {
-			raw = query(scope.path, scope.token, filter.intent, filter.outcome, 200)
+			raw = query(scope.path, scope.token, filter, 200)
 			want := 0
-			if filter.intent == "office_information" || filter.outcome == "resolved" {
+			if filter["intent"] == "office_information" || filter["outcome"] == "resolved" {
 				want = 1
 			}
 			if err := json.Unmarshal(raw, &page); err != nil || len(page.Calls) != want {
-				t.Fatalf("filter %+v returned %s %v, want %d calls", filter, raw, err, want)
+				t.Fatalf("filter %v returned %s %v, want %d calls", filter, raw, err, want)
 			}
 		}
-		raw = query(scope.path, scope.token, "billing_question", "resolved", 200)
+		raw = query(scope.path, scope.token, map[string]any{"intent": "billing_question", "outcome": "resolved"}, 200)
 		if err := json.Unmarshal(raw, &page); err != nil || len(page.Calls) != 0 {
 			t.Fatalf("intent filter not applied: %s %v", raw, err)
 		}
-		raw = query(scope.path, scope.token, "office_information", "abandoned", 200)
+		raw = query(scope.path, scope.token, map[string]any{"intent": "office_information", "outcome": "abandoned"}, 200)
 		if err := json.Unmarshal(raw, &page); err != nil || len(page.Calls) != 0 {
 			t.Fatalf("outcome filter not applied: %s %v", raw, err)
 		}
