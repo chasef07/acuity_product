@@ -252,6 +252,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"access_invitations",
 		"access_support_sessions",
 		"ai_interaction_attention",
+		"ai_interaction_manual_tags",
+		"ai_manual_tags",
 		"human_calling_connection_attempts",
 		"human_calling_recordings",
 		"messaging_thread_unreads",

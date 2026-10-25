@@ -4058,7 +4058,7 @@ components:
     BookingMetrics:
       type: object
       additionalProperties: false
-      required: [calls, bookings, searched, converted, conversion, p50, p90, durationSamples, searchEvidenceCalls, preciseSearchCalls]
+      required: [calls, bookings, searched, converted, conversion, p50, p90, durationSamples, searchEvidenceCalls]
       properties:
         calls:
           type: integer
@@ -4088,10 +4088,6 @@ components:
         searchEvidenceCalls:
           type: integer
           description: Calls with recorded availability use or complete tool history.
-        preciseSearchCalls:
-          type: integer
-          deprecated: true
-          description: Deprecated rolling-deploy compatibility field. Always zero; use searched for the completed-search denominator.
     BookingGroups:
       type: object
       additionalProperties: false
@@ -4575,15 +4571,6 @@ components:
           $ref: "#/components/schemas/CallIntent"
         outcome:
           $ref: "#/components/schemas/CallOutcome"
-        needsReviewOnly:
-          type: boolean
-          deprecated: true
-          description: Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
-        manualTag:
-          type: string
-          maxLength: 60
-          deprecated: true
-          description: Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
         practiceId:
           type: string
           format: uuid
@@ -5310,6 +5297,13 @@ components:
         durationMs: {type: integer, minimum: 0}
         httpStatus: {type: integer, minimum: 100, maximum: 599}
         code: {type: string, pattern: '^-?[0-9]{1,6}$'}
+    OperatorAILegacyScorecardCheck:
+      type: object
+      additionalProperties: false
+      required: [check, needsReview]
+      properties:
+        check: {type: string}
+        needsReview: {type: boolean}
     OperatorAIInteractionAnalytics:
       type: object
       additionalProperties: false
@@ -5347,6 +5341,11 @@ components:
           type: object
           additionalProperties: true
           description: Complete stored evaluator result, including version, status, answers and usage.
+        legacyScorecard:
+          type: array
+          description: For a typesafe-scorecard-v1 to v5 evaluation, each check that version defines, in display order, with the backend's review flag. The same reading produces the ledger's reviewReasons.
+          items:
+            $ref: "#/components/schemas/OperatorAILegacyScorecardCheck"
         id:
           type: string
           format: uuid

@@ -14,9 +14,31 @@ type evaluationFlag struct {
 type evaluationReading struct {
 	Evaluated bool
 	Version   string
+	Checks    []string
 	Scored    []string
 	Flags     []evaluationFlag
 	Sentiment *float64
+}
+
+type LegacyScorecardCheck struct {
+	Check       string
+	NeedsReview bool
+}
+
+func legacyScorecardChecks(raw json.RawMessage) []LegacyScorecardCheck {
+	reading := readEvaluation(raw)
+	if reading.Checks == nil {
+		return nil
+	}
+	flagged := map[string]bool{}
+	for _, flag := range reading.Flags {
+		flagged[flag.Check] = true
+	}
+	checks := make([]LegacyScorecardCheck, 0, len(reading.Checks))
+	for _, check := range reading.Checks {
+		checks = append(checks, LegacyScorecardCheck{Check: check, NeedsReview: flagged[check]})
+	}
+	return checks
 }
 
 func EvaluationReviewReasons(raw json.RawMessage) []string {
@@ -51,9 +73,9 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 		return reading
 	}
 	if json.Unmarshal(raw, &scorecard) == nil &&
-		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3" || scorecard.Version == "typesafe-scorecard-v4" || scorecard.Version == "typesafe-scorecard-v5") &&
-		(scorecard.Status == "complete" || scorecard.Status == "incomplete") {
-		reading := evaluationReading{Version: scorecard.Version, Flags: []evaluationFlag{}}
+		(scorecard.Version == "typesafe-scorecard-v1" || scorecard.Version == "typesafe-scorecard-v2" || scorecard.Version == "typesafe-scorecard-v3" || scorecard.Version == "typesafe-scorecard-v4" || scorecard.Version == "typesafe-scorecard-v5") {
+		reading := evaluationReading{Version: scorecard.Version, Checks: []string{}, Flags: []evaluationFlag{}}
+		scoring := scorecard.Status == "complete" || scorecard.Status == "incomplete"
 		answer := func(name, answerType string) *float64 {
 			if _, failed := scorecard.Errors[name]; failed {
 				return nil
@@ -91,8 +113,9 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 			if check.name == "results_reported_truthfully" && (scorecard.Version == "typesafe-scorecard-v4" || scorecard.Version == "typesafe-scorecard-v5") {
 				continue
 			}
+			reading.Checks = append(reading.Checks, check.name)
 			score := answer(check.name, "noul")
-			if score == nil || *score < 0 || *score > 1 {
+			if !scoring || score == nil || *score < 0 || *score > 1 {
 				continue
 			}
 			reading.Scored = append(reading.Scored, check.name)
@@ -103,7 +126,7 @@ func readEvaluation(raw json.RawMessage) evaluationReading {
 				})
 			}
 		}
-		if score := answer("expressed_sentiment", "score"); score != nil && *score >= 0 && *score <= 4 {
+		if score := answer("expressed_sentiment", "score"); scoring && score != nil && *score >= 0 && *score <= 4 {
 			reading.Sentiment = score
 		}
 		reading.Evaluated = len(reading.Scored) > 0

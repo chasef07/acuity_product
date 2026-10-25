@@ -920,12 +920,6 @@ export type BookingMetrics = {
      * Calls with recorded availability use or complete tool history.
      */
     searchEvidenceCalls: number;
-    /**
-     * Deprecated rolling-deploy compatibility field. Always zero; use searched for the completed-search denominator.
-     *
-     * @deprecated
-     */
-    preciseSearchCalls: number;
 };
 
 export type BookingGroups = {
@@ -1308,18 +1302,6 @@ export type OperatorAiAnalyticsQueryRequest = {
     judgeResult?: 'pass' | 'unjudged';
     intent?: CallIntent;
     outcome?: CallOutcome;
-    /**
-     * Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
-     *
-     * @deprecated
-     */
-    needsReviewOnly?: boolean;
-    /**
-     * Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
-     *
-     * @deprecated
-     */
-    manualTag?: string;
     practiceId: string;
     locationId?: string;
     range: OperatorAiAnalyticsRange;
@@ -1846,6 +1828,11 @@ export type ProviderErrorDiagnostic = {
     code?: string;
 };
 
+export type OperatorAiLegacyScorecardCheck = {
+    check: string;
+    needsReview: boolean;
+};
+
 export type OperatorAiInteractionAnalytics = {
     intent?: CallIntent;
     outcome?: CallOutcome;
@@ -1861,6 +1848,10 @@ export type OperatorAiInteractionAnalytics = {
     evaluation?: {
         [key: string]: unknown;
     };
+    /**
+     * For a typesafe-scorecard-v1 to v5 evaluation, each check that version defines, in display order, with the backend's review flag. The same reading produces the ledger's reviewReasons.
+     */
+    legacyScorecard?: Array<OperatorAiLegacyScorecardCheck>;
     id: string;
     practiceId: string;
     locationId: string;

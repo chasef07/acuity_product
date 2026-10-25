@@ -34,6 +34,12 @@ test("evaluation preserves probability distributions, usage and legacy metadata"
  assert.match(html, /Automatic red highlights apply only/)
 })
 
+const allChecks = ["request_understood", "appointment_datetime_correct", "office_rules_grounded", "results_reported_truthfully", "conversation_responsive"]
+const v4Checks = allChecks.filter((check) => check !== "results_reported_truthfully")
+const v5Checks = v4Checks.filter((check) => check !== "request_understood")
+const legacyChecks = (checks: string[], flagged: string[] = []) => checks.map((check) => ({ check, needsReview: flagged.includes(check) }))
+const flaggedResponsive = legacyChecks(allChecks, ["conversation_responsive"])
+
 const scorecard = {
   status: "complete",
   evaluatorVersion: "typesafe-scorecard-v1",
@@ -46,7 +52,7 @@ const scorecard = {
 }
 
 test("partial scorecard preserves completed scores and exposes failures and missing results", () => {
-  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+  const html = renderToStaticMarkup(<CallEvaluation legacyScorecard={legacyChecks(allChecks)} evaluation={{
     ...scorecard, status: "incomplete", reason: "judge_errors",
     results: { request_understood: scorecard.results.request_understood },
     errors: { office_rules_grounded: { cause: "HTTPStatusError", httpStatus: 503, attempts: 2 } },
@@ -69,7 +75,7 @@ const scorecardV2 = {
 }
 
 test("v2 renders five checks including low responsiveness without inverting the score and an inapplicable date check unless it failed", () => {
-  const html = renderToStaticMarkup(<CallEvaluation evaluation={scorecardV2} />)
+  const html = renderToStaticMarkup(<CallEvaluation legacyScorecard={flaggedResponsive} evaluation={scorecardV2} />)
   assert.match(html, /Conversation responsive<\/dt><dd[^>]*>0.05 \/ 1/)
   assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, 5)
   assert.match(html, /2.50 \/ 4/)
@@ -87,12 +93,12 @@ test("v2 renders five checks including low responsiveness without inverting the 
       appointment_datetime_correct: { status: "not_applicable", reason: "no_appointment_action_result" },
     },
   }
-  const notApplicable = renderToStaticMarkup(<CallEvaluation evaluation={inapplicable} />)
+  const notApplicable = renderToStaticMarkup(<CallEvaluation legacyScorecard={flaggedResponsive} evaluation={inapplicable} />)
   assert.match(notApplicable, /Appointment date and time correct<\/dt><dd[^>]*>Not applicable/)
   assert.match(notApplicable, /No booking, rescheduling, or cancellation tool returned a result/)
   assert.doesNotMatch(notApplicable, /No valid score was recorded/)
   assert.equal(notApplicable.match(/ \/ 1<\/dd>/g)?.length, 4)
-  const failed = renderToStaticMarkup(<CallEvaluation evaluation={{
+  const failed = renderToStaticMarkup(<CallEvaluation legacyScorecard={flaggedResponsive} evaluation={{
     ...inapplicable, errors: { appointment_datetime_correct: { cause: "TimeoutError" } },
   }} />)
   assert.match(failed, /Judge failed: TimeoutError/)
@@ -101,7 +107,7 @@ test("v2 renders five checks including low responsiveness without inverting the 
 
 test("v2 responsiveness preserves unavailable and judge error states", () => {
   for (const value of [undefined, null, "0.9", -0.1, 1.1, NaN, Infinity]) {
-    const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+    const html = renderToStaticMarkup(<CallEvaluation legacyScorecard={legacyChecks(allChecks)} evaluation={{
       ...scorecardV2, results: {
         ...scorecard.results,
         conversation_responsive: { answers: { conversation_responsive: { type: "noul", noul: value } } },
@@ -111,7 +117,7 @@ test("v2 responsiveness preserves unavailable and judge error states", () => {
     assert.equal(html.match(/0.85 \/ 1/g)?.length, 4)
     assert.match(html, /No valid score was recorded/)
   }
-  const failed = renderToStaticMarkup(<CallEvaluation evaluation={{
+  const failed = renderToStaticMarkup(<CallEvaluation legacyScorecard={legacyChecks(allChecks)} evaluation={{
     ...scorecardV2, errors: { conversation_responsive: { cause: "TimeoutError" } },
   }} />)
   assert.match(failed, /Conversation responsive<\/dt><dd[^>]*>Unavailable/)
@@ -119,28 +125,27 @@ test("v2 responsiveness preserves unavailable and judge error states", () => {
   assert.doesNotMatch(failed, /0.05 \/ 1/)
 })
 
-test("scorecard flags valid checks at 0.4 inclusive, including partial results", () => {
-  for (const status of ["complete", "incomplete"]) {
-    for (const [value, flagged] of [[0, true], [0.4, true], [0.400001, false], [0.9, false]] as const) {
-      const html = renderToStaticMarkup(<CallEvaluation evaluation={{
-        ...scorecardV2, status,
-        results: { request_understood: { answers: { request_understood: { type: "noul", noul: value } } } },
-      }} />)
-      assert.equal(html.includes(">Needs review<"), flagged)
-    }
+test("scorecard highlights exactly the checks the backend reading flags, not its own threshold", () => {
+  for (const [value, flagged] of [[0, false], [0.9, true]] as const) {
+    const html = renderToStaticMarkup(<CallEvaluation legacyScorecard={legacyChecks(["request_understood"], flagged ? ["request_understood"] : [])} evaluation={{
+      ...scorecardV2, results: { request_understood: { answers: { request_understood: { type: "noul", noul: value } } } },
+    }} />)
+    assert.equal(html.includes(">Needs review<"), flagged)
   }
-  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
-    ...scorecardV2, results: {
-      request_understood: { answers: { request_understood: { type: "noul", noul: 0 } } },
-      expressed_sentiment: { answers: { expressed_sentiment: { type: "score", score: 0 } } },
-    }, errors: { request_understood: { cause: "TimeoutError" } },
-  }} />)
-  assert.doesNotMatch(html, />Needs review</)
-  assert.match(html, /Judge failed/)
+  const unread = renderToStaticMarkup(<CallEvaluation evaluation={scorecardV2} />)
+  assert.doesNotMatch(unread, />Needs review</)
+})
+
+for (const [version, checks] of [["typesafe-scorecard-v1", allChecks], ["typesafe-scorecard-v2", allChecks], ["typesafe-scorecard-v3", allChecks], ["typesafe-scorecard-v4", v4Checks], ["typesafe-scorecard-v5", v5Checks]] as const) test(`${version} detail shows the backend's flagged checks`, () => {
+  const results = Object.fromEntries(checks.map((name) => [name, { answers: { [name]: { type: "noul", noul: name === "conversation_responsive" ? 0.3 : 0.85 } } }]))
+  const html = renderToStaticMarkup(<CallEvaluation legacyScorecard={legacyChecks([...checks], ["conversation_responsive"])} evaluation={{ ...scorecard, evaluatorVersion: version, results }} />)
+  assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, checks.length)
+  assert.match(html, /Conversation responsive<\/dt><dd class="[^"]*text-destructive">0.30 \/ 1<\/dd><\/div><dd class="mt-1 text-destructive">Needs review/)
+  assert.equal(html.match(/>Needs review</g)?.length, 1)
 })
 
 test("v3 renders the new scorecard contract and preserves review alerts", () => {
-  const html = renderToStaticMarkup(<CallEvaluation evaluation={{
+  const html = renderToStaticMarkup(<CallEvaluation legacyScorecard={flaggedResponsive} evaluation={{
     ...scorecardV2, evaluatorVersion: "typesafe-scorecard-v3",
     results: {
       ...scorecardV2.results,
@@ -157,12 +162,12 @@ test("v3 renders the new scorecard contract and preserves review alerts", () => 
 test("v4 omits the removed truthfulness judge while historical scorecards keep it", () => {
   const v4Results: Record<string, unknown> = { ...scorecardV2.results }
   delete v4Results.results_reported_truthfully
-  const v4 = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecardV2, evaluatorVersion: "typesafe-scorecard-v4", results: v4Results }} />)
+  const v4 = renderToStaticMarkup(<CallEvaluation legacyScorecard={legacyChecks(v4Checks, ["conversation_responsive"])} evaluation={{ ...scorecardV2, evaluatorVersion: "typesafe-scorecard-v4", results: v4Results }} />)
   assert.doesNotMatch(v4, /Action results reported truthfully|No valid score was recorded|Automatic red highlights apply only/)
   assert.match(v4, /Conversation responsive<\/dt><dd[^>]*>0.05 \/ 1/)
   assert.match(v4, />Needs review</)
   for (const version of ["typesafe-scorecard-v1", "typesafe-scorecard-v2", "typesafe-scorecard-v3"]) {
-    const historical = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecardV2, evaluatorVersion: version }} />)
+    const historical = renderToStaticMarkup(<CallEvaluation legacyScorecard={flaggedResponsive} evaluation={{ ...scorecardV2, evaluatorVersion: version }} />)
     assert.match(historical, /Action results reported truthfully<\/dt><dd[^>]*>0.85 \/ 1/)
   }
 })
@@ -172,21 +177,21 @@ test("v5 omits the request-understood judge and keeps active review alerts and h
   delete results.request_understood
   delete results.results_reported_truthfully
   for (const status of ["complete", "incomplete"]) {
-    const html = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecardV2, status, evaluatorVersion: "typesafe-scorecard-v5", results }} />)
+    const html = renderToStaticMarkup(<CallEvaluation legacyScorecard={legacyChecks(v5Checks, ["conversation_responsive"])} evaluation={{ ...scorecardV2, status, evaluatorVersion: "typesafe-scorecard-v5", results }} />)
     assert.doesNotMatch(html, /Caller request understood|Action results reported truthfully|No valid score was recorded|Automatic red highlights apply only/)
     assert.equal(html.match(/ \/ 1<\/dd>/g)?.length, 3)
     assert.match(html, /Conversation responsive<\/dt><dd[^>]*>0.05 \/ 1/)
     assert.match(html, />Needs review</)
     assert.match(html, /2.50 \/ 4/)
   }
-  const failed = renderToStaticMarkup(<CallEvaluation evaluation={{
+  const failed = renderToStaticMarkup(<CallEvaluation legacyScorecard={legacyChecks(v5Checks)} evaluation={{
     ...scorecardV2, status: "incomplete", evaluatorVersion: "typesafe-scorecard-v5", results,
     errors: { conversation_responsive: { cause: "TimeoutError" } },
   }} />)
   assert.match(failed, /Judge failed: TimeoutError/)
   assert.doesNotMatch(failed, /Caller request understood|>Needs review</)
   for (const version of ["typesafe-scorecard-v1", "typesafe-scorecard-v2", "typesafe-scorecard-v3", "typesafe-scorecard-v4"]) {
-    const historical = renderToStaticMarkup(<CallEvaluation evaluation={{ ...scorecardV2, evaluatorVersion: version }} />)
+    const historical = renderToStaticMarkup(<CallEvaluation legacyScorecard={legacyChecks(version === "typesafe-scorecard-v4" ? v4Checks : allChecks)} evaluation={{ ...scorecardV2, evaluatorVersion: version }} />)
     assert.match(historical, /Caller request understood<\/dt><dd[^>]*>0.85 \/ 1/)
   }
 })
