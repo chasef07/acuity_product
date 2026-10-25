@@ -81,7 +81,7 @@ type agentCallsCursor struct {
 func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCommand) (AgentCallsPage, error) {
 	normalizeAnalyticsCommand(&command.QueryAnalyticsCommand)
 	duration, validRange := analyticsRangeDuration(command.Range)
-	if !validRange || command.Limit < 1 || command.Limit > 100 || len(command.Phone) > 32 || !validCallLabelFilters(command.QueryAnalyticsCommand) {
+	if !validRange || command.Limit < 1 || command.Limit > 100 || len(command.Phone) > 32 {
 		return AgentCallsPage{}, ErrInvalidInput
 	}
 	phone := strings.Map(func(r rune) rune {

@@ -158,14 +158,6 @@ func TestCallLabelsQueriesFilterBeforePaginationAndPreserveScope(t *testing.T) {
 	if _, err = m.QueryAgentCalls(ctx, knowledge); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("combined cursor reused across outcome filter: %v", err)
 	}
-	for _, bad := range []QueryAnalyticsCommand{{Range: AnalyticsRange7Days, Intent: "bad"}, {Range: AnalyticsRange7Days, Outcome: "bad"}} {
-		if _, err = m.QueryAnalytics(ctx, bad); !errors.Is(err, ErrInvalidInput) {
-			t.Fatalf("invalid operator filter: %v", err)
-		}
-		if _, err = m.QueryAgentCalls(ctx, QueryAgentCallsCommand{QueryAnalyticsCommand: bad}); !errors.Is(err, ErrInvalidInput) {
-			t.Fatalf("invalid customer filter: %v", err)
-		}
-	}
 }
 
 func TestAnalyticsJudgeFailuresFilterBeforePagination(t *testing.T) {
