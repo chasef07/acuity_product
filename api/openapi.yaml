@@ -1738,33 +1738,6 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/operator/scorecard/results:
-    post:
-      operationId: queryOperatorScorecardResults
-      summary: Booking conversion and the daily share of calls with a problem over a range.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/OperatorScorecardResultsRequest"
-      responses:
-        "200":
-          description: Range totals and one point per UTC day.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OperatorScorecardResults"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "429":
-          $ref: "#/components/responses/AnalyticsBusy"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/operator/call-reviews/queue:
     post:
       operationId: openOperatorCallReviewQueue
@@ -4451,54 +4424,6 @@ components:
         reviewerDisagreements:
           type: array
           items: {$ref: "#/components/schemas/OperatorReviewerDisagreement"}
-    OperatorScorecardResultsRequest:
-      type: object
-      additionalProperties: false
-      required: [practiceId, range]
-      properties:
-        practiceId: {type: string, format: uuid}
-        locationId: {type: string, format: uuid}
-        range: {$ref: "#/components/schemas/OperatorAIAnalyticsRange"}
-    OperatorScorecardDay:
-      type: object
-      additionalProperties: false
-      required: [date, calls, problemCalls, problemRate]
-      properties:
-        date: {type: string, format: date}
-        calls: {type: integer}
-        problemCalls: {type: integer}
-        problemRate: {type: number, nullable: true}
-    OperatorScorecardResults:
-      type: object
-      additionalProperties: false
-      required: [calls, problemCalls, bookingCallers, converted, blocked, missed, notSearched, conversion, daily]
-      properties:
-        calls:
-          type: integer
-          description: Calls scored by the current judge version only, so a window spanning a judge release does not mix versions.
-        problemCalls:
-          type: integer
-          description: Calls with a no on any failure question, a missed booking, or a new-booking request with no availability search.
-        bookingCallers:
-          type: integer
-          description: Caller numbers that asked for a new appointment in the window, each counted once. Cancels and reschedules are not counted.
-        converted:
-          type: integer
-          description: Booking caller numbers with a call that booked successfully.
-        blocked:
-          type: integer
-          description: Booking caller numbers blocked by a tool result and not converted; left out of the conversion denominator.
-        missed: {type: integer}
-        notSearched:
-          type: integer
-          description: Booking caller numbers whose new-booking calls never searched availability.
-        conversion:
-          type: number
-          nullable: true
-          description: converted / (bookingCallers - blocked).
-        daily:
-          type: array
-          items: {$ref: "#/components/schemas/OperatorScorecardDay"}
     OperatorGoldenSetCall:
       type: object
       additionalProperties: false
