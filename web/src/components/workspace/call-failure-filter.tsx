@@ -1,12 +1,10 @@
 import { Button } from "@/components/ui/button"
 import { useScorecardQuestions } from "@/lib/clients/call-review"
+import { juryScorecardVersions } from "@/lib/scorecard-flow"
 import { OptionSelect } from "./manage-agent-page"
 
 export function CallFailureFilter({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const current = useScorecardQuestions()
-  const previous = useScorecardQuestions("typesafe-scorecard-v7")
-  const oldest = useScorecardQuestions("typesafe-scorecard-v6")
-  const catalogs = [current, previous, oldest]
+  const catalogs = juryScorecardVersions.map(useScorecardQuestions)
   const judges = new Map<string, { value: string; label: string }>()
   for (const catalog of catalogs) {
     if (catalog.status !== "ready") continue

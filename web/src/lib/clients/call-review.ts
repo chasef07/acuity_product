@@ -7,10 +7,11 @@ import {
 } from "../api/generated/sdk.gen"
 import type { OperatorCallReviewSubmission } from "../api/generated/types.gen"
 import { useRead } from "../data/queries"
+import { isJuryScorecard } from "../scorecard-flow"
 import { portalRequest } from "./portal-request"
 
 export function useScorecardQuestions(version?: string) {
-  const supportedVersion = version === "typesafe-scorecard-v6" || version === "typesafe-scorecard-v7" || version === "typesafe-scorecard-v8" ? version : undefined
+  const supportedVersion = isJuryScorecard(version) ? version : undefined
   return useRead({
     name: "scorecard-questions",
     identity: { scorecard: supportedVersion },

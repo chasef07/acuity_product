@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ const (
 	ScorecardCodeVersion  = "code-checks-v2"
 	scorecardNoAtOrBelow  = 0.40
 )
+
+var juryScorecardVersions = []string{ScorecardJudgeVersion, legacyJudgeVersion, previousJudgeVersion}
 
 type ScorecardQuestion struct {
 	Key      string `json:"key"`
@@ -387,7 +390,7 @@ func juryQuestions(version string) []juryQuestion {
 
 func readJury(evaluation json.RawMessage) (juryEvaluation, bool) {
 	var jury juryEvaluation
-	valid := json.Unmarshal(evaluation, &jury) == nil && (jury.Version == ScorecardJudgeVersion || jury.Version == legacyJudgeVersion || jury.Version == previousJudgeVersion) &&
+	valid := json.Unmarshal(evaluation, &jury) == nil && slices.Contains(juryScorecardVersions, jury.Version) &&
 		(jury.Status == "complete" || jury.Status == "incomplete") && len(jury.Jurors) > 0
 	for _, juror := range jury.Jurors {
 		valid = valid && strings.TrimSpace(juror) != ""

@@ -144,7 +144,7 @@ func (a *distributionAccumulator) finish() AnalyticsDistributionCounts {
 	for outcome, calls := range a.outcomes {
 		result.Outcomes = append(result.Outcomes, AnalyticsOutcomeCount{Outcome: outcome, Calls: calls})
 	}
-	for _, version := range []string{ScorecardJudgeVersion, legacyJudgeVersion, previousJudgeVersion} {
+	for _, version := range juryScorecardVersions {
 		for _, question := range juryQuestions(version) {
 			if calls, ok := a.failures[question.key]; ok {
 				result.Failures = append(result.Failures, AnalyticsFailureCount{Key: question.key, Label: question.failureLabel, Calls: calls})
