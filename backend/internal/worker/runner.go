@@ -35,6 +35,7 @@ type MessagingWork interface {
 
 type InteractionWork interface {
 	ProcessNextReceipt(context.Context) (bool, error)
+	ProjectNextAnalyticsFacts(context.Context) (bool, error)
 }
 
 type Dependency interface {
@@ -141,7 +142,7 @@ func New(
 
 func (runner *Runner) Run(ctx context.Context) error {
 	var lanes sync.WaitGroup
-	lanes.Add(10)
+	lanes.Add(11)
 
 	go func() {
 		defer lanes.Done()
@@ -193,6 +194,10 @@ func (runner *Runner) Run(ctx context.Context) error {
 	go func() {
 		defer lanes.Done()
 		runner.runQueueLaneWithIdleMaximum(ctx, 1, "recording_retention_failed", runner.work.ProcessNextRecordingRetention, time.Minute, false)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLaneWithIdleMaximum(ctx, 1, "ai_analytics_facts_projection_failed", runner.interactions.ProjectNextAnalyticsFacts, time.Minute, true)
 	}()
 	go func() {
 		defer lanes.Done()

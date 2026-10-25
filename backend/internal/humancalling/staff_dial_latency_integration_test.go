@@ -224,6 +224,16 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
  `, practices[0].Practice.ID, practices[0].Locations[0].ID, now, transcript, analyticsCalls); err != nil {
 		t.Fatal(err)
 	}
+	facts := interaction.New(db.As(testdb.Worker), nil, nil)
+	for {
+		projected, err := facts.ProjectNextAnalyticsFacts(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !projected {
+			break
+		}
+	}
 	var metrics mixedLatencyLog
 	observer := observability.NewLogger(observability.RuntimeWorker, "worker-mixed-test", slog.New(slog.NewJSONHandler(&metrics, nil)))
 	newRuntime := func(role observability.RuntimeRole, databaseRole testdb.Role) (*pgxpool.Pool, *postgres.Executor) {

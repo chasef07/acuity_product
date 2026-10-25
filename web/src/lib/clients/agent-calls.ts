@@ -97,6 +97,8 @@ export type AiCallLedger = {
   retry: () => void
 }
 
+const summaryRefreshMs = 60_000
+
 export function useAiCallAnalytics({
   practiceID,
   locationID,
@@ -119,7 +121,7 @@ export function useAiCallAnalytics({
   judgeResult?: OperatorAiAnalyticsQueryRequest["judgeResult"]
 }): AiCallLedger {
   const pages = usePages({
-    live: "workspace",
+    refreshEvery: summaryRefreshMs,
     name: "ai-call-analytics",
     identity: { practiceID, locationID, range, intent, outcome, failuresOnly, failingJudge, judgeResult },
     enabled: Boolean(practiceID) && enabled,

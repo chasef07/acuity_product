@@ -43,6 +43,7 @@ func TestCallLabelsHTTPFiltersAndPublicProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	drainAnalyticsFacts(t, db)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	spec, err := api.GetSwagger()

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -2224,6 +2225,9 @@ func (server *Server) writeInteractionError(
 	case errors.Is(err, interaction.ErrConflict):
 		server.writeError(w, r, http.StatusConflict, "INTERACTION_CONFLICT", "The source call conflicts with the stored Interaction.", false)
 	default:
+		if r.Context().Err() == nil {
+			slog.Warn("interaction_request_failed", "route", r.Pattern, "error", err.Error())
+		}
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 	}
 }

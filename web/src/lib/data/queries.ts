@@ -82,10 +82,12 @@ export function usePages<const I extends Identity, P extends { nextCursor: strin
   identity,
   enabled = true,
   hold,
+  refreshEvery,
   read,
   combine,
 }: ReadOptions<I> & {
   hold?: boolean
+  refreshEvery?: number
   read: (identity: I, cursor: string, transport: PortalTransport) => Promise<PortalResult<P>>
   combine: (pages: P[]) => T
 }): PortalPages<T, P> {
@@ -101,6 +103,7 @@ export function usePages<const I extends Identity, P extends { nextCursor: strin
     getNextPageParam: (page: P) => page.nextCursor || undefined,
     enabled: (cached) => enabled && !(hold && cached.state.data !== undefined),
     ...(hold === undefined ? {} : { staleTime: Infinity }),
+    refetchInterval: refreshEvery,
     select,
   })
   const refetch = useRetry(query.refetch, queryKey, enabled)

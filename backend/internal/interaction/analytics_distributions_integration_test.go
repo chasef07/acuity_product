@@ -80,6 +80,7 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 	}
 	module := New(db.As(testdb.Portal), access.New(db.As(testdb.Portal), func() time.Time { return now }), func() time.Time { return now })
 	cmd := QueryAnalyticsCommand{Identity: access.Identity{Subject: "distribution", Email: "distribution@example.test", EmailVerified: true}, PracticeID: practice, LocationID: location, Range: AnalyticsRange7Days, Limit: 50}
+	drainAnalyticsFacts(t, module)
 	page, err := module.QueryAnalytics(ctx, cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -232,6 +233,7 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 		}
 		insert(practice, location, fmt.Sprint("drill-", i), now.Add(-24*time.Hour), "office_information", outcome)
 	}
+	drainAnalyticsFacts(t, module)
 	cmd.Cursor = ""
 	baseline, err := module.QueryAnalytics(ctx, cmd)
 	if err != nil {

@@ -270,6 +270,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	}
 	_ = invalidCost.Body.Close()
 
+	drainAnalyticsFacts(t, db)
 	queryBody, _ := json.Marshal(map[string]any{
 		"practiceId": practiceID,
 		"locationId": northID,
@@ -609,4 +610,18 @@ func nullJSON(encoded []byte, value map[string]any) any {
 		return nil
 	}
 	return json.RawMessage(encoded)
+}
+
+func drainAnalyticsFacts(t *testing.T, db *testdb.DB) {
+	t.Helper()
+	module := interaction.New(db.As(testdb.Worker), nil, nil)
+	for {
+		projected, err := module.ProjectNextAnalyticsFacts(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !projected {
+			return
+		}
+	}
 }

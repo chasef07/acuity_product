@@ -46,6 +46,7 @@ func TestAnalyticsLargeTranscriptQueryBudget(t *testing.T) {
 	}
 	module := New(executor, access.New(executor, func() time.Time { return now }), func() time.Time { return now })
 	command := QueryAnalyticsCommand{Identity: access.Identity{Subject: "operator", Email: "operator@example.test", EmailVerified: true}, PracticeID: practiceID, Range: AnalyticsRange24Hours, Limit: 25}
+	drainAnalyticsFacts(t, module)
 	started := time.Now()
 	page, err := module.QueryAnalytics(ctx, command)
 	elapsed := time.Since(started)
@@ -192,6 +193,7 @@ func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 			}
 		}
 	}
+	drainAnalyticsFacts(t, New(db.As(testdb.Worker), nil, nil))
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
