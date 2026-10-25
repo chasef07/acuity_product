@@ -29,7 +29,6 @@ type BookingMetrics struct {
 	P90                 *float64 `json:"p90"`
 	DurationSamples     int      `json:"durationSamples"`
 	SearchEvidenceCalls int      `json:"searchEvidenceCalls"`
-	PreciseSearchCalls  int      `json:"preciseSearchCalls"`
 }
 
 type BookingGroups struct {

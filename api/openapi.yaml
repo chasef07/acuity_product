@@ -4058,7 +4058,7 @@ components:
     BookingMetrics:
       type: object
       additionalProperties: false
-      required: [calls, bookings, searched, converted, conversion, p50, p90, durationSamples, searchEvidenceCalls, preciseSearchCalls]
+      required: [calls, bookings, searched, converted, conversion, p50, p90, durationSamples, searchEvidenceCalls]
       properties:
         calls:
           type: integer
@@ -4088,10 +4088,6 @@ components:
         searchEvidenceCalls:
           type: integer
           description: Calls with recorded availability use or complete tool history.
-        preciseSearchCalls:
-          type: integer
-          deprecated: true
-          description: Deprecated rolling-deploy compatibility field. Always zero; use searched for the completed-search denominator.
     BookingGroups:
       type: object
       additionalProperties: false
@@ -4575,15 +4571,6 @@ components:
           $ref: "#/components/schemas/CallIntent"
         outcome:
           $ref: "#/components/schemas/CallOutcome"
-        needsReviewOnly:
-          type: boolean
-          deprecated: true
-          description: Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
-        manualTag:
-          type: string
-          maxLength: 60
-          deprecated: true
-          description: Ignored. Accepted for one release so tabs on the previous web bundle keep loading; remove with ai_manual_tags.
         practiceId:
           type: string
           format: uuid
