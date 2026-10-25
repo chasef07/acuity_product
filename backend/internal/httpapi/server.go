@@ -609,6 +609,10 @@ func (server *Server) QueryOperatorAIAnalytics(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
+	if !validCallLabelFilters(body.Intent, body.Outcome) {
+		server.writeInteractionError(w, r, interaction.ErrInvalidInput)
+		return
+	}
 	ctx, finish, ok := server.beginAnalytics(w, r)
 	if !ok {
 		return

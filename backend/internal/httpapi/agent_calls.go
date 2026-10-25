@@ -19,6 +19,10 @@ func (server *Server) QueryAgentCalls(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
+	if !validCallLabelFilters(body.Intent, body.Outcome) {
+		server.writeInteractionError(w, r, interaction.ErrInvalidInput)
+		return
+	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	page, err := server.interactions.QueryAgentCalls(ctx, interaction.QueryAgentCallsCommand{
@@ -82,4 +86,7 @@ func (server *Server) FlagAgentCallIssue(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	server.writeJSON(w, http.StatusOK, issue)
+}
+func validCallLabelFilters(intent *api.CallIntent, outcome *api.CallOutcome) bool {
+	return (intent == nil || intent.Valid()) && (outcome == nil || outcome.Valid())
 }

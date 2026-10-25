@@ -202,7 +202,7 @@ func (m *Module) QueryAnalytics(
 ) (AnalyticsPage, error) {
 	normalizeAnalyticsCommand(&command)
 	duration, ok := analyticsRangeDuration(command.Range)
-	if !ok || command.Limit < 1 || command.Limit > 100 || !validCallLabelFilters(command) || !validJudgeResult(command) || len(judgeFailureKeys(command.FailingJudge)) == 0 {
+	if !ok || command.Limit < 1 || command.Limit > 100 || !validJudgeResult(command) || len(judgeFailureKeys(command.FailingJudge)) == 0 {
 		return AnalyticsPage{}, ErrInvalidInput
 	}
 	to := m.now().UTC().Truncate(time.Microsecond)
