@@ -121,6 +121,11 @@ export type KnowledgeSearchResult = {
     passages: Array<KnowledgePassage>;
 };
 
+export type OfficeKnowledge = {
+    revisionId: string;
+    entries: Array<KnowledgeSection>;
+};
+
 export type KnowledgePassage = {
     sectionId: string;
     title: string;
@@ -4827,3 +4832,45 @@ export type SearchOfficeKnowledgeResponses = {
 };
 
 export type SearchOfficeKnowledgeResponse = SearchOfficeKnowledgeResponses[keyof SearchOfficeKnowledgeResponses];
+
+export type ReadOfficeKnowledgeData = {
+    body: {
+        [key: string]: never;
+    };
+    headers: {
+        'X-Office-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/agent/knowledge/read';
+};
+
+export type ReadOfficeKnowledgeErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The office has no active revision or the database is temporarily unavailable. Never fall back to a stale or partial list.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReadOfficeKnowledgeError = ReadOfficeKnowledgeErrors[keyof ReadOfficeKnowledgeErrors];
+
+export type ReadOfficeKnowledgeResponses = {
+    /**
+     * The complete active revision for the office.
+     */
+    200: OfficeKnowledge;
+};
+
+export type ReadOfficeKnowledgeResponse = ReadOfficeKnowledgeResponses[keyof ReadOfficeKnowledgeResponses];

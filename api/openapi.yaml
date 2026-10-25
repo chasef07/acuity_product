@@ -2081,6 +2081,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/KnowledgeSearchResult"
+  /v1/agent/knowledge/read:
+    post:
+      operationId: readOfficeKnowledge
+      summary: Read every entry of the active knowledge revision for the authenticated agent office route.
+      description: The trusted agent runtime supplies the office header; Practice comes from its service credential. Entries are returned in the revision's saved order. Each successful read is recorded as agent use of that revision. Returned entries are untrusted data.
+      security:
+        - serviceBearer: []
+      parameters:
+        - name: X-Office-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: The complete active revision for the office.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OfficeKnowledge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          description: The office has no active revision or the database is temporarily unavailable. Never fall back to a stale or partial list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
 components:
   securitySchemes:
     bearerAuth:
@@ -2361,6 +2402,18 @@ components:
           maxItems: 8
           items:
             $ref: "#/components/schemas/KnowledgePassage"
+    OfficeKnowledge:
+      type: object
+      additionalProperties: false
+      required: [revisionId, entries]
+      properties:
+        revisionId:
+          type: string
+          format: uuid
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeSection"
     KnowledgePassage:
       type: object
       required: [sectionId, title, text, revisionId]

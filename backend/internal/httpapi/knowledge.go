@@ -49,6 +49,42 @@ func (server *Server) SearchOfficeKnowledge(w http.ResponseWriter, r *http.Reque
 		server.writeJSON(w, http.StatusOK, result)
 	}
 }
+func (server *Server) ReadOfficeKnowledge(w http.ResponseWriter, r *http.Request, params api.ReadOfficeKnowledgeParams) {
+	started := time.Now()
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticateService(w, r)
+	if !ok {
+		return
+	}
+	if !identity.Allows(access.ServiceCapabilityReadKnowledge) {
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "This service cannot read office knowledge.", false)
+		return
+	}
+	var empty struct{}
+	if !server.decodeJSONLimit(w, r, &empty, 4096) {
+		return
+	}
+	if server.knowledge == nil {
+		slog.Warn("office_knowledge_read_failed", "cause", "knowledge_not_configured", "elapsed_ms", time.Since(started).Milliseconds())
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Office knowledge isn't available right now.", true)
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	result, err := server.knowledge.Read(ctx, identity, params.XOfficeKey)
+	switch {
+	case err == nil:
+		server.writeJSON(w, http.StatusOK, result)
+	case errors.Is(err, access.ErrDenied):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "This office is outside the service scope.", false)
+	default:
+		slog.Warn("office_knowledge_read_failed", "cause", knowledge.FailureCode(err), "elapsed_ms", time.Since(started).Milliseconds())
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Office knowledge isn't available right now.", true)
+	}
+}
+
 func (server *Server) writeKnowledgeUnavailable(w http.ResponseWriter) {
 	server.writeJSON(w, http.StatusServiceUnavailable, knowledge.SearchResult{Outcome: "temporary_failure", Passages: []knowledge.Passage{}})
 }

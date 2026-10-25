@@ -89,6 +89,10 @@ type Passage struct {
 	Text       string `json:"text"`
 	RevisionID string `json:"revisionId"`
 }
+type OfficeKnowledge struct {
+	RevisionID string    `json:"revisionId"`
+	Entries    []Section `json:"entries"`
+}
 type SearchResult struct {
 	Outcome    string    `json:"outcome"`
 	RevisionID *string   `json:"revisionId,omitempty"`

@@ -177,7 +177,7 @@ func (m *Module) ReadRevision(ctx context.Context, practiceID, officeKey, revisi
 	if uuid.Validate(practiceID) != nil || (revisionID != "" && uuid.Validate(revisionID) != nil) {
 		return "", nil, ErrInvalidInput
 	}
-	revision, sections, err := m.readRevision(ctx, practiceID, officeKey, revisionID)
+	revision, sections, err := readRevision(ctx, m.db, practiceID, officeKey, revisionID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -187,8 +187,12 @@ func (m *Module) ReadRevision(ctx context.Context, practiceID, officeKey, revisi
 	return revision.ID, sections, nil
 }
 
-func (m *Module) readRevision(ctx context.Context, practiceID, officeKey, revisionID string) (*RevisionSummary, []Section, error) {
-	rows, err := m.db.Query(ctx, `
+type querier interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+func readRevision(ctx context.Context, db querier, practiceID, officeKey, revisionID string) (*RevisionSummary, []Section, error) {
+	rows, err := db.Query(ctx, `
 		SELECT r.id::text, r.version, r.created_at, p.section_id, p.title, p.text
 		FROM (`+officeRevisions+`) r
 		JOIN knowledge_passages p ON p.revision_id = r.id
@@ -376,11 +380,46 @@ func (m *Module) Search(ctx context.Context, identity access.ServiceIdentity, of
 	if len(result.Passages) > 0 {
 		result.Outcome = "found"
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_retrieval_observations(id,practice_id,office_key,revision_id,section_ids,outcome,elapsed_millis) VALUES($1,$2,$3,$4,$5,$6,$7)`, uuid.NewString(), identity.PracticeID, officeKey, revision, ids, result.Outcome, time.Since(started).Milliseconds()); err != nil {
+	if err = recordObservation(ctx, tx, identity.PracticeID, officeKey, revision, ids, result.Outcome, started); err != nil {
 		return empty, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return empty, err
 	}
 	return result, nil
+}
+
+func (m *Module) Read(ctx context.Context, identity access.ServiceIdentity, officeKey string) (OfficeKnowledge, error) {
+	started := time.Now()
+	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return OfficeKnowledge{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = m.access.LockServiceAuthorization(ctx, tx, identity, officeKey, access.ServiceCapabilityReadKnowledge); err != nil {
+		return OfficeKnowledge{}, err
+	}
+	revision, entries, err := readRevision(ctx, tx, identity.PracticeID, officeKey, "")
+	if err != nil {
+		return OfficeKnowledge{}, err
+	}
+	if revision == nil {
+		return OfficeKnowledge{}, ErrUnavailable
+	}
+	ids := make([]string, len(entries))
+	for i, entry := range entries {
+		ids[i] = entry.ID
+	}
+	if err = recordObservation(ctx, tx, identity.PracticeID, officeKey, revision.ID, ids, "found", started); err != nil {
+		return OfficeKnowledge{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return OfficeKnowledge{}, err
+	}
+	return OfficeKnowledge{RevisionID: revision.ID, Entries: entries}, nil
+}
+
+func recordObservation(ctx context.Context, tx pgx.Tx, practiceID, officeKey, revisionID string, sectionIDs []string, outcome string, started time.Time) error {
+	_, err := tx.Exec(ctx, `INSERT INTO knowledge_retrieval_observations(id,practice_id,office_key,revision_id,section_ids,outcome,elapsed_millis) VALUES($1,$2,$3,$4,$5,$6,$7)`, uuid.NewString(), practiceID, officeKey, revisionID, sectionIDs, outcome, time.Since(started).Milliseconds())
+	return err
 }
