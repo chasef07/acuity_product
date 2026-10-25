@@ -65,21 +65,3 @@ func TestHistoricalKnowledgeQuestionKeepsItsOriginalMeaning(t *testing.T) {
 		t.Fatalf("unknown version must not silently use current criteria: %+v", got)
 	}
 }
-
-func TestV8DoesNotInventBookingIntent(t *testing.T) {
-	for _, answers := range []map[string]bool{nil, {"scheduling_succeeded": true}, {"office_question_answered": true}} {
-		if got := classifyBooking(answers); got != bookingUnknown {
-			t.Fatalf("missing intent is unknown, got %q for %v", got, answers)
-		}
-	}
-	callers := map[string]bookingOutcome{}
-	recordCallerBooking(callers, "synthetic-caller", classifyBooking(map[string]bool{"scheduling_succeeded": true}))
-	result := ScorecardResults{}
-	result.countBookingCallers(callers)
-	if result.BookingCallers != 0 || result.Conversion != nil {
-		t.Fatalf("unknown intent must not become conversion evidence: %+v", result)
-	}
-	if got := classifyBooking(map[string]bool{"new_booking_requested": false}); got != bookingNotRequested {
-		t.Fatalf("explicit historical no must remain no: %q", got)
-	}
-}

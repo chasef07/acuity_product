@@ -499,42 +499,6 @@ func recordScorecard(ctx context.Context, tx pgx.Tx, interaction Interaction, co
 	return len(answers), nil
 }
 
-type bookingOutcome string
-
-const (
-	bookingNotRequested bookingOutcome = ""
-	bookingConverted    bookingOutcome = "converted"
-	bookingBlocked      bookingOutcome = "blocked"
-	bookingNotSearched  bookingOutcome = "not_searched"
-	bookingMissed       bookingOutcome = "missed"
-	bookingAttempted    bookingOutcome = "attempted"
-	bookingUnknown      bookingOutcome = "unknown"
-)
-
-func classifyBooking(answers map[string]bool) bookingOutcome {
-	offered, offerJudged := answers["time_offered"]
-	searched, searchKnown := answers["availability_searched"]
-	requested, intentKnown := answers["new_booking_requested"]
-	switch {
-	case !intentKnown:
-		return bookingUnknown
-	case !requested:
-		return bookingNotRequested
-	case answers["scheduling_succeeded"]:
-		return bookingConverted
-	case answers["booking_blocked"]:
-		return bookingBlocked
-	case searchKnown && !searched:
-		return bookingNotSearched
-	case answers["scheduling_tool_called"] || offered:
-		return bookingAttempted
-	case !offerJudged:
-		return bookingUnknown
-	default:
-		return bookingMissed
-	}
-}
-
 type ScorecardBackfill struct {
 	Calls   int `json:"calls"`
 	Answers int `json:"answers"`

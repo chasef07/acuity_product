@@ -1182,52 +1182,6 @@ export type OperatorJudgeAccuracy = {
     reviewerDisagreements: Array<OperatorReviewerDisagreement>;
 };
 
-export type OperatorScorecardResultsRequest = {
-    practiceId: string;
-    locationId?: string;
-    range: OperatorAiAnalyticsRange;
-};
-
-export type OperatorScorecardDay = {
-    date: string;
-    calls: number;
-    problemCalls: number;
-    problemRate: number | null;
-};
-
-export type OperatorScorecardResults = {
-    /**
-     * Calls scored by the current judge version only, so a window spanning a judge release does not mix versions.
-     */
-    calls: number;
-    /**
-     * Calls with a no on any failure question, a missed booking, or a new-booking request with no availability search.
-     */
-    problemCalls: number;
-    /**
-     * Caller numbers that asked for a new appointment in the window, each counted once. Cancels and reschedules are not counted.
-     */
-    bookingCallers: number;
-    /**
-     * Booking caller numbers with a call that booked successfully.
-     */
-    converted: number;
-    /**
-     * Booking caller numbers blocked by a tool result and not converted; left out of the conversion denominator.
-     */
-    blocked: number;
-    missed: number;
-    /**
-     * Booking caller numbers whose new-booking calls never searched availability.
-     */
-    notSearched: number;
-    /**
-     * converted / (bookingCallers - blocked).
-     */
-    conversion: number | null;
-    daily: Array<OperatorScorecardDay>;
-};
-
 export type OperatorGoldenSetCall = {
     interactionId: string;
     startedAt: string;
@@ -4416,47 +4370,6 @@ export type GetOperatorScorecardQuestionsResponses = {
 };
 
 export type GetOperatorScorecardQuestionsResponse = GetOperatorScorecardQuestionsResponses[keyof GetOperatorScorecardQuestionsResponses];
-
-export type QueryOperatorScorecardResultsData = {
-    body: OperatorScorecardResultsRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/operator/scorecard/results';
-};
-
-export type QueryOperatorScorecardResultsErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * Another analytics request is running on this portal instance. Retry later.
-     */
-    429: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type QueryOperatorScorecardResultsError = QueryOperatorScorecardResultsErrors[keyof QueryOperatorScorecardResultsErrors];
-
-export type QueryOperatorScorecardResultsResponses = {
-    /**
-     * Range totals and one point per UTC day.
-     */
-    200: OperatorScorecardResults;
-};
-
-export type QueryOperatorScorecardResultsResponse = QueryOperatorScorecardResultsResponses[keyof QueryOperatorScorecardResultsResponses];
 
 export type OpenOperatorCallReviewQueueData = {
     body: OperatorCallReviewQueueRequest;
