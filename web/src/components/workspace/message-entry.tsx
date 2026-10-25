@@ -41,13 +41,11 @@ import { useCopyState } from "@/hooks/use-copy-state"
 export function MessageEntry({
   message,
   showLocation,
-  canMutate,
   onChanged,
   onTaskCreated,
 }: {
   message: Message
   showLocation: boolean
-  canMutate: boolean
   onChanged: () => void
   onTaskCreated: (task: Task) => void
 }) {
@@ -130,7 +128,6 @@ export function MessageEntry({
             {message.attachment && (
               <MessageAttachmentView
                 attachment={message.attachment}
-                canMutate={canMutate}
                 onChanged={onChanged}
               />
             )}
@@ -194,7 +191,7 @@ export function MessageEntry({
                 </TooltipContent>
               </Tooltip>
             )}
-            {canMutate && !message.taskId && (
+            {!message.taskId && (
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -219,8 +216,7 @@ export function MessageEntry({
                 </TooltipContent>
               </Tooltip>
             )}
-            {canMutate &&
-              outbound &&
+            {outbound &&
               (message.delivery === "Failed" ||
                 message.delivery === "Status unknown") && (
                 <DropdownMenu>

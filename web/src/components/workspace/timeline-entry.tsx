@@ -25,7 +25,6 @@ import { MessageEntry } from "./message-entry"
 export function TimelineEntry({
   item,
   contextLocationID,
-  canMutate,
   onChanged,
   onTaskCreated,
   onTaskOpen,
@@ -37,7 +36,6 @@ export function TimelineEntry({
 }: {
   item: ConversationTimelineItem
   contextLocationID: string
-  canMutate: boolean
   onChanged: () => void
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
@@ -103,7 +101,6 @@ export function TimelineEntry({
       <MessageEntry
         message={item.message}
         showLocation={item.message.thread.locationId !== contextLocationID}
-        canMutate={canMutate}
         onChanged={onChanged}
         onTaskCreated={onTaskCreated}
       />

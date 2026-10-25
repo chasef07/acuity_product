@@ -76,7 +76,6 @@ test("Task rail toggles the selected context while preserving the conversation",
       practiceName="Synthetic Practice"
       engagement={projection.selection.engagement!}
       practiceID={projection.scope.practiceID}
-      canMutate
       selectedTaskID={projection.selection.task?.id}
       onTaskCreated={() => {}}
       onTaskOpen={() => {}}
@@ -381,7 +380,7 @@ test("the sender office follows the offices of the selected Task", async (t) => 
       return undefined
     },
   }
-  await conversation.render(0, { canMutate: true, calling, engagement: { ...engagement, locations: [officeA, officeB] } })
+  await conversation.render(0, { calling, engagement: { ...engagement, locations: [officeA, officeB] } })
   const office = conversation.host.querySelector<HTMLSelectElement>('select[aria-label="Sender office"]')
   assert.ok(office)
   await act(async () => {
@@ -389,7 +388,7 @@ test("the sender office follows the offices of the selected Task", async (t) => 
     office.dispatchEvent(new window.Event("change", { bubbles: true }))
   })
 
-  await conversation.render(0, { canMutate: true, calling, engagement: { ...engagement, locations: [officeB] } })
+  await conversation.render(0, { calling, engagement: { ...engagement, locations: [officeB] } })
   const call = Array.from(conversation.host.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Call")
   assert.ok(call)
   await act(async () => call.click())
@@ -458,7 +457,6 @@ test("the Task panel credits the callback caller and flags an open Task only wit
         task={task}
         activeCall={undefined}
         view="task"
-        canMutate
         numberHistory={numberHistory}
         taskCallError=""
         onTaskUpdated={() => {}}
@@ -489,7 +487,6 @@ test("an AI Task shows the missed handoff call attached to it", () => {
         task={value}
         activeCall={undefined}
         view="task"
-        canMutate
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
@@ -521,7 +518,6 @@ test("completing a Task keeps Next task in place and holds Reopen until the chan
         onSelectTask={(row) => selected.push(row.id)}
         activeCall={undefined}
         view="task"
-        canMutate
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
@@ -572,7 +568,6 @@ test("the focused Task shows each projected version and completes only the versi
         task={task}
         activeCall={undefined}
         view="task"
-        canMutate
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
@@ -665,7 +660,7 @@ test("loaded attachment previews revoke their object URL on navigation", async (
 
 test("a refused send keeps its draft attempt and a sent Message reloads after its hold", async (t) => {
   const conversation = conversationHarness(t)
-  await conversation.render(0, { canMutate: true })
+  await conversation.render(0)
   assert.equal(conversation.timelineRequests, 1)
   const composer = conversation.host.querySelector<HTMLFormElement>('form[aria-label="Message composer"]')!
   const textarea = composer.querySelector("textarea")!
@@ -788,7 +783,7 @@ test("a live update while scrolled up keeps every loaded item and offers New act
 
 test("a sent Message does not reload its conversation after navigation", async (t) => {
   const conversation = conversationHarness(t)
-  await conversation.render(0, { canMutate: true })
+  await conversation.render(0)
   const composer = conversation.host.querySelector<HTMLFormElement>('form[aria-label="Message composer"]')!
   const textarea = composer.querySelector("textarea")!
   await typeInto(textarea, "Synthetic reply")
@@ -916,7 +911,6 @@ function conversationHarness(t: TestContext) {
           practiceName="Synthetic Practice"
           engagement={projection.selection.engagement!}
           practiceID={projection.scope.practiceID}
-          canMutate={false}
           textTask={conversation.textTask}
           onTextTaskUpdated={() => {}}
           onTaskCreated={() => {}}

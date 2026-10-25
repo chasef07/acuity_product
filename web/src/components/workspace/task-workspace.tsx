@@ -39,7 +39,6 @@ export function TaskWorkspace({
   task,
   onNextTask,
   activeCall,
-  canMutate,
   numberHistory = [],
   taskCallError,
   onTaskUpdated,
@@ -48,7 +47,6 @@ export function TaskWorkspace({
   task: Task
   onNextTask?: () => void
   activeCall: CallingCall | undefined
-  canMutate: boolean
   numberHistory?: ConversationTimelineItem[]
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
@@ -187,7 +185,7 @@ export function TaskWorkspace({
           <h2 className="min-w-0 flex-1 text-base font-medium leading-snug">
             {task.title}
           </h2>
-          {task.state === "OPEN" && canMutate && (
+          {task.state === "OPEN" && (
             <Button
               ref={renameButton}
               variant="ghost"
@@ -200,15 +198,12 @@ export function TaskWorkspace({
           )}
         </div>
       )}
-      {(task.urgency === "high_priority" || !canMutate) && (
+      {task.urgency === "high_priority" && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {task.urgency === "high_priority" && (
-            <Badge variant="destructive">{taskUrgencyLabels.high_priority}</Badge>
-          )}
-          {!canMutate && <Badge variant="outline">Read only</Badge>}
+          <Badge variant="destructive">{taskUrgencyLabels.high_priority}</Badge>
         </div>
       )}
-      {canMutate && <TaskMetadata task={task} onUpdated={acceptUpdate} />}
+      <TaskMetadata task={task} onUpdated={acceptUpdate} />
       {task.sourceMessage && (
         <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
           {task.sourceMessage}
@@ -219,45 +214,43 @@ export function TaskWorkspace({
         This Task changed. Review the latest activity before completing it.
         <Button size="sm" variant="outline" className="mt-2" onClick={() => setReviewedVersion(task.version)}>Review latest</Button>
       </div>}
-      {canMutate && (
-        <div className="mt-4 flex flex-col gap-2">
-          {task.state === "OPEN" ? (
-            <>
-              {callbackNotice && (
-                <p role="status" className={cn("text-xs leading-5 text-muted-foreground", recovery && "order-2")}>
-                  {callbackNotice}
-                </p>
-              )}
-              <Button
-                variant={recovery ? "ghost" : "default"}
-                className={recovery ? "order-2" : undefined}
-                onClick={() => void transition("complete")}
-                disabled={pending || needsReview}
-              >
-                {pending ? <Spinner /> : <CheckCircle2Icon />} {task.origin === "APPOINTMENT_REVIEW" ? "Verify & next" : recovery ? "Mark done" : "Complete & next"}
-              </Button>
-              {activeCall ? (
-                <Button variant="outline" onClick={onReturnToCall}>
-                  <PhoneCallIcon /> Return to active call
-                </Button>
-              ) : null}
-            </>
-          ) : (
-            <>
-            {onNextTask && <Button onClick={onNextTask}>Next task</Button>}
+      <div className="mt-4 flex flex-col gap-2">
+        {task.state === "OPEN" ? (
+          <>
+            {callbackNotice && (
+              <p role="status" className={cn("text-xs leading-5 text-muted-foreground", recovery && "order-2")}>
+                {callbackNotice}
+              </p>
+            )}
             <Button
-              variant="ghost"
-              size="sm"
-              className="mt-2 self-start text-muted-foreground"
-              onClick={() => void transition("reopen")}
-              disabled={pending || !stateSettled}
+              variant={recovery ? "ghost" : "default"}
+              className={recovery ? "order-2" : undefined}
+              onClick={() => void transition("complete")}
+              disabled={pending || needsReview}
             >
-              {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
+              {pending ? <Spinner /> : <CheckCircle2Icon />} {task.origin === "APPOINTMENT_REVIEW" ? "Verify & next" : recovery ? "Mark done" : "Complete & next"}
             </Button>
-            </>
-          )}
-        </div>
-      )}
+            {activeCall ? (
+              <Button variant="outline" onClick={onReturnToCall}>
+                <PhoneCallIcon /> Return to active call
+              </Button>
+            ) : null}
+          </>
+        ) : (
+          <>
+          {onNextTask && <Button onClick={onNextTask}>Next task</Button>}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-2 self-start text-muted-foreground"
+            onClick={() => void transition("reopen")}
+            disabled={pending || !stateSettled}
+          >
+            {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
+          </Button>
+          </>
+        )}
+      </div>
       {taskCallError && (
         <p className="mt-3 text-xs text-destructive">{taskCallError}</p>
       )}

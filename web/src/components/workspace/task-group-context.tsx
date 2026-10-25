@@ -10,10 +10,9 @@ import { formatTimestamp } from "@/lib/format-time"
 import { taskGroupLabel, taskUrgencyLabels } from "@/lib/vocabulary"
 import { TaskMetadata } from "./task-metadata"
 
-export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdated }: {
+export function TaskGroupContext({ group, taskRows, onSelect, onUpdated }: {
   group: Task
   taskRows: Task[]
-  canMutate: boolean
   onSelect: (task: Task) => void
   onUpdated: (task: Task, advance?: boolean) => void
 }) {
@@ -35,7 +34,7 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
   }
 
   async function resolve(member?: Task) {
-    if (pending || stale || !canMutate || reviewed.length === 0) return
+    if (pending || stale || reviewed.length === 0) return
     setPending(true)
     setError("")
     const outcome = member ? await completeTask(member) : await completeTaskGroup(reviewed)
@@ -83,12 +82,12 @@ export function TaskGroupContext({ group, taskRows, canMutate, onSelect, onUpdat
               <p className="whitespace-pre-wrap break-words text-sm leading-5 text-muted-foreground">{member.sourceMessage}</p>
               <div className="flex items-center justify-between gap-2">
                 <Button size="sm" variant="ghost" className="-ml-2 text-xs" onClick={() => onSelect(member)}>Open Task & call <ArrowUpRightIcon className="size-3.5" /></Button>
-                {canMutate && <Button size="sm" variant="outline" disabled={pending || stale} onClick={() => void resolve(member)}><CheckCircle2Icon /> {member.origin === "APPOINTMENT_REVIEW" ? "Complete verification" : "Complete"}</Button>}
+                <Button size="sm" variant="outline" disabled={pending || stale} onClick={() => void resolve(member)}><CheckCircle2Icon /> {member.origin === "APPOINTMENT_REVIEW" ? "Complete verification" : "Complete"}</Button>
               </div>
-              {canMutate && <fieldset disabled={pending || stale} className="min-w-0"><TaskMetadata compact task={member} onUpdated={updated} /></fieldset>}
+              <fieldset disabled={pending || stale} className="min-w-0"><TaskMetadata compact task={member} onUpdated={updated} /></fieldset>
             </article>)}
           </div>
-          {canMutate && reviewed.length > 1 && <footer className="shrink-0 border-t bg-background pt-3 pb-1">
+          {reviewed.length > 1 && <footer className="shrink-0 border-t bg-background pt-3 pb-1">
             <Button className="w-full" disabled={pending || stale} onClick={() => void resolve()}><CheckCircle2Icon /> Complete all {reviewed.length} requests</Button>
             <p className="mt-2 text-center text-[11px] leading-4 text-muted-foreground">Completes all {reviewed.length} requests shown. Each keeps its history.</p>
           </footer>}

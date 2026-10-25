@@ -33,7 +33,6 @@ function panel(props: Partial<Parameters<typeof TaskCallContext>[0]>) {
         task={task}
         activeCall={undefined}
         view="task"
-        canMutate
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}

@@ -47,7 +47,6 @@ export function MessageConversation({
   practiceID,
   locationID,
   initialDestination,
-  canMutate,
   selectedTaskID,
   selectedCallID,
   selectedAIInteractionID,
@@ -63,7 +62,6 @@ export function MessageConversation({
   practiceID: string
   locationID: string
   initialDestination?: string
-  canMutate: boolean
   selectedTaskID?: string
   selectedCallID?: string
   selectedAIInteractionID?: string
@@ -212,7 +210,6 @@ export function MessageConversation({
                     <TimelineEntry
                       item={item}
                       contextLocationID={locationID}
-                      canMutate={canMutate}
                       onChanged={loadLatest}
                       onTaskCreated={onTaskCreated}
                       onTaskOpen={onTaskOpen}
@@ -277,18 +274,15 @@ export function MessageConversation({
         locationID={locationID}
         destination={initialDestination ?? ""}
         disabled={
-          !canMutate ||
           !locationID ||
           Boolean(conversationThread?.outboundBlocked)
         }
         disabledReason={
-          !canMutate
-            ? "Read only"
-            : !locationID
-              ? "Choose an authorized sender route"
-              : conversationThread?.outboundBlocked
-                ? "Outbound messaging is blocked after STOP"
-                : ""
+          !locationID
+            ? "Choose an authorized sender route"
+            : conversationThread?.outboundBlocked
+              ? "Outbound messaging is blocked after STOP"
+              : ""
         }
         onSent={(message) => {
           setAwayFromLatest(false)
