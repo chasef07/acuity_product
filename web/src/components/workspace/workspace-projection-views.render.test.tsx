@@ -159,9 +159,9 @@ test("the sidebar shows Manage agent pages in place of Tasks only while Manage a
       </SidebarProvider>,
     ))
   await render({ ...projection, selection: { ...projection.selection, view: "manage-agent", agentPage: "insurance" } })
-  const nav = host.querySelector("nav")
+  const nav = Array.from(host.querySelectorAll("nav")).find((element) =>
+    (element.getAttribute("aria-label") ?? document.getElementById(element.getAttribute("aria-labelledby") ?? "")?.textContent) === "Manage agent")
   assert.ok(nav)
-  assert.equal(document.getElementById(nav.getAttribute("aria-labelledby") ?? "")?.textContent, "Manage agent")
   assert.deepEqual(Array.from(nav.querySelectorAll("button"), (button) => button.textContent), ["Home", "Calls", "Knowledge base", "Insurance list"])
   assert.equal(nav.querySelector("[aria-current='page']")?.textContent, "Insurance list")
   assert.match(host.textContent ?? "", /Acuity Health/)

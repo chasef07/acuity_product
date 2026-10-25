@@ -24,7 +24,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { ReviewFolder } from "./review-folder"
-import { AnalyticsNavigation, commandCenterPages, practiceAnalyticsPages, type CommandCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
+import { AnalyticsNavigation, commandCenterPages, manageAgentPages, practiceAnalyticsPages, type CommandCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { Task } from "@/lib/api/generated/types.gen"
 import {
@@ -50,7 +50,6 @@ import {
   TaskCategoryMenu,
   TaskResponsibilityToggle,
 } from "./workspace-rail-filters"
-import { ManageAgentNavigation } from "./manage-agent-navigation"
 import { ProlongedOutageNotice } from "./workspace-rail-outage-notice"
 import { TaskRow } from "./workspace-rail-task-row"
 import { currentPractice, workspaceFolders } from "./workspace-rail-folders"
@@ -248,7 +247,9 @@ export function WorkspaceRail({
         </SidebarHeader>
         {manageAgent ? (
           <SidebarContent className="overflow-y-auto px-2 py-2">
-            <ManageAgentNavigation
+            <AnalyticsNavigation
+              label="Manage agent"
+              pages={manageAgentPages}
               page={projection.selection.agentPage}
               onPage={(page) => onIntent({ type: "select-manage-agent", page })}
             />
