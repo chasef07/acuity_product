@@ -59,20 +59,6 @@ func TestCallLabelsQueriesFilterBeforePaginationAndPreserveScope(t *testing.T) {
 	if page.Calls[0].Intent == nil || *page.Calls[0].Intent != "existing_patient_booking" || page.Calls[0].Outcome == nil || *page.Calls[0].Outcome != "resolved" || page.Calls[0].LabelingStatus == nil || *page.Calls[0].LabelingStatus != "complete" {
 		t.Fatalf("public labels missing: %+v", page.Calls[0])
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_scorecard_answers(interaction_id, practice_id, question, scorecard_version, source, judge_model, computed_at, answer, detail) VALUES
- ($1, $2, 'knowledge_available', 'typesafe-scorecard-v8', 'judge', 'synthetic', $3, false, '{}'),
- ($1, $2, 'knowledge_answered', 'typesafe-scorecard-v8', 'judge', 'synthetic', $3, false, '{"queries":["Saturday hours"]}')`, first, practice, now); err != nil {
-		t.Fatal(err)
-	}
-	knowledgePage, err := m.QueryAgentCalls(ctx, QueryAgentCallsCommand{QueryAnalyticsCommand: cmd, NeedsKnowledgeOnly: true})
-	if err != nil || len(knowledgePage.Calls) != 1 || knowledgePage.Calls[0].ID != first || knowledgePage.NextCursor != "" || len(knowledgePage.Calls[0].KnowledgeGaps) != 1 {
-		t.Fatalf("knowledge and label filters/projection: %+v %v", knowledgePage, err)
-	}
-	if _, err := m.QueryAgentCalls(ctx, QueryAgentCallsCommand{QueryAnalyticsCommand: QueryAnalyticsCommand{
-		Identity: staff, PracticeID: practice, Range: AnalyticsRange7Days, Limit: 1, Intent: cmd.Intent, Outcome: cmd.Outcome, Cursor: page.NextCursor,
-	}, NeedsKnowledgeOnly: true}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("label cursor reused across knowledge filter: %v", err)
-	}
 	cmd.Cursor = page.NextCursor
 	page, err = m.QueryAgentCalls(ctx, QueryAgentCallsCommand{QueryAnalyticsCommand: cmd})
 	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != second || page.NextCursor != "" {
@@ -129,34 +115,6 @@ func TestCallLabelsQueriesFilterBeforePaginationAndPreserveScope(t *testing.T) {
 	opDetail, err := m.ReadOperatorAnalytics(ctx, operator, first)
 	if err != nil || opDetail.Intent == nil || *opDetail.Intent != "existing_patient_booking" || opDetail.Outcome == nil || *opDetail.Outcome != "resolved" {
 		t.Fatalf("operator detail labels: %+v %v", opDetail, err)
-	}
-	insert(allowed, "matching-labels-without-knowledge-gap", 2, "existing_patient_booking", "resolved")
-	for _, id := range []string{legacy, second} {
-		if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_scorecard_answers (interaction_id,practice_id,question,source,answer,scorecard_version,judge_model,computed_at) VALUES ($1,$2,'office_question_answered','judge',false,'test','synthetic-judge',now())`, id, practice); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_scorecard_answers (interaction_id,practice_id,question,source,answer,scorecard_version,detail,computed_at) VALUES ($1,$2,'knowledge_answered','code',false,'test','{"queries":["Saturday hours"]}',now())`, id, practice); err != nil {
-			t.Fatal(err)
-		}
-	}
-	knowledge := QueryAgentCallsCommand{QueryAnalyticsCommand: QueryAnalyticsCommand{Identity: staff, PracticeID: practice, Range: AnalyticsRange7Days, Limit: 1, Intent: "existing_patient_booking", Outcome: "resolved"}, NeedsKnowledgeOnly: true}
-	page, err = m.QueryAgentCalls(ctx, knowledge)
-	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != first || page.NextCursor == "" || len(page.Calls[0].KnowledgeGaps) != 1 || page.Calls[0].KnowledgeGaps[0] != "Saturday hours" || page.Calls[0].Intent == nil {
-		t.Fatalf("combined knowledge/labels first page: %+v %v", page, err)
-	}
-	knowledge.Cursor = page.NextCursor
-	page, err = m.QueryAgentCalls(ctx, knowledge)
-	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != second || page.NextCursor != "" {
-		t.Fatalf("combined knowledge/labels continuation: %+v %v", page, err)
-	}
-	knowledge.NeedsKnowledgeOnly = false
-	if _, err = m.QueryAgentCalls(ctx, knowledge); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("combined cursor reused across knowledge filter: %v", err)
-	}
-	knowledge.NeedsKnowledgeOnly = true
-	knowledge.Outcome = "abandoned"
-	if _, err = m.QueryAgentCalls(ctx, knowledge); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("combined cursor reused across outcome filter: %v", err)
 	}
 }
 

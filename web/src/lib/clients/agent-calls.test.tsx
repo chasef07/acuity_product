@@ -97,7 +97,7 @@ test("recent calls page by cursor and a filter change abandons the old page", as
   await waitFor(() => view.latest().status === "ready")
   assert.deepEqual(backend.requests[0], {
     path: "/v1/agent-calls/query",
-    body: { practiceId: "practice-1", range: "7d", phone: "", flaggedOnly: false, needsKnowledgeOnly: false, limit: 50 },
+    body: { practiceId: "practice-1", range: "7d", phone: "", flaggedOnly: false, limit: 50 },
   })
 
   await act(async () => void view.latest().loadMore())

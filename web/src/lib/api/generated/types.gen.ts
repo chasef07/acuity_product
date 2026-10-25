@@ -695,7 +695,9 @@ export type AgentCallsQuery = {
     phone?: string;
     flaggedOnly?: boolean;
     /**
-     * Only calls where the judge found the caller asked an office question that office knowledge could not answer.
+     * Ignored. Accepted for one release so tabs on the previous web bundle keep loading.
+     *
+     * @deprecated
      */
     needsKnowledgeOnly?: boolean;
     cursor?: string;
@@ -713,10 +715,6 @@ export type AgentCall = {
     appointmentActions: Array<AiAppointmentAction>;
     transferred: boolean;
     issueFlagged: boolean;
-    /**
-     * Office knowledge searches during the call that found no answer.
-     */
-    knowledgeGaps: Array<string>;
 };
 
 export type AgentCallsPage = {

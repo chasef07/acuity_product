@@ -32,7 +32,7 @@ func TestAgentCallRequiresAppointmentOutcomeEvidence(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := agentCall(c.stored, json.RawMessage(c.receipts), false, nil)
+			got := agentCall(c.stored, json.RawMessage(c.receipts), false)
 			if !reflect.DeepEqual(got.AppointmentActions, c.want) {
 				t.Fatalf("actions = %v, want %v", got.AppointmentActions, c.want)
 			}

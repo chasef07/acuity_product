@@ -11,7 +11,6 @@ test("changing call filters cancels old pages without unlocking the current page
     appointmentActions: [],
     transferred: false,
     issueFlagged: false,
-    knowledgeGaps: [],
   })
   const first = call("+15555550101")
   const stale = call("+15555550102")
@@ -23,7 +22,6 @@ test("changing call filters cancels old pages without unlocking the current page
   let allLoads = 0
   await page.route("**/v1/agent-calls/query", async (route) => {
     const body = route.request().postDataJSON()
-    if (body.needsKnowledgeOnly) return route.fulfill({ json: { calls: [], nextCursor: "" } })
     if (body.cursor) {
       pageRequests.push(body.cursor)
       pending.set(body.cursor, route)
