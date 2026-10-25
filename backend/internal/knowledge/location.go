@@ -59,7 +59,7 @@ func (m *Module) readLocationRevision(ctx context.Context, identity access.Ident
 	if err != nil {
 		return LocationKnowledge{}, err
 	}
-	revision, sections, err := m.readRevision(ctx, practiceID, officeKey, revisionID)
+	revision, sections, err := readRevision(ctx, m.db, practiceID, officeKey, revisionID)
 	if err != nil {
 		return LocationKnowledge{}, err
 	}
