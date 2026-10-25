@@ -45,7 +45,10 @@ Staff publish a complete, ordered entry list with a reason through
 `POST /v1/knowledge/revisions`. Each publish creates a new revision recording
 who changed it and why, and switches the office to it only if no one else
 published first. The next Abita search uses it. Earlier revisions are never
-changed.
+changed. A publish whose titles and text together exceed 20,000 characters is
+rejected. The editor's "What Abita sees" preview shows the entries as Abita
+will receive them in its prompt (each title, then its text, in entry order) and
+counts them against that limit.
 
 Each revision has a version number, its position in the office's history
 starting at 1. The Portal's History panel lists every version with its author,
