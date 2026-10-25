@@ -1,4 +1,18 @@
-import type { AgentCallDetail } from "./api/generated/types.gen.ts"
+import type { AgentCallDetail, GetOperatorScorecardQuestionsData } from "./api/generated/types.gen.ts"
+
+type JuryScorecardVersion = NonNullable<NonNullable<GetOperatorScorecardQuestionsData["query"]>["version"]>
+
+export const currentScorecardVersion = "typesafe-scorecard-v8" satisfies JuryScorecardVersion
+const juryScorecards: Record<JuryScorecardVersion, true> = {
+  [currentScorecardVersion]: true,
+  "typesafe-scorecard-v7": true,
+  "typesafe-scorecard-v6": true,
+}
+export const juryScorecardVersions = Object.keys(juryScorecards) as readonly JuryScorecardVersion[]
+
+export function isJuryScorecard(version: unknown): version is JuryScorecardVersion {
+  return typeof version === "string" && Object.hasOwn(juryScorecards, version)
+}
 
 export type CheckState = "pass" | "fail" | "unknown" | "not_applicable" | "context"
 export type FlowResult = NonNullable<AgentCallDetail["checkResult"]>

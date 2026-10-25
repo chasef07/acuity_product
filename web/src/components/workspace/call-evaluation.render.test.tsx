@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { CallEvaluation } from "./call-evaluation.tsx"
+import { juryScorecardVersions } from "../../lib/scorecard-flow.ts"
 
 test("missing and incomplete evaluations never imply a passing call", () => {
  const missing = renderToStaticMarkup(<CallEvaluation />)
@@ -217,6 +218,13 @@ for (const version of ["typesafe-scorecard-v6", "typesafe-scorecard-v7"]) test(`
   assert.match(html, /No quorum/)
   assert.match(html, /No availability search returned a result/)
   assert.match(html, /Negative · 1.2 \/ 4/)
+})
+
+for (const version of juryScorecardVersions) test(`${version} renders the jury scorecard`, () => {
+  const html = renderToStaticMarkup(<CallEvaluation evaluation={{ evaluator: "jury", evaluatorVersion: version, jurors: ["model/a"], status: "complete", results: {} }} />)
+  assert.match(html, /Jury: a\. The verdict is the majority/)
+  assert.match(html, /Caller sentiment/)
+  assert.doesNotMatch(html, /shown as recorded/)
 })
 
 test("v8 shows unknown knowledge separately from failures and missing sentiment as unavailable", () => {

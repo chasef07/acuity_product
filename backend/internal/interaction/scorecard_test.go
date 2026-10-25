@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -519,5 +521,24 @@ func TestTrustAllowsFalseAlarmsUpToFivePercent(t *testing.T) {
 	estimate.FalseAlarms = value(0.06)
 	if status, reason := trustVerdict(estimate, trustRates{}); status != trustStatusBelow || reason != "6% of its no's are false alarms, max 5%" {
 		t.Fatalf("over 5%% false alarms is below the bar: %s %s", status, reason)
+	}
+}
+
+func TestJuryScorecardVersionsDefineReadJuryAndFailureKeys(t *testing.T) {
+	for n := 1; n <= 10; n++ {
+		version := fmt.Sprintf("typesafe-scorecard-v%d", n)
+		raw, err := json.Marshal(map[string]any{"evaluatorVersion": version, "status": "complete", "jurors": []string{"synthetic"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, accepted := readJury(raw); accepted != slices.Contains(juryScorecardVersions, version) {
+			t.Errorf("readJury(%s) accepted=%v, want %v", version, accepted, !accepted)
+		}
+	}
+	keys := judgeFailureKeys("")
+	for _, version := range juryScorecardVersions {
+		if !slices.ContainsFunc(keys, func(key string) bool { return strings.HasPrefix(key, version+":") }) {
+			t.Errorf("judgeFailureKeys has no key for %s: %v", version, keys)
+		}
 	}
 }
