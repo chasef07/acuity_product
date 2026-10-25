@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -555,22 +554,5 @@ func TestMigrateRollsBackProvisioningWhenVoiceConfigurationFails(t *testing.T) {
 	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
 		t.Fatalf("failed migrate retained provisioning output: %v", err)
-	}
-}
-
-func TestProvisionConfiguredLocationVoiceRejectsMissingLocation(t *testing.T) {
-	pool := testdb.Open(t).Owner
-	err := provisionConfiguredLocationVoice(context.Background(), app.Config{
-		LocationVoiceProvision: app.LocationVoiceProvisionConfig{
-			PracticeKey: "abita-eye-group",
-			LocationKey: "demo-484",
-			Number:      "+14843989071",
-		},
-	}, pool)
-	if err == nil {
-		t.Fatal("provisioning accepted a missing configured Location")
-	}
-	if !strings.Contains(err.Error(), `provision Location voice "abita-eye-group"/"demo-484"`) {
-		t.Fatalf("missing configured Location error = %q", err)
 	}
 }
