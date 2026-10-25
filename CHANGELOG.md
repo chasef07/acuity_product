@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.47.0](https://github.com/chasef07/acuity_product/compare/v1.46.2...v1.47.0) (2026-10-25)
+
+
+### Features
+
+* **knowledge:** let Abita read an office's whole active knowledge revision (ACU-187) ([#555](https://github.com/chasef07/acuity_product/issues/555)) ([0f919f3](https://github.com/chasef07/acuity_product/commit/0f919f3448e005c5ddb7eb1168a451bc2480691e))
+
+
+### Performance Improvements
+
+* **humancalling:** bound stale CallLeg reconciliation to live candidates ([#557](https://github.com/chasef07/acuity_product/issues/557)) ([50b4e89](https://github.com/chasef07/acuity_product/commit/50b4e892b7109a8088247dcef29d78cb5a50e175))
+
 ## [1.46.2](https://github.com/chasef07/acuity_product/compare/v1.46.1...v1.46.2) (2026-10-23)
 
 
