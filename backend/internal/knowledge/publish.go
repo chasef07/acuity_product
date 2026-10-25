@@ -14,6 +14,7 @@ import (
 
 const abitaPracticeKey = "abita-eye-group"
 const maxAbitaEntryCharacters = 800
+const maxKnowledgeCharacters = 20000
 
 var requiredAbitaEntries = []string{
 	"current-address", "phone", "fax", "paperwork-email", "directions", "other-offices",
@@ -34,6 +35,13 @@ type EntryError struct {
 
 func (e *EntryError) Error() string { return fmt.Sprintf("Entry %q %s.", e.EntryID, e.Rule) }
 func (e *EntryError) Unwrap() error { return ErrInvalidInput }
+
+type SizeError struct{ Characters int }
+
+func (e *SizeError) Error() string {
+	return fmt.Sprintf("This office's knowledge has %d characters of titles and text; keep it to %d.", e.Characters, maxKnowledgeCharacters)
+}
+func (e *SizeError) Unwrap() error { return ErrInvalidInput }
 
 type PublishCommand struct {
 	Identity           access.Identity
@@ -60,6 +68,13 @@ func (m *Module) PublishLocation(ctx context.Context, cmd PublishCommand) (Revis
 	_ = tx.Rollback(ctx)
 	if err != nil {
 		return RevisionSummary{}, err
+	}
+	characters := 0
+	for _, section := range cmd.Sections {
+		characters += utf8.RuneCountInString(section.Title) + utf8.RuneCountInString(section.Text)
+	}
+	if characters > maxKnowledgeCharacters {
+		return RevisionSummary{}, &SizeError{Characters: characters}
 	}
 	revision, err := m.replaceCorpus(ctx, ImportCommand{
 		ID: cmd.RevisionID, PracticeID: cmd.PracticeID, OfficeKey: officeKey, ExpectedRevisionID: cmd.ExpectedRevisionID,

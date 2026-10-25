@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
@@ -55,6 +56,27 @@ func syntheticAbitaSections() []knowledge.Section {
 	sections := make([]knowledge.Section, len(syntheticRequiredAbitaEntries))
 	for i, id := range syntheticRequiredAbitaEntries {
 		sections[i] = knowledge.Section{ID: id, Title: "Synthetic " + id, Text: "Synthetic fact for " + id + "."}
+	}
+	return sections
+}
+
+func syntheticAbitaSectionsOfSize(t *testing.T, total int) []knowledge.Section {
+	t.Helper()
+	sections := syntheticAbitaSections()
+	for i := 1; i <= 5; i++ {
+		sections = append(sections, knowledge.Section{ID: fmt.Sprintf("extra-%d", i), Title: fmt.Sprintf("Synthetic extra %d", i), Text: "Synthetic."})
+	}
+	missing := total
+	for _, section := range sections {
+		missing -= utf8.RuneCountInString(section.Title) + utf8.RuneCountInString(section.Text)
+	}
+	for i := range sections {
+		add := min(missing, 800-utf8.RuneCountInString(sections[i].Text))
+		sections[i].Text += strings.Repeat("x", add)
+		missing -= add
+	}
+	if missing != 0 {
+		t.Fatalf("cannot build %d characters of synthetic knowledge", total)
 	}
 	return sections
 }
@@ -255,6 +277,27 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		})
 	}
 
+	t.Run("Abita knowledge over 20,000 characters is rejected with its size and the limit, and at the limit it publishes", func(t *testing.T) {
+		springHill := func(total int) publishBody {
+			return publishBody{PracticeID: abita, LocationID: locations["spring-hill"], RevisionID: uuid.NewString(), Reason: "Synthetic size check", Sections: syntheticAbitaSectionsOfSize(t, total)}
+		}
+		status, response := publish("operator-token", springHill(20001))
+		if status != http.StatusBadRequest || !strings.Contains(response, `"code":"KNOWLEDGE_TOO_LARGE"`) || !strings.Contains(response, "20001 characters") || !strings.Contains(response, "keep it to 20000") {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		var corpora int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM knowledge_corpora WHERE practice_id=$1 AND office_key='spring-hill'`, abita).Scan(&corpora); err != nil || corpora != 0 {
+			t.Fatalf("rejected publish created a corpus: count=%d err=%v", corpora, err)
+		}
+		body := springHill(20000)
+		if status, response := publish("operator-token", body); status != http.StatusOK {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		if active(abita, "spring-hill") != body.RevisionID {
+			t.Fatal("publish at the limit did not switch the active revision")
+		}
+	})
+
 	t.Run("missing revision ID is rejected", func(t *testing.T) {
 		body := first
 		body.RevisionID = uuid.Nil.String()
@@ -388,11 +431,15 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		}
 	})
 
-	t.Run("other practices are not held to the Abita standard", func(t *testing.T) {
+	t.Run("other practices are not held to the Abita standard but are held to the 20,000 character limit", func(t *testing.T) {
 		body := publishBody{PracticeID: demo, LocationID: locations["demo"], RevisionID: uuid.NewString(), Reason: "First demo facts"}
-		for i := range 30 {
+		for i := range 4 {
 			body.Sections = append(body.Sections, knowledge.Section{ID: fmt.Sprintf("topic-%d", i), Title: fmt.Sprintf("Topic %d", i), Text: strings.Repeat("Demo fact. ", 545)})
 		}
+		if status, response := publish("demo-token", body); status != http.StatusBadRequest || !strings.Contains(response, `"code":"KNOWLEDGE_TOO_LARGE"`) {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		body.Sections = body.Sections[:3]
 		if status, response := publish("demo-token", body); status != http.StatusOK {
 			t.Fatalf("status=%d body=%s", status, response)
 		}

@@ -121,6 +121,7 @@ func (server *Server) PublishLocationKnowledge(w http.ResponseWriter, r *http.Re
 		RevisionID: body.RevisionId.String(), ExpectedRevisionID: expected, Reason: body.Reason, Sections: sections,
 	})
 	var entry *knowledge.EntryError
+	var size *knowledge.SizeError
 	switch {
 	case err == nil:
 		server.writeJSON(w, http.StatusOK, revision)
@@ -128,6 +129,8 @@ func (server *Server) PublishLocationKnowledge(w http.ResponseWriter, r *http.Re
 		envelope := errorEnvelope(r, "INVALID_KNOWLEDGE_ENTRY", entry.Error(), false)
 		envelope.Error.EntryId = &entry.EntryID
 		server.writeJSON(w, http.StatusBadRequest, envelope)
+	case errors.As(err, &size):
+		server.writeError(w, r, http.StatusBadRequest, "KNOWLEDGE_TOO_LARGE", size.Error(), false)
 	case errors.Is(err, knowledge.ErrInvalidInput):
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, access.ErrDenied):

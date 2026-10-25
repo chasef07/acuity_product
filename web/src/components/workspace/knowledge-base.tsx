@@ -45,6 +45,20 @@ function matches(entry: Entry, words: string[]) {
   return words.every((word) => haystack.includes(word))
 }
 
+function abitaPromptKnowledge(entries: Entry[]) {
+  return entries.map(({ title, text }) => `${title}\n${text}`).join("\n\n")
+}
+
+const maxKnowledgeCharacters = 20_000
+
+function knowledgeCharacters(entries: Entry[]) {
+  return entries.reduce((total, { title, text }) => total + [...title].length + [...text].length, 0)
+}
+
+function formatCount(count: number) {
+  return count.toLocaleString("en-US")
+}
+
 function publishedSections(entries: Entry[]): KnowledgeSection[] {
   const used = new Set(entries.map((entry) => entry.id).filter(Boolean))
   return entries.map(({ id, title, text }) => {
@@ -241,6 +255,7 @@ function KnowledgeEditor({
   }
   const shown = draft.entries.filter((entry) => entry.key === editing || matches(entry, words))
   const publishing = draft.publish.status === "publishing"
+  const characters = knowledgeCharacters(draft.entries)
 
   return (
     <fieldset disabled={publishing} className="flex min-w-0 flex-col gap-4">
@@ -297,6 +312,20 @@ function KnowledgeEditor({
         <PlusIcon data-icon="inline-start" />
         Add entry
       </Button>
+      <div className="overflow-hidden rounded-lg border bg-card">
+        <DisclosureRow
+          group
+          defaultOpen={false}
+          title="What Abita sees"
+          detail={
+            <span className={characters > maxKnowledgeCharacters ? "text-destructive" : undefined}>
+              {formatCount(characters)} of {formatCount(maxKnowledgeCharacters)} characters
+            </span>
+          }
+        >
+          <p className="px-3 pb-3 pl-9 text-sm whitespace-pre-wrap">{abitaPromptKnowledge(draft.entries)}</p>
+        </DisclosureRow>
+      </div>
     </fieldset>
   )
 }
@@ -319,6 +348,8 @@ function PublishBar({
   const publishing = draft.publish.status === "publishing"
   const failure = draft.publish.status === "failed" ? draft.publish.failure : undefined
   const failedEntry = rejectedEntry(draft)
+  const characters = knowledgeCharacters(draft.entries)
+  const oversized = characters > maxKnowledgeCharacters
 
   async function submit() {
     const publication = {
@@ -370,10 +401,18 @@ function PublishBar({
       <Button variant="ghost" onClick={discard}>
         Discard changes
       </Button>
-      <Button disabled={!changed(draft) || !draft.reason.trim()} onClick={() => void submit()}>
+      <Button disabled={!changed(draft) || !draft.reason.trim() || oversized} onClick={() => void submit()}>
         {publishing && <Spinner data-icon="inline-start" />}
         {publishing ? "Publishing…" : "Publish"}
       </Button>
+      {oversized && (
+        <Alert variant="destructive" className="basis-full">
+          <AlertTitle>
+            This office&apos;s knowledge has {formatCount(characters)} characters of titles and text; keep it to{" "}
+            {formatCount(maxKnowledgeCharacters)}.
+          </AlertTitle>
+        </Alert>
+      )}
       {failure && (
         <Alert variant="destructive" className="basis-full">
           <AlertTitle>
@@ -492,7 +531,7 @@ function RevisionSummary({ row }: { row: KnowledgeRevisionHistoryEntry }) {
       <span>{row.reason}</span>
       <span className="text-xs text-muted-foreground">
         {row.lastAgentSearchAt
-          ? `Last used by the agent: ${formatTimestamp(row.lastAgentSearchAt)} · ${row.agentSearchCount} ${row.agentSearchCount === 1 ? "search" : "searches"}`
+          ? `Last used by the agent: ${formatTimestamp(row.lastAgentSearchAt)} · ${row.agentSearchCount} ${row.agentSearchCount === 1 ? "call" : "calls"}`
           : "Not used by the agent yet"}
       </span>
     </>
