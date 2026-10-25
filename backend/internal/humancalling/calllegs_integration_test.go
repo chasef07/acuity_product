@@ -3002,6 +3002,10 @@ func (idleInteractionWork) ProcessNextReceipt(context.Context) (bool, error) {
 	return false, nil
 }
 
+func (idleInteractionWork) ProjectNextAnalyticsFacts(context.Context) (bool, error) {
+	return false, nil
+}
+
 func TestConcurrentStaffDialsPreserveOneWinnerAndCleanUpLosers(t *testing.T) {
 	const staffCount = 3
 	now := time.Date(2026, time.August, 19, 19, 30, 0, 0, time.UTC)

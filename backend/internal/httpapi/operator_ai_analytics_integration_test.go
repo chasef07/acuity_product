@@ -472,6 +472,9 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledgerResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "operator-token", allLocationsBody)
+	if ledgerResponse.StatusCode != http.StatusOK {
+		t.Fatalf("ledger after legacy evaluation = %d: %s", ledgerResponse.StatusCode, readBody(t, ledgerResponse))
+	}
 	var ledger struct {
 		Calls []struct {
 			ID            string   `json:"id"`

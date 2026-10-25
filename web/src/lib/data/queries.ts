@@ -17,7 +17,9 @@ import {
   portalRequest,
 } from "../clients/portal-request"
 
-type Live = "workspace" | "review-folders" | "task-detail"
+type Live = "workspace" | "review-folders" | "task-detail" | "analytics"
+
+const analyticsRefreshMs = 5_000
 
 type Identity = { readonly [field: string]: string | number | boolean | undefined }
 
@@ -168,7 +170,9 @@ export function useLiveRefresh(signals: {
 }) {
   const client = useQueryClient()
   const seen = useRef(signals)
+  const analytics = useRef<{ refreshedAt: number; trailing?: ReturnType<typeof setTimeout> }>({ refreshedAt: 0 })
   const { workspaceVersion, taskCounts, detailRevision } = signals
+  useEffect(() => () => clearTimeout(analytics.current.trailing), [])
   useEffect(() => {
     const previous = seen.current
     seen.current = { workspaceVersion, taskCounts, detailRevision }
@@ -176,6 +180,15 @@ export function useLiveRefresh(signals: {
     if (previous.workspaceVersion !== workspaceVersion) {
       stale.add("workspace")
       stale.add("review-folders")
+      const throttle = analytics.current
+      const refreshAnalytics = () => {
+        throttle.trailing = undefined
+        throttle.refreshedAt = Date.now()
+        void client.invalidateQueries({ queryKey: ["analytics"] })
+      }
+      const wait = throttle.refreshedAt + analyticsRefreshMs - Date.now()
+      if (wait <= 0) refreshAnalytics()
+      else throttle.trailing ??= setTimeout(refreshAnalytics, wait)
     }
     if (previous.taskCounts !== taskCounts) stale.add("review-folders")
     if (previous.detailRevision !== detailRevision) stale.add("task-detail")

@@ -278,12 +278,7 @@ func queryAnalyticsSummary(
 			interaction.started_at,
 			interaction.ended_at,
 			interaction.status,
-			interaction.appointment_outcome,
-			interaction.analytics_evidence -> 'transcript',
-			interaction.analytics_evidence -> 'closeout',
-			interaction.closeout_payload -> 'evaluation',
-			interaction.closeout_payload -> 'contextFootprint',
-			interaction.cost_usage_evidence,
+			interaction.appointment_outcome,`+analyticsFactsColumns+`,
 			CASE WHEN issue.interaction_id IS NULL THEN '' ELSE COALESCE(issue.review_outcome, 'PENDING') END,
 			interaction.location_id::text,
 			COALESCE(interaction.version_agent, ''),
@@ -308,7 +303,7 @@ func queryAnalyticsSummary(
 			AND interaction.started_at >= $3
 			AND interaction.started_at <= $4
 		ORDER BY interaction.started_at, interaction.id
-	`, command.PracticeID, locationIDs, from, to, judgeFailureKeys(""))
+	`, command.PracticeID, locationIDs, from, to, judgeFailureKeys(""), analyticsFactsVersion)
 	if err != nil {
 		return AnalyticsSummary{}, fmt.Errorf("query operator AI analytics summary: %w", err)
 	}
@@ -323,43 +318,51 @@ func queryAnalyticsSummary(
 	for _, day := range summary.Daily {
 		dailyDistributions[day.Date] = newDistributionAccumulator()
 	}
+	staleCalls := 0
 	for rows.Next() {
 		if summary.TotalCalls == analyticsRowLimit {
 			return AnalyticsSummary{}, errors.New("operator AI analytics exceeds bounded reporting window")
 		}
 		var projection analyticsProjection
-		var evaluation, footprint, usage json.RawMessage
+		var stored analyticsFactsRow
 		var intent, outcome *string
 		var evaluated bool
 		var failures []string
 		values := make([]string, len(versionDimensions))
-		if err := rows.Scan(
+		targets := []any{
 			&projection.call.ID,
 			&projection.call.StartedAt,
 			&projection.call.EndedAt,
 			&projection.call.Status,
 			&projection.appointmentOutcome,
-			&projection.transcript,
-			&projection.closeoutPayload,
-			&evaluation,
-			&footprint,
-			&usage,
+		}
+		targets = append(targets, stored.targets()...)
+		targets = append(targets,
 			&projection.quality.staffFlag,
 			&projection.versions.locationID,
 			&values[0], &values[1], &values[2], &values[3], &values[4], &values[5],
 			&intent, &outcome, &evaluated, &failures,
-		); err != nil {
+		)
+		if err := rows.Scan(targets...); err != nil {
 			return AnalyticsSummary{}, fmt.Errorf("scan operator AI analytics summary: %w", err)
 		}
-		if len(projection.transcript) == 0 || len(projection.closeoutPayload) == 0 {
-			return AnalyticsSummary{}, errors.New("operator AI analytics evidence backfill is incomplete")
+		facts, err := stored.facts(len(judges.summary.Questions))
+		if errors.Is(err, errAnalyticsFactsIncomplete) {
+			staleCalls++
+			if staleCalls > analyticsStaleFactsLimit {
+				return AnalyticsSummary{}, fmt.Errorf("%w: more than %d calls in range await the facts worker", errAnalyticsFactsIncomplete, analyticsStaleFactsLimit)
+			}
+			facts, err = stored.staleEvidence.facts(projection.call.StartedAt), nil
 		}
-		projectAnalyticsEvidence(&projection)
+		if err != nil {
+			return AnalyticsSummary{}, err
+		}
+		projectToolExecutions(&projection, facts.executions)
 		projection.quality.startedAt = projection.call.StartedAt
-		projection.quality.evaluation = readEvaluation(evaluation)
-		judges.add(evaluation)
-		projection.quality.footprint = contextFootprint(footprint)
-		projection.quality.usage = callTokenUsage(usage)
+		projection.quality.evaluation = facts.evaluation
+		projection.quality.footprint = facts.footprint
+		projection.quality.usage = facts.usage
+		judges.add(facts.jury)
 		projection.versions.values = map[string]string{}
 		for i, dimension := range versionDimensions {
 			projection.versions.values[dimension] = values[i]
@@ -712,11 +715,14 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 	projection.call.P50TtftMs = medianMilliseconds(samples.ttft)
 	projection.call.P50TtsTtfbMs = medianMilliseconds(samples.ttsTtfb)
 	projection.call.P50TotalLatencyMs = medianMilliseconds(samples.total)
-	executions := normalizeToolExecutions(
+	projectToolExecutions(projection, normalizeToolExecutions(
 		projection.transcript,
 		projection.closeoutPayload,
 		projection.call.StartedAt,
-	)
+	))
+}
+
+func projectToolExecutions(projection *analyticsProjection, executions []ToolExecution) {
 	projection.executions = executions
 	projection.call.ToolCallCount = len(executions)
 	projection.call.ToolActions = []string{}

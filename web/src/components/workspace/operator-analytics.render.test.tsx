@@ -77,6 +77,71 @@ test("Command Center keeps the same call table during and after automatic refres
   assert.equal(host.querySelector("table"), null)
 })
 
+test("Breakdowns reads one range summary and refreshes it once per workspace change", async (t) => {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace?view=operator-analytics" })
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window },
+    document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator },
+    HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    Element: { configurable: true, value: dom.window.Element },
+    Node: { configurable: true, value: dom.window.Node },
+    getComputedStyle: { configurable: true, value: dom.window.getComputedStyle.bind(dom.window) },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+    requestAnimationFrame: { configurable: true, value: () => 0 },
+    cancelAnimationFrame: { configurable: true, value: () => {} },
+  })
+  Object.defineProperty(dom.window, "matchMedia", { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) })
+  process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
+  clearAccessToken()
+  const pending: ((response: Response) => void)[] = []
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    if (input === "/api/auth/token") return Response.json({ token: "synthetic-token" })
+    const url = new URL((input as Request).url)
+    if (url.pathname === "/v1/operator/scorecard/questions") return Response.json({ questions: [] })
+    assert.equal(url.pathname, "/v1/operator/ai-analytics/query")
+    return new Promise<Response>((resolve) => pending.push(resolve))
+  })
+  const { OperatorAnalytics } = await import("./operator-analytics")
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  t.after(async () => {
+    await act(async () => root.unmount())
+    dom.window.close()
+  })
+  const render = (version: number) => act(async () => root.render(
+    <DataProvider>
+      <LiveWorkspace version={version}>
+        <OperatorAnalytics practiceID="practice-1" locationScopeID="office-1" tab="breakdowns" />
+      </LiveWorkspace>
+    </DataProvider>,
+  ))
+  await render(1)
+  await waitFor(() => pending.length >= 1)
+  await settle()
+  assert.equal(pending.length, 1, "Breakdowns must not request the range summary twice")
+  await act(async () => pending[0](new Response("", { status: 503 })))
+  const retryButton = () => [...host.querySelectorAll("button")].find((button) => button.textContent === "Retry")
+  await waitFor(() => retryButton() !== undefined)
+  const retry = retryButton()!
+  await act(async () => retry.click())
+  await waitFor(() => pending.length >= 2)
+  await settle()
+  assert.equal(pending.length, 2, "one retry must send one summary request")
+  await act(async () => pending[1](Response.json({ summary: { totalCalls: 0, distributions: { totalCalls: 0, intents: [], outcomes: [], failures: [], paths: [], daily: [] } }, calls: [], nextCursor: "" })))
+  await render(2)
+  await waitFor(() => pending.length >= 3)
+  await settle()
+  assert.equal(pending.length, 3, "a workspace change must refresh the shared summary once")
+})
+
+async function settle() {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+  }
+}
+
 function LiveWorkspace({ version, children }: { version: number; children: ReactNode }) {
   useLiveRefresh({ workspaceVersion: version, taskCounts: "", detailRevision: 0 })
   return children

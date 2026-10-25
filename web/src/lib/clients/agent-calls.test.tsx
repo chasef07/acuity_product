@@ -211,14 +211,14 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   assert.equal(view.latest().state, "unavailable")
 
   answer = () => new Response("{}", { status: 403 })
-  await view.render(filters, 1)
+  await act(async () => void view.latest().retry())
   await waitFor(() => view.latest().state === "denied")
 
   answer = (body) =>
     body.cursor
       ? new Response("{}", { status: 503 })
       : Response.json({ summary, calls: [call("ai-1")], nextCursor: "next" })
-  await view.render(filters, 2)
+  await act(async () => void view.latest().retry())
   await waitFor(() => view.latest().state === "ready")
   assert.deepEqual(backend.requests.at(-1)?.body, {
     practiceId: "practice-1",
@@ -239,14 +239,14 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   await waitFor(() => view.latest().state === "denied")
   assert.equal(view.latest().data, undefined)
 
-  await view.render(filters, 3)
+  await act(async () => void view.latest().retry())
   await waitFor(() => view.latest().state === "ready")
   const sent = backend.requests.length
-  await view.render({ ...filters, enabled: false }, 3)
+  await view.render({ ...filters, enabled: false })
   await settle()
   assert.equal(backend.requests.length, sent)
   assert.equal(view.latest().state, "ready")
-  await view.render(filters, 3)
+  await view.render(filters)
   assert.equal(view.latest().state, "ready")
   await waitFor(() => backend.requests.length === sent + 1)
 })
@@ -266,7 +266,7 @@ test("analytics stays denied through a pending refresh after pagination loses au
   await act(async () => void (await view.latest().loadNextPage()))
   await waitFor(() => view.latest().state === "denied")
   assert.equal(view.latest().data, undefined)
-  await view.render(filters, 1)
+  await act(async () => void view.latest().retry())
   await waitFor(() => firstPageRequests === 2)
   assert.equal(view.latest().state, "denied")
   assert.equal(view.latest().data, undefined)

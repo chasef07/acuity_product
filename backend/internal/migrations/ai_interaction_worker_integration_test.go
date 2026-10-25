@@ -94,16 +94,20 @@ func TestWorkerProjectsCloseoutAndPreservesHistoricalSummaryReceipt(t *testing.T
 		}
 		var status interaction.CallStatus
 		var transcript, closeoutPayload json.RawMessage
+		var factsVersion *int
 		if err := pool.QueryRow(ctx, `
-			SELECT status, transcript, closeout_payload
+			SELECT status, transcript, closeout_payload, analytics_facts_version
 			FROM ai_interactions
 			WHERE practice_id = $1 AND source_call_id = $2
-		`, practiceID, sourceCallID).Scan(&status, &transcript, &closeoutPayload); err != nil {
+		`, practiceID, sourceCallID).Scan(&status, &transcript, &closeoutPayload, &factsVersion); err != nil {
 			t.Fatalf("read projected CLOSEOUT: %v", err)
 		}
 		if status != interaction.CallCompleted ||
 			!json.Valid(transcript) || !json.Valid(closeoutPayload) {
 			t.Fatalf("projected CLOSEOUT = (%q, %s, %s)", status, transcript, closeoutPayload)
+		}
+		if factsVersion == nil {
+			t.Fatal("receipt projection left the call without analytics facts")
 		}
 	})
 

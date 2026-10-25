@@ -119,7 +119,7 @@ export function useAiCallAnalytics({
   judgeResult?: OperatorAiAnalyticsQueryRequest["judgeResult"]
 }): AiCallLedger {
   const pages = usePages({
-    live: "workspace",
+    live: "analytics",
     name: "ai-call-analytics",
     identity: { practiceID, locationID, range, intent, outcome, failuresOnly, failingJudge, judgeResult },
     enabled: Boolean(practiceID) && enabled,

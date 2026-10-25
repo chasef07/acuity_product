@@ -516,6 +516,10 @@ func (work *controlledInteractionWork) ProcessNextReceipt(context.Context) (bool
 	}
 }
 
+func (*controlledInteractionWork) ProjectNextAnalyticsFacts(context.Context) (bool, error) {
+	return false, nil
+}
+
 func (work *controlledMessagingWork) ProcessNextReceipt(context.Context) (bool, error) {
 	select {
 	case work.receiptProcessed <- struct{}{}:

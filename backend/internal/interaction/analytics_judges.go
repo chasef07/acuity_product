@@ -78,8 +78,28 @@ func newJudgeAccumulator() *judgeAccumulator {
 	return a
 }
 
-func (a *judgeAccumulator) add(raw json.RawMessage) {
-	a.summary.TotalCalls++
+const (
+	juryQuestionUnavailable          = "unavailable"
+	juryQuestionUnknown              = "unknown"
+	juryQuestionNotApplicable        = "not_applicable"
+	juryQuestionNoQuorum             = "no_quorum"
+	juryQuestionQuorumMet            = "quorum_met"
+	juryQuestionAttemptedUnavailable = "attempted_unavailable"
+)
+
+const (
+	juryVoteYes     = 'y'
+	juryVoteNo      = 'n'
+	juryVoteMissing = '-'
+)
+
+type juryFacts struct {
+	Models  []string
+	Results []string
+	Votes   []string
+}
+
+func readJuryFacts(raw json.RawMessage) juryFacts {
 	jury, valid := readJury(raw)
 	roster := map[string]bool{}
 	for _, model := range jury.Jurors {
@@ -89,16 +109,90 @@ func (a *judgeAccumulator) add(raw json.RawMessage) {
 		roster[model] = true
 	}
 	if !valid || jury.Version != ScorecardJudgeVersion {
+		return juryFacts{}
+	}
+	models := append([]string{}, jury.Jurors...)
+	sort.Strings(models)
+	required := len(models)/2 + 1
+	facts := juryFacts{Models: models, Results: []string{}, Votes: []string{}}
+	for _, q := range ScorecardQuestionsForVersion(ScorecardJudgeVersion) {
+		if q.Source != "judge" {
+			continue
+		}
+		outcome, votes := readJuryQuestion(jury, q.Key, models, required)
+		facts.Results = append(facts.Results, outcome)
+		facts.Votes = append(facts.Votes, votes)
+	}
+	return facts
+}
+
+func readJuryQuestion(jury juryEvaluation, key string, models []string, required int) (string, string) {
+	var result struct {
+		Status      string                     `json:"status"`
+		Cause       string                     `json:"cause"`
+		Verdict     json.RawMessage            `json:"verdict"`
+		Probability json.RawMessage            `json:"probability"`
+		Votes       map[string]json.RawMessage `json:"votes"`
+	}
+	source, failed := jury.Errors[key]
+	if !failed {
+		source = jury.Results[key]
+	}
+	if json.Unmarshal(source, &result) != nil {
+		return juryQuestionUnavailable, ""
+	}
+	if !failed && result.Status == "unknown" {
+		return juryQuestionUnknown, ""
+	}
+	if !failed && result.Status == "not_applicable" {
+		return juryQuestionNotApplicable, ""
+	}
+	if result.Votes == nil || failed && result.Cause != "no_quorum" || !failed && result.Status != "" {
+		return juryQuestionUnavailable, ""
+	}
+	votes := make([]byte, len(models))
+	cast, yes := 0, 0
+	sum := 0.0
+	for i, model := range models {
+		var probability *float64
+		if json.Unmarshal(result.Votes[model], &probability) != nil || !validProbability(probability) {
+			votes[i] = juryVoteMissing
+			continue
+		}
+		cast++
+		sum += *probability
+		votes[i] = juryVoteNo
+		if *probability > scorecardNoAtOrBelow {
+			votes[i] = juryVoteYes
+			yes++
+		}
+	}
+	var verdict *bool
+	var probability *float64
+	validConsensus := json.Unmarshal(result.Verdict, &verdict) == nil && verdict != nil &&
+		json.Unmarshal(result.Probability, &probability) == nil && validProbability(probability)
+	outcome := juryQuestionAttemptedUnavailable
+	if failed {
+		if cast < required {
+			outcome = juryQuestionNoQuorum
+		}
+	} else if cast >= required && validConsensus && *verdict == (yes > cast-yes || yes == cast-yes && sum/float64(cast) > scorecardNoAtOrBelow) {
+		outcome = juryQuestionQuorumMet
+	}
+	return outcome, string(votes)
+}
+
+func (a *judgeAccumulator) add(facts juryFacts) {
+	a.summary.TotalCalls++
+	if facts.Models == nil {
 		a.summary.UnavailableCalls++
 		return
 	}
 	a.summary.ReportedCalls++
-	models := append([]string{}, jury.Jurors...)
-	sort.Strings(models)
-	required := len(models)/2 + 1
+	models := facts.Models
 	key, _ := json.Marshal(models)
 	if a.lineups[string(key)] == nil {
-		a.lineups[string(key)] = &AnalyticsJudgeLineup{Models: models, RequiredVotes: required}
+		a.lineups[string(key)] = &AnalyticsJudgeLineup{Models: models, RequiredVotes: len(models)/2 + 1}
 	}
 	a.lineups[string(key)].Calls++
 	for _, model := range models {
@@ -108,65 +202,32 @@ func (a *judgeAccumulator) add(raw json.RawMessage) {
 	}
 	for i := range a.summary.Questions {
 		q := &a.summary.Questions[i]
-		var result struct {
-			Status      string                     `json:"status"`
-			Cause       string                     `json:"cause"`
-			Verdict     json.RawMessage            `json:"verdict"`
-			Probability json.RawMessage            `json:"probability"`
-			Votes       map[string]json.RawMessage `json:"votes"`
-		}
-		source, failed := jury.Errors[q.Key]
-		if !failed {
-			source = jury.Results[q.Key]
-		}
-		if json.Unmarshal(source, &result) != nil {
+		switch facts.Results[i] {
+		case juryQuestionUnavailable:
 			q.Unavailable++
 			continue
-		}
-		if !failed && result.Status == "unknown" {
+		case juryQuestionUnknown:
 			q.Unknown++
 			continue
-		}
-		if !failed && result.Status == "not_applicable" {
+		case juryQuestionNotApplicable:
 			q.NotApplicable++
 			continue
-		}
-		if result.Votes == nil || failed && result.Cause != "no_quorum" || !failed && result.Status != "" {
+		case juryQuestionNoQuorum:
+			q.NoQuorum++
+		case juryQuestionQuorumMet:
+			q.QuorumMet++
+		case juryQuestionAttemptedUnavailable:
 			q.Unavailable++
-			continue
 		}
 		q.Attempted++
 		votes := map[string]bool{}
-		yes := 0
-		sum := 0.0
-		for _, model := range models {
-			var probability *float64
-			if json.Unmarshal(result.Votes[model], &probability) != nil || !validProbability(probability) {
+		for j, model := range models {
+			if facts.Votes[i][j] == juryVoteMissing {
 				a.models[model].MissingVotes++
 				continue
 			}
 			a.models[model].Votes++
-			votes[model] = *probability > scorecardNoAtOrBelow
-			sum += *probability
-			if votes[model] {
-				yes++
-			}
-		}
-		var verdict *bool
-		var probability *float64
-		validConsensus := json.Unmarshal(result.Verdict, &verdict) == nil && verdict != nil &&
-			json.Unmarshal(result.Probability, &probability) == nil && validProbability(probability)
-
-		if failed {
-			if len(votes) < required {
-				q.NoQuorum++
-			} else {
-				q.Unavailable++
-			}
-		} else if len(votes) >= required && validConsensus && *verdict == (yes > len(votes)-yes || yes == len(votes)-yes && sum/float64(len(votes)) > scorecardNoAtOrBelow) {
-			q.QuorumMet++
-		} else {
-			q.Unavailable++
+			votes[model] = facts.Votes[i][j] == juryVoteYes
 		}
 		for leftIndex, left := range models {
 			leftVote, present := votes[left]
