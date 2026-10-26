@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.49.0](https://github.com/chasef07/acuity_product/compare/v1.48.0...v1.49.0) (2026-10-26)
+
+
+### Features
+
+* **knowledge-import:** publish updates to offices that already have knowledge ([#562](https://github.com/chasef07/acuity_product/issues/562)) ([f1e0ca9](https://github.com/chasef07/acuity_product/commit/f1e0ca9456aaa36d377c6eac0e8948acc67c45f1))
+* **knowledge:** allow markdown in office knowledge entries and preview titles as headings ([#561](https://github.com/chasef07/acuity_product/issues/561)) ([7f9a5ee](https://github.com/chasef07/acuity_product/commit/7f9a5ee95cc48476148333c16fbaf66e389a3050))
+
 ## [1.48.0](https://github.com/chasef07/acuity_product/compare/v1.47.0...v1.48.0) (2026-10-25)
 
 
