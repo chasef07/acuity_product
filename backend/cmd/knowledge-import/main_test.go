@@ -9,7 +9,7 @@ import (
 )
 
 func TestImportFileCannotForgeActorOrIgnoreExtraInput(t *testing.T) {
-	for _, body := range []string{`{"actorSubject":"someone-else"}`, `{} {}`, `{"patientId":"synthetic-patient"}`} {
+	for _, body := range []string{`{"actorSubject":"someone-else"}`, `{} {}`, `{"patientId":"synthetic-patient"}`, `{"expectedRevisionId":"00000000-0000-4000-8000-000000000001"}`} {
 		if _, err := readCommand(strings.NewReader(body)); err == nil {
 			t.Fatalf("accepted unsafe import input %s", body)
 		}

@@ -26,7 +26,9 @@ func validateSections(sections []Section) error {
 		return fmt.Errorf("corpus must contain 1 to 100 whole sections: %w", ErrInvalidInput)
 	}
 	seen := map[string]bool{}
+	characters := 0
 	for index, section := range sections {
+		characters += utf8.RuneCountInString(section.Title) + utf8.RuneCountInString(section.Text)
 		var rule string
 		switch {
 		case !sectionID.MatchString(section.ID):
@@ -42,6 +44,9 @@ func validateSections(sections []Section) error {
 			continue
 		}
 		return &EntryError{EntryID: section.ID, Rule: rule}
+	}
+	if characters > maxKnowledgeCharacters {
+		return &SizeError{Characters: characters}
 	}
 	return nil
 }

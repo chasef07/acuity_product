@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -25,7 +26,7 @@ func (publicationEmbedder) Embed(_ context.Context, texts []string, _ knowledge.
 	return vectors, nil
 }
 
-func TestImportPublishesOnlyOfficesWithoutKnowledge(t *testing.T) {
+func TestImportSetsUpAnOfficeOrUpdatesItsActiveRevision(t *testing.T) {
 	pool := testdb.OpenAsOwner(t)
 	ctx := context.Background()
 	auth := access.New(pool, nil)
@@ -40,7 +41,7 @@ func TestImportPublishesOnlyOfficesWithoutKnowledge(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := Source{PracticeID: practice, OfficeKey: "synthetic-office", Entries: []Entry{{ID: "hours", Title: "Hours", Text: "Closes at five."}}}
-	command, err := sourceCommand(source, strings.Repeat("a", 40))
+	command, err := sourceCommand(source, strings.Repeat("a", 40), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,12 +63,77 @@ func TestImportPublishesOnlyOfficesWithoutKnowledge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := module.ReplaceCorpus(ctx, prepared); err != nil {
+	first, err := module.ReplaceCorpus(ctx, prepared)
+	if err != nil {
 		t.Fatal(err)
 	}
-	command.Sections[0].Text = "Closes at six."
-	if _, err := preparePublication(ctx, pool, command, email); err == nil || !strings.Contains(err.Error(), "Portal") {
-		t.Fatalf("import over an active revision: %v", err)
+	source.Entries[0].Text = "Closes at six."
+	for _, tc := range []struct{ expected, reason, want string }{
+		{first.ID, " ", "--reason"},
+		{"", " ", "--reason"},
+		{"not-a-revision", "Later hours", "--expected-revision"},
+	} {
+		if _, err := sourceCommand(source, strings.Repeat("a", 40), tc.expected, tc.reason); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%+v: %v", tc, err)
+		}
+	}
+	setup, err := sourceCommand(source, strings.Repeat("a", 40), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparePublication(ctx, pool, setup, email); err == nil || !strings.Contains(err.Error(), "--expected-revision "+first.ID) {
+		t.Fatalf("setup over an active revision: %v", err)
+	}
+	wrong, err := sourceCommand(source, strings.Repeat("a", 40), uuid.NewString(), "Later hours")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparePublication(ctx, pool, wrong, email); err == nil {
+		t.Fatal("accepted an update against a revision that is not active")
+	}
+	update, err := sourceCommand(source, strings.Repeat("a", 40), strings.ToUpper(first.ID), "Later hours")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if update.ID == setup.ID || update.Reason != "Later hours" {
+		t.Fatalf("update command: %+v", update)
+	}
+	prepared, err = preparePublication(ctx, pool, update, email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := module.ReplaceCorpus(ctx, prepared)
+	if err != nil || second.Version != 2 {
+		t.Fatalf("update: %+v, %v", second, err)
+	}
+	replay, err := preparePublication(ctx, pool, update, email)
+	if err != nil {
+		t.Fatalf("replaying the same update: %v", err)
+	}
+	if again, err := module.ReplaceCorpus(ctx, replay); err != nil || again.ID != second.ID || again.Version != 2 {
+		t.Fatalf("replayed update: %+v, %v", again, err)
+	}
+	staff := prepared
+	staff.ID, staff.ExpectedRevisionID, staff.Provenance = uuid.NewString(), second.ID, "portal"
+	staff.Sections = []knowledge.Section{{ID: "hours", Title: "Hours", Text: "Closes at seven."}}
+	if _, err := module.ReplaceCorpus(ctx, staff); err != nil {
+		t.Fatal(err)
+	}
+	source.Entries[0].Text = "Closes at eight."
+	stale, err := sourceCommand(source, strings.Repeat("a", 40), second.ID, "Even later hours")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparePublication(ctx, pool, stale, email); err == nil {
+		t.Fatal("an update overwrote a newer Portal publish")
+	}
+	oversized := Source{PracticeID: practice, OfficeKey: "synthetic-office"}
+	for i := range 4 {
+		oversized.Entries = append(oversized.Entries, Entry{ID: fmt.Sprintf("entry-%d", i), Title: "T", Text: strings.Repeat("x", 5000)})
+	}
+	var size *knowledge.SizeError
+	if _, err := sourceCommand(oversized, strings.Repeat("a", 40), second.ID, "Too long"); !errors.As(err, &size) || size.Characters != 20004 {
+		t.Fatalf("source over the prompt cap: %v", err)
 	}
 }
 
@@ -123,7 +189,7 @@ func TestExportRoundTripsARevision(t *testing.T) {
 				t.Fatalf("exported scope: %+v", source)
 			}
 			source.OfficeKey = tc.target
-			command, err := sourceCommand(source, strings.Repeat("b", 40))
+			command, err := sourceCommand(source, strings.Repeat("b", 40), "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -155,7 +221,7 @@ func TestImportHoldsAbitaOfficesToTheEntryStandard(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM access_practices WHERE provisioning_key='abita-eye-group'`).Scan(&practice); err != nil {
 		t.Fatal(err)
 	}
-	command, err := sourceCommand(Source{PracticeID: practice, OfficeKey: "new-office", Entries: []Entry{{ID: "hours", Title: "Hours", Text: "Closes at five."}}}, strings.Repeat("c", 40))
+	command, err := sourceCommand(Source{PracticeID: practice, OfficeKey: "new-office", Entries: []Entry{{ID: "hours", Title: "Hours", Text: "Closes at five."}}}, strings.Repeat("c", 40), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

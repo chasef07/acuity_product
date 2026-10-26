@@ -49,7 +49,7 @@ func readSource(r io.Reader) (Source, error) {
 	return source, nil
 }
 
-func sourceCommand(source Source, commit string) (knowledge.ImportCommand, error) {
+func sourceCommand(source Source, commit, expectedRevision, reason string) (knowledge.ImportCommand, error) {
 	if !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(commit) {
 		return knowledge.ImportCommand{}, errors.New("--commit must be a full lowercase Git commit SHA")
 	}
@@ -61,8 +61,21 @@ func sourceCommand(source Source, commit string) (knowledge.ImportCommand, error
 	if err != nil {
 		return knowledge.ImportCommand{}, err
 	}
-	id := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(commit+"\n"), body...)).String()
-	command := knowledge.ImportCommand{ID: id, PracticeID: source.PracticeID, OfficeKey: source.OfficeKey, Sections: sections, Provenance: "git:" + commit, Reason: "Set up office knowledge", ActorSubject: "validation-only"}
+	if expectedRevision == "" && reason == "" {
+		reason = "Set up office knowledge"
+	}
+	if strings.TrimSpace(reason) == "" {
+		return knowledge.ImportCommand{}, errors.New("--reason must say why the knowledge changed")
+	}
+	if expectedRevision != "" {
+		parsed, err := uuid.Parse(expectedRevision)
+		if err != nil {
+			return knowledge.ImportCommand{}, errors.New("--expected-revision must be the revision UUID printed by --export")
+		}
+		expectedRevision = parsed.String()
+	}
+	id := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(commit+"\n"+expectedRevision+"\n"+reason+"\n"), body...)).String()
+	command := knowledge.ImportCommand{ID: id, PracticeID: source.PracticeID, OfficeKey: source.OfficeKey, ExpectedRevisionID: expectedRevision, Sections: sections, Provenance: "git:" + commit, Reason: reason, ActorSubject: "validation-only"}
 	if err := knowledge.ValidateImport(command); err != nil {
 		return command, err
 	}
@@ -70,7 +83,7 @@ func sourceCommand(source Source, commit string) (knowledge.ImportCommand, error
 	return command, nil
 }
 
-func runSource(path, commit string, apply bool) error {
+func runSource(path, commit, expectedRevision, reason string, apply bool) error {
 	if !apply && commit == "" {
 		commit = "0000000000000000000000000000000000000000"
 	}
@@ -82,7 +95,7 @@ func runSource(path, commit string, apply bool) error {
 	if err != nil {
 		return err
 	}
-	command, err := sourceCommand(source, commit)
+	command, err := sourceCommand(source, commit, expectedRevision, reason)
 	if err != nil {
 		return err
 	}

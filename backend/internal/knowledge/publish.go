@@ -68,13 +68,6 @@ func (m *Module) PublishLocation(ctx context.Context, cmd PublishCommand) (Revis
 	if err != nil {
 		return RevisionSummary{}, err
 	}
-	characters := 0
-	for _, section := range cmd.Sections {
-		characters += utf8.RuneCountInString(section.Title) + utf8.RuneCountInString(section.Text)
-	}
-	if characters > maxKnowledgeCharacters {
-		return RevisionSummary{}, &SizeError{Characters: characters}
-	}
 	revision, err := m.replaceCorpus(ctx, ImportCommand{
 		ID: cmd.RevisionID, PracticeID: cmd.PracticeID, OfficeKey: officeKey, ExpectedRevisionID: cmd.ExpectedRevisionID,
 		Sections: cmd.Sections, Provenance: "portal", Reason: cmd.Reason, ActorSubject: cmd.Identity.Subject,

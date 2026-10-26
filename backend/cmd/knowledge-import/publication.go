@@ -32,8 +32,11 @@ func preparePublication(ctx context.Context, pool *pgxpool.Pool, command knowled
 	if err != nil {
 		return command, errors.New("could not read the authorized office route")
 	}
-	if active != nil {
-		return command, fmt.Errorf("office %q already has active revision %s; edit its knowledge in the Portal (POST /v1/knowledge/revisions)", command.OfficeKey, *active)
+	if active == nil && command.ExpectedRevisionID != "" {
+		return command, fmt.Errorf("office %q has no knowledge yet; publish without --expected-revision", command.OfficeKey)
+	}
+	if active != nil && command.ExpectedRevisionID != *active && command.ID != *active {
+		return command, fmt.Errorf("office %q has active revision %s; export it, commit your edits, and publish with --expected-revision %s and --reason", command.OfficeKey, *active, *active)
 	}
 	return command, nil
 }
