@@ -26,7 +26,9 @@ func main() {
 	practice := flag.String("practice", "", "Practice UUID for export")
 	office := flag.String("office", "", "Abita office key for export")
 	revision := flag.String("revision", "", "revision UUID for export; defaults to the active revision")
-	apply := flag.Bool("apply", false, "publish knowledge for an office that has none yet")
+	expectedRevision := flag.String("expected-revision", "", "the office's active revision UUID, from --export, when updating an office")
+	reason := flag.String("reason", "", "why the knowledge changed; required when updating an office")
+	apply := flag.Bool("apply", false, "publish the source as the office's new active revision")
 	flag.Parse()
 	var err error
 	if *export {
@@ -35,8 +37,10 @@ func main() {
 		if *file != "" {
 			err = errors.New("use either --source or --file")
 		} else {
-			err = runSource(*source, *commit, *apply)
+			err = runSource(*source, *commit, *expectedRevision, *reason, *apply)
 		}
+	} else if *expectedRevision != "" || *reason != "" {
+		err = errors.New("--expected-revision and --reason require --source")
 	} else {
 		err = run(*file, *apply)
 	}
@@ -58,6 +62,9 @@ func readCommand(reader io.Reader) (knowledge.ImportCommand, error) {
 	}
 	if command.ActorSubject != "" {
 		return command, errors.New("actorSubject must be omitted; the bound operator supplies attribution")
+	}
+	if command.ExpectedRevisionID != "" {
+		return command, errors.New("--file sets up offices only; update an office with --source and --expected-revision")
 	}
 	return command, nil
 }
@@ -84,7 +91,7 @@ func applyPublication(command knowledge.ImportCommand, apply bool) error {
 		if err := knowledge.ValidateImport(command); err != nil {
 			return err
 		}
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"applied": false, "validation": "Content structure only; --apply checks the operator, the route, that the office has no knowledge yet, the Abita entry standard, and embeddings; source approval remains an operator responsibility", "practiceId": command.PracticeID, "officeKey": command.OfficeKey, "sections": len(command.Sections)})
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"applied": false, "validation": "Content structure only; --apply checks the operator, the route, the office's active revision, the Abita entry standard, and embeddings; source approval remains an operator responsibility", "practiceId": command.PracticeID, "officeKey": command.OfficeKey, "sections": len(command.Sections)})
 	}
 	if os.Getenv("KNOWLEDGE_IMPORT_DATABASE_URL") == "" || os.Getenv("KNOWLEDGE_OPERATOR_EMAIL") == "" || os.Getenv("KNOWLEDGE_GOOGLE_PROJECT") == "" {
 		return errors.New("KNOWLEDGE_IMPORT_DATABASE_URL, KNOWLEDGE_OPERATOR_EMAIL and KNOWLEDGE_GOOGLE_PROJECT are required")

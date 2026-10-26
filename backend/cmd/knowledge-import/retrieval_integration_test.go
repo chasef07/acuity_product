@@ -62,7 +62,7 @@ func TestPublishedSourcesReturnFocusedEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cmd, err := sourceCommand(source, "0000000000000000000000000000000000000000")
+			cmd, err := sourceCommand(source, "0000000000000000000000000000000000000000", "", "")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -22,7 +22,7 @@ AI call rewrites the facts.
 ## Abita office standard
 
 The Abita Eye Group offices use one entry standard, enforced on every publish,
-from the Portal or the setup command, by
+from the Portal or the operator command, by
 [`backend/internal/knowledge/publish.go`](../backend/internal/knowledge/publish.go).
 Every office keeps the same required entry IDs (address, phone, fax, paperwork
 email, directions, other offices, hours, holiday closures, after-hours,
@@ -78,20 +78,35 @@ YAML goes to stdout in saved entry order, and the exported revision ID goes to
 stderr. Revisions published before entry order was saved export in entry ID
 order.
 
-Set up a new office that has no knowledge yet. Commit its YAML (same format as
-the export) on a branch so the source is reviewable, then also set
+Publish an office's knowledge from a reviewed YAML source (same format as the
+export). Commit the YAML on a branch so the source is reviewable, then also set
 `KNOWLEDGE_OPERATOR_EMAIL`, `KNOWLEDGE_GOOGLE_PROJECT`, and optionally
-`KNOWLEDGE_GOOGLE_LOCATION` (defaults to `us-east1`), then:
+`KNOWLEDGE_GOOGLE_LOCATION` (defaults to `us-east1`).
+
+Set up a new office that has no knowledge yet:
 
 ```sh
 go run ./backend/cmd/knowledge-import \
   --source office.yaml --commit FULL_REVIEWED_GIT_SHA --apply
 ```
 
-The CLI refuses an office that already has an active revision; change that
-office in the Portal. If a setup run fails after publishing, `--export` shows
-whether it landed before you retry. It rejects a source that differs from its bytes at the
-declared Git commit and resolves the supplied email to an existing bound
-Platform Operator, so a source cannot forge attribution. Without `--apply` it
-validates the source structure only. Legacy reviewed JSON imports remain
-supported by `--file`, under the same refusal.
+Update an office that already has knowledge. Export its active revision, edit
+and commit the YAML, then publish against the exported revision ID with a
+reason:
+
+```sh
+go run ./backend/cmd/knowledge-import \
+  --source office.yaml --commit FULL_REVIEWED_GIT_SHA \
+  --expected-revision EXPORTED_REVISION_UUID --reason "Why it changed" --apply
+```
+
+An update publishes a new version exactly as a Portal publish does: the same
+entry standard and character limit, a History entry with the operator and
+reason, and a refusal if anyone published after the exported revision. Export
+again and reapply your edits in that case. Rerunning the same command after a
+failure is safe: if it already landed, it returns that version instead of
+publishing another. The CLI rejects a source
+that differs from its bytes at the declared Git commit and resolves the
+supplied email to an existing bound Platform Operator, so a source cannot forge
+attribution. Without `--apply` it validates the source structure only. Legacy
+reviewed JSON imports remain supported by `--file`, for setup only.
