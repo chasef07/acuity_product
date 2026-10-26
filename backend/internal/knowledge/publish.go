@@ -25,8 +25,7 @@ var requiredAbitaEntries = []string{
 	"medical-records-requests", "prescription-copies", "social-follow-up",
 }
 
-var markdownLine = regexp.MustCompile(`^(#|>|[-*+] |\d+[.)] )`)
-var markdownInline = regexp.MustCompile("\\*\\*|__|`|\\]\\(|(^|[\\s(\"'“‘—–-])(\\*[^\\s*][^*]*\\*|_[^\\s_][^_]*_($|[^\\p{L}\\p{N}_]))")
+var markdownHeading = regexp.MustCompile(`^#{1,6}(\s|$)`)
 
 type EntryError struct {
 	EntryID string
@@ -104,13 +103,16 @@ func validateAbitaStandard(sections []Section) error {
 			return &EntryError{EntryID: section.ID, Rule: "has the same title as another entry"}
 		}
 		titles[section.Title] = true
+		if strings.ContainsAny(section.Title, "\r\n") {
+			return &EntryError{EntryID: section.ID, Rule: "has a line break in its title; keep the title on one line"}
+		}
 		if n := utf8.RuneCountInString(section.Text); n > maxAbitaEntryCharacters {
 			return &EntryError{EntryID: section.ID, Rule: fmt.Sprintf("has %d characters; keep it to %d or split it", n, maxAbitaEntryCharacters)}
 		}
 		for _, line := range strings.Split(section.Text, "\n") {
 			line = strings.TrimSpace(line)
-			if markdownLine.MatchString(line) || markdownInline.MatchString(line) {
-				return &EntryError{EntryID: section.ID, Rule: "uses markdown formatting; write plain text"}
+			if markdownHeading.MatchString(line) {
+				return &EntryError{EntryID: section.ID, Rule: "uses a markdown heading; the entry title is its heading"}
 			}
 		}
 	}

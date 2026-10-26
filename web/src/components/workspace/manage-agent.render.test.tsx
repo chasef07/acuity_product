@@ -540,7 +540,7 @@ test("several edits wait beside the search bar, outside the scrolling list, and 
   await page.unmount()
 })
 
-test("What Abita sees shows the draft's entries in order as title then text, counts their characters against the cap, and holds Publish over it", async (t) => {
+test("What Abita sees shows the draft's entries in order as a markdown heading per title, then its text, counts their characters against the cap, and holds Publish over it", async (t) => {
   const page = harness(t)
   page.knowledge = syntheticKnowledge
   await page.render(knowledgeBase())
@@ -550,7 +550,7 @@ test("What Abita sees shows the draft's entries in order as title then text, cou
   assert.equal(page.panel(preview).open, false)
   await act(async () => preview.click())
   assert.equal(page.panel(preview).open, true)
-  assert.equal(page.panel(preview).text, "Office hours\nMonday to Friday\n8am to 5pm\n\nParking\nSynthetic garage on site.")
+  assert.equal(page.panel(preview).text, "### Office hours\n\nMonday to Friday\n8am to 5pm\n\n### Parking\n\nSynthetic garage on site.")
   assert.deepEqual(page.rowTitles(), ["Office hours", "Parking"])
 
   await page.click("Add entry")
@@ -558,20 +558,20 @@ test("What Abita sees shows the draft's entries in order as title then text, cou
   await page.fill(page.field("Text"), "Synthetic fax 555-0100.")
   await page.click("Done")
   await page.rowAction("Office hours", "Edit")
-  await page.fill(page.field("Text"), "Closes at six")
+  await page.fill(page.field("Text"), "Closes at six\n")
   await page.click("Done")
-  assert.equal(page.panel(preview).text, "Office hours\nCloses at six\n\nParking\nSynthetic garage on site.\n\nFax\nSynthetic fax 555-0100.")
-  assert.equal(preview.textContent, "What Abita sees83 of 20,000 characters")
+  assert.equal(page.panel(preview).text, "### Office hours\n\nCloses at six\n\n### Parking\n\nSynthetic garage on site.\n\n### Fax\n\nSynthetic fax 555-0100.")
+  assert.equal(preview.textContent, "What Abita sees84 of 20,000 characters")
   await page.fill(page.field("Why are you changing this?"), "New hours and fax")
   assert.equal(page.button(/^Publish$/).disabled, false)
   assert.equal(page.alert(), "")
 
   await page.rowAction("Parking", "Edit")
-  await page.fill(page.field("Text"), "x".repeat(19_943))
+  await page.fill(page.field("Text"), "x".repeat(19_942))
   assert.equal(preview.textContent, "What Abita sees20,001 of 20,000 characters")
   assert.equal(page.button(/^Publish$/).disabled, true)
   assert.equal(page.alert(), "This office's knowledge has 20,001 characters of titles and text; keep it to 20,000.")
-  await page.fill(page.field("Text"), "x".repeat(19_942))
+  await page.fill(page.field("Text"), "x".repeat(19_941))
   assert.equal(preview.textContent, "What Abita sees20,000 of 20,000 characters")
   assert.equal(page.button(/^Publish$/).disabled, false)
   assert.equal(page.alert(), "")
@@ -611,12 +611,12 @@ test("a rejected, conflicting, or failed publish says why and keeps the unpublis
   await page.fill(page.field("Why are you changing this?"), "Bold the days")
 
   page.publishStatus = 400
-  page.publishError = { code: "INVALID_KNOWLEDGE_ENTRY", message: "Entry \"hours\" uses markdown formatting; write plain text.", correlationId: "synthetic", retryable: false, entryId: "hours" }
+  page.publishError = { code: "INVALID_KNOWLEDGE_ENTRY", message: "Entry \"hours\" uses a markdown heading; the entry title is its heading.", correlationId: "synthetic", retryable: false, entryId: "hours" }
   await page.click("Publish")
   await waitFor(() => page.alert() !== "")
   assert.equal(page.alert(), "Not published. Fix “Office hours” below.")
   const hours = page.button(/^Office hours$/).closest("li")!
-  assert.equal(hours.querySelector("[role='alert']")?.textContent, "Entry \"hours\" uses markdown formatting; write plain text.")
+  assert.equal(hours.querySelector("[role='alert']")?.textContent, "Entry \"hours\" uses a markdown heading; the entry title is its heading.")
   const rejected = page.field("Text")
   await page.fill(rejected, "**Monday** to Friday, closed weekends")
   assert.equal(page.field("Text"), rejected)
@@ -748,12 +748,12 @@ test("a publish that fails after leaving and returning says why, keeps the chang
     {
       text: "**Closes** at six",
       status: 400,
-      error: { code: "INVALID_KNOWLEDGE_ENTRY", message: "Entry \"hours\" uses markdown formatting; write plain text.", correlationId: "synthetic", retryable: false, entryId: "hours" },
+      error: { code: "INVALID_KNOWLEDGE_ENTRY", message: "Entry \"hours\" uses a markdown heading; the entry title is its heading.", correlationId: "synthetic", retryable: false, entryId: "hours" },
       settled: () => page.maybeButton("Publishing…") === undefined,
       check: () => {
         const hours = page.button(/^Office hours$/)
         assert.equal(hours.getAttribute("aria-expanded"), "true")
-        assert.equal(hours.closest("li")!.querySelector("[role='alert']")?.textContent, "Entry \"hours\" uses markdown formatting; write plain text.")
+        assert.equal(hours.closest("li")!.querySelector("[role='alert']")?.textContent, "Entry \"hours\" uses a markdown heading; the entry title is its heading.")
       },
     },
   ]

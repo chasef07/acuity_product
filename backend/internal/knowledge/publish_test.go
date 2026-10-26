@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestAbitaStandardRejectsMarkdown(t *testing.T) {
+func TestAbitaStandardRejectsHeadingsInEntryText(t *testing.T) {
 	sections := func(text string) []Section {
 		result := make([]Section, len(requiredAbitaEntries))
 		for i, id := range requiredAbitaEntries {
@@ -14,23 +14,32 @@ func TestAbitaStandardRejectsMarkdown(t *testing.T) {
 		result[0].Text = text
 		return result
 	}
-	for _, text := range []string{
-		"# Address", "- First line", "* First line", "+ First line", "> Quoted", "1. First step", "2) Second step",
-		"See **this**", "See __this__", "Use `code`", "Visit [our site](https://example.invalid)",
-		"An *emphasized* word", "An _emphasized_ word", ">Quoted", "*front_desk email*", "*Note*—bring ID", "\"*Note*\" applies", "_Note_—bring ID",
-	} {
+	for _, text := range []string{"# Address", "## Address", "Intro\n### Parking", "  #### Parking", "######"} {
 		var entry *EntryError
 		if err := validateAbitaStandard(sections(text)); !errors.As(err, &entry) || entry.EntryID != requiredAbitaEntries[0] {
 			t.Errorf("%q: %v", text, err)
 		}
 	}
 	for _, text := range []string{
-		"Suite 100, 1. 5 miles north of the hospital.", "Dr. Smith sees patients 9:00 AM–5:00 PM.",
-		"Email front_desk@example.invalid. Fees are $25 - $40.", "Ages 2-6 need a parent (or guardian) present.",
-		"Prices: frames from $99; lenses * not included.",
+		"- First line\n- Second line", "1. First step\n2. Second step", "See **this**", "> Quoted", "Use `code`",
+		"Visit [our site](https://example.invalid)", "Take the #5 bus.", "#hashtag on social media", "Suite #201",
 	} {
 		if err := validateAbitaStandard(sections(text)); err != nil {
 			t.Errorf("%q: %v", text, err)
+		}
+	}
+}
+
+func TestAbitaStandardRejectsLineBreaksInTitles(t *testing.T) {
+	for _, title := range []string{"Hours\n# Extra", "Hours\r\nExtra"} {
+		sections := make([]Section, len(requiredAbitaEntries))
+		for i, id := range requiredAbitaEntries {
+			sections[i] = Section{ID: id, Title: id, Text: "Plain fact."}
+		}
+		sections[0].Title = title
+		var entry *EntryError
+		if err := validateAbitaStandard(sections); !errors.As(err, &entry) || entry.EntryID != requiredAbitaEntries[0] {
+			t.Errorf("%q: %v", title, err)
 		}
 	}
 }

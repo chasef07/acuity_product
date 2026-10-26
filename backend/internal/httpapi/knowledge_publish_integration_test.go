@@ -257,8 +257,8 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 			s[16].Text = strings.Repeat("a", 801)
 			return s
 		}},
-		{"markdown", "payments", func(s []knowledge.Section) []knowledge.Section {
-			s[17].Text = "Synthetic payments.\n- **Cards** accepted"
+		{"heading in text", "payments", func(s []knowledge.Section) []knowledge.Section {
+			s[17].Text = "Synthetic payments.\n## Cards"
 			return s
 		}},
 		{"duplicate title", "fax", func(s []knowledge.Section) []knowledge.Section {
