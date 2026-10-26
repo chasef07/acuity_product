@@ -15,7 +15,7 @@ authorized retrieval scope.
 Write the useful fact directly. Do not include `Status: available` labels,
 document-export boilerplate, or instructions explaining when to read the entry.
 Keep actual restrictions and explicit missing information in ordinary sentences.
-The Abita tool renders selected facts as plain text. Revision IDs and source IDs
+Abita receives each entry as its title heading and text. Revision IDs and source IDs
 remain in the API/audit records, rather than the model's tool response. No extra
 AI call rewrites the facts.
 
@@ -32,7 +32,9 @@ records, prescription copies, and social follow-up). Staff may add other topics.
 
 - When an office has no answer, the entry says so ("… is not supplied") so the
   agent does not borrow another office's fact or guess.
-- Keep each entry under 800 characters and use plain sentences, not markdown.
+- Keep each entry under 800 characters. Entry text may use markdown lists,
+  bold, and links, but not headings: Abita receives each title as the entry's
+  heading.
 - Title entries with the words callers use. Title words that appear in the
   question weigh most in ranking, so prefer "Broken glasses repair" over "Repairs".
 - `other-offices` lists the practice's other offices, followed by any
@@ -47,8 +49,8 @@ who changed it and why, and switches the office to it only if no one else
 published first. The next Abita search uses it. Earlier revisions are never
 changed. A publish whose titles and text together exceed 20,000 characters is
 rejected. The editor's "What Abita sees" preview shows the entries as Abita
-will receive them in its prompt (each title, then its text, in entry order) and
-counts them against that limit.
+will receive them in its prompt (each title as a `###` markdown heading, then
+its text, in entry order) and counts their titles and text against that limit.
 
 Each revision has a version number, its position in the office's history
 starting at 1. The Portal's History panel lists every version with its author,

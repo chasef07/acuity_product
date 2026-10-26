@@ -46,7 +46,7 @@ function matches(entry: Entry, words: string[]) {
 }
 
 function abitaPromptKnowledge(entries: Entry[]) {
-  return entries.map(({ title, text }) => `${title}\n${text}`).join("\n\n")
+  return entries.map(({ title, text }) => `### ${title}\n\n${text.trim()}`.trim()).join("\n\n")
 }
 
 const maxKnowledgeCharacters = 20_000
