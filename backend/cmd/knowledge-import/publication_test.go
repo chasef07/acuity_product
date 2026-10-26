@@ -15,17 +15,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type publicationEmbedder struct{}
-
-func (publicationEmbedder) Embed(_ context.Context, texts []string, _ knowledge.TaskType) ([][]float32, error) {
-	vectors := make([][]float32, len(texts))
-	for i := range vectors {
-		vectors[i] = make([]float32, knowledge.Dimensions)
-		vectors[i][0] = 1
-	}
-	return vectors, nil
-}
-
 func TestImportSetsUpAnOfficeOrUpdatesItsActiveRevision(t *testing.T) {
 	pool := testdb.OpenAsOwner(t)
 	ctx := context.Background()
@@ -59,7 +48,7 @@ func TestImportSetsUpAnOfficeOrUpdatesItsActiveRevision(t *testing.T) {
 	if err != nil || prepared.ActorSubject != "synthetic-operator" || prepared.ExpectedRevisionID != "" {
 		t.Fatalf("first import: %+v, %v", prepared, err)
 	}
-	module, err := knowledge.New(pool, auth, publicationEmbedder{}, knowledge.Config{})
+	module, err := knowledge.New(pool, auth)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +142,7 @@ func TestExportRoundTripsARevision(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM access_practices WHERE provisioning_key='synthetic'`).Scan(&practice); err != nil {
 		t.Fatal(err)
 	}
-	module, err := knowledge.New(pool, auth, publicationEmbedder{}, knowledge.Config{})
+	module, err := knowledge.New(pool, auth)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +215,7 @@ func TestImportHoldsAbitaOfficesToTheEntryStandard(t *testing.T) {
 		t.Fatal(err)
 	}
 	command.ActorSubject = "synthetic-operator"
-	module, err := knowledge.New(pool, auth, publicationEmbedder{}, knowledge.Config{})
+	module, err := knowledge.New(pool, auth)
 	if err != nil {
 		t.Fatal(err)
 	}

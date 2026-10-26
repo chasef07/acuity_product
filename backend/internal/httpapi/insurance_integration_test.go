@@ -24,17 +24,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 )
 
-type constantEmbedder struct{}
-
-func (constantEmbedder) Embed(_ context.Context, texts []string, _ knowledge.TaskType) ([][]float32, error) {
-	vectors := make([][]float32, len(texts))
-	for i := range vectors {
-		vectors[i] = make([]float32, knowledge.Dimensions)
-		vectors[i][0] = 1
-	}
-	return vectors, nil
-}
-
 func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
@@ -90,7 +79,7 @@ func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	knowledgeModule, err := knowledge.New(db.As(testdb.Portal), accessModule, constantEmbedder{}, knowledge.Config{})
+	knowledgeModule, err := knowledge.New(db.As(testdb.Portal), accessModule)
 	if err != nil {
 		t.Fatal(err)
 	}

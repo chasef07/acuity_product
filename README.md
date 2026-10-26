@@ -60,7 +60,6 @@ flowchart LR
     Backend["Go backend<br/>isolated runtime roles"]
     DB[("PostgreSQL")]
     Telnyx["Telnyx<br/>voice and messaging"]
-    Vertex["Google Vertex AI<br/>knowledge embeddings"]
     Abita["Abita AI agent"]
 
     Browser -->|"pages and sign-in"| Web
@@ -71,8 +70,7 @@ flowchart LR
     Browser <-->|"WebRTC calling"| Telnyx
     Telnyx -->|"signed webhooks"| Backend
     Backend -->|"provider commands"| Telnyx
-    Backend -->|"embedding requests"| Vertex
-    Abita -->|"authenticated Tasks, AI Interactions, and knowledge queries"| Backend
+    Abita -->|"authenticated Tasks, AI Interactions, and knowledge reads"| Backend
 ```
 
 ### One backend, five runtime roles
@@ -105,7 +103,7 @@ Business rules live in their owning module under `backend/internal/`.
 | HumanCalling | [`humancalling/`](backend/internal/humancalling) | Calls, CallLegs, softphone readiness, transfers, voicemail, and recordings |
 | Messaging | [`messaging/`](backend/internal/messaging) | Conversations, send intent, delivery evidence, and attachments |
 | AIInteraction | [`interaction/`](backend/internal/interaction) | AI call lifecycle, transcripts, appointment evidence, and analytics |
-| Knowledge | [`knowledge/`](backend/internal/knowledge) | Office corpus revisions, controlled imports, and semantic passage search |
+| Knowledge | [`knowledge/`](backend/internal/knowledge) | Office knowledge revisions, controlled imports, and agent reads |
 | Insurance | [`insurance/`](backend/internal/insurance) | Read-only staff view of the middleware's insurance rules for a Location's Abita Office Route; stores nothing |
 
 The [`workspace/`](backend/internal/workspace) query layer combines authorized
@@ -122,14 +120,12 @@ also rejects comments in hand-written Go; only tool directives such as
 scan: the softphone takeover trigger in migration `0106` reads Access's
 operational scopes, as `softphone.go` already does.
 
-Knowledge uses Access for Practice and office authorization, a Google Vertex AI
-adapter for embeddings, and PostgreSQL/pgvector for passages and immutable revisions.
-Embedding requests run outside database transactions; the Agent has read-only access.
+Knowledge uses Access for Practice and office authorization and PostgreSQL for
+entries and immutable revisions; the Agent has read-only access.
 Each office's active database revision is its only knowledge source; staff
 publish complete office revisions through the Portal backend, as described in the
-[Knowledge workflow](knowledge/README.md). Search combines semantic and text matching, preserving
-complete facts and restrictions while limiting the evidence returned to the Agent.
-Staff read a Location's current revision, in saved order and without embeddings,
+[Knowledge workflow](knowledge/README.md). The Agent reads the whole active
+revision for its office, in saved order. Staff read a Location's current revision
 through its single Abita Office Route.
 
 The browser/backend contract is [`api/openapi.yaml`](api/openapi.yaml).

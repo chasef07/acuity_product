@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -12,39 +13,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/google/uuid"
 )
-
-type testEmbedder struct {
-	fail       bool
-	before     func()
-	calls      int
-	irrelevant bool
-}
-
-func (p *testEmbedder) Embed(_ context.Context, texts []string, _ TaskType) ([][]float32, error) {
-	p.calls++
-	if p.before != nil {
-		p.before()
-	}
-	if p.fail {
-		return nil, errors.New("provider failed with private diagnostics")
-	}
-	result := make([][]float32, len(texts))
-	for i := range texts {
-		result[i] = make([]float32, Dimensions)
-		if p.irrelevant {
-			result[i][1] = 1
-		} else {
-			result[i][0] = 1
-		}
-	}
-	return result, nil
-}
-func TestMissingEmbeddingProviderIsNamedAsTheFailureCause(t *testing.T) {
-	_, err := (&Module{}).embed(context.Background(), []string{"office hours"}, RetrievalQuery)
-	if !errors.Is(err, ErrUnavailable) || FailureCode(err) != "provider_not_configured" {
-		t.Fatalf("embed without provider = %v (%s)", err, FailureCode(err))
-	}
-}
 
 func TestValidateImport(t *testing.T) {
 	cases := []struct {
@@ -65,7 +33,7 @@ func TestValidateImport(t *testing.T) {
 		})
 	}
 }
-func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
+func TestCorpusAtomicReplacementAndScopedRead(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	ctx := context.Background()
@@ -75,14 +43,7 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	authorization := testaccess.Activate(t, a, access.Identity{Subject: "staff", Email: "staff@example.com", EmailVerified: true})
-	provider := &testEmbedder{}
-	portal := db.As(testdb.Portal)
-	provider.before = func() {
-		if got := portal.Stat().AcquiredConns(); got != 0 {
-			t.Errorf("provider called with %d acquired portal connections; want none", got)
-		}
-	}
-	m, err := New(portal, a, provider, Config{MinSimilarity: 0.5})
+	m, err := New(db.As(testdb.Portal), a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,52 +53,29 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := access.ServiceIdentity{Subject: "agent", PracticeID: cmd.PracticeID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityReadKnowledge}}
-	got, err := m.Search(ctx, service, "office-a", "When does everyone head home?")
-	if err != nil || got.Outcome != "found" || got.Passages[0].RevisionID != rev.ID {
-		t.Fatalf("search=%+v err=%v", got, err)
+	got, err := m.Read(ctx, service, "office-a")
+	if err != nil || got.RevisionID != rev.ID || !reflect.DeepEqual(got.Entries, cmd.Sections) {
+		t.Fatalf("read=%+v err=%v", got, err)
 	}
-	provider.irrelevant = true
-	irrelevant, err := m.Search(ctx, service, "office-a", "Who won the football game?")
-	if err != nil || irrelevant.Outcome != "no_relevant_information" || len(irrelevant.Passages) != 0 {
-		t.Fatalf("irrelevant result=%+v error=%v", irrelevant, err)
-	}
-	provider.irrelevant = false
-	before := provider.calls
-	if _, err := m.Search(ctx, access.ServiceIdentity{Subject: "agent", PracticeID: uuid.NewString(), LocationScope: access.LocationScopeAll, Capabilities: service.Capabilities}, "office-a", "hours"); !errors.Is(err, access.ErrDenied) {
+	if _, err := m.Read(ctx, access.ServiceIdentity{Subject: "agent", PracticeID: uuid.NewString(), LocationScope: access.LocationScopeAll, Capabilities: service.Capabilities}, "office-a"); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("cross Practice=%v", err)
 	}
-	if provider.calls != before {
-		t.Fatal("unauthorized query reached embedding provider")
-	}
-	if _, err := m.Search(ctx, service, "office-b", "hours"); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.Read(ctx, service, "office-b"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("same location different route must not share corpus: %v", err)
 	}
-	if _, err := m.Search(ctx, access.ServiceIdentity{Subject: "staff", PracticeID: cmd.PracticeID, LocationScope: access.LocationScopeAll}, "office-a", "hours"); !errors.Is(err, access.ErrDenied) {
+	if _, err := m.Read(ctx, access.ServiceIdentity{Subject: "staff", PracticeID: cmd.PracticeID, LocationScope: access.LocationScopeAll}, "office-a"); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("missing capability=%v", err)
 	}
-	before = provider.calls
-	if _, err := m.ReplaceCorpus(ctx, cmd); err != nil {
-		t.Fatal(err)
-	}
-	if provider.calls != before {
-		t.Fatal("replay re-embedded corpus")
+	if replayed, err := m.ReplaceCorpus(ctx, cmd); err != nil || replayed.ID != rev.ID || replayed.Version != rev.Version {
+		t.Fatalf("replay=%+v %v", replayed, err)
 	}
 	next := cmd
 	next.ID = uuid.NewString()
 	next.ExpectedRevisionID = rev.ID
 	next.Sections = []Section{{ID: "hours", Title: "Office hours", Text: "The synthetic office closes at five."}}
-	provider.fail = true
-	if _, err := m.ReplaceCorpus(ctx, next); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("provider failure=%v", err)
-	}
-	provider.fail = false
-	got, err = m.Search(ctx, service, "office-a", "hours")
-	if err != nil || *got.RevisionID != rev.ID {
-		t.Fatalf("failed import changed pointer: %+v %v", got, err)
-	}
 	newRev, err := m.ReplaceCorpus(ctx, next)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || newRev.Version != rev.Version+1 {
+		t.Fatalf("replacement=%+v %v", newRev, err)
 	}
 	if _, err := m.ReplaceCorpus(ctx, cmd); !errors.Is(err, ErrConflict) {
 		t.Fatalf("superseded replay=%v", err)
@@ -147,31 +85,31 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 	if _, err := m.ReplaceCorpus(ctx, stale); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale pointer=%v", err)
 	}
-	got, err = m.Search(ctx, service, "office-a", "hours")
-	if err != nil || *got.RevisionID != newRev.ID || got.Passages[0].Text != next.Sections[0].Text {
-		t.Fatalf("replacement search=%+v %v", got, err)
+	got, err = m.Read(ctx, service, "office-a")
+	if err != nil || got.RevisionID != newRev.ID || got.Entries[0].Text != next.Sections[0].Text {
+		t.Fatalf("replacement read=%+v %v", got, err)
 	}
-	var revisions, passages int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM knowledge_revisions`).Scan(&revisions); err != nil {
+	var revisions, passages, embedded int
+	if err := pool.QueryRow(ctx, `SELECT count(*), count(embedding_model) + count(embedding_dimensions) FROM knowledge_revisions`).Scan(&revisions, &embedded); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM knowledge_passages`).Scan(&passages); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*), $1::int + count(embedding) FROM knowledge_passages`, embedded).Scan(&passages, &embedded); err != nil {
 		t.Fatal(err)
 	}
-	if revisions != 2 || passages != 2 {
-		t.Fatalf("partial/replayed revisions persisted: %d %d", revisions, passages)
+	if revisions != 2 || passages != 2 || embedded != 0 {
+		t.Fatalf("partial/replayed revisions persisted: %d %d, embedding values %d", revisions, passages, embedded)
 	}
-	entered := make(chan struct{}, 2)
-	release := make(chan struct{})
-	m.embedder = embeddingFunc(func(ctx context.Context, texts []string, task TaskType) ([][]float32, error) {
-		entered <- struct{}{}
-		<-release
-		return (&testEmbedder{}).Embed(ctx, texts, task)
-	})
 	candidates := []ImportCommand{next, next}
 	for i := range candidates {
 		candidates[i].ID = uuid.NewString()
 		candidates[i].ExpectedRevisionID = newRev.ID
+	}
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := holder.Exec(ctx, `SELECT 1 FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2 FOR UPDATE`, next.PracticeID, next.OfficeKey); err != nil {
+		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
 	results := make([]error, 2)
@@ -179,9 +117,21 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 		wg.Add(1)
 		go func(i int) { defer wg.Done(); _, results[i] = m.ReplaceCorpus(ctx, candidates[i]) }(i)
 	}
-	<-entered
-	<-entered
-	close(release)
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		var waiting int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%knowledge_corpora%FOR UPDATE%'`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("publishers waiting on the corpus lock=%d", waiting)
+		}
+	}
+	if err := holder.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 	wg.Wait()
 	wins, conflicts := 0, 0
 	for _, err := range results {
@@ -196,26 +146,11 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 	if wins != 1 || conflicts != 1 {
 		t.Fatalf("concurrent imports wins=%d conflicts=%d", wins, conflicts)
 	}
-	canceled, cancel := context.WithCancel(ctx)
-	m.embedder = embeddingFunc(func(ctx context.Context, texts []string, task TaskType) ([][]float32, error) {
-		cancel()
-		return (&testEmbedder{}).Embed(ctx, texts, task)
-	})
-	var current string
-	if err := pool.QueryRow(ctx, `SELECT revision_id::text FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2`, cmd.PracticeID, cmd.OfficeKey).Scan(&current); err != nil {
-		t.Fatal(err)
-	}
-	late := next
-	late.ID = uuid.NewString()
-	late.ExpectedRevisionID = current
-	if _, err := m.ReplaceCorpus(canceled, late); !errors.Is(err, context.Canceled) {
-		t.Fatalf("late provider import=%v", err)
-	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM knowledge_revisions`).Scan(&revisions); err != nil {
 		t.Fatal(err)
 	}
 	if revisions != 3 {
-		t.Fatalf("canceled/concurrent imports persisted %d revisions", revisions)
+		t.Fatalf("concurrent imports persisted %d revisions", revisions)
 	}
 
 	provisioning := access.Provisioning{Environment: "test", RequestedBy: "test", Practices: []access.PracticeProvision{{Key: "knowledge-test", Name: "Synthetic practice", Locations: []access.LocationProvision{{Key: "one", Name: "Synthetic location", AbitaOfficeKeys: []string{"office-a", "office-b"}}}}}}
@@ -226,14 +161,7 @@ func TestCorpusAtomicReplacementAndScopedSearch(t *testing.T) {
 	if _, err := access.New(pool, time.Now).Provision(ctx, provisioning); err != nil {
 		t.Fatalf("retire imported route: %v", err)
 	}
-	if _, err := m.Search(ctx, service, "office-a", "hours"); !errors.Is(err, access.ErrDenied) {
-		t.Fatalf("retired route search: %v", err)
+	if _, err := m.Read(ctx, service, "office-a"); !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("retired route read: %v", err)
 	}
-
-}
-
-type embeddingFunc func(context.Context, []string, TaskType) ([][]float32, error)
-
-func (f embeddingFunc) Embed(ctx context.Context, texts []string, task TaskType) ([][]float32, error) {
-	return f(ctx, texts, task)
 }

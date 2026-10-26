@@ -49,9 +49,9 @@ func (identity staticServiceAuthenticator) AuthenticateService(context.Context, 
 	return access.ServiceIdentity(identity), nil
 }
 
-func TestKnowledgeSearchDeniesServicesWithTheSharedAccessCode(t *testing.T) {
+func TestKnowledgeReadDeniesServicesWithTheSharedAccessCode(t *testing.T) {
 	server := &Server{role: "portal-api", config: Config{RequestTimeout: time.Second}, serviceAuth: staticServiceAuthenticator{Subject: "synthetic-service"}}
-	request := httptest.NewRequest(http.MethodPost, "/v1/agent/knowledge/search", strings.NewReader(`{"query":"hours"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/agent/knowledge/read", strings.NewReader(`{}`))
 	request.Header.Set("Authorization", "Bearer synthetic-service-token")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Office-Key", "synthetic-office")

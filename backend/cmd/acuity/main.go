@@ -287,15 +287,7 @@ func runAuthorizedHTTP(
 		if err != nil {
 			return err
 		}
-		var embedder knowledge.Embedder
-		if config.KnowledgeGoogleProject != "" {
-			provider, providerErr := knowledge.NewGoogleEmbedder(ctx, config.KnowledgeGoogleProject, config.KnowledgeGoogleLocation, nil)
-			if providerErr != nil {
-				return providerErr
-			}
-			embedder = provider
-		}
-		knowledgeModule, err := knowledge.New(database, accessModule, embedder, knowledge.Config{SearchEmbeddingTimeout: 3 * time.Second})
+		knowledgeModule, err := knowledge.New(database, accessModule)
 		if err != nil {
 			return err
 		}

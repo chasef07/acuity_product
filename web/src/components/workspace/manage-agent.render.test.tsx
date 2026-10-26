@@ -99,7 +99,7 @@ test("Home connects Acuity to knowledge, insurance, and tools", async (t) => {
   assert.deepEqual(
     Array.from(page.host.querySelectorAll('[aria-label="Agent tools"] li'), (item) => item.querySelector("span")?.textContent),
     [
-      "Search office knowledge",
+      "Read office knowledge",
       "Find an existing patient",
       "Register a new patient",
       "Check insurance acceptance",

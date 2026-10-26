@@ -28,7 +28,3 @@ The after-hours entry title is clarified to `After-hours doctor contact` so ordi
 | `location-and-contact` | `current-address`, `paperwork-email`, `fax`, `crystal-river-location`, `lutz-move-history` |
 | `scope-of-services` | `cataract-provider`, `medical-services`, `routine-vision-and-children`, `retina-care` |
 | `new-user-request` | `medical-drive-closure` |
-
-## Evaluation
-
-`backend/cmd/knowledge-import/testdata/evals/spring-hill.json` contains synthetic questions with expected entry IDs and response budgets. These are acceptance cases, not evidence that live retrieval has passed. Evaluate against the active published revision and record outcomes separately. Preserving the September 7, 2026 holiday statement preserves the live source; it must remain explicitly dated and must not be presented as a current closure.

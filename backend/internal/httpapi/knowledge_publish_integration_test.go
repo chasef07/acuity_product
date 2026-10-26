@@ -3,13 +3,11 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -27,21 +25,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
-
-type switchableEmbedder struct {
-	fail   atomic.Bool
-	during atomic.Pointer[func()]
-}
-
-func (e *switchableEmbedder) Embed(ctx context.Context, texts []string, task knowledge.TaskType) ([][]float32, error) {
-	if e.fail.Load() {
-		return nil, errors.New("synthetic embedding outage")
-	}
-	if during := e.during.Swap(nil); during != nil {
-		(*during)()
-	}
-	return constantEmbedder{}.Embed(ctx, texts, task)
-}
 
 var syntheticRequiredAbitaEntries = []string{
 	"current-address", "phone", "fax", "paperwork-email", "directions", "other-offices",
@@ -144,8 +127,7 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		locations[row.key] = id
 	}
 
-	embedder := &switchableEmbedder{}
-	seedKnowledge, err := knowledge.New(db.As(testdb.Portal), seedAccess, embedder, knowledge.Config{})
+	seedKnowledge, err := knowledge.New(db.As(testdb.Portal), seedAccess)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +143,7 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 	runtimePool := db.As(testdb.Portal)
 
 	accessModule := access.New(runtimePool, nil)
-	knowledgeModule, err := knowledge.New(runtimePool, accessModule, embedder, knowledge.Config{SearchEmbeddingTimeout: 500 * time.Millisecond})
+	knowledgeModule, err := knowledge.New(runtimePool, accessModule)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,10 +190,9 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		}
 		return revision
 	}
-	search := func(office string) knowledge.SearchResult {
+	agentRead := func(office string) knowledge.OfficeKnowledge {
 		t.Helper()
-		payload := []byte(`{"query":"When does the office close?"}`)
-		req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/agent/knowledge/search", strings.NewReader(string(payload)))
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/agent/knowledge/read", strings.NewReader(`{}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -222,7 +203,7 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var result knowledge.SearchResult
+		var result knowledge.OfficeKnowledge
 		decode(t, response, &result)
 		return result
 	}
@@ -306,51 +287,7 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		}
 	})
 
-	t.Run("embedding failure leaves the previous revision searchable", func(t *testing.T) {
-		embedder.fail.Store(true)
-		status, response := publish("staff-token", hollywood(edited))
-		embedder.fail.Store(false)
-		if status != http.StatusServiceUnavailable || !strings.Contains(response, "Nothing changed") {
-			t.Fatalf("status=%d body=%s", status, response)
-		}
-		if active(abita, "hollywood") != initial.ID {
-			t.Fatal("failed publish changed the active revision")
-		}
-		if result := search("hollywood"); result.RevisionID == nil || *result.RevisionID != initial.ID {
-			t.Fatalf("search after failed publish=%+v", result)
-		}
-	})
-
-	t.Run("access revoked while embedding blocks the publish", func(t *testing.T) {
-		revoke := func() {
-			if _, err := pool.Exec(ctx, `UPDATE access_memberships SET revoked_at=now() WHERE user_subject=$1`, staff.Subject); err != nil {
-				t.Error(err)
-			}
-		}
-		embedder.during.Store(&revoke)
-		status, response := publish("staff-token", hollywood(edited))
-		if _, err := pool.Exec(ctx, `UPDATE access_memberships SET revoked_at=NULL WHERE user_subject=$1`, staff.Subject); err != nil {
-			t.Fatal(err)
-		}
-		if status != http.StatusForbidden {
-			t.Fatalf("status=%d body=%s", status, response)
-		}
-		if active(abita, "hollywood") != initial.ID {
-			t.Fatal("revoked member changed the active revision")
-		}
-	})
-
-	t.Run("search embedding slower than its timeout fails the search", func(t *testing.T) {
-		slowEmbedding := func() { time.Sleep(1500 * time.Millisecond) }
-		embedder.during.Store(&slowEmbedding)
-		if result := search("hollywood"); result.Outcome != "temporary_failure" {
-			t.Fatalf("slow search=%+v", result)
-		}
-	})
-
-	t.Run("staff publish slower than the search embedding timeout is live for the agent and attributed", func(t *testing.T) {
-		slowEmbedding := func() { time.Sleep(1500 * time.Millisecond) }
-		embedder.during.Store(&slowEmbedding)
+	t.Run("staff publish is live for the agent and attributed", func(t *testing.T) {
 		status, response := publish("staff-token", first)
 		if status != http.StatusOK {
 			t.Fatalf("status=%d body=%s", status, response)
@@ -364,9 +301,8 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		if active(abita, "hollywood") != first.RevisionID {
 			t.Fatal("publish did not switch the active revision")
 		}
-		result := search("hollywood")
-		if result.RevisionID == nil || *result.RevisionID != first.RevisionID {
-			t.Fatalf("agent search=%+v", result)
+		if result := agentRead("hollywood"); result.RevisionID != first.RevisionID || !slices.Equal(result.Entries, edited) {
+			t.Fatalf("agent read=%+v", result)
 		}
 		var createdBy, provenance, reason, previous string
 		if err := pool.QueryRow(ctx, `SELECT created_by, provenance, reason, previous_revision_id::text FROM knowledge_revisions WHERE id=$1`, first.RevisionID).Scan(&createdBy, &provenance, &reason, &previous); err != nil {
@@ -578,8 +514,8 @@ func TestStaffPublishOfficeKnowledgeThroughPortalRuntimeRole(t *testing.T) {
 		if status != http.StatusOK || json.Unmarshal([]byte(current), &view) != nil || view.Revision == nil || view.Revision.ID != restore.RevisionID || view.Revision.Version != 4 || !slices.Equal(view.Sections, old.Sections) {
 			t.Fatalf("current status=%d body=%s", status, current)
 		}
-		if result := search("hollywood"); result.RevisionID == nil || *result.RevisionID != restore.RevisionID {
-			t.Fatalf("agent search after restore=%+v", result)
+		if result := agentRead("hollywood"); result.RevisionID != restore.RevisionID {
+			t.Fatalf("agent read after restore=%+v", result)
 		}
 		rows := history(t)
 		if len(rows) != 4 || rows[0].ID != restore.RevisionID || rows[0].Version != 4 || !rows[0].Active || rows[0].Reason != "Restore version 1" || *rows[0].PreviousRevisionID != before || rows[0].AgentSearchCount != 1 || rows[3].ID != initial.ID {

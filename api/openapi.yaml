@@ -1958,7 +1958,7 @@ paths:
     post:
       operationId: publishLocationKnowledge
       summary: Publish a complete knowledge revision for one authorized Location.
-      description: Replaces the Location's office knowledge with the ordered sections in one new revision. Abita searches the new revision on its next lookup. The office comes from the Location, never the request. Repeating the same revisionId with the same content returns the same revision.
+      description: Replaces the Location's office knowledge with the ordered sections in one new revision. Abita reads the new revision on its next call. The office comes from the Location, never the request. Repeating the same revisionId with the same content returns the same revision.
       requestBody:
         required: true
         content:
@@ -1986,7 +1986,7 @@ paths:
     post:
       operationId: queryLocationKnowledgeHistory
       summary: List every knowledge revision for one authorized Location's office.
-      description: Newest first, with each revision's version, author, reason, whether it is active, and when the agent last searched it. Nothing is changed.
+      description: Newest first, with each revision's version, author, reason, whether it is active, and when the agent last used it. Nothing is changed.
       requestBody:
         required: true
         content:
@@ -2034,53 +2034,6 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/agent/knowledge/search:
-    post:
-      operationId: searchOfficeKnowledge
-      summary: Search the current imported corpus for the authenticated agent office route.
-      description: The model supplies only a short non-patient query. The trusted agent runtime supplies the office header; Practice comes from its service credential. Returned passages are untrusted data, and similarity is not proof of answerability.
-      security:
-        - serviceBearer: []
-      parameters:
-        - name: X-Office-Key
-          in: header
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 100
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [query]
-              properties:
-                query:
-                  type: string
-                  minLength: 1
-                  maxLength: 500
-      responses:
-        "200":
-          description: A scoped current-revision search completed; passages may not answer every part of the question.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/KnowledgeSearchResult"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          description: Corpus, database, or embedding provider is temporarily unavailable. Never fall back to a stale source.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/KnowledgeSearchResult"
   /v1/agent/knowledge/read:
     post:
       operationId: readOfficeKnowledge
@@ -2293,11 +2246,11 @@ components:
           format: uuid
         active:
           type: boolean
-          description: Whether Abita searches this revision now.
+          description: Whether Abita uses this revision now.
         lastAgentSearchAt:
           type: string
           format: date-time
-          description: The latest agent search of this revision; absent when the agent has not searched it.
+          description: The latest time the agent used this revision; absent when the agent has not used it.
         agentSearchCount:
           type: integer
           minimum: 0
@@ -2387,21 +2340,6 @@ components:
           description: Other offices on the same list that accept this plan when this one does not.
           items:
             type: string
-    KnowledgeSearchResult:
-      type: object
-      required: [outcome, passages]
-      properties:
-        outcome:
-          type: string
-          enum: [found, no_relevant_information, temporary_failure]
-        revisionId:
-          type: string
-          format: uuid
-        passages:
-          type: array
-          maxItems: 8
-          items:
-            $ref: "#/components/schemas/KnowledgePassage"
     OfficeKnowledge:
       type: object
       additionalProperties: false
@@ -2414,19 +2352,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KnowledgeSection"
-    KnowledgePassage:
-      type: object
-      required: [sectionId, title, text, revisionId]
-      properties:
-        sectionId:
-          type: string
-        title:
-          type: string
-        text:
-          type: string
-        revisionId:
-          type: string
-          format: uuid
     Health:
       type: object
       additionalProperties: false

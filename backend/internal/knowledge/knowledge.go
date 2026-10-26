@@ -7,9 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -105,23 +103,6 @@ func (m *Module) replaceCorpus(ctx context.Context, cmd ImportCommand, authorize
 	if err != nil {
 		return Revision{}, err
 	}
-	rev, replayed, err := m.inspectImport(ctx, tx, cmd, hash)
-	_ = tx.Rollback(ctx)
-	if err != nil || replayed {
-		return rev, err
-	}
-	texts := make([]string, len(cmd.Sections))
-	for i, s := range cmd.Sections {
-		texts[i] = s.Title + "\n" + s.Text
-	}
-	vectors, err := m.embed(ctx, texts, RetrievalDocument)
-	if err != nil {
-		return Revision{}, fmt.Errorf("embedding preparation failed; check provider access and whole-section token limits (no content was replaced): %w", err)
-	}
-	tx, err = m.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return Revision{}, err
-	}
 	defer tx.Rollback(ctx)
 	if authorize != nil {
 		if err = authorize(ctx, tx); err != nil {
@@ -134,20 +115,20 @@ func (m *Module) replaceCorpus(ctx context.Context, cmd ImportCommand, authorize
 	if _, err = tx.Exec(ctx, `SELECT 1 FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2 FOR UPDATE`, cmd.PracticeID, cmd.OfficeKey); err != nil {
 		return Revision{}, err
 	}
-	rev, replayed, err = m.inspectImport(ctx, tx, cmd, hash)
+	rev, replayed, err := m.inspectImport(ctx, tx, cmd, hash)
 	if err != nil {
 		return Revision{}, err
 	}
 	if replayed {
 		return rev, tx.Commit(ctx)
 	}
-	rev = Revision{ID: cmd.ID, ContentHash: hash, Model: Model, Dimensions: Dimensions}
-	err = tx.QueryRow(ctx, `INSERT INTO knowledge_revisions(id,practice_id,office_key,content_hash,embedding_model,embedding_dimensions,provenance,reason,created_by,previous_revision_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING created_at`, cmd.ID, cmd.PracticeID, cmd.OfficeKey, hash, Model, Dimensions, cmd.Provenance, cmd.Reason, cmd.ActorSubject, optionalID(cmd.ExpectedRevisionID)).Scan(&rev.CreatedAt)
+	rev = Revision{ID: cmd.ID, ContentHash: hash}
+	err = tx.QueryRow(ctx, `INSERT INTO knowledge_revisions(id,practice_id,office_key,content_hash,provenance,reason,created_by,previous_revision_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at`, cmd.ID, cmd.PracticeID, cmd.OfficeKey, hash, cmd.Provenance, cmd.Reason, cmd.ActorSubject, optionalID(cmd.ExpectedRevisionID)).Scan(&rev.CreatedAt)
 	if err != nil {
 		return Revision{}, err
 	}
 	for i, s := range cmd.Sections {
-		if _, err = tx.Exec(ctx, `INSERT INTO knowledge_passages(revision_id,section_id,title,text,embedding,position) VALUES($1,$2,$3,$4,$5::vector,$6)`, cmd.ID, s.ID, s.Title, s.Text, vectors[i], i); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO knowledge_passages(revision_id,section_id,title,text,position) VALUES($1,$2,$3,$4,$5)`, cmd.ID, s.ID, s.Title, s.Text, i); err != nil {
 			return Revision{}, err
 		}
 	}
@@ -238,7 +219,7 @@ func (m *Module) inspectImport(ctx context.Context, tx pgx.Tx, cmd ImportCommand
 	var rev Revision
 	var practice, office, provenance, reason, actor string
 	var previous *string
-	err = tx.QueryRow(ctx, `SELECT id::text,content_hash,embedding_model,embedding_dimensions,created_at,practice_id::text,office_key,provenance,reason,created_by,previous_revision_id::text FROM knowledge_revisions WHERE id=$1`, cmd.ID).Scan(&rev.ID, &rev.ContentHash, &rev.Model, &rev.Dimensions, &rev.CreatedAt, &practice, &office, &provenance, &reason, &actor, &previous)
+	err = tx.QueryRow(ctx, `SELECT id::text,content_hash,created_at,practice_id::text,office_key,provenance,reason,created_by,previous_revision_id::text FROM knowledge_revisions WHERE id=$1`, cmd.ID).Scan(&rev.ID, &rev.ContentHash, &rev.CreatedAt, &practice, &office, &provenance, &reason, &actor, &previous)
 	if err == nil {
 		prior := ""
 		if previous != nil {
@@ -261,137 +242,6 @@ func (m *Module) inspectImport(ctx context.Context, tx pgx.Tx, cmd ImportCommand
 		return Revision{}, false, ErrConflict
 	}
 	return Revision{}, false, nil
-}
-
-func (m *Module) embed(ctx context.Context, texts []string, task TaskType) ([]string, error) {
-	if m.embedder == nil {
-		return nil, errProviderNotConfigured
-	}
-	vectors, err := m.embedder.Embed(ctx, texts, task)
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if err != nil {
-		var classified *ProviderFailure
-		if errors.As(err, &classified) {
-			return nil, classified
-		}
-		return nil, ErrUnavailable
-	}
-	if len(vectors) != len(texts) {
-		return nil, ErrUnavailable
-	}
-	result := make([]string, len(vectors))
-	for i, v := range vectors {
-		if len(v) != Dimensions {
-			return nil, ErrUnavailable
-		}
-		parts := make([]string, len(v))
-		norm := float64(0)
-		for j, x := range v {
-			if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
-				return nil, ErrUnavailable
-			}
-			norm += float64(x) * float64(x)
-			parts[j] = strconv.FormatFloat(float64(x), 'g', -1, 32)
-		}
-		if norm == 0 {
-			return nil, ErrUnavailable
-		}
-		result[i] = "[" + strings.Join(parts, ",") + "]"
-	}
-	return result, nil
-}
-
-func (m *Module) Search(ctx context.Context, identity access.ServiceIdentity, officeKey, query string) (SearchResult, error) {
-	started := time.Now()
-	empty := SearchResult{Outcome: "temporary_failure", Passages: []Passage{}}
-	if strings.TrimSpace(query) == "" || utf8.RuneCountInString(query) > 500 {
-		return empty, ErrInvalidInput
-	}
-	tx, err := m.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return empty, err
-	}
-	_, err = m.access.LockServiceAuthorization(ctx, tx, identity, officeKey, access.ServiceCapabilityReadKnowledge)
-	var initial *string
-	if err == nil {
-		err = tx.QueryRow(ctx, `SELECT revision_id::text FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2`, identity.PracticeID, officeKey).Scan(&initial)
-	}
-	_ = tx.Rollback(ctx)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = ErrUnavailable
-		}
-		return empty, err
-	}
-	if initial == nil {
-		return empty, ErrUnavailable
-	}
-	embeddingCtx, cancel := context.WithTimeout(ctx, m.config.SearchEmbeddingTimeout)
-	defer cancel()
-	vectors, err := m.embed(embeddingCtx, []string{query}, RetrievalQuery)
-	if err != nil {
-		return empty, err
-	}
-	if ctx.Err() != nil {
-		return empty, ctx.Err()
-	}
-	tx, err = m.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return empty, err
-	}
-	defer tx.Rollback(ctx)
-	_, err = m.access.LockServiceAuthorization(ctx, tx, identity, officeKey, access.ServiceCapabilityReadKnowledge)
-	if err != nil {
-		return empty, err
-	}
-	var revision, model string
-	var dimensions int
-	err = tx.QueryRow(ctx, `SELECT r.id::text,r.embedding_model,r.embedding_dimensions FROM knowledge_corpora c JOIN knowledge_revisions r ON r.id=c.revision_id WHERE c.practice_id=$1 AND c.office_key=$2 `, identity.PracticeID, officeKey).Scan(&revision, &model, &dimensions)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = ErrUnavailable
-		}
-		return empty, err
-	}
-	if model != Model || dimensions != Dimensions {
-		return empty, ErrUnavailable
-	}
-	rows, err := tx.Query(ctx, hybridSearchSQL, revision, vectors[0], m.config.MinSimilarity, query)
-	if err != nil {
-		return empty, err
-	}
-	result := SearchResult{Outcome: "no_relevant_information", RevisionID: &revision, Passages: []Passage{}}
-	ids := []string{}
-	candidates := []searchCandidate{}
-	for rows.Next() {
-		p := searchCandidate{Passage: Passage{RevisionID: revision}}
-		if err = rows.Scan(&p.SectionID, &p.Title, &p.Text, &p.similarity, &p.lexical, &p.matchedTerms, &p.titleTerms, &p.queryCoverage); err != nil {
-			rows.Close()
-			return empty, err
-		}
-		candidates = append(candidates, p)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return empty, err
-	}
-	result.Passages = selectPassages(relevantPassages(candidates, m.config.MaxPassages), m.config.MaxPassages)
-	for _, p := range result.Passages {
-		ids = append(ids, p.SectionID)
-	}
-	if len(result.Passages) > 0 {
-		result.Outcome = "found"
-	}
-	if err = recordObservation(ctx, tx, identity.PracticeID, officeKey, revision, ids, result.Outcome, started); err != nil {
-		return empty, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return empty, err
-	}
-	return result, nil
 }
 
 func (m *Module) Read(ctx context.Context, identity access.ServiceIdentity, officeKey string) (OfficeKnowledge, error) {

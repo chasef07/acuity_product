@@ -43,7 +43,7 @@ func TestReadLocationReturnsTheCurrentRevisionForAnAuthorizedLocation(t *testing
 		locations[location.Name] = location.ID
 	}
 	practiceID := authorization.Practice.ID
-	m, err := New(db.As(testdb.Portal), a, &testEmbedder{}, Config{})
+	m, err := New(db.As(testdb.Portal), a)
 	if err != nil {
 		t.Fatal(err)
 	}
