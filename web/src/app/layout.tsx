@@ -1,9 +1,15 @@
 import type { Metadata, Viewport } from "next"
+import { Inter } from "next/font/google"
 
 import { Providers } from "@/components/providers"
 import { siteConfig, siteSocialImage, siteStructuredData } from "@/lib/site"
 
 import "./globals.css"
+
+const sans = Inter({
+  subsets: ["latin"],
+  variable: "--font-acuity-sans",
+})
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
@@ -70,7 +76,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className="h-full"
+      className={`${sans.variable} h-full`}
     >
       <body className="flex min-h-full flex-col">
         <script

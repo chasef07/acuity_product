@@ -3,7 +3,7 @@ import type { StaticImageData } from "next/image"
 import Image from "next/image"
 import Link from "next/link"
 import { ArrowRight, Check } from "lucide-react"
-import { Geist, Inter } from "next/font/google"
+import { Geist } from "next/font/google"
 
 import { AcuityMark } from "@/components/acuity-mark"
 import {
@@ -19,11 +19,6 @@ import styles from "./enterprise-site.module.css"
 import chasePortrait from "../../../public/marketing/chase-fagen-v2.png"
 import kylePortrait from "../../../public/marketing/kyle-shechtman-2026.png"
 import venincasaPortrait from "../../../public/marketing/michael-venincasa-md.jpg"
-
-const sans = Inter({
-  subsets: ["latin"],
-  variable: "--font-acuity-sans",
-})
 
 const display = Geist({
   subsets: ["latin"],
@@ -175,7 +170,7 @@ export function MarketingFrame({
       key={initiallyOpen ? "sign-in-open" : "sign-in-closed"}
       initiallyOpen={initiallyOpen}
     >
-      <div className={cn(styles.site, sans.variable, display.variable)}>
+      <div className={cn(styles.site, display.variable)}>
         <a className={styles.skipLink} href="#main-content">
           Skip to main content
         </a>
