@@ -39,7 +39,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 	}
 	assertCapturedCommand(t, commands, "run\tjobs\tupdate\tacuity-migrate",
 		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000",
-		"--remove-env-vars\tMIGRATE_VOICE_PRACTICE_KEY,MIGRATE_VOICE_LOCATION_KEY,MIGRATE_VOICE_NUMBER,PROVISIONING_INPUT,PROVISIONING_OUTPUT",
+		"--remove-env-vars\tPROVISIONING_INPUT,PROVISIONING_OUTPUT",
 	)
 
 	for _, service := range []string{

@@ -686,12 +686,6 @@ export type AgentCallsQuery = {
     range: OperatorAiAnalyticsRange;
     phone?: string;
     flaggedOnly?: boolean;
-    /**
-     * Ignored. Accepted for one release so tabs on the previous web bundle keep loading.
-     *
-     * @deprecated
-     */
-    needsKnowledgeOnly?: boolean;
     cursor?: string;
     limit?: number;
 };
