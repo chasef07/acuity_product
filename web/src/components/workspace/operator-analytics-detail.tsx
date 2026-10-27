@@ -52,6 +52,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { useAiCallEvidence } from "@/lib/clients/agent-calls"
 import { useScorecardQuestions } from "@/lib/clients/call-review"
+import { accessDenied } from "@/lib/clients/portal-request"
 import { formatAppointmentDateTime, formatTimestamp } from "@/lib/format-time"
 import {
   appointmentOutcomeTitles,
@@ -87,9 +88,7 @@ export function OperatorAnalyticsDetailSheet({
   const loading = Boolean(interactionID) && evidence.status === "loading"
   const error =
     interactionID && evidence.status === "failed"
-      ? evidence.failure.kind === "signedOut" ||
-        evidence.failure.kind === "unauthenticated" ||
-        evidence.failure.kind === "unauthorized"
+      ? accessDenied(evidence.failure)
         ? "Your session is not authorized to load this AI call."
         : "This AI call evidence is temporarily unavailable."
       : ""

@@ -12,7 +12,7 @@ import type {
   StaffAnalytics,
 } from "../api/generated/types.gen"
 import { type PortalQuery, useRead } from "../data/queries"
-import type { PortalResult } from "./portal-request"
+import { accessDenied, type PortalResult } from "./portal-request"
 
 export type AnalyticsReport<T extends object> = (
   | { state: "loading" | "denied" | "busy" | "unavailable" }
@@ -93,14 +93,13 @@ function analyticsReport<T extends object>(
   const { retry } = query
   if (query.status === "loading") return { state: "loading", retry }
   if (query.status === "ready") return { state: "ready", ...query.data, retry }
-  const { kind } = query.failure
+  const { failure } = query
   return {
-    state:
-      kind === "signedOut" || kind === "unauthenticated" || kind === "unauthorized"
-        ? "denied"
-        : kind === "busy"
-          ? "busy"
-          : "unavailable",
+    state: accessDenied(failure)
+      ? "denied"
+      : failure.kind === "busy"
+        ? "busy"
+        : "unavailable",
     retry,
   }
 }

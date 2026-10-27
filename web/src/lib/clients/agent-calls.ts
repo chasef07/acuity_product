@@ -18,7 +18,7 @@ import type {
   OperatorAiCallIssueOutcome,
 } from "../api/generated/types.gen"
 import { readFailure, usePages, useRead } from "../data/queries"
-import { portalRequest } from "./portal-request"
+import { accessDenied, portalRequest } from "./portal-request"
 
 export function useAgentCalls({
   practiceID,
@@ -142,12 +142,7 @@ export function useAiCallAnalytics({
     combine: combineCallPages<OperatorAiAnalyticsPage>,
   })
   const failure = readFailure(pages)
-  const denied =
-    failure?.kind === "signedOut" ||
-    failure?.kind === "unauthenticated" ||
-    failure?.kind === "unauthorized" ||
-    pages.moreFailure?.kind === "signedOut" ||
-    pages.moreFailure?.kind === "unauthenticated"
+  const denied = accessDenied(failure) || accessDenied(pages.moreFailure)
   const data: AiCallAnalytics | undefined =
     pages.status === "ready" && pages.data.summary && !denied
       ? { ...pages.data, summary: pages.data.summary }

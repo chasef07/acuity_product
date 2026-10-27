@@ -251,6 +251,22 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   await waitFor(() => backend.requests.length === sent + 1)
 })
 
+test("AI call analytics is denied when the next page is forbidden", async (t) => {
+  fakeBackend(t, (_, body) =>
+    body.cursor
+      ? new Response("{}", { status: 403 })
+      : Response.json({ summary, calls: [call("ai-1")], nextCursor: "next" }),
+  )
+  const view = mountHook(t, useAiCallAnalytics)
+  await view.render({ practiceID: "practice-1", locationID: "location-1", range: "24h", enabled: true })
+  await waitFor(() => view.latest().state === "ready")
+
+  await act(async () => void (await view.latest().loadNextPage()))
+  await waitFor(() => view.latest().nextPage === "unavailable")
+  assert.equal(view.latest().state, "denied")
+  assert.equal(view.latest().data, undefined)
+})
+
 test("analytics stays denied through a pending refresh after pagination loses authorization", async (t) => {
   const refresh = deferred<Response>()
   let firstPageRequests = 0

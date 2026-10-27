@@ -14,6 +14,7 @@ import {
   type PortalResult,
   type PortalSend,
   type PortalTransport,
+  accessDenied,
   portalRequest,
 } from "../clients/portal-request"
 
@@ -240,7 +241,7 @@ function portalQuery<T>(
   refreshFailed: boolean,
 ): PortalQuery<T> {
   const failure = query.status === "error" ? failureOf(query.error) : undefined
-  if (query.data === undefined || (failure && refreshFailed && accessLost(failure))) {
+  if (query.data === undefined || (failure && refreshFailed && accessDenied(failure))) {
     return failure ? { status: "failed", failure } : { status: "loading" }
   }
   return {
@@ -249,12 +250,4 @@ function portalQuery<T>(
     refreshing,
     ...(failure && refreshFailed ? { refreshFailure: failure } : {}),
   }
-}
-
-function accessLost(failure: PortalFailure) {
-  return (
-    failure.kind === "signedOut" ||
-    failure.kind === "unauthenticated" ||
-    failure.kind === "unauthorized"
-  )
 }
