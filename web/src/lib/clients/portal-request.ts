@@ -65,6 +65,14 @@ export async function portalRequest<T>(
   return failed(portalFailure(result?.response?.status, result?.error))
 }
 
+export function accessDenied(failure?: PortalFailure): boolean {
+  return (
+    failure?.kind === "signedOut" ||
+    failure?.kind === "unauthenticated" ||
+    failure?.kind === "unauthorized"
+  )
+}
+
 function failed(failure: PortalFailure): { ok: false; failure: PortalFailure } {
   return { ok: false, failure }
 }
