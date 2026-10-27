@@ -3693,10 +3693,6 @@ components:
           maxLength: 32
         flaggedOnly:
           type: boolean
-        needsKnowledgeOnly:
-          type: boolean
-          deprecated: true
-          description: Ignored. Accepted for one release so tabs on the previous web bundle keep loading.
         cursor:
           type: string
         limit:
