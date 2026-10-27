@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/chasef07/acuity_product/compare/v2.0.0...v2.0.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **web:** use one access-denied predicate for portal failures ([#567](https://github.com/chasef07/acuity_product/issues/567)) ([2cb99f2](https://github.com/chasef07/acuity_product/commit/2cb99f2b63ed5ed69d2d17624d81777d65ef01e7))
+
 ## [2.0.0](https://github.com/chasef07/acuity_product/compare/v1.49.0...v2.0.0) (2026-10-27)
 
 
