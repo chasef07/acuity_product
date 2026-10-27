@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.0.0](https://github.com/chasef07/acuity_product/compare/v1.49.0...v2.0.0) (2026-10-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **knowledge:** retire office knowledge search and embeddings ([#566](https://github.com/chasef07/acuity_product/issues/566))
+
+### Features
+
+* **web:** Inter on Windows and Linux, and a 1.75 icon stroke ([#564](https://github.com/chasef07/acuity_product/issues/564)) ([6a5446b](https://github.com/chasef07/acuity_product/commit/6a5446bb1f4c909c8d8fa6d0c9942ae53c257433))
+
+
+### Code Refactoring
+
+* **knowledge:** retire office knowledge search and embeddings ([#566](https://github.com/chasef07/acuity_product/issues/566)) ([5d09199](https://github.com/chasef07/acuity_product/commit/5d091991e546ae92c6b5a76d3970a5b0b0d406f6))
+
 ## [1.49.0](https://github.com/chasef07/acuity_product/compare/v1.48.0...v1.49.0) (2026-10-26)
 
 
