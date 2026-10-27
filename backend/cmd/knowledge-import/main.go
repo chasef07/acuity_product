@@ -91,10 +91,10 @@ func applyPublication(command knowledge.ImportCommand, apply bool) error {
 		if err := knowledge.ValidateImport(command); err != nil {
 			return err
 		}
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"applied": false, "validation": "Content structure only; --apply checks the operator, the route, the office's active revision, the Abita entry standard, and embeddings; source approval remains an operator responsibility", "practiceId": command.PracticeID, "officeKey": command.OfficeKey, "sections": len(command.Sections)})
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"applied": false, "validation": "Content structure only; --apply checks the operator, the route, the office's active revision, and the Abita entry standard; source approval remains an operator responsibility", "practiceId": command.PracticeID, "officeKey": command.OfficeKey, "sections": len(command.Sections)})
 	}
-	if os.Getenv("KNOWLEDGE_IMPORT_DATABASE_URL") == "" || os.Getenv("KNOWLEDGE_OPERATOR_EMAIL") == "" || os.Getenv("KNOWLEDGE_GOOGLE_PROJECT") == "" {
-		return errors.New("KNOWLEDGE_IMPORT_DATABASE_URL, KNOWLEDGE_OPERATOR_EMAIL and KNOWLEDGE_GOOGLE_PROJECT are required")
+	if os.Getenv("KNOWLEDGE_IMPORT_DATABASE_URL") == "" || os.Getenv("KNOWLEDGE_OPERATOR_EMAIL") == "" {
+		return errors.New("KNOWLEDGE_IMPORT_DATABASE_URL and KNOWLEDGE_OPERATOR_EMAIL are required")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -109,15 +109,7 @@ func applyPublication(command knowledge.ImportCommand, apply bool) error {
 	if err != nil {
 		return err
 	}
-	location := os.Getenv("KNOWLEDGE_GOOGLE_LOCATION")
-	if location == "" {
-		location = "us-east1"
-	}
-	provider, err := knowledge.NewGoogleEmbedder(ctx, os.Getenv("KNOWLEDGE_GOOGLE_PROJECT"), location, nil)
-	if err != nil {
-		return err
-	}
-	module, err := knowledge.New(pool, access.New(pool, nil), provider, knowledge.Config{})
+	module, err := knowledge.New(pool, access.New(pool, nil))
 	if err != nil {
 		return err
 	}
@@ -148,7 +140,7 @@ func runExport(practice, office, revision string) error {
 		return err
 	}
 	defer pool.Close()
-	module, err := knowledge.New(pool, access.New(pool, nil), nil, knowledge.Config{})
+	module, err := knowledge.New(pool, access.New(pool, nil))
 	if err != nil {
 		return err
 	}

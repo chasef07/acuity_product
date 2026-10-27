@@ -1,7 +1,6 @@
 package knowledge
 
 import (
-	"context"
 	"errors"
 	"time"
 
@@ -9,29 +8,9 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/postgres"
 )
 
-const Model = "text-multilingual-embedding-002"
-const Dimensions = 768
-
-type TaskType string
-
-const (
-	RetrievalDocument TaskType = "RETRIEVAL_DOCUMENT"
-	RetrievalQuery    TaskType = "RETRIEVAL_QUERY"
-)
-
-type Embedder interface {
-	Embed(context.Context, []string, TaskType) ([][]float32, error)
-}
-type Config struct {
-	MinSimilarity          float64
-	MaxPassages            int
-	SearchEmbeddingTimeout time.Duration
-}
 type Module struct {
-	db       postgres.Database
-	access   *access.Module
-	embedder Embedder
-	config   Config
+	db     postgres.Database
+	access *access.Module
 }
 
 var (
@@ -40,23 +19,11 @@ var (
 	ErrUnavailable  = errors.New("knowledge is temporarily unavailable")
 )
 
-func New(db postgres.Database, accessModule *access.Module, embedder Embedder, config Config) (*Module, error) {
+func New(db postgres.Database, accessModule *access.Module) (*Module, error) {
 	if db == nil || accessModule == nil {
 		return nil, ErrInvalidInput
 	}
-	if config.MinSimilarity == 0 {
-		config.MinSimilarity = 0.52
-	}
-	if config.MaxPassages == 0 {
-		config.MaxPassages = 4
-	}
-	if config.SearchEmbeddingTimeout == 0 {
-		config.SearchEmbeddingTimeout = 8 * time.Second
-	}
-	if config.MaxPassages < 1 || config.MaxPassages > 8 || config.MinSimilarity < 0 || config.MinSimilarity > 1 || config.SearchEmbeddingTimeout <= 0 {
-		return nil, ErrInvalidInput
-	}
-	return &Module{db: db, access: accessModule, embedder: embedder, config: config}, nil
+	return &Module{db: db, access: accessModule}, nil
 }
 
 type Section struct {
@@ -78,23 +45,10 @@ type ImportCommand struct {
 type Revision struct {
 	ID          string    `json:"id"`
 	ContentHash string    `json:"contentHash"`
-	Model       string    `json:"model"`
-	Dimensions  int       `json:"dimensions"`
 	Version     int       `json:"version"`
 	CreatedAt   time.Time `json:"createdAt"`
-}
-type Passage struct {
-	SectionID  string `json:"sectionId"`
-	Title      string `json:"title"`
-	Text       string `json:"text"`
-	RevisionID string `json:"revisionId"`
 }
 type OfficeKnowledge struct {
 	RevisionID string    `json:"revisionId"`
 	Entries    []Section `json:"entries"`
-}
-type SearchResult struct {
-	Outcome    string    `json:"outcome"`
-	RevisionID *string   `json:"revisionId,omitempty"`
-	Passages   []Passage `json:"passages"`
 }

@@ -1,16 +1,16 @@
 # Office knowledge
 
-Each office's reusable, non-patient knowledge lives in PostgreSQL/pgvector as
-immutable revisions. The office's active revision is the only source: Abita
-searches it on every lookup, and staff edit it in the Portal. There are no
-knowledge files in this repository.
+Each office's reusable, non-patient knowledge lives in PostgreSQL as immutable
+revisions. The office's active revision is the only source: Abita loads the whole
+revision through `POST /v1/agent/knowledge/read`, and staff edit it in the
+Portal. There are no knowledge files in this repository.
 
 Each entry has a stable ID, title, and complete text. Keep one coherent topic
 per entry, including all qualifications and restrictions required to interpret
 it correctly. Do not split by arbitrary character counts or duplicate the same
 fact across entries. Never put patient information, transcripts, secrets, or
 operator identities in entries. The Practice and Abita Office Route identify the
-authorized retrieval scope.
+authorized read scope.
 
 Write the useful fact directly. Do not include `Status: available` labels,
 document-export boilerplate, or instructions explaining when to read the entry.
@@ -35,8 +35,8 @@ records, prescription copies, and social follow-up). Staff may add other topics.
 - Keep each entry under 800 characters. Entry text may use markdown lists,
   bold, and links, but not headings: Abita receives each title as the entry's
   heading.
-- Title entries with the words callers use. Title words that appear in the
-  question weigh most in ranking, so prefer "Broken glasses repair" over "Repairs".
+- Title entries with the words callers use, so prefer "Broken glasses repair"
+  over "Repairs".
 - `other-offices` lists the practice's other offices, followed by any
   office-specific note.
 - Remove holiday closures once they pass.
@@ -46,7 +46,7 @@ records, prescription copies, and social follow-up). Staff may add other topics.
 Staff publish a complete, ordered entry list with a reason through
 `POST /v1/knowledge/revisions`. Each publish creates a new revision recording
 who changed it and why, and switches the office to it only if no one else
-published first. The next Abita search uses it. Earlier revisions are never
+published first. Abita's next read uses it. Earlier revisions are never
 changed. A publish whose titles and text together exceed 20,000 characters is
 rejected. The editor's "What Abita sees" preview shows the entries as Abita
 will receive them in its prompt (each title as a `###` markdown heading, then
@@ -54,16 +54,9 @@ its text, in entry order) and counts their titles and text against that limit.
 
 Each revision has a version number, its position in the office's history
 starting at 1. The Portal's History panel lists every version with its author,
-reason, and when the agent last searched it, and shows what each changed from
+reason, and when the agent last used it, and shows what each changed from
 the one before. Restoring publishes an earlier version's entries as a new
 version with a reason; it never edits history.
-
-## Search regression fixtures
-
-[`backend/cmd/knowledge-import/testdata/`](../backend/cmd/knowledge-import/testdata/)
-holds a frozen copy of the office entries and their retrieval cases. CI uses
-them only to test search code. They are never published and do not track
-production; editing them changes no office's knowledge.
 
 ## Operator commands
 
@@ -82,8 +75,7 @@ order.
 
 Publish an office's knowledge from a reviewed YAML source (same format as the
 export). Commit the YAML on a branch so the source is reviewable, then also set
-`KNOWLEDGE_OPERATOR_EMAIL`, `KNOWLEDGE_GOOGLE_PROJECT`, and optionally
-`KNOWLEDGE_GOOGLE_LOCATION` (defaults to `us-east1`).
+`KNOWLEDGE_OPERATOR_EMAIL`.
 
 Set up a new office that has no knowledge yet:
 

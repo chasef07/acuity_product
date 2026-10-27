@@ -73,15 +73,14 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	embeddings := &knowledgeEmbeddingDouble{}
-	module, err := knowledge.New(db.As(testdb.Portal), accessModule, embeddings, knowledge.Config{})
+	module, err := knowledge.New(db.As(testdb.Portal), accessModule)
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler := api.Handler(&Server{role: "portal-api", config: Config{RequestTimeout: time.Second}, knowledge: module, serviceAuth: authenticator})
-	search := func(tenant int, office string, status int) knowledge.SearchResult {
+	read := func(tenant int, office string, status int) knowledge.OfficeKnowledge {
 		t.Helper()
-		r := httptest.NewRequest(http.MethodPost, "/v1/agent/knowledge/search", strings.NewReader(`{"query":"What are the office hours?"}`))
+		r := httptest.NewRequest(http.MethodPost, "/v1/agent/knowledge/read", strings.NewReader(`{}`))
 		r.Header.Set("Authorization", "Bearer "+credentials[tenant].Token)
 		r.Header.Set("X-Office-Key", office)
 		r.Header.Set("Content-Type", "application/json")
@@ -90,14 +89,13 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 		if w.Code != status {
 			t.Fatalf("tenant %d office %s status=%d want=%d body=%s", tenant, office, w.Code, status, w.Body)
 		}
-		var result knowledge.SearchResult
-		if status == http.StatusOK || status == http.StatusServiceUnavailable {
+		var result knowledge.OfficeKnowledge
+		if status == http.StatusOK {
 			if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 				t.Fatal(err)
 			}
-		}
-		if status == http.StatusServiceUnavailable && (result.Outcome != "temporary_failure" || len(result.Passages) != 0) {
-			t.Fatalf("failure returned fallback facts: %+v", result)
+		} else if strings.Contains(w.Body.String(), "entries") {
+			t.Fatalf("failure returned fallback facts: %s", w.Body)
 		}
 		return result
 	}
@@ -108,8 +106,8 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 	}
 	check := func(tenant int, office, revision, text string) {
 		t.Helper()
-		result := search(tenant, office, http.StatusOK)
-		if result.Outcome != "found" || result.RevisionID == nil || *result.RevisionID != revision || len(result.Passages) != 1 || result.Passages[0].RevisionID != revision || result.Passages[0].Text != text {
+		result := read(tenant, office, http.StatusOK)
+		if result.RevisionID != revision || len(result.Entries) != 1 || result.Entries[0].Text != text {
 			t.Fatalf("tenant %d office %s returned wrong corpus/revision: %+v", tenant, office, result)
 		}
 	}
@@ -121,15 +119,11 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 		}
 		manifests[office.key] = command
 		check(office.tenant, office.key, command.ID, command.Sections[0].Text)
-		before := embeddings.calls
-		search(1-office.tenant, office.key, http.StatusForbidden)
-		if embeddings.calls != before {
-			t.Fatal("cross-Practice request reached the embedding provider")
-		}
+		read(1-office.tenant, office.key, http.StatusForbidden)
 	}
-	search(0, "sweetwater-optical", http.StatusServiceUnavailable)
-	search(1, "dev", http.StatusServiceUnavailable)
-	search(1, "mental-health-demo", http.StatusServiceUnavailable)
+	read(0, "sweetwater-optical", http.StatusServiceUnavailable)
+	read(1, "dev", http.StatusServiceUnavailable)
+	read(1, "mental-health-demo", http.StatusServiceUnavailable)
 	for tenant := range practices {
 		command := manifest(tenant, "shared-office", fmt.Sprintf("Synthetic tenant %d opens at a different hour.", tenant))
 		if _, err := module.ReplaceCorpus(ctx, command); err != nil {
@@ -158,13 +152,6 @@ func TestKnowledgeHTTPAllOfficesPreserveTenantRouteAndRevisionIsolation(t *testi
 	check(0, replacement.OfficeKey, replacement.ID, replacement.Sections[0].Text)
 	restore := manifest(0, original.OfficeKey, original.Sections[0].Text)
 	restore.ExpectedRevisionID = replacement.ID
-	embeddings.fail = true
-	if _, err := module.ReplaceCorpus(ctx, restore); !errors.Is(err, knowledge.ErrUnavailable) {
-		t.Fatalf("failed restore=%v", err)
-	}
-	search(0, original.OfficeKey, http.StatusServiceUnavailable)
-	embeddings.fail = false
-	check(0, replacement.OfficeKey, replacement.ID, replacement.Sections[0].Text)
 	if _, err := module.ReplaceCorpus(ctx, restore); err != nil {
 		t.Fatal(err)
 	}

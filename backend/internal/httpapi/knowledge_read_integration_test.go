@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,13 +23,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
 )
-
-type countingEmbedder struct{ calls atomic.Int64 }
-
-func (e *countingEmbedder) Embed(ctx context.Context, texts []string, task knowledge.TaskType) ([][]float32, error) {
-	e.calls.Add(1)
-	return constantEmbedder{}.Embed(ctx, texts, task)
-}
 
 type serviceTokens map[string]access.ServiceIdentity
 
@@ -86,8 +78,7 @@ func TestAgentReadsTheWholeActiveOfficeKnowledgeRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	embedder := &countingEmbedder{}
-	knowledgeModule, err := knowledge.New(runtimePool, accessModule, embedder, knowledge.Config{})
+	knowledgeModule, err := knowledge.New(runtimePool, accessModule)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,14 +160,10 @@ func TestAgentReadsTheWholeActiveOfficeKnowledgeRevision(t *testing.T) {
 		return count
 	}
 
-	t.Run("authorized service reads every active entry in saved order without embedding", func(t *testing.T) {
-		embeddingsBefore := embedder.calls.Load()
+	t.Run("authorized service reads every active entry in saved order", func(t *testing.T) {
 		result := readOK(t)
 		if result.RevisionID != initial.ID || !slices.Equal(result.Entries, savedOrderNotIDOrder) {
 			t.Fatalf("read=%+v; want revision %s entries %+v", result, initial.ID, savedOrderNotIDOrder)
-		}
-		if calls := embedder.calls.Load() - embeddingsBefore; calls != 0 {
-			t.Fatalf("read made %d embedding calls", calls)
 		}
 	})
 

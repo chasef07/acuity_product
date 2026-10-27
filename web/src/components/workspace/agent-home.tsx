@@ -19,7 +19,7 @@ import { AgentHomeMap, agentAreas, type AgentArea } from "./agent-home-map"
 import type { AgentLocationProps } from "./manage-agent-page"
 
 const tools = [
-  { icon: BookOpenIcon, label: "Search office knowledge" },
+  { icon: BookOpenIcon, label: "Read office knowledge" },
   { icon: UserSearchIcon, label: "Find an existing patient" },
   { icon: UserSearchIcon, label: "Register a new patient" },
   { icon: ShieldCheckIcon, label: "Check insurance acceptance" },
