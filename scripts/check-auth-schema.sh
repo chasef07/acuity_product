@@ -18,14 +18,15 @@ psql "$AUTH_SCHEMA_CHECK_DATABASE_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
 DROP SCHEMA IF EXISTS auth CASCADE;
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
-CREATE SCHEMA auth;
 SQL
 
+for migration in backend/internal/migrations/sql/*better_auth*.sql; do
+  psql "$AUTH_SCHEMA_CHECK_DATABASE_URL" -v ON_ERROR_STOP=1 -q -1 -f "$migration"
+done
+
 generated="$(mktemp)"
-expected="$(mktemp)"
-normalized="$(mktemp)"
 cleanup() {
-  rm -f "$generated" "$expected" "$normalized"
+  rm -f "$generated"
 }
 trap cleanup EXIT
 
@@ -42,12 +43,14 @@ trap cleanup EXIT
   PORTAL_API_AUDIENCE=http://127.0.0.1:18080 \
   GOOGLE_CLIENT_ID=auth-schema-google-client \
   GOOGLE_CLIENT_SECRET=auth-schema-google-secret \
-  npx --yes auth@1.6.25 generate \
+  npx --yes auth@1.7.14 generate \
     --config src/lib/auth-cli.ts \
     --output "$generated" \
     --yes
 )
 
-tail -n +4 backend/internal/migrations/sql/0003_better_auth.sql > "$expected"
-awk '{ print }' "$generated" > "$normalized"
-diff -u "$expected" "$normalized"
+if [ -s "$generated" ]; then
+  echo "Better Auth needs schema changes the *better_auth*.sql migrations do not make:" >&2
+  cat "$generated" >&2
+  exit 1
+fi
