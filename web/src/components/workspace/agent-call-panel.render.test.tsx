@@ -32,3 +32,19 @@ test("the transcript puts the agent on the right and the caller on the left, lik
 test("an empty transcript says nothing was recorded", () => {
   assert.match(renderToStaticMarkup(<CallTranscript messages={[]} />), /No transcript available/)
 })
+
+test("a knowledge gap highlights only the first caller message with the judged words", () => {
+  const markup = renderToStaticMarkup(
+    <CallTranscript
+      highlight="You open on Thanksgiving?"
+      messages={[
+        { speaker: "Agent", text: "You open on Thanksgiving?", occurredAt: "2026-08-30T12:00:00Z" },
+        { speaker: "Caller", text: "You open on Thanksgiving?", occurredAt: "2026-08-30T12:00:05Z" },
+        { speaker: "Caller", text: "You open on Thanksgiving?", occurredAt: "2026-08-30T12:00:09Z" },
+      ]}
+    />,
+  )
+  assert.equal(markup.match(/Not in the knowledge base/g)?.length, 1)
+  const label = markup.indexOf("Not in the knowledge base")
+  assert.ok(markup.indexOf("2026-08-30T12:00:00Z") < label && label < markup.indexOf("2026-08-30T12:00:05Z"))
+})

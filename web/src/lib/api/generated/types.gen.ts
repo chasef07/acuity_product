@@ -706,6 +706,10 @@ export type AgentCall = {
     appointmentActions: Array<AiAppointmentAction>;
     transferred: boolean;
     issueFlagged: boolean;
+    /**
+     * The caller's words the judges picked as the office question office knowledge could not answer.
+     */
+    knowledgeGapLine?: string;
 };
 
 export type AgentCallsPage = {

@@ -26,6 +26,7 @@ type AgentCall struct {
 	AppointmentActions []AppointmentAction `json:"appointmentActions"`
 	Transferred        bool                `json:"transferred"`
 	IssueFlagged       bool                `json:"issueFlagged"`
+	KnowledgeGapLine   *string             `json:"knowledgeGapLine,omitempty"`
 }
 type AgentCallIssueReason string
 
@@ -112,7 +113,8 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
   SELECT i.id::text, i.location_id::text, i.phone, i.started_at, i.ended_at, i.status,
    i.appointment_outcome, i.booking_result, i.cancellation_result,
    i.closeout_payload -> 'domainOutcomes', issue.interaction_id IS NOT NULL,
-   classification.intent, classification.outcome, classification.status
+   classification.intent, classification.outcome, classification.status,
+   i.closeout_payload -> 'evaluation' -> 'results' -> 'knowledge_available' ->> 'line'
   FROM ai_interactions i
   LEFT JOIN ai_interaction_issues issue ON issue.interaction_id = i.id
   LEFT JOIN ai_interaction_classifications classification ON classification.interaction_id = i.id
@@ -135,12 +137,14 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 		var receipts json.RawMessage
 		var flagged bool
 		var labels callLabelProjection
-		if err := rows.Scan(&stored.ID, &stored.LocationID, &stored.Phone, &stored.StartedAt, &stored.EndedAt, &stored.Status, &stored.AppointmentOutcome, &stored.BookingResult, &stored.CancellationResult, &receipts, &flagged, &labels.Intent, &labels.Outcome, &labels.LabelingStatus); err != nil {
+		var line *string
+		if err := rows.Scan(&stored.ID, &stored.LocationID, &stored.Phone, &stored.StartedAt, &stored.EndedAt, &stored.Status, &stored.AppointmentOutcome, &stored.BookingResult, &stored.CancellationResult, &receipts, &flagged, &labels.Intent, &labels.Outcome, &labels.LabelingStatus, &line); err != nil {
 			rows.Close()
 			return AgentCallsPage{}, err
 		}
 		call := agentCall(stored, receipts, flagged)
 		call.Intent, call.Outcome, call.LabelingStatus = labels.Intent, labels.Outcome, labels.LabelingStatus
+		call.KnowledgeGapLine = line
 		page.Calls = append(page.Calls, call)
 	}
 	rows.Close()

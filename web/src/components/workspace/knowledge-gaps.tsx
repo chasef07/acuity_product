@@ -65,6 +65,7 @@ export function KnowledgeGaps({ practiceID, locationID, locations }: { practiceI
                 <span className="min-w-0 flex-1">
                   {formatTimestamp(call.startedAt)}
                   {!locationID && <span className="text-muted-foreground"> · {officeName(call)}</span>}
+                  {call.knowledgeGapLine && <span className="block truncate text-muted-foreground">“{call.knowledgeGapLine}”</span>}
                 </span>
                 <span className="text-muted-foreground">{formatClock(call.durationSeconds)}</span>
                 <ChevronRightIcon aria-hidden="true" className="size-4 text-muted-foreground" />
@@ -81,6 +82,7 @@ export function KnowledgeGaps({ practiceID, locationID, locations }: { practiceI
         loadingNext={false}
         onClose={() => setOpen(undefined)}
         onFlagged={() => {}}
+        highlight={open?.knowledgeGapLine}
         footerBusy={saving}
         footer={
           open && (

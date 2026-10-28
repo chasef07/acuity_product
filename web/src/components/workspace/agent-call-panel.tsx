@@ -80,6 +80,7 @@ export function AgentCallPanel({
   onNext,
   footer,
   footerBusy = false,
+  highlight,
 }: {
   position: number
   loadedCount: number
@@ -93,6 +94,7 @@ export function AgentCallPanel({
   onFlagged: (id: string) => void
   footer?: ReactNode
   footerBusy?: boolean
+  highlight?: string
 }) {
   const [saving, setSaving] = useState(false)
   return (
@@ -152,6 +154,7 @@ export function AgentCallPanel({
               saving={saving}
               onSavingChange={setSaving}
               onFlagged={onFlagged}
+              highlight={highlight}
             />
             {footer && (
               <div className="max-h-[50%] shrink-0 overflow-y-auto border-t p-6">
@@ -170,11 +173,13 @@ function CallContent({
   onFlagged,
   saving,
   onSavingChange,
+  highlight,
 }: {
   id: string
   onFlagged: (id: string) => void
   saving: boolean
   onSavingChange: (saving: boolean) => void
+  highlight?: string
 }) {
   const call = useAgentCall(id)
   const [flagged, setFlagged] = useState<AgentCallIssue>()
@@ -393,7 +398,7 @@ function CallContent({
               )
             )}
             <h2 className="text-sm font-medium">Transcript</h2>
-            <CallTranscript messages={detail.messages} />
+            <CallTranscript messages={detail.messages} highlight={highlight} />
           </div>
         </div>
       )}
@@ -401,7 +406,7 @@ function CallContent({
   )
 }
 
-export function CallTranscript({ messages }: { messages: AgentCallMessage[] }) {
+export function CallTranscript({ messages, highlight }: { messages: AgentCallMessage[]; highlight?: string }) {
   if (!messages.length) {
     return (
       <Empty>
@@ -414,18 +419,25 @@ export function CallTranscript({ messages }: { messages: AgentCallMessage[] }) {
       </Empty>
     )
   }
+  const marked = messages.findIndex((message) => message.speaker === "Caller" && message.text.trim() === highlight?.trim())
   return messages.map((message, index) => {
     const agent = message.speaker === "Agent"
     const align = agent ? "end" : "start"
+    const gap = index === marked
     return (
       <Message key={index} align={align}>
         <MessageContent>
           <MessageHeader>{message.speaker}</MessageHeader>
-          <Bubble align={align} variant={agent ? "muted" : "outline"}>
+          <Bubble align={align} variant={agent ? "muted" : "outline"} className={gap ? "*:data-[slot=bubble-content]:border-warning/40 *:data-[slot=bubble-content]:bg-warning/10" : undefined}>
             <BubbleContent className="whitespace-pre-wrap">
               {message.text}
             </BubbleContent>
           </Bubble>
+          {gap && (
+            <p ref={(node) => node?.scrollIntoView({ block: "center" })} className="text-xs text-warning">
+              Not in the knowledge base
+            </p>
+          )}
           <MessageFooter>
             <time dateTime={message.occurredAt}>
               {formatClockTime(message.occurredAt)}
