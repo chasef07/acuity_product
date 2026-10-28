@@ -1,4 +1,4 @@
-import { AgentsPageContent } from "@/components/marketing/enterprise-site"
+import { AgentsPageContent } from "@/components/marketing/platform-pages"
 import { createPublicPageMetadata } from "@/lib/site"
 
 export const metadata = createPublicPageMetadata({

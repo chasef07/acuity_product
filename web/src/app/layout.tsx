@@ -23,14 +23,6 @@ export const metadata: Metadata = {
   creator: siteConfig.name,
   publisher: siteConfig.name,
   category: "Healthcare technology",
-  keywords: [
-    "medical AI agents",
-    "AI agents for patient access",
-    "medical AI receptionist",
-    "ophthalmology AI receptionist",
-    "AdvancedMD AI receptionist",
-    "healthcare workflow automation",
-  ],
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [

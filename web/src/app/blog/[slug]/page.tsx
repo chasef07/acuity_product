@@ -106,7 +106,7 @@ export default async function BlogPostPage({ params }: PageProps) {
         </article>
 
         <section className={styles.cta}>
-          <h2>Voice AI agents for patient access, judged on every call.</h2>
+          <h2>Applied AI for medical enterprises, judged on every call.</h2>
           <p>
             Acuity is the infrastructure platform and partner for medical practices to deploy, measure,
             and continuously improve AI agents they own, starting with the phone.

@@ -6,7 +6,7 @@ async function expectPinnedNavigation(page: Page) {
   await expect.poll(async () => (await page.getByRole("banner").boundingBox())?.y).toBe(0)
 }
 
-test("enterprise story leads from medical voice to the Acuity Health Method", async ({ page }) => {
+test("home leads with the hero and no longer carries the method sections", async ({ page }) => {
   await page.goto("/")
 
   await expect(
@@ -14,14 +14,7 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
       name: "Applied AI for medical enterprises.",
     }),
   ).toBeVisible()
-  await expect(
-    page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
-  ).toBeVisible()
-  const methodCapabilities = page.getByTestId("method-capabilities")
-  await expect(methodCapabilities).toContainText("Agentic")
-  await expect(methodCapabilities).toContainText("system design")
-  await expect(methodCapabilities).toContainText("Workflow")
-  await expect(methodCapabilities).toContainText("transformation")
+  await expect(page.getByTestId("strategy-capabilities")).toHaveCount(0)
   await expect(
     page.getByText(
       "Acuity is the infrastructure platform and partner for medical practices to deploy, measure, and continuously improve AI agents they own, starting with the phone.",
@@ -41,12 +34,14 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   await banner.getByRole("button", { name: "Platform" }).click()
   await expect(banner.getByRole("link", { name: /^Acuity Agents/ })).toBeVisible()
   await expect(banner.getByRole("link", { name: /^Acuity Systems/ })).toBeVisible()
-  await banner.getByRole("link", { name: /^Deployment Strategy/ }).click()
-  await expect(page).toHaveURL(/\/method$/)
-  await expect(
-    page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
-  ).toBeVisible()
+  await expect(banner.getByRole("link", { name: /^Deployment/ })).toBeVisible()
+  await banner.getByRole("link", { name: /^Strategy/ }).click()
+  await expect(page).toHaveURL(/\/platform\/strategy$/)
+  await expect(page.getByRole("heading", { name: "Two capabilities make it work" })).toBeVisible()
   await expect(page.getByText("Data security + HIPAA safeguards")).toBeVisible()
+  const methodCapabilities = page.getByTestId("strategy-capabilities")
+  await expect(methodCapabilities).toContainText("Agentic system design")
+  await expect(methodCapabilities).toContainText("Workflow transformation")
 
   await banner.getByRole("button", { name: "Integrations" }).click()
   await banner.getByRole("link", { name: /^All integrations/ }).click()
@@ -94,7 +89,7 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
 test("platform pages describe the agents and the staff systems", async ({ page }) => {
   await page.goto("/platform/agents")
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("AI agents for the patient phone line.")
-  for (const name of ["Answer the call", "Book in your system", "Confirm accepted insurance", "Hand off with context"]) {
+  for (const name of ["Answer the call", "Book in your system", "Hand off with context", "Your insurance list"]) {
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible()
   }
 
@@ -104,34 +99,46 @@ test("platform pages describe the agents and the staff systems", async ({ page }
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible()
   }
 
+  await page.goto("/platform/deployment")
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Deployment is where practice AI succeeds or fails.")
+  await page.getByRole("tab", { name: "Phase 03" }).click()
+  await expect(page.getByRole("tabpanel")).toContainText("Test it in real operations.")
+  await expect(page.getByRole("link", { name: /^Strategy/ }).last()).toHaveAttribute("href", "/platform/strategy")
+
+  await page.goto("/platform/strategy")
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Start with one workflow. Prove it. Then scale.")
+  await expect(page.getByRole("link", { name: "Build with us" }).last()).toHaveAttribute("href", "/work-with-us")
+
   const banner = page.getByRole("banner")
   await expect(banner.getByRole("link", { name: "Blog", exact: true })).toHaveAttribute("href", "/blog")
-  await banner.getByRole("button", { name: "Platform" }).click()
+  await banner.getByRole("button", { name: "Platform" }).hover()
   await expect(banner.getByRole("link", { name: /^Acuity Agents/ })).toBeVisible()
-  await page.keyboard.press("Escape")
+  await expect(banner.getByRole("link", { name: /LiveKit case study/ })).toBeVisible()
+  await banner.getByRole("button", { name: "Company" }).hover()
+  await expect(banner.getByRole("link", { name: /^Who We Are/ })).toBeVisible()
   await expect(banner.getByRole("link", { name: /^Acuity Agents/ })).toBeHidden()
+  await page.keyboard.press("Escape")
+  await expect(banner.getByRole("link", { name: /^Who We Are/ })).toBeHidden()
 })
 
-test("home rotates the LiveKit case study and partner stories", async ({ page }) => {
+test("home shows case-study cards that page sideways", async ({ page }) => {
   await page.goto("/")
-  const stories = page.getByRole("region", { name: "Proven in the operation." })
-  const panel = stories.getByRole("tabpanel")
-  await expect(stories.getByRole("tab")).toHaveCount(4)
-  await expect(panel).toContainText("80%")
-  await expect(panel).toContainText("Calls fully contained by AI agents")
-  await expect(panel.getByRole("link", { name: /Read the LiveKit case study/ })).toHaveAttribute(
+  const stories = page.getByRole("region", { name: "Solving the problems that move patient access." })
+  const cards = stories.getByRole("link")
+  await expect(cards).toHaveCount(4)
+  await expect(cards.first()).toContainText("80% of calls fully contained by AI agents")
+  await expect(cards.first()).toHaveAttribute(
     "href",
     "https://livekit.com/blog/how-acuity-health-transforms-patient-access-with-livekit-voice-agents",
   )
+  await expect(stories.getByRole("link", { name: /AdvancedMD/ })).toHaveAttribute("href", "/integrations/advancedmd")
 
-  await stories.getByRole("tab", { name: "AdvancedMD" }).click()
-  await expect(stories.getByRole("tab", { name: "AdvancedMD" })).toHaveAttribute("aria-selected", "true")
-  await expect(panel).toContainText("Patient calls become appointments in AdvancedMD.")
-
-  await page.emulateMedia({ reducedMotion: "no-preference" })
-  await page.goto("/")
-  await expect(stories.getByRole("tab", { name: "LiveKit" })).toHaveAttribute("aria-selected", "true")
-  await expect(stories.getByRole("tab", { name: "AdvancedMD" })).toHaveAttribute("aria-selected", "true", { timeout: 12_000 })
+  const previous = stories.getByRole("button", { name: "Previous stories" })
+  const next = stories.getByRole("button", { name: "Next stories" })
+  await expect(previous).toBeDisabled()
+  await next.click()
+  await expect(previous).toBeEnabled()
+  await expect.poll(() => stories.getByRole("list").evaluate((list) => list.scrollLeft)).toBeGreaterThan(0)
 })
 
 test("hero copy pins to the left edge on wide screens", async ({ page }) => {
@@ -170,6 +177,21 @@ test("mobile menu opens as a dropdown with grouped links", async ({ page }) => {
   await page.keyboard.press("Escape")
   await expect(menu).toBeHidden()
   await expect(banner.getByRole("button", { name: "Open menu" })).toBeFocused()
+})
+
+test("blog index features the latest post above a cover grid", async ({ page }) => {
+  await page.goto("/blog")
+  await expect(page.getByRole("heading", { level: 1, name: "All posts" })).toBeVisible()
+  await expect(page.getByRole("link", { name: /Read the article/ })).toHaveAttribute("href", "/blog/name-the-slot")
+  await expect(page.getByText("Stories, announcements, and product updates.")).toBeVisible()
+  const posts = page.getByRole("main").getByRole("listitem")
+  await expect(posts).toHaveCount(3)
+  await page.getByRole("button", { name: "Customer stories" }).click()
+  await expect(posts).toHaveCount(1)
+  await expect(posts.getByRole("link")).toHaveAttribute(
+    "href",
+    "https://livekit.com/blog/how-acuity-health-transforms-patient-access-with-livekit-voice-agents",
+  )
 })
 
 test("retired commercial routes and their legacy aliases return 404", async ({
@@ -255,6 +277,7 @@ test("legacy SEO routes redirect only to equivalent current pages", async ({ req
     ["/partners/advancedmd", "/integrations/advancedmd"],
     ["/partners", "/integrations"],
     ["/partnerships", "/integrations"],
+    ["/method", "/platform/strategy"],
   ] as const
 
   for (const [source, destination] of redirects) {
@@ -353,7 +376,7 @@ test("public pages expose canonical metadata and browser identity assets", async
     {
       route: "/",
       canonical: "https://acuityhealth.io",
-      title: "Voice AI Agents for Patient Access | Acuity Health",
+      title: "Applied AI for Medical Enterprises | Acuity Health",
       description:
         "Acuity is the infrastructure platform and partner for medical practices to deploy, measure, and continuously improve AI agents they own, starting with the phone.",
     },
@@ -392,11 +415,18 @@ test("public pages expose canonical metadata and browser identity assets", async
         "Acuity Systems gives practice staff one workspace for agent handoffs, patient calls and texts, call history, analytics, and the agent's knowledge base.",
     },
     {
-      route: "/method",
-      canonical: "https://acuityhealth.io/method",
-      title: "The Acuity Health Method | Acuity Health",
+      route: "/platform/deployment",
+      canonical: "https://acuityhealth.io/platform/deployment",
+      title: "Deployment: On-Site Rollout of AI Agents | Acuity Health",
       description:
-        "How Acuity Health combines agentic system design with workflow transformation to deploy enterprise medical voice.",
+        "Acuity Health's founders go on-site, build the agent around your workflow, and stay through rollout until your team owns it.",
+    },
+    {
+      route: "/platform/strategy",
+      canonical: "https://acuityhealth.io/platform/strategy",
+      title: "Strategy: Where Practice AI Pays Off First | Acuity Health",
+      description:
+        "Start with one patient-access workflow, agree on the KPIs that define success, and expand only when the evidence holds.",
     },
     {
       route: "/who-we-are",
@@ -463,7 +493,7 @@ test("public pages expose canonical metadata and browser identity assets", async
     )
     await expect(page.locator('meta[name="twitter:image:alt"]')).toHaveAttribute(
       "content",
-      "Acuity Health: Voice AI agents for patient access",
+      "Acuity Health: Applied AI for medical enterprises",
     )
     await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
       "href",

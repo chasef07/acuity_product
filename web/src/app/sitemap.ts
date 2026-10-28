@@ -5,9 +5,10 @@ import { siteConfig } from "@/lib/site"
 
 const publicRoutes = [
   { path: "/", changeFrequency: "weekly", priority: 1, lastModified: "2026-10-28" },
-  { path: "/method", changeFrequency: "monthly", priority: 0.8, lastModified: "2026-08-30" },
   { path: "/platform/agents", changeFrequency: "monthly", priority: 0.8, lastModified: "2026-10-28" },
   { path: "/platform/systems", changeFrequency: "monthly", priority: 0.8, lastModified: "2026-10-28" },
+  { path: "/platform/deployment", changeFrequency: "monthly", priority: 0.8, lastModified: "2026-10-28" },
+  { path: "/platform/strategy", changeFrequency: "monthly", priority: 0.8, lastModified: "2026-10-28" },
   { path: "/integrations", changeFrequency: "monthly", priority: 0.8, lastModified: "2026-10-28" },
   { path: "/integrations/stedi", changeFrequency: "monthly", priority: 0.8, lastModified: "2026-09-13" },
   { path: "/integrations/advancedmd", changeFrequency: "monthly", priority: 0.8, lastModified: "2026-09-06" },
