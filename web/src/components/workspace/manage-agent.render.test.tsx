@@ -158,7 +158,7 @@ test("Home fixes a call Abita couldn't answer by editing a topic, and a conflict
       { id: "parking", title: "Parking", text: "Parking details are not supplied." },
     ],
   }
-  const call = agentCall("gap-1", "+15555550111")
+  const call = { ...agentCall("gap-1", "+15555550111"), startedAt: new Date().toISOString() }
   page.agentCalls = { calls: [call], nextCursor: "" }
   page.callDetail = { call, locationName: "Hollywood", messages: [{ speaker: "Caller", text: "Do you validate parking?", occurredAt: "2026-10-28T15:00:05Z" }], scorecard: [] }
   await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={() => {}} />)
@@ -199,6 +199,7 @@ test("Home fixes a call Abita couldn't answer by editing a topic, and a conflict
     { id: "parking", title: "Parking", text: "We validate garage parking at the front desk." },
   ])
   assert.match(published.reason, /^Updated “Parking” from a caller question on /)
+  assert.doesNotMatch(published.reason, /Today|Yesterday/)
   assert.deepEqual(page.gapCloses, [{ id: "gap-1", resolution: "ANSWERED" }])
   await page.unmount()
 })

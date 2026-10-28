@@ -181,7 +181,7 @@ function KnowledgeFix({
       practiceId: practiceID,
       locationId: locationID,
       expectedRevisionId: current.revision?.id,
-      reason: `${replaces ? `Updated “${entry.title}”` : `Added “${entry.title}”`} from a caller question on ${formatTimestamp(call.startedAt)}`,
+      reason: `${replaces ? `Updated “${entry.title}”` : `Added “${entry.title}”`} from a caller question on ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(call.startedAt))}`,
       sections: publishedSections(sections),
     }
     const payload = JSON.stringify(publication)
