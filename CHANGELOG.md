@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.0](https://github.com/chasef07/acuity_product/compare/v2.1.0...v2.2.0) (2026-10-28)
+
+
+### Features
+
+* **knowledge:** fix calls that need knowledge from the Home page ([#578](https://github.com/chasef07/acuity_product/issues/578)) ([3c04292](https://github.com/chasef07/acuity_product/commit/3c04292c2fec9a3a441067285bb053e74e5c2510))
+* **web:** platform pages, mega menu, case cards, blog redesign and social cards ([#577](https://github.com/chasef07/acuity_product/issues/577)) ([dfbaf45](https://github.com/chasef07/acuity_product/commit/dfbaf452bb56277bb30ddf7c34b7baf8adf4e86a))
+
 ## [2.1.0](https://github.com/chasef07/acuity_product/compare/v2.0.1...v2.1.0) (2026-10-28)
 
 
