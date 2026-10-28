@@ -59,28 +59,30 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if !reflect.DeepEqual(appliedNames, wantNames) {
 		t.Fatalf("applied migrations = %v, want %v", appliedNames, wantNames)
 	}
-	var bookingSearchPreciseExists bool
+	var retiredBookingSearchColumns int
 	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM information_schema.columns
-			WHERE table_schema='public' AND table_name='ai_interactions'
-				AND column_name='booking_search_precise'
-		)
-	`).Scan(&bookingSearchPreciseExists); err != nil {
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema='public' AND table_name='ai_interactions'
+			AND column_name IN ('booking_search_known', 'booking_search_precise')
+	`).Scan(&retiredBookingSearchColumns); err != nil {
 		t.Fatal(err)
 	}
-	if !bookingSearchPreciseExists {
-		t.Fatal("booking_search_precise column is missing")
+	if retiredBookingSearchColumns != 0 {
+		t.Fatalf("retired booking search columns remain: %d", retiredBookingSearchColumns)
 	}
-	var bookingFactsIndex string
+	var bookingAnalyticsIndex string
 	if err := pool.QueryRow(ctx, `
 		SELECT indexdef FROM pg_indexes
-		WHERE schemaname='public' AND indexname='ai_interactions_booking_facts_idx'
-	`).Scan(&bookingFactsIndex); err != nil {
-		t.Fatalf("read booking facts index: %v", err)
+		WHERE schemaname='public' AND indexname='ai_interactions_booking_analytics_idx'
+	`).Scan(&bookingAnalyticsIndex); err != nil {
+		t.Fatalf("read booking analytics index: %v", err)
 	}
-	if !strings.Contains(bookingFactsIndex, "booking_search_precise") {
-		t.Fatalf("booking facts index omits precise-search coverage: %s", bookingFactsIndex)
+	if !strings.Contains(bookingAnalyticsIndex, "booking_patient_basis") || strings.Contains(bookingAnalyticsIndex, "booking_patient_group") {
+		t.Fatalf("booking analytics index does not cover the columns the report reads: %s", bookingAnalyticsIndex)
+	}
+	var retiredBookingFactsIndex bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.ai_interactions_booking_facts_idx') IS NOT NULL`).Scan(&retiredBookingFactsIndex); err != nil || retiredBookingFactsIndex {
+		t.Fatalf("retired booking facts index remains: %v %v", retiredBookingFactsIndex, err)
 	}
 	var pendingInteractionReceiptIndex string
 	if err := pool.QueryRow(ctx, `

@@ -162,7 +162,7 @@ func TestHistoricalPatientBasisUpgradeAndSourceCorrections(t *testing.T) {
 		t.Fatal(err)
 	}
 	var before, after, basis string
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing'-'version_agent'-'version_prompts'-'version_tools'-'version_judges'-'version_evaluator'-'version_knowledge'-'analytics_facts_version'-'analytics_tool_names'-'analytics_tool_call_ids'-'analytics_tool_statuses'-'analytics_tool_durations_ms'-'analytics_evaluated'-'analytics_scored_checks'-'analytics_flagged_checks'-'analytics_sentiment'-'analytics_input_tokens'-'analytics_cached_tokens'-'analytics_output_tokens'-'analytics_footprint'-'analytics_jury_models'-'analytics_jury_results'-'analytics_jury_votes')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&before, &basis); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing'-'booking_search_known'-'booking_search_precise'-'version_agent'-'version_prompts'-'version_tools'-'version_judges'-'version_evaluator'-'version_knowledge'-'analytics_facts_version'-'analytics_tool_names'-'analytics_tool_call_ids'-'analytics_tool_statuses'-'analytics_tool_durations_ms'-'analytics_evaluated'-'analytics_scored_checks'-'analytics_flagged_checks'-'analytics_sentiment'-'analytics_input_tokens'-'analytics_cached_tokens'-'analytics_output_tokens'-'analytics_footprint'-'analytics_jury_models'-'analytics_jury_results'-'analytics_jury_votes')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&before, &basis); err != nil {
 		t.Fatal(err)
 	}
 	if basis != "assumed_new" {
@@ -171,7 +171,7 @@ func TestHistoricalPatientBasisUpgradeAndSourceCorrections(t *testing.T) {
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing'-'version_agent'-'version_prompts'-'version_tools'-'version_judges'-'version_evaluator'-'version_knowledge'-'analytics_facts_version'-'analytics_tool_names'-'analytics_tool_call_ids'-'analytics_tool_statuses'-'analytics_tool_durations_ms'-'analytics_evaluated'-'analytics_scored_checks'-'analytics_flagged_checks'-'analytics_sentiment'-'analytics_input_tokens'-'analytics_cached_tokens'-'analytics_output_tokens'-'analytics_footprint'-'analytics_jury_models'-'analytics_jury_results'-'analytics_jury_votes')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&after, &basis); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing'-'booking_search_known'-'booking_search_precise'-'version_agent'-'version_prompts'-'version_tools'-'version_judges'-'version_evaluator'-'version_knowledge'-'analytics_facts_version'-'analytics_tool_names'-'analytics_tool_call_ids'-'analytics_tool_statuses'-'analytics_tool_durations_ms'-'analytics_evaluated'-'analytics_scored_checks'-'analytics_flagged_checks'-'analytics_sentiment'-'analytics_input_tokens'-'analytics_cached_tokens'-'analytics_output_tokens'-'analytics_footprint'-'analytics_jury_models'-'analytics_jury_results'-'analytics_jury_votes')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&after, &basis); err != nil {
 		t.Fatal(err)
 	}
 	if before != after || basis != "legacy_existing" {
