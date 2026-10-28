@@ -37,6 +37,7 @@ func (server *Server) QueryAgentCalls(w http.ResponseWriter, r *http.Request) {
 			Outcome:    stringValue(body.Outcome),
 		},
 		Phone: stringValue(body.Phone), FlaggedOnly: body.FlaggedOnly != nil && *body.FlaggedOnly,
+		KnowledgeGapOnly: body.KnowledgeGapOnly != nil && *body.KnowledgeGapOnly,
 	})
 	if err != nil {
 		server.writeInteractionError(w, r, err)
@@ -85,6 +86,27 @@ func (server *Server) FlagAgentCallIssue(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	server.writeJSON(w, http.StatusOK, issue)
+}
+func (server *Server) CloseAgentCallKnowledgeGap(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.KnowledgeGapCloseInput
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	review, err := server.interactions.CloseKnowledgeGap(ctx, identity, id.String(), interaction.KnowledgeGapResolution(body.Resolution))
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, review)
 }
 func validCallLabelFilters(intent *api.CallIntent, outcome *api.CallOutcome) bool {
 	return (intent == nil || intent.Valid()) && (outcome == nil || outcome.Valid())

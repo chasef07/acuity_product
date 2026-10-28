@@ -66,13 +66,15 @@ type AgentCallsPage struct {
 }
 type QueryAgentCallsCommand struct {
 	QueryAnalyticsCommand
-	Phone       string
-	FlaggedOnly bool
+	Phone            string
+	FlaggedOnly      bool
+	KnowledgeGapOnly bool
 }
 type agentCallsCursor struct {
 	analyticsCursor
-	Phone       string `json:"phone"`
-	FlaggedOnly bool   `json:"flaggedOnly"`
+	Phone            string `json:"phone"`
+	FlaggedOnly      bool   `json:"flaggedOnly"`
+	KnowledgeGapOnly bool   `json:"knowledgeGapOnly"`
 }
 
 func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCommand) (AgentCallsPage, error) {
@@ -95,7 +97,7 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	var id any
 	if command.Cursor != "" {
 		var cursor agentCallsCursor
-		if !decodeCursor(command.QueryAnalyticsCommand, &cursor, &cursor.analyticsCursor, through) || cursor.Phone != phone || cursor.FlaggedOnly != command.FlaggedOnly {
+		if !decodeCursor(command.QueryAnalyticsCommand, &cursor, &cursor.analyticsCursor, through) || cursor.Phone != phone || cursor.FlaggedOnly != command.FlaggedOnly || cursor.KnowledgeGapOnly != command.KnowledgeGapOnly {
 			return AgentCallsPage{}, ErrInvalidInput
 		}
 		through, startedAt, id = cursor.Through, cursor.StartedAt, cursor.ID
@@ -120,8 +122,9 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
    AND (NOT $8 OR issue.interaction_id IS NOT NULL)
    AND ($10 = '' OR classification.intent = $10)
    AND ($11 = '' OR classification.outcome = $11)
+   AND (NOT $12 OR (`+openKnowledgeGap+`))
   ORDER BY i.started_at DESC, i.id DESC LIMIT $9
- `, command.PracticeID, locations, through.Add(-duration), through, startedAt, id, phone, command.FlaggedOnly, command.Limit+1, command.Intent, command.Outcome)
+ `, command.PracticeID, locations, through.Add(-duration), through, startedAt, id, phone, command.FlaggedOnly, command.Limit+1, command.Intent, command.Outcome, command.KnowledgeGapOnly)
 	if err != nil {
 		return AgentCallsPage{}, err
 	}
@@ -146,7 +149,7 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	if len(page.Calls) > command.Limit {
 		page.Calls = page.Calls[:command.Limit]
 		last := page.Calls[len(page.Calls)-1]
-		page.NextCursor, err = encodeCursor(agentCallsCursor{analyticsCursor: newAnalyticsCursor(command.QueryAnalyticsCommand, last.StartedAt, last.ID, through), Phone: phone, FlaggedOnly: command.FlaggedOnly})
+		page.NextCursor, err = encodeCursor(agentCallsCursor{analyticsCursor: newAnalyticsCursor(command.QueryAnalyticsCommand, last.StartedAt, last.ID, through), Phone: phone, FlaggedOnly: command.FlaggedOnly, KnowledgeGapOnly: command.KnowledgeGapOnly})
 		if err != nil {
 			return AgentCallsPage{}, err
 		}

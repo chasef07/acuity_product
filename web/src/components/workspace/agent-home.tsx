@@ -16,6 +16,7 @@ import { formatTimestamp } from "@/lib/format-time"
 import { homeDay, homeGreeting } from "@/lib/home-greeting"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 import { AgentHomeMap, agentAreas, type AgentArea } from "./agent-home-map"
+import { KnowledgeGaps } from "./knowledge-gaps"
 import type { AgentLocationProps } from "./manage-agent-page"
 
 const tools = [
@@ -98,6 +99,7 @@ export function AgentHome({
           </section>
         )}
       </div>
+      {locationID && <KnowledgeGaps practiceID={practiceID} locationID={locationID} />}
     </section>
   )
 }

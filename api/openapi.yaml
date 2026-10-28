@@ -1071,6 +1071,40 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/agent-calls/{interactionId}/knowledge-gap:
+    put:
+      operationId: closeAgentCallKnowledgeGap
+      summary: Close a call the judge flagged for missing office knowledge; the first close is preserved.
+      parameters:
+        - name: interactionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeGapCloseInput"
+      responses:
+        "200":
+          description: The saved close.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeGapReview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operator/ai-costs/query:
     post:
       operationId: queryOperatorAICosts
@@ -3693,6 +3727,9 @@ components:
           maxLength: 32
         flaggedOnly:
           type: boolean
+        knowledgeGapOnly:
+          type: boolean
+          description: Restrict to calls the judge flagged for missing office knowledge that staff have not closed.
         cursor:
           type: string
         limit:
@@ -3754,6 +3791,26 @@ components:
           type: string
           maxLength: 2000
           description: Optional staff explanation of what happened.
+    KnowledgeGapResolution:
+      type: string
+      enum: [ANSWERED, NOT_NEEDED]
+    KnowledgeGapCloseInput:
+      type: object
+      additionalProperties: false
+      required: [resolution]
+      properties:
+        resolution:
+          $ref: "#/components/schemas/KnowledgeGapResolution"
+    KnowledgeGapReview:
+      type: object
+      additionalProperties: false
+      required: [resolution, reviewedAt]
+      properties:
+        resolution:
+          $ref: "#/components/schemas/KnowledgeGapResolution"
+        reviewedAt:
+          type: string
+          format: date-time
     AgentCallIssue:
       type: object
       additionalProperties: false

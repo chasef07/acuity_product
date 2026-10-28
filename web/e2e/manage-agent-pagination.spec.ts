@@ -22,6 +22,10 @@ test("changing call filters cancels old pages without unlocking the current page
   let allLoads = 0
   await page.route("**/v1/agent-calls/query", async (route) => {
     const body = route.request().postDataJSON()
+    if (body.knowledgeGapOnly) {
+      await route.fulfill({ json: { calls: [], nextCursor: "" } })
+      return
+    }
     if (body.cursor) {
       pageRequests.push(body.cursor)
       pending.set(body.cursor, route)

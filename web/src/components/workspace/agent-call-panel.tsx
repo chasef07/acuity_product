@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { ChevronLeftIcon, ChevronRightIcon, FlagIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -78,6 +78,8 @@ export function AgentCallPanel({
   navigationError,
   onPrevious,
   onNext,
+  footer,
+  footerBusy = false,
 }: {
   position: number
   loadedCount: number
@@ -89,12 +91,14 @@ export function AgentCallPanel({
   id: string
   onClose: () => void
   onFlagged: (id: string) => void
+  footer?: ReactNode
+  footerBusy?: boolean
 }) {
   const [saving, setSaving] = useState(false)
   return (
     <Sheet
       open={Boolean(id)}
-      onOpenChange={(open) => !open && !saving && onClose()}
+      onOpenChange={(open) => !open && !saving && !footerBusy && onClose()}
     >
       <SheetContent className="flex h-full flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
         {id && (
@@ -149,6 +153,11 @@ export function AgentCallPanel({
               onSavingChange={setSaving}
               onFlagged={onFlagged}
             />
+            {footer && (
+              <div className="max-h-[50%] shrink-0 overflow-y-auto border-t p-6">
+                {footer}
+              </div>
+            )}
           </>
         )}
       </SheetContent>
