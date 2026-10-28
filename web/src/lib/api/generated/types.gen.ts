@@ -1294,7 +1294,7 @@ export type OperatorAiAnalyticsDay = {
     toolCallCount?: number;
     toolErrorCount?: number;
     /**
-     * UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
+     * Eastern (America/New_York) call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
      */
     date: string;
     totalCalls: number;
@@ -1314,7 +1314,7 @@ export type OperatorAiAnalyticsDay = {
 
 export type OperatorAiAnalyticsSummary = {
     /**
-     * All UTC dates in the full selected range, including dates without calls; independent of call pagination.
+     * All Eastern dates in the full selected range, including dates without calls; independent of call pagination.
      */
     daily: Array<OperatorAiAnalyticsDay>;
     judges?: OperatorAiAnalyticsJudges;
@@ -1426,7 +1426,7 @@ export type OperatorAiJudgeQuestion = {
 
 export type OperatorAiAnalyticsDistributions = OperatorAiAnalyticsDistributionCounts & {
     /**
-     * Every UTC date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
+     * Every Eastern date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
      */
     daily: Array<OperatorAiAnalyticsDistributionDay>;
     /**
@@ -1437,7 +1437,7 @@ export type OperatorAiAnalyticsDistributions = OperatorAiAnalyticsDistributionCo
 
 export type OperatorAiAnalyticsDistributionDay = OperatorAiAnalyticsDistributionCounts & {
     /**
-     * UTC calendar date in YYYY-MM-DD format.
+     * Eastern calendar date in YYYY-MM-DD format.
      */
     date: string;
 };
@@ -1550,7 +1550,7 @@ export type OperatorAiContextFootprint = {
 
 export type OperatorAiQualityDay = {
     /**
-     * UTC call-start date in YYYY-MM-DD format.
+     * Eastern call-start date in YYYY-MM-DD format.
      */
     date: string;
     /**
@@ -1599,7 +1599,7 @@ export type OperatorAiQualityDay = {
 
 export type OperatorAiAnalyticsQuality = {
     /**
-     * All UTC dates in the selected range, matching summary daily.
+     * All Eastern dates in the selected range, matching summary daily.
      */
     daily: Array<OperatorAiQualityDay>;
     /**
@@ -1649,7 +1649,7 @@ export type OperatorAiVersionChange = {
      */
     firstSeenAt: string;
     /**
-     * UTC call-start date on which this version first served the most calls
+     * Eastern call-start date on which this version first served the most calls
      */
     date: string;
     /**
@@ -1659,7 +1659,7 @@ export type OperatorAiVersionChange = {
 };
 
 /**
- * Versions recorded by calls. Per dimension (and per office for knowledge), each UTC day's majority version is the one serving the most calls that day; a tie keeps the version in effect, else picks the tied version that served first. A change marks a day whose majority differs from the version in effect, and days without calls change nothing. Versions in effect at the start come from the latest call within 90 days before the range.
+ * Versions recorded by calls. Per dimension (and per office for knowledge), each Eastern day's majority version is the one serving the most calls that day; a tie keeps the version in effect, else picks the tied version that served first. A change marks a day whose majority differs from the version in effect, and days without calls change nothing. Versions in effect at the start come from the latest call within 90 days before the range.
  */
 export type OperatorAiAnalyticsVersions = {
     inEffect: Array<OperatorAiVersionInEffect>;
