@@ -53,7 +53,7 @@ func TestBookingFactsBackfillResumesAndTracksEvidenceChanges(t *testing.T) {
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ai_interactions WHERE booking_confirmed AND booking_searched AND booking_search_known AND booking_patient_group='new'`).Scan(&complete); err != nil || complete != 1001 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ai_interactions WHERE booking_confirmed AND booking_searched AND booking_patient_group='new'`).Scan(&complete); err != nil || complete != 1001 {
 		t.Fatalf("backfill count %d: %v", complete, err)
 	}
 	if err := migrations.Apply(ctx, pool); err != nil {
@@ -62,13 +62,13 @@ func TestBookingFactsBackfillResumesAndTracksEvidenceChanges(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET appointment_outcome='INDETERMINATE',transcript='{"items":[]}',closeout_payload='{"domainOutcomes":[{"outcome":"patient_verified","status":"success"}]}' WHERE source_call_id='1'`); err != nil {
 		t.Fatal(err)
 	}
-	var booked, searched, known bool
+	var booked, searched bool
 	var group string
-	if err := pool.QueryRow(ctx, `SELECT booking_confirmed,booking_searched,booking_search_known,booking_patient_group FROM ai_interactions WHERE source_call_id='1'`).Scan(&booked, &searched, &known, &group); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT booking_confirmed,booking_searched,booking_patient_group FROM ai_interactions WHERE source_call_id='1'`).Scan(&booked, &searched, &group); err != nil {
 		t.Fatal(err)
 	}
-	if booked || searched || !known || group != "existing" {
-		t.Fatalf("stale projection: %v %v %v %s", booked, searched, known, group)
+	if booked || searched || group != "existing" {
+		t.Fatalf("stale projection: %v %v %s", booked, searched, group)
 	}
 }
 
@@ -175,13 +175,6 @@ func TestBookingConversionMigrationClassifiesCompletedSearches(t *testing.T) {
 	if appointmentChanges != 0 {
 		t.Fatalf("appointment-change calls in conversion denominator = %d, want 0", appointmentChanges)
 	}
-	var preciseCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ai_interactions WHERE booking_search_precise`).Scan(&preciseCount); err != nil {
-		t.Fatal(err)
-	}
-	if preciseCount != 0 {
-		t.Fatalf("retired precise-search facts = %d, want 0", preciseCount)
-	}
 	if err := pool.QueryRow(ctx, `SELECT booking_patient_group FROM ai_interactions WHERE source_call_id='partial'`).Scan(&group); err != nil {
 		t.Fatal(err)
 	}
@@ -228,10 +221,10 @@ func TestBookingConversionMigrationClassifiesCompletedSearches(t *testing.T) {
 		t.Fatalf("unclassified completed searches = %d, want 0", unclassifiedSearches)
 	}
 	var invocation bool
-	if err := pool.QueryRow(ctx, `SELECT booking_searched, booking_search_precise, booking_patient_group FROM ai_interactions WHERE source_call_id='versioned-success-without-invocation'`).Scan(&invocation, &precise, &group); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT booking_searched, booking_patient_group FROM ai_interactions WHERE source_call_id='versioned-success-without-invocation'`).Scan(&invocation, &group); err != nil {
 		t.Fatal(err)
 	}
-	if invocation || precise || group != "unknown" {
-		t.Fatalf("restored versioned success = searched %v, precise %v, group %q; want false, false, unknown", invocation, precise, group)
+	if invocation || group != "unknown" {
+		t.Fatalf("restored versioned success = searched %v, group %q; want false, unknown", invocation, group)
 	}
 }
