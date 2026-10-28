@@ -44,7 +44,7 @@ test("Home hydrates its greeting and shows knowledge status, and hides the knowl
   })
   const host = document.createElement("div")
   document.body.append(host)
-  const home = <DataProvider><AgentHome practiceID="practice-1" locationID="office-1" onPage={() => {}} /></DataProvider>
+  const home = <DataProvider><AgentHome practiceID="practice-1" locationID="office-1" locations={[{ id: "office-1", name: "Office 1" }]} onPage={() => {}} /></DataProvider>
   host.innerHTML = renderToString(home)
   assert.equal(host.querySelector("h1")?.textContent, "Welcome,")
   assert.equal(host.querySelector("header time")?.textContent, "")

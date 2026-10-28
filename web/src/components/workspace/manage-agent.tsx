@@ -58,7 +58,7 @@ export function ManageAgent({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       {page === "home" ? (
-        <AgentHome {...location} onPage={onPage} />
+        <AgentHome {...location} locations={locations} onPage={onPage} />
       ) : page === "knowledge" ? (
         <KnowledgeBase {...location} actorSubject={actorSubject} />
       ) : page === "insurance" ? (

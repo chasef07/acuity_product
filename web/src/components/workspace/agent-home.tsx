@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import type { Location } from "@/lib/api/generated/types.gen"
 import { useLocationKnowledge } from "@/lib/clients/location-knowledge"
 import { formatTimestamp } from "@/lib/format-time"
 import { homeDay, homeGreeting } from "@/lib/home-greeting"
@@ -37,8 +38,9 @@ const tools = [
 export function AgentHome({
   practiceID,
   locationID,
+  locations,
   onPage,
-}: AgentLocationProps & { onPage: (page: ManageAgentPage) => void }) {
+}: AgentLocationProps & { locations: Location[]; onPage: (page: ManageAgentPage) => void }) {
   const titleID = useId()
   const detailsID = useId()
   const details = useRef<HTMLDivElement>(null)
@@ -99,7 +101,7 @@ export function AgentHome({
           </section>
         )}
       </div>
-      {locationID && <KnowledgeGaps practiceID={practiceID} locationID={locationID} />}
+      <KnowledgeGaps practiceID={practiceID} locationID={locationID} locations={locations} />
     </section>
   )
 }

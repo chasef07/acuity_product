@@ -695,6 +695,7 @@ export type AgentCallsQuery = {
 };
 
 export type AgentCall = {
+    locationId: string;
     intent?: CallIntent;
     outcome?: CallOutcome;
     labelingStatus?: CallLabelingStatus;

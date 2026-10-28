@@ -289,6 +289,31 @@ test("Home keeps an edited answer when someone else removes that topic, and savi
   await page.unmount()
 })
 
+test("on all offices, Home lists every office's calls that need knowledge and fixes each against its own office", async (t) => {
+  const page = harness(t)
+  page.knowledge = { locationId: locations[1].id, revision: { id: "revision-7", version: 7, createdAt: "2026-10-27T14:00:00Z" }, sections: [{ id: "hours", title: "Hours", text: "Open 8 to 5." }] }
+  const hollywood = agentCall("gap-1", "+15555550111")
+  const sweetwater = { ...agentCall("gap-2", "+15555550122"), locationId: locations[1].id }
+  page.agentCalls = { calls: [hollywood, sweetwater], nextCursor: "" }
+  page.callDetail = { call: sweetwater, locationName: "Sweetwater", messages: [{ speaker: "Caller", text: "Is there parking?", occurredAt: "2026-10-28T15:00:05Z" }], scorecard: [] }
+  await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID="" locations={locations} page="home" onPage={() => {}} />)
+  await waitFor(() => gapRows(page.host).length === 2)
+  assert.deepEqual(page.agentCallsRequests, [allOfficesGapQuery()])
+  assert.match(gapRows(page.host)[0].textContent ?? "", /· Hollywood/)
+  assert.match(gapRows(page.host)[1].textContent ?? "", /· Sweetwater/)
+  await act(async () => gapRows(page.host)[1].click())
+  await waitFor(() => /Saves to Sweetwater's knowledge base/.test(page.sheetText()) && Boolean(page.sheet()?.querySelector("textarea")))
+  assert.equal(page.knowledgeRequests.at(-1)?.locationId, locations[1].id)
+  await page.fill(sheetField(page, "Title"), "Parking")
+  await page.fill(sheetField(page, "Text"), "Free parking behind the building.")
+  await page.sheetClick("Save and close")
+  await waitFor(() => gapRows(page.host).length === 1)
+  assert.equal(page.publishRequests.at(-1)?.locationId, locations[1].id)
+  assert.equal(page.publishRequests.at(-1)?.expectedRevisionId, "revision-7")
+  assert.deepEqual(page.gapCloses, [{ id: "gap-2", resolution: "ANSWERED" }])
+  await page.unmount()
+})
+
 function sheetField(page: ReturnType<typeof harness>, label: string) {
   const field = Array.from(page.sheet()?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea") ?? []).find(
     (item) => item.labels?.[0]?.textContent === label,
@@ -305,7 +330,7 @@ function gapRows(host: HTMLElement) {
   return Array.from(host.querySelectorAll<HTMLButtonElement>("[aria-label='Calls that need knowledge'] li > button"))
 }
 
-test("with all offices in scope and several offices, one-Location pages ask for an office and load nothing", async (t) => {
+test("with all offices in scope and several offices, one-Location pages ask for an office, and Home loads only the all-office knowledge gaps", async (t) => {
   const page = harness(t)
   for (const selected of ["home", "knowledge", "insurance"] as const) {
     await page.render(
@@ -326,7 +351,8 @@ test("with all offices in scope and several offices, one-Location pages ask for 
     }
   }
   assert.equal(page.host.querySelector("h1")?.textContent, "Insurance list")
-  assert.deepEqual([page.knowledgeRequests, page.plansRequests, page.agentCallsRequests], [[], [], []])
+  assert.deepEqual([page.knowledgeRequests, page.plansRequests], [[], []])
+  assert.deepEqual(page.agentCallsRequests, [allOfficesGapQuery()])
   await page.unmount()
 })
 
@@ -348,7 +374,7 @@ test("each page keeps its title, actions, and filters inside the panel", async (
   const page = harness(t)
   page.knowledge = syntheticKnowledge
   page.agentCalls = {
-    calls: [{ id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }],
+    calls: [{ id: "call-1", locationId: locations[0].id, phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }],
     nextCursor: "",
   }
   const showPage = (selected: "home" | "transcripts" | "knowledge" | "insurance") =>
@@ -385,7 +411,7 @@ test("each page keeps its title, actions, and filters inside the panel", async (
 
 test("Calls updates automatically without replacing the table while refreshing and keeps retry available", async (t) => {
   const page = harness(t)
-  const original = { id: "call-1", phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }
+  const original = { id: "call-1", locationId: locations[0].id, phone: "+15555550111", startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }
   page.agentCalls = { calls: [original], nextCursor: "" }
   const show = (version: number) => page.render(<LiveWorkspace version={version}><ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="transcripts" onPage={() => {}} /></LiveWorkspace>)
   await show(1)
@@ -1131,12 +1157,16 @@ function LiveWorkspace({ version, children }: { version: number; children: React
   return children
 }
 
+function allOfficesGapQuery(): AgentCallsQuery {
+  return { practiceId: "practice-1", range: "24h", phone: "", flaggedOnly: false, knowledgeGapOnly: true, limit: 50 }
+}
+
 function homeGapQuery(locationId: string): AgentCallsQuery {
   return { practiceId: "practice-1", locationId, range: "24h", phone: "", flaggedOnly: false, knowledgeGapOnly: true, limit: 50 }
 }
 
 function agentCall(id: string, phone: string): AgentCallsPage["calls"][number] {
-  return { id, phone, startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }
+  return { id, locationId: locations[0].id, phone, startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }
 }
 
 function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {

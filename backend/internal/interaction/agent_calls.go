@@ -19,6 +19,7 @@ type AgentCall struct {
 	Outcome            *string             `json:"outcome,omitempty"`
 	LabelingStatus     *string             `json:"labelingStatus,omitempty"`
 	ID                 string              `json:"id"`
+	LocationID         string              `json:"locationId"`
 	Phone              string              `json:"phone"`
 	StartedAt          time.Time           `json:"startedAt"`
 	DurationSeconds    *int                `json:"durationSeconds,omitempty"`
@@ -108,7 +109,7 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
-  SELECT i.id::text, i.phone, i.started_at, i.ended_at, i.status,
+  SELECT i.id::text, i.location_id::text, i.phone, i.started_at, i.ended_at, i.status,
    i.appointment_outcome, i.booking_result, i.cancellation_result,
    i.closeout_payload -> 'domainOutcomes', issue.interaction_id IS NOT NULL,
    classification.intent, classification.outcome, classification.status
@@ -134,7 +135,7 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 		var receipts json.RawMessage
 		var flagged bool
 		var labels callLabelProjection
-		if err := rows.Scan(&stored.ID, &stored.Phone, &stored.StartedAt, &stored.EndedAt, &stored.Status, &stored.AppointmentOutcome, &stored.BookingResult, &stored.CancellationResult, &receipts, &flagged, &labels.Intent, &labels.Outcome, &labels.LabelingStatus); err != nil {
+		if err := rows.Scan(&stored.ID, &stored.LocationID, &stored.Phone, &stored.StartedAt, &stored.EndedAt, &stored.Status, &stored.AppointmentOutcome, &stored.BookingResult, &stored.CancellationResult, &receipts, &flagged, &labels.Intent, &labels.Outcome, &labels.LabelingStatus); err != nil {
 			rows.Close()
 			return AgentCallsPage{}, err
 		}
@@ -212,7 +213,7 @@ func agentCall(stored Interaction, receipts json.RawMessage, flagged bool) Agent
 			}
 		}
 	}
-	call := AgentCall{ID: stored.ID, Phone: stored.Phone, StartedAt: stored.StartedAt, AppointmentActions: actions, Transferred: stored.Status == CallEscalated, IssueFlagged: flagged}
+	call := AgentCall{ID: stored.ID, LocationID: stored.LocationID, Phone: stored.Phone, StartedAt: stored.StartedAt, AppointmentActions: actions, Transferred: stored.Status == CallEscalated, IssueFlagged: flagged}
 	if stored.EndedAt != nil {
 		seconds := max(0, int(stored.EndedAt.Sub(stored.StartedAt).Seconds()))
 		call.DurationSeconds = &seconds
