@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.1.0](https://github.com/chasef07/acuity_product/compare/v2.0.1...v2.1.0) (2026-10-28)
+
+
+### Features
+
+* **analytics:** Call volume page and booking-by-intent trend ([#572](https://github.com/chasef07/acuity_product/issues/572)) ([bdaac0c](https://github.com/chasef07/acuity_product/commit/bdaac0c46622d6e94d1adf19de0f1436280a4441))
+
+
+### Bug Fixes
+
+* **analytics:** bucket every portal report by Eastern day ([#570](https://github.com/chasef07/acuity_product/issues/570)) ([5745a06](https://github.com/chasef07/acuity_product/commit/5745a069b3fc7c77c88ef7d254bfe12ab39c86fb))
+* **auth:** upgrade better-auth to 1.7.14 for the sign-in advisories ([#574](https://github.com/chasef07/acuity_product/issues/574)) ([be931c7](https://github.com/chasef07/acuity_product/commit/be931c7213312ef2a805d175eb81afddd00f00cf))
+* **web:** drop the Optional tags from the agent tools list ([#571](https://github.com/chasef07/acuity_product/issues/571)) ([464bf33](https://github.com/chasef07/acuity_product/commit/464bf336bc6e5e0d1a94be849c662d254457a626))
+
 ## [2.0.1](https://github.com/chasef07/acuity_product/compare/v2.0.0...v2.0.1) (2026-10-27)
 
 
