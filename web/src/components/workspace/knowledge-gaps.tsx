@@ -34,8 +34,8 @@ export function KnowledgeGaps({ practiceID, locationID }: { practiceID: string; 
   if (gaps.status === "loading") return null
   if (gaps.status === "failed") {
     return (
-      <Alert variant="destructive" className="mx-4 mt-6 w-auto sm:mx-6">
-        <AlertTitle>Calls Abita couldn&apos;t answer are unavailable</AlertTitle>
+      <Alert variant="destructive" className="mx-4 mb-8 w-auto sm:mx-6">
+        <AlertTitle>Calls that need knowledge are unavailable</AlertTitle>
         <Button variant="outline" size="sm" className="mt-2 w-fit" onClick={gaps.retry}>
           Try again
         </Button>
@@ -43,14 +43,14 @@ export function KnowledgeGaps({ practiceID, locationID }: { practiceID: string; 
     )
   }
   return (
-    <section aria-label="Calls Abita couldn't answer" className="mx-4 mt-6 rounded-xl border p-4 sm:mx-6">
+    <section aria-label="Calls that need knowledge" className="mx-4 mb-8 rounded-xl border p-4 sm:mx-6">
       <h2 className="flex items-center gap-2 text-base font-medium">
         <MessageCircleQuestionIcon aria-hidden="true" className="size-4 text-muted-foreground" />
         {calls.length === 0
-          ? "Abita had answers for every call"
-          : `${calls.length}${more ? "+" : ""} ${calls.length === 1 && !more ? "call" : "calls"} Abita couldn't answer`}
+          ? "No calls need knowledge"
+          : `${calls.length}${more ? "+" : ""} ${calls.length === 1 && !more ? "call needs" : "calls need"} knowledge`}
       </h2>
-      <p className="mt-0.5 text-sm text-muted-foreground">Last 24 hours</p>
+      <p className="mt-0.5 text-sm text-muted-foreground">Missing from the knowledge base · Last 24 hours</p>
       {calls.length > 0 && (
         <ul className="mt-3 border-t">
           {calls.map((call) => (

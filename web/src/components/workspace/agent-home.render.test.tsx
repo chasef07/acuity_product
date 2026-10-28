@@ -58,6 +58,6 @@ test("Home hydrates its greeting and shows knowledge status and the last day's u
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
   }
   assert.match(host.textContent ?? "", /No knowledge published yet/)
-  assert.match(host.textContent ?? "", /Abita had answers for every call/)
+  assert.match(host.textContent ?? "", /No calls need knowledge/)
   assert.doesNotMatch(host.textContent ?? "", /Needs knowledge|Load more calls|office question went unanswered/i)
 })

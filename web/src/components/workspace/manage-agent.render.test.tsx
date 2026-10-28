@@ -84,7 +84,7 @@ test("Home connects Acuity to knowledge, insurance, and tools", async (t) => {
   assert.deepEqual(Array.from(connections.querySelectorAll("button"), (button) => button.getAttribute("aria-label")), ["Knowledge base", "Insurance", "Tools"])
   assert.equal(connections.querySelectorAll('svg[aria-label="Acuity"] circle').length, 7)
   assert.doesNotMatch(page.text(), /What Acuity can do|Transfer policy|Emergency policy/)
-  await waitFor(() => /Abita had answers for every call/.test(page.text()))
+  await waitFor(() => /No calls need knowledge/.test(page.text()))
   assert.deepEqual(page.agentCallsRequests, [homeGapQuery(locations[0].id)])
   await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => /Version 14 · published/.test(page.text()))
@@ -148,7 +148,7 @@ test("pages that show one Location use the workspace's office, or the only offic
   await page.unmount()
 })
 
-test("Home fixes a call Abita couldn't answer by editing a topic, and a conflict keeps the typed answer", async (t) => {
+test("Home fixes a call that needs knowledge by editing a topic, and a conflict keeps the typed answer", async (t) => {
   const page = harness(t)
   page.knowledge = {
     locationId: locations[0].id,
@@ -162,7 +162,7 @@ test("Home fixes a call Abita couldn't answer by editing a topic, and a conflict
   page.agentCalls = { calls: [call], nextCursor: "" }
   page.callDetail = { call, locationName: "Hollywood", messages: [{ speaker: "Caller", text: "Do you validate parking?", occurredAt: "2026-10-28T15:00:05Z" }], scorecard: [] }
   await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={() => {}} />)
-  await waitFor(() => /1 call Abita couldn't answer/.test(page.text()))
+  await waitFor(() => /1 call needs knowledge/.test(page.text()))
   assert.deepEqual(page.agentCallsRequests, [homeGapQuery(locations[0].id)])
   await act(async () => gapRows(page.host)[0].click())
   await waitFor(() => /Do you validate parking\?/.test(page.sheetText()) && /Edit a topic/.test(page.sheetText()))
@@ -190,7 +190,7 @@ test("Home fixes a call Abita couldn't answer by editing a topic, and a conflict
   await page.sheetClick("Close")
   assert.match(page.sheetText(), /Fix this/)
   releasePublish()
-  await waitFor(() => /Abita had answers for every call/.test(page.text()))
+  await waitFor(() => /No calls need knowledge/.test(page.text()))
   const published = page.publishRequests.at(-1)!
   assert.equal(page.publishRequests.length, 2)
   assert.equal(published.expectedRevisionId, "revision-3")
@@ -212,7 +212,7 @@ test("Home adds a topic once even when closing the call needs a retry, and Not n
   page.agentCalls = { calls: [first, second], nextCursor: "" }
   page.callDetail = { call: first, locationName: "Hollywood", messages: [{ speaker: "Caller", text: "Is there parking?", occurredAt: "2026-10-28T15:00:05Z" }], scorecard: [] }
   await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={() => {}} />)
-  await waitFor(() => /2 calls Abita couldn't answer/.test(page.text()))
+  await waitFor(() => /2 calls need knowledge/.test(page.text()))
   await act(async () => gapRows(page.host)[0].click())
   await waitFor(() => /Add a topic/.test(page.sheetText()) && Boolean(page.sheet()?.querySelector("textarea")))
   assert.equal(page.sheet()!.querySelector<HTMLButtonElement>("button[type='submit']")!.disabled, true)
@@ -232,7 +232,7 @@ test("Home adds a topic once even when closing the call needs a retry, and Not n
   assert.doesNotMatch(page.sheetText(), /Not needed|Add a topic/)
   page.gapCloseStatus = 200
   await page.sheetClick("Close call")
-  await waitFor(() => /1 call Abita couldn't answer/.test(page.text()))
+  await waitFor(() => /1 call needs knowledge/.test(page.text()))
   assert.equal(page.publishRequests.length, 1)
   assert.deepEqual(page.gapCloses, [{ id: "gap-1", resolution: "ANSWERED" }, { id: "gap-1", resolution: "ANSWERED" }])
 
@@ -240,7 +240,7 @@ test("Home adds a topic once even when closing the call needs a retry, and Not n
   await act(async () => gapRows(page.host)[0].click())
   await waitFor(() => /Not needed/.test(page.sheetText()))
   await page.sheetClick("Not needed")
-  await waitFor(() => /Abita had answers for every call/.test(page.text()))
+  await waitFor(() => /No calls need knowledge/.test(page.text()))
   assert.equal(page.publishRequests.length, 1)
   assert.deepEqual(page.gapCloses.at(-1), { id: "gap-2", resolution: "NOT_NEEDED" })
   await page.unmount()
@@ -277,7 +277,7 @@ test("Home keeps an edited answer when someone else removes that topic, and savi
   page.publishStatus = 200
   page.publishError = undefined
   await page.sheetClick("Save and close")
-  await waitFor(() => /Abita had answers for every call/.test(page.text()))
+  await waitFor(() => /No calls need knowledge/.test(page.text()))
   const published = page.publishRequests.at(-1)!
   assert.equal(published.expectedRevisionId, "revision-4")
   assert.deepEqual(published.sections, [
@@ -297,7 +297,7 @@ function sheetField(page: ReturnType<typeof harness>, label: string) {
 }
 
 function gapRows(host: HTMLElement) {
-  return Array.from(host.querySelectorAll<HTMLButtonElement>("[aria-label=\"Calls Abita couldn't answer\"] li > button"))
+  return Array.from(host.querySelectorAll<HTMLButtonElement>("[aria-label='Calls that need knowledge'] li > button"))
 }
 
 test("with all offices in scope and several offices, one-Location pages ask for an office and load nothing", async (t) => {

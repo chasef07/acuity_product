@@ -72,7 +72,6 @@ export function AgentHome({
           </time>
         </h1>
       </header>
-      {locationID && <KnowledgeGaps practiceID={practiceID} locationID={locationID} />}
       <div className="px-4 py-10 sm:px-6 @[36rem]:py-16">
         <AgentHomeMap selected={selected} detailsID={detailsID} onSelect={selectArea} />
       </div>
@@ -100,6 +99,7 @@ export function AgentHome({
           </section>
         )}
       </div>
+      {locationID && <KnowledgeGaps practiceID={practiceID} locationID={locationID} />}
     </section>
   )
 }
