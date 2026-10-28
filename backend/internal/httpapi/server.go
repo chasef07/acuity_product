@@ -3427,7 +3427,7 @@ func operatorAIAnalyticsPageResponse(
 			ToolFailureRate:   page.Summary.ToolFailureRate,
 		}
 		for _, day := range page.Summary.Daily {
-			response.Summary.Daily = append(response.Summary.Daily, api.OperatorAIAnalyticsDay{BookingCount: &day.BookingCount, CancellationCount: &day.CancellationCount, RescheduleCount: &day.RescheduleCount, ToolCallCount: &day.ToolCallCount, ToolErrorCount: &day.ToolErrorCount, Date: day.Date, TotalCalls: day.TotalCalls, CallMinutes: day.CallMinutes, TransferCount: day.TransferCount, TransferRate: day.TransferRate})
+			response.Summary.Daily = append(response.Summary.Daily, api.OperatorAIAnalyticsDay{BookingCount: &day.BookingCount, CancellationCount: &day.CancellationCount, RescheduleCount: &day.RescheduleCount, ToolCallCount: &day.ToolCallCount, ToolErrorCount: &day.ToolErrorCount, NewPatientIntentCalls: day.NewPatientIntentCalls, NewPatientIntentBookings: day.NewPatientIntentBookings, ExistingPatientIntentCalls: day.ExistingPatientIntentCalls, ExistingPatientIntentBookings: day.ExistingPatientIntentBookings, Date: day.Date, TotalCalls: day.TotalCalls, CallMinutes: day.CallMinutes, TransferCount: day.TransferCount, TransferRate: day.TransferRate})
 		}
 	}
 	for _, call := range page.Calls {

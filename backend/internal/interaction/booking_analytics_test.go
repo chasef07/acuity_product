@@ -26,18 +26,24 @@ func TestBookingAnalyticsCalendarDaysAndPooledPercentiles(t *testing.T) {
 	if report.Total.P50 == nil || *report.Total.P50 != 200 || report.Total.P90 == nil || *report.Total.P90 != 280 {
 		t.Fatalf("pooled percentiles: %+v", report.Total)
 	}
-	if report.Daily[1].New.P50 != nil || report.Daily[1].New.Conversion != nil {
+	if report.Daily[1].New.P50 != nil {
 		t.Fatal("missing samples rendered as zero")
 	}
 }
 
-func TestBookingWithoutSearchDoesNotConvertAnotherCall(t *testing.T) {
-	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+func TestBookingAnalyticsCountsMinutesForEveryEndedCall(t *testing.T) {
+	from := time.Date(2026, 9, 1, 0, 0, 0, 0, ReportingZone)
+	ninetySeconds, threeMinutes, reversed := from.Add(90*time.Second), from.Add(time.Hour+3*time.Minute), from.Add(-time.Minute)
 	report := summarizeBookingFacts([]bookingFact{
-		{started: from, searched: true, patientGroup: "new"},
-		{started: from.Add(time.Hour), booked: true, appointmentID: "synthetic-booking", patientGroup: "new"},
+		{started: from, ended: &ninetySeconds, patientGroup: "new"},
+		{started: from.Add(time.Hour), ended: &threeMinutes, booked: true, appointmentID: "synthetic-booking", patientGroup: "existing"},
+		{started: from.Add(2 * time.Hour), patientGroup: "unknown"},
+		{started: from.Add(3 * time.Hour), ended: &reversed, patientGroup: "unknown"},
 	}, from, from.AddDate(0, 0, 7))
-	if report.Total.Searched != 1 || report.Total.Converted != 0 || report.Total.Bookings != 1 {
-		t.Fatalf("a booking cannot convert another call: %+v", report.Total)
+	if report.Total.Calls != 4 || report.Total.Minutes != 4.5 || report.Groups.New.Minutes != 1.5 || report.Groups.Existing.Minutes != 3 || report.Groups.Unknown.Minutes != 0 {
+		t.Fatalf("call minutes: total=%+v groups=%+v", report.Total, report.Groups)
+	}
+	if report.Daily[0].Total.Calls != 4 || report.Daily[0].Total.Minutes != 4.5 || report.Daily[1].Total.Minutes != 0 {
+		t.Fatalf("daily call minutes: %+v", report.Daily[:2])
 	}
 }

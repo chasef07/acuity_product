@@ -18,15 +18,12 @@ type QueryBookingAnalyticsCommand struct {
 }
 
 type BookingMetrics struct {
-	Calls               int      `json:"calls"`
-	Bookings            int      `json:"bookings"`
-	Searched            int      `json:"searched"`
-	Converted           int      `json:"converted"`
-	Conversion          *float64 `json:"conversion"`
-	P50                 *float64 `json:"p50"`
-	P90                 *float64 `json:"p90"`
-	DurationSamples     int      `json:"durationSamples"`
-	SearchEvidenceCalls int      `json:"searchEvidenceCalls"`
+	Calls           int      `json:"calls"`
+	Minutes         float64  `json:"minutes"`
+	Bookings        int      `json:"bookings"`
+	P50             *float64 `json:"p50"`
+	P90             *float64 `json:"p90"`
+	DurationSamples int      `json:"durationSamples"`
 }
 
 type BookingGroups struct {
@@ -57,7 +54,6 @@ type bookingFact struct {
 	appointmentID string
 	countBooking  bool
 	searched      bool
-	searchKnown   bool
 	patientGroup  string
 }
 
@@ -76,7 +72,7 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 
 	rows, err := tx.Query(ctx, `
         SELECT started_at, ended_at, booking_confirmed, COALESCE(new_appointment_id, ''),
-            booking_searched, booking_search_known,
+            booking_searched,
             CASE WHEN booking_patient_basis IN ('confirmed_existing', 'phone_match', 'legacy_existing') THEN 'existing' ELSE 'new' END
         FROM ai_interactions
         WHERE practice_id = $1::uuid AND location_id = ANY($2::uuid[])
@@ -91,7 +87,7 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 	facts := make([]bookingFact, 0)
 	for rows.Next() {
 		var fact bookingFact
-		if err := rows.Scan(&fact.started, &fact.ended, &fact.booked, &fact.appointmentID, &fact.searched, &fact.searchKnown, &fact.patientGroup); err != nil {
+		if err := rows.Scan(&fact.started, &fact.ended, &fact.booked, &fact.appointmentID, &fact.searched, &fact.patientGroup); err != nil {
 			rows.Close()
 			return BookingAnalytics{}, fmt.Errorf("read booking analytics: %w", err)
 		}
@@ -117,34 +113,21 @@ type bookingAccumulator struct {
 
 func (a *bookingAccumulator) add(f bookingFact) {
 	a.metrics.Calls++
-	if f.searchKnown || f.searched {
-		a.metrics.SearchEvidenceCalls++
-	}
-	if f.searched {
-		a.metrics.Searched++
-		if f.booked {
-			a.metrics.Converted++
-		}
-	}
 	if f.countBooking {
 		a.metrics.Bookings++
 	}
-	if !f.booked && !f.searched {
+	if f.ended == nil || f.ended.Before(f.started) {
 		return
 	}
-	end := f.ended
-	if end == nil || end.Before(f.started) {
-		return
+	seconds := f.ended.Sub(f.started).Seconds()
+	a.metrics.Minutes += seconds / 60
+	if f.booked || f.searched {
+		a.durations = append(a.durations, seconds)
 	}
-	a.durations = append(a.durations, end.Sub(f.started).Seconds())
 }
 
 func (a *bookingAccumulator) finish() BookingMetrics {
 	result := a.metrics
-	if result.Searched > 0 {
-		value := float64(result.Converted) / float64(result.Searched) * 100
-		result.Conversion = &value
-	}
 	sort.Float64s(a.durations)
 	result.DurationSamples = len(a.durations)
 	result.P50 = bookingPercentile(a.durations, .5)

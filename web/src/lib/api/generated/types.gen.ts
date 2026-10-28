@@ -874,23 +874,15 @@ export type PracticeAnalyticsQueryRequest = {
 export type BookingMetrics = {
     calls: number;
     /**
+     * Completed-call time in minutes, from call start to hang-up. Calls without a valid end contribute zero.
+     */
+    minutes: number;
+    /**
      * Distinct appointment identifiers backed by a confirmed Product BOOKING outcome and booked result in the selected completed-call cohort.
      */
     bookings: number;
     /**
-     * Unique completed calls with a get_availability execution that has a successful tool output, excluding calls whose Product outcome is RESCHEDULE or CANCELLATION. A completed search with no openings remains included.
-     */
-    searched: number;
-    /**
-     * Searched calls with a confirmed booking.
-     */
-    converted: number;
-    /**
-     * Converted divided by searched, multiplied by 100. Null without a denominator.
-     */
-    conversion: number | null;
-    /**
-     * Median call-start-to-hang-up duration in seconds across calls with a completed booking search or confirmed booking and valid timing evidence. Includes non-converting attempts.
+     * Median call-start-to-hang-up duration in seconds across calls with a completed booking search or confirmed booking and valid timing evidence. Includes attempts that did not book.
      */
     p50: number | null;
     /**
@@ -898,10 +890,6 @@ export type BookingMetrics = {
      */
     p90: number | null;
     durationSamples: number;
-    /**
-     * Calls with recorded availability use or complete tool history.
-     */
-    searchEvidenceCalls: number;
 };
 
 export type BookingGroups = {
@@ -1293,6 +1281,22 @@ export type OperatorAiAnalyticsDay = {
     rescheduleCount?: number;
     toolCallCount?: number;
     toolErrorCount?: number;
+    /**
+     * Calls labeled with the new_patient_booking intent.
+     */
+    newPatientIntentCalls: number;
+    /**
+     * Of newPatientIntentCalls, those with a confirmed BOOKING appointment outcome.
+     */
+    newPatientIntentBookings: number;
+    /**
+     * Calls labeled with the existing_patient_booking intent.
+     */
+    existingPatientIntentCalls: number;
+    /**
+     * Of existingPatientIntentCalls, those with a confirmed BOOKING appointment outcome.
+     */
+    existingPatientIntentBookings: number;
     /**
      * Eastern (America/New_York) call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
      */

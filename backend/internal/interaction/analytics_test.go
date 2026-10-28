@@ -108,3 +108,26 @@ func TestAnalyticsDailyBucketsFollowEasternDays(t *testing.T) {
 		t.Fatalf("9:30pm Eastern call must count on Aug 9: daily=%+v quality=%+v", summary.Daily, summary.Quality.Daily)
 	}
 }
+
+func TestAnalyticsDailyCountsBookedCallsByPatientIntent(t *testing.T) {
+	day := time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC)
+	summary := AnalyticsSummary{Daily: analyticsDays(day, day)}
+	for _, call := range []struct {
+		intent  CallIntent
+		outcome AppointmentOutcome
+	}{
+		{"new_patient_booking", OutcomeBooking},
+		{"new_patient_booking", OutcomeIndeterminate},
+		{"new_patient_booking", OutcomeBooking},
+		{"existing_patient_booking", OutcomeReschedule},
+		{"existing_patient_booking", OutcomeBooking},
+		{"office_information", OutcomeBooking},
+		{"", OutcomeBooking},
+	} {
+		summarizeAnalyticsProjection(&summary, analyticsProjection{call: AnalyticsCall{StartedAt: day}, intent: call.intent, appointmentOutcome: call.outcome})
+	}
+	got := summary.Daily[0]
+	if got.NewPatientIntentCalls != 3 || got.NewPatientIntentBookings != 2 || got.ExistingPatientIntentCalls != 2 || got.ExistingPatientIntentBookings != 1 || got.BookingCount != 5 {
+		t.Fatalf("intent bookings = %+v", got)
+	}
+}

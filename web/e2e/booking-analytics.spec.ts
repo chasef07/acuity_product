@@ -177,44 +177,35 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     ).toHaveText("2")
     await expect(breakdown.getByRole("row")).toHaveCount(4)
     await expect(breakdown.getByRole("columnheader")).toHaveText([
-      "Patient status", "Bookings", "Conversion", "p50 duration",
+      "Patient status", "Bookings", "p50 duration",
     ])
     await expect(
       breakdown.getByRole("row").filter({ hasText: "New patients" }).getByRole("cell"),
-    ).toHaveText(["New patients", "2", "66.7%", "7m 0s"])
+    ).toHaveText(["New patients", "2", "7m 0s"])
     await expect(
       breakdown.getByRole("row").filter({ hasText: "Existing patients" }).getByRole("cell"),
-    ).toHaveText(["Existing patients", "2", "66.7%", "8m 0s"])
+    ).toHaveText(["Existing patients", "2", "8m 0s"])
     await expect(
       breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
-    ).toHaveText(["Total", "4", "66.7%", "7m 30s"])
+    ).toHaveText(["Total", "4", "7m 30s"])
     await expect(page.getByRole("navigation", { name: "Analytics", exact: true }).getByRole("button")).toHaveCount(4)
     await expect(page.getByRole("group", { name: "Analytics view", exact: true })).toHaveCount(0)
-    await selectAnalyticsPage(page, "Conversion")
+    await selectAnalyticsPage(page, "Call volume")
     await expect(
-      performance.getByRole("status", {
-        name: "Booking conversion",
-        exact: true,
-      }),
-    ).toHaveText("66.7%")
+      performance.getByRole("status", { name: "Total calls", exact: true }),
+    ).toHaveText("11")
     await expect(
-      breakdown.getByText("Excludes 1 call with no availability history.", {
-        exact: true,
-      }),
-    ).toBeVisible()
-    await expect(breakdown.getByRole("row")).toHaveCount(4)
-    await expect(
-      breakdown.getByRole("row").filter({ hasText: "New patients" }).getByRole("cell"),
-    ).toHaveText(["New patients", "2", "3", "66.7%"])
-    await expect(
-      breakdown.getByRole("row").filter({ hasText: "Existing patients" }).getByRole("cell"),
-    ).toHaveText(["Existing patients", "2", "3", "66.7%"])
+      performance.getByRole("status", { name: "Total minutes", exact: true }),
+    ).toHaveText("110")
+    await expect(breakdown.getByRole("columnheader")).toHaveText([
+      "Patient status", "Calls", "Minutes", "Avg. / call",
+    ])
     await expect(
       breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
-    ).toHaveText(["Total", "4", "6", "66.7%"])
+    ).toHaveText(["Total", "11", "110", "10m 0s"])
     await expect(performance.locator(".recharts-bar")).toHaveCount(2)
     await page.screenshot({
-      path: testInfo.outputPath("admin-booking-conversion.png"),
+      path: testInfo.outputPath("admin-call-volume.png"),
       fullPage: true,
     })
     await selectAnalyticsPage(page, "Duration")
@@ -250,9 +241,9 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     ).toBeVisible()
 
     await page.setViewportSize({ width: 390, height: 844 })
-    await selectAnalyticsPage(page, "Conversion")
+    await selectAnalyticsPage(page, "Call volume")
     await expect(page.getByRole("navigation", { name: "Analytics", exact: true })).toBeHidden()
-    await expect(page.getByRole("navigation", { name: "Current location", exact: true }).getByText("Conversion", { exact: true })).toBeVisible()
+    await expect(page.getByRole("navigation", { name: "Current location", exact: true }).getByText("Call volume", { exact: true })).toBeVisible()
     await expect(page.getByRole("combobox", { name: "Date range", exact: true })).toContainText("Last 30 days")
     await expect(page.getByRole("combobox", { name: "Date range", exact: true })).toBeInViewport()
     await page.screenshot({ path: testInfo.outputPath("admin-analytics-mobile.png"), fullPage: true })
