@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/chasef07/acuity_product/compare/v2.2.0...v2.3.0) (2026-10-28)
+
+
+### Features
+
+* **knowledge:** list calls that need knowledge on All offices ([#580](https://github.com/chasef07/acuity_product/issues/580)) ([c185008](https://github.com/chasef07/acuity_product/commit/c18500868a0aa822e17ac7bd903ecdb89010da9e))
+
 ## [2.2.0](https://github.com/chasef07/acuity_product/compare/v2.1.0...v2.2.0) (2026-10-28)
 
 
