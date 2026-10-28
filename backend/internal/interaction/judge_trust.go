@@ -148,7 +148,7 @@ func estimateTrust(calls map[string]*trustCall, pools map[string]reviewPool, now
 		human := float64(pairsAgreed) / float64(pairs)
 		estimate.HumanAgreement = &human
 	}
-	recent, _, _ := measureTrust(calls, pools, now.Add(-trustRecentWindow).UTC().Format("2006-01-02"))
+	recent, _, _ := measureTrust(calls, pools, now.Add(-trustRecentWindow).In(ReportingZone).Format("2006-01-02"))
 	estimate.Status, estimate.Reason = trustVerdict(estimate, recent)
 	return estimate
 }

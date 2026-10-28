@@ -84,7 +84,7 @@ func (v *versionAccumulator) seed(dimension, locationID, version string) {
 }
 
 func (v *versionAccumulator) add(startedAt time.Time, call callVersions) {
-	day := startedAt.UTC().Format(time.DateOnly)
+	day := startedAt.In(ReportingZone).Format(time.DateOnly)
 	for _, dimension := range versionDimensions {
 		version := call.values[dimension]
 		if version == "" {
@@ -126,7 +126,7 @@ func (v *versionAccumulator) flush(stream *versionStream) {
 			Version:         majority,
 			PreviousVersion: stream.current,
 			FirstSeenAt:     first,
-			Date:            first.UTC().Format(time.DateOnly),
+			Date:            first.In(ReportingZone).Format(time.DateOnly),
 			LocationID:      stream.locationID,
 		})
 	}

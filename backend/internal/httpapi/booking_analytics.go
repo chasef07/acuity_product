@@ -26,7 +26,7 @@ func (server *Server) QueryBookingAnalytics(w http.ResponseWriter, r *http.Reque
 	defer finish()
 	page, err := server.interactions.QueryBookingAnalytics(ctx, interaction.QueryBookingAnalyticsCommand{
 		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: uuidString(body.LocationId),
-		Days: int(body.Days), TimeZone: body.TimeZone,
+		Days: int(body.Days),
 	})
 	if err != nil {
 		server.writeInteractionError(w, r, err)

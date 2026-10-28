@@ -328,7 +328,7 @@ func evidenceAnalyticsSummary(ctx context.Context, tx pgx.Tx, command QueryAnaly
 		if (command.Intent == "" || intent != nil && *intent == command.Intent) &&
 			(command.Outcome == "" || outcome != nil && *outcome == command.Outcome) {
 			distributions.add(intent, outcome, evaluated, failures)
-			dailyDistributions[projection.call.StartedAt.UTC().Format(time.DateOnly)].add(intent, outcome, evaluated, failures)
+			dailyDistributions[projection.call.StartedAt.In(ReportingZone).Format(time.DateOnly)].add(intent, outcome, evaluated, failures)
 		}
 		summarizeAnalyticsProjection(&summary, projection)
 	}

@@ -6,7 +6,6 @@ import (
 	"math"
 	"sort"
 	"time"
-	_ "time/tzdata"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 )
@@ -16,7 +15,6 @@ type QueryBookingAnalyticsCommand struct {
 	PracticeID string
 	LocationID string
 	Days       int
-	TimeZone   string
 }
 
 type BookingMetrics struct {
@@ -64,12 +62,11 @@ type bookingFact struct {
 }
 
 func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBookingAnalyticsCommand) (BookingAnalytics, error) {
-	zone, validZone := reportingZone(command.TimeZone)
-	if !validZone || (command.Days != 7 && command.Days != 30 && command.Days != 90) {
+	if command.Days != 7 && command.Days != 30 && command.Days != 90 {
 		return BookingAnalytics{}, ErrInvalidInput
 	}
-	now := m.now().In(zone)
-	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone)
+	now := m.now().In(ReportingZone)
+	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ReportingZone)
 	from := to.AddDate(0, 0, -command.Days)
 	tx, locations, err := m.beginAnalyticsScope(ctx, command.Identity, command.PracticeID, command.LocationID, audienceAdmin)
 	if err != nil {

@@ -37,7 +37,7 @@ func assertVersionChanges(t *testing.T, got []VersionChange, want []wantChange) 
 		w := want[i]
 		if change.Dimension != w.dimension || change.Version != w.version || change.PreviousVersion != w.previous ||
 			change.LocationID != w.location || !change.FirstSeenAt.Equal(w.firstSeenAt) ||
-			change.Date != w.firstSeenAt.UTC().Format(time.DateOnly) {
+			change.Date != w.firstSeenAt.In(ReportingZone).Format(time.DateOnly) {
 			t.Fatalf("change %d=%+v want %+v", i, change, w)
 		}
 	}
@@ -65,6 +65,16 @@ func TestVersionChangesFollowDailyMajority(t *testing.T) {
 		assertVersionChanges(t, got, []wantChange{
 			{"agent", "0.11.0", "0.10.0", "", versionTestTime(1, 10)},
 			{"agent", "0.10.0", "0.11.0", "", versionTestTime(3, 10)},
+		})
+	})
+	t.Run("an evening rollout counts on its Eastern day", func(t *testing.T) {
+		got := versionChanges(seedAgent, []versionCall{
+			versionAgentCall(0, 12, "0.10.0"), versionAgentCall(1, 1, "0.11.0"), versionAgentCall(1, 2, "0.11.0"),
+			versionAgentCall(1, 12, "0.10.0"),
+		})
+		assertVersionChanges(t, got, []wantChange{
+			{"agent", "0.11.0", "0.10.0", "", versionTestTime(1, 1)},
+			{"agent", "0.10.0", "0.11.0", "", versionTestTime(1, 12)},
 		})
 	})
 	t.Run("ties keep the version in effect or pick the earliest", func(t *testing.T) {

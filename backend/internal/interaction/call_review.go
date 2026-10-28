@@ -212,28 +212,20 @@ type JudgeAccuracy struct {
 	ReviewerDisagreements []ReviewerDisagreement `json:"reviewerDisagreements"`
 }
 
-var reviewZone = func() *time.Location {
-	zone, err := time.LoadLocation("America/New_York")
-	if err != nil {
-		panic(err)
-	}
-	return zone
-}()
-
 const reviewCutoffHour = 16
 
 func reviewDay(date string) (time.Time, time.Time, bool) {
-	day, err := time.ParseInLocation("2006-01-02", date, reviewZone)
+	day, err := time.ParseInLocation("2006-01-02", date, ReportingZone)
 	if err != nil {
 		return time.Time{}, time.Time{}, false
 	}
-	end := time.Date(day.Year(), day.Month(), day.Day(), reviewCutoffHour, 0, 0, 0, reviewZone)
+	end := time.Date(day.Year(), day.Month(), day.Day(), reviewCutoffHour, 0, 0, 0, ReportingZone)
 	return end.AddDate(0, 0, -1), end, true
 }
 
 func latestReviewDay(now time.Time) time.Time {
-	local := now.In(reviewZone)
-	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, reviewZone)
+	local := now.In(ReportingZone)
+	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, ReportingZone)
 	if local.Hour() < reviewCutoffHour {
 		day = day.AddDate(0, 0, -1)
 	}

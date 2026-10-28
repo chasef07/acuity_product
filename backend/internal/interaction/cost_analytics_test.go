@@ -16,11 +16,11 @@ func assertCostClose(t *testing.T, got, want float64) {
 
 func TestGPTLiveAndLunaRecordedCosts(t *testing.T) {
 	started := time.Date(2026, 9, 25, 1, 0, 0, 0, time.UTC)
-	report := newCostAnalytics(started, started.Add(time.Hour), time.UTC)
+	report := newCostAnalytics(started, started.Add(time.Hour))
 	report.addCall(started, started.Add(2*time.Minute), json.RawMessage(`[
  {"provider":"api.openai.com","model":"gpt-live-1","session_duration":91.5},
  {"provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10000,"input_cached_tokens":2000,"input_cache_creation_tokens":1000,"output_tokens":500,"output_reasoning_tokens":200}
- ]`), time.UTC)
+ ]`))
 	report.finalize()
 	if report.PricedCalls != 1 || report.UnpricedUsage != 0 {
 		t.Fatalf("missing coverage: %+v", report)
@@ -52,8 +52,8 @@ func TestGPTLiveCostsKeepUnknownUsageVisible(t *testing.T) {
 		{"typeless unknown model", `[{"provider":"livekit","model":"unknown","audio_duration":60}]`, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			report := newCostAnalytics(started, started.Add(time.Hour), time.UTC)
-			report.addCall(started, started.Add(time.Minute), json.RawMessage(tc.usage), time.UTC)
+			report := newCostAnalytics(started, started.Add(time.Hour))
+			report.addCall(started, started.Add(time.Minute), json.RawMessage(tc.usage))
 			report.finalize()
 			if report.PricedCalls != 0 || report.CostPerCallUSD != nil || report.CostPerMinuteUSD != nil || report.CacheHitRate != nil || report.UnpricedUsage != tc.unpriced {
 				t.Fatalf("invented coverage: %+v", report)
@@ -70,7 +70,7 @@ func TestGPTLiveCostsKeepUnknownUsageVisible(t *testing.T) {
 
 func TestCostAnalyticsLeavesLegacyUsageUnpriced(t *testing.T) {
 	started := time.Date(2026, 9, 25, 1, 0, 0, 0, time.UTC)
-	report := newCostAnalytics(started, started.Add(time.Hour), time.UTC)
+	report := newCostAnalytics(started, started.Add(time.Hour))
 	for _, usage := range []string{
 		`[{"type":"llm_usage","provider":"livekit","model":"google/gemma-4-31b-it","input_tokens":1000000},
     {"type":"stt_usage","provider":"assemblyai","model":"universal-3.5-pro","audio_duration":60},
@@ -78,7 +78,7 @@ func TestCostAnalyticsLeavesLegacyUsageUnpriced(t *testing.T) {
 		`[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-live-1","session_duration":60},
     {"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10000,"output_tokens":1000}]`,
 	} {
-		report.addCall(started, started.Add(time.Minute), json.RawMessage(usage), time.UTC)
+		report.addCall(started, started.Add(time.Minute), json.RawMessage(usage))
 	}
 	report.finalize()
 	if report.PricedCalls != 1 || report.UnpricedUsage != 3 {
@@ -87,4 +87,17 @@ func TestCostAnalyticsLeavesLegacyUsageUnpriced(t *testing.T) {
 	assertCostClose(t, report.TotalCostUSD, .0785)
 	assertCostClose(t, *report.CostPerCallUSD, .065)
 	assertCostClose(t, *report.CostPerMinuteUSD, .065)
+}
+
+func TestCostAnalyticsBucketsEasternDays(t *testing.T) {
+	sep24At10pmEastern := time.Date(2026, 9, 25, 2, 0, 0, 0, time.UTC)
+	sep25At930pmEastern := time.Date(2026, 9, 26, 1, 30, 0, 0, time.UTC)
+	report := newCostAnalytics(sep24At10pmEastern, sep24At10pmEastern.Add(24*time.Hour))
+	report.addCall(sep25At930pmEastern, sep25At930pmEastern.Add(time.Minute), json.RawMessage(`[]`))
+	if report.TimeZone != "America/New_York" || report.From != "2026-09-24" || report.Through != "2026-09-25" {
+		t.Fatalf("report window = %s %s..%s", report.TimeZone, report.From, report.Through)
+	}
+	if len(report.Daily) != 2 || report.Daily[1].Day != "2026-09-25" || report.Daily[1].Calls != 1 {
+		t.Fatalf("9:30pm Eastern call must count on Sep 25: %+v", report.Daily)
+	}
 }

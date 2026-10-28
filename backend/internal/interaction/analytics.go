@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/google/uuid"
@@ -18,6 +19,14 @@ import (
 )
 
 type AnalyticsRange string
+
+var ReportingZone = func() *time.Location {
+	zone, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		panic(err)
+	}
+	return zone
+}()
 
 const (
 	AnalyticsRange24Hours AnalyticsRange = "24h"
@@ -59,7 +68,8 @@ type AnalyticsDay struct {
 
 func analyticsDays(from, through time.Time) []AnalyticsDay {
 	days := []AnalyticsDay{}
-	for day := from.UTC().Truncate(24 * time.Hour); !day.After(through); day = day.AddDate(0, 0, 1) {
+	first, last := from.In(ReportingZone), through.In(ReportingZone)
+	for day := time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, ReportingZone); !day.After(last); day = day.AddDate(0, 0, 1) {
 		days = append(days, AnalyticsDay{Date: day.Format(time.DateOnly)})
 	}
 	return days
@@ -370,7 +380,7 @@ func queryAnalyticsSummary(
 		if (command.Intent == "" || intent != nil && *intent == command.Intent) &&
 			(command.Outcome == "" || outcome != nil && *outcome == command.Outcome) {
 			distributions.add(intent, outcome, evaluated, failures)
-			dailyDistributions[projection.call.StartedAt.UTC().Format(time.DateOnly)].add(intent, outcome, evaluated, failures)
+			dailyDistributions[projection.call.StartedAt.In(ReportingZone).Format(time.DateOnly)].add(intent, outcome, evaluated, failures)
 		}
 		summarizeAnalyticsProjection(&summary, projection)
 	}
@@ -393,7 +403,7 @@ func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analytic
 		minutes = ended.Sub(projection.call.StartedAt).Minutes()
 	}
 	summary.TotalCallMinutes += minutes
-	date := projection.call.StartedAt.UTC().Format(time.DateOnly)
+	date := projection.call.StartedAt.In(ReportingZone).Format(time.DateOnly)
 	for i := range summary.Daily {
 		day := &summary.Daily[i]
 		if day.Date == date {

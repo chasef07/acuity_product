@@ -9,14 +9,15 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
 type QueryStaffAnalyticsCommand struct {
-	Identity                         access.Identity
-	PracticeID, LocationID, TimeZone string
-	Days                             int
+	Identity               access.Identity
+	PracticeID, LocationID string
+	Days                   int
 }
 
 type StaffPhoneMetrics struct {
@@ -69,19 +70,17 @@ type staffTaskFact struct {
 }
 
 func (m *Module) QueryStaffAnalytics(ctx context.Context, command QueryStaffAnalyticsCommand) (StaffAnalytics, error) {
-	zone, zoneErr := time.LoadLocation(command.TimeZone)
 	_, practiceErr := uuid.Parse(command.PracticeID)
 	var locationErr error
 	if command.LocationID != "" {
 		_, locationErr = uuid.Parse(command.LocationID)
 	}
 	if m.database == nil || m.access == nil || practiceErr != nil || locationErr != nil ||
-		command.TimeZone == "" || command.TimeZone == "Local" || zoneErr != nil ||
 		(command.Days != 7 && command.Days != 30 && command.Days != 90) {
 		return StaffAnalytics{}, ErrInvalidInput
 	}
-	now := time.Now().In(zone)
-	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone)
+	now := time.Now().In(interaction.ReportingZone)
+	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, interaction.ReportingZone)
 	from := to.AddDate(0, 0, -command.Days)
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

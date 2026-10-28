@@ -1,5 +1,3 @@
-import { useState } from "react"
-
 import {
   queryBookingAnalytics,
   queryOperatorAiCosts,
@@ -34,17 +32,15 @@ export function usePracticeReport({
   days: 7 | 30 | 90
   kind: PracticeReport["kind"]
 }): AnalyticsReport<PracticeReport> {
-  const timeZone = useBrowserTimeZone()
   return analyticsReport(
     useRead({
       name: "practice-report",
-      identity: { practiceID, locationID, days, timeZone, kind },
+      identity: { practiceID, locationID, days, kind },
       read: async (identity, transport): Promise<PortalResult<PracticeReport>> => {
         const body = {
           practiceId: identity.practiceID,
           locationId: identity.locationID || undefined,
           days: identity.days,
-          timeZone: identity.timeZone,
         }
         if (identity.kind === "staff") {
           const result = await queryStaffAnalytics({ ...transport, body })
@@ -66,11 +62,10 @@ export function useAiCostReport({
   locationID: string
   range: OperatorAiAnalyticsRange
 }): AnalyticsReport<{ report: OperatorAiCostAnalytics }> {
-  const timeZone = useBrowserTimeZone()
   return analyticsReport(
     useRead({
       name: "ai-cost-report",
-      identity: { practiceID, locationID, range, timeZone },
+      identity: { practiceID, locationID, range },
       read: async (identity, transport) => {
         const result = await queryOperatorAiCosts({
           ...transport,
@@ -78,7 +73,6 @@ export function useAiCostReport({
             practiceId: identity.practiceID,
             locationId: identity.locationID || undefined,
             range: identity.range,
-            timeZone: identity.timeZone,
           },
         })
         return { ...result, data: result.data && { report: result.data } }
@@ -102,11 +96,4 @@ function analyticsReport<T extends object>(
         : "unavailable",
     retry,
   }
-}
-
-function useBrowserTimeZone() {
-  const [timeZone] = useState(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
-  )
-  return timeZone
 }

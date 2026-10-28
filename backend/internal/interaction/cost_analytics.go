@@ -17,7 +17,6 @@ type QueryCostAnalyticsCommand struct {
 	PracticeID string
 	LocationID string
 	Range      AnalyticsRange
-	TimeZone   string
 }
 
 type CostItem struct {
@@ -85,8 +84,7 @@ func costItems() []CostItem {
 
 func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyticsCommand) (CostAnalytics, error) {
 	duration, validRange := analyticsRangeDuration(command.Range)
-	zone, validZone := reportingZone(command.TimeZone)
-	if !validRange || !validZone {
+	if !validRange {
 		return CostAnalytics{}, ErrInvalidInput
 	}
 	to := m.now().UTC()
@@ -109,7 +107,7 @@ func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyt
 		return CostAnalytics{}, fmt.Errorf("query AI costs: %w", err)
 	}
 	defer rows.Close()
-	report := newCostAnalytics(from, to, zone)
+	report := newCostAnalytics(from, to)
 	rowCount := 0
 	for rows.Next() {
 		rowCount++
@@ -121,7 +119,7 @@ func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyt
 		if len(usage) == 0 {
 			return CostAnalytics{}, errors.New("AI cost usage evidence backfill is incomplete")
 		}
-		report.addCall(started, ended, usage, zone)
+		report.addCall(started, ended, usage)
 	}
 	if err := rows.Err(); err != nil {
 		return CostAnalytics{}, fmt.Errorf("iterate AI costs: %w", err)
@@ -136,19 +134,19 @@ func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyt
 	return report, nil
 }
 
-func newCostAnalytics(from, to time.Time, zone *time.Location) CostAnalytics {
-	first, last := from.In(zone), to.In(zone)
+func newCostAnalytics(from, to time.Time) CostAnalytics {
+	first, last := from.In(ReportingZone), to.In(ReportingZone)
 	report := CostAnalytics{
-		From: first.Format(time.DateOnly), Through: last.Format(time.DateOnly), TimeZone: zone.String(), RateEffectiveDate: costRateEffectiveDate,
+		From: first.Format(time.DateOnly), Through: last.Format(time.DateOnly), TimeZone: ReportingZone.String(), RateEffectiveDate: costRateEffectiveDate,
 		Items: costItems(), Daily: []CostDay{},
 	}
-	for day := time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, zone); !day.After(last); day = day.AddDate(0, 0, 1) {
-		report.Daily = append(report.Daily, CostDay{Day: day.Format(time.DateOnly)})
+	for _, day := range analyticsDays(from, to) {
+		report.Daily = append(report.Daily, CostDay{Day: day.Date})
 	}
 	return report
 }
 
-func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessage, zone *time.Location) {
+func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessage) {
 	report.TotalCalls++
 	quantities := map[string]float64{}
 	known := map[string]bool{}
@@ -232,7 +230,7 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 		report.pricedMinutes += max(minutes, 0)
 	}
 	report.UnpricedUsage += unpricedUsage
-	day := started.In(zone).Format(time.DateOnly)
+	day := started.In(ReportingZone).Format(time.DateOnly)
 	for i := range report.Daily {
 		if report.Daily[i].Day == day {
 			report.Daily[i].CostUSD += callCost

@@ -51,7 +51,7 @@ func TestCostUsageProjectionPreservesPricingAndCorrections(t *testing.T) {
 		t.Fatal(err)
 	}
 	module := New(pool, access.New(pool, func() time.Time { return now }), func() time.Time { return now })
-	command := QueryCostAnalyticsCommand{Identity: access.Identity{Subject: "operator", Email: "operator@example.test", EmailVerified: true}, PracticeID: practiceID, Range: AnalyticsRange24Hours, TimeZone: "UTC"}
+	command := QueryCostAnalyticsCommand{Identity: access.Identity{Subject: "operator", Email: "operator@example.test", EmailVerified: true}, PracticeID: practiceID, Range: AnalyticsRange24Hours}
 	if _, err := module.QueryCostAnalytics(ctx, command); err == nil || !strings.Contains(err.Error(), "backfill is incomplete") {
 		t.Fatalf("incomplete projection must fail visibly: %v", err)
 	}
@@ -71,10 +71,10 @@ func TestCostUsageProjectionPreservesPricingAndCorrections(t *testing.T) {
 			if strings.Contains(string(projected), "Synthetic") {
 				t.Fatalf("projection retained non-usage payload: %s", projected)
 			}
-			original := newCostAnalytics(now.Add(-24*time.Hour), now, time.UTC)
-			compact := newCostAnalytics(now.Add(-24*time.Hour), now, time.UTC)
-			original.addCall(now.Add(-time.Hour), now.Add(-50*time.Minute), json.RawMessage(usage), time.UTC)
-			compact.addCall(now.Add(-time.Hour), now.Add(-50*time.Minute), projected, time.UTC)
+			original := newCostAnalytics(now.Add(-24*time.Hour), now)
+			compact := newCostAnalytics(now.Add(-24*time.Hour), now)
+			original.addCall(now.Add(-time.Hour), now.Add(-50*time.Minute), json.RawMessage(usage))
+			compact.addCall(now.Add(-time.Hour), now.Add(-50*time.Minute), projected)
 			original.finalize()
 			compact.finalize()
 			if !reflect.DeepEqual(original, compact) {

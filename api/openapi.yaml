@@ -4013,7 +4013,7 @@ components:
     PracticeAnalyticsQueryRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, days, timeZone]
+      required: [practiceId, days]
       properties:
         practiceId:
           type: string
@@ -4024,11 +4024,6 @@ components:
         days:
           type: integer
           enum: [7, 30, 90]
-        timeZone:
-          type: string
-          minLength: 1
-          maxLength: 100
-          description: IANA timezone used for reporting-day boundaries.
     BookingMetrics:
       type: object
       additionalProperties: false
@@ -4410,16 +4405,11 @@ components:
     OperatorAICostQueryRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, range, timeZone]
+      required: [practiceId, range]
       properties:
         practiceId: {type: string, format: uuid}
         locationId: {type: string, format: uuid}
         range: {$ref: "#/components/schemas/OperatorAIAnalyticsRange"}
-        timeZone:
-          type: string
-          minLength: 1
-          maxLength: 100
-          description: IANA timezone for daily chart buckets. The range is a rolling time window.
     OperatorAICostItem:
       type: object
       additionalProperties: false
@@ -4572,7 +4562,7 @@ components:
         toolErrorCount: {type: integer, minimum: 0}
         date:
           type: string
-          description: UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
+          description: Eastern (America/New_York) call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
         totalCalls:
           type: integer
           minimum: 0
@@ -4611,7 +4601,7 @@ components:
       properties:
         daily:
           type: array
-          description: All UTC dates in the full selected range, including dates without calls; independent of call pagination.
+          description: All Eastern dates in the full selected range, including dates without calls; independent of call pagination.
           items: {$ref: "#/components/schemas/OperatorAIAnalyticsDay"}
         judges: {$ref: "#/components/schemas/OperatorAIAnalyticsJudges"}
         distributions: {$ref: "#/components/schemas/OperatorAIAnalyticsDistributions"}
@@ -4761,7 +4751,7 @@ components:
           properties:
             daily:
               type: array
-              description: Every UTC date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
+              description: Every Eastern date in the selected reporting window, including zero-call dates, in ascending order. Daily category and coverage counts sum to the aggregate distribution counts.
               items: {$ref: "#/components/schemas/OperatorAIAnalyticsDistributionDay"}
             paths:
               type: array
@@ -4773,7 +4763,7 @@ components:
         - type: object
           required: [date]
           properties:
-            date: {type: string, description: UTC calendar date in YYYY-MM-DD format.}
+            date: {type: string, description: Eastern calendar date in YYYY-MM-DD format.}
     OperatorAIAnalyticsDistributionCounts:
       type: object
       required: [totalCalls, intents, outcomes, failures, unlabeledIntentCalls, unlabeledOutcomeCalls, evaluatedCalls, failedCalls, unevaluatedCalls]
@@ -4904,7 +4894,7 @@ components:
         - tokenCalls
         - footprintCalls
       properties:
-        date: {type: string, description: UTC call-start date in YYYY-MM-DD format.}
+        date: {type: string, description: Eastern call-start date in YYYY-MM-DD format.}
         evaluatedCalls:
           type: integer
           minimum: 0
@@ -4961,7 +4951,7 @@ components:
       properties:
         daily:
           type: array
-          description: All UTC dates in the selected range, matching summary daily.
+          description: All Eastern dates in the selected range, matching summary daily.
           items: {$ref: "#/components/schemas/OperatorAIQualityDay"}
         evaluatedCalls:
           type: integer
@@ -5014,7 +5004,7 @@ components:
           type: string
           format: date-time
           description: Start of the first call, on the day this version became the majority, served by this version.
-        date: {type: string, description: UTC call-start date on which this version first served the most calls, in YYYY-MM-DD format.}
+        date: {type: string, description: Eastern call-start date on which this version first served the most calls, in YYYY-MM-DD format.}
         locationId:
           type: string
           format: uuid
@@ -5023,7 +5013,7 @@ components:
       type: object
       additionalProperties: false
       required: [inEffect, changes]
-      description: Versions recorded by calls. Per dimension (and per office for knowledge), each UTC day's majority version is the one serving the most calls that day; a tie keeps the version in effect, else picks the tied version that served first. A change marks a day whose majority differs from the version in effect, and days without calls change nothing. Versions in effect at the start come from the latest call within 90 days before the range.
+      description: Versions recorded by calls. Per dimension (and per office for knowledge), each Eastern day's majority version is the one serving the most calls that day; a tie keeps the version in effect, else picks the tied version that served first. A change marks a day whose majority differs from the version in effect, and days without calls change nothing. Versions in effect at the start come from the latest call within 90 days before the range.
       properties:
         inEffect:
           type: array

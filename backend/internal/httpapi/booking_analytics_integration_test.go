@@ -51,8 +51,8 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT p.id::text, l.id::text FROM access_practices p JOIN access_locations l ON l.practice_id=p.id WHERE p.provisioning_key='other'`).Scan(&otherPractice, &otherLocation); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	yesterday := time.Date(now.Year(), now.Month(), now.Day()-1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().In(interaction.ReportingZone)
+	yesterday := time.Date(now.Year(), now.Month(), now.Day()-1, 12, 0, 0, 0, interaction.ReportingZone)
 	for index, fixture := range []struct {
 		location, group            string
 		booked, searched, evidence bool
@@ -100,9 +100,9 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	}
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	query := func(token, practiceID, locationID, timeZone string, status int) []byte {
+	query := func(token, practiceID, locationID string, status int) []byte {
 		t.Helper()
-		body := map[string]any{"practiceId": practiceID, "days": 7, "timeZone": timeZone}
+		body := map[string]any{"practiceId": practiceID, "days": 7}
 		if locationID != "" {
 			body["locationId"] = locationID
 		}
@@ -114,12 +114,16 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 		}
 		return []byte(raw)
 	}
-	query("", practice, north, "UTC", 401)
-	query("staff", practice, north, "UTC", 403)
-	query("admin", otherPractice, "", "UTC", 403)
-	query("admin", practice, otherLocation, "UTC", 403)
-	query("admin", practice, north, "invalid", 400)
-	raw := query("admin", practice, north, "UTC", 200)
+	query("", practice, north, 401)
+	query("staff", practice, north, 403)
+	query("admin", otherPractice, "", 403)
+	query("admin", practice, otherLocation, 403)
+	removed, _ := json.Marshal(map[string]any{"practiceId": practice, "days": 7, "timeZone": "UTC"})
+	removedResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/analytics/bookings/query", "admin", removed)
+	if body := readBody(t, removedResponse); removedResponse.StatusCode != 400 || !strings.Contains(body, `"code":"INVALID_REQUEST"`) {
+		t.Fatalf("removed timeZone field status=%d body=%s", removedResponse.StatusCode, body)
+	}
+	raw := query("admin", practice, north, 200)
 	var report interaction.BookingAnalytics
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
@@ -127,7 +131,7 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if report.Total.Calls != 3 || report.Total.Bookings != 2 || report.Total.Searched != 2 || report.Total.Converted != 1 || report.Total.SearchEvidenceCalls != 2 || report.Total.Conversion == nil || *report.Total.Conversion != 50 {
 		t.Fatalf("unexpected totals: %+v", report.Total)
 	}
-	if len(report.Daily) != 7 || report.Groups.New.Bookings != 2 || report.Groups.Unknown.Bookings != 0 || report.Total.P50 == nil || *report.Total.P50 != 300 {
+	if report.TimeZone != "America/New_York" || len(report.Daily) != 7 || report.Groups.New.Bookings != 2 || report.Groups.Unknown.Bookings != 0 || report.Total.P50 == nil || *report.Total.P50 != 300 {
 		t.Fatalf("unexpected report: %+v", report)
 	}
 	if strings.Contains(string(raw), "PRIVATE-CALL-CONTENT") || strings.Contains(string(raw), "1727555") || strings.Contains(string(raw), "appointment-") {
@@ -136,13 +140,13 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if report.Total.P90 == nil || math.Abs(*report.Total.P90-300) > .001 {
 		t.Fatalf("full booked-call duration: %+v", report.Total)
 	}
-	if err := json.Unmarshal(query("admin", practice, "", "UTC", 200), &report); err != nil {
+	if err := json.Unmarshal(query("admin", practice, "", 200), &report); err != nil {
 		t.Fatal(err)
 	}
 	if report.Total.Bookings != 3 || report.Total.Searched != 3 {
 		t.Fatalf("all-office totals: %+v", report.Total)
 	}
-	if err := json.Unmarshal(query("operator", otherPractice, "", "UTC", 200), &report); err != nil {
+	if err := json.Unmarshal(query("operator", otherPractice, "", 200), &report); err != nil {
 		t.Fatal(err)
 	}
 	if report.Total.Conversion != nil || report.Total.P50 != nil || report.Total.Bookings != 0 {
@@ -164,7 +168,7 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := json.Unmarshal(query("admin", practice, north, "UTC", 200), &report); err != nil {
+	if err := json.Unmarshal(query("admin", practice, north, 200), &report); err != nil {
 		t.Fatal(err)
 	}
 	if report.Total.Calls != 5 || report.Total.Bookings != 3 || report.Total.Searched != 4 || report.Total.Converted != 2 ||
