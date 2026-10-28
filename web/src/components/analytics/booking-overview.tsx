@@ -23,7 +23,6 @@ import {
 } from "@/components/ui/table"
 import {
   formatDay,
-  formatPercent,
   type BookingDay,
   type BookingAnalytics,
   type BookingMetric,
@@ -47,11 +46,17 @@ const chartConfig = {
 } satisfies ChartConfig
 const visibleGroups = ["new", "existing"] as const
 const count = (value: number) => value.toLocaleString("en-US")
+const minutes = (value: number) =>
+  value.toLocaleString("en-US", { maximumFractionDigits: 1 })
 
 type Series = keyof typeof chartConfig
 
 function chartValue(summary: BookingSummary, metric: Metric) {
-  return metric === "duration" ? summary.p50 : summary[metric]
+  return metric === "duration"
+    ? summary.p50
+    : metric === "volume"
+      ? summary.calls
+      : summary.bookings
 }
 
 function GroupLabel({ group }: { group: keyof typeof chartConfig }) {
@@ -91,29 +96,21 @@ function DayTooltip({
               <strong>
                 {metric === "bookings"
                   ? count(summary.bookings)
-                  : metric === "conversion"
-                    ? summary.searched === 0
-                      ? "No activity"
-                      : formatPercent(summary.conversion)
+                  : metric === "volume"
+                    ? `${count(summary.calls)} ${summary.calls === 1 ? "call" : "calls"}`
                     : summary.p50 === null
-                      ? summary.bookings === 0 && summary.searched === 0
-                        ? "No activity"
-                        : "Duration unavailable"
+                      ? "No duration samples"
                       : formatDuration(summary.p50)}
               </strong>
             </div>
-            {metric === "conversion" && summary.searched > 0 && (
+            {metric === "volume" && summary.calls > 0 && (
               <span className={styles.tooltipSub}>
-                {count(summary.converted)} of {count(summary.searched)} booked
+                {minutes(summary.minutes)} min
               </span>
             )}
-            {metric === "duration" && (
+            {metric === "duration" && summary.durationSamples > 0 && (
               <span className={styles.tooltipSub}>
-                {summary.durationSamples === 0
-                  ? summary.bookings === 0 && summary.searched === 0
-                    ? "No booking attempts"
-                    : "No recorded call durations"
-                  : `p50 · ${count(summary.durationSamples)} calls`}
+                p50 · {count(summary.durationSamples)} calls
               </span>
             )}
           </div>
@@ -140,8 +137,8 @@ function BookingTrend({
       aria-label={
         metric === "bookings"
           ? "Daily confirmed bookings"
-          : metric === "conversion"
-            ? "Daily booking conversion by patient status"
+          : metric === "volume"
+            ? "Daily calls by patient status"
             : "Daily p50 duration by patient status"
       }
     >
@@ -165,13 +162,9 @@ function BookingTrend({
           minTickGap={48}
         />
         <YAxis
-          domain={metric === "conversion" ? [0, 100] : [0, "auto"]}
+          domain={[0, "auto"]}
           tickFormatter={(value: number) =>
-            metric === "conversion"
-              ? `${value}%`
-              : metric === "duration"
-                ? formatDuration(value)
-                : String(value)
+            metric === "duration" ? formatDuration(value) : String(value)
           }
           axisLine={false}
           tickLine={false}
@@ -189,7 +182,7 @@ function BookingTrend({
             name={chartConfig[cohort].label}
             dataKey={(day: BookingDay) => chartValue(day[cohort], metric)}
             fill={`var(--color-${cohort})`}
-            stackId={metric === "bookings" ? "bookings" : undefined}
+            stackId={metric === "duration" ? undefined : metric}
             maxBarSize={36}
             isAnimationActive={!reducedMotion}
           />
@@ -199,7 +192,7 @@ function BookingTrend({
   )
 }
 
-function ConversionSummary({
+function VolumeSummary({
   total,
   groups,
 }: {
@@ -209,9 +202,15 @@ function ConversionSummary({
   return (
     <div className={styles.summary}>
       <div>
-        <p className={styles.summaryLabel}>Booking conversion</p>
-        <output className={styles.headline} aria-label="Booking conversion">
-          {formatPercent(total.conversion)}
+        <p className={styles.summaryLabel}>Total calls</p>
+        <output className={styles.headline} aria-label="Total calls">
+          {count(total.calls)}
+        </output>
+      </div>
+      <div>
+        <p className={styles.summaryLabel}>Total minutes</p>
+        <output className={styles.headline} aria-label="Total minutes">
+          {minutes(total.minutes)}
         </output>
       </div>
       <div className={styles.cohorts}>
@@ -221,11 +220,9 @@ function ConversionSummary({
             <div key={group} className={styles.cohort}>
               <div className={styles.cohortHeading}>
                 <GroupLabel group={group} />
-                <strong>{formatPercent(summary.conversion)}</strong>
+                <strong>{count(summary.calls)}</strong>
               </div>
-              <p>
-                {count(summary.converted)} of {count(summary.searched)} booked
-              </p>
+              <p>{minutes(summary.minutes)} min</p>
             </div>
           )
         })}
@@ -243,8 +240,8 @@ function Summary({
   groups: Record<PatientGroup, BookingSummary>
   metric: Metric
 }) {
-  if (metric === "conversion")
-    return <ConversionSummary total={total} groups={groups} />
+  if (metric === "volume")
+    return <VolumeSummary total={total} groups={groups} />
   const label =
     metric === "bookings" ? "Confirmed bookings" : "Median call duration"
   return (
@@ -293,7 +290,7 @@ function Summary({
   )
 }
 
-function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
+function VolumeBreakdown({ report }: { report: BookingAnalytics }) {
   const rows = [
     ...visibleGroups.map((group) => ({
       key: group,
@@ -302,47 +299,75 @@ function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
     })),
     { key: "total", label: <strong>Total</strong>, summary: report.total },
   ]
-  const excluded = report.total.calls - report.total.searchEvidenceCalls
   return (
-    <section className={styles.breakdown} aria-label="Breakdown">
-      <div className={styles.sectionHeading}>
-        <div>
-          <h2>Breakdown</h2>
-          {excluded > 0 && (
-            <p className={styles.summaryCaption}>
-              Excludes {count(excluded)} {excluded === 1 ? "call" : "calls"}{" "}
-              with no availability history.
-            </p>
-          )}
-        </div>
-      </div>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Patient status</TableHead>
-            <TableHead className="text-right">Booked calls</TableHead>
-            <TableHead className="text-right">Searched calls</TableHead>
-            <TableHead className="text-right">Conversion</TableHead>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Patient status</TableHead>
+          <TableHead className="text-right">Calls</TableHead>
+          <TableHead className="text-right">Minutes</TableHead>
+          <TableHead className="text-right">Avg. / call</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map(({ key, label, summary }) => (
+          <TableRow key={key}>
+            <TableCell>{label}</TableCell>
+            <TableCell className="text-right tabular-nums">
+              {count(summary.calls)}
+            </TableCell>
+            <TableCell className="text-right tabular-nums">
+              {minutes(summary.minutes)}
+            </TableCell>
+            <TableCell className="text-right tabular-nums">
+              {formatDuration(
+                summary.calls ? (summary.minutes * 60) / summary.calls : null,
+              )}
+            </TableCell>
           </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map(({ key, label, summary }) => (
-            <TableRow key={key}>
-              <TableCell>{label}</TableCell>
-              <TableCell className="text-right tabular-nums">
-                {count(summary.converted)}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {count(summary.searched)}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {formatPercent(summary.conversion)}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </section>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
+function BookingBreakdown({ report }: { report: BookingAnalytics }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Patient status</TableHead>
+          <TableHead className="text-right">Bookings</TableHead>
+          <TableHead className="text-right">p50 duration</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {visibleGroups.map((group) => (
+          <TableRow key={group}>
+            <TableCell>
+              <GroupLabel group={group} />
+            </TableCell>
+            <TableCell className="text-right tabular-nums">
+              {count(report.groups[group].bookings)}
+            </TableCell>
+            <TableCell className="text-right tabular-nums">
+              {formatDuration(report.groups[group].p50)}
+            </TableCell>
+          </TableRow>
+        ))}
+        <TableRow>
+          <TableCell>
+            <strong>Total</strong>
+          </TableCell>
+          <TableCell className="text-right tabular-nums">
+            {count(report.total.bookings)}
+          </TableCell>
+          <TableCell className="text-right tabular-nums">
+            {formatDuration(report.total.p50)}
+          </TableCell>
+        </TableRow>
+      </TableBody>
+    </Table>
   )
 }
 
@@ -355,13 +380,9 @@ export function BookingOverview({
 }) {
   const partialBreakdown = report.groups.unknown.calls > 0
   const series: readonly Series[] =
-    metric === "bookings"
-      ? partialBreakdown ? [...visibleGroups, "unknown"] : visibleGroups
-      : metric === "conversion"
-      ? visibleGroups
-      : partialBreakdown
-        ? ["total", ...visibleGroups]
-        : visibleGroups
+    metric === "duration"
+      ? partialBreakdown ? ["total", ...visibleGroups] : visibleGroups
+      : partialBreakdown ? [...visibleGroups, "unknown"] : visibleGroups
   return (
     <>
       <section className={styles.hero} aria-label="Booking performance">
@@ -371,8 +392,8 @@ export function BookingOverview({
             <h2>
               {metric === "bookings"
                 ? "Bookings"
-                : metric === "conversion"
-                  ? "Conversion"
+                : metric === "volume"
+                  ? "Calls"
                   : "Median call duration"}
             </h2>
             <div className={styles.chartLegend}>
@@ -381,76 +402,33 @@ export function BookingOverview({
           </div>
           <BookingTrend daily={report.daily} metric={metric} series={series} />
           <p className={styles.chartCaption}>
-            {metric === "bookings"
-              ? `${dailyTotalComparison(report.daily.map((day) => day.total.bookings))} · `
-              : metric === "duration"
-                ? "Days without measurements are blank. · "
-                : ""}
+            {metric === "duration"
+              ? "Days without measurements are blank. · "
+              : `${dailyTotalComparison(report.daily.map((day) => chartValue(day.total, metric)))} · `}
             Today is excluded.
           </p>
         </div>
       </section>
 
-      {metric === "conversion" ? (
-        <ConversionBreakdown report={report} />
-      ) : (
-        <section className={styles.breakdown} aria-label="Breakdown">
-          <div className={styles.sectionHeading}>
-            <div>
-              <h2>Breakdown</h2>
-              {partialBreakdown && (
-                <p className={styles.summaryCaption}>
-                  New/existing breakdown covers{" "}
-                  {count(report.total.calls - report.groups.unknown.calls)} of{" "}
-                  {count(report.total.calls)} calls. Totals include all calls.
-                </p>
-              )}
-            </div>
+      <section className={styles.breakdown} aria-label="Breakdown">
+        <div className={styles.sectionHeading}>
+          <div>
+            <h2>Breakdown</h2>
+            {partialBreakdown && (
+              <p className={styles.summaryCaption}>
+                New/existing breakdown covers{" "}
+                {count(report.total.calls - report.groups.unknown.calls)} of{" "}
+                {count(report.total.calls)} calls. Totals include all calls.
+              </p>
+            )}
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Patient status</TableHead>
-                <TableHead className="text-right">Bookings</TableHead>
-                <TableHead className="text-right">Conversion</TableHead>
-                <TableHead className="text-right">p50 duration</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleGroups.map((group) => (
-                <TableRow key={group}>
-                  <TableCell>
-                    <GroupLabel group={group} />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {count(report.groups[group].bookings)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatPercent(report.groups[group].conversion)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatDuration(report.groups[group].p50)}
-                  </TableCell>
-                </TableRow>
-              ))}
-              <TableRow>
-                <TableCell>
-                  <strong>Total</strong>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {count(report.total.bookings)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatPercent(report.total.conversion)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatDuration(report.total.p50)}
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </section>
-      )}
+        </div>
+        {metric === "volume" ? (
+          <VolumeBreakdown report={report} />
+        ) : (
+          <BookingBreakdown report={report} />
+        )}
+      </section>
     </>
   )
 }

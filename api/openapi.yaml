@@ -4027,36 +4027,28 @@ components:
     BookingMetrics:
       type: object
       additionalProperties: false
-      required: [calls, bookings, searched, converted, conversion, p50, p90, durationSamples, searchEvidenceCalls]
+      required: [calls, minutes, bookings, p50, p90, durationSamples]
       properties:
         calls:
           type: integer
+        minutes:
+          type: number
+          format: double
+          minimum: 0
+          description: Completed-call time in minutes, from call start to hang-up. Calls without a valid end contribute zero.
         bookings:
           type: integer
           description: Distinct appointment identifiers backed by a confirmed Product BOOKING outcome and booked result in the selected completed-call cohort.
-        searched:
-          type: integer
-          description: Unique completed calls with a get_availability execution that has a successful tool output, excluding calls whose Product outcome is RESCHEDULE or CANCELLATION. A completed search with no openings remains included.
-        converted:
-          type: integer
-          description: Searched calls with a confirmed booking.
-        conversion:
-          type: number
-          nullable: true
-          description: Converted divided by searched, multiplied by 100. Null without a denominator.
         p50:
           type: number
           nullable: true
-          description: Median call-start-to-hang-up duration in seconds across calls with a completed booking search or confirmed booking and valid timing evidence. Includes non-converting attempts.
+          description: Median call-start-to-hang-up duration in seconds across calls with a completed booking search or confirmed booking and valid timing evidence. Includes attempts that did not book.
         p90:
           type: number
           nullable: true
           description: 90th percentile duration in seconds using linear interpolation.
         durationSamples:
           type: integer
-        searchEvidenceCalls:
-          type: integer
-          description: Calls with recorded availability use or complete tool history.
     BookingGroups:
       type: object
       additionalProperties: false
@@ -4553,13 +4545,29 @@ components:
     OperatorAIAnalyticsDay:
       type: object
       additionalProperties: false
-      required: [date, totalCalls, callMinutes, transferCount]
+      required: [date, totalCalls, callMinutes, transferCount, newPatientIntentCalls, newPatientIntentBookings, existingPatientIntentCalls, existingPatientIntentBookings]
       properties:
         bookingCount: {type: integer, minimum: 0}
         cancellationCount: {type: integer, minimum: 0}
         rescheduleCount: {type: integer, minimum: 0}
         toolCallCount: {type: integer, minimum: 0}
         toolErrorCount: {type: integer, minimum: 0}
+        newPatientIntentCalls:
+          type: integer
+          minimum: 0
+          description: Calls labeled with the new_patient_booking intent.
+        newPatientIntentBookings:
+          type: integer
+          minimum: 0
+          description: Of newPatientIntentCalls, those with a confirmed BOOKING appointment outcome.
+        existingPatientIntentCalls:
+          type: integer
+          minimum: 0
+          description: Calls labeled with the existing_patient_booking intent.
+        existingPatientIntentBookings:
+          type: integer
+          minimum: 0
+          description: Of existingPatientIntentCalls, those with a confirmed BOOKING appointment outcome.
         date:
           type: string
           description: Eastern (America/New_York) call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.

@@ -30,7 +30,7 @@ export async function selectCommandCenterPage(page: Page, name: "Calls" | "Summa
   }).toPass({ timeout: 10_000 })
 }
 
-export async function selectAnalyticsPage(page: Page, name: "Bookings" | "Conversion" | "Duration" | "Staff") {
+export async function selectAnalyticsPage(page: Page, name: "Bookings" | "Call volume" | "Duration" | "Staff") {
   const analytics = page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name: "Analytics", exact: true })
   const destination = page.getByRole("navigation", { name: "Analytics", exact: true }).getByRole("button", { name, exact: true })
   await expect(async () => {

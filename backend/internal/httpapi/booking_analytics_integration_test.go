@@ -128,7 +128,7 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Total.Calls != 3 || report.Total.Bookings != 2 || report.Total.Searched != 2 || report.Total.Converted != 1 || report.Total.SearchEvidenceCalls != 2 || report.Total.Conversion == nil || *report.Total.Conversion != 50 {
+	if report.Total.Calls != 3 || report.Total.Minutes != 15 || report.Total.Bookings != 2 {
 		t.Fatalf("unexpected totals: %+v", report.Total)
 	}
 	if report.TimeZone != "America/New_York" || len(report.Daily) != 7 || report.Groups.New.Bookings != 2 || report.Groups.Unknown.Bookings != 0 || report.Total.P50 == nil || *report.Total.P50 != 300 {
@@ -143,13 +143,13 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if err := json.Unmarshal(query("admin", practice, "", 200), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Total.Bookings != 3 || report.Total.Searched != 3 {
+	if report.Total.Calls != 4 || report.Total.Minutes != 20 || report.Total.Bookings != 3 {
 		t.Fatalf("all-office totals: %+v", report.Total)
 	}
 	if err := json.Unmarshal(query("operator", otherPractice, "", 200), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Total.Conversion != nil || report.Total.P50 != nil || report.Total.Bookings != 0 {
+	if report.Total.Minutes != 0 || report.Total.P50 != nil || report.Total.Bookings != 0 {
 		t.Fatalf("empty report: %+v", report.Total)
 	}
 	for index, booked := range []bool{true, false} {
@@ -171,8 +171,8 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if err := json.Unmarshal(query("admin", practice, north, 200), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Total.Calls != 5 || report.Total.Bookings != 3 || report.Total.Searched != 4 || report.Total.Converted != 2 ||
-		report.Groups.New.Bookings != 2 || report.Groups.Existing.Bookings != 1 || report.Groups.Existing.Searched != 3 || report.Groups.Existing.Converted != 1 {
+	if report.Total.Calls != 5 || report.Total.Minutes != 25 || report.Total.Bookings != 3 ||
+		report.Groups.New.Bookings != 2 || report.Groups.Existing.Bookings != 1 {
 		t.Fatalf("historical patient classification changed report groups: %+v", report)
 	}
 	response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "admin", []byte(`{"practiceId":"`+practice+`","range":"7d","limit":1}`))

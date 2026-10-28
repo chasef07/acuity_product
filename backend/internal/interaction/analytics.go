@@ -54,16 +54,20 @@ type QueryAnalyticsCommand struct {
 }
 
 type AnalyticsDay struct {
-	BookingCount      int
-	CancellationCount int
-	RescheduleCount   int
-	ToolCallCount     int
-	ToolErrorCount    int
-	Date              string
-	TotalCalls        int
-	CallMinutes       float64
-	TransferCount     int
-	TransferRate      *float64
+	BookingCount                  int
+	CancellationCount             int
+	RescheduleCount               int
+	ToolCallCount                 int
+	ToolErrorCount                int
+	NewPatientIntentCalls         int
+	NewPatientIntentBookings      int
+	ExistingPatientIntentCalls    int
+	ExistingPatientIntentBookings int
+	Date                          string
+	TotalCalls                    int
+	CallMinutes                   float64
+	TransferCount                 int
+	TransferRate                  *float64
 }
 
 func analyticsDays(from, through time.Time) []AnalyticsDay {
@@ -201,6 +205,7 @@ type analyticsProjection struct {
 	executions         []ToolExecution
 	call               AnalyticsCall
 	appointmentOutcome AppointmentOutcome
+	intent             CallIntent
 	transcript         json.RawMessage
 	closeoutPayload    json.RawMessage
 	quality            qualitySample
@@ -368,6 +373,9 @@ func queryAnalyticsSummary(
 			return AnalyticsSummary{}, err
 		}
 		projectToolExecutions(&projection, facts.executions)
+		if intent != nil {
+			projection.intent = CallIntent(*intent)
+		}
 		projection.quality.startedAt = projection.call.StartedAt
 		projection.quality.evaluation = facts.evaluation
 		projection.quality.footprint = facts.footprint
@@ -421,6 +429,18 @@ func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analytic
 			day.CallMinutes += minutes
 			if projection.call.Transferred {
 				day.TransferCount++
+			}
+			booked := 0
+			if projection.appointmentOutcome == OutcomeBooking {
+				booked = 1
+			}
+			switch projection.intent {
+			case IntentNewPatientBooking:
+				day.NewPatientIntentCalls++
+				day.NewPatientIntentBookings += booked
+			case IntentExistingPatientBooking:
+				day.ExistingPatientIntentCalls++
+				day.ExistingPatientIntentBookings += booked
 			}
 			break
 		}

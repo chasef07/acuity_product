@@ -3,7 +3,6 @@
 import {
   BookOpenIcon,
   CalendarCheck2Icon,
-  ChartNoAxesCombinedIcon,
   Clock3Icon,
   CoinsIcon,
   HouseIcon,
@@ -39,11 +38,11 @@ export const commandCenterPages: Array<{ value: CommandCenterPage; label: string
   { value: "review", label: "Review", icon: ListChecksIcon },
 ]
 
-export type PracticeAnalyticsPage = "bookings" | "conversion" | "duration" | "staff"
+export type PracticeAnalyticsPage = "bookings" | "volume" | "duration" | "staff"
 
 export const practiceAnalyticsPages: Array<{ value: PracticeAnalyticsPage; label: string; icon: typeof CalendarCheck2Icon }> = [
   { value: "bookings", label: "Bookings", icon: CalendarCheck2Icon },
-  { value: "conversion", label: "Conversion", icon: ChartNoAxesCombinedIcon },
+  { value: "volume", label: "Call volume", icon: PhoneIcon },
   { value: "duration", label: "Duration", icon: Clock3Icon },
   { value: "staff", label: "Staff", icon: UsersIcon },
 ]

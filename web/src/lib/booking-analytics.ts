@@ -7,7 +7,7 @@ import type {
 export type { BookingAnalytics, BookingDay }
 export type BookingSummary = BookingMetrics
 export type PatientGroup = "new" | "existing" | "unknown"
-export type BookingMetric = "bookings" | "conversion" | "duration"
+export type BookingMetric = "bookings" | "volume" | "duration"
 
 export function canViewPracticeAnalytics(
   discovery: AccessDiscovery | undefined,
