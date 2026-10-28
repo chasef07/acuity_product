@@ -122,11 +122,12 @@ function KnowledgeFix({
   const attempt = useRef<{ payload: string; revisionID: string }>(undefined)
   const errorID = useId()
   const base = knowledge.status === "ready" ? knowledge.data : undefined
+  const stale = knowledge.status === "ready" && Boolean(knowledge.refreshFailure)
   const editing = mode === "edit" && draft.id !== ""
   const picked = editing ? base?.sections.find((section) => section.id === draft.id) : undefined
   const removed = editing && base !== undefined && !picked
   const unchanged = picked !== undefined && picked.title === draft.title.trim() && picked.text === draft.text.trim()
-  const ready = draft.title.trim() !== "" && draft.text.trim() !== "" && (mode === "add" || editing) && !unchanged
+  const ready = draft.title.trim() !== "" && draft.text.trim() !== "" && (mode === "add" || editing) && !unchanged && !stale
 
   function busy(value: boolean) {
     setSaving(value)
@@ -179,7 +180,7 @@ function KnowledgeFix({
       practiceId: practiceID,
       locationId: locationID,
       expectedRevisionId: current.revision?.id,
-      reason: `${replaces ? `Updated “${entry.title}”` : `Added “${entry.title}”`} from a caller question on ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(call.startedAt))}`,
+      reason: `${replaces ? `Updated “${entry.title}”` : `Added “${entry.title}”`} from a caller question on ${new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(call.startedAt))}`,
       sections: publishedSections(sections),
     }
     const payload = JSON.stringify(publication)
@@ -220,6 +221,13 @@ function KnowledgeFix({
         </Alert>
       ) : !base ? (
         <p role="status" className="text-sm text-muted-foreground">Loading office knowledge…</p>
+      ) : stale ? (
+        <Alert variant="destructive">
+          <AlertTitle>Office knowledge couldn&apos;t reload</AlertTitle>
+          <Button type="button" variant="outline" size="sm" className="mt-2 w-fit" onClick={knowledge.retry}>
+            Try again
+          </Button>
+        </Alert>
       ) : (
         <>
           <ToggleGroup
