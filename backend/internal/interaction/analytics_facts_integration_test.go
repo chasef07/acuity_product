@@ -316,6 +316,9 @@ func evidenceAnalyticsSummary(ctx context.Context, tx pgx.Tx, command QueryAnaly
 			return AnalyticsSummary{}, err
 		}
 		projectAnalyticsEvidence(&projection)
+		if intent != nil {
+			projection.intent = CallIntent(*intent)
+		}
 		projection.quality.startedAt = projection.call.StartedAt
 		projection.quality.evaluation = readEvaluation(evaluation)
 		judges.add(readJuryFacts(evaluation))
