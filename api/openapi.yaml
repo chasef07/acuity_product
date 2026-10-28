@@ -3739,8 +3739,11 @@ components:
     AgentCall:
       type: object
       additionalProperties: false
-      required: [id, phone, startedAt, appointmentActions, transferred, issueFlagged]
+      required: [id, locationId, phone, startedAt, appointmentActions, transferred, issueFlagged]
       properties:
+        locationId:
+          type: string
+          format: uuid
         intent:
           $ref: "#/components/schemas/CallIntent"
         outcome:

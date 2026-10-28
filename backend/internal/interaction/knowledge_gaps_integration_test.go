@@ -57,7 +57,7 @@ func TestKnowledgeGapCallsListOpenJudgedGapsAndCloseOnce(t *testing.T) {
 
 	command := QueryAgentCallsCommand{QueryAnalyticsCommand: QueryAnalyticsCommand{Identity: staff, PracticeID: practice, Range: AnalyticsRange24Hours, Limit: 1}, KnowledgeGapOnly: true}
 	page, err := module.QueryAgentCalls(ctx, command)
-	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != newest || page.NextCursor == "" {
+	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != newest || page.Calls[0].LocationID != allowed || page.NextCursor == "" {
 		t.Fatalf("first gap page: %+v %v", page, err)
 	}
 	command.Cursor = page.NextCursor

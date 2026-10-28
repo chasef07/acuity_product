@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import type { AgentCall, KnowledgeGapResolution, KnowledgeSection, LocationKnowledge } from "@/lib/api/generated/types.gen"
+import type { AgentCall, KnowledgeGapResolution, KnowledgeSection, Location, LocationKnowledge } from "@/lib/api/generated/types.gen"
 import { closeKnowledgeGap, useAgentCalls } from "@/lib/clients/agent-calls"
 import { publishLocationKnowledge, useLocationKnowledge } from "@/lib/clients/location-knowledge"
 import { formatTimestamp } from "@/lib/format-time"
@@ -17,13 +17,17 @@ import { formatClock } from "@/lib/vocabulary"
 import { AgentCallPanel } from "./agent-call-panel"
 import { EntryFields } from "./knowledge-base"
 
-export function KnowledgeGaps({ practiceID, locationID }: { practiceID: string; locationID: string }) {
+export function KnowledgeGaps({ practiceID, locationID, locations }: { practiceID: string; locationID: string; locations: Location[] }) {
   const gaps = useAgentCalls({ practiceID, locationID, range: "24h", phone: "", flaggedOnly: false, knowledgeGapOnly: true })
   const [open, setOpen] = useState<AgentCall>()
   const [published, setPublished] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const calls = gaps.status === "ready" ? gaps.data.calls : []
   const more = gaps.status === "ready" && Boolean(gaps.data.nextCursor)
+
+  function officeName(call: AgentCall) {
+    return locations.find((location) => location.id === call.locationId)?.name ?? "Unknown office"
+  }
 
   function closed(id: string) {
     setOpen((current) => (current?.id === id ? undefined : current))
@@ -58,7 +62,10 @@ export function KnowledgeGaps({ practiceID, locationID }: { practiceID: string; 
                 className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm hover:bg-muted/50"
                 onClick={() => setOpen(call)}
               >
-                <span className="min-w-0 flex-1">{formatTimestamp(call.startedAt)}</span>
+                <span className="min-w-0 flex-1">
+                  {formatTimestamp(call.startedAt)}
+                  {!locationID && <span className="text-muted-foreground"> · {officeName(call)}</span>}
+                </span>
                 <span className="text-muted-foreground">{formatClock(call.durationSeconds)}</span>
                 <ChevronRightIcon aria-hidden="true" className="size-4 text-muted-foreground" />
               </button>
@@ -80,7 +87,8 @@ export function KnowledgeGaps({ practiceID, locationID }: { practiceID: string; 
             <KnowledgeFix
               key={open.id}
               practiceID={practiceID}
-              locationID={locationID}
+              locationID={open.locationId}
+              officeName={locationID ? undefined : officeName(open)}
               call={open}
               published={published.includes(open.id)}
               onPublished={(id) => setPublished((ids) => [...ids, id])}
@@ -99,6 +107,7 @@ type Mode = "add" | "edit"
 function KnowledgeFix({
   practiceID,
   locationID,
+  officeName,
   call,
   published,
   onPublished,
@@ -107,6 +116,7 @@ function KnowledgeFix({
 }: {
   practiceID: string
   locationID: string
+  officeName?: string
   call: AgentCall
   published: boolean
   onPublished: (id: string) => void
@@ -210,6 +220,7 @@ function KnowledgeFix({
       }}
     >
       <h3 className="text-sm font-medium">Fix this</h3>
+      {officeName && <p className="-mt-2 text-sm text-muted-foreground">Saves to {officeName}&apos;s knowledge base</p>}
       {published ? (
         <p className="text-sm text-muted-foreground">Saved to knowledge.</p>
       ) : knowledge.status === "failed" ? (

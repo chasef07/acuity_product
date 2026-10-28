@@ -267,6 +267,7 @@ test("call navigation crosses page boundaries with retry and shows a concurrent 
   const ids = [randomUUID(), randomUUID(), randomUUID()]
   const calls = ids.map((id, index): AgentCall => ({
     id,
+    locationId: randomUUID(),
     phone: `+1555555010${index}`,
     startedAt: new Date(Date.now() - index * 60_000).toISOString(),
     durationSeconds: 60,
