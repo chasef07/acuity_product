@@ -10,6 +10,17 @@ type BlogAuthor = {
   x?: string
 }
 
+export const blogCategories = ["Product", "Perspectives", "Customer stories"] as const
+
+export type BlogCategory = (typeof blogCategories)[number]
+
+export type BlogCoverStyle = {
+  label: string
+  tone: "mist" | "sand" | "stone" | "dusk" | "ember"
+  shape: "a" | "b" | "c"
+  art: "wave" | "calendar" | "network" | "rings" | "bars" | "slots"
+}
+
 export type BlogPost = {
   slug: string
   title: string
@@ -17,7 +28,8 @@ export type BlogPost = {
   description: string
   date: string
   readingTime: string
-  category: string
+  category: BlogCategory
+  cover: BlogCoverStyle
   author: BlogAuthor
   hero: "dead-air" | "name-the-slot"
   load: () => Promise<{ default: ComponentType }>
@@ -39,9 +51,10 @@ export const blogPosts: BlogPost[] = [
       "How a medical voice agent turns what a caller says into a correct booking: a 15-field signed slot token, five generations of slot references, a loaded calendar instead of a date parser, and compare-and-swap booking instead of holds.",
     date: "2026-10-14",
     readingTime: "10 min read",
-    category: "Voice AI",
+    category: "Product",
     author: chase,
     hero: "name-the-slot",
+    cover: { label: "SEP15-0900", tone: "sand", shape: "b", art: "slots" },
     load: () => import("@/content/blog/name-the-slot.mdx"),
   },
   {
@@ -52,9 +65,10 @@ export const blogPosts: BlogPost[] = [
       "How a full-duplex speech-to-speech voice agent went silent after promising to check, how a yes/no judge scorecard caught it, and how six agent teams competed in LiveKit audio simulations to fix it with a shorter prompt.",
     date: "2026-10-06",
     readingTime: "8 min read",
-    category: "Voice AI",
+    category: "Perspectives",
     author: chase,
     hero: "dead-air",
+    cover: { label: "Dead air", tone: "dusk", shape: "c", art: "bars" },
     load: () => import("@/content/blog/the-dead-air-problem.mdx"),
   },
 ]

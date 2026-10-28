@@ -17,36 +17,6 @@
   mask-image: linear-gradient(to right, transparent, black 58%);
 }
 
-.caption {
-  max-width: 450px;
-  margin: 0;
-  position: absolute;
-  z-index: 2;
-  right: 5%;
-  bottom: 6.5%;
-  display: grid;
-  justify-items: end;
-  color: #343a35;
-  text-align: right;
-}
-
-.caption span {
-  font-family: var(--font-acuity-sans), ui-sans-serif, system-ui, sans-serif;
-  font-size: 8px;
-  font-weight: 650;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.caption strong {
-  margin-top: 5px;
-  font-family: var(--font-acuity-display), ui-sans-serif, system-ui, sans-serif;
-  font-size: clamp(1.65rem, 2.4vw, 2.65rem);
-  font-weight: 350;
-  letter-spacing: -0.045em;
-  line-height: 1;
-}
-
 @media (max-width: 640px) {
   .field {
     min-height: 280px;
@@ -59,15 +29,5 @@
     width: 116%;
     left: -8%;
     mask-image: none;
-  }
-
-  .caption {
-    right: 5%;
-    bottom: 6%;
-  }
-
-  .caption strong {
-    max-width: 270px;
-    font-size: 1.75rem;
   }
 }

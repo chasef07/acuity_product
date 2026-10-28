@@ -176,10 +176,6 @@ export function PixelWaveField() {
   return (
     <div className={styles.field} role="img" aria-label="A pixel wave forming into an abstract voice signal">
       <canvas ref={canvasRef} />
-      <p className={styles.caption}>
-        <span>AI agents</span>
-        <strong>for medical enterprises</strong>
-      </p>
     </div>
   )
 }

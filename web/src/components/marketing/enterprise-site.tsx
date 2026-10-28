@@ -2,7 +2,7 @@ import type { ReactNode } from "react"
 import type { StaticImageData } from "next/image"
 import Image from "next/image"
 import Link from "next/link"
-import { ArrowRight, Check } from "lucide-react"
+import { ArrowRight } from "lucide-react"
 import { Geist } from "next/font/google"
 
 import { AcuityMark } from "@/components/acuity-mark"
@@ -12,7 +12,14 @@ import {
 } from "@/components/auth/sign-in-dialog"
 import { cn } from "@/lib/utils"
 
+import { blogPosts } from "@/lib/blog"
+
+import { BlogCover } from "./blog/blog-cover"
+import { CaseStudies } from "./case-studies"
 import { PixelWaveField } from "./pixel-wave-field"
+import { SiteNavigation, type NavigationFeature } from "./site-navigation"
+import { liveKitCaseStudyUrl, modMedListingUrl, stories } from "./stories"
+import { StoryArt } from "./story-art"
 import { WorkWithUsForm } from "./work-with-us-form"
 import styles from "./enterprise-site.module.css"
 
@@ -27,7 +34,10 @@ const display = Geist({
 
 export type MarketingRoute =
   | "/"
-  | "/method"
+  | "/platform/agents"
+  | "/platform/systems"
+  | "/platform/deployment"
+  | "/platform/strategy"
   | "/integrations"
   | "/integrations/advancedmd"
   | "/integrations/stedi"
@@ -38,18 +48,14 @@ export type MarketingRoute =
   | "/security"
   | "/blog"
 
-const navigation: Array<{ href: MarketingRoute; label: string }> = [
-  { href: "/", label: "Home" },
-  { href: "/method", label: "Our Method" },
-  { href: "/integrations", label: "Integrations" },
-  { href: "/who-we-are", label: "Who We Are" },
-]
-
 const footerNavigation = [
   {
-    label: "Product",
+    label: "Platform",
     links: [
-      { href: "/method", label: "The Acuity Health Method" },
+      { href: "/platform/agents", label: "Acuity Agents" },
+      { href: "/platform/systems", label: "Acuity Systems" },
+      { href: "/platform/deployment", label: "Deployment" },
+      { href: "/platform/strategy", label: "Strategy" },
       { href: "/integrations", label: "Partnerships & Integrations" },
     ],
   },
@@ -82,37 +88,6 @@ const footerNavigation = [
   },
 ] as const
 
-function SiteHeader({ current }: { current: MarketingRoute }) {
-  return (
-    <header className={styles.siteHeader}>
-      <Link className={styles.brand} href="/" aria-label="Acuity Health home">
-        <AcuityMark className={styles.brandMark} />
-        <span>Acuity Health</span>
-      </Link>
-
-      <nav className={styles.primaryNav} aria-label="Main navigation">
-        {navigation.map((item) => (
-          <Link
-            className={styles.navLink}
-            href={item.href}
-            aria-current={current === item.href ? "page" : undefined}
-            key={item.href}
-          >
-            {item.label}
-          </Link>
-        ))}
-      </nav>
-
-      <div className={styles.headerActions}>
-        <PortalSignInTrigger className={styles.portalLink} />
-        <Link className={styles.workLink} href="/work-with-us">
-          Build with us
-        </Link>
-      </div>
-    </header>
-  )
-}
-
 function SiteFooter() {
   return (
     <footer className={styles.siteFooter}>
@@ -122,9 +97,9 @@ function SiteFooter() {
             <AcuityMark className={styles.footerBrandMark} />
             <span>Acuity Health</span>
           </Link>
-          <p className={styles.footerDescription}>Voice AI agents for patient access.</p>
+          <p className={styles.footerDescription}>Applied AI for medical enterprises.</p>
           <Link className={styles.footerContact} href="/work-with-us">
-            Work with us
+            Build with us
           </Link>
           <p className={styles.footerCopyright}>© {new Date().getFullYear()} Acuity Health.</p>
         </div>
@@ -151,9 +126,33 @@ function SiteFooter() {
           ))}
         </nav>
       </div>
-
     </footer>
   )
+}
+
+function storyFeature(index: number, cta: string): NavigationFeature {
+  const story = stories[index]
+  return {
+    href: story.href,
+    external: story.external,
+    title: story.title,
+    cta,
+    art: <StoryArt kind={story.art} />,
+  }
+}
+
+const latestPost = [...blogPosts].sort((a, b) => b.date.localeCompare(a.date))[0]
+
+const navigationFeatures: Record<string, NavigationFeature> = {
+  Platform: storyFeature(0, "Read the LiveKit case study"),
+  Integrations: storyFeature(1, "Explore the AdvancedMD integration"),
+  Company: {
+    href: `/blog/${latestPost.slug}`,
+    external: false,
+    title: latestPost.title,
+    cta: "Read the article",
+    art: <BlogCover cover={latestPost.cover} category={latestPost.category} />,
+  },
 }
 
 export function MarketingFrame({
@@ -174,7 +173,7 @@ export function MarketingFrame({
         <a className={styles.skipLink} href="#main-content">
           Skip to main content
         </a>
-        <SiteHeader current={current} />
+        <SiteNavigation current={current} features={navigationFeatures} />
         <main id="main-content">{children}</main>
         <SiteFooter />
       </div>
@@ -182,57 +181,8 @@ export function MarketingFrame({
   )
 }
 
-function Waveform({ compact = false }: { compact?: boolean }) {
-  return (
-    <span
-      className={cn(styles.waveform, compact && styles.waveformCompact)}
-      aria-hidden="true"
-    >
-      {[18, 34, 54, 42, 66, 48, 28, 62, 46, 34, 20].map((height, index) => (
-        <i style={{ height: `${height}%` }} key={`${height}-${index}`} />
-      ))}
-    </span>
-  )
-}
 
-function MethodCapabilities({ headingLevel = 3 }: { headingLevel?: 2 | 3 }) {
-  const Heading = headingLevel === 2 ? "h2" : "h3"
-
-  return (
-    <div className={styles.methodCapabilities} data-testid="method-capabilities">
-      <div className={styles.methodColumns}>
-        <article className={styles.methodSystem}>
-          <p className={styles.methodLabel}>The technology</p>
-          <Heading>Agentic<br />system design</Heading>
-          <p className={styles.methodDescription}>
-            Voice AI agents built around medical workflows, privacy, and control.
-          </p>
-          <ul>
-            <li>Data security + HIPAA safeguards</li>
-            <li>Analytics + guardrails</li>
-            <li>EMR integrations</li>
-          </ul>
-        </article>
-        <article className={styles.methodWorkflow}>
-          <p className={styles.methodLabel}>The operation</p>
-          <Heading>Workflow<br />transformation</Heading>
-          <p className={styles.methodDescription}>
-            Workflows shaped with the people who run them, from rollout onward.
-          </p>
-          <ul>
-            <li>Change management</li>
-            <li>Workflow redesign</li>
-            <li>Frontline training</li>
-          </ul>
-        </article>
-      </div>
-      <div className={styles.methodConnection}>
-        <p>Built together.<br />Improved in the operation.</p>
-        <span>One team, from system design to the way work gets done.</span>
-      </div>
-    </div>
-  )
-}
+const stediPartnerUrl = "https://www.stedi.com/platform-partners#acuity-health"
 
 export function EnterpriseHome({
   initiallyOpen = false,
@@ -253,52 +203,19 @@ export function EnterpriseHome({
             <Link className={styles.darkButton} href="/work-with-us">
               Build with us
             </Link>
-            <Link className={styles.textLink} href="/method">
-              Explore our method
+            <Link className={styles.textLink} href="/platform/deployment">
+              How we deploy
             </Link>
           </div>
         </div>
         <PixelWaveField />
       </section>
 
-      <section className={styles.methodSection}>
-        <header className={styles.sectionHeader}>
-          <div>
-            <p className={styles.eyebrow}>The Acuity Health Method</p>
-            <h2>Two capabilities make enterprise AI work.</h2>
-          </div>
-          <p>
-            Acuity combines medical voice system design with the workflow expertise
-            needed to deploy it across the enterprise.
-          </p>
-        </header>
-        <MethodCapabilities />
-      </section>
-
-      <section className={styles.storyPreview}>
-        <div className={styles.storyArtifact} aria-hidden="true">
-          <Waveform compact />
-          <span>Consulting became the product.</span>
-        </div>
-        <div>
-          <p className={styles.eyebrow}>The founding story</p>
-          <h2>We started close to the work.</h2>
-          <p>
-            Acuity grew out of our consulting work with medical practices. We build
-            voice AI agents around real workflows and support teams through rollout.
-          </p>
-          <Link className={styles.inlineArrowLink} href="/who-we-are">
-            Read our story <ArrowRight size={16} aria-hidden="true" />
-          </Link>
-        </div>
-      </section>
+      <CaseStudies stories={stories} />
     </MarketingFrame>
   )
 }
 
-const stediPartnerUrl = "https://www.stedi.com/platform-partners#acuity-health"
-const modMedListingUrl = "https://modmed.my.site.com/synapsysmarketplace/s/partner-app/a9YUW000000jfGj2AI/data-buddies-solutions-llc"
-const liveKitCaseStudyUrl ="https://livekit.com/blog/how-acuity-health-transforms-patient-access-with-livekit-voice-agents"
 
 export function IntegrationsPageContent() {
   return (
@@ -398,13 +315,10 @@ export function IntegrationsPageContent() {
       <section className={styles.integrationEditorial} aria-labelledby="other-systems">
         <header>
           <p className={styles.eyebrow}>Your systems. Your workflow.</p>
-          <h2 id="other-systems">More EHR & PMS integrations</h2>
+          <h2 id="other-systems">Other EHR & PMS systems</h2>
         </header>
         <div className={styles.storyBody}>
-          <p>We also connect with these platforms. We scope the supported workflows and access requirements with your team before rollout.</p>
-          <ul className={styles.integrationNames}>
-            <li>Nextech</li><li>athenahealth</li><li>Compulink</li>
-          </ul>
+          <p>We scope new EHR and PM connections with each practice, including Nextech, athenahealth and Compulink.</p>
           <p>Use another system? We can assess a custom connection around the work your practice needs.</p>
         </div>
       </section>
@@ -553,36 +467,14 @@ export function AdvancedMDPageContent() {
   )
 }
 
-export function MethodPageContent() {
-  return (
-    <MarketingFrame current="/method">
-      <section className={styles.methodSection}>
-        <header className={styles.sectionHeader}>
-          <div>
-            <p className={styles.eyebrow}>The Acuity Health Method</p>
-            <h1>Two capabilities make enterprise AI work.</h1>
-          </div>
-          <p>
-            Acuity Health combines medical voice system design with the workflow
-            expertise needed to deploy it across the enterprise.
-          </p>
-        </header>
-        <MethodCapabilities headingLevel={2} />
-      </section>
 
-      <section className={styles.commitmentSection}>
-        <div>
-          <p className={styles.eyebrow}>The deployment commitment</p>
-          <h2>Prove it in the operation. Then earn the right to scale.</h2>
-        </div>
-        <ul>
-          <li><Check size={17} aria-hidden="true" /> Founders remain involved from diagnosis through executive review.</li>
-          <li><Check size={17} aria-hidden="true" /> We go on-site to understand frontline reality and support launch.</li>
-          <li><Check size={17} aria-hidden="true" /> Expansion waits for performance, handoffs, adoption, and ownership.</li>
-          <li><Check size={17} aria-hidden="true" /> The customer gains capability at every stage.</li>
-        </ul>
-      </section>
-    </MarketingFrame>
+
+
+function LinkedInLogo() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" focusable="false">
+      <path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28ZM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13ZM7.12 20.45H3.56V9h3.56v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.73v20.54C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .77 23.2 0 22.22 0Z" />
+    </svg>
   )
 }
 
@@ -590,18 +482,14 @@ function FounderPanel({
   fullName,
   role,
   linkedinHref,
-  location,
   imageSrc,
   portraitClassName,
-  children,
 }: {
   fullName: string
   role: string
   linkedinHref: `https://${string}`
-  location: string
   imageSrc: StaticImageData
   portraitClassName?: string
-  children: ReactNode
 }) {
   return (
     <article className={styles.founderPanel}>
@@ -619,18 +507,11 @@ function FounderPanel({
         <h2>{fullName}</h2>
         <div className={styles.founderProfile}>
           <p>{role}</p>
-          <a href={linkedinHref} rel="noreferrer" target="_blank">
-            LinkedIn <ArrowRight aria-hidden="true" size={14} />
+          <a href={linkedinHref} rel="noreferrer" target="_blank" aria-label={`${fullName} on LinkedIn`}>
+            <LinkedInLogo />
           </a>
         </div>
       </div>
-      <details className={styles.founderThought} open>
-        <summary>Currently on my mind</summary>
-        <div>
-          {children}
-          <span>{location}</span>
-        </div>
-      </details>
     </article>
   )
 }
@@ -727,30 +608,16 @@ export function WhoWeArePageContent() {
             fullName="Kyle Shechtman"
             imageSrc={kylePortrait}
             linkedinHref="https://www.linkedin.com/in/kyle-shechtman"
-            location="August 2026"
             portraitClassName={styles.founderPortraitKyle}
             role="Co-founder & CEO"
-          >
-            <p>
-              Enterprise AI requires a forward-deployed approach because the real
-              specification lives inside the operation. The team has to understand
-              the workflow, earn trust, and stay long enough for the change to stick.
-            </p>
-          </FounderPanel>
+          />
           <FounderPanel
             fullName="Chase Fagen"
             imageSrc={chasePortrait}
             linkedinHref="https://www.linkedin.com/in/chase-fagen-198947180"
-            location="August 2026"
             portraitClassName={styles.founderPortraitChase}
             role="Co-founder & Head of AI Engineering"
-          >
-            <p>
-              When intelligence has negligible marginal cost and is abundant,
-              where does value creation accrue? Who owns the interface through
-              which intelligence enters the economy?
-            </p>
-          </FounderPanel>
+          />
         </div>
         <article
           aria-labelledby="dr-venincasa"

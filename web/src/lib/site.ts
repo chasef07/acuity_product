@@ -5,7 +5,7 @@ export const siteConfig = {
   shortName: "Acuity Health",
   legalName: "Data Buddies Solutions LLC",
   url: "https://acuityhealth.io",
-  title: "Voice AI Agents for Patient Access | Acuity Health",
+  title: "Applied AI for Medical Enterprises | Acuity Health",
   description:
     "Acuity is the infrastructure platform and partner for medical practices to deploy, measure, and continuously improve AI agents they own, starting with the phone.",
 } as const
@@ -14,7 +14,7 @@ export const siteSocialImage = {
   url: "/opengraph-image",
   width: 1200,
   height: 630,
-  alt: "Acuity Health: Voice AI agents for patient access",
+  alt: "Acuity Health: Applied AI for medical enterprises",
 } as const
 
 export const siteStructuredData = {

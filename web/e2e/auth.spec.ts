@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test"
 
 import { signInAs } from "./support"
 
-for (const path of ["/", "/method"]) {
+for (const path of ["/", "/platform/strategy"]) {
   test(`${path} starts Google sign-in with one click`, async ({ page }) => {
     await page.context().route("**/api/auth/oauth-popup/start**", (route) =>
       route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Google sign-in</title>" }),

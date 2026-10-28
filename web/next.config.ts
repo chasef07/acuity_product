@@ -33,6 +33,11 @@ const nextConfig: NextConfig = {
         destination: "/integrations",
         permanent: true,
       },
+      {
+        source: "/method",
+        destination: "/platform/strategy",
+        permanent: true,
+      },
     ]
   },
   async headers() {

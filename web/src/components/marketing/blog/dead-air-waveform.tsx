@@ -1,17 +1,17 @@
 import styles from "./blog.module.css"
 
-export const agentBars = Array.from({ length: 44 }, (_, i) =>
+const agentBars = Array.from({ length: 44 }, (_, i) =>
   Math.round(10 + 46 * Math.abs(Math.sin(i * 1.7) * Math.cos(i * 0.45))),
 )
 
-export const callerBars = Array.from({ length: 16 }, (_, i) =>
+const callerBars = Array.from({ length: 16 }, (_, i) =>
   Math.round(8 + 34 * Math.abs(Math.sin(i * 2.3 + 1) * Math.cos(i * 0.9))),
 )
 
 const middle = 70
 const signal = "#d9733f"
 
-export function DeadAirWaveform({ compact = false }: { compact?: boolean }) {
+export function DeadAirWaveform() {
   return (
     <figure
       className={styles.wave}
@@ -51,17 +51,15 @@ export function DeadAirWaveform({ compact = false }: { compact?: boolean }) {
           strokeWidth="2"
           strokeLinecap="round"
         />
-        {compact ? null : (
-          <line
-            className={styles.playhead}
-            x1="370"
-            x2="370"
-            y1="34"
-            y2="106"
-            stroke={signal}
-            strokeWidth="2"
-          />
-        )}
+        <line
+          className={styles.playhead}
+          x1="370"
+          x2="370"
+          y1="34"
+          y2="106"
+          stroke={signal}
+          strokeWidth="2"
+        />
         {callerBars.map((height, index) => (
           <rect
             key={`caller-${index}`}
@@ -74,22 +72,20 @@ export function DeadAirWaveform({ compact = false }: { compact?: boolean }) {
           />
         ))}
       </svg>
-      {compact ? null : (
-        <figcaption className={styles.waveLegend}>
-          <span>
-            Agent
-            <span>&ldquo;One moment while I look you up in the system.&rdquo;</span>
-          </span>
-          <span>
-            Dead air
-            <span>nothing is running</span>
-          </span>
-          <span>
-            Caller
-            <span>&ldquo;hello? hello?&rdquo;</span>
-          </span>
-        </figcaption>
-      )}
+      <figcaption className={styles.waveLegend}>
+        <span>
+          Agent
+          <span>&ldquo;One moment while I look you up in the system.&rdquo;</span>
+        </span>
+        <span>
+          Dead air
+          <span>nothing is running</span>
+        </span>
+        <span>
+          Caller
+          <span>&ldquo;hello? hello?&rdquo;</span>
+        </span>
+      </figcaption>
     </figure>
   )
 }
