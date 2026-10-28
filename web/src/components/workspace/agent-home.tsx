@@ -24,13 +24,13 @@ const tools = [
   { icon: UserSearchIcon, label: "Register a new patient" },
   { icon: ShieldCheckIcon, label: "Check insurance acceptance" },
   { icon: ShieldCheckIcon, label: "Update insurance coverage" },
-  { icon: CalendarCheckIcon, label: "Find available appointments", optional: true },
-  { icon: CalendarCheckIcon, label: "Book an appointment", optional: true },
-  { icon: CalendarCheckIcon, label: "Reschedule an appointment", optional: true },
-  { icon: CalendarCheckIcon, label: "Cancel an appointment", optional: true },
-  { icon: BookOpenIcon, label: "Save a staff follow-up task", optional: true },
-  { icon: ArrowRightLeftIcon, label: "Transfer a call", optional: true },
-  { icon: XIcon, label: "End a call", optional: true },
+  { icon: CalendarCheckIcon, label: "Find available appointments" },
+  { icon: CalendarCheckIcon, label: "Book an appointment" },
+  { icon: CalendarCheckIcon, label: "Reschedule an appointment" },
+  { icon: CalendarCheckIcon, label: "Cancel an appointment" },
+  { icon: BookOpenIcon, label: "Save a staff follow-up task" },
+  { icon: ArrowRightLeftIcon, label: "Transfer a call" },
+  { icon: XIcon, label: "End a call" },
 ]
 
 export function AgentHome({
@@ -146,17 +146,13 @@ function KnowledgeVersion({ practiceID, locationID }: { practiceID: string; loca
 
 function AgentTools() {
   return (
-    <>
-      <p className="mb-3 text-sm text-muted-foreground">Some tools depend on this office&apos;s setup.</p>
-      <ul aria-label="Agent tools" className="border-t">
-        {tools.map((tool) => (
-          <li key={tool.label} className="flex min-h-11 items-center gap-3 border-b py-2">
-            <tool.icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 whitespace-nowrap text-sm font-medium">{tool.label}</span>
-            {tool.optional && <span className="text-xs text-muted-foreground">Optional</span>}
-          </li>
-        ))}
-      </ul>
-    </>
+    <ul aria-label="Agent tools" className="border-t">
+      {tools.map((tool) => (
+        <li key={tool.label} className="flex min-h-11 items-center gap-3 border-b py-2">
+          <tool.icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 whitespace-nowrap text-sm font-medium">{tool.label}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
