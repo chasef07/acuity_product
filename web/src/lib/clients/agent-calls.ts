@@ -1,4 +1,5 @@
 import {
+  closeAgentCallKnowledgeGap,
   flagAgentCallIssue as flagAgentCallIssueRequest,
   getAgentCall,
   getOperatorAiInteractionAnalytics,
@@ -11,6 +12,7 @@ import type {
   CallOutcome,
   AgentCallIssueReason,
   AgentCallsPage,
+  KnowledgeGapResolution,
   OperatorAiAnalyticsPage,
   OperatorAiAnalyticsQueryRequest,
   OperatorAiAnalyticsRange,
@@ -26,6 +28,7 @@ export function useAgentCalls({
   range,
   phone,
   flaggedOnly,
+  knowledgeGapOnly = false,
   intent,
   outcome,
 }: {
@@ -34,13 +37,14 @@ export function useAgentCalls({
   range: OperatorAiAnalyticsRange
   phone: string
   flaggedOnly: boolean
+  knowledgeGapOnly?: boolean
   intent?: CallIntent
   outcome?: CallOutcome
 }) {
   return usePages({
     live: "workspace",
     name: "agent-calls",
-    identity: { practiceID, locationID, range, phone, flaggedOnly, intent, outcome },
+    identity: { practiceID, locationID, range, phone, flaggedOnly, knowledgeGapOnly, intent, outcome },
     read: (identity, cursor, transport) =>
       queryAgentCalls({
         ...transport,
@@ -50,6 +54,7 @@ export function useAgentCalls({
           range: identity.range,
           phone: identity.phone,
           flaggedOnly: identity.flaggedOnly,
+          knowledgeGapOnly: identity.knowledgeGapOnly || undefined,
           intent: identity.intent,
           outcome: identity.outcome,
           limit: 50,
@@ -79,6 +84,16 @@ export function flagAgentCallIssue(
       ...transport,
       path: { interactionId: interactionID },
       body: { reason, note },
+    }),
+  )
+}
+
+export function closeKnowledgeGap(interactionID: string, resolution: KnowledgeGapResolution) {
+  return portalRequest((transport) =>
+    closeAgentCallKnowledgeGap({
+      ...transport,
+      path: { interactionId: interactionID },
+      body: { resolution },
     }),
   )
 }

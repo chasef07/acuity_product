@@ -84,13 +84,14 @@ test("Home connects Acuity to knowledge, insurance, and tools", async (t) => {
   assert.deepEqual(Array.from(connections.querySelectorAll("button"), (button) => button.getAttribute("aria-label")), ["Knowledge base", "Insurance", "Tools"])
   assert.equal(connections.querySelectorAll('svg[aria-label="Acuity"] circle').length, 7)
   assert.doesNotMatch(page.text(), /What Acuity can do|Transfer policy|Emergency policy/)
-  assert.deepEqual(page.agentCallsRequests, [])
+  await waitFor(() => /Abita had answers for every call/.test(page.text()))
+  assert.deepEqual(page.agentCallsRequests, [homeGapQuery(locations[0].id)])
   await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => /Version 14 · published/.test(page.text()))
   assert.doesNotMatch(page.text(), /v14/)
   assert.match(page.text(), /Open knowledge base/)
   assert.doesNotMatch(page.text(), /Needs knowledge|An office question went unanswered/)
-  assert.deepEqual(page.agentCallsRequests, [])
+  assert.deepEqual(page.agentCallsRequests, [homeGapQuery(locations[0].id)])
   await page.click("Open knowledge base")
   await act(async () => page.button(/^Insurance/).click())
   await page.click("Open insurance list")
@@ -141,10 +142,162 @@ test("pages that show one Location use the workspace's office, or the only offic
       assert.equal(page.host.querySelector("[role='combobox'][aria-label='Office']"), null)
       assert.doesNotMatch(page.text(), /Choose an office/)
     }
-    assert.deepEqual(page.agentCallsRequests, [])
+    assert.deepEqual(page.agentCallsRequests.at(-1), homeGapQuery(expected))
+    assert.ok(page.agentCallsRequests.every((request) => request.knowledgeGapOnly === true))
   }
   await page.unmount()
 })
+
+test("Home fixes a call Abita couldn't answer by editing a topic, and a conflict keeps the typed answer", async (t) => {
+  const page = harness(t)
+  page.knowledge = {
+    locationId: locations[0].id,
+    revision: { id: "revision-3", version: 3, createdAt: "2026-10-27T14:00:00Z" },
+    sections: [
+      { id: "hours", title: "Hours", text: "Open 8 to 5." },
+      { id: "parking", title: "Parking", text: "Parking details are not supplied." },
+    ],
+  }
+  const call = agentCall("gap-1", "+15555550111")
+  page.agentCalls = { calls: [call], nextCursor: "" }
+  page.callDetail = { call, locationName: "Hollywood", messages: [{ speaker: "Caller", text: "Do you validate parking?", occurredAt: "2026-10-28T15:00:05Z" }], scorecard: [] }
+  await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={() => {}} />)
+  await waitFor(() => /1 call Abita couldn't answer/.test(page.text()))
+  assert.deepEqual(page.agentCallsRequests, [homeGapQuery(locations[0].id)])
+  await act(async () => gapRows(page.host)[0].click())
+  await waitFor(() => /Do you validate parking\?/.test(page.sheetText()) && /Edit a topic/.test(page.sheetText()))
+  await page.sheetClick("Edit a topic")
+  await page.type(page.sheet()!.querySelector<HTMLInputElement>("input[aria-label='Search topics']")!, "park")
+  assert.deepEqual(Array.from(page.sheet()!.querySelectorAll("[aria-label='Topics'] button"), (item) => item.textContent), ["Parking"])
+  await page.sheetClick("Parking")
+  assert.equal(sheetField(page, "Title").value, "Parking")
+  await page.fill(sheetField(page, "Text"), "We validate garage parking at the front desk.")
+
+  page.publishStatus = 409
+  page.publishError = { code: "KNOWLEDGE_CHANGED", message: "Someone else changed this office's knowledge. Reload to see their changes.", correlationId: "c-1", retryable: false }
+  await page.sheetClick("Save and close")
+  await waitFor(() => page.sheetAlerts().some((alert) => alert.includes("Someone else changed this office's knowledge. Check the topic and save again.")))
+  assert.equal(sheetField(page, "Text").value, "We validate garage parking at the front desk.")
+  assert.deepEqual(page.gapCloses, [])
+
+  page.publishStatus = 200
+  page.publishError = undefined
+  page.publishResult = { id: "revision-4", version: 4, createdAt: "2026-10-28T15:10:00Z" }
+  let releasePublish = () => {}
+  page.publishGate = new Promise<void>((resolve) => { releasePublish = resolve })
+  await page.sheetClick("Save and close")
+  await waitFor(() => page.publishRequests.length === 2)
+  await page.sheetClick("Close")
+  assert.match(page.sheetText(), /Fix this/)
+  releasePublish()
+  await waitFor(() => /Abita had answers for every call/.test(page.text()))
+  const published = page.publishRequests.at(-1)!
+  assert.equal(page.publishRequests.length, 2)
+  assert.equal(published.expectedRevisionId, "revision-3")
+  assert.deepEqual(published.sections, [
+    { id: "hours", title: "Hours", text: "Open 8 to 5." },
+    { id: "parking", title: "Parking", text: "We validate garage parking at the front desk." },
+  ])
+  assert.match(published.reason, /^Updated “Parking” from a caller question on /)
+  assert.deepEqual(page.gapCloses, [{ id: "gap-1", resolution: "ANSWERED" }])
+  await page.unmount()
+})
+
+test("Home adds a topic once even when closing the call needs a retry, and Not needed closes without publishing", async (t) => {
+  const page = harness(t)
+  page.knowledge = { locationId: locations[0].id, revision: { id: "revision-3", version: 3, createdAt: "2026-10-27T14:00:00Z" }, sections: [{ id: "hours", title: "Hours", text: "Open 8 to 5." }] }
+  const first = agentCall("gap-1", "+15555550111")
+  const second = agentCall("gap-2", "+15555550122")
+  page.agentCalls = { calls: [first, second], nextCursor: "" }
+  page.callDetail = { call: first, locationName: "Hollywood", messages: [{ speaker: "Caller", text: "Is there parking?", occurredAt: "2026-10-28T15:00:05Z" }], scorecard: [] }
+  await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={() => {}} />)
+  await waitFor(() => /2 calls Abita couldn't answer/.test(page.text()))
+  await act(async () => gapRows(page.host)[0].click())
+  await waitFor(() => /Add a topic/.test(page.sheetText()) && Boolean(page.sheet()?.querySelector("textarea")))
+  assert.equal(page.sheet()!.querySelector<HTMLButtonElement>("button[type='submit']")!.disabled, true)
+  await page.fill(sheetField(page, "Title"), "Parking")
+  await page.fill(sheetField(page, "Text"), "Free parking behind the building.")
+  page.gapCloseStatus = 503
+  await page.sheetClick("Save and close")
+  await waitFor(() => page.sheetAlerts().some((alert) => alert.includes("Saved to knowledge, but this call couldn't be closed. Try again.")))
+  assert.equal(page.publishRequests.length, 1)
+  assert.deepEqual(page.publishRequests[0].sections.at(-1), { id: "parking", title: "Parking", text: "Free parking behind the building." })
+  assert.match(page.publishRequests[0].reason, /^Added “Parking” from a caller question on /)
+
+  await page.sheetClick("Close")
+  await waitFor(() => !/Saved to knowledge/.test(page.sheetText()))
+  await act(async () => gapRows(page.host)[0].click())
+  await waitFor(() => /Close call/.test(page.sheetText()))
+  assert.doesNotMatch(page.sheetText(), /Not needed|Add a topic/)
+  page.gapCloseStatus = 200
+  await page.sheetClick("Close call")
+  await waitFor(() => /1 call Abita couldn't answer/.test(page.text()))
+  assert.equal(page.publishRequests.length, 1)
+  assert.deepEqual(page.gapCloses, [{ id: "gap-1", resolution: "ANSWERED" }, { id: "gap-1", resolution: "ANSWERED" }])
+
+  page.callDetail = { ...page.callDetail, call: second }
+  await act(async () => gapRows(page.host)[0].click())
+  await waitFor(() => /Not needed/.test(page.sheetText()))
+  await page.sheetClick("Not needed")
+  await waitFor(() => /Abita had answers for every call/.test(page.text()))
+  assert.equal(page.publishRequests.length, 1)
+  assert.deepEqual(page.gapCloses.at(-1), { id: "gap-2", resolution: "NOT_NEEDED" })
+  await page.unmount()
+})
+
+test("Home keeps an edited answer when someone else removes that topic, and saving adds it back", async (t) => {
+  const page = harness(t)
+  page.knowledge = {
+    locationId: locations[0].id,
+    revision: { id: "revision-3", version: 3, createdAt: "2026-10-27T14:00:00Z" },
+    sections: [
+      { id: "hours", title: "Hours", text: "Open 8 to 5." },
+      { id: "parking", title: "Parking", text: "Parking details are not supplied." },
+    ],
+  }
+  const call = agentCall("gap-1", "+15555550111")
+  page.agentCalls = { calls: [call], nextCursor: "" }
+  page.callDetail = { call, locationName: "Hollywood", messages: [{ speaker: "Caller", text: "Do you validate parking?", occurredAt: "2026-10-28T15:00:05Z" }], scorecard: [] }
+  await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={() => {}} />)
+  await waitFor(() => gapRows(page.host).length === 1)
+  await act(async () => gapRows(page.host)[0].click())
+  await waitFor(() => /Edit a topic/.test(page.sheetText()))
+  await page.sheetClick("Edit a topic")
+  await page.sheetClick("Parking")
+  await page.fill(sheetField(page, "Text"), "We validate garage parking at the front desk.")
+
+  page.knowledge = { ...page.knowledge, revision: { id: "revision-4", version: 4, createdAt: "2026-10-28T15:05:00Z" }, sections: [{ id: "hours", title: "Hours", text: "Open 8 to 5." }] }
+  page.publishStatus = 409
+  page.publishError = { code: "KNOWLEDGE_CHANGED", message: "Someone else changed this office's knowledge. Reload to see their changes.", correlationId: "c-1", retryable: false }
+  await page.sheetClick("Save and close")
+  await waitFor(() => /Someone else removed this topic. Saving adds it back./.test(page.sheetText()))
+  assert.equal(sheetField(page, "Text").value, "We validate garage parking at the front desk.")
+
+  page.publishStatus = 200
+  page.publishError = undefined
+  await page.sheetClick("Save and close")
+  await waitFor(() => /Abita had answers for every call/.test(page.text()))
+  const published = page.publishRequests.at(-1)!
+  assert.equal(published.expectedRevisionId, "revision-4")
+  assert.deepEqual(published.sections, [
+    { id: "hours", title: "Hours", text: "Open 8 to 5." },
+    { id: "parking", title: "Parking", text: "We validate garage parking at the front desk." },
+  ])
+  assert.match(published.reason, /^Added “Parking” from a caller question on /)
+  await page.unmount()
+})
+
+function sheetField(page: ReturnType<typeof harness>, label: string) {
+  const field = Array.from(page.sheet()?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea") ?? []).find(
+    (item) => item.labels?.[0]?.textContent === label,
+  )
+  assert.ok(field, label)
+  return field
+}
+
+function gapRows(host: HTMLElement) {
+  return Array.from(host.querySelectorAll<HTMLButtonElement>("[aria-label=\"Calls Abita couldn't answer\"] li > button"))
+}
 
 test("with all offices in scope and several offices, one-Location pages ask for an office and load nothing", async (t) => {
   const page = harness(t)
@@ -972,6 +1125,10 @@ function LiveWorkspace({ version, children }: { version: number; children: React
   return children
 }
 
+function homeGapQuery(locationId: string): AgentCallsQuery {
+  return { practiceId: "practice-1", locationId, range: "24h", phone: "", flaggedOnly: false, knowledgeGapOnly: true, limit: 50 }
+}
+
 function agentCall(id: string, phone: string): AgentCallsPage["calls"][number] {
   return { id, phone, startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }
 }
@@ -1043,6 +1200,8 @@ function harness(t: TestContext) {
     callDetail: undefined as AgentCallDetail | undefined,
     flagRequests: [] as string[],
     flagStatus: 200,
+    gapCloses: [] as { id: string; resolution: string }[],
+    gapCloseStatus: 200,
     sheet: () => document.querySelector("[data-slot='sheet-content']"),
     sheetText: () => page.sheet()?.textContent ?? "",
     sheetAlerts: () => Array.from(page.sheet()?.querySelectorAll("[role='alert']") ?? [], (alert) => alert.textContent ?? ""),
@@ -1156,6 +1315,12 @@ function harness(t: TestContext) {
       if (page.afterPublish) page.knowledge = page.afterPublish
       if (page.afterPublishHistory) page.history = page.afterPublishHistory
       return Response.json(page.publishResult)
+    }
+    const gapPath = /^\/v1\/agent-calls\/([^/]+)\/knowledge-gap$/.exec(url.pathname)
+    if (gapPath) {
+      const { resolution } = (await request.json()) as { resolution: string }
+      page.gapCloses.push({ id: gapPath[1], resolution })
+      return page.gapCloseStatus === 200 ? Response.json({ resolution, reviewedAt: "2026-10-28T15:00:00Z" }) : new Response("", { status: page.gapCloseStatus })
     }
     const callPath = /^\/v1\/agent-calls\/([^/]+)(\/issue)?$/.exec(url.pathname)
     if (callPath && request.method !== "POST") {

@@ -21,6 +21,7 @@ import {
 import type { PortalFailure } from "@/lib/clients/portal-request"
 import { type PortalQuery, readFailure } from "@/lib/data/queries"
 import { formatTimestamp } from "@/lib/format-time"
+import { fold, matches, publishedSections, publishFailureMessage } from "@/lib/knowledge-publication"
 import {
   knowledgeDraftKey,
   readKnowledgeDraft,
@@ -36,15 +37,6 @@ import {
   type AgentLocationProps,
 } from "./manage-agent-page"
 
-function fold(text: string) {
-  return text.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase()
-}
-
-function matches(entry: Entry, words: string[]) {
-  const haystack = fold(`${entry.title}\n${entry.text}`)
-  return words.every((word) => haystack.includes(word))
-}
-
 function abitaPromptKnowledge(entries: Entry[]) {
   return entries.map(({ title, text }) => `### ${title}\n\n${text.trim()}`.trim()).join("\n\n")
 }
@@ -57,18 +49,6 @@ function knowledgeCharacters(entries: Entry[]) {
 
 function formatCount(count: number) {
   return count.toLocaleString("en-US")
-}
-
-function publishedSections(entries: Entry[]): KnowledgeSection[] {
-  const used = new Set(entries.map((entry) => entry.id).filter(Boolean))
-  return entries.map(({ id, title, text }) => {
-    if (id) return { id, title, text }
-    const slug = fold(title).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 90) || "entry"
-    let candidate = slug
-    for (let suffix = 2; used.has(candidate); suffix++) candidate = `${slug}-${suffix}`
-    used.add(candidate)
-    return { id: candidate, title, text }
-  })
 }
 
 function changed(draft: Draft) {
@@ -424,7 +404,7 @@ function PublishBar({
   )
 }
 
-function EntryFields({ entry, onChange }: { entry: Entry; onChange: (change: Partial<KnowledgeSection>) => void }) {
+export function EntryFields({ entry, onChange }: { entry: Pick<KnowledgeSection, "title" | "text">; onChange: (change: Partial<KnowledgeSection>) => void }) {
   const titleID = useId()
   const textID = useId()
   return (
@@ -443,12 +423,6 @@ function EntryFields({ entry, onChange }: { entry: Entry; onChange: (change: Par
       </div>
     </>
   )
-}
-
-function publishFailureMessage(failure: PortalFailure) {
-  if (failure.kind === "signedOut" || failure.kind === "unauthenticated") return "Sign in again to publish."
-  if (failure.kind === "unauthorized") return "You don't have access to change this Location's knowledge."
-  return failure.message ?? "Not published. Nothing changed. Try again."
 }
 
 export function KnowledgeHistory({

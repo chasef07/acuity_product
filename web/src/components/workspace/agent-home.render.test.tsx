@@ -9,7 +9,7 @@ import { AgentHome } from "./agent-home"
 import { clearAccessToken } from "../../lib/auth-client"
 import { DataProvider } from "../../lib/data/provider"
 
-test("Home hydrates its greeting and shows knowledge status without loading call gaps", async (context) => {
+test("Home hydrates its greeting and shows knowledge status and the last day's unanswered calls", async (context) => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace" })
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: dom.window },
@@ -35,6 +35,7 @@ test("Home hydrates its greeting and shows knowledge status without loading call
     const request = input as Request
     const pathname = new URL(request.url).pathname
     if (pathname === "/v1/knowledge/query") return Response.json({ locationId: "office-1", sections: [] })
+    if (pathname === "/v1/agent-calls/query") return Response.json({ calls: [], nextCursor: "" })
     assert.fail(`Unexpected Home request: ${pathname}`)
   })
   const host = document.createElement("div")
@@ -57,5 +58,6 @@ test("Home hydrates its greeting and shows knowledge status without loading call
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
   }
   assert.match(host.textContent ?? "", /No knowledge published yet/)
+  assert.match(host.textContent ?? "", /Abita had answers for every call/)
   assert.doesNotMatch(host.textContent ?? "", /Needs knowledge|Load more calls|office question went unanswered/i)
 })

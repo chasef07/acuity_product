@@ -686,6 +686,10 @@ export type AgentCallsQuery = {
     range: OperatorAiAnalyticsRange;
     phone?: string;
     flaggedOnly?: boolean;
+    /**
+     * Restrict to calls the judge flagged for missing office knowledge that staff have not closed.
+     */
+    knowledgeGapOnly?: boolean;
     cursor?: string;
     limit?: number;
 };
@@ -716,6 +720,17 @@ export type AgentCallIssueInput = {
      * Optional staff explanation of what happened.
      */
     note?: string;
+};
+
+export type KnowledgeGapResolution = 'ANSWERED' | 'NOT_NEEDED';
+
+export type KnowledgeGapCloseInput = {
+    resolution: KnowledgeGapResolution;
+};
+
+export type KnowledgeGapReview = {
+    resolution: KnowledgeGapResolution;
+    reviewedAt: string;
 };
 
 export type AgentCallIssue = {
@@ -3463,6 +3478,49 @@ export type FlagAgentCallIssueResponses = {
 };
 
 export type FlagAgentCallIssueResponse = FlagAgentCallIssueResponses[keyof FlagAgentCallIssueResponses];
+
+export type CloseAgentCallKnowledgeGapData = {
+    body: KnowledgeGapCloseInput;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/agent-calls/{interactionId}/knowledge-gap';
+};
+
+export type CloseAgentCallKnowledgeGapErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CloseAgentCallKnowledgeGapError = CloseAgentCallKnowledgeGapErrors[keyof CloseAgentCallKnowledgeGapErrors];
+
+export type CloseAgentCallKnowledgeGapResponses = {
+    /**
+     * The saved close.
+     */
+    200: KnowledgeGapReview;
+};
+
+export type CloseAgentCallKnowledgeGapResponse = CloseAgentCallKnowledgeGapResponses[keyof CloseAgentCallKnowledgeGapResponses];
 
 export type QueryOperatorAiCostsData = {
     body: OperatorAiCostQueryRequest;

@@ -16,6 +16,7 @@ import { formatTimestamp } from "@/lib/format-time"
 import { homeDay, homeGreeting } from "@/lib/home-greeting"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 import { AgentHomeMap, agentAreas, type AgentArea } from "./agent-home-map"
+import { KnowledgeGaps } from "./knowledge-gaps"
 import type { AgentLocationProps } from "./manage-agent-page"
 
 const tools = [
@@ -71,6 +72,7 @@ export function AgentHome({
           </time>
         </h1>
       </header>
+      {locationID && <KnowledgeGaps practiceID={practiceID} locationID={locationID} />}
       <div className="px-4 py-10 sm:px-6 @[36rem]:py-16">
         <AgentHomeMap selected={selected} detailsID={detailsID} onSelect={selectArea} />
       </div>
