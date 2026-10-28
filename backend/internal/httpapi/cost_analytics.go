@@ -26,7 +26,7 @@ func (server *Server) QueryOperatorAICosts(w http.ResponseWriter, r *http.Reques
 	defer finish()
 	report, err := server.interactions.QueryCostAnalytics(ctx, interaction.QueryCostAnalyticsCommand{
 		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: uuidString(body.LocationId),
-		Range: interaction.AnalyticsRange(body.Range), TimeZone: body.TimeZone,
+		Range: interaction.AnalyticsRange(body.Range),
 	})
 	if err != nil {
 		server.writeInteractionError(w, r, err)

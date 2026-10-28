@@ -104,7 +104,7 @@ func newQualityAccumulator(days []AnalyticsDay) *qualityAccumulator {
 }
 
 func (q *qualityAccumulator) add(sample qualitySample) {
-	day := q.byDate[sample.startedAt.UTC().Format(time.DateOnly)]
+	day := q.byDate[sample.startedAt.In(ReportingZone).Format(time.DateOnly)]
 	if day == nil {
 		return
 	}

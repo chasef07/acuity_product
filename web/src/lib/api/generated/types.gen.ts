@@ -869,10 +869,6 @@ export type PracticeAnalyticsQueryRequest = {
     practiceId: string;
     locationId?: string;
     days: 7 | 30 | 90;
-    /**
-     * IANA timezone used for reporting-day boundaries.
-     */
-    timeZone: string;
 };
 
 export type BookingMetrics = {
@@ -1175,10 +1171,6 @@ export type OperatorAiCostQueryRequest = {
     practiceId: string;
     locationId?: string;
     range: OperatorAiAnalyticsRange;
-    /**
-     * IANA timezone for daily chart buckets. The range is a rolling time window.
-     */
-    timeZone: string;
 };
 
 export type OperatorAiCostItem = {

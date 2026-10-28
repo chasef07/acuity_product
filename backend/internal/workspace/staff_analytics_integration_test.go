@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
@@ -40,8 +41,8 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT p.id::text,l.id::text FROM access_practices p JOIN access_locations l ON l.practice_id=p.id WHERE p.provisioning_key='other'`).Scan(&otherPractice, &otherLocation); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	day := time.Date(now.Year(), now.Month(), now.Day()-3, 12, 0, 0, 0, time.UTC)
+	now := time.Now().In(interaction.ReportingZone)
+	day := time.Date(now.Year(), now.Month(), now.Day()-3, 12, 0, 0, 0, interaction.ReportingZone)
 	insertCall := func(location, direction string, durations []int, bridged bool) string {
 		t.Helper()
 		id := uuid.NewString()
@@ -81,7 +82,7 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, interaction.ReportingZone)
 	from := to.AddDate(0, 0, -7)
 	insertText(practice, locA, "OUTBOUND", "HUMAN", staff.Subject, "SENT", from)
 	insertText(practice, locA, "OUTBOUND", "HUMAN", staff.Subject, "DELIVERED", day)
@@ -115,7 +116,7 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 		}
 	}
 	module := workspace.New(db.As(testdb.Portal), a)
-	command := workspace.QueryStaffAnalyticsCommand{Identity: admin, PracticeID: practice, LocationID: locA, Days: 7, TimeZone: "UTC"}
+	command := workspace.QueryStaffAnalyticsCommand{Identity: admin, PracticeID: practice, LocationID: locA, Days: 7}
 	report, err := module.QueryStaffAnalytics(ctx, command)
 	if err != nil {
 		t.Fatal(err)

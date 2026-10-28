@@ -208,7 +208,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET transcript = jsonb_set(transcript, '{usage}', $2::jsonb) WHERE id=$1::uuid`, richID, usage); err != nil {
 		t.Fatal(err)
 	}
-	costBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "locationId": northID, "range": "7d", "timeZone": "America/Los_Angeles"})
+	costBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "locationId": northID, "range": "7d"})
 	for _, token := range []string{"", "admin-token", "operator-token"} {
 		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", token, costBody)
 		if token != "operator-token" {
@@ -245,7 +245,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		for _, day := range costs.Daily {
 			daily += day.CostUSD
 		}
-		if math.Abs(shares-100) > 1e-9 || math.Abs(daily-costs.TotalCostUSD) > 1e-9 {
+		if costs.TimeZone != "America/New_York" || math.Abs(shares-100) > 1e-9 || math.Abs(daily-costs.TotalCostUSD) > 1e-9 {
 			t.Fatal("cost breakdown does not reconcile")
 		}
 	}
@@ -263,12 +263,11 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		unknownCosts.CostPerMinuteUSD != nil || math.Abs(unknownCosts.TotalCostUSD-totalCost) > 1e-9 {
 		t.Fatalf("unknown usage was hidden or lost known costs: %+v", unknownCosts)
 	}
-	invalidCostBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "range": "7d", "timeZone": "Not/AZone"})
-	invalidCost := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", "operator-token", invalidCostBody)
-	if invalidCost.StatusCode != http.StatusBadRequest {
-		t.Fatalf("invalid cost timezone = %d", invalidCost.StatusCode)
+	removedCostBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "range": "7d", "timeZone": "UTC"})
+	removedCost := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", "operator-token", removedCostBody)
+	if body := readBody(t, removedCost); removedCost.StatusCode != http.StatusBadRequest || !strings.Contains(body, `"code":"INVALID_REQUEST"`) {
+		t.Fatalf("removed cost timeZone field = %d: %s", removedCost.StatusCode, body)
 	}
-	_ = invalidCost.Body.Close()
 
 	queryBody, _ := json.Marshal(map[string]any{
 		"practiceId": practiceID,
@@ -518,7 +517,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	 SELECT 'cost-scale',$1,$2,'cost-scale-'||n,'+15555550101','+15555550102',$3::timestamptz-interval '10 minutes',$3,'COMPLETED',3,$4 FROM generate_series(1,$5) n`, practiceID, southID, now.Add(-time.Hour), largeReport, largeCalls); err != nil {
 		t.Fatal(err)
 	}
-	largeCostBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "locationId": southID, "range": "30d", "timeZone": "UTC"})
+	largeCostBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "locationId": southID, "range": "30d"})
 	started := time.Now()
 	largeCostResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", "operator-token", largeCostBody)
 	if largeCostResponse.StatusCode != http.StatusOK {

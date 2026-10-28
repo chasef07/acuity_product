@@ -91,3 +91,20 @@ func TestProjectAnalyticsCallDerivesTransferOnlyFromEscalatedStatus(t *testing.T
 		t.Fatal("ESCALATED call was not marked transferred")
 	}
 }
+
+func TestAnalyticsDailyBucketsFollowEasternDays(t *testing.T) {
+	aug8At10pmEastern := time.Date(2026, time.August, 9, 2, 0, 0, 0, time.UTC)
+	aug9At930pmEastern := time.Date(2026, time.August, 10, 1, 30, 0, 0, time.UTC)
+	summary := AnalyticsSummary{Daily: analyticsDays(aug8At10pmEastern, aug8At10pmEastern.Add(24*time.Hour))}
+	summarizeAnalyticsProjection(&summary, analyticsProjection{
+		call:    AnalyticsCall{ID: "evening", StartedAt: aug9At930pmEastern},
+		quality: qualitySample{startedAt: aug9At930pmEastern},
+	})
+	finalizeAnalyticsSummary(&summary)
+	if len(summary.Daily) != 2 || summary.Daily[0].Date != "2026-08-08" || summary.Daily[1].Date != "2026-08-09" {
+		t.Fatalf("daily dates = %+v, want Aug 8 and Aug 9 Eastern", summary.Daily)
+	}
+	if summary.Daily[1].TotalCalls != 1 || summary.Quality.Daily[1].UnevaluatedCalls != 1 {
+		t.Fatalf("9:30pm Eastern call must count on Aug 9: daily=%+v quality=%+v", summary.Daily, summary.Quality.Daily)
+	}
+}

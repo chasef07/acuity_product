@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/jackc/pgx/v5"
@@ -161,12 +160,4 @@ func locationNames(authorization access.Authorization) map[string]string {
 		result[location.ID] = location.Name
 	}
 	return result
-}
-
-func reportingZone(name string) (*time.Location, bool) {
-	if name == "" || name == "Local" {
-		return nil, false
-	}
-	zone, err := time.LoadLocation(name)
-	return zone, err == nil
 }

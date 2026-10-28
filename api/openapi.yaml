@@ -4013,7 +4013,7 @@ components:
     PracticeAnalyticsQueryRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, days, timeZone]
+      required: [practiceId, days]
       properties:
         practiceId:
           type: string
@@ -4024,11 +4024,6 @@ components:
         days:
           type: integer
           enum: [7, 30, 90]
-        timeZone:
-          type: string
-          minLength: 1
-          maxLength: 100
-          description: IANA timezone used for reporting-day boundaries.
     BookingMetrics:
       type: object
       additionalProperties: false
@@ -4410,16 +4405,11 @@ components:
     OperatorAICostQueryRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, range, timeZone]
+      required: [practiceId, range]
       properties:
         practiceId: {type: string, format: uuid}
         locationId: {type: string, format: uuid}
         range: {$ref: "#/components/schemas/OperatorAIAnalyticsRange"}
-        timeZone:
-          type: string
-          minLength: 1
-          maxLength: 100
-          description: IANA timezone for daily chart buckets. The range is a rolling time window.
     OperatorAICostItem:
       type: object
       additionalProperties: false

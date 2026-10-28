@@ -24,7 +24,7 @@ func (server *Server) QueryStaffAnalytics(w http.ResponseWriter, r *http.Request
 	}
 	defer finish()
 	report, err := server.workspace.QueryStaffAnalytics(ctx, workspace.QueryStaffAnalyticsCommand{
-		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: uuidString(body.LocationId), Days: int(body.Days), TimeZone: body.TimeZone,
+		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: uuidString(body.LocationId), Days: int(body.Days),
 	})
 	if err != nil {
 		server.writeWorkspaceError(w, r, err)
