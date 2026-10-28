@@ -12,7 +12,9 @@ import {
 } from "@/components/auth/sign-in-dialog"
 import { cn } from "@/lib/utils"
 
+import { CaseStudies, type CaseStudy } from "./case-studies"
 import { PixelWaveField } from "./pixel-wave-field"
+import { SiteNavigation } from "./site-navigation"
 import { WorkWithUsForm } from "./work-with-us-form"
 import styles from "./enterprise-site.module.css"
 
@@ -28,6 +30,8 @@ const display = Geist({
 export type MarketingRoute =
   | "/"
   | "/method"
+  | "/platform/agents"
+  | "/platform/systems"
   | "/integrations"
   | "/integrations/advancedmd"
   | "/integrations/stedi"
@@ -38,18 +42,13 @@ export type MarketingRoute =
   | "/security"
   | "/blog"
 
-const navigation: Array<{ href: MarketingRoute; label: string }> = [
-  { href: "/", label: "Home" },
-  { href: "/method", label: "Our Method" },
-  { href: "/integrations", label: "Integrations" },
-  { href: "/who-we-are", label: "Who We Are" },
-]
-
 const footerNavigation = [
   {
-    label: "Product",
+    label: "Platform",
     links: [
-      { href: "/method", label: "The Acuity Health Method" },
+      { href: "/platform/agents", label: "Acuity Agents" },
+      { href: "/method", label: "Deployment Strategy" },
+      { href: "/platform/systems", label: "Acuity Systems" },
       { href: "/integrations", label: "Partnerships & Integrations" },
     ],
   },
@@ -81,37 +80,6 @@ const footerNavigation = [
     ],
   },
 ] as const
-
-function SiteHeader({ current }: { current: MarketingRoute }) {
-  return (
-    <header className={styles.siteHeader}>
-      <Link className={styles.brand} href="/" aria-label="Acuity Health home">
-        <AcuityMark className={styles.brandMark} />
-        <span>Acuity Health</span>
-      </Link>
-
-      <nav className={styles.primaryNav} aria-label="Main navigation">
-        {navigation.map((item) => (
-          <Link
-            className={styles.navLink}
-            href={item.href}
-            aria-current={current === item.href ? "page" : undefined}
-            key={item.href}
-          >
-            {item.label}
-          </Link>
-        ))}
-      </nav>
-
-      <div className={styles.headerActions}>
-        <PortalSignInTrigger className={styles.portalLink} />
-        <Link className={styles.workLink} href="/work-with-us">
-          Build with us
-        </Link>
-      </div>
-    </header>
-  )
-}
 
 function SiteFooter() {
   return (
@@ -174,7 +142,7 @@ export function MarketingFrame({
         <a className={styles.skipLink} href="#main-content">
           Skip to main content
         </a>
-        <SiteHeader current={current} />
+        <SiteNavigation current={current} />
         <main id="main-content">{children}</main>
         <SiteFooter />
       </div>
@@ -234,6 +202,46 @@ function MethodCapabilities({ headingLevel = 3 }: { headingLevel?: 2 | 3 }) {
   )
 }
 
+const liveKitCaseStudyUrl = "https://livekit.com/blog/how-acuity-health-transforms-patient-access-with-livekit-voice-agents"
+const stediPartnerUrl = "https://www.stedi.com/platform-partners#acuity-health"
+const modMedListingUrl = "https://modmed.my.site.com/synapsysmarketplace/s/partner-app/a9YUW000000jfGj2AI/data-buddies-solutions-llc"
+
+const caseStudies: CaseStudy[] = [
+  {
+    tab: "LiveKit",
+    eyebrow: "Case study · LiveKit",
+    title: "AI agents that handle the whole call.",
+    body: "Acuity’s agents run on LiveKit. Across every use case they fully contain 80% of calls, and most bookings finish in under a minute.",
+    metrics: [
+      { value: "80%", label: "Calls fully contained by AI agents" },
+      { value: "<1 min", label: "Most bookings completed" },
+      { value: "81%", label: "Booking calls that end with a “thank you”" },
+    ],
+    link: { href: liveKitCaseStudyUrl, label: "Read the LiveKit case study", external: true },
+  },
+  {
+    tab: "AdvancedMD",
+    eyebrow: "Marketplace partner · AdvancedMD",
+    title: "Patient calls become appointments in AdvancedMD.",
+    body: "Our agents book with your practice’s providers, locations, appointment types, and scheduling rules.",
+    link: { href: "/integrations/advancedmd", label: "Explore the AdvancedMD integration" },
+  },
+  {
+    tab: "ModMed",
+    eyebrow: "Marketplace listing · ModMed",
+    title: "Listed on the ModMed SynapSYS Marketplace.",
+    body: "Practices using ModMed can find Acuity Health there. We scope the supported workflows with your team before rollout.",
+    link: { href: modMedListingUrl, label: "View our ModMed listing", external: true },
+  },
+  {
+    tab: "Whitecotton Vision",
+    eyebrow: "Sales & implementation partner · Whitecotton Vision",
+    title: "Brought to eye care by Whitecotton Vision.",
+    body: "Whitecotton Vision brings Acuity Health to ophthalmology and optometry practices and supports implementation.",
+    link: { href: "https://whitecottonvision.com/acuity-health", label: "Explore Acuity with Whitecotton Vision", external: true },
+  },
+]
+
 export function EnterpriseHome({
   initiallyOpen = false,
 }: {
@@ -260,6 +268,8 @@ export function EnterpriseHome({
         </div>
         <PixelWaveField />
       </section>
+
+      <CaseStudies stories={caseStudies} />
 
       <section className={styles.methodSection}>
         <header className={styles.sectionHeader}>
@@ -296,9 +306,6 @@ export function EnterpriseHome({
   )
 }
 
-const stediPartnerUrl = "https://www.stedi.com/platform-partners#acuity-health"
-const modMedListingUrl = "https://modmed.my.site.com/synapsysmarketplace/s/partner-app/a9YUW000000jfGj2AI/data-buddies-solutions-llc"
-const liveKitCaseStudyUrl ="https://livekit.com/blog/how-acuity-health-transforms-patient-access-with-livekit-voice-agents"
 
 export function IntegrationsPageContent() {
   return (
@@ -398,13 +405,10 @@ export function IntegrationsPageContent() {
       <section className={styles.integrationEditorial} aria-labelledby="other-systems">
         <header>
           <p className={styles.eyebrow}>Your systems. Your workflow.</p>
-          <h2 id="other-systems">More EHR & PMS integrations</h2>
+          <h2 id="other-systems">Other EHR & PMS systems</h2>
         </header>
         <div className={styles.storyBody}>
-          <p>We also connect with these platforms. We scope the supported workflows and access requirements with your team before rollout.</p>
-          <ul className={styles.integrationNames}>
-            <li>Nextech</li><li>athenahealth</li><li>Compulink</li>
-          </ul>
+          <p>We scope new EHR and PM connections with each practice, including Nextech, athenahealth and Compulink.</p>
           <p>Use another system? We can assess a custom connection around the work your practice needs.</p>
         </div>
       </section>
@@ -581,6 +585,130 @@ export function MethodPageContent() {
           <li><Check size={17} aria-hidden="true" /> Expansion waits for performance, handoffs, adoption, and ownership.</li>
           <li><Check size={17} aria-hidden="true" /> The customer gains capability at every stage.</li>
         </ul>
+      </section>
+    </MarketingFrame>
+  )
+}
+
+export function AgentsPageContent() {
+  return (
+    <MarketingFrame current="/platform/agents">
+      <section className={styles.missionVision} aria-labelledby="agents-title">
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Acuity Agents</p>
+          <h1 id="agents-title">AI agents for the patient phone line.</h1>
+        </div>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>What the agent does</p>
+          <p>Answer patient calls, book in your practice management system, confirm accepted insurance, and hand anything unresolved to staff with context.</p>
+        </div>
+      </section>
+
+      <section className={styles.integrationsSection} aria-labelledby="agent-work">
+        <header className={styles.sectionHeader}>
+          <div>
+            <p className={styles.eyebrow}>Built around your rules</p>
+            <h2 id="agent-work">The work an agent takes off the front desk.</h2>
+          </div>
+          <p>Each agent is configured for one practice: its providers, locations, appointment types, payers, and the moments that need a person.</p>
+        </header>
+        <div className={cn(styles.platformDetails, styles.platformDetailsFour)}>
+          <article>
+            <h2>Answer the call</h2>
+            <p>Handle common questions, scheduling requests, and after-hours calls from your practice’s own knowledge base.</p>
+          </article>
+          <article>
+            <h2>Book in your system</h2>
+            <p>Schedule directly in AdvancedMD with your providers, locations, appointment types, and scheduling rules.</p>
+          </article>
+          <article>
+            <h2>Confirm accepted insurance</h2>
+            <p>Tell callers whether your practice accepts their plan, from your own insurance list.</p>
+          </article>
+          <article>
+            <h2>Hand off with context</h2>
+            <p>Turn unresolved requests into staff tasks with the call and what the patient needs.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="agent-testing">
+        <header>
+          <p className={styles.eyebrow}>Built as code</p>
+          <h2 id="agent-testing">Tailored to each practice. Tested against real scenarios.</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Our agents run on LiveKit. Building them as code lets us tailor each one to a practice, and we pressure-test them with LiveKit Simulations against patient profiles and edge cases.</p>
+          <p>Across every use case, Acuity’s agents fully contain 80% of calls, and 81% of booking calls end with a “thank you.”</p>
+          <div className={styles.platformActions}>
+            <a className={styles.inlineArrowLink} href={liveKitCaseStudyUrl} target="_blank" rel="noopener">
+              Read the LiveKit case study <ArrowRight size={16} aria-hidden="true" />
+            </a>
+            <Link className={styles.inlineArrowLink} href="/platform/systems">
+              See the staff workspace <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+          </div>
+        </div>
+      </section>
+    </MarketingFrame>
+  )
+}
+
+export function SystemsPageContent() {
+  return (
+    <MarketingFrame current="/platform/systems">
+      <section className={styles.missionVision} aria-labelledby="systems-title">
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Acuity Systems</p>
+          <h1 id="systems-title">The staff workspace behind every agent.</h1>
+        </div>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>One place for the work</p>
+          <p>The requests agents hand off, the calls they handle, and the numbers that show whether it is working.</p>
+        </div>
+      </section>
+
+      <section className={styles.integrationsSection} aria-labelledby="systems-work">
+        <header className={styles.sectionHeader}>
+          <div>
+            <p className={styles.eyebrow}>For practice staff</p>
+            <h2 id="systems-work">Agents do the routine. Staff see everything.</h2>
+          </div>
+          <p>Your team works handoffs, reviews calls, and keeps the agent’s answers current from one workspace.</p>
+        </header>
+        <div className={styles.platformDetails}>
+          <article>
+            <h2>Task inbox</h2>
+            <p>Requests an agent could not finish arrive as tasks, with the call and what the patient needs.</p>
+          </article>
+          <article>
+            <h2>Calls and texts</h2>
+            <p>Call and text patients back from the same workspace, without switching tools.</p>
+          </article>
+          <article>
+            <h2>Call history</h2>
+            <p>Review every call your agent handled, with the full transcript.</p>
+          </article>
+          <article>
+            <h2>Analytics</h2>
+            <p>Track bookings, call volume, call duration, and staff activity, day by day.</p>
+          </article>
+          <article>
+            <h2>Knowledge base</h2>
+            <p>Keep the answers your agent gives current, with a history of every change.</p>
+          </article>
+        </div>
+        <div className={styles.customIntegration}>
+          <div>
+            <h2>How do we roll it out?</h2>
+            <p className={styles.integrationDescription}>
+              We prove the workflow in your operation with your team, then expand.
+            </p>
+          </div>
+          <Link className={styles.inlineArrowLink} href="/method">
+            Our deployment strategy <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+        </div>
       </section>
     </MarketingFrame>
   )
