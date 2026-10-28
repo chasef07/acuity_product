@@ -31,7 +31,7 @@ export function KnowledgeGaps({ practiceID, locationID }: { practiceID: string; 
     gaps.update((shown) => ({ ...shown, calls: shown.calls.filter((call) => call.id !== id) }))
   }
 
-  if (gaps.status === "loading") return null
+  if (gaps.status === "loading" || (gaps.status === "ready" && calls.length === 0 && !open)) return null
   if (gaps.status === "failed") {
     return (
       <Alert variant="destructive" className="mx-4 mb-8 w-auto sm:mx-6">
@@ -46,9 +46,7 @@ export function KnowledgeGaps({ practiceID, locationID }: { practiceID: string; 
     <section aria-label="Calls that need knowledge" className="mx-4 mb-8 rounded-xl border p-4 sm:mx-6">
       <h2 className="flex items-center gap-2 text-base font-medium">
         <MessageCircleQuestionIcon aria-hidden="true" className="size-4 text-muted-foreground" />
-        {calls.length === 0
-          ? "No calls need knowledge"
-          : `${calls.length}${more ? "+" : ""} ${calls.length === 1 && !more ? "call needs" : "calls need"} knowledge`}
+        {`${calls.length}${more ? "+" : ""} ${calls.length === 1 && !more ? "call needs" : "calls need"} knowledge`}
       </h2>
       <p className="mt-0.5 text-sm text-muted-foreground">Missing from the knowledge base · Last 24 hours</p>
       {calls.length > 0 && (

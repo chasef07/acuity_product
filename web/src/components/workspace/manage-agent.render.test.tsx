@@ -84,10 +84,11 @@ test("Home connects Acuity to knowledge, insurance, and tools", async (t) => {
   assert.deepEqual(Array.from(connections.querySelectorAll("button"), (button) => button.getAttribute("aria-label")), ["Knowledge base", "Insurance", "Tools"])
   assert.equal(connections.querySelectorAll('svg[aria-label="Acuity"] circle').length, 7)
   assert.doesNotMatch(page.text(), /What Acuity can do|Transfer policy|Emergency policy/)
-  await waitFor(() => /No calls need knowledge/.test(page.text()))
+  await waitFor(() => page.agentCallsRequests.length === 1)
   assert.deepEqual(page.agentCallsRequests, [homeGapQuery(locations[0].id)])
   await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => /Version 14 · published/.test(page.text()))
+  assert.equal(gapCard(page.host), null)
   assert.doesNotMatch(page.text(), /v14/)
   assert.match(page.text(), /Open knowledge base/)
   assert.doesNotMatch(page.text(), /Needs knowledge|An office question went unanswered/)
@@ -190,7 +191,7 @@ test("Home fixes a call that needs knowledge by editing a topic, and a conflict 
   await page.sheetClick("Close")
   assert.match(page.sheetText(), /Fix this/)
   releasePublish()
-  await waitFor(() => /No calls need knowledge/.test(page.text()))
+  await waitFor(() => gapCard(page.host) === null)
   const published = page.publishRequests.at(-1)!
   assert.equal(page.publishRequests.length, 2)
   assert.equal(published.expectedRevisionId, "revision-3")
@@ -240,7 +241,7 @@ test("Home adds a topic once even when closing the call needs a retry, and Not n
   await act(async () => gapRows(page.host)[0].click())
   await waitFor(() => /Not needed/.test(page.sheetText()))
   await page.sheetClick("Not needed")
-  await waitFor(() => /No calls need knowledge/.test(page.text()))
+  await waitFor(() => gapCard(page.host) === null)
   assert.equal(page.publishRequests.length, 1)
   assert.deepEqual(page.gapCloses.at(-1), { id: "gap-2", resolution: "NOT_NEEDED" })
   await page.unmount()
@@ -277,7 +278,7 @@ test("Home keeps an edited answer when someone else removes that topic, and savi
   page.publishStatus = 200
   page.publishError = undefined
   await page.sheetClick("Save and close")
-  await waitFor(() => /No calls need knowledge/.test(page.text()))
+  await waitFor(() => gapCard(page.host) === null)
   const published = page.publishRequests.at(-1)!
   assert.equal(published.expectedRevisionId, "revision-4")
   assert.deepEqual(published.sections, [
@@ -294,6 +295,10 @@ function sheetField(page: ReturnType<typeof harness>, label: string) {
   )
   assert.ok(field, label)
   return field
+}
+
+function gapCard(host: HTMLElement) {
+  return host.querySelector("[aria-label='Calls that need knowledge']")
 }
 
 function gapRows(host: HTMLElement) {
