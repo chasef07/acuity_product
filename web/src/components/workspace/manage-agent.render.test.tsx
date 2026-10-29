@@ -182,6 +182,7 @@ test("Home fixes a call that needs knowledge by editing a topic, and a conflict 
   await waitFor(() => page.sheetAlerts().some((alert) => alert.includes("Someone else changed this office's knowledge. Check the topic and save again.")))
   assert.equal(sheetField(page, "Text").value, "We validate garage parking at the front desk.")
   assert.deepEqual(page.gapCloses, [])
+  assert.equal(page.scrolls, 1)
 
   page.publishStatus = 200
   page.publishError = undefined
@@ -1197,7 +1198,9 @@ function harness(t: TestContext) {
     requestAnimationFrame: { configurable: true, value: () => 0 },
     cancelAnimationFrame: { configurable: true, value: () => {} },
   })
-  dom.window.Element.prototype.scrollIntoView = () => {}
+  dom.window.Element.prototype.scrollIntoView = () => {
+    page.scrolls += 1
+  }
   Object.defineProperty(dom.window, "matchMedia", {
     configurable: true,
     value: () => ({ addEventListener() {}, matches: false, removeEventListener() {} }),
@@ -1210,6 +1213,7 @@ function harness(t: TestContext) {
   const root = createRoot(host)
   const page = {
     host,
+    scrolls: 0,
     plansRequests: [] as InsurancePlansQuery[],
     knowledgeRequests: [] as LocationKnowledgeQuery[],
     plansStatus: 200,

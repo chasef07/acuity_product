@@ -434,7 +434,7 @@ export function CallTranscript({ messages, highlight }: { messages: AgentCallMes
             </BubbleContent>
           </Bubble>
           {gap && (
-            <p ref={(node) => node?.scrollIntoView({ block: "center" })} className="text-xs text-warning">
+            <p ref={scrollToCenter} className="text-xs text-warning">
               Not in the knowledge base
             </p>
           )}
@@ -447,4 +447,8 @@ export function CallTranscript({ messages, highlight }: { messages: AgentCallMes
       </Message>
     )
   })
+}
+
+function scrollToCenter(node: HTMLElement | null) {
+  node?.scrollIntoView({ block: "center" })
 }
