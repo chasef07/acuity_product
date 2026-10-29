@@ -159,14 +159,16 @@ test("Home fixes a call that needs knowledge by editing a topic, and a conflict 
       { id: "parking", title: "Parking", text: "Parking details are not supplied." },
     ],
   }
-  const call = { ...agentCall("gap-1", "+15555550111"), startedAt: new Date().toISOString() }
+  const call = { ...agentCall("gap-1", "+15555550111"), startedAt: new Date().toISOString(), knowledgeGapLine: "Do you validate parking?" }
   page.agentCalls = { calls: [call], nextCursor: "" }
   page.callDetail = { call, locationName: "Hollywood", messages: [{ speaker: "Caller", text: "Do you validate parking?", occurredAt: "2026-10-28T15:00:05Z" }], scorecard: [] }
   await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={() => {}} />)
   await waitFor(() => /1 call needs knowledge/.test(page.text()))
   assert.deepEqual(page.agentCallsRequests, [homeGapQuery(locations[0].id)])
+  assert.match(gapRows(page.host)[0].textContent ?? "", /“Do you validate parking\?”/)
   await act(async () => gapRows(page.host)[0].click())
   await waitFor(() => /Do you validate parking\?/.test(page.sheetText()) && /Edit a topic/.test(page.sheetText()))
+  assert.match(page.sheetText(), /Not in the knowledge base/)
   await page.sheetClick("Edit a topic")
   await page.type(page.sheet()!.querySelector<HTMLInputElement>("input[aria-label='Search topics']")!, "park")
   assert.deepEqual(Array.from(page.sheet()!.querySelectorAll("[aria-label='Topics'] button"), (item) => item.textContent), ["Parking"])
@@ -180,6 +182,7 @@ test("Home fixes a call that needs knowledge by editing a topic, and a conflict 
   await waitFor(() => page.sheetAlerts().some((alert) => alert.includes("Someone else changed this office's knowledge. Check the topic and save again.")))
   assert.equal(sheetField(page, "Text").value, "We validate garage parking at the front desk.")
   assert.deepEqual(page.gapCloses, [])
+  assert.equal(page.scrolls, 1)
 
   page.publishStatus = 200
   page.publishError = undefined
@@ -1195,6 +1198,9 @@ function harness(t: TestContext) {
     requestAnimationFrame: { configurable: true, value: () => 0 },
     cancelAnimationFrame: { configurable: true, value: () => {} },
   })
+  dom.window.Element.prototype.scrollIntoView = () => {
+    page.scrolls += 1
+  }
   Object.defineProperty(dom.window, "matchMedia", {
     configurable: true,
     value: () => ({ addEventListener() {}, matches: false, removeEventListener() {} }),
@@ -1207,6 +1213,7 @@ function harness(t: TestContext) {
   const root = createRoot(host)
   const page = {
     host,
+    scrolls: 0,
     plansRequests: [] as InsurancePlansQuery[],
     knowledgeRequests: [] as LocationKnowledgeQuery[],
     plansStatus: 200,

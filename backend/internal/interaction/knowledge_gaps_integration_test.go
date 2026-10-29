@@ -53,16 +53,19 @@ func TestKnowledgeGapCallsListOpenJudgedGapsAndCloseOnce(t *testing.T) {
 	insert(allowed, "unjudged", now.Add(-4*time.Minute), nil)
 	yesterday := insert(allowed, "yesterday-gap", now.Add(-25*time.Hour), &missing)
 	forbidden := insert(denied, "forbidden-gap", now.Add(-time.Minute), &missing)
+	if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET closeout_payload = '{"evaluation":{"results":{"knowledge_available":{"verdict":false,"line":"Are you open on Thanksgiving?"}}}}' WHERE id = $1`, newest); err != nil {
+		t.Fatal(err)
+	}
 	module := New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 
 	command := QueryAgentCallsCommand{QueryAnalyticsCommand: QueryAnalyticsCommand{Identity: staff, PracticeID: practice, Range: AnalyticsRange24Hours, Limit: 1}, KnowledgeGapOnly: true}
 	page, err := module.QueryAgentCalls(ctx, command)
-	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != newest || page.Calls[0].LocationID != allowed || page.NextCursor == "" {
+	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != newest || page.Calls[0].LocationID != allowed || page.NextCursor == "" || page.Calls[0].KnowledgeGapLine == nil || *page.Calls[0].KnowledgeGapLine != "Are you open on Thanksgiving?" {
 		t.Fatalf("first gap page: %+v %v", page, err)
 	}
 	command.Cursor = page.NextCursor
 	page, err = module.QueryAgentCalls(ctx, command)
-	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != older || page.NextCursor != "" {
+	if err != nil || len(page.Calls) != 1 || page.Calls[0].ID != older || page.NextCursor != "" || page.Calls[0].KnowledgeGapLine != nil {
 		t.Fatalf("second gap page: %+v %v", page, err)
 	}
 	command.KnowledgeGapOnly = false
