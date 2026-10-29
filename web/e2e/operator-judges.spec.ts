@@ -27,7 +27,7 @@ test("Judges compares model pairs using shared votes and exposes criteria and qu
         delete results.office_question_answered
         evaluationErrors.office_question_answered = { cause: "no_quorum", votes: { [models[0]]: 0.9 }, errors: { [models[1]]: "TimeoutError", [models[2]]: "TimeoutError" } }
       }
-      const evaluation = index === 13 ? {} : { evaluator: "jury", evaluatorVersion: index === 12 ? "typesafe-scorecard-v7" : "typesafe-scorecard-v8", jurors: models, status: index === 10 ? "incomplete" : "complete", results: { ...results, ...(index === 11 ? { appointment_datetime_correct: { status: "unknown", reason: "no_confirmed_appointment_action" } } : {}) }, errors: evaluationErrors }
+      const evaluation = index === 13 ? {} : { evaluator: "jury", evaluatorVersion: index === 12 ? "typesafe-scorecard-v8" : "typesafe-scorecard-v9", jurors: models, status: index === 10 ? "incomplete" : "complete", results: { ...results, ...(index === 11 ? { appointment_datetime_correct: { status: "unknown", reason: "no_confirmed_appointment_action" } } : {}) }, errors: evaluationErrors }
       await client.query(`INSERT INTO ai_interactions(id,service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript,closeout_payload) VALUES($1,'judges-e2e',$2,$3,$1::uuid::text,'+15555550199','+17275550106',now()-interval '5 minutes',now()-interval '3 minutes','COMPLETED',3,$4,$5)`, [id, scope.practice_id, scope.id, { items: [] }, { evaluation }])
     }
     await page.setViewportSize({ width: 1440, height: 1200 })

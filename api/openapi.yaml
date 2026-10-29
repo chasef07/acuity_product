@@ -1756,7 +1756,7 @@ paths:
           description: Evaluator version; omitted selects the current scorecard.
           schema:
             type: string
-            enum: [typesafe-scorecard-v6, typesafe-scorecard-v7, typesafe-scorecard-v8]
+            enum: [typesafe-scorecard-v6, typesafe-scorecard-v7, typesafe-scorecard-v8, typesafe-scorecard-v9]
       responses:
         "200":
           description: Every scorecard question with its plain-English yes and no definitions.
