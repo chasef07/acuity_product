@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.0](https://github.com/chasef07/acuity_product/compare/v2.4.0...v2.5.0) (2026-10-29)
+
+
+### Features
+
+* **knowledge:** show and highlight the caller's unanswered question ([#582](https://github.com/chasef07/acuity_product/issues/582)) ([66ba21c](https://github.com/chasef07/acuity_product/commit/66ba21c34475a7261d324e7cab2be0d925204e19))
+
 ## [2.4.0](https://github.com/chasef07/acuity_product/compare/v2.3.0...v2.4.0) (2026-10-29)
 
 
