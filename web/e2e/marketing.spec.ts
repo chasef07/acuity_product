@@ -125,9 +125,10 @@ test("home shows case-study cards that page sideways", async ({ page }) => {
   await page.goto("/")
   const stories = page.getByRole("region", { name: "Solving the problems that move patient access." })
   const cards = stories.getByRole("link")
-  await expect(cards).toHaveCount(4)
-  await expect(cards.first()).toContainText("80% of calls fully contained by AI agents")
-  await expect(cards.first()).toHaveAttribute(
+  await expect(cards).toHaveCount(5)
+  await expect(cards.first()).toContainText("11 patients on the phone at once")
+  await expect(cards.first()).toHaveAttribute("href", "/blog/abita-eye-group")
+  await expect(stories.getByRole("link", { name: /LiveKit/ })).toHaveAttribute(
     "href",
     "https://livekit.com/blog/how-acuity-health-transforms-patient-access-with-livekit-voice-agents",
   )
@@ -182,13 +183,14 @@ test("mobile menu opens as a dropdown with grouped links", async ({ page }) => {
 test("blog index features the latest post above a cover grid", async ({ page }) => {
   await page.goto("/blog")
   await expect(page.getByRole("heading", { level: 1, name: "All posts" })).toBeVisible()
-  await expect(page.getByRole("link", { name: /Read the article/ })).toHaveAttribute("href", "/blog/name-the-slot")
+  await expect(page.getByRole("link", { name: /Read the article/ })).toHaveAttribute("href", "/blog/abita-eye-group")
   await expect(page.getByText("Stories, announcements, and product updates.")).toBeVisible()
   const posts = page.getByRole("main").getByRole("listitem")
-  await expect(posts).toHaveCount(3)
+  await expect(posts).toHaveCount(4)
   await page.getByRole("button", { name: "Customer stories" }).click()
-  await expect(posts).toHaveCount(1)
-  await expect(posts.getByRole("link")).toHaveAttribute(
+  await expect(posts).toHaveCount(2)
+  await expect(posts.getByRole("link").first()).toHaveAttribute("href", "/blog/abita-eye-group")
+  await expect(posts.getByRole("link").last()).toHaveAttribute(
     "href",
     "https://livekit.com/blog/how-acuity-health-transforms-patient-access-with-livekit-voice-agents",
   )

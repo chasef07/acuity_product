@@ -1,12 +1,8 @@
-import type { StaticImageData } from "next/image"
 import type { ComponentType } from "react"
-
-import chasePortrait from "../../public/marketing/chase-fagen-v2.png"
 
 type BlogAuthor = {
   name: string
   role: string
-  portrait: StaticImageData
   x?: string
 }
 
@@ -31,18 +27,30 @@ export type BlogPost = {
   category: BlogCategory
   cover: BlogCoverStyle
   author: BlogAuthor
-  hero: "dead-air" | "name-the-slot"
+  hero?: "dead-air"
   load: () => Promise<{ default: ComponentType }>
 }
 
 const chase: BlogAuthor = {
   name: "Chase Fagen",
   role: "Co-Founder and Head of AI Engineering",
-  portrait: chasePortrait,
   x: "chasef07",
 }
 
 export const blogPosts: BlogPost[] = [
+  {
+    slug: "abita-eye-group",
+    title: "How Abita Eye Group went from a two-person call center to 11 patients on the phone at once",
+    dek: "Acuity Health built an AI agent with Abita Eye Group that answered 16,328 patient calls and booked 1,472 appointments in AdvancedMD in under three months for a six-location Florida eye practice.",
+    description:
+      "Abita Eye Group case study: an AI voice agent built with Acuity Health answered 16,328 patient calls, booked 1,472 appointments in AdvancedMD, and handled up to 11 callers at once across six Florida locations.",
+    date: "2026-10-29",
+    readingTime: "5 min read",
+    category: "Customer stories",
+    author: chase,
+    cover: { label: "Abita Eye Group", tone: "ember", shape: "a", art: "bars" },
+    load: () => import("@/content/blog/abita-eye-group.mdx"),
+  },
   {
     slug: "name-the-slot",
     title: "Only Let the Model Handle What a Person Can Check",
@@ -53,7 +61,6 @@ export const blogPosts: BlogPost[] = [
     readingTime: "10 min read",
     category: "Product",
     author: chase,
-    hero: "name-the-slot",
     cover: { label: "SEP15-0900", tone: "sand", shape: "b", art: "slots" },
     load: () => import("@/content/blog/name-the-slot.mdx"),
   },

@@ -68,8 +68,8 @@ export function ApproachChart() {
   )
 }
 
-export function Stats({ children }: { children: ReactNode }) {
-  return <div className={styles.stats}>{children}</div>
+export function Stats({ children, row = false }: { children: ReactNode; row?: boolean }) {
+  return <div className={cn(styles.stats, row && styles.statsRow)}>{children}</div>
 }
 
 export function Stat({
@@ -80,7 +80,7 @@ export function Stat({
   tone = "simulation",
 }: {
   label: string
-  before: string
+  before?: string
   after: string
   note: string
   tone?: "simulation" | "production"
@@ -89,10 +89,14 @@ export function Stat({
     <div className={cn(styles.stat, tone === "production" && styles.statDark)}>
       <p className={styles.statLabel}>{label}</p>
       <p className={styles.statNumbers}>
-        <span className={styles.statBefore}>{before}</span>
-        <span className={styles.statArrow} aria-hidden="true">
-          →
-        </span>
+        {before ? (
+          <>
+            <span className={styles.statBefore}>{before}</span>
+            <span className={styles.statArrow} aria-hidden="true">
+              →
+            </span>
+          </>
+        ) : null}
         <span className={styles.statAfter}>{after}</span>
       </p>
       <p className={styles.statNote}>{note}</p>

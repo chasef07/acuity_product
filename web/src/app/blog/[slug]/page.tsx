@@ -1,9 +1,9 @@
 import type { Metadata } from "next"
-import Image from "next/image"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ArrowLeft, ArrowRight } from "lucide-react"
 
+import { BlogCover } from "@/components/marketing/blog/blog-cover"
 import styles from "@/components/marketing/blog/blog.module.css"
 import { DeadAirWaveform } from "@/components/marketing/blog/dead-air-waveform"
 import { MarketingFrame } from "@/components/marketing/enterprise-site"
@@ -80,26 +80,27 @@ export default async function BlogPostPage({ params }: PageProps) {
             Blog
           </Link>
           <p className={styles.meta}>
-            <span className={styles.category}>{post.category}</span>
+            <span>
+              {post.author.name}, {post.author.role}
+            </span>
+            <span className={styles.metaDivider} aria-hidden="true" />
             <span>{formatBlogDate(post.date)}</span>
             <span aria-hidden="true">·</span>
             <span>{post.readingTime}</span>
           </p>
           <h1 className={styles.title}>{post.title}</h1>
           <p className={styles.dek}>{post.dek}</p>
-          <div className={styles.byline}>
-            <Image className={styles.avatar} src={post.author.portrait} alt="" width={44} height={44} />
-            <span className={styles.bylineText}>
-              <span className={styles.bylineName}>{post.author.name}</span>
-              <span className={styles.bylineRole}>{post.author.role}</span>
-            </span>
-          </div>
-          {post.hero === "dead-air" ? (
+        </header>
+
+        {post.hero === "dead-air" ? (
+          <div className={styles.heroVisual}>
             <div className={styles.waveCard}>
               <DeadAirWaveform />
             </div>
-          ) : null}
-        </header>
+          </div>
+        ) : (
+          <BlogCover cover={post.cover} category={post.category} className={styles.heroVisual} />
+        )}
 
         <article className={styles.article}>
           <Content />
