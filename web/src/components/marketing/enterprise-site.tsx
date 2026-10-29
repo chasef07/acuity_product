@@ -144,8 +144,8 @@ function storyFeature(index: number, cta: string): NavigationFeature {
 const latestPost = [...blogPosts].sort((a, b) => b.date.localeCompare(a.date))[0]
 
 const navigationFeatures: Record<string, NavigationFeature> = {
-  Platform: storyFeature(0, "Read the LiveKit case study"),
-  Integrations: storyFeature(1, "Explore the AdvancedMD integration"),
+  Platform: storyFeature(1, "Read the LiveKit case study"),
+  Integrations: storyFeature(2, "Explore the AdvancedMD integration"),
   Company: {
     href: `/blog/${latestPost.slug}`,
     external: false,

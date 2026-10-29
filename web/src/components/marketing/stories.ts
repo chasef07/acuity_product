@@ -16,6 +16,14 @@ export type Story = {
 
 export const stories: Story[] = [
   {
+    title: "11 patients on the phone at once with one AI agent",
+    partner: "Abita Eye Group",
+    href: "/blog/abita-eye-group",
+    external: false,
+    art: "bars",
+    tone: "dark",
+  },
+  {
     title: "80% of calls fully contained by AI agents",
     partner: "LiveKit",
     href: liveKitCaseStudyUrl,
