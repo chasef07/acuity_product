@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.0](https://github.com/chasef07/acuity_product/compare/v2.5.0...v2.6.0) (2026-10-29)
+
+
+### Features
+
+* **blog:** publish the Abita Eye Group case study and lighten post pages ([#586](https://github.com/chasef07/acuity_product/issues/586)) ([255f9be](https://github.com/chasef07/acuity_product/commit/255f9be743b075637b9179fbc3af5913893cdd6e))
+
 ## [2.5.0](https://github.com/chasef07/acuity_product/compare/v2.4.0...v2.5.0) (2026-10-29)
 
 
