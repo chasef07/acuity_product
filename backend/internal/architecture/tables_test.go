@@ -18,6 +18,7 @@ var tablePrefixes = []struct{ prefix, owner string }{
 	{"access_", "access"},
 	{"ai_", "interaction"},
 	{"human_calling_", "humancalling"},
+	{"insurance_", "insurance"},
 	{"knowledge_", "knowledge"},
 	{"messaging_", "messaging"},
 	{"work_", "work"},

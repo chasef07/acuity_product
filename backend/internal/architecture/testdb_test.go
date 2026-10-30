@@ -15,6 +15,7 @@ import (
 var domainModules = map[string]bool{
 	"access":       true,
 	"humancalling": true,
+	"insurance":    true,
 	"interaction":  true,
 	"knowledge":    true,
 	"messaging":    true,

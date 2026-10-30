@@ -655,6 +655,11 @@ GRANT UPDATE (revision_id) ON TABLE public.knowledge_corpora TO acuity_portal;
 -- Staff history shows when the agent last searched each revision.
 GRANT SELECT, INSERT ON TABLE public.knowledge_retrieval_observations TO acuity_portal;
 
+-- Staff publish whole new insurance catalog revisions and switch the active
+-- one; published revisions are never updated or deleted.
+GRANT SELECT, INSERT ON TABLE public.insurance_catalogs, public.insurance_revisions TO acuity_portal;
+GRANT UPDATE (revision_id) ON TABLE public.insurance_catalogs TO acuity_portal;
+
 -- Human reply snapshots and provider-confirmed shared completion.
 GRANT SELECT, INSERT ON work_text_replies TO acuity_portal;
 GRANT SELECT, UPDATE ON work_text_replies TO acuity_worker;

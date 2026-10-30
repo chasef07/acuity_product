@@ -625,6 +625,8 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_staff_transfers",
 		"human_calling_timeline",
 		"human_calling_voicemails",
+		"insurance_catalogs",
+		"insurance_revisions",
 		"knowledge_corpora",
 		"knowledge_revisions",
 		"knowledge_passages",
@@ -655,6 +657,8 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_softphone_leases",
 		"human_calling_staff_transfers",
 		"human_calling_timeline",
+		"insurance_catalogs",
+		"insurance_revisions",
 		"knowledge_corpora",
 		"knowledge_passages",
 		"knowledge_retrieval_observations",
@@ -836,6 +840,7 @@ func expectedColumnPrivileges() map[string]bool {
 	grant("acuity_portal", "public.ai_call_review_assignments", "UPDATE", "note", "question_idea", "completed_at")
 	grant("acuity_portal", "public.ai_call_reviews", "UPDATE", "answer", "note")
 	grant("acuity_portal", "public.knowledge_corpora", "UPDATE", "revision_id")
+	grant("acuity_portal", "public.insurance_catalogs", "UPDATE", "revision_id")
 	grant("acuity_portal", "public.work_task_interactions", "UPDATE", "task_id")
 	grant(
 		"acuity_portal",
