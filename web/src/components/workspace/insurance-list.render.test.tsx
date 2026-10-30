@@ -146,7 +146,7 @@ test("removing a plan from the office's table publishes the full catalog without
   assert.equal(publication.expectedRevisionId, imported.id)
   assert.equal(publication.reason, "Office stopped taking Demo Medicaid")
   assert.deepEqual(publication.catalog.regions[0].tables[0].rows.map((row) => row.planId), ["example-choice-medical", "zeta-vision", "self-pay-medical"])
-  assert.deepEqual(publication.catalog.regions[0].plans, published.regions[0].plans)
+  assert.deepEqual(publication.catalog.regions[0].plans, published.regions[0].plans.filter((plan) => plan.id !== "demo-medicaid"))
   assert.deepEqual(publication.catalog.regions[1], published.regions[1])
   assert.deepEqual(page.active.catalog, publication.catalog)
   assert.deepEqual(page.groups()[0].rows.map(title), ["Example Choice PPO", "Self-pay"])

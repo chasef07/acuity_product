@@ -286,17 +286,21 @@ own credential for `POST /v1/agent/insurance/read` is
 `ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_PRACTICE_ID`; set all three or none. Until
 they are set, that read answers 401.
 
-Seed a Practice's first insurance revision from the middleware's current
-list with the operator command. Without `--apply` it only reads and validates
-the list. `--apply` also needs `INSURANCE_IMPORT_DATABASE_URL` and
-`INSURANCE_OPERATOR_EMAIL` (an existing bound Platform Operator, recorded as
-the author) and publishes it with provenance `import`. Rerunning with the same
-list changes nothing; once the Practice has a different active revision, the
-command refuses and the list is changed in the Portal instead.
+Seed a Practice's first insurance revision from an `InsuranceCatalog` JSON
+file with the operator command. The file is the middleware's frozen export,
+`internal/insurance/testdata/catalog.json` in amd_middleware, which this repo
+keeps byte for byte as `backend/internal/insurance/testdata/export.json`. The
+command parses the file strictly and has the middleware validate it. Without
+`--apply` it stops there. `--apply` also needs `INSURANCE_IMPORT_DATABASE_URL`
+and `INSURANCE_OPERATOR_EMAIL` (an existing bound Platform Operator, recorded
+as the author) and publishes it with provenance `import`. Rerunning with the
+same list changes nothing; once the Practice has a different active revision,
+the command refuses and the list is changed in the Portal instead.
 
 ```sh
 MIDDLEWARE_BASE_URL=... MIDDLEWARE_API_SECRET=... \
-  go run ./backend/cmd/insurance-import --practice PRACTICE_UUID [--apply]
+  go run ./backend/cmd/insurance-import --practice PRACTICE_UUID \
+  --from-file backend/internal/insurance/testdata/export.json [--apply]
 ```
 
 Configure the frontend using [web/README.md](web/README.md), then start it with:
