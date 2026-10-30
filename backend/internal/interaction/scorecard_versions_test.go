@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func TestSixFailuresAreActionableInV10V9AndV8(t *testing.T) {
+func TestSixFailuresAreActionableInV11ThroughV8(t *testing.T) {
 	keys := []string{"knowledge_available", "office_question_answered", "appointment_datetime_correct", "call_ended_correctly", "transfer_policy_followed", "emergency_policy_followed"}
-	for _, version := range []string{ScorecardJudgeVersion, v9JudgeVersion, v8JudgeVersion} {
+	for _, version := range []string{ScorecardJudgeVersion, v10JudgeVersion, v9JudgeVersion, v8JudgeVersion} {
 		var catalog []string
 		for _, question := range ScorecardQuestionsForVersion(version) {
 			if question.Source == "judge" {
@@ -35,7 +35,7 @@ func TestSixFailuresAreActionableInV10V9AndV8(t *testing.T) {
 }
 
 func TestUnknownKnowledgeIsNeitherPassNorFailure(t *testing.T) {
-	for _, version := range []string{ScorecardJudgeVersion, v9JudgeVersion, v8JudgeVersion} {
+	for _, version := range []string{ScorecardJudgeVersion, v10JudgeVersion, v9JudgeVersion, v8JudgeVersion} {
 		raw := json.RawMessage(`{"evaluatorVersion":"` + version + `","status":"complete","jurors":["a","b","c"],"results":{"knowledge_available":{"status":"unknown","reason":"no_office_knowledge_result"},"appointment_datetime_correct":{"status":"not_applicable","reason":"no_appointment_action"}}}`)
 		if answers := judgeAnswers(raw); len(answers) != 0 {
 			t.Fatalf("%s unknown/inapplicable checks are not verdicts: %+v", version, answers)
@@ -103,5 +103,29 @@ func TestV10KnowledgeGapCountsOnlyOfficeQuestions(t *testing.T) {
 	}
 	if v10.Prompt != v9.Prompt || v10.Yes == v9.Yes || v9.No != "The office knowledge did not supply the information needed to answer a caller's office question." {
 		t.Fatalf("v10 keeps the prompt and v9 keeps its own criteria: v10=%+v v9=%+v", v10, v9)
+	}
+}
+
+func TestV11RewordsThreeJudgesWhileV10KeepsItsMeaning(t *testing.T) {
+	text := func(version, key string) string {
+		for _, question := range ScorecardQuestionsForVersion(version) {
+			if question.Key == key {
+				return question.Question
+			}
+		}
+		t.Fatalf("%s has no %s judge", version, key)
+		return ""
+	}
+	for key, phrase := range map[string]string{
+		"emergency_policy_followed": "Ignore everything before that description",
+		"transfer_policy_followed":  "an unfinished attempt is TRUE",
+		"office_question_answered":  "honestly saying so and offering staff follow-up is correct",
+	} {
+		if !strings.Contains(text(ScorecardJudgeVersion, key), phrase) || strings.Contains(text(v10JudgeVersion, key), phrase) {
+			t.Fatalf("v11 %s must carry its new rule and v10 must keep its own wording", key)
+		}
+	}
+	if text(ScorecardJudgeVersion, "knowledge_available") != text(v10JudgeVersion, "knowledge_available") {
+		t.Fatal("v11 keeps the v10 knowledge question")
 	}
 }

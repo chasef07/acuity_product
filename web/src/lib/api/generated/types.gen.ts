@@ -4502,7 +4502,7 @@ export type GetOperatorScorecardQuestionsData = {
         /**
          * Evaluator version; omitted selects the current scorecard.
          */
-        version?: 'typesafe-scorecard-v6' | 'typesafe-scorecard-v7' | 'typesafe-scorecard-v8' | 'typesafe-scorecard-v9' | 'typesafe-scorecard-v10';
+        version?: 'typesafe-scorecard-v6' | 'typesafe-scorecard-v7' | 'typesafe-scorecard-v8' | 'typesafe-scorecard-v9' | 'typesafe-scorecard-v10' | 'typesafe-scorecard-v11';
     };
     url: '/v1/operator/scorecard/questions';
 };

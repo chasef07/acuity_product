@@ -36,6 +36,7 @@ function title(value: string): string {
 const notApplicableReasons: Record<string, string> = {
   no_appointment_action_result: "No booking, rescheduling, or cancellation tool returned a result.",
   no_appointment_action: "No booking, rescheduling, or cancellation was attempted.",
+  no_agent_hangup: "The agent did not end the call; it was transferred or the caller hung up.",
   no_availability_result: "No availability search returned a result.",
   no_insurance_check: "No insurance check returned a result.",
 }

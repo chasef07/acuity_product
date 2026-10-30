@@ -1706,6 +1706,7 @@ func (e WorkspaceSnapshotState) Valid() bool {
 // Defines values for GetOperatorScorecardQuestionsParamsVersion.
 const (
 	TypesafeScorecardV10 GetOperatorScorecardQuestionsParamsVersion = "typesafe-scorecard-v10"
+	TypesafeScorecardV11 GetOperatorScorecardQuestionsParamsVersion = "typesafe-scorecard-v11"
 	TypesafeScorecardV6  GetOperatorScorecardQuestionsParamsVersion = "typesafe-scorecard-v6"
 	TypesafeScorecardV7  GetOperatorScorecardQuestionsParamsVersion = "typesafe-scorecard-v7"
 	TypesafeScorecardV8  GetOperatorScorecardQuestionsParamsVersion = "typesafe-scorecard-v8"
@@ -1716,6 +1717,8 @@ const (
 func (e GetOperatorScorecardQuestionsParamsVersion) Valid() bool {
 	switch e {
 	case TypesafeScorecardV10:
+		return true
+	case TypesafeScorecardV11:
 		return true
 	case TypesafeScorecardV6:
 		return true
@@ -7076,22 +7079,22 @@ var swaggerSpec = []string{
 	"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",
-	"7180/P7Z/uhdAyt44PcwcBehAC4ICHcbLmwarn4fVCufzNIV5FxsiS51lTIUkyVNwS4t/kMSzgJg8oCA",
-	"xFopgZKV7AmGshqeVRsq2RJAPI1dKPtjPpAP9Fp5p/lEVajs8semwErYDmDa6RapwEU9ljTWj9LXR6jc",
-	"XyWOES7g1fXU2LfJRA+q/mPQzezpBywljtYbksoOC5KVNUwIE/T37EUi/goPUbqRvM8oJ6J16p5TKVsc",
-	"ljkngyYb9r6wSJJw7ccd6kErXy9E8RRAhpLcYngZ6Lb6xITfEFM7tqg9rIDlh5t7W5DMFDMOYKCEP3iI",
-	"eEuu1oxdtzZHjwi9IXrKYzvwVz3u3j29+rp38L4+D+Uwa1EwNnH7rnM4YtwE8YMSqXe5c6zCXWvclW77",
-	"LeF0qaPj7LadRJsimurb1pfhYkWhDuWQ29YWFVXZ/sLVxG+9/QPGOUkUe27Eg37WFbdm31rUz/b3S8Wo",
-	"n+/f6wP+FQs7sNBin728SeRQoZbs4of9NODiQH7zlc08OpthKUEc31oeYy6suFHo89WVqaS7nuj8pIdL",
-	"GnKrfNLeLrB+Y3T/Ai9JORHQ1g8r8MRl6tyn8N9nc+rPgAQmbanYEpZso+qvJ9uvsv/AkrTTIj2wdDhn",
-	"2TElXACFLyEA6VIRlZd16ZNar8BudZEPFc6t5v6UQdxq/aYcA+Xnn2ifvU7LUwGo2Rdf+xWuQ9fQKMJx",
-	"CwCAQSvjTOpCkYJgHq0RTbNcVpHL9mtsVD6VRah3ouln3pGxKXvywO9J6Pdh/3MFKbiaUBWkaLrzp2rH",
-	"K9bGXA6g7ISa5MB++5h48ACCQ+1An1ma8YGp8wPSY1HDPNna+/2a11ungWNmTCQsI6kmY8kgihfGms6p",
-	"CDrjNFODgXwLNZgvHp0fPsyjDl0J6WD79Fca+DxTYw3QgA60YC91VyosJGJXumlkPWy3gQomQCz9aOFH",
-	"+PRP/jBUz/OVJr6EaAHBkhvTQjTZ+kFssX4rAMvRhmyudIfVRrrgRH3fZrZSf//6MjwsFWgofyWCYUQA",
-	"mA4qgmMiuz8QkspEy0jhnECF4F8AGRQH+exIQG3sa3mfIKYr0FQUgX5I7trmtXnhf3Uf/Sc1TdwdhR28",
-	"FinOxJrJjq7K7hKQMAP+RHaYI2ZCp8p9Hckmk9vwyWqGZd1QWAHEWZUVugajCQ9JlrDtBlpQ5uqGSIx+",
-	"urg4W5h6N6PxKOfJ6IfRWspM/PD0Kc7oHobc4D3yHqt3YPTx3cf/bwA=",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
