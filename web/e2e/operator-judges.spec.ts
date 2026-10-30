@@ -45,7 +45,7 @@ test("Judges compares model pairs using shared votes and exposes criteria and qu
     await expect(pair.getByRole("cell").nth(2)).toHaveText("11")
     await expect(pair.getByRole("cell").nth(3)).toHaveText("7 · 63.6%")
     await expect(pair.getByRole("cell").nth(4)).toHaveText("4 · 36.4%")
-    await expect(command.getByRole("region", { name: "Judge criteria" })).toContainText("An office question went unanswered")
+    await expect(command.getByRole("region", { name: "Judge criteria" })).toContainText("An office question that the office knowledge answers went unanswered")
     await expect(command.getByRole("region", { name: "Model vote coverage" })).toContainText(models[0])
     await page.screenshot({ path: testInfo.outputPath("judges-desktop.png"), fullPage: true, animations: "disabled" })
     await page.setViewportSize({ width: 390, height: 1000 })
