@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.9.0](https://github.com/chasef07/acuity_product/compare/v2.8.0...v2.9.0) (2026-10-30)
+
+
+### Features
+
+* **calling:** reject illegal Call and CallLeg moves in the database ([#536](https://github.com/chasef07/acuity_product/issues/536)) ([ae251c0](https://github.com/chasef07/acuity_product/commit/ae251c0b27745bbae07ecdc59ddddee88d371b22))
+* **insurance:** publish insurance list revisions checked by the middleware ([#591](https://github.com/chasef07/acuity_product/issues/591)) ([1f90eb5](https://github.com/chasef07/acuity_product/commit/1f90eb5f74b1ebf2f810369e67a2134cb42f2aa2))
+* **web:** show speaking and teaching on Who We Are ([#590](https://github.com/chasef07/acuity_product/issues/590)) ([0dcf6b4](https://github.com/chasef07/acuity_product/commit/0dcf6b4d367bb31e4b37f32092294e35321480d3))
+
 ## [2.8.0](https://github.com/chasef07/acuity_product/compare/v2.7.0...v2.8.0) (2026-10-30)
 
 
