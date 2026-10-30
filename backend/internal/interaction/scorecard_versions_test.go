@@ -98,10 +98,10 @@ func TestV10KnowledgeGapCountsOnlyOfficeQuestions(t *testing.T) {
 		return ScorecardQuestion{}
 	}
 	v10, v9 := question("typesafe-scorecard-v10"), question("typesafe-scorecard-v9")
-	if !strings.Contains(v10.Question, "These are not office questions: insurance acceptance") || strings.Contains(v9.Question, "insurance") {
+	if !strings.Contains(v10.Question, "Not office questions: insurance acceptance") || strings.Contains(v9.Question, "insurance") {
 		t.Fatalf("v10 must exclude insurance and other non-office questions while v9 keeps its own wording: v10=%+v v9=%+v", v10, v9)
 	}
-	if v10.Prompt != v9.Prompt || v10.Yes != v9.Yes || v10.No != v9.No {
-		t.Fatalf("only the knowledge question text changes in v10: v10=%+v v9=%+v", v10, v9)
+	if v10.Prompt != v9.Prompt || v10.Yes == v9.Yes || v9.No != "The office knowledge did not supply the information needed to answer a caller's office question." {
+		t.Fatalf("v10 keeps the prompt and v9 keeps its own criteria: v10=%+v v9=%+v", v10, v9)
 	}
 }
