@@ -47,7 +47,7 @@ var sqlBaseline = []struct {
 	reason string
 }{
 	{"backend/cmd/knowledge-import/main.go", read, "knowledge_corpora", "import command confirms the published revision"},
-	{"backend/cmd/knowledge-import/publication.go", read, "access_abita_office_locations access_platform_operators knowledge_corpora", "import command resolves the operator and checks the office's active revision"},
+	{"backend/cmd/knowledge-import/publication.go", read, "access_abita_office_locations knowledge_corpora", "import command checks the office's active revision"},
 	{"backend/internal/access/access.go", read, "human_calling_location_voice_numbers", "service authorization resolves a Location by voice number"},
 	{"backend/internal/humancalling/callleg_projection.go", read, "access_calling_scopes access_membership_locations access_memberships access_operational_scopes access_practices", "call projection resolves staff scope and practice policy (also FOR SHARE OF practice, appended with +=)"},
 	{"backend/internal/humancalling/calls.go", read, "access_locations", "call views join Location names"},

@@ -583,6 +583,25 @@ func (m *Module) ReadPracticeKey(ctx context.Context, practiceID string) (string
 	return key, nil
 }
 
+func (m *Module) ReadPlatformOperatorSubject(ctx context.Context, email string) (string, error) {
+	if m.database == nil {
+		return "", ErrDenied
+	}
+	var subject string
+	err := m.database.QueryRow(ctx, `
+		SELECT user_subject
+		FROM access_platform_operators
+		WHERE email = $1 AND user_subject IS NOT NULL
+	`, normalizeEmail(email)).Scan(&subject)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrDenied
+	}
+	if err != nil {
+		return "", fmt.Errorf("read Platform Operator: %w", err)
+	}
+	return subject, nil
+}
+
 func (m *Module) ReadSubjectEmails(ctx context.Context, practiceID string, subjects []string) (map[string]string, error) {
 	if m.database == nil {
 		return nil, ErrDenied
