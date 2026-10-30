@@ -1,6 +1,7 @@
 package insurance
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,9 +11,14 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/chasef07/acuity_product/backend/internal/access"
 )
 
-const middlewareTimeout = 5 * time.Second
+const (
+	middlewareTimeout = 5 * time.Second
+	maxCatalogBytes   = 4 << 20
+)
 
 var middlewareOffices = map[string]string{
 	"sweetwater-optical":        "sweetwater",
@@ -26,6 +32,15 @@ func middlewareOffice(officeKey string) string {
 		return office
 	}
 	return officeKey
+}
+
+func officeLocations(routes []access.AbitaOfficeRoute) map[string][]string {
+	locations := map[string][]string{}
+	for _, route := range routes {
+		office := middlewareOffice(route.OfficeKey)
+		locations[office] = append(locations[office], route.LocationID)
+	}
+	return locations
 }
 
 type MiddlewareClient struct {
@@ -46,37 +61,108 @@ func NewMiddlewareClient(baseURL, secret string, client *http.Client) (*Middlewa
 }
 
 func (c *MiddlewareClient) Plans(ctx context.Context, office string, coverage Coverage) ([]Plan, error) {
-	ctx, cancel := context.WithTimeout(ctx, middlewareTimeout)
-	defer cancel()
 	office = middlewareOffice(office)
 	query := url.Values{"office": {office}, "coverage": {string(coverage)}}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/insurance/plans?"+query.Encode(), nil)
+	status, raw, err := c.send(ctx, "plans", http.MethodGet, "/api/insurance/plans?"+query.Encode(), nil, 2<<20)
 	if err != nil {
-		return nil, fmt.Errorf("build middleware plans request: %w", err)
+		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.secret)
-	request.Header.Set("Accept", "application/json")
-	response, err := c.client.Do(request)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("middleware plans request timed out")
-		}
-		return nil, fmt.Errorf("middleware plans connection failed")
+	if status == http.StatusBadRequest {
+		return nil, fmt.Errorf("%w: middleware plans returned HTTP %d", ErrUnknownOffice, status)
 	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusBadRequest {
-		return nil, fmt.Errorf("%w: middleware plans returned HTTP %d", ErrUnknownOffice, response.StatusCode)
-	}
-	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return nil, fmt.Errorf("middleware plans returned HTTP %d", response.StatusCode)
+	if status < 200 || status > 299 {
+		return nil, fmt.Errorf("middleware plans returned HTTP %d", status)
 	}
 	var body struct {
 		OfficeID string   `json:"officeId"`
 		Coverage Coverage `json:"coverage"`
 		Plans    []Plan   `json:"plans"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(&body); err != nil || body.Plans == nil || body.OfficeID != office || body.Coverage != coverage {
+	if err := json.Unmarshal(raw, &body); err != nil || body.Plans == nil || body.OfficeID != office || body.Coverage != coverage {
 		return nil, fmt.Errorf("middleware plans response is invalid")
 	}
 	return body.Plans, nil
+}
+
+func (c *MiddlewareClient) Catalog(ctx context.Context) (Catalog, error) {
+	status, raw, err := c.send(ctx, "catalog", http.MethodGet, "/api/insurance/catalog", nil, maxCatalogBytes)
+	if err != nil {
+		return Catalog{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	if status != http.StatusOK {
+		return Catalog{}, fmt.Errorf("%w: middleware catalog returned HTTP %d", ErrUnavailable, status)
+	}
+	catalog, err := ParseCatalog(raw)
+	if err != nil {
+		return Catalog{}, fmt.Errorf("%w: middleware catalog response is invalid: %w", ErrUnavailable, err)
+	}
+	return catalog, nil
+}
+
+type CatalogError struct {
+	Region  string `json:"region"`
+	Table   string `json:"table"`
+	PlanID  string `json:"planId"`
+	Rule    string `json:"rule"`
+	Message string `json:"message"`
+}
+
+type ValidationError struct {
+	Errors []CatalogError
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("the middleware rejected the insurance list with %d errors", len(e.Errors))
+}
+
+func (c *MiddlewareClient) Validate(ctx context.Context, catalog Catalog) error {
+	status, raw, err := c.send(ctx, "validate", http.MethodPost, "/api/insurance/catalog/validate", catalog.encode(), 2<<20)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	var verdict struct {
+		Valid  *bool          `json:"valid"`
+		Errors []CatalogError `json:"errors"`
+	}
+	if err := json.Unmarshal(raw, &verdict); err != nil || verdict.Valid == nil {
+		return fmt.Errorf("%w: middleware validate returned HTTP %d without a verdict", ErrUnavailable, status)
+	}
+	switch {
+	case status == http.StatusOK && *verdict.Valid && len(verdict.Errors) == 0:
+		return nil
+	case status == http.StatusBadRequest && !*verdict.Valid && len(verdict.Errors) > 0:
+		return &ValidationError{Errors: verdict.Errors}
+	default:
+		return fmt.Errorf("%w: middleware validate returned HTTP %d with an inconsistent verdict", ErrUnavailable, status)
+	}
+}
+
+func (c *MiddlewareClient) send(ctx context.Context, name, method, path string, body []byte, limit int64) (int, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, middlewareTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, fmt.Errorf("build middleware %s request: %w", name, err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.secret)
+	request.Header.Set("Accept", "application/json")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := c.client.Do(request)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return 0, nil, fmt.Errorf("middleware %s request timed out", name)
+		}
+		return 0, nil, fmt.Errorf("middleware %s connection failed", name)
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return 0, nil, fmt.Errorf("middleware %s response could not be read", name)
+	}
+	if int64(len(raw)) > limit {
+		return 0, nil, fmt.Errorf("middleware %s response exceeds %d bytes", name, limit)
+	}
+	return response.StatusCode, raw, nil
 }
