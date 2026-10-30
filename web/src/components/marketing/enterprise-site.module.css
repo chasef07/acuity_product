@@ -761,7 +761,8 @@
 }
 
 .foundingStory h2,
-.principlesSection h2 {
+.principlesSection h2,
+.speakingSection h2 {
   max-width: 400px;
   margin: 0;
   font-family: var(--font-acuity-display), ui-sans-serif, system-ui, sans-serif;
@@ -1056,12 +1057,16 @@
   text-underline-offset: 4px;
 }
 
-.principlesSection {
+.principlesSection,
+.speakingSection {
   padding: clamp(80px, 9vw, 128px) var(--edge);
   display: grid;
   grid-template-columns: minmax(0, 0.65fr) minmax(0, 1.35fr);
   align-items: start;
   gap: clamp(48px, 7vw, 96px);
+}
+
+.principlesSection {
   background: #eeeeeb;
 }
 
@@ -1100,6 +1105,61 @@
   color: var(--marketing-ink-soft);
   font-size: 16px;
   line-height: 1.55;
+}
+
+.talkList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.talkList li {
+  padding: 24px 0;
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 24px;
+  border-top: 1px solid var(--marketing-line);
+}
+
+.talkList span {
+  padding-top: 4px;
+  color: var(--marketing-accent);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.talkList h3 {
+  margin: 0 0 8px;
+  font-family: var(--font-acuity-display), ui-sans-serif, system-ui, sans-serif;
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+}
+
+.talkList p {
+  margin: 0;
+  color: var(--marketing-ink-soft);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.talkPhoto {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.talkPhoto img {
+  width: 100%;
+  height: auto;
+  filter: saturate(0.8);
+}
+
+.talkPhoto figcaption {
+  margin-top: 14px;
+  color: var(--marketing-ink-soft);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .collaborationSection {
@@ -1384,6 +1444,7 @@
   .sectionHeader,
   .foundingStory,
   .principlesSection,
+  .speakingSection,
   .inquiryIntro {
     grid-template-columns: 1fr;
   }
@@ -1458,6 +1519,7 @@
   .foundingStory,
   .foundersSection,
   .principlesSection,
+  .speakingSection,
   .missionVision,
   .collaborationSection,
   .inquirySection {
@@ -1509,6 +1571,15 @@
 
   .principlesSection h3 {
     white-space: normal;
+  }
+
+  .talkList li {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .talkList span {
+    padding-top: 0;
   }
 
   .collaborationSteps,

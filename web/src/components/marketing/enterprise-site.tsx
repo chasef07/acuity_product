@@ -26,6 +26,38 @@ import styles from "./enterprise-site.module.css"
 import chasePortrait from "../../../public/marketing/chase-fagen-v2.png"
 import kylePortrait from "../../../public/marketing/kyle-shechtman-2026.png"
 import venincasaPortrait from "../../../public/marketing/michael-venincasa-md.jpg"
+import puertoRicoTalk from "../../../public/marketing/speaking-puerto-rico-2026.jpg"
+
+const talks = [
+  {
+    date: "Oct 2026",
+    title: "AI in Focus: Using AI in Eye Care",
+    venue: "Colegio de Optómetras de Puerto Rico, 25th Optometric Congress",
+  },
+  {
+    date: "Sep 2026",
+    title: "AI in patient management",
+    venue: "Florida Society of Ophthalmic Administrators",
+    audience: "Executives and practice managers of large ophthalmology practices",
+  },
+  {
+    date: "May 2026",
+    title: "How AI is changing patient access",
+    venue: "2026 Civetta Meeting",
+    audience: "Optical retail",
+  },
+  {
+    date: "Mar 2026",
+    title: "From Fear to Focus: Incorporating AI into Vision Care",
+    venue: "Academy of Ophthalmic Education",
+    audience: "2-hour COPE-accredited CE",
+  },
+  {
+    date: "Mar 2026",
+    title: "The Patient Is Already Using AI. The Question Is Whether Your Practice Is.",
+    venue: "Vision Expo, Innovation Stage",
+  },
+]
 
 const display = Geist({
   subsets: ["latin"],
@@ -650,6 +682,37 @@ export function WhoWeArePageContent() {
             </div>
           </div>
         </article>
+      </section>
+
+      <section className={styles.speakingSection} aria-labelledby="speaking">
+        <header>
+          <p className={styles.eyebrow}>Speaking & teaching</p>
+          <h2 id="speaking">In the room with doctors and operators.</h2>
+        </header>
+        <ol className={styles.talkList}>
+          {talks.map((talk) => (
+            <li key={talk.title}>
+              <span>{talk.date}</span>
+              <div>
+                <h3>{talk.title}</h3>
+                <p>{talk.venue}</p>
+                {talk.audience && <p>{talk.audience}</p>}
+              </div>
+            </li>
+          ))}
+        </ol>
+        <figure className={styles.talkPhoto}>
+          <Image
+            alt="Kyle Shechtman and Michael Venincasa, MD, presenting to an audience at the 25th Optometric Congress in San Juan, Puerto Rico"
+            placeholder="blur"
+            sizes="(max-width: 640px) calc(100vw - 48px), 92vw"
+            src={puertoRicoTalk}
+          />
+          <figcaption>
+            Kyle Shechtman and Dr. Michael Venincasa teaching AI in Focus at the
+            25th Optometric Congress, San Juan, October 2026.
+          </figcaption>
+        </figure>
       </section>
 
       <section className={styles.principlesSection}>
