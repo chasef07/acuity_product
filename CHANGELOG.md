@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.0](https://github.com/chasef07/acuity_product/compare/v2.7.0...v2.8.0) (2026-10-30)
+
+
+### Features
+
+* **scorecard:** support the typesafe-scorecard-v11 jury ([#592](https://github.com/chasef07/acuity_product/issues/592)) ([4d7a787](https://github.com/chasef07/acuity_product/commit/4d7a7875da27a2a39b6e78257af59b50b9d38896))
+
 ## [2.7.0](https://github.com/chasef07/acuity_product/compare/v2.6.0...v2.7.0) (2026-10-30)
 
 
