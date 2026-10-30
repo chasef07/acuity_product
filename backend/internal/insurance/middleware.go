@@ -53,7 +53,7 @@ func OfficeNames(catalog Catalog, routes []access.AbitaOfficeRoute) map[string]s
 			locations = append(locations, route.LocationName)
 		}
 		slices.Sort(locations)
-		names[office] = strings.Join(slices.Compact(locations), " and ")
+		names[office] = strings.Join(slices.Compact(locations), " / ")
 		if names[office] == "" {
 			names[office] = office
 		}
