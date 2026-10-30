@@ -127,6 +127,7 @@ test("the diff names the plans and this office's rows that were added, removed a
   assert.deepEqual(diffCatalogs(active, restored, "hollywood"), {
     plans: [
       { change: "changed", region: "south", plan: "beta", label: "Beta Plus", fields: ["label"] },
+      { change: "removed", region: "south", plan: "cash", label: "Self pay", fields: [] },
       { change: "added", region: "south", plan: "gamma", label: "Gamma EPO", fields: [] },
     ],
     rows: [
