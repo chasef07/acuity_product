@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { expect, test, type Page } from "@playwright/test"
-import type { InsuranceCatalog, InsurancePublication, InsuranceRevision } from "../src/lib/api/generated/types.gen"
+import type { InsuranceCatalog, InsurancePublication, InsuranceRevision, InsuranceValidationError } from "../src/lib/api/generated/types.gen"
 import { openAgentPage, signInAs } from "./support"
 
 const imported: InsuranceRevision = {
@@ -42,7 +42,21 @@ function catalog(): InsuranceCatalog {
 }
 
 async function serveInsurance(page: Page, canEdit: boolean) {
-  const state = { active: { revision: imported, catalog: catalog() }, publications: [] as InsurancePublication[], answers: [] as ("invalid" | "conflict" | "ok")[] }
+  const state = {
+    active: { revision: imported, catalog: catalog() },
+    revisions: [{ revision: imported, catalog: catalog() }],
+    publications: [] as InsurancePublication[],
+    answers: [] as ("invalid" | "conflict" | "ok")[],
+    invalid: [{ region: "spring_hill_crystal_river", table: "", planId: "example-choice-medical", rule: "empty_family", message: "Plan example-choice-medical needs a family." }] as InsuranceValidationError[],
+    published: ["2026-10-30T19:30:00Z"],
+  }
+  await page.route("**/v1/insurance/revisions/history", (route) =>
+    route.fulfill({ json: { revisions: state.revisions.map((item) => item.revision).reverse() } }),
+  )
+  await page.route("**/v1/insurance/revisions/read", (route) => {
+    const { revisionId } = route.request().postDataJSON() as { revisionId: string }
+    return route.fulfill({ json: state.revisions.find((item) => item.revision.id === revisionId) })
+  })
   await page.route("**/v1/insurance/revisions/query", (route) =>
     route.fulfill({ json: { ...state.active, officeId: "spring_hill", officeNames: { spring_hill: "Spring Hill", crystal_river: "Crystal River" }, canEdit } }),
   )
@@ -59,7 +73,7 @@ async function serveInsurance(page: Page, canEdit: boolean) {
             message: "The insurance list has problems to fix before it can be published. Nothing changed.",
             correlationId: "synthetic",
             retryable: false,
-            errors: [{ region: "spring_hill_crystal_river", table: "", planId: "example-choice-medical", rule: "empty_family", message: "Plan example-choice-medical needs a family." }],
+            errors: state.invalid,
           },
         },
       })
@@ -75,13 +89,14 @@ async function serveInsurance(page: Page, canEdit: boolean) {
     }
     const revision: InsuranceRevision = {
       id: publication.revisionId,
-      createdAt: "2026-10-30T19:30:00Z",
+      createdAt: state.published.shift() ?? "2026-10-30T19:30:00Z",
       createdBy: "selected@abita.test",
       reason: publication.reason,
-      provenance: "portal",
+      provenance: publication.provenance ?? "portal",
       previousRevisionId: publication.expectedRevisionId,
     }
     state.active = { revision, catalog: publication.catalog }
+    state.revisions.push(state.active)
     return route.fulfill({ json: revision })
   })
   return state
@@ -147,5 +162,61 @@ test("staff change a doctor and a shared plan field, fix a rejected publish, sur
   expect(published.catalog.regions[0].plans[0].family).toBe("Example Health")
   expect(published.catalog.regions[0].tables[0].rows[0].doctors).toEqual({ "Dr. Chen": "no", "Dr. Rivera": "yes" })
   expect(published.catalog.regions[0].tables[0].rows[1].note).toBe("Someone else's synthetic note")
+  expect(errors).toEqual([])
+})
+
+test("staff publish a change, open History, have a restore rejected, then restore the earlier revision and see the list as it was", async ({ page }, testInfo) => {
+  const state = await serveInsurance(page, true)
+  state.published = ["2026-10-30T19:30:00Z", "2026-10-30T20:15:00Z"]
+  const errors: string[] = []
+  page.on("pageerror", (error) => errors.push(error.message))
+  await signInAs(page, "selected@abita.test", "Synthetic Staff")
+  await openAgentPage(page, "Insurance list")
+
+  const zeta = page.getByRole("listitem").filter({ hasText: "Zeta Vision Plan" })
+  await zeta.getByRole("button", { name: /^Zeta Vision Plan/ }).click()
+  await zeta.getByRole("button", { name: "Remove", exact: true }).click()
+  await page.getByLabel("Why are you changing this?").fill("Zeta Vision left the network")
+  await page.getByRole("button", { name: "Publish", exact: true }).click()
+  await expect(page.locator('time[datetime="2026-10-30T19:30:00Z"]')).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Zeta Vision Plan/ })).toHaveCount(0)
+
+  await page.getByRole("button", { name: "History", exact: true }).click()
+  const history = page.getByRole("dialog", { name: "History" })
+  const rows = history.getByRole("listitem")
+  await expect(rows).toHaveCount(2)
+  await expect(rows.nth(0)).toContainText(/Portal edit.*Active.*selected@abita\.test.*Zeta Vision left the network/)
+  await expect(rows.nth(1)).toContainText(/Imported.*operator@abita\.test.*initial import/)
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("insurance-history-list.png") })
+
+  await rows.nth(1).getByRole("button").click()
+  await expect(history.getByText("Restoring this version would make these changes to the active list for Spring Hill.")).toBeVisible()
+  await expect(history.getByRole("region", { name: "This office's rows" }).getByRole("listitem")).toHaveText(["AddedZeta Vision Plan"])
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("insurance-history-diff.png") })
+
+  await history.getByRole("button", { name: "Restore this version" }).click()
+  state.answers.push("invalid")
+  state.invalid = [{ region: "spring_hill_crystal_river", table: "spring_hill", planId: "zeta-vision", rule: "unknown_doctor_column", message: "Dr. Rivera is not a doctor column on the spring_hill table." }]
+  await history.getByRole("button", { name: "Restore", exact: true }).click()
+  await expect(history.getByRole("alert")).toContainText("Not restored. This version no longer passes the insurance list checks. Nothing changed.")
+  await expect(history.getByRole("alert")).toContainText("Dr. Rivera is not a doctor column on the spring_hill table.")
+  expect(state.revisions).toHaveLength(2)
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("insurance-restore-rejected.png") })
+
+  await history.getByRole("button", { name: "Restore", exact: true }).click()
+  await expect(rows).toHaveCount(3)
+  await expect(rows.nth(0)).toContainText(new RegExp(`Restore.*Active.*selected@abita\\.test.*Restore ${imported.id.slice(0, 8)}`))
+  await page.keyboard.press("Escape")
+  await expect(history).toHaveCount(0)
+  await expect(page.locator('time[datetime="2026-10-30T20:15:00Z"]')).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Zeta Vision Plan/ })).toBeVisible()
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("insurance-restored.png") })
+
+  const restore = state.publications.at(-1)!
+  expect(state.publications).toHaveLength(3)
+  expect(restore.provenance).toBe("restore")
+  expect(restore.reason).toBe(`Restore ${imported.id.slice(0, 8)}`)
+  expect(restore.catalog).toEqual(catalog())
+  expect(restore.expectedRevisionId).toBe(state.revisions[1].revision.id)
   expect(errors).toEqual([])
 })
