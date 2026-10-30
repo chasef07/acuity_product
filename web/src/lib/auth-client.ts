@@ -3,7 +3,7 @@
 import { createAuthClient } from "better-auth/react"
 import { oauthPopupClient } from "better-auth/client/plugins"
 
-import { clearKnowledgeDrafts } from "./knowledge-drafts.ts"
+import { clearDrafts } from "./drafts.ts"
 
 export const authClient = createAuthClient({
   plugins: [oauthPopupClient()],
@@ -11,7 +11,7 @@ export const authClient = createAuthClient({
     onSuccess(context) {
       if (new URL(context.request.url).pathname.endsWith("/sign-out")) {
         clearAccessToken()
-        clearKnowledgeDrafts()
+        clearDrafts()
       }
     },
   },
