@@ -35,7 +35,7 @@ func TestAnalyticsJudgesCoverFullWindowAndIgnoreLabelFilters(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO access_platform_operators(email,user_subject) VALUES('judges@example.test','judges')`); err != nil {
 		t.Fatal(err)
 	}
-	raw := `{"evaluatorVersion":"typesafe-scorecard-v10","status":"complete","jurors":["a","b","c"],"results":{"office_question_answered":{"verdict":true,"probability":0.6333333333333333,"votes":{"a":0.4,"b":0.6,"c":0.9}}}}`
+	raw := `{"evaluatorVersion":"typesafe-scorecard-v11","status":"complete","jurors":["a","b","c"],"results":{"office_question_answered":{"verdict":true,"probability":0.6333333333333333,"votes":{"a":0.4,"b":0.6,"c":0.9}}}}`
 	insert := func(owner, office, source string, at time.Time, evaluation string) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,closeout_payload) VALUES('agent',$1,$2,$3,'+15555550101','+15555550102',$4,$4,'COMPLETED',3,jsonb_build_object('evaluation',$5::jsonb))`, owner, office, source, at, evaluation); err != nil {
