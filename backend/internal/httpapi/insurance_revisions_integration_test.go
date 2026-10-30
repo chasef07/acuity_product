@@ -572,4 +572,39 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 			unchanged(t, current, count)
 		}
 	})
+
+	t.Run("a Spring Hill member removes a plan only Spring Hill lists but cannot rename one Crystal River shares", func(t *testing.T) {
+		current, count := active()
+		status, body := send("/v1/insurance/revisions/query", "spring-hill-token", map[string]string{"practiceId": practice, "locationId": locations["Spring Hill"]})
+		var view struct {
+			Catalog insurance.Catalog `json:"catalog"`
+		}
+		if status != http.StatusOK || json.Unmarshal([]byte(body), &view) != nil {
+			t.Fatalf("query: status=%d body=%.300s", status, body)
+		}
+		removed := view.Catalog
+		north := region(&removed, "spring_hill_crystal_river")
+		north.Plans = slices.DeleteFunc(slices.Clone(north.Plans), func(p insurance.RegionPlan) bool { return p.ID == "simply-health" })
+		springHill := table(&removed, "spring_hill_crystal_river", "spring_hill")
+		springHill.Rows = slices.DeleteFunc(slices.Clone(springHill.Rows), func(r insurance.TableRow) bool { return r.PlanID == "simply-health" })
+		if slices.ContainsFunc(table(&removed, "spring_hill_crystal_river", "crystal_river").Rows, func(r insurance.TableRow) bool { return r.PlanID == "simply-health" }) {
+			t.Fatal("simply-health is not a Spring Hill-only plan")
+		}
+		removal := publication("Spring Hill", current, removed)
+		if status, body := send("/v1/insurance/revisions", "spring-hill-token", removal); status != http.StatusOK {
+			t.Fatalf("removing a Spring Hill-only plan: status=%d body=%s", status, body)
+		}
+		unchanged(t, removal.RevisionID, count+1)
+
+		renamed := removed
+		renamed.Regions = slices.Clone(removed.Regions)
+		north = region(&renamed, "spring_hill_crystal_river")
+		north.Plans = slices.Clone(north.Plans)
+		north.Plans[0].Label = "Synthetic renamed shared plan"
+		status, body = send("/v1/insurance/revisions", "spring-hill-token", publication("Spring Hill", removal.RevisionID, renamed))
+		if status != http.StatusForbidden || !strings.Contains(body, "ACCESS_DENIED") {
+			t.Fatalf("renaming a plan Crystal River shares: status=%d body=%s", status, body)
+		}
+		unchanged(t, removal.RevisionID, count+1)
+	})
 }
