@@ -140,8 +140,9 @@ export function officeTables(catalog: InsuranceCatalog, office: string): OfficeT
   )
 }
 
-export function regionOffices(region: InsuranceRegion) {
-  return [...new Set(region.tables.flatMap((table) => table.offices))]
+export function planOffices(region: InsuranceRegion, planId: string) {
+  const tables = region.tables.filter((table) => table.rows.some((row) => row.planId === planId))
+  return [...new Set(tables.flatMap((table) => table.offices))]
 }
 
 export function touchedOffices(before: InsuranceCatalog, after: InsuranceCatalog) {
@@ -150,7 +151,7 @@ export function touchedOffices(before: InsuranceCatalog, after: InsuranceCatalog
 }
 
 function allOffices(catalog: InsuranceCatalog) {
-  return catalog.regions.flatMap(regionOffices)
+  return catalog.regions.flatMap((region) => region.tables.flatMap((table) => table.offices))
 }
 
 function officeView(catalog: InsuranceCatalog, office: string) {
@@ -158,7 +159,9 @@ function officeView(catalog: InsuranceCatalog, office: string) {
     carriers: catalog.carriers,
     regions: catalog.regions.flatMap((region) => {
       const tables = region.tables.filter((table) => table.offices.includes(office))
-      return tables.length > 0 ? [{ id: region.id, plans: region.plans, tables }] : []
+      if (tables.length === 0) return []
+      const listed = new Set(tables.flatMap((table) => table.rows.map((row) => row.planId)))
+      return [{ id: region.id, plans: region.plans.filter((plan) => listed.has(plan.id)), tables }]
     }),
   }
 }
