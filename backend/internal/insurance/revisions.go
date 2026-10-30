@@ -19,6 +19,7 @@ var (
 	ErrUnavailable  = errors.New("insurance rules are unavailable")
 	ErrConflict     = errors.New("the insurance list changed; reload it before publishing")
 	ErrNoCatalog    = errors.New("no insurance list has been published for this Practice")
+	ErrNotFound     = errors.New("the Practice has no insurance list revision with this ID")
 )
 
 type Provenance string
@@ -46,6 +47,15 @@ type LocationCatalog struct {
 	CanEdit     bool              `json:"canEdit"`
 }
 
+type RevisionHistory struct {
+	Revisions []Revision `json:"revisions"`
+}
+
+type RevisionCatalog struct {
+	Revision Revision `json:"revision"`
+	Catalog  Catalog  `json:"catalog"`
+}
+
 type ActiveCatalog struct {
 	RevisionID string  `json:"revisionId"`
 	Catalog    Catalog `json:"catalog"`
@@ -58,6 +68,7 @@ type PublishCommand struct {
 	RevisionID         string
 	ExpectedRevisionID string
 	Reason             string
+	Provenance         Provenance
 	Catalog            Catalog
 }
 
@@ -100,6 +111,12 @@ func (r *Revisions) Publish(ctx context.Context, cmd PublishCommand) (Revision, 
 	if uuid.Validate(cmd.PracticeID) != nil || uuid.Validate(cmd.LocationID) != nil || uuid.Validate(cmd.ExpectedRevisionID) != nil || !validReason(cmd.Reason) {
 		return Revision{}, ErrInvalidInput
 	}
+	if cmd.Provenance == "" {
+		cmd.Provenance = ProvenancePortal
+	}
+	if cmd.Provenance != ProvenancePortal && cmd.Provenance != ProvenanceRestore {
+		return Revision{}, ErrInvalidInput
+	}
 	if id, err := uuid.Parse(cmd.RevisionID); err != nil || id == uuid.Nil {
 		return Revision{}, ErrInvalidInput
 	}
@@ -114,7 +131,7 @@ func (r *Revisions) Publish(ctx context.Context, cmd PublishCommand) (Revision, 
 	}
 	return r.replace(ctx, replacement{
 		practiceID: cmd.PracticeID, revisionID: cmd.RevisionID, expectedRevisionID: cmd.ExpectedRevisionID,
-		reason: cmd.Reason, actor: cmd.Identity.Subject, provenance: ProvenancePortal, catalog: cmd.Catalog,
+		reason: cmd.Reason, actor: cmd.Identity.Subject, provenance: cmd.Provenance, catalog: cmd.Catalog,
 	}, func(ctx context.Context, tx pgx.Tx, before Catalog) error {
 		return r.authorizeOffices(ctx, tx, cmd.Identity, cmd.PracticeID, cmd.LocationID, TouchedOffices(before, cmd.Catalog))
 	})
@@ -278,11 +295,16 @@ func (r *Revisions) authorizeOffices(ctx context.Context, tx pgx.Tx, identity ac
 	return nil
 }
 
-func (r *Revisions) Query(ctx context.Context, identity access.Identity, practiceID, locationID string) (LocationCatalog, error) {
+func (r *Revisions) readOffice(ctx context.Context, identity access.Identity, practiceID, locationID string) (string, error) {
 	if uuid.Validate(practiceID) != nil || uuid.Validate(locationID) != nil {
-		return LocationCatalog{}, ErrInvalidInput
+		return "", ErrInvalidInput
 	}
 	officeKey, err := r.access.ReadLocationAbitaOfficeKey(ctx, identity, practiceID, locationID)
+	return middlewareOffice(officeKey), err
+}
+
+func (r *Revisions) Query(ctx context.Context, identity access.Identity, practiceID, locationID string) (LocationCatalog, error) {
+	office, err := r.readOffice(ctx, identity, practiceID, locationID)
 	if err != nil {
 		return LocationCatalog{}, err
 	}
@@ -290,7 +312,6 @@ func (r *Revisions) Query(ctx context.Context, identity access.Identity, practic
 	if err != nil {
 		return LocationCatalog{}, err
 	}
-	office := middlewareOffice(officeKey)
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return LocationCatalog{}, err
@@ -315,6 +336,50 @@ func (r *Revisions) Query(ctx context.Context, identity access.Identity, practic
 	}, nil
 }
 
+func (r *Revisions) History(ctx context.Context, identity access.Identity, practiceID, locationID string) (RevisionHistory, error) {
+	if _, err := r.readOffice(ctx, identity, practiceID, locationID); err != nil {
+		return RevisionHistory{}, err
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, created_at, created_by, reason, provenance, previous_revision_id::text
+		FROM insurance_revisions
+		WHERE practice_id = $1
+		ORDER BY created_at DESC, id DESC
+	`, practiceID)
+	if err != nil {
+		return RevisionHistory{}, err
+	}
+	revisions, err := pgx.CollectRows(rows, pgx.RowToStructByPos[Revision])
+	if err != nil {
+		return RevisionHistory{}, err
+	}
+	if err := r.withAuthors(ctx, practiceID, revisions); err != nil {
+		return RevisionHistory{}, err
+	}
+	return RevisionHistory{Revisions: revisions}, nil
+}
+
+func (r *Revisions) ReadRevision(ctx context.Context, identity access.Identity, practiceID, locationID, revisionID string) (RevisionCatalog, error) {
+	if uuid.Validate(revisionID) != nil {
+		return RevisionCatalog{}, ErrInvalidInput
+	}
+	if _, err := r.readOffice(ctx, identity, practiceID, locationID); err != nil {
+		return RevisionCatalog{}, err
+	}
+	stored, err := scanRevision(r.db.QueryRow(ctx, `SELECT `+revisionColumns+` FROM insurance_revisions r WHERE r.practice_id = $1 AND r.id = $2`, practiceID, revisionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RevisionCatalog{}, ErrNotFound
+	}
+	if err != nil {
+		return RevisionCatalog{}, err
+	}
+	revision, err := r.withAuthor(ctx, practiceID, stored.revision)
+	if err != nil {
+		return RevisionCatalog{}, err
+	}
+	return RevisionCatalog{Revision: revision, Catalog: stored.catalog}, nil
+}
+
 func (r *Revisions) Read(ctx context.Context, identity access.ServiceIdentity) (ActiveCatalog, error) {
 	if !identity.Allows(access.ServiceCapabilityReadInsurance) || uuid.Validate(identity.PracticeID) != nil {
 		return ActiveCatalog{}, access.ErrDenied
@@ -336,38 +401,58 @@ type querier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+const revisionColumns = `r.id::text, r.created_at, r.created_by, r.reason, r.provenance, r.previous_revision_id::text, r.content_hash, r.catalog::text`
+
 func readActive(ctx context.Context, db querier, practiceID string) (storedRevision, error) {
-	var stored storedRevision
-	var body []byte
-	err := db.QueryRow(ctx, `
-		SELECT r.id::text, r.created_at, r.created_by, r.reason, r.provenance, r.previous_revision_id::text, r.content_hash, r.catalog::text
+	stored, err := scanRevision(db.QueryRow(ctx, `
+		SELECT `+revisionColumns+`
 		FROM insurance_catalogs c
 		JOIN insurance_revisions r ON r.practice_id = c.practice_id AND r.id = c.revision_id
 		WHERE c.practice_id = $1
-	`, practiceID).Scan(&stored.revision.ID, &stored.revision.CreatedAt, &stored.revision.CreatedBy, &stored.revision.Reason,
-		&stored.revision.Provenance, &stored.revision.PreviousRevisionID, &stored.hash, &body)
+	`, practiceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return storedRevision{}, ErrNoCatalog
 	}
-	if err != nil {
+	return stored, err
+}
+
+func scanRevision(row pgx.Row) (storedRevision, error) {
+	var stored storedRevision
+	var body []byte
+	if err := row.Scan(&stored.revision.ID, &stored.revision.CreatedAt, &stored.revision.CreatedBy, &stored.revision.Reason,
+		&stored.revision.Provenance, &stored.revision.PreviousRevisionID, &stored.hash, &body); err != nil {
 		return storedRevision{}, err
 	}
-	if stored.catalog, err = ParseCatalog(body); err != nil {
+	catalog, err := ParseCatalog(body)
+	if err != nil {
 		return storedRevision{}, fmt.Errorf("stored insurance revision %s: %w", stored.revision.ID, err)
 	}
+	stored.catalog = catalog
 	return stored, nil
 }
 
 func (r *Revisions) withAuthor(ctx context.Context, practiceID string, revision Revision) (Revision, error) {
-	emails, err := r.access.ReadSubjectEmails(ctx, practiceID, []string{revision.CreatedBy})
+	revisions := []Revision{revision}
+	err := r.withAuthors(ctx, practiceID, revisions)
+	return revisions[0], err
+}
+
+func (r *Revisions) withAuthors(ctx context.Context, practiceID string, revisions []Revision) error {
+	subjects := make([]string, len(revisions))
+	for i, revision := range revisions {
+		subjects[i] = revision.CreatedBy
+	}
+	emails, err := r.access.ReadSubjectEmails(ctx, practiceID, subjects)
 	if err != nil {
-		return Revision{}, err
+		return err
 	}
-	revision.CreatedBy = emails[revision.CreatedBy]
-	if revision.CreatedBy == "" {
-		revision.CreatedBy = "Unknown user"
+	for i := range revisions {
+		revisions[i].CreatedBy = emails[revisions[i].CreatedBy]
+		if revisions[i].CreatedBy == "" {
+			revisions[i].CreatedBy = "Unknown user"
+		}
 	}
-	return revision, nil
+	return nil
 }
 
 func validReason(reason string) bool {

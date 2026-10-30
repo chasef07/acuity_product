@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -13,6 +14,27 @@ import (
 )
 
 func (server *Server) QueryInsuranceCatalog(w http.ResponseWriter, r *http.Request) {
+	var body api.InsuranceCatalogQuery
+	server.readInsurance(w, r, &body, func(ctx context.Context, identity access.Identity) (any, error) {
+		return server.insuranceRevisions.Query(ctx, identity, body.PracticeId.String(), body.LocationId.String())
+	})
+}
+
+func (server *Server) QueryInsuranceHistory(w http.ResponseWriter, r *http.Request) {
+	var body api.InsuranceCatalogQuery
+	server.readInsurance(w, r, &body, func(ctx context.Context, identity access.Identity) (any, error) {
+		return server.insuranceRevisions.History(ctx, identity, body.PracticeId.String(), body.LocationId.String())
+	})
+}
+
+func (server *Server) ReadInsuranceRevision(w http.ResponseWriter, r *http.Request) {
+	var body api.InsuranceRevisionQuery
+	server.readInsurance(w, r, &body, func(ctx context.Context, identity access.Identity) (any, error) {
+		return server.insuranceRevisions.ReadRevision(ctx, identity, body.PracticeId.String(), body.LocationId.String(), body.RevisionId.String())
+	})
+}
+
+func (server *Server) readInsurance(w http.ResponseWriter, r *http.Request, body any, read func(context.Context, access.Identity) (any, error)) {
 	started := time.Now()
 	if !server.portalOnly(w, r) {
 		return
@@ -21,8 +43,7 @@ func (server *Server) QueryInsuranceCatalog(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	var body api.InsuranceCatalogQuery
-	if !server.decodeJSON(w, r, &body) {
+	if !server.decodeJSON(w, r, body) {
 		return
 	}
 	if server.insuranceRevisions == nil {
@@ -31,7 +52,7 @@ func (server *Server) QueryInsuranceCatalog(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	result, err := server.insuranceRevisions.Query(ctx, identity, body.PracticeId.String(), body.LocationId.String())
+	result, err := read(ctx, identity)
 	switch {
 	case err == nil:
 		server.writeJSON(w, http.StatusOK, result)
@@ -39,13 +60,15 @@ func (server *Server) QueryInsuranceCatalog(w http.ResponseWriter, r *http.Reque
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, access.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, insurance.ErrNotFound):
+		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "This version of the insurance list doesn't exist.", false)
 	case errors.Is(err, access.ErrNoOfficeRoute):
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "The insurance list isn't available for this Location.", false)
 	case errors.Is(err, insurance.ErrNoCatalog):
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "No insurance list has been published for this practice yet.", false)
 	default:
 		if r.Context().Err() == nil {
-			slog.Warn("insurance_catalog_query_failed", "error", err.Error(), "elapsed_ms", time.Since(started).Milliseconds())
+			slog.Warn("insurance_catalog_read_failed", "path", r.URL.Path, "error", err.Error(), "elapsed_ms", time.Since(started).Milliseconds())
 		}
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "The insurance list isn't available right now.", true)
 	}
@@ -68,6 +91,10 @@ func (server *Server) PublishInsuranceCatalog(w http.ResponseWriter, r *http.Req
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "Not published. Nothing changed. Try again.", true)
 		return
 	}
+	var provenance insurance.Provenance
+	if body.Provenance != nil {
+		provenance = insurance.Provenance(*body.Provenance)
+	}
 	encoded, _ := json.Marshal(body.Catalog)
 	catalog, err := insurance.ParseCatalog(encoded)
 	if err != nil {
@@ -78,7 +105,8 @@ func (server *Server) PublishInsuranceCatalog(w http.ResponseWriter, r *http.Req
 	defer cancel()
 	revision, err := server.insuranceRevisions.Publish(ctx, insurance.PublishCommand{
 		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: body.LocationId.String(),
-		RevisionID: body.RevisionId.String(), ExpectedRevisionID: body.ExpectedRevisionId.String(), Reason: body.Reason, Catalog: catalog,
+		RevisionID: body.RevisionId.String(), ExpectedRevisionID: body.ExpectedRevisionId.String(), Reason: body.Reason,
+		Provenance: provenance, Catalog: catalog,
 	})
 	var rejected *insurance.ValidationError
 	switch {

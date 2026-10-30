@@ -1966,6 +1966,72 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /v1/insurance/revisions/history:
+    post:
+      operationId: queryInsuranceHistory
+      summary: List every insurance list revision of the Practice for one authorized Location.
+      description: Newest first, with each revision's author, time, reason, provenance, and the revision it replaced. Authorized like the insurance list query. Nothing is changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InsuranceCatalogQuery"
+      responses:
+        "200":
+          description: The Practice's insurance list revisions, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsuranceRevisionHistory"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          description: The Location has no single Abita Office Route, or the database is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /v1/insurance/revisions/read:
+    post:
+      operationId: readInsuranceRevision
+      summary: Read one insurance list revision of the Practice for one authorized Location.
+      description: The revision and its whole catalog. Authorized like the insurance list query. Nothing is changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InsuranceRevisionQuery"
+      responses:
+        "200":
+          description: The revision and its catalog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsuranceRevisionCatalog"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "404":
+          description: The Practice has no revision with this ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: The Location has no single Abita Office Route, or the database is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /v1/insurance/revisions:
     post:
       operationId: publishInsuranceCatalog
@@ -2430,6 +2496,43 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+        provenance:
+          type: string
+          enum: [portal, restore]
+          default: portal
+          description: restore when the catalog is an earlier revision published again. Only the seed import records import.
+        catalog:
+          $ref: "#/components/schemas/InsuranceCatalog"
+    InsuranceRevisionQuery:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId, revisionId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        revisionId:
+          type: string
+          format: uuid
+    InsuranceRevisionHistory:
+      type: object
+      additionalProperties: false
+      required: [revisions]
+      properties:
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsuranceRevision"
+    InsuranceRevisionCatalog:
+      type: object
+      additionalProperties: false
+      required: [revision, catalog]
+      properties:
+        revision:
+          $ref: "#/components/schemas/InsuranceRevision"
         catalog:
           $ref: "#/components/schemas/InsuranceCatalog"
     InsuranceRevision:
