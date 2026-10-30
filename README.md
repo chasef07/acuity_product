@@ -141,7 +141,11 @@ owns plan semantics: every publish is checked by its
 `POST /api/insurance/catalog/validate` first, its errors return verbatim, and
 nothing changes when it rejects or cannot be reached. The middleware reads
 the active revision through `POST /v1/agent/insurance/read` with its own
-service credential, which holds only `READ_INSURANCE`.
+service credential, which holds only `READ_INSURANCE`. Staff list revisions
+with `POST /v1/insurance/revisions/history` and read one with
+`POST /v1/insurance/revisions/read`. A restore is an ordinary publish of an
+earlier catalog with provenance `restore`, so it is validated and authorized
+like any publish, and history is never rewritten.
 
 The browser/backend contract is [`api/openapi.yaml`](api/openapi.yaml).
 Go bindings and the TypeScript client are generated from it, not edited by hand.
