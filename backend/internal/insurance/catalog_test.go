@@ -45,7 +45,7 @@ func TestOfficeNamesJoinEveryLocationRoutedToTheOfficeAndAnOfficeWithNoLocationS
 	}
 	want := map[string]string{
 		"hollywood":                 "Hollywood",
-		"sweetwater":                "Sweetwater and Sweetwater Optical",
+		"sweetwater":                "Sweetwater / Sweetwater Optical",
 		"north_miami_beach_optical": "North Miami Beach Optical",
 		"spring_hill":               "Spring Hill",
 		"crystal_river":             "crystal_river",

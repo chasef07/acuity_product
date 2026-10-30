@@ -34,7 +34,7 @@ const offices: Record<string, string> = {
 
 const officeNames: Record<string, string> = {
   hollywood: "Hollywood",
-  sweetwater: "Sweetwater and Sweetwater Optical",
+  sweetwater: "Sweetwater / Sweetwater Optical",
   north_miami_beach_optical: "North Miami Beach Optical",
   spring_hill: "Spring Hill",
   crystal_river: "Crystal River",
@@ -218,7 +218,7 @@ test("changing a doctor from yes to no and editing the row's rules publishes and
   await page.check("PCP referral", true)
   await page.fill(page.field("PCP referral channel"), "availity")
   await page.check("Staff verifies", true)
-  await page.check("Sweetwater and Sweetwater Optical", true)
+  await page.check("Sweetwater / Sweetwater Optical", true)
   await page.fill(page.field("Callers hear"), "Bring a referral")
   await page.fill(page.field("Staff note"), "Referral from the PCP")
   await page.fill(page.field("Label"), "Example Choice PPO Plus")
@@ -285,10 +285,10 @@ test("before publishing, a shared plan change names the other offices it also ch
   await page.render(insuranceList(locations[1].id))
   await waitFor(() => page.groups().length === 2)
   await page.rowAction("Example Choice PPO", "Edit")
-  assert.match(page.text(), /The label, family, aliases, carrier and self-pay are shared with Hollywood and Sweetwater and Sweetwater Optical\./)
+  assert.match(page.text(), /The label, family, aliases, carrier and self-pay are shared with Hollywood and Sweetwater \/ Sweetwater Optical\./)
   assert.equal(page.status(), "")
   await page.fill(page.field("Label"), "Example Choice Plus")
-  assert.equal(page.status(), "Also changes Hollywood and Sweetwater and Sweetwater Optical.")
+  assert.equal(page.status(), "Also changes Hollywood and Sweetwater / Sweetwater Optical.")
   await page.click("Discard changes")
 
   await page.render(insuranceList(locations[2].id), "spring hill")

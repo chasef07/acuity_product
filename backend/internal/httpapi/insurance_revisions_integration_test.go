@@ -289,7 +289,7 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 	t.Run("staff read the list with their Location's office, every office's Location names, and whether they can edit its table", func(t *testing.T) {
 		officeNames := map[string]string{
 			"hollywood":                 "Hollywood",
-			"sweetwater":                "Sweetwater and Sweetwater Optical",
+			"sweetwater":                "Sweetwater / Sweetwater Optical",
 			"north_miami_beach_optical": "North Miami Beach Optical",
 			"spring_hill":               "Spring Hill",
 			"crystal_river":             "Crystal River",
