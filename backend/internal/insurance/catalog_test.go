@@ -46,9 +46,23 @@ func TestTouchedOfficesFollowWhatEachOfficeServes(t *testing.T) {
 		{"a shared South Florida plan alias touches every South Florida office", func(c *insurance.Catalog) {
 			c.Regions[0].Plans[0].Aliases = append(c.Regions[0].Plans[0].Aliases, "Another alias")
 		}, []string{"hollywood", "north_miami_beach_optical", "sweetwater"}},
-		{"removing a plan from a region touches every office of that region", func(c *insurance.Catalog) {
-			c.Regions[1].Plans = c.Regions[1].Plans[:1]
+		{"moving a plan both northern tables list to another carrier touches both offices", func(c *insurance.Catalog) {
+			c.Regions[1].Plans[0].CarrierCode, c.Regions[1].Plans[0].CarrierID = "SYN02", "car00002"
 		}, []string{"crystal_river", "spring_hill"}},
+		{"removing a plan only Spring Hill lists touches only Spring Hill", func(c *insurance.Catalog) {
+			c.Regions[1].Plans = c.Regions[1].Plans[:1]
+			c.Regions[1].Tables[1].Rows = c.Regions[1].Tables[1].Rows[:1]
+		}, []string{"spring_hill"}},
+		{"adding a plan to the Spring Hill table touches only Spring Hill", func(c *insurance.Catalog) {
+			c.Regions[1].Plans = append(c.Regions[1].Plans, insurance.RegionPlan{ID: "north-epo", Label: "Synthetic north-epo", Family: "Synthetic", Coverage: "medical", Aliases: []string{}})
+			c.Regions[1].Tables[1].Rows = append(c.Regions[1].Tables[1].Rows, insurance.TableRow{PlanID: "north-epo", Doctors: map[string]string{"Dr. Example": "yes"}, Requires: []insurance.Requirement{}, OnlyOffices: []string{}})
+		}, []string{"spring_hill"}},
+		{"renaming a plan only Spring Hill lists touches only Spring Hill", func(c *insurance.Catalog) {
+			c.Regions[1].Plans[1].Label = "Renamed PPO"
+		}, []string{"spring_hill"}},
+		{"a region plan no table lists touches no office", func(c *insurance.Catalog) {
+			c.Regions[1].Plans = append(c.Regions[1].Plans, insurance.RegionPlan{ID: "north-unlisted", Aliases: []string{}})
+		}, []string{}},
 		{"a Crystal River table row touches only Crystal River", func(c *insurance.Catalog) {
 			c.Regions[1].Tables[0].Rows[0].Doctors["Dr. Example"] = "pending"
 		}, []string{"crystal_river"}},
