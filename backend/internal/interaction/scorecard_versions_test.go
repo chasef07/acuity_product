@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func TestSixFailuresAreActionableInV9AndV8(t *testing.T) {
+func TestSixFailuresAreActionableInV10V9AndV8(t *testing.T) {
 	keys := []string{"knowledge_available", "office_question_answered", "appointment_datetime_correct", "call_ended_correctly", "transfer_policy_followed", "emergency_policy_followed"}
-	for _, version := range []string{ScorecardJudgeVersion, v8JudgeVersion} {
+	for _, version := range []string{ScorecardJudgeVersion, v9JudgeVersion, v8JudgeVersion} {
 		var catalog []string
 		for _, question := range ScorecardQuestionsForVersion(version) {
 			if question.Source == "judge" {
@@ -35,7 +35,7 @@ func TestSixFailuresAreActionableInV9AndV8(t *testing.T) {
 }
 
 func TestUnknownKnowledgeIsNeitherPassNorFailure(t *testing.T) {
-	for _, version := range []string{ScorecardJudgeVersion, v8JudgeVersion} {
+	for _, version := range []string{ScorecardJudgeVersion, v9JudgeVersion, v8JudgeVersion} {
 		raw := json.RawMessage(`{"evaluatorVersion":"` + version + `","status":"complete","jurors":["a","b","c"],"results":{"knowledge_available":{"status":"unknown","reason":"no_office_knowledge_result"},"appointment_datetime_correct":{"status":"not_applicable","reason":"no_appointment_action"}}}`)
 		if answers := judgeAnswers(raw); len(answers) != 0 {
 			t.Fatalf("%s unknown/inapplicable checks are not verdicts: %+v", version, answers)
@@ -84,5 +84,24 @@ func TestV9TransferQuestionGradesAgainstTheAgentsPolicy(t *testing.T) {
 	v9, v8 := question("typesafe-scorecard-v9"), question("typesafe-scorecard-v8")
 	if !strings.Contains(v9.Question, "`transfer_policy`") || strings.Contains(v8.Question, "transfer_policy") || v8.Prompt != "Did the agent follow the staff-transfer policy?" {
 		t.Fatalf("v9 must grade against the agent's transfer policy while v8 keeps its own wording: v9=%+v v8=%+v", v9, v8)
+	}
+}
+
+func TestV10KnowledgeGapCountsOnlyOfficeQuestions(t *testing.T) {
+	question := func(version string) ScorecardQuestion {
+		for _, question := range ScorecardQuestionsForVersion(version) {
+			if question.Key == "knowledge_available" {
+				return question
+			}
+		}
+		t.Fatalf("%s has no knowledge judge", version)
+		return ScorecardQuestion{}
+	}
+	v10, v9 := question("typesafe-scorecard-v10"), question("typesafe-scorecard-v9")
+	if !strings.Contains(v10.Question, "These are not office questions: insurance acceptance") || strings.Contains(v9.Question, "insurance") {
+		t.Fatalf("v10 must exclude insurance and other non-office questions while v9 keeps its own wording: v10=%+v v9=%+v", v10, v9)
+	}
+	if v10.Prompt != v9.Prompt || v10.Yes != v9.Yes || v10.No != v9.No {
+		t.Fatalf("only the knowledge question text changes in v10: v10=%+v v9=%+v", v10, v9)
 	}
 }

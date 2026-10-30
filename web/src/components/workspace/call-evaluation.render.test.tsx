@@ -232,7 +232,7 @@ for (const version of juryScorecardVersions) test(`${version} renders the jury s
   assert.doesNotMatch(html, /shown as recorded/)
 })
 
-for (const version of ["typesafe-scorecard-v8", "typesafe-scorecard-v9"]) test(`${version} shows unknown knowledge separately from failures and missing sentiment as unavailable`, () => {
+for (const version of ["typesafe-scorecard-v8", "typesafe-scorecard-v9", "typesafe-scorecard-v10"]) test(`${version} shows unknown knowledge separately from failures and missing sentiment as unavailable`, () => {
  const question = (key: string, prompt: string) => ({ key, prompt, code: "", label: "", source: "judge" as const, question: "", yes: "", no: "", failure: true })
  const html = renderToStaticMarkup(<CallEvaluation questions={[question("knowledge_available", "Did returned knowledge contain the answer?"), question("transfer_policy_followed", "Was transfer policy followed?")]} verdicts={[{question: "transfer_policy_followed", code: "T1", prompt: "", answer: "no"}]} evaluation={{evaluatorVersion: version, evaluator:"jury", status:"complete", jurors:["a","b","c"], results:{knowledge_available:{status:"unknown",reason:"no_office_knowledge_result"}, transfer_policy_followed:{verdict:false, probability:0.2,votes:{a:0.1,b:0.2,c:0.3},errors:{}}}}} />)
  assert.match(html, /Was transfer policy followed\?<\/dt><dd class="shrink-0 font-medium text-destructive">Failed/)

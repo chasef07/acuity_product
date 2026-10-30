@@ -1,10 +1,12 @@
 package interaction
 
+import "slices"
+
 var ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
 	{
 		Key: "knowledge_available", Code: "K2", Label: "Office knowledge had the answer", Source: "judge", Failure: true,
 		Prompt:   "Did the office knowledge contain the answer to each office question?",
-		Question: "Did `office_knowledge` contain the information needed to answer the caller's office questions? Compare the caller's questions with that office knowledge, not the agent's answer. Answer FALSE if the office knowledge did not supply, or only said it did not supply, the information a caller's office question needed. Answer TRUE if no office question was asked or office information could not be loaded; a load failure does not prove the knowledge was missing.",
+		Question: "Did `office_knowledge` contain the information needed to answer the caller's office questions? An office question asks for a fact about this practice that is the same for every caller: hours, locations and directions, phone and fax numbers, providers, services, self-pay fees and prices, and office policies or procedures such as records requests, prescriptions, forms, and glasses or contact lens pickup. These are not office questions: insurance acceptance, coverage, plan referral rules, or costs under a plan; appointment availability or requests to book, change, or cancel; the caller's own appointments, orders, records, prescriptions, bills, or results; medical advice; requests for staff or questions about the assistant; sales or vendor calls; and anything about other businesses. Compare the caller's office questions with that office knowledge, not the agent's answer. Answer FALSE if the office knowledge did not supply, or only said it did not supply, the information an office question needed. Answer TRUE if no office question was asked or office information could not be loaded; a load failure does not prove the knowledge was missing.",
 		Yes:      "The office knowledge supplied the information needed to answer the caller's office questions, no office question was asked, or office information could not be loaded.", No: "The office knowledge did not supply the information needed to answer a caller's office question.",
 	},
 	{
@@ -78,6 +80,16 @@ var v8ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
 	},
 })
 
+var v9ScorecardQuestions = func() []ScorecardQuestion {
+	questions := slices.Clone(ScorecardQuestions)
+	for i := range questions {
+		if questions[i].Key == "knowledge_available" {
+			questions[i].Question = "Did `office_knowledge` contain the information needed to answer the caller's office questions? Compare the caller's questions with that office knowledge, not the agent's answer. Answer FALSE if the office knowledge did not supply, or only said it did not supply, the information a caller's office question needed. Answer TRUE if no office question was asked or office information could not be loaded; a load failure does not prove the knowledge was missing."
+		}
+	}
+	return questions
+}()
+
 func withCodeChecks(questions []ScorecardQuestion) []ScorecardQuestion {
 	for _, question := range legacyScorecardQuestions {
 		if question.Source == "code" {
@@ -91,6 +103,8 @@ func ScorecardQuestionsForVersion(version string) []ScorecardQuestion {
 	switch version {
 	case "", ScorecardJudgeVersion:
 		return ScorecardQuestions
+	case v9JudgeVersion:
+		return v9ScorecardQuestions
 	case v8JudgeVersion:
 		return v8ScorecardQuestions
 	case legacyJudgeVersion:

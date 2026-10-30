@@ -14,8 +14,8 @@ func TestAnalyticsFactsVersionTracksScorecardCatalogs(t *testing.T) {
 			catalog += fmt.Sprint(question.Key, question.Source, question.Failure, question.Label)
 		}
 	}
-	const pinned = "490063bfeeaac4a0632dcb346f2cebd650117c142201b08e269d370e60074705"
-	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(catalog))); analyticsFactsVersion != 2 || got != pinned {
+	const pinned = "ccba7a66ca0a359da0fd5d6430347bf2d5dffd0bebda94584568c289cc944cda"
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(catalog))); analyticsFactsVersion != 3 || got != pinned {
 		t.Fatalf("scorecard catalogs changed (fingerprint %s): bump analyticsFactsVersion (now %d) and re-pin", got, analyticsFactsVersion)
 	}
 }

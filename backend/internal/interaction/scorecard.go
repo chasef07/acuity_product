@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	ScorecardJudgeVersion = "typesafe-scorecard-v9"
+	ScorecardJudgeVersion = "typesafe-scorecard-v10"
+	v9JudgeVersion        = "typesafe-scorecard-v9"
 	v8JudgeVersion        = "typesafe-scorecard-v8"
 	legacyJudgeVersion    = "typesafe-scorecard-v7"
 	previousJudgeVersion  = "typesafe-scorecard-v6"
@@ -22,7 +23,7 @@ const (
 	scorecardNoAtOrBelow  = 0.40
 )
 
-var juryScorecardVersions = []string{ScorecardJudgeVersion, v8JudgeVersion, legacyJudgeVersion, previousJudgeVersion}
+var juryScorecardVersions = []string{ScorecardJudgeVersion, v9JudgeVersion, v8JudgeVersion, legacyJudgeVersion, previousJudgeVersion}
 
 type ScorecardQuestion struct {
 	Key      string `json:"key"`
