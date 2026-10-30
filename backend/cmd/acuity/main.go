@@ -300,12 +300,8 @@ func runAuthorizedHTTP(
 			return err
 		}
 		var rules *insurance.MiddlewareClient
-		var insuranceModule *insurance.Module
 		if config.Middleware.BaseURL != "" {
 			if rules, err = insurance.NewMiddlewareClient(config.Middleware.BaseURL, config.Middleware.APISecret, nil); err != nil {
-				return err
-			}
-			if insuranceModule, err = insurance.New(accessModule, rules); err != nil {
 				return err
 			}
 		}
@@ -327,7 +323,6 @@ func runAuthorizedHTTP(
 			Work:                 workModule,
 			Workspace:            workspace.New(database, accessModule),
 			Knowledge:            knowledgeModule,
-			Insurance:            insuranceModule,
 			InsuranceRevisions:   insuranceRevisions,
 			ServiceAuthenticator: serviceAuth,
 		})

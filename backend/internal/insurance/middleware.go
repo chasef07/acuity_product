@@ -60,30 +60,6 @@ func NewMiddlewareClient(baseURL, secret string, client *http.Client) (*Middlewa
 	return &MiddlewareClient{baseURL: strings.TrimRight(parsed.String(), "/"), secret: secret, client: client}, nil
 }
 
-func (c *MiddlewareClient) Plans(ctx context.Context, office string, coverage Coverage) ([]Plan, error) {
-	office = middlewareOffice(office)
-	query := url.Values{"office": {office}, "coverage": {string(coverage)}}
-	status, raw, err := c.send(ctx, "plans", http.MethodGet, "/api/insurance/plans?"+query.Encode(), nil, 2<<20)
-	if err != nil {
-		return nil, err
-	}
-	if status == http.StatusBadRequest {
-		return nil, fmt.Errorf("%w: middleware plans returned HTTP %d", ErrUnknownOffice, status)
-	}
-	if status < 200 || status > 299 {
-		return nil, fmt.Errorf("middleware plans returned HTTP %d", status)
-	}
-	var body struct {
-		OfficeID string   `json:"officeId"`
-		Coverage Coverage `json:"coverage"`
-		Plans    []Plan   `json:"plans"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil || body.Plans == nil || body.OfficeID != office || body.Coverage != coverage {
-		return nil, fmt.Errorf("middleware plans response is invalid")
-	}
-	return body.Plans, nil
-}
-
 func (c *MiddlewareClient) Catalog(ctx context.Context) (Catalog, error) {
 	status, raw, err := c.send(ctx, "catalog", http.MethodGet, "/api/insurance/catalog", nil, maxCatalogBytes)
 	if err != nil {

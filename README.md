@@ -273,10 +273,9 @@ A deliberate historical sample can be queued by inserting its reviewed
 interaction IDs into `ai_interaction_classifications(interaction_id)` with
 `ON CONFLICT DO NOTHING`. No automatic all-history backfill runs.
 
-`portal-api` reads insurance rules from the AdvancedMD middleware, and
-validates insurance list publishes with it, when `MIDDLEWARE_BASE_URL` and
-`MIDDLEWARE_API_SECRET` are both set; set neither to leave the insurance plans
-endpoint and insurance publishes returning 503 Unavailable. The middleware's
+`portal-api` validates insurance list publishes with the AdvancedMD
+middleware when `MIDDLEWARE_BASE_URL` and `MIDDLEWARE_API_SECRET` are both
+set; set neither to leave insurance publishes returning 503 Unavailable. The middleware's
 own credential for `POST /v1/agent/insurance/read` is
 `ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_TOKEN`, with
 `ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_SUBJECT` and

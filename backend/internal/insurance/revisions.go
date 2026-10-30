@@ -15,8 +15,10 @@ import (
 )
 
 var (
-	ErrConflict  = errors.New("the insurance list changed; reload it before publishing")
-	ErrNoCatalog = errors.New("no insurance list has been published for this Practice")
+	ErrInvalidInput = errors.New("invalid insurance input")
+	ErrUnavailable  = errors.New("insurance rules are unavailable")
+	ErrConflict     = errors.New("the insurance list changed; reload it before publishing")
+	ErrNoCatalog    = errors.New("no insurance list has been published for this Practice")
 )
 
 type Provenance string

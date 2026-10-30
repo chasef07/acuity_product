@@ -14,6 +14,16 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/insurance"
 )
 
+const secret = "synthetic-middleware-secret"
+
+func TestMiddlewareClientRequiresBaseURLAndSecret(t *testing.T) {
+	for _, scenario := range [][2]string{{"", secret}, {"middleware.example", secret}, {"https://middleware.example", ""}, {"https://middleware.example", "   "}} {
+		if _, err := insurance.NewMiddlewareClient(scenario[0], scenario[1], nil); err == nil {
+			t.Errorf("client accepted base URL %q with secret set=%t", scenario[0], scenario[1] != "")
+		}
+	}
+}
+
 func middlewareClient(t *testing.T, handler http.HandlerFunc) *insurance.MiddlewareClient {
 	t.Helper()
 	server := httptest.NewServer(handler)
