@@ -47,8 +47,9 @@ type MiddlewareConfig struct {
 }
 
 type ServiceConfig struct {
-	AcuityDemo    ServiceCredentialConfig
-	AbitaEyeGroup ServiceCredentialConfig
+	AcuityDemo              ServiceCredentialConfig
+	AbitaEyeGroup           ServiceCredentialConfig
+	AbitaEyeGroupMiddleware *ServiceCredentialConfig
 }
 
 type ServiceCredentialConfig struct {
@@ -299,7 +300,17 @@ func loadServiceConfig(getenv func(string) string) (ServiceConfig, error) {
 	if err != nil {
 		return ServiceConfig{}, err
 	}
-	return ServiceConfig{AcuityDemo: demo, AbitaEyeGroup: production}, nil
+	config := ServiceConfig{AcuityDemo: demo, AbitaEyeGroup: production}
+	const middleware = "ABITA_EYE_GROUP_MIDDLEWARE_SERVICE"
+	if getenv(middleware+"_TOKEN") == "" && getenv(middleware+"_SUBJECT") == "" && getenv(middleware+"_PRACTICE_ID") == "" {
+		return config, nil
+	}
+	credential, err := loadServiceCredential(getenv, middleware)
+	if err != nil {
+		return ServiceConfig{}, fmt.Errorf("%s_TOKEN, _SUBJECT, and _PRACTICE_ID must be set together: %w", middleware, err)
+	}
+	config.AbitaEyeGroupMiddleware = &credential
+	return config, nil
 }
 
 func loadServiceCredential(

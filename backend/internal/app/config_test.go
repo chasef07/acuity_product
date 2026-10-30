@@ -238,6 +238,25 @@ func TestLoadServiceConfigRequiresDemoAndProductionTenantCredentials(t *testing.
 		t.Fatalf("service config = %#v", config)
 	}
 
+	if config.AbitaEyeGroupMiddleware != nil {
+		t.Fatalf("middleware credential without its variables = %#v", config.AbitaEyeGroupMiddleware)
+	}
+
+	values["ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_TOKEN"] = "middleware-token"
+	if _, err := loadServiceConfig(func(name string) string { return values[name] }); err == nil {
+		t.Fatal("expected a middleware token without its subject and Practice to fail closed")
+	}
+	values["ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_SUBJECT"] = "abita-eye-group-middleware"
+	values["ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_PRACTICE_ID"] = "00000000-0000-0000-0000-000000000002"
+	config, err = loadServiceConfig(func(name string) string { return values[name] })
+	if err != nil {
+		t.Fatalf("load service config with the middleware credential: %v", err)
+	}
+	if middleware := config.AbitaEyeGroupMiddleware; middleware == nil || middleware.Token != "middleware-token" ||
+		middleware.Subject != "abita-eye-group-middleware" || middleware.PracticeID != "00000000-0000-0000-0000-000000000002" {
+		t.Fatalf("middleware credential = %#v", config.AbitaEyeGroupMiddleware)
+	}
+
 	delete(values, "ABITA_EYE_GROUP_SERVICE_TOKEN")
 	if _, err := loadServiceConfig(func(name string) string { return values[name] }); err == nil {
 		t.Fatal("expected an incomplete production credential to fail closed")
