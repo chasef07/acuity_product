@@ -2,12 +2,10 @@ package insurance_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"testing"
 
@@ -92,33 +90,5 @@ func TestValidateIsUnavailableWithoutAClearVerdict(t *testing.T) {
 	}
 	if err := client.Validate(context.Background(), syntheticCatalog()); !errors.Is(err, insurance.ErrUnavailable) {
 		t.Fatalf("unreachable validate error = %v", err)
-	}
-}
-
-func TestCatalogReadsTheMiddlewareExportStrictly(t *testing.T) {
-	export, err := os.ReadFile("testdata/export.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var path string
-	client := middlewareClient(t, func(w http.ResponseWriter, r *http.Request) {
-		path = r.URL.Path
-		respond(http.StatusOK, string(export))(w, r)
-	})
-	catalog, err := client.Catalog(context.Background())
-	if err != nil || path != "/api/insurance/catalog" {
-		t.Fatalf("catalog: path %s, %v", path, err)
-	}
-	if encoded, _ := json.Marshal(catalog); string(encoded)+"\n" != string(export) {
-		t.Fatal("catalog read changed the export")
-	}
-	for name, handler := range map[string]http.HandlerFunc{
-		"unknown field": respond(http.StatusOK, `{"carriers":[],"regions":[],"revision":"1"}`),
-		"server error":  respond(http.StatusInternalServerError, `{}`),
-		"rejected":      respond(http.StatusBadRequest, `{}`),
-	} {
-		if _, err := middlewareClient(t, handler).Catalog(context.Background()); !errors.Is(err, insurance.ErrUnavailable) {
-			t.Errorf("%s: catalog error = %v, want unavailable", name, err)
-		}
 	}
 }

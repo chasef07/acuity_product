@@ -15,10 +15,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 )
 
-const (
-	middlewareTimeout = 5 * time.Second
-	maxCatalogBytes   = 4 << 20
-)
+const middlewareTimeout = 5 * time.Second
 
 var middlewareOffices = map[string]string{
 	"sweetwater-optical":        "sweetwater",
@@ -82,21 +79,6 @@ func (c *MiddlewareClient) Plans(ctx context.Context, office string, coverage Co
 		return nil, fmt.Errorf("middleware plans response is invalid")
 	}
 	return body.Plans, nil
-}
-
-func (c *MiddlewareClient) Catalog(ctx context.Context) (Catalog, error) {
-	status, raw, err := c.send(ctx, "catalog", http.MethodGet, "/api/insurance/catalog", nil, maxCatalogBytes)
-	if err != nil {
-		return Catalog{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
-	}
-	if status != http.StatusOK {
-		return Catalog{}, fmt.Errorf("%w: middleware catalog returned HTTP %d", ErrUnavailable, status)
-	}
-	catalog, err := ParseCatalog(raw)
-	if err != nil {
-		return Catalog{}, fmt.Errorf("%w: middleware catalog response is invalid: %w", ErrUnavailable, err)
-	}
-	return catalog, nil
 }
 
 type CatalogError struct {
