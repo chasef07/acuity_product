@@ -68,8 +68,11 @@ function reviseRegion(region: InsuranceRegion, edit: InsuranceEdit): InsuranceRe
     }
     case "addRow":
       return region.plans.some((plan) => plan.id === at.plan) ? withTable(region, at, (table) => addRow(table, at.plan)) : region
-    case "removeRow":
-      return withTable(region, at, (table) => ({ ...table, rows: table.rows.filter((row) => row.planId !== at.plan) }))
+    case "removeRow": {
+      const removed = withTable(region, at, (table) => ({ ...table, rows: table.rows.filter((row) => row.planId !== at.plan) }))
+      const listed = removed.tables.some((table) => table.rows.some((row) => row.planId === at.plan))
+      return listed ? removed : { ...removed, plans: removed.plans.filter((plan) => plan.id !== at.plan) }
+    }
     case "changePlan":
       return withPlan(region, at.plan, (plan) => ({ ...plan, ...edit.change }))
     case "setCarrier":
