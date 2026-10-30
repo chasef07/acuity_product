@@ -115,6 +115,132 @@ export type InsurancePlanRule = {
     acceptedAt: Array<string>;
 };
 
+export type InsuranceCatalogQuery = {
+    practiceId: string;
+    locationId: string;
+};
+
+export type LocationInsuranceCatalog = {
+    revision: InsuranceRevision;
+    catalog: InsuranceCatalog;
+    /**
+     * The middleware office this Location's Abita Office Route maps to.
+     */
+    officeId: string;
+    /**
+     * Whether the caller can publish a change to a table that lists this office, which touches every office on that table.
+     */
+    canEdit: boolean;
+};
+
+export type InsurancePublication = {
+    practiceId: string;
+    locationId: string;
+    /**
+     * Chosen by the client; the idempotency key.
+     */
+    revisionId: string;
+    /**
+     * The active revision the edit started from.
+     */
+    expectedRevisionId: string;
+    reason: string;
+    catalog: InsuranceCatalog;
+};
+
+export type InsuranceRevision = {
+    id: string;
+    createdAt: string;
+    /**
+     * The publisher's email, or "Unknown user" when it cannot be resolved.
+     */
+    createdBy: string;
+    reason: string;
+    provenance: 'import' | 'portal' | 'restore';
+    /**
+     * Absent for the Practice's first revision.
+     */
+    previousRevisionId?: string;
+};
+
+export type AgentInsuranceCatalog = {
+    revisionId: string;
+    catalog: InsuranceCatalog;
+};
+
+/**
+ * The middleware's insurance list. The middleware owns its rules and validates every publish.
+ */
+export type InsuranceCatalog = {
+    carriers: Array<InsuranceCarrier>;
+    regions: Array<InsuranceRegion>;
+};
+
+export type InsuranceCarrier = {
+    id: string;
+    name: string;
+};
+
+export type InsuranceRegion = {
+    id: string;
+    /**
+     * Plan rows shared by every office of the region.
+     */
+    plans: Array<InsuranceRegionPlan>;
+    tables: Array<InsuranceOfficeTable>;
+};
+
+export type InsuranceRegionPlan = {
+    id: string;
+    label: string;
+    family: string;
+    coverage: string;
+    carrierCode: string;
+    carrierId: string;
+    selfPay: boolean;
+    aliases: Array<string>;
+};
+
+export type InsuranceOfficeTable = {
+    id: string;
+    /**
+     * Middleware office IDs this table serves.
+     */
+    offices: Array<string>;
+    doctors: Array<string>;
+    rows: Array<InsuranceTableRow>;
+};
+
+export type InsuranceTableRow = {
+    planId: string;
+    /**
+     * Each doctor's answer for this plan; a doctor with no answer is omitted.
+     */
+    doctors: {
+        [key: string]: string;
+    };
+    requires: Array<InsuranceRequirement>;
+    onlyOffices: Array<string>;
+    notice: string;
+    note: string;
+};
+
+export type InsuranceRequirement = {
+    kind: string;
+    channel: string;
+};
+
+export type InsuranceValidationError = {
+    region: string;
+    table: string;
+    planId: string;
+    /**
+     * The middleware's stable snake_case code for the rule.
+     */
+    rule: string;
+    message: string;
+};
+
 export type OfficeKnowledge = {
     revisionId: string;
     entries: Array<KnowledgeSection>;
@@ -135,6 +261,10 @@ export type ErrorEnvelope = {
          * The knowledge entry that broke a rule, when a knowledge publication is rejected.
          */
         entryId?: string;
+        /**
+         * Every reason the middleware rejected an insurance publication, verbatim.
+         */
+        errors?: Array<InsuranceValidationError>;
     };
 };
 
@@ -4679,6 +4809,84 @@ export type QueryInsurancePlansResponses = {
 
 export type QueryInsurancePlansResponse = QueryInsurancePlansResponses[keyof QueryInsurancePlansResponses];
 
+export type QueryInsuranceCatalogData = {
+    body: InsuranceCatalogQuery;
+    path?: never;
+    query?: never;
+    url: '/v1/insurance/revisions/query';
+};
+
+export type QueryInsuranceCatalogErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * No insurance list has been published for the Practice, the Location has no single Abita Office Route, or the database is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryInsuranceCatalogError = QueryInsuranceCatalogErrors[keyof QueryInsuranceCatalogErrors];
+
+export type QueryInsuranceCatalogResponses = {
+    /**
+     * The active insurance list.
+     */
+    200: LocationInsuranceCatalog;
+};
+
+export type QueryInsuranceCatalogResponse = QueryInsuranceCatalogResponses[keyof QueryInsuranceCatalogResponses];
+
+export type PublishInsuranceCatalogData = {
+    body: InsurancePublication;
+    path?: never;
+    query?: never;
+    url: '/v1/insurance/revisions';
+};
+
+export type PublishInsuranceCatalogErrors = {
+    /**
+     * The request is invalid, or the middleware rejected the catalog (code INSURANCE_INVALID, with every reason in error.errors). Nothing changed.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * expectedRevisionId is no longer the active revision, or revisionId was already used for different content. Nothing changed.
+     */
+    409: ErrorEnvelope;
+    /**
+     * The middleware validator or the database is unavailable. Nothing changed.
+     */
+    503: ErrorEnvelope;
+};
+
+export type PublishInsuranceCatalogError = PublishInsuranceCatalogErrors[keyof PublishInsuranceCatalogErrors];
+
+export type PublishInsuranceCatalogResponses = {
+    /**
+     * The published revision, now active for every office in the Practice.
+     */
+    200: InsuranceRevision;
+};
+
+export type PublishInsuranceCatalogResponse = PublishInsuranceCatalogResponses[keyof PublishInsuranceCatalogResponses];
+
 export type QueryLocationKnowledgeData = {
     body: LocationKnowledgeQuery;
     path?: never;
@@ -4872,3 +5080,42 @@ export type ReadOfficeKnowledgeResponses = {
 };
 
 export type ReadOfficeKnowledgeResponse = ReadOfficeKnowledgeResponses[keyof ReadOfficeKnowledgeResponses];
+
+export type ReadAgentInsuranceCatalogData = {
+    body: {
+        [key: string]: never;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/agent/insurance/read';
+};
+
+export type ReadAgentInsuranceCatalogErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The Practice has no published insurance list or the database is temporarily unavailable. Never fall back to another list.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReadAgentInsuranceCatalogError = ReadAgentInsuranceCatalogErrors[keyof ReadAgentInsuranceCatalogErrors];
+
+export type ReadAgentInsuranceCatalogResponses = {
+    /**
+     * The active revision and its catalog.
+     */
+    200: AgentInsuranceCatalog;
+};
+
+export type ReadAgentInsuranceCatalogResponse = ReadAgentInsuranceCatalogResponses[keyof ReadAgentInsuranceCatalogResponses];

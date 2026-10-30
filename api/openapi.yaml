@@ -1962,6 +1962,76 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/insurance/revisions/query:
+    post:
+      operationId: queryInsuranceCatalog
+      summary: Read the Practice's active insurance list for one authorized Location.
+      description: The whole Practice catalog, its active revision, the middleware office this Location's route maps to, and whether the caller can publish a change to that office's tables. Nothing is changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InsuranceCatalogQuery"
+      responses:
+        "200":
+          description: The active insurance list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocationInsuranceCatalog"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          description: No insurance list has been published for the Practice, the Location has no single Abita Office Route, or the database is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /v1/insurance/revisions:
+    post:
+      operationId: publishInsuranceCatalog
+      summary: Publish a complete insurance list as the Practice's new active revision.
+      description: Replaces the whole Practice catalog. The caller needs mutation access to the requested Location and to the Location of every office the change touches; an office with no Location needs a Platform Operator. The middleware validates the catalog before anything is written. Repeating the same revisionId with the same content returns the same revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InsurancePublication"
+      responses:
+        "200":
+          description: The published revision, now active for every office in the Practice.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsuranceRevision"
+        "400":
+          description: The request is invalid, or the middleware rejected the catalog (code INSURANCE_INVALID, with every reason in error.errors). Nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          description: expectedRevisionId is no longer the active revision, or revisionId was already used for different content. Nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: The middleware validator or the database is unavailable. Nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /v1/knowledge/query:
     post:
       operationId: queryLocationKnowledge
@@ -2105,6 +2175,39 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           description: The office has no active revision or the database is temporarily unavailable. Never fall back to a stale or partial list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /v1/agent/insurance/read:
+    post:
+      operationId: readAgentInsuranceCatalog
+      summary: Read the active insurance list of the service credential's Practice.
+      description: For the middleware, which loads the whole catalog. Practice comes from the service credential, which needs READ_INSURANCE. Nothing is changed.
+      security:
+        - serviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: The active revision and its catalog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentInsuranceCatalog"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          description: The Practice has no published insurance list or the database is temporarily unavailable. Never fall back to another list.
           content:
             application/json:
               schema:
@@ -2374,6 +2477,221 @@ components:
           description: Other offices on the same list that accept this plan when this one does not.
           items:
             type: string
+    InsuranceCatalogQuery:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+    LocationInsuranceCatalog:
+      type: object
+      additionalProperties: false
+      required: [revision, catalog, officeId, canEdit]
+      properties:
+        revision:
+          $ref: "#/components/schemas/InsuranceRevision"
+        catalog:
+          $ref: "#/components/schemas/InsuranceCatalog"
+        officeId:
+          type: string
+          description: The middleware office this Location's Abita Office Route maps to.
+        canEdit:
+          type: boolean
+          description: Whether the caller can publish a change to a table that lists this office, which touches every office on that table.
+    InsurancePublication:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId, revisionId, expectedRevisionId, reason, catalog]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        revisionId:
+          type: string
+          format: uuid
+          description: Chosen by the client; the idempotency key.
+        expectedRevisionId:
+          type: string
+          format: uuid
+          description: The active revision the edit started from.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        catalog:
+          $ref: "#/components/schemas/InsuranceCatalog"
+    InsuranceRevision:
+      type: object
+      additionalProperties: false
+      required: [id, createdAt, createdBy, reason, provenance]
+      properties:
+        id:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+          description: The publisher's email, or "Unknown user" when it cannot be resolved.
+        reason:
+          type: string
+        provenance:
+          type: string
+          enum: [import, portal, restore]
+        previousRevisionId:
+          type: string
+          format: uuid
+          description: Absent for the Practice's first revision.
+    AgentInsuranceCatalog:
+      type: object
+      additionalProperties: false
+      required: [revisionId, catalog]
+      properties:
+        revisionId:
+          type: string
+          format: uuid
+        catalog:
+          $ref: "#/components/schemas/InsuranceCatalog"
+    InsuranceCatalog:
+      type: object
+      additionalProperties: false
+      description: The middleware's insurance list. The middleware owns its rules and validates every publish.
+      required: [carriers, regions]
+      properties:
+        carriers:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsuranceCarrier"
+        regions:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsuranceRegion"
+    InsuranceCarrier:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    InsuranceRegion:
+      type: object
+      additionalProperties: false
+      required: [id, plans, tables]
+      properties:
+        id:
+          type: string
+        plans:
+          type: array
+          description: Plan rows shared by every office of the region.
+          items:
+            $ref: "#/components/schemas/InsuranceRegionPlan"
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsuranceOfficeTable"
+    InsuranceRegionPlan:
+      type: object
+      additionalProperties: false
+      required: [id, label, family, coverage, carrierCode, carrierId, selfPay, aliases]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        family:
+          type: string
+        coverage:
+          type: string
+        carrierCode:
+          type: string
+        carrierId:
+          type: string
+        selfPay:
+          type: boolean
+        aliases:
+          type: array
+          items:
+            type: string
+    InsuranceOfficeTable:
+      type: object
+      additionalProperties: false
+      required: [id, offices, doctors, rows]
+      properties:
+        id:
+          type: string
+        offices:
+          type: array
+          description: Middleware office IDs this table serves.
+          items:
+            type: string
+        doctors:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsuranceTableRow"
+    InsuranceTableRow:
+      type: object
+      additionalProperties: false
+      required: [planId, doctors, requires, onlyOffices, notice, note]
+      properties:
+        planId:
+          type: string
+        doctors:
+          type: object
+          description: Each doctor's answer for this plan; a doctor with no answer is omitted.
+          additionalProperties:
+            type: string
+        requires:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsuranceRequirement"
+        onlyOffices:
+          type: array
+          items:
+            type: string
+        notice:
+          type: string
+        note:
+          type: string
+    InsuranceRequirement:
+      type: object
+      additionalProperties: false
+      required: [kind, channel]
+      properties:
+        kind:
+          type: string
+        channel:
+          type: string
+    InsuranceValidationError:
+      type: object
+      additionalProperties: false
+      required: [region, table, planId, rule, message]
+      properties:
+        region:
+          type: string
+        table:
+          type: string
+        planId:
+          type: string
+        rule:
+          type: string
+          description: The middleware's stable snake_case code for the rule.
+        message:
+          type: string
     OfficeKnowledge:
       type: object
       additionalProperties: false
@@ -2418,6 +2736,11 @@ components:
             entryId:
               type: string
               description: The knowledge entry that broke a rule, when a knowledge publication is rejected.
+            errors:
+              type: array
+              description: Every reason the middleware rejected an insurance publication, verbatim.
+              items:
+                $ref: "#/components/schemas/InsuranceValidationError"
     SignUpEligibilityRequest:
       type: object
       additionalProperties: false

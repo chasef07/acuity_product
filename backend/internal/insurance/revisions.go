@@ -14,7 +14,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrConflict = errors.New("the insurance list changed; reload it before publishing")
+var (
+	ErrConflict  = errors.New("the insurance list changed; reload it before publishing")
+	ErrNoCatalog = errors.New("no insurance list has been published for this Practice")
+)
 
 type Provenance string
 
@@ -127,8 +130,8 @@ func (r *Revisions) Import(ctx context.Context, cmd ImportCommand) (Revision, bo
 		revision, err := r.withAuthor(ctx, cmd.PracticeID, active.revision)
 		return revision, false, err
 	case err == nil:
-		return Revision{}, false, fmt.Errorf("%w: the Practice already has insurance list revision %s; change it in the Portal", ErrConflict, active.revision.ID)
-	case !errors.Is(err, ErrUnavailable):
+		return Revision{}, false, fmt.Errorf("the Practice already has insurance list revision %s, so change it in the Portal: %w", active.revision.ID, ErrConflict)
+	case !errors.Is(err, ErrNoCatalog):
 		return Revision{}, false, err
 	}
 	revision, err := r.replace(ctx, replacement{
@@ -333,7 +336,7 @@ func readActive(ctx context.Context, db querier, practiceID string) (storedRevis
 	`, practiceID).Scan(&stored.revision.ID, &stored.revision.CreatedAt, &stored.revision.CreatedBy, &stored.revision.Reason,
 		&stored.revision.Provenance, &stored.revision.PreviousRevisionID, &stored.hash, &body)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return storedRevision{}, fmt.Errorf("%w: no insurance list has been published for this Practice", ErrUnavailable)
+		return storedRevision{}, ErrNoCatalog
 	}
 	if err != nil {
 		return storedRevision{}, err
