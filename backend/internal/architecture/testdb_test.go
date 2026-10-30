@@ -15,6 +15,7 @@ import (
 var domainModules = map[string]bool{
 	"access":       true,
 	"humancalling": true,
+	"insurance":    true,
 	"interaction":  true,
 	"knowledge":    true,
 	"messaging":    true,
@@ -166,7 +167,7 @@ func isModuleConstructor(call *ast.CallExpr, internal string) bool {
 	switch fun := call.Fun.(type) {
 	case *ast.SelectorExpr:
 		pkg, ok := fun.X.(*ast.Ident)
-		return ok && fun.Sel.Name == "New" && domainModules[pkg.Name]
+		return ok && strings.HasPrefix(fun.Sel.Name, "New") && domainModules[pkg.Name]
 	case *ast.Ident:
 		return fun.Name == "New" && internal != ""
 	}
@@ -189,12 +190,14 @@ func TestFixture(t *testing.T) {
 	_ = pool.Config()
 	_, _ = pgxpool.ParseConfig(url)
 	_ = work.New(legacy, nil, nil)
+	_, _ = insurance.NewRevisions(pool, nil, nil)
+	_, _ = insurance.NewMiddlewareClient(url, secret, nil)
 }
 `, parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := countOwnerRuns(file), (ownerRuns{opens: 2, pools: 4}); got != want {
+	if got, want := countOwnerRuns(file), (ownerRuns{opens: 2, pools: 5}); got != want {
 		t.Fatalf("countOwnerRuns = %+v, want %+v", got, want)
 	}
 }

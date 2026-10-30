@@ -22,3 +22,25 @@ func (m *Module) LocationHasAbitaOfficeRoute(ctx context.Context, tx pgx.Tx, pra
 	}
 	return routed, nil
 }
+
+type AbitaOfficeRoute struct {
+	OfficeKey  string
+	LocationID string
+}
+
+func (m *Module) ReadAbitaOfficeRoutes(ctx context.Context, tx pgx.Tx, practiceID string) ([]AbitaOfficeRoute, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT office_key, location_id::text
+		FROM access_abita_office_locations
+		WHERE practice_id = $1
+		ORDER BY office_key
+	`, practiceID)
+	if err != nil {
+		return nil, fmt.Errorf("read Abita Office Routes: %w", err)
+	}
+	routes, err := pgx.CollectRows(rows, pgx.RowToStructByPos[AbitaOfficeRoute])
+	if err != nil {
+		return nil, fmt.Errorf("scan Abita Office Routes: %w", err)
+	}
+	return routes, nil
+}

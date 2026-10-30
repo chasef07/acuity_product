@@ -254,36 +254,44 @@ func runAuthorizedHTTP(
 			messaging.Config{AttachmentStore: attachmentStore},
 			nil,
 		)
-		serviceAuth, err := access.NewServiceAuthenticator(
-			access.ServiceCredential{
+		agentCapabilities := []access.ServiceCapability{
+			access.ServiceCapabilityCreateTask,
+			access.ServiceCapabilityHumanHandoff,
+			access.ServiceCapabilityIngestAIInteraction,
+			access.ServiceCapabilityReadKnowledge,
+		}
+		credentials := []access.ServiceCredential{
+			{
 				Token: config.Service.AcuityDemo.Token,
 				Identity: access.ServiceIdentity{
 					Subject:       config.Service.AcuityDemo.Subject,
 					PracticeID:    config.Service.AcuityDemo.PracticeID,
 					LocationScope: access.LocationScopeAll,
-					Capabilities: []access.ServiceCapability{
-						access.ServiceCapabilityCreateTask,
-						access.ServiceCapabilityHumanHandoff,
-						access.ServiceCapabilityIngestAIInteraction,
-						access.ServiceCapabilityReadKnowledge,
-					},
+					Capabilities:  agentCapabilities,
 				},
 			},
-			access.ServiceCredential{
+			{
 				Token: config.Service.AbitaEyeGroup.Token,
 				Identity: access.ServiceIdentity{
 					Subject:       config.Service.AbitaEyeGroup.Subject,
 					PracticeID:    config.Service.AbitaEyeGroup.PracticeID,
 					LocationScope: access.LocationScopeAll,
-					Capabilities: []access.ServiceCapability{
-						access.ServiceCapabilityCreateTask,
-						access.ServiceCapabilityHumanHandoff,
-						access.ServiceCapabilityIngestAIInteraction,
-						access.ServiceCapabilityReadKnowledge,
-					},
+					Capabilities:  agentCapabilities,
 				},
 			},
-		)
+		}
+		if middleware := config.Service.AbitaEyeGroupMiddleware; middleware != nil {
+			credentials = append(credentials, access.ServiceCredential{
+				Token: middleware.Token,
+				Identity: access.ServiceIdentity{
+					Subject:       middleware.Subject,
+					PracticeID:    middleware.PracticeID,
+					LocationScope: access.LocationScopeAll,
+					Capabilities:  []access.ServiceCapability{access.ServiceCapabilityReadInsurance},
+				},
+			})
+		}
+		serviceAuth, err := access.NewServiceAuthenticator(credentials...)
 		if err != nil {
 			return err
 		}
@@ -291,16 +299,19 @@ func runAuthorizedHTTP(
 		if err != nil {
 			return err
 		}
+		var rules *insurance.MiddlewareClient
 		var insuranceModule *insurance.Module
 		if config.Middleware.BaseURL != "" {
-			rules, rulesErr := insurance.NewMiddlewareClient(config.Middleware.BaseURL, config.Middleware.APISecret, nil)
-			if rulesErr != nil {
-				return rulesErr
-			}
-			insuranceModule, err = insurance.New(accessModule, rules)
-			if err != nil {
+			if rules, err = insurance.NewMiddlewareClient(config.Middleware.BaseURL, config.Middleware.APISecret, nil); err != nil {
 				return err
 			}
+			if insuranceModule, err = insurance.New(accessModule, rules); err != nil {
+				return err
+			}
+		}
+		insuranceRevisions, err := insurance.NewRevisions(database, accessModule, rules)
+		if err != nil {
+			return err
 		}
 		handler, err = httpapi.NewPortal(httpapi.Config{
 			AllowedOrigins: config.BrowserOrigins,
@@ -317,6 +328,7 @@ func runAuthorizedHTTP(
 			Workspace:            workspace.New(database, accessModule),
 			Knowledge:            knowledgeModule,
 			Insurance:            insuranceModule,
+			InsuranceRevisions:   insuranceRevisions,
 			ServiceAuthenticator: serviceAuth,
 		})
 		if err != nil {

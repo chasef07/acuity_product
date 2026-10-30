@@ -63,6 +63,7 @@ type Config struct {
 type PortalDependencies struct {
 	Knowledge            *knowledge.Module
 	Insurance            *insurance.Module
+	InsuranceRevisions   *insurance.Revisions
 	Access               *access.Module
 	Authenticator        IdentityAuthenticator
 	Calling              *humancalling.Module
@@ -80,36 +81,38 @@ type RealtimeDependencies struct {
 }
 
 type Server struct {
-	knowledge       *knowledge.Module
-	insurance       *insurance.Module
-	role            string
-	config          Config
-	pool            *pgxpool.Pool
-	access          *access.Module
-	authenticator   IdentityAuthenticator
-	events          EventStreamer
-	calling         *humancalling.Module
-	interactions    *interaction.Module
-	messaging       *messaging.Module
-	work            *work.Module
-	workspace       *workspace.Module
-	serviceAuth     ServiceAuthenticator
-	observer        observability.Observer
-	analyticsActive atomic.Int32
+	knowledge          *knowledge.Module
+	insurance          *insurance.Module
+	insuranceRevisions *insurance.Revisions
+	role               string
+	config             Config
+	pool               *pgxpool.Pool
+	access             *access.Module
+	authenticator      IdentityAuthenticator
+	events             EventStreamer
+	calling            *humancalling.Module
+	interactions       *interaction.Module
+	messaging          *messaging.Module
+	work               *work.Module
+	workspace          *workspace.Module
+	serviceAuth        ServiceAuthenticator
+	observer           observability.Observer
+	analyticsActive    atomic.Int32
 }
 
 type serverDependencies struct {
-	knowledge     *knowledge.Module
-	insurance     *insurance.Module
-	access        *access.Module
-	authenticator IdentityAuthenticator
-	events        EventStreamer
-	calling       *humancalling.Module
-	interactions  *interaction.Module
-	messaging     *messaging.Module
-	work          *work.Module
-	workspace     *workspace.Module
-	serviceAuth   ServiceAuthenticator
+	knowledge          *knowledge.Module
+	insurance          *insurance.Module
+	insuranceRevisions *insurance.Revisions
+	access             *access.Module
+	authenticator      IdentityAuthenticator
+	events             EventStreamer
+	calling            *humancalling.Module
+	interactions       *interaction.Module
+	messaging          *messaging.Module
+	work               *work.Module
+	workspace          *workspace.Module
+	serviceAuth        ServiceAuthenticator
 }
 
 func NewPortal(
@@ -128,16 +131,17 @@ func NewPortal(
 		return nil, fmt.Errorf("portal dependencies are required")
 	}
 	return newServer("portal-api", config, pool, serverDependencies{
-		knowledge:     dependencies.Knowledge,
-		insurance:     dependencies.Insurance,
-		access:        dependencies.Access,
-		authenticator: dependencies.Authenticator,
-		calling:       dependencies.Calling,
-		interactions:  dependencies.Interactions,
-		messaging:     dependencies.Messaging,
-		work:          dependencies.Work,
-		workspace:     dependencies.Workspace,
-		serviceAuth:   dependencies.ServiceAuthenticator,
+		knowledge:          dependencies.Knowledge,
+		insurance:          dependencies.Insurance,
+		insuranceRevisions: dependencies.InsuranceRevisions,
+		access:             dependencies.Access,
+		authenticator:      dependencies.Authenticator,
+		calling:            dependencies.Calling,
+		interactions:       dependencies.Interactions,
+		messaging:          dependencies.Messaging,
+		work:               dependencies.Work,
+		workspace:          dependencies.Workspace,
+		serviceAuth:        dependencies.ServiceAuthenticator,
 	})
 }
 
@@ -190,21 +194,22 @@ func newServer(
 	}
 
 	server := &Server{
-		knowledge:     dependencies.knowledge,
-		insurance:     dependencies.insurance,
-		role:          role,
-		config:        config,
-		pool:          pool,
-		access:        dependencies.access,
-		authenticator: dependencies.authenticator,
-		events:        dependencies.events,
-		calling:       dependencies.calling,
-		interactions:  dependencies.interactions,
-		messaging:     dependencies.messaging,
-		work:          dependencies.work,
-		workspace:     dependencies.workspace,
-		serviceAuth:   dependencies.serviceAuth,
-		observer:      config.Observer,
+		knowledge:          dependencies.knowledge,
+		insurance:          dependencies.insurance,
+		insuranceRevisions: dependencies.insuranceRevisions,
+		role:               role,
+		config:             config,
+		pool:               pool,
+		access:             dependencies.access,
+		authenticator:      dependencies.authenticator,
+		events:             dependencies.events,
+		calling:            dependencies.calling,
+		interactions:       dependencies.interactions,
+		messaging:          dependencies.messaging,
+		work:               dependencies.work,
+		workspace:          dependencies.workspace,
+		serviceAuth:        dependencies.serviceAuth,
+		observer:           config.Observer,
 	}
 	generated := api.HandlerWithOptions(server, api.StdHTTPServerOptions{
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {

@@ -104,7 +104,7 @@ Business rules live in their owning module under `backend/internal/`.
 | Messaging | [`messaging/`](backend/internal/messaging) | Conversations, send intent, delivery evidence, and attachments |
 | AIInteraction | [`interaction/`](backend/internal/interaction) | AI call lifecycle, transcripts, appointment evidence, and analytics |
 | Knowledge | [`knowledge/`](backend/internal/knowledge) | Office knowledge revisions, controlled imports, and agent reads |
-| Insurance | [`insurance/`](backend/internal/insurance) | Read-only staff view of the middleware's insurance rules for a Location's Abita Office Route; stores nothing |
+| Insurance | [`insurance/`](backend/internal/insurance) | Each Practice's insurance list as immutable revisions validated by the middleware, and the staff view of the middleware's plan rules for a Location |
 
 The [`workspace/`](backend/internal/workspace) query layer combines authorized
 cross-domain views; it does not own domain writes. HTTP, authentication,
@@ -127,6 +127,21 @@ publish complete office revisions through the Portal backend, as described in th
 [Knowledge workflow](knowledge/README.md). The Agent reads the whole active
 revision for its office, in saved order. Staff read a Location's current revision
 through its single Abita Office Route.
+
+Insurance keeps each Practice's whole insurance list (carriers, region plans,
+and office tables, in the middleware's `InsuranceCatalog` shape) as one chain
+of immutable revisions. `POST /v1/insurance/revisions` publishes a complete
+list against the revision it started from. Regions share plan rows across
+offices, so a publish needs mutation access to the Location of every office
+whose carriers, region plans, or tables it changes, not only the requested
+Location; an office with no Location needs a Platform Operator. The middleware
+office mapping is `middlewareOffices` in
+[`middleware.go`](backend/internal/insurance/middleware.go). The middleware
+owns plan semantics: every publish is checked by its
+`POST /api/insurance/catalog/validate` first, its errors return verbatim, and
+nothing changes when it rejects or cannot be reached. The middleware reads
+the active revision through `POST /v1/agent/insurance/read` with its own
+service credential, which holds only `READ_INSURANCE`.
 
 The browser/backend contract is [`api/openapi.yaml`](api/openapi.yaml).
 Go bindings and the TypeScript client are generated from it, not edited by hand.
@@ -258,9 +273,32 @@ A deliberate historical sample can be queued by inserting its reviewed
 interaction IDs into `ai_interaction_classifications(interaction_id)` with
 `ON CONFLICT DO NOTHING`. No automatic all-history backfill runs.
 
-`portal-api` reads insurance rules from the AdvancedMD middleware when
-`MIDDLEWARE_BASE_URL` and `MIDDLEWARE_API_SECRET` are both set; set neither to
-leave the insurance plans endpoint returning 503 Unavailable.
+`portal-api` reads insurance rules from the AdvancedMD middleware, and
+validates insurance list publishes with it, when `MIDDLEWARE_BASE_URL` and
+`MIDDLEWARE_API_SECRET` are both set; set neither to leave the insurance plans
+endpoint and insurance publishes returning 503 Unavailable. The middleware's
+own credential for `POST /v1/agent/insurance/read` is
+`ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_TOKEN`, with
+`ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_SUBJECT` and
+`ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_PRACTICE_ID`; set all three or none. Until
+they are set, that read answers 401.
+
+Seed a Practice's first insurance revision from an `InsuranceCatalog` JSON
+file with the operator command. The file is the middleware's frozen export,
+`internal/insurance/testdata/catalog.json` in amd_middleware, which this repo
+keeps byte for byte as `backend/internal/insurance/testdata/export.json`. The
+command parses the file strictly and has the middleware validate it. Without
+`--apply` it stops there. `--apply` also needs `INSURANCE_IMPORT_DATABASE_URL`
+and `INSURANCE_OPERATOR_EMAIL` (an existing bound Platform Operator, recorded
+as the author) and publishes it with provenance `import`. Rerunning with the
+same list changes nothing; once the Practice has a different active revision,
+the command refuses and the list is changed in the Portal instead.
+
+```sh
+MIDDLEWARE_BASE_URL=... MIDDLEWARE_API_SECRET=... \
+  go run ./backend/cmd/insurance-import --practice PRACTICE_UUID \
+  --from-file backend/internal/insurance/testdata/export.json [--apply]
+```
 
 Configure the frontend using [web/README.md](web/README.md), then start it with:
 

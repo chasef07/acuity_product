@@ -21,15 +21,14 @@ type serviceCredential struct {
 }
 
 type ServiceAuthenticator struct {
-	credentials [2]serviceCredential
+	credentials []serviceCredential
 }
 
-func NewServiceAuthenticator(
-	first ServiceCredential,
-	second ServiceCredential,
-) (*ServiceAuthenticator, error) {
-	credentials := [2]ServiceCredential{first, second}
-	var validated [2]serviceCredential
+func NewServiceAuthenticator(credentials ...ServiceCredential) (*ServiceAuthenticator, error) {
+	if len(credentials) == 0 {
+		return nil, fmt.Errorf("at least one service credential is required")
+	}
+	validated := make([]serviceCredential, len(credentials))
 	seen := make(map[[sha256.Size]byte]struct{}, len(credentials))
 	for index, credential := range credentials {
 		identity := credential.Identity

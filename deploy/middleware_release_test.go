@@ -111,3 +111,34 @@ func TestMiddlewareInputsReachOnlyPortalAPIOrFailBeforeCloudAccess(t *testing.T)
 		}
 	}
 }
+
+func TestCloudRunCommandsPassTheMiddlewareServiceCredentialOnlyToPortalAPI(t *testing.T) {
+	credential := []string{
+		"ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_TOKEN_SECRET=middleware-service-token",
+		"ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_SUBJECT=abita-eye-group-middleware",
+		"ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_PRACTICE_ID=00000000-0000-0000-0000-000000000002",
+	}
+	capture, output, err := runCloudRunCommands(t, credential...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+	commands := capturedGcloudCommands(t, capture)
+	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-portal-api",
+		"ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_TOKEN=middleware-service-token:latest",
+		"ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_SUBJECT=abita-eye-group-middleware",
+		"ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_PRACTICE_ID=00000000-0000-0000-0000-000000000002",
+	)
+	for _, command := range commands {
+		if strings.Contains(command, "MIDDLEWARE_SERVICE") && !strings.HasPrefix(command, "run\tdeploy\tacuity-portal-api\t") {
+			t.Fatalf("middleware service credential reached another runtime: %s", command)
+		}
+	}
+	for index := range credential {
+		partial := slices.Delete(slices.Clone(credential), index, index+1)
+		capture, output, err := runCloudRunCommands(t, partial...)
+		if err == nil || !strings.Contains(string(output), "must be set together") {
+			t.Fatalf("partial credential without %s: %v %q", credential[index], err, output)
+		}
+		assertNoReleaseCloudAccess(t, capture)
+	}
+}
