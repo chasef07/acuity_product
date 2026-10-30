@@ -29,9 +29,16 @@ func TestServiceAuthenticatorReturnsTheTenantBoundToEachCredential(t *testing.T)
 			access.ServiceCapabilityIngestAIInteraction,
 		},
 	}
+	middleware := access.ServiceIdentity{
+		Subject:       "abita-eye-group-middleware",
+		PracticeID:    "00000000-0000-0000-0000-000000000002",
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityReadInsurance},
+	}
 	authenticator, err := access.NewServiceAuthenticator(
 		access.ServiceCredential{Token: "demo-token", Identity: demo},
 		access.ServiceCredential{Token: "production-token", Identity: production},
+		access.ServiceCredential{Token: "middleware-token", Identity: middleware},
 	)
 	if err != nil {
 		t.Fatalf("new service authenticator: %v", err)
@@ -40,6 +47,7 @@ func TestServiceAuthenticatorReturnsTheTenantBoundToEachCredential(t *testing.T)
 	for token, want := range map[string]access.ServiceIdentity{
 		"demo-token":       demo,
 		"production-token": production,
+		"middleware-token": middleware,
 	} {
 		got, err := authenticator.AuthenticateService(context.Background(), token)
 		if err != nil {
@@ -47,6 +55,9 @@ func TestServiceAuthenticatorReturnsTheTenantBoundToEachCredential(t *testing.T)
 		}
 		if got.Subject != want.Subject || got.PracticeID != want.PracticeID {
 			t.Fatalf("identity = %#v, want %#v", got, want)
+		}
+		if got.Allows(access.ServiceCapabilityReadInsurance) != (token == "middleware-token") {
+			t.Fatalf("%s reads insurance = %t", want.Subject, got.Allows(access.ServiceCapabilityReadInsurance))
 		}
 	}
 
@@ -72,16 +83,18 @@ func TestServiceAuthenticatorRejectsInvalidCredentialSets(t *testing.T) {
 		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
 	}
 	valid := access.ServiceCredential{Token: "valid-token", Identity: identity}
-	for name, credentials := range map[string][2]access.ServiceCredential{
+	for name, credentials := range map[string][]access.ServiceCredential{
+		"no credentials":     nil,
 		"empty first token":  {{Identity: identity}, valid},
 		"empty second token": {valid, {Identity: identity}},
+		"empty third token":  {valid, {Token: "other-token", Identity: identity}, {Identity: identity}},
 		"duplicate token": {
 			{Token: "same-token", Identity: identity},
 			{Token: "same-token", Identity: identity},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := access.NewServiceAuthenticator(credentials[0], credentials[1]); err == nil {
+			if _, err := access.NewServiceAuthenticator(credentials...); err == nil {
 				t.Fatal("expected invalid credential set to fail closed")
 			}
 		})
