@@ -181,6 +181,73 @@ function planRow(catalog: InsuranceCatalog, at: PlanAt) {
   }
 }
 
+export type Change = "added" | "removed" | "changed"
+export type PlanField = Exclude<keyof InsuranceRegionPlan, "id">
+export type RowField = Exclude<keyof InsuranceTableRow, "planId">
+export type TableField = "offices" | "doctors"
+
+export type CatalogDiff = {
+  plans: { change: Change; region: string; plan: string; label: string; fields: PlanField[] }[]
+  rows: { change: Change; at: PlanAt; label: string; fields: RowField[] }[]
+  tables: { change: Change; region: string; table: string; fields: TableField[] }[]
+  elsewhere: number
+}
+
+export function diffCatalogs(from: InsuranceCatalog, to: InsuranceCatalog, office: string): CatalogDiff {
+  const diff: CatalogDiff = { plans: [], rows: [], tables: [], elsewhere: compare(from.carriers, to.carriers, (carrier) => carrier.id).length }
+  const empty = (id: string): InsuranceRegion => ({ id, plans: [], tables: [] })
+  for (const id of union(from.regions, to.regions, (region) => region.id)) {
+    const before = from.regions.find((region) => region.id === id) ?? empty(id)
+    const after = to.regions.find((region) => region.id === id) ?? empty(id)
+    const labels = new Map([...before.plans, ...after.plans].map((plan) => [plan.id, plan.label]))
+    const plans = compare(before.plans, after.plans, (plan) => plan.id).map(({ change, item, fields }) => ({
+      change, region: id, plan: item.id, label: item.label, fields: fields.filter((field) => field !== "id"),
+    }))
+    if ([...before.tables, ...after.tables].some((table) => table.offices.includes(office))) diff.plans.push(...plans)
+    else diff.elsewhere += plans.length
+    for (const tableID of union(before.tables, after.tables, (table) => table.id)) {
+      const old = before.tables.filter((table) => table.id === tableID)
+      const next = after.tables.filter((table) => table.id === tableID)
+      const shape = ({ id, offices, doctors }: InsuranceOfficeTable) => ({ id, offices, doctors })
+      const tables = compare(old.map(shape), next.map(shape), (table) => table.id).map(({ change, fields }) => ({
+        change, region: id, table: tableID, fields: fields.filter((field) => field !== "id"),
+      }))
+      const rows = compare(old.flatMap((table) => table.rows), next.flatMap((table) => table.rows), (row) => row.planId).map(
+        ({ change, item, fields }) => ({
+          change,
+          at: { region: id, table: tableID, plan: item.planId },
+          label: labels.get(item.planId) ?? item.planId,
+          fields: fields.filter((field) => field !== "planId"),
+        }),
+      )
+      if ([...old, ...next].some((table) => table.offices.includes(office))) {
+        diff.tables.push(...tables)
+        diff.rows.push(...rows)
+      } else {
+        diff.elsewhere += tables.length + rows.length
+      }
+    }
+  }
+  return diff
+}
+
+function union<T>(left: T[], right: T[], key: (item: T) => string) {
+  return [...new Set([...left, ...right].map(key))]
+}
+
+function compare<T extends object>(before: T[], after: T[], key: (item: T) => string) {
+  const old = new Map(before.map((item) => [key(item), item]))
+  const next = new Map(after.map((item) => [key(item), item]))
+  return union(before, after, key).flatMap((id): { change: Change; item: T; fields: (keyof T)[] }[] => {
+    const previous = old.get(id)
+    const current = next.get(id)
+    if (!current) return [{ change: "removed", item: previous!, fields: [] }]
+    if (!previous) return [{ change: "added", item: current, fields: [] }]
+    const fields = (Object.keys(current) as (keyof T)[]).filter((field) => !same(previous[field], current[field]))
+    return fields.length > 0 ? [{ change: "changed", item: current, fields }] : []
+  })
+}
+
 export type CarrierChoice = Carrier & { value: string; label: string }
 
 export function carrierChoices(catalog: InsuranceCatalog): CarrierChoice[] {
