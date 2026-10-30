@@ -39,7 +39,7 @@ func TestAnalyticsJudgesValidateVotesAndQuorum(t *testing.T) {
 			if test.errors != "" {
 				errors = `{"office_question_answered":` + test.errors + `}`
 			}
-			raw := json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v9","status":"incomplete","jurors":` + test.models + `,"results":` + result + `,"errors":` + errors + `}`)
+			raw := json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v10","status":"incomplete","jurors":` + test.models + `,"results":` + result + `,"errors":` + errors + `}`)
 			a := newJudgeAccumulator()
 			a.add(readJuryFacts(raw))
 			summary := a.finish()
@@ -88,7 +88,7 @@ func TestAnalyticsJudgesValidateVotesAndQuorum(t *testing.T) {
 }
 
 func TestAnalyticsJudgesExcludeUnsupportedAndMalformedReports(t *testing.T) {
-	for _, raw := range []string{`null`, `{}`, `{"evaluatorVersion":"typesafe-scorecard-v8","status":"complete","jurors":["a"]}`, `{"evaluatorVersion":"typesafe-scorecard-v9","status":"complete","jurors":["a","a"]}`, `{"evaluatorVersion":"typesafe-scorecard-v9","status":"complete","jurors":[" "]}`, `{"evaluatorVersion":"typesafe-scorecard-v9","status":"skipped","jurors":["a"]}`} {
+	for _, raw := range []string{`null`, `{}`, `{"evaluatorVersion":"typesafe-scorecard-v8","status":"complete","jurors":["a"]}`, `{"evaluatorVersion":"typesafe-scorecard-v10","status":"complete","jurors":["a","a"]}`, `{"evaluatorVersion":"typesafe-scorecard-v10","status":"complete","jurors":[" "]}`, `{"evaluatorVersion":"typesafe-scorecard-v10","status":"skipped","jurors":["a"]}`} {
 		a := newJudgeAccumulator()
 		a.add(readJuryFacts(json.RawMessage(raw)))
 		summary := a.finish()
@@ -101,7 +101,7 @@ func TestAnalyticsJudgesExcludeUnsupportedAndMalformedReports(t *testing.T) {
 func TestAnalyticsJudgesAggregateCanonicalLineupsAndQuestionPairs(t *testing.T) {
 	a := newJudgeAccumulator()
 	for _, models := range []string{`["b","a"]`, `["a","b"]`} {
-		a.add(readJuryFacts(json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v9","status":"complete","jurors":` + models + `,"results":{"office_question_answered":{"verdict":true,"probability":0.6,"votes":{"a":0.4,"b":0.8}},"call_ended_correctly":{"verdict":true,"probability":0.8,"votes":{"a":0.8,"b":0.8}},"expressed_sentiment":{"score":4,"votes":{"a":4,"b":4}}}}`)))
+		a.add(readJuryFacts(json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v10","status":"complete","jurors":` + models + `,"results":{"office_question_answered":{"verdict":true,"probability":0.6,"votes":{"a":0.4,"b":0.8}},"call_ended_correctly":{"verdict":true,"probability":0.8,"votes":{"a":0.8,"b":0.8}},"expressed_sentiment":{"score":4,"votes":{"a":4,"b":4}}}}`)))
 	}
 	summary := a.finish()
 	if len(summary.Lineups) != 1 || summary.Lineups[0].Calls != 2 || summary.Lineups[0].RequiredVotes != 2 || !reflect.DeepEqual(summary.Lineups[0].Models, []string{"a", "b"}) {

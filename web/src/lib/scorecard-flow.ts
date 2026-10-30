@@ -2,9 +2,10 @@ import type { AgentCallDetail, GetOperatorScorecardQuestionsData } from "./api/g
 
 type JuryScorecardVersion = NonNullable<NonNullable<GetOperatorScorecardQuestionsData["query"]>["version"]>
 
-const currentScorecardVersion = "typesafe-scorecard-v9" satisfies JuryScorecardVersion
+const currentScorecardVersion = "typesafe-scorecard-v10" satisfies JuryScorecardVersion
 const juryScorecards: Record<JuryScorecardVersion, true> = {
   [currentScorecardVersion]: true,
+  "typesafe-scorecard-v9": true,
   "typesafe-scorecard-v8": true,
   "typesafe-scorecard-v7": true,
   "typesafe-scorecard-v6": true,
@@ -15,7 +16,7 @@ export function isJuryScorecard(version: unknown): version is JuryScorecardVersi
   return typeof version === "string" && Object.hasOwn(juryScorecards, version)
 }
 
-const failureJudgeScorecards = new Set<unknown>([currentScorecardVersion, "typesafe-scorecard-v8" satisfies JuryScorecardVersion])
+const failureJudgeScorecards = new Set<unknown>([currentScorecardVersion, "typesafe-scorecard-v9", "typesafe-scorecard-v8"] satisfies JuryScorecardVersion[])
 
 export function hasFailureJudges(version: unknown): boolean {
   return failureJudgeScorecards.has(version)

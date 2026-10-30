@@ -1,11 +1,13 @@
 package interaction
 
+import "slices"
+
 var ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
 	{
 		Key: "knowledge_available", Code: "K2", Label: "Office knowledge had the answer", Source: "judge", Failure: true,
 		Prompt:   "Did the office knowledge contain the answer to each office question?",
-		Question: "Did `office_knowledge` contain the information needed to answer the caller's office questions? Compare the caller's questions with that office knowledge, not the agent's answer. Answer FALSE if the office knowledge did not supply, or only said it did not supply, the information a caller's office question needed. Answer TRUE if no office question was asked or office information could not be loaded; a load failure does not prove the knowledge was missing.",
-		Yes:      "The office knowledge supplied the information needed to answer the caller's office questions, no office question was asked, or office information could not be loaded.", No: "The office knowledge did not supply the information needed to answer a caller's office question.",
+		Question: "Did `office_knowledge` answer the caller's office questions? First, find each question the caller asked. Second, keep the office questions. An office question asks for something this practice would answer the same way for any caller: hours, locations and directions, phones and faxes, practice identifiers, providers and their languages, services, conditions treated, products and programs, self-pay prices, and office policies such as walk-ins, late arrival, cancellations, check-in, referrals the office requires, rides after dilation, forms, how records and prescriptions are sent, and glasses pickup. A question about the caller's own visit counts when an office policy answers it. Not office questions: insurance acceptance, coverage, costs or referral rules; open appointment times; sending, changing or the status of a patient's own records, prescriptions, orders, bills or appointments; medical advice; asking for staff or about the assistant; vendor calls; other businesses. Third, answer FALSE if `office_knowledge` did not supply, or said it did not supply, the answer to a kept question, even if the agent guessed or offered staff follow-up; check the knowledge, not the agent's reply. Otherwise answer TRUE, also when office information could not be loaded.",
+		Yes:      "Office knowledge answered every office question, none was asked, or office information could not be loaded.", No: "Office knowledge did not supply the answer to an office question.",
 	},
 	{
 		Key: "office_question_answered", Code: "A3", Label: "Office question answered correctly", Source: "judge", Failure: true,
@@ -78,6 +80,18 @@ var v8ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
 	},
 })
 
+var v9ScorecardQuestions = func() []ScorecardQuestion {
+	questions := slices.Clone(ScorecardQuestions)
+	for i := range questions {
+		if questions[i].Key == "knowledge_available" {
+			questions[i].Question = "Did `office_knowledge` contain the information needed to answer the caller's office questions? Compare the caller's questions with that office knowledge, not the agent's answer. Answer FALSE if the office knowledge did not supply, or only said it did not supply, the information a caller's office question needed. Answer TRUE if no office question was asked or office information could not be loaded; a load failure does not prove the knowledge was missing."
+			questions[i].Yes = "The office knowledge supplied the information needed to answer the caller's office questions, no office question was asked, or office information could not be loaded."
+			questions[i].No = "The office knowledge did not supply the information needed to answer a caller's office question."
+		}
+	}
+	return questions
+}()
+
 func withCodeChecks(questions []ScorecardQuestion) []ScorecardQuestion {
 	for _, question := range legacyScorecardQuestions {
 		if question.Source == "code" {
@@ -91,6 +105,8 @@ func ScorecardQuestionsForVersion(version string) []ScorecardQuestion {
 	switch version {
 	case "", ScorecardJudgeVersion:
 		return ScorecardQuestions
+	case v9JudgeVersion:
+		return v9ScorecardQuestions
 	case v8JudgeVersion:
 		return v8ScorecardQuestions
 	case legacyJudgeVersion:
