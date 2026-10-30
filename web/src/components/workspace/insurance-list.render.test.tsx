@@ -82,10 +82,21 @@ const published: InsuranceCatalog = {
     },
     {
       id: "spring_hill_crystal_river",
-      plans: [{ id: "spring-plan", label: "Spring Plan HMO", family: "Spring", coverage: "medical", carrierCode: "EXC01", carrierId: "car10001", selfPay: false, aliases: [] }],
+      plans: [
+        { id: "spring-plan", label: "Spring Plan HMO", family: "Spring", coverage: "medical", carrierCode: "EXC01", carrierId: "car10001", selfPay: false, aliases: [] },
+        { id: "spring-select", label: "Spring Select PPO", family: "Spring", coverage: "medical", carrierCode: "EXC02", carrierId: "car10001", selfPay: false, aliases: [] },
+      ],
       tables: [
-        { id: "spring_hill", offices: ["spring_hill"], doctors: ["Dr. Licht"], rows: [{ planId: "spring-plan", doctors: { "Dr. Licht": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" }] },
-        { id: "crystal_river", offices: ["crystal_river"], doctors: ["Dr. Licht"], rows: [] },
+        {
+          id: "spring_hill",
+          offices: ["spring_hill"],
+          doctors: ["Dr. Licht"],
+          rows: [
+            { planId: "spring-plan", doctors: { "Dr. Licht": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" },
+            { planId: "spring-select", doctors: { "Dr. Licht": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" },
+          ],
+        },
+        { id: "crystal_river", offices: ["crystal_river"], doctors: ["Dr. Licht"], rows: [{ planId: "spring-plan", doctors: { "Dr. Licht": "pending" }, requires: [], onlyOffices: [], notice: "", note: "" }] },
       ],
     },
   ],
@@ -302,6 +313,18 @@ test("before publishing, a shared plan change names the other offices it also ch
   assert.equal(page.status(), "")
   await page.fill(page.field("Family"), "Spring Health")
   assert.equal(page.status(), "Also changes Crystal River.")
+  await page.unmount()
+})
+
+test("a plan only this office's table lists names no other office before or after an edit", async (t) => {
+  const page = harness(t)
+  await page.render(insuranceList(locations[2].id), "spring hill")
+  await waitFor(() => page.groups().length === 1)
+  await page.rowAction("Spring Select PPO", "Edit")
+  assert.doesNotMatch(page.text(), /shared with/)
+  await page.fill(page.field("Label"), "Spring Select Plus")
+  assert.match(page.text(), /1 unpublished change/)
+  assert.equal(page.status(), "")
   await page.unmount()
 })
 

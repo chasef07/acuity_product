@@ -116,9 +116,22 @@ func (c Catalog) officeView(office string) officeView {
 		tables := slices.DeleteFunc(slices.Clone(region.Tables), func(table OfficeTable) bool {
 			return !slices.Contains(table.Offices, office)
 		})
-		if len(tables) > 0 {
-			view.regions = append(view.regions, Region{ID: region.ID, Plans: region.Plans, Tables: tables})
+		if len(tables) == 0 {
+			continue
 		}
+		listed := map[string]bool{}
+		for _, table := range tables {
+			for _, row := range table.Rows {
+				listed[row.PlanID] = true
+			}
+		}
+		var plans []RegionPlan
+		for _, plan := range region.Plans {
+			if listed[plan.ID] {
+				plans = append(plans, plan)
+			}
+		}
+		view.regions = append(view.regions, Region{ID: region.ID, Plans: plans, Tables: tables})
 	}
 	return view
 }

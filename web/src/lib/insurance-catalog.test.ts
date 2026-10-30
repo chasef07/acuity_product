@@ -37,10 +37,23 @@ const catalog: InsuranceCatalog = {
 
 const at = { region: "south", table: "doctors", plan: "alpha" }
 
-test("a table row change touches every office on that table and a plan change touches every office of the region", () => {
-  assert.deepEqual(touchedOffices(catalog, replay(catalog, [{ kind: "setDoctor", at, doctor: "Dr. A", answer: "no" }])), ["hollywood", "sweetwater"])
-  assert.deepEqual(touchedOffices(catalog, replay(catalog, [{ kind: "changePlan", at, change: { label: "Alpha Choice" } }])), ["hollywood", "optical", "sweetwater"])
-  assert.deepEqual(touchedOffices(catalog, catalog), [])
+test("a change touches the offices whose tables list the plan, every office on a changed table, and every office for a carrier", () => {
+  const listedTwice = replay(catalog, [{ kind: "addRow", at: { ...at, table: "optical" } }])
+  const opticalOnly = { region: "south", table: "optical", plan: "gamma" }
+  const cases: [string, InsuranceCatalog, InsuranceCatalog, string[]][] = [
+    ["no change", catalog, catalog, []],
+    ["a doctor answer on the shared table", catalog, replay(catalog, [{ kind: "setDoctor", at, doctor: "Dr. A", answer: "no" }]), ["hollywood", "sweetwater"]],
+    ["renaming a plan only the doctors table lists", catalog, replay(catalog, [{ kind: "changePlan", at, change: { label: "Alpha Choice" } }]), ["hollywood", "sweetwater"]],
+    ["removing a plan only the doctors table lists", catalog, replay(catalog, [{ kind: "removeRow", at }]), ["hollywood", "sweetwater"]],
+    ["adding a plan to the optical table", catalog, replay(catalog, [{ kind: "createPlan", at: opticalOnly, label: "Gamma", family: "Gamma", coverage: "medical" }]), ["optical"]],
+    ["renaming a plan both tables list", listedTwice, replay(listedTwice, [{ kind: "changePlan", at, change: { label: "Alpha Choice" } }]), ["hollywood", "optical", "sweetwater"]],
+    ["moving a plan both tables list to another carrier", listedTwice, replay(listedTwice, [{ kind: "setCarrier", at, carrier: { code: "BET01", id: "car2" } }]), ["hollywood", "optical", "sweetwater"]],
+    ["renaming a carrier", catalog, { ...catalog, carriers: [{ id: "car2", name: "BETA RENAMED" }, catalog.carriers[1]] }, ["hollywood", "optical", "spring", "sweetwater"]],
+  ]
+  for (const [name, before, after, offices] of cases) {
+    assert.deepEqual(touchedOffices(before, after), offices, name)
+    assert.deepEqual(touchedOffices(after, before), offices, `reverting ${name}`)
+  }
 })
 
 test("undoing an edit by hand leaves nothing to publish", () => {

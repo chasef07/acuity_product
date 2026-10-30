@@ -31,8 +31,8 @@ import {
   doctorAnswers,
   newPlanID,
   officeTables,
+  planOffices,
   record,
-  regionOffices,
   replay,
   requirementKinds,
   same,
@@ -448,7 +448,7 @@ function PlanFields({
 }) {
   const { at, plan, row: entry, table, region } = row
   const [aliases, setAliases] = useState(plan.aliases.join("\n"))
-  const sharedWith = regionOffices(region).filter((item) => item !== office).map(names)
+  const sharedWith = planOffices(region, plan.id).filter((item) => item !== office).map(names)
   const current = carrierValue({ code: plan.carrierCode, id: plan.carrierId })
   const known = choices.some((choice) => choice.value === current)
 
