@@ -12,6 +12,45 @@ var ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
 	{
 		Key: "office_question_answered", Code: "A3", Label: "Office question answered correctly", Source: "judge", Failure: true,
 		Prompt:   "Was each office question answered correctly from the office knowledge?",
+		Question: "Did the agent correctly answer every office question using `office_knowledge`? An office question asks for something this practice would answer the same way for any caller: hours, locations and directions, phones and faxes, practice identifiers, providers and their languages, services, conditions treated, products and programs, self-pay prices, and office policies such as walk-ins, late arrival, cancellations, check-in, referrals the office requires, rides after dilation, forms, how records and prescriptions are sent, and glasses pickup. A question about the caller's own visit counts when an office policy answers it. Not office questions: insurance acceptance, coverage, costs or referral rules; open appointment times; sending, changing or the status of a patient's own records, prescriptions, orders, bills or appointments; medical advice; asking for staff or about the assistant; vendor calls; other businesses. Answer FALSE for an office question left unanswered although `office_knowledge` has the answer, an invented or incorrect answer, or an answer that goes beyond the office knowledge. A later correction does not support an earlier unsupported answer. If `office_knowledge` lacks the answer, honestly saying so and offering staff follow-up is correct. If the call ended while the agent was answering, grade only what came before. Answer TRUE if no office question was asked.",
+		Yes:      "Every office question was correctly answered from the office knowledge, or no office question was asked.", No: "An office question that the office knowledge answers went unanswered, or an answer was incorrect or unsupported.",
+	},
+	{
+		Key: "appointment_datetime_correct", Code: "A2", Label: "Appointment matched the caller", Source: "judge", Failure: true,
+		Prompt:   "Did each confirmed appointment action match the caller's final agreed date and time?",
+		Question: "For every confirmed booking, rescheduling, or cancellation action, did the tool result match the caller's final intended appointment date and time? Use the final agreed date/time, including explicitly accepted alternatives, in the office timezone, reading relative dates such as tomorrow from `call_started`. For rescheduling check both the original appointment and the new date/time; for cancellation check the targeted appointment. Compare actual tool results in `transcript`, not the assistant's claim. Grade confirmed actions only; a failed or missing result does not establish a wrong date/time. For a partial reschedule, grade the confirmed new booking even if the old cancellation is unconfirmed.",
+		Yes:      "Every confirmed appointment action's tool result matches the caller's intended date and time.", No: "A confirmed action targets or produces a different appointment or date/time than the caller finally agreed to.",
+	},
+	{
+		Key: "call_ended_correctly", Code: "E1", Label: "Call ended correctly", Source: "judge", Failure: true,
+		Prompt:   "Did the agent end the call only after the caller was finished?",
+		Question: "Judge only the end_call that ended the call; one whose result says blocked did not end it, and a caller disconnect is not an agent hangup. At that moment the caller was finished if they had said goodbye or thanks, said they were done (such as being on their way), declined further help, or made no request after the agent asked once whether they needed anything else. Caller words transcribed after that end_call do not count if the caller had already finished.",
+		Yes:      "The caller was finished with nothing left unhandled, or no end_call ended the call.", No: "Right before the end_call, the caller was mid-sentence, asked a new question, gave new information, requested staff, or had an unhandled request, or the agent had just asked a question without waiting for the answer.",
+	},
+	{
+		Key: "transfer_policy_followed", Code: "T1", Label: "Transfer policy followed", Source: "judge", Failure: true,
+		Prompt:   "Did the agent transfer staff requests when its transfer policy requires?",
+		Question: "Grade each caller request to speak with staff against `transfer_policy`. A request is the caller asking for a person, staff, or a named staff member; naming staff in passing, asking whether staff got a message, or garbled speech is not a request. Eye emergencies are graded separately. For each request: (1) If the caller is returning a call from named staff, or says earlier calls, messages, or transfers went unanswered, the transfer is immediate: answer TRUE only if the agent's next action was transfer_call; offering another message, asking for name or number, or asking about the need is FALSE. (2) Otherwise the agent makes one specific attempt to help first: offering supported work or a staff task, or a general offer when the need is unknown. If the caller accepted that help (said yes, answered its questions, gave their need, or let the agent proceed), the request is settled; questions asked while helping are not intake, and save_staff_task settles a callback or message request. If the caller still wanted staff after the attempt, answer TRUE only if transfer_call came next, with no second pitch, repeated question such as asking again how it can help, intake, or claim to be the receptionist or front desk. (3) If the caller hung up or the call ended before the agent's next chance to act, grade only what came before; an unfinished attempt is TRUE. Grade when transfer_call was called, not the wording, and not whether a human answered. Answer TRUE if no staff request occurred.",
+		Yes:      "Every staff request was transferred at the point the policy requires, settled by help the caller accepted or a saved staff task, or dropped or cut off by the caller, or no staff request occurred.", No: "For a request the caller still pressed, the agent pitched or asked again, did intake, deflected or claimed to be staff, skipped the one attempt the policy requires, or never called transfer_call; or it delayed an immediate transfer the policy requires; or it transferred instead of giving help the caller accepted.",
+	},
+	{
+		Key: "emergency_policy_followed", Code: "M1", Label: "Emergency policy followed", Source: "judge", Failure: true,
+		Prompt:   "Did the agent immediately transfer an eye emergency listed in its transfer policy?",
+		Question: "After the caller first described an eye emergency listed in `transfer_policy`, did the agent go to transfer_call without asking identity, insurance, or scheduling questions in between? Ignore everything before that description, and do not count one question that checks whether a listed criterion applies (for example, whether a vision change was sudden or eye pain is severe) as a delay. Use the caller's reported symptoms and that policy; do not require a diagnosis or invent additional emergency triggers. An announcement or staff-task draft does not replace the transfer tool call. Grade the attempt, not whether a human answered. Answer TRUE if no policy-defined eye emergency was described.",
+		Yes:      "Every policy-defined eye emergency led to transfer_call with no identity, insurance, or scheduling questions after it was described, or no eye emergency was described.", No: "After the caller described a policy-defined eye emergency, the agent asked identity, insurance, or scheduling questions, or offered booking or a staff task, before transfer_call, or never called transfer_call.",
+	},
+})
+
+var v10ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
+	{
+		Key: "knowledge_available", Code: "K2", Label: "Office knowledge had the answer", Source: "judge", Failure: true,
+		Prompt:   "Did the office knowledge contain the answer to each office question?",
+		Question: "Did `office_knowledge` answer the caller's office questions? First, find each question the caller asked. Second, keep the office questions. An office question asks for something this practice would answer the same way for any caller: hours, locations and directions, phones and faxes, practice identifiers, providers and their languages, services, conditions treated, products and programs, self-pay prices, and office policies such as walk-ins, late arrival, cancellations, check-in, referrals the office requires, rides after dilation, forms, how records and prescriptions are sent, and glasses pickup. A question about the caller's own visit counts when an office policy answers it. Not office questions: insurance acceptance, coverage, costs or referral rules; open appointment times; sending, changing or the status of a patient's own records, prescriptions, orders, bills or appointments; medical advice; asking for staff or about the assistant; vendor calls; other businesses. Third, answer FALSE if `office_knowledge` did not supply, or said it did not supply, the answer to a kept question, even if the agent guessed or offered staff follow-up; check the knowledge, not the agent's reply. Otherwise answer TRUE, also when office information could not be loaded.",
+		Yes:      "Office knowledge answered every office question, none was asked, or office information could not be loaded.", No: "Office knowledge did not supply the answer to an office question.",
+	},
+	{
+		Key: "office_question_answered", Code: "A3", Label: "Office question answered correctly", Source: "judge", Failure: true,
+		Prompt:   "Was each office question answered correctly from the office knowledge?",
 		Question: "Did the agent correctly answer every office question using `office_knowledge`? Office questions include hours, locations, providers, services, fees, office policies, and records or prescription procedures. Answer FALSE for an unanswered office question, an invented or incorrect answer, or an answer that goes beyond the office knowledge. A later correction does not support an earlier unsupported answer. Questions about patient-specific records, insurance acceptance, appointment availability, or medical advice do not count. Answer TRUE if no office question was asked.",
 		Yes:      "Every office question was correctly answered from the office knowledge, or no office question was asked.", No: "An office question went unanswered or received an incorrect or unsupported answer.",
 	},
@@ -81,7 +120,7 @@ var v8ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
 })
 
 var v9ScorecardQuestions = func() []ScorecardQuestion {
-	questions := slices.Clone(ScorecardQuestions)
+	questions := slices.Clone(v10ScorecardQuestions)
 	for i := range questions {
 		if questions[i].Key == "knowledge_available" {
 			questions[i].Question = "Did `office_knowledge` contain the information needed to answer the caller's office questions? Compare the caller's questions with that office knowledge, not the agent's answer. Answer FALSE if the office knowledge did not supply, or only said it did not supply, the information a caller's office question needed. Answer TRUE if no office question was asked or office information could not be loaded; a load failure does not prove the knowledge was missing."
@@ -105,6 +144,8 @@ func ScorecardQuestionsForVersion(version string) []ScorecardQuestion {
 	switch version {
 	case "", ScorecardJudgeVersion:
 		return ScorecardQuestions
+	case v10JudgeVersion:
+		return v10ScorecardQuestions
 	case v9JudgeVersion:
 		return v9ScorecardQuestions
 	case v8JudgeVersion:

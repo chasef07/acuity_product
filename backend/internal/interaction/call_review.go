@@ -533,7 +533,7 @@ func (m *Module) callReview(ctx context.Context, identity access.Identity, inter
 		review.Version = jury.Version
 	}
 	review.Questions = reviewQuestions(facts, review.Version)
-	if review.Version == ScorecardJudgeVersion || review.Version == v9JudgeVersion || review.Version == v8JudgeVersion {
+	if review.Version == ScorecardJudgeVersion || review.Version == v10JudgeVersion || review.Version == v9JudgeVersion || review.Version == v8JudgeVersion {
 		applicable := review.Questions[:0]
 		for _, key := range review.Questions {
 			var result struct {
