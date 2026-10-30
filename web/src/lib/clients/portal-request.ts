@@ -1,5 +1,5 @@
 import { portalClient } from "../api/client"
-import type { ErrorEnvelope } from "../api/generated/types.gen"
+import type { ErrorEnvelope, InsuranceValidationError } from "../api/generated/types.gen"
 import { getAccessTokenResult } from "../auth-client"
 
 type PortalFailureKind =
@@ -20,6 +20,7 @@ export type PortalFailure = {
   message?: string
   correlationId?: string
   entryId?: string
+  errors?: InsuranceValidationError[]
 }
 
 export type PortalOutcome<T> =
@@ -90,6 +91,7 @@ export function portalFailure(status: number | undefined, error: unknown): Porta
           message: envelope.message,
           correlationId: envelope.correlationId,
           ...(envelope.entryId === undefined ? {} : { entryId: envelope.entryId }),
+          ...(envelope.errors === undefined ? {} : { errors: envelope.errors }),
         }
       : {}),
   }
@@ -109,11 +111,24 @@ function errorEnvelope(value: unknown): ErrorEnvelope["error"] | undefined {
   if (typeof value !== "object" || value === null) return undefined
   const error = (value as { error?: unknown }).error
   if (typeof error !== "object" || error === null) return undefined
-  const { code, message, correlationId, retryable, entryId } = error as Record<string, unknown>
+  const { code, message, correlationId, retryable, entryId, errors } = error as Record<string, unknown>
   return typeof code === "string" &&
     typeof message === "string" &&
     typeof correlationId === "string" &&
     typeof retryable === "boolean"
-    ? { code, message, correlationId, retryable, ...(typeof entryId === "string" ? { entryId } : {}) }
+    ? {
+        code,
+        message,
+        correlationId,
+        retryable,
+        ...(typeof entryId === "string" ? { entryId } : {}),
+        ...(Array.isArray(errors) && errors.every(validationError) ? { errors } : {}),
+      }
     : undefined
+}
+
+function validationError(value: unknown): value is InsuranceValidationError {
+  if (typeof value !== "object" || value === null) return false
+  const fields = value as Record<string, unknown>
+  return ["region", "table", "planId", "rule", "message"].every((field) => typeof fields[field] === "string")
 }
