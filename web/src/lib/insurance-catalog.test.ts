@@ -63,7 +63,38 @@ test("removing a plan created in the draft forgets it instead of leaving an unus
   assert.deepEqual(edits, [])
   const removed = replay(catalog, record([], { kind: "removeRow", at }))
   assert.deepEqual(removed.regions[0].tables[0].rows, [])
-  assert.equal(removed.regions[0].plans.length, 3)
+  assert.deepEqual(planIDs(removed, "south"), ["beta", "cash"])
+})
+
+const optical = { ...at, table: "optical" }
+const listedTwice = replay(catalog, [{ kind: "addRow", at: optical }])
+
+function planIDs(revised: InsuranceCatalog, region: string) {
+  return revised.regions.find((item) => item.id === region)?.plans.map((plan) => plan.id)
+}
+
+test("removing the last row that lists a plan removes the plan from its region, and removing one of two rows keeps it", () => {
+  const oneLeft = replay(listedTwice, [{ kind: "removeRow", at }])
+  assert.deepEqual(planIDs(oneLeft, "south"), ["alpha", "beta", "cash"])
+  assert.deepEqual(oneLeft.regions[0].tables[1].rows.map((row) => row.planId), ["alpha"])
+
+  const noneLeft = replay(listedTwice, [{ kind: "removeRow", at }, { kind: "removeRow", at: optical }])
+  assert.deepEqual(planIDs(noneLeft, "south"), ["beta", "cash"])
+  assert.deepEqual(planIDs(noneLeft, "north"), ["alpha"])
+  assert.deepEqual(touchedOffices(listedTwice, noneLeft), ["hollywood", "optical", "sweetwater"])
+  assert.equal(changedPlans(listedTwice, noneLeft), 2)
+})
+
+test("a remove replayed onto a newer list keeps the plan only while another table still lists it", () => {
+  const mine = record([], { kind: "removeRow", at })
+  const theirsRemovedOptical = replay(listedTwice, [{ kind: "removeRow", at: optical }])
+  assert.deepEqual(planIDs(theirsRemovedOptical, "south"), ["alpha", "beta", "cash"])
+  assert.deepEqual(planIDs(replay(theirsRemovedOptical, mine), "south"), ["beta", "cash"])
+
+  const theirsAddedOptical = listedTwice
+  const replayed = replay(theirsAddedOptical, mine)
+  assert.deepEqual(planIDs(replayed, "south"), ["alpha", "beta", "cash"])
+  assert.deepEqual(replayed.regions[0].tables[1].rows.map((row) => row.planId), ["alpha"])
 })
 
 test("carrier choices are the code and ID pairs plans already use, named from the carrier list, with no carrier first", () => {
