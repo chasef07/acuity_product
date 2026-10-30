@@ -34,17 +34,22 @@ type receipt struct {
 
 func main() {
 	practice := flag.String("practice", "", "Practice UUID whose insurance list to seed")
-	apply := flag.Bool("apply", false, "publish the middleware's catalog as the Practice's first revision")
+	fromFile := flag.String("from-file", "", "path to the InsuranceCatalog JSON to seed")
+	apply := flag.Bool("apply", false, "publish the catalog as the Practice's first revision")
 	flag.Parse()
-	if err := run(*practice, *apply); err != nil {
+	if err := run(*practice, *fromFile, *apply); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(practice string, apply bool) error {
+func run(practice, fromFile string, apply bool) error {
 	if uuid.Validate(practice) != nil {
 		return errors.New("--practice must be the Practice UUID")
+	}
+	catalog, err := readCatalog(fromFile)
+	if err != nil {
+		return err
 	}
 	middleware, err := insurance.NewMiddlewareClient(os.Getenv("MIDDLEWARE_BASE_URL"), os.Getenv("MIDDLEWARE_API_SECRET"), nil)
 	if err != nil {
@@ -55,7 +60,7 @@ func run(practice string, apply bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if !apply {
-		result, err := check(ctx, middleware, practice)
+		result, err := check(ctx, middleware, practice, catalog)
 		if err != nil {
 			return err
 		}
@@ -69,33 +74,40 @@ func run(practice string, apply bool) error {
 		return err
 	}
 	defer pool.Close()
-	result, err := seed(ctx, pool, middleware, practice, os.Getenv("INSURANCE_OPERATOR_EMAIL"))
+	result, err := seed(ctx, pool, middleware, practice, os.Getenv("INSURANCE_OPERATOR_EMAIL"), catalog)
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }
 
-func check(ctx context.Context, middleware *insurance.MiddlewareClient, practice string) (receipt, error) {
-	catalog, err := middleware.Catalog(ctx)
-	if err != nil {
-		return receipt{}, fmt.Errorf("read the middleware catalog: %w", err)
+func readCatalog(path string) (insurance.Catalog, error) {
+	if path == "" {
+		return insurance.Catalog{}, errors.New("--from-file must name the InsuranceCatalog JSON to seed")
 	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return insurance.Catalog{}, fmt.Errorf("read the catalog file: %w", err)
+	}
+	catalog, err := insurance.ParseCatalog(body)
+	if err != nil {
+		return insurance.Catalog{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return catalog, nil
+}
+
+func check(ctx context.Context, middleware *insurance.MiddlewareClient, practice string, catalog insurance.Catalog) (receipt, error) {
 	if err := middleware.Validate(ctx, catalog); err != nil {
 		return receipt{}, describe(err)
 	}
 	return summarize(receipt{PracticeID: practice}, catalog), nil
 }
 
-func seed(ctx context.Context, db postgres.Database, middleware *insurance.MiddlewareClient, practice, operatorEmail string) (receipt, error) {
+func seed(ctx context.Context, db postgres.Database, middleware *insurance.MiddlewareClient, practice, operatorEmail string, catalog insurance.Catalog) (receipt, error) {
 	accessModule := access.New(db, nil)
 	subject, err := accessModule.ReadPlatformOperatorSubject(ctx, operatorEmail)
 	if err != nil {
 		return receipt{}, errors.New("import requires an existing bound Platform Operator")
-	}
-	catalog, err := middleware.Catalog(ctx)
-	if err != nil {
-		return receipt{}, fmt.Errorf("read the middleware catalog: %w", err)
 	}
 	revisions, err := insurance.NewRevisions(db, accessModule, middleware)
 	if err != nil {

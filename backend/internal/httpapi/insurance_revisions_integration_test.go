@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -104,6 +105,8 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 					{Key: "spring-hill", Email: "springhill@abita.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"spring-hill"}},
 					{Key: "north", Email: "north@abita.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"spring-hill", "crystal-river"}},
 					{Key: "south-but-optical", Email: "south@abita.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"hollywood", "sweetwater", "north-miami-beach-optical"}},
+					{Key: "south-but-sweetwater", Email: "south-optical@abita.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"hollywood", "sweetwater-optical", "north-miami-beach-optical"}},
+					{Key: "south", Email: "south-all@abita.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"hollywood", "sweetwater", "sweetwater-optical", "north-miami-beach-optical"}},
 				},
 			},
 			{
@@ -121,11 +124,11 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 	runtime := db.As(testdb.Portal)
 	accessModule := access.New(runtime, nil)
 	identities := map[string]access.Identity{}
-	for token, email := range map[string]string{"admin-token": "admin@abita.test", "spring-hill-token": "springhill@abita.test", "north-token": "north@abita.test", "south-token": "south@abita.test", "demo-token": "admin@demo.test", "operator-token": "operator@acuity.test"} {
+	for token, email := range map[string]string{"admin-token": "admin@abita.test", "spring-hill-token": "springhill@abita.test", "north-token": "north@abita.test", "south-token": "south@abita.test", "south-optical-token": "south-optical@abita.test", "south-all-token": "south-all@abita.test", "demo-token": "admin@demo.test", "operator-token": "operator@acuity.test"} {
 		identities[token] = access.Identity{Subject: strings.TrimSuffix(token, "-token") + "-subject", Email: email, EmailVerified: true}
 	}
 	authorization := testaccess.Activate(t, accessModule, identities["admin-token"])
-	for _, token := range []string{"spring-hill-token", "north-token", "south-token", "demo-token"} {
+	for _, token := range []string{"spring-hill-token", "north-token", "south-token", "south-optical-token", "south-all-token", "demo-token"} {
 		testaccess.Activate(t, accessModule, identities[token])
 	}
 	if _, err := accessModule.DiscoverActor(ctx, identities["operator-token"]); err != nil {
@@ -529,5 +532,44 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 			t.Fatalf("import over Portal edits: published=%t err=%v", published, err)
 		}
 		unchanged(t, current, count)
+	})
+
+	t.Run("both Sweetwater Locations guard the one Sweetwater office", func(t *testing.T) {
+		current, count := active()
+		for _, tc := range []struct {
+			token, location string
+			canEdit         bool
+			status          int
+		}{
+			{"south-token", "Sweetwater", false, http.StatusForbidden},
+			{"south-optical-token", "Sweetwater Optical", false, http.StatusForbidden},
+			{"south-all-token", "Sweetwater", true, http.StatusOK},
+			{"south-all-token", "Sweetwater Optical", true, http.StatusOK},
+		} {
+			status, body := send("/v1/insurance/revisions/query", tc.token, map[string]string{"practiceId": practice, "locationId": locations[tc.location]})
+			var view struct {
+				Catalog  insurance.Catalog `json:"catalog"`
+				OfficeID string            `json:"officeId"`
+				CanEdit  bool              `json:"canEdit"`
+			}
+			if status != http.StatusOK || json.Unmarshal([]byte(body), &view) != nil || view.OfficeID != "sweetwater" || view.CanEdit != tc.canEdit {
+				t.Fatalf("%s queries %s: status=%d office=%s canEdit=%t, want canEdit %t", tc.token, tc.location, status, view.OfficeID, view.CanEdit, tc.canEdit)
+			}
+			catalog := view.Catalog
+			row := &table(&catalog, "south_florida", "doctors").Rows[5]
+			if !slices.Contains(row.OnlyOffices, "sweetwater") {
+				t.Fatalf("row %s is not a Sweetwater row", row.PlanID)
+			}
+			row.Note = "Synthetic Sweetwater note from " + tc.token + " at " + tc.location
+			publish := publication(tc.location, current, catalog)
+			status, body = send("/v1/insurance/revisions", tc.token, publish)
+			if status != tc.status {
+				t.Fatalf("%s publishes at %s: status=%d body=%s, want %d", tc.token, tc.location, status, body, tc.status)
+			}
+			if status == http.StatusOK {
+				current, count = publish.RevisionID, count+1
+			}
+			unchanged(t, current, count)
+		}
 	})
 }
