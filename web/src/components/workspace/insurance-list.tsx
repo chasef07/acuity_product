@@ -17,7 +17,6 @@ import type {
   InsuranceRegionPlan,
   InsuranceTableRow,
   InsuranceValidationError,
-  Location,
   LocationInsuranceCatalog,
 } from "@/lib/api/generated/types.gen"
 import { publishInsuranceCatalog, readInsuranceCatalog, useInsuranceCatalog } from "@/lib/clients/insurance-catalog"
@@ -52,10 +51,8 @@ const coverageOrder = Object.keys(insuranceCoverageLabels)
 
 type Names = (office: string) => string
 
-function officeNames(locations: Location[]): Names {
-  const byOffice = new Map(locations.map((location) => [fold(location.name).replace(/[^a-z0-9]+/g, "_"), location.name]))
-  return (office) =>
-    byOffice.get(office) ?? office.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ")
+function officeNames(loaded: LocationInsuranceCatalog | undefined): Names {
+  return (office) => loaded?.officeNames[office] ?? office
 }
 
 function coverageLabel(coverage: string) {
@@ -71,18 +68,14 @@ function save(key: string, next: Draft) {
   insuranceDrafts.write(key, changed || next.reason.trim() ? next : undefined)
 }
 
-export function InsuranceList({
-  actorSubject,
-  locations,
-  ...props
-}: AgentLocationProps & { actorSubject: string; locations: Location[] }) {
+export function InsuranceList({ actorSubject, ...props }: AgentLocationProps & { actorSubject: string }) {
   const catalog = useInsuranceCatalog(props)
   const loaded = catalog.status === "ready" ? catalog.data : undefined
   const key = draftScope(actorSubject, props.practiceID)
   const stored = useSyncExternalStore(insuranceDrafts.subscribe, () => insuranceDrafts.read(key), () => undefined)
   const draft = loaded?.canEdit ? stored : undefined
   const [search, setSearch] = useState("")
-  const names = useMemo(() => officeNames(locations), [locations])
+  const names = useMemo(() => officeNames(loaded), [loaded])
   const words = fold(search).split(/\s+/).filter(Boolean)
   const wasPublishing = useRef(stored?.publish.status === "publishing")
   const reload = catalog.retry

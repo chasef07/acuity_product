@@ -44,7 +44,7 @@ function catalog(): InsuranceCatalog {
 async function serveInsurance(page: Page, canEdit: boolean) {
   const state = { active: { revision: imported, catalog: catalog() }, publications: [] as InsurancePublication[], answers: [] as ("invalid" | "conflict" | "ok")[] }
   await page.route("**/v1/insurance/revisions/query", (route) =>
-    route.fulfill({ json: { ...state.active, officeId: "spring_hill", canEdit } }),
+    route.fulfill({ json: { ...state.active, officeId: "spring_hill", officeNames: { spring_hill: "Spring Hill", crystal_river: "Crystal River" }, canEdit } }),
   )
   await page.route("**/v1/insurance/revisions", (route) => {
     const publication: InsurancePublication = route.request().postDataJSON()

@@ -32,6 +32,14 @@ const offices: Record<string, string> = {
   [locations[2].id]: "spring_hill",
 }
 
+const officeNames: Record<string, string> = {
+  hollywood: "Hollywood",
+  sweetwater: "Sweetwater and Sweetwater Optical",
+  north_miami_beach_optical: "North Miami Beach Optical",
+  spring_hill: "Spring Hill",
+  crystal_river: "Crystal River",
+}
+
 const imported: InsuranceRevision = {
   id: "00000000-0000-4000-8000-0000000000c1",
   createdAt: "2026-10-30T15:00:00Z",
@@ -210,7 +218,7 @@ test("changing a doctor from yes to no and editing the row's rules publishes and
   await page.check("PCP referral", true)
   await page.fill(page.field("PCP referral channel"), "availity")
   await page.check("Staff verifies", true)
-  await page.check("Sweetwater", true)
+  await page.check("Sweetwater and Sweetwater Optical", true)
   await page.fill(page.field("Callers hear"), "Bring a referral")
   await page.fill(page.field("Staff note"), "Referral from the PCP")
   await page.fill(page.field("Label"), "Example Choice PPO Plus")
@@ -272,15 +280,15 @@ test("the carrier is a dropdown of the catalog's code and ID pairs labeled with 
   await page.unmount()
 })
 
-test("before publishing, a shared plan change names the other offices it also changes, using the Portal's office names", async (t) => {
+test("before publishing, a shared plan change names the other offices it also changes by the Location names the backend joins for each office", async (t) => {
   const page = harness(t)
   await page.render(insuranceList(locations[1].id))
   await waitFor(() => page.groups().length === 2)
   await page.rowAction("Example Choice PPO", "Edit")
-  assert.match(page.text(), /The label, family, aliases, carrier and self-pay are shared with Hollywood and Sweetwater\./)
+  assert.match(page.text(), /The label, family, aliases, carrier and self-pay are shared with Hollywood and Sweetwater and Sweetwater Optical\./)
   assert.equal(page.status(), "")
   await page.fill(page.field("Label"), "Example Choice Plus")
-  assert.equal(page.status(), "Also changes Hollywood and Sweetwater.")
+  assert.equal(page.status(), "Also changes Hollywood and Sweetwater and Sweetwater Optical.")
   await page.click("Discard changes")
 
   await page.render(insuranceList(locations[2].id), "spring hill")
@@ -544,7 +552,7 @@ function harness(t: TestContext) {
           { status: page.queryStatus },
         )
       }
-      return Response.json({ ...page.active, officeId: offices[body.locationId], canEdit: page.canEdit })
+      return Response.json({ ...page.active, officeId: offices[body.locationId], officeNames, canEdit: page.canEdit })
     }
     assert.equal(url.pathname, "/v1/insurance/revisions")
     const publication = (await request.json()) as InsurancePublication

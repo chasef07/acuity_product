@@ -60,7 +60,7 @@ export function ManageAgent({
       ) : page === "knowledge" ? (
         <KnowledgeBase {...location} actorSubject={actorSubject} />
       ) : page === "insurance" ? (
-        <InsuranceList {...location} actorSubject={actorSubject} locations={locations} />
+        <InsuranceList {...location} actorSubject={actorSubject} />
       ) : (
         <AgentCalls practiceID={practiceID} locationScopeID={locationScopeID} />
       )}

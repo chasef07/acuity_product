@@ -2390,7 +2390,7 @@ components:
     LocationInsuranceCatalog:
       type: object
       additionalProperties: false
-      required: [revision, catalog, officeId, canEdit]
+      required: [revision, catalog, officeId, officeNames, canEdit]
       properties:
         revision:
           $ref: "#/components/schemas/InsuranceRevision"
@@ -2399,6 +2399,11 @@ components:
         officeId:
           type: string
           description: The middleware office this Location's Abita Office Route maps to.
+        officeNames:
+          type: object
+          additionalProperties:
+            type: string
+          description: The display name of every office in the catalog, keyed by middleware office id. The names of every Location routed to the office, joined in alphabetical order; the office id when no Location is routed to it.
         canEdit:
           type: boolean
           description: Whether the caller can publish a change to a table that lists this office, which touches every office on that table.

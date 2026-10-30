@@ -85,6 +85,12 @@ export type LocationInsuranceCatalog = {
      */
     officeId: string;
     /**
+     * The display name of every office in the catalog, keyed by middleware office id. The names of every Location routed to the office, joined in alphabetical order; the office id when no Location is routed to it.
+     */
+    officeNames: {
+        [key: string]: string;
+    };
+    /**
      * Whether the caller can publish a change to a table that lists this office, which touches every office on that table.
      */
     canEdit: boolean;

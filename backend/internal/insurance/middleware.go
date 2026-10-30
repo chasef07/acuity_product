@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,13 +35,30 @@ func middlewareOffice(officeKey string) string {
 	return officeKey
 }
 
-func officeLocations(routes []access.AbitaOfficeRoute) map[string][]string {
-	locations := map[string][]string{}
+func officeRoutes(routes []access.AbitaOfficeRoute) map[string][]access.AbitaOfficeRoute {
+	offices := map[string][]access.AbitaOfficeRoute{}
 	for _, route := range routes {
 		office := middlewareOffice(route.OfficeKey)
-		locations[office] = append(locations[office], route.LocationID)
+		offices[office] = append(offices[office], route)
 	}
-	return locations
+	return offices
+}
+
+func OfficeNames(catalog Catalog, routes []access.AbitaOfficeRoute) map[string]string {
+	byOffice := officeRoutes(routes)
+	names := map[string]string{}
+	for _, office := range catalog.offices() {
+		locations := []string{}
+		for _, route := range byOffice[office] {
+			locations = append(locations, route.LocationName)
+		}
+		slices.Sort(locations)
+		names[office] = strings.Join(slices.Compact(locations), " and ")
+		if names[office] == "" {
+			names[office] = office
+		}
+	}
+	return names
 }
 
 type MiddlewareClient struct {

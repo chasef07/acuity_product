@@ -37,6 +37,7 @@ const locations: Location[] = [
 const insurance: LocationInsuranceCatalog = {
   revision: { id: "00000000-0000-4000-8000-0000000000c1", createdAt: "2026-10-30T15:00:00Z", createdBy: "operator@abita.test", reason: "initial import", provenance: "import" },
   officeId: "hollywood",
+  officeNames: { hollywood: "Hollywood", sweetwater: "Sweetwater" },
   canEdit: true,
   catalog: {
     carriers: [{ id: "car10001", name: "EXAMPLE CHOICE HEALTH" }],

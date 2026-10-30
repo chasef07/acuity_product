@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"slices"
 	"testing"
 
+	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/insurance"
 )
 
@@ -29,6 +31,27 @@ func syntheticCatalog() insurance.Catalog {
 				{ID: "spring_hill", Offices: []string{"spring_hill"}, Doctors: []string{"Dr. Example"}, Rows: []insurance.TableRow{row("north-hmo"), row("north-ppo")}},
 			}},
 		},
+	}
+}
+
+func TestOfficeNamesJoinEveryLocationRoutedToTheOfficeAndAnOfficeWithNoLocationShowsItsID(t *testing.T) {
+	routes := []access.AbitaOfficeRoute{
+		{OfficeKey: "sweetwater-optical", LocationID: "location-2", LocationName: "Sweetwater Optical"},
+		{OfficeKey: "sweetwater", LocationID: "location-1", LocationName: "Sweetwater"},
+		{OfficeKey: "hollywood", LocationID: "location-3", LocationName: "Hollywood"},
+		{OfficeKey: "north-miami-beach-optical", LocationID: "location-4", LocationName: "North Miami Beach Optical"},
+		{OfficeKey: "spring-hill", LocationID: "location-5", LocationName: "Spring Hill"},
+		{OfficeKey: "demo-office", LocationID: "location-6", LocationName: "Demo"},
+	}
+	want := map[string]string{
+		"hollywood":                 "Hollywood",
+		"sweetwater":                "Sweetwater and Sweetwater Optical",
+		"north_miami_beach_optical": "North Miami Beach Optical",
+		"spring_hill":               "Spring Hill",
+		"crystal_river":             "crystal_river",
+	}
+	if got := insurance.OfficeNames(syntheticCatalog(), routes); !reflect.DeepEqual(got, want) {
+		t.Fatalf("office names = %#v, want %#v", got, want)
 	}
 }
 

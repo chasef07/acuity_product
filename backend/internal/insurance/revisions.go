@@ -39,10 +39,11 @@ type Revision struct {
 }
 
 type LocationCatalog struct {
-	Revision Revision `json:"revision"`
-	Catalog  Catalog  `json:"catalog"`
-	OfficeID string   `json:"officeId"`
-	CanEdit  bool     `json:"canEdit"`
+	Revision    Revision          `json:"revision"`
+	Catalog     Catalog           `json:"catalog"`
+	OfficeID    string            `json:"officeId"`
+	OfficeNames map[string]string `json:"officeNames"`
+	CanEdit     bool              `json:"canEdit"`
 }
 
 type ActiveCatalog struct {
@@ -258,20 +259,20 @@ func (r *Revisions) authorizeOffices(ctx context.Context, tx pgx.Tx, identity ac
 	if err != nil {
 		return err
 	}
-	locations := officeLocations(routes)
+	byOffice := officeRoutes(routes)
 	checked := map[string]bool{locationID: true}
 	for _, office := range offices {
-		if len(locations[office]) == 0 {
+		if len(byOffice[office]) == 0 {
 			return fmt.Errorf("%w: office %q has no Location, so only a Platform Operator can change it", access.ErrDenied, office)
 		}
-		for _, location := range locations[office] {
-			if checked[location] {
+		for _, route := range byOffice[office] {
+			if checked[route.LocationID] {
 				continue
 			}
-			if _, err := r.access.LockMutationAuthorization(ctx, tx, identity, practiceID, location); err != nil {
+			if _, err := r.access.LockMutationAuthorization(ctx, tx, identity, practiceID, route.LocationID); err != nil {
 				return err
 			}
-			checked[location] = true
+			checked[route.LocationID] = true
 		}
 	}
 	return nil
@@ -294,6 +295,11 @@ func (r *Revisions) Query(ctx context.Context, identity access.Identity, practic
 	if err != nil {
 		return LocationCatalog{}, err
 	}
+	routes, err := r.access.ReadAbitaOfficeRoutes(ctx, tx, practiceID)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return LocationCatalog{}, err
+	}
 	denied := r.authorizeOffices(ctx, tx, identity, practiceID, locationID, active.catalog.tableOffices(office))
 	_ = tx.Rollback(ctx)
 	if denied != nil && !errors.Is(denied, access.ErrDenied) {
@@ -303,7 +309,10 @@ func (r *Revisions) Query(ctx context.Context, identity access.Identity, practic
 	if err != nil {
 		return LocationCatalog{}, err
 	}
-	return LocationCatalog{Revision: revision, Catalog: active.catalog, OfficeID: office, CanEdit: denied == nil}, nil
+	return LocationCatalog{
+		Revision: revision, Catalog: active.catalog, OfficeID: office,
+		OfficeNames: OfficeNames(active.catalog, routes), CanEdit: denied == nil,
+	}, nil
 }
 
 func (r *Revisions) Read(ctx context.Context, identity access.ServiceIdentity) (ActiveCatalog, error) {
