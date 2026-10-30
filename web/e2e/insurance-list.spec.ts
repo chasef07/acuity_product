@@ -34,7 +34,12 @@ function catalog(): InsuranceCatalog {
               { planId: "zeta-vision", doctors: { "Dr. Rivera": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" },
             ],
           },
-          { id: "crystal_river", offices: ["crystal_river"], doctors: ["Dr. Licht"], rows: [] },
+          {
+            id: "crystal_river",
+            offices: ["crystal_river"],
+            doctors: ["Dr. Licht"],
+            rows: [{ planId: "example-choice-medical", doctors: { "Dr. Licht": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" }],
+          },
         ],
       },
     ],
