@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.10.0](https://github.com/chasef07/acuity_product/compare/v2.9.0...v2.10.0) (2026-10-31)
+
+
+### Features
+
+* **insurance:** edit and publish an office's insurance list in Manage agent ([#598](https://github.com/chasef07/acuity_product/issues/598)) ([9fb3bfa](https://github.com/chasef07/acuity_product/commit/9fb3bfa29aa8be2c4e7dfebb22b25f4b05030af1))
+* **insurance:** show insurance list history and restore an earlier version ([#599](https://github.com/chasef07/acuity_product/issues/599)) ([486941a](https://github.com/chasef07/acuity_product/commit/486941a6ccd5a6bb1f3908939e0fc85e7f0e5b0a))
+
 ## [2.9.0](https://github.com/chasef07/acuity_product/compare/v2.8.0...v2.9.0) (2026-10-30)
 
 
