@@ -25,7 +25,6 @@ import { AgentPage, AgentQueryBody, OptionSelect } from "./manage-agent-page"
 import { CallLabel, CallLabelFilters, type IntentFilter, type OutcomeFilter } from "./call-labels"
 import type {
   AgentCallsQuery,
-  InsuranceCoverage,
   Location,
 } from "@/lib/api/generated/types.gen"
 import { useAgentCalls } from "@/lib/clients/agent-calls"
@@ -50,7 +49,6 @@ export function ManageAgent({
   page: ManageAgentPage
   onPage: (page: ManageAgentPage) => void
 }) {
-  const [coverage, setCoverage] = useState<InsuranceCoverage>("medical")
   const location = {
     practiceID,
     locationID: locationScopeID || (locations.length === 1 ? locations[0].id : ""),
@@ -62,7 +60,7 @@ export function ManageAgent({
       ) : page === "knowledge" ? (
         <KnowledgeBase {...location} actorSubject={actorSubject} />
       ) : page === "insurance" ? (
-        <InsuranceList {...location} coverage={coverage} onCoverage={setCoverage} />
+        <InsuranceList {...location} actorSubject={actorSubject} />
       ) : (
         <AgentCalls practiceID={practiceID} locationScopeID={locationScopeID} />
       )}

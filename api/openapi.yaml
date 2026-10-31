@@ -1936,32 +1936,6 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/insurance/plans/query:
-    post:
-      operationId: queryInsurancePlans
-      summary: List the insurance plans Abita uses at one authorized Location, with each plan's result there.
-      description: Read-only view of the middleware's plan list. The middleware owns the rules; nothing is stored here.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/InsurancePlansQuery"
-      responses:
-        "200":
-          description: Plans for the Location and visit coverage.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/InsurancePlansPage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/insurance/revisions/query:
     post:
       operationId: queryInsuranceCatalog
@@ -2402,81 +2376,6 @@ components:
           type: string
         text:
           type: string
-    InsuranceCoverage:
-      type: string
-      enum: [medical, routine_vision]
-    InsuranceOutcome:
-      type: string
-      enum: [accepted, not_accepted, needs_staff_task]
-    InsurancePlansQuery:
-      type: object
-      additionalProperties: false
-      required: [practiceId, locationId, coverage]
-      properties:
-        practiceId:
-          type: string
-          format: uuid
-        locationId:
-          type: string
-          format: uuid
-        coverage:
-          $ref: "#/components/schemas/InsuranceCoverage"
-    InsurancePlansPage:
-      type: object
-      additionalProperties: false
-      required: [locationId, coverage, plans]
-      properties:
-        locationId:
-          type: string
-          format: uuid
-        coverage:
-          $ref: "#/components/schemas/InsuranceCoverage"
-        plans:
-          type: array
-          items:
-            $ref: "#/components/schemas/InsurancePlanRule"
-    InsurancePlanRule:
-      type: object
-      additionalProperties: false
-      required: [planId, label, names, outcome, allowedProviders, requirements, acceptedAt]
-      properties:
-        planId:
-          type: string
-        label:
-          type: string
-        names:
-          type: array
-          description: Other ways callers name this plan, excluding the label.
-          items:
-            type: string
-        carrierCode:
-          type: string
-        carrierId:
-          type: string
-        carrierName:
-          type: string
-          description: AdvancedMD carrier directory name.
-        outcome:
-          $ref: "#/components/schemas/InsuranceOutcome"
-        allowedProviders:
-          type: array
-          items:
-            type: string
-        requirements:
-          type: array
-          items:
-            type: string
-            enum: [prior_authorization, pcp_referral, staff_verify]
-        callerNotice:
-          type: string
-        note:
-          type: string
-          description: Practice insurance list comment, verbatim.
-        acceptedAt:
-          type: array
-          description: Other offices on the same list that accept this plan when this one does not.
-          items:
-            type: string
     InsuranceCatalogQuery:
       type: object
       additionalProperties: false
@@ -2491,7 +2390,7 @@ components:
     LocationInsuranceCatalog:
       type: object
       additionalProperties: false
-      required: [revision, catalog, officeId, canEdit]
+      required: [revision, catalog, officeId, officeNames, canEdit]
       properties:
         revision:
           $ref: "#/components/schemas/InsuranceRevision"
@@ -2500,6 +2399,11 @@ components:
         officeId:
           type: string
           description: The middleware office this Location's Abita Office Route maps to.
+        officeNames:
+          type: object
+          additionalProperties:
+            type: string
+          description: The display name of every office in the catalog, keyed by middleware office id. The names of every Location routed to the office, joined in alphabetical order; the office id when no Location is routed to it.
         canEdit:
           type: boolean
           description: Whether the caller can publish a change to a table that lists this office, which touches every office on that table.

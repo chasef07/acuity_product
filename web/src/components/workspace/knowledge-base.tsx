@@ -22,11 +22,9 @@ import type { PortalFailure } from "@/lib/clients/portal-request"
 import { type PortalQuery, readFailure } from "@/lib/data/queries"
 import { formatTimestamp } from "@/lib/format-time"
 import { fold, matches, publishedSections, publishFailureMessage } from "@/lib/knowledge-publication"
+import { draftScope } from "@/lib/drafts"
 import {
-  knowledgeDraftKey,
-  readKnowledgeDraft,
-  subscribeKnowledgeDrafts,
-  writeKnowledgeDraft,
+  knowledgeDrafts,
   type KnowledgeDraft as Draft,
   type KnowledgeDraftEntry as Entry,
 } from "@/lib/knowledge-drafts"
@@ -75,7 +73,7 @@ function changeCount(draft: Draft) {
 
 function saveDraft(key: string, next: Draft) {
   const idle: Draft = { ...next, publish: { status: "idle" } }
-  writeKnowledgeDraft(key, changed(idle) || idle.reason.trim() ? idle : undefined)
+  knowledgeDrafts.write(key, changed(idle) || idle.reason.trim() ? idle : undefined)
 }
 
 function rejectedEntry(draft: Draft) {
@@ -91,8 +89,8 @@ export function KnowledgeBase({ actorSubject, ...props }: AgentLocationProps & {
   const [search, setSearch] = useState("")
   const [historyOpen, setHistoryOpen] = useState(false)
   const words = fold(search).split(/\s+/).filter(Boolean)
-  const draftKey = knowledgeDraftKey(actorSubject, props.practiceID, props.locationID)
-  const draft = useSyncExternalStore(subscribeKnowledgeDrafts, () => readKnowledgeDraft(draftKey), () => undefined)
+  const draftKey = draftScope(actorSubject, props.practiceID, props.locationID)
+  const draft = useSyncExternalStore(knowledgeDrafts.subscribe, () => knowledgeDrafts.read(draftKey), () => undefined)
 
   return (
     <AgentPage
@@ -342,18 +340,18 @@ function PublishBar({
     const payload = JSON.stringify(publication)
     const attempt = draft.attempt?.payload === payload ? draft.attempt : { payload, revisionID: crypto.randomUUID() }
     const sent: Draft = { ...draft, publish: { status: "publishing" }, attempt }
-    writeKnowledgeDraft(draftKey, sent)
+    knowledgeDrafts.write(draftKey, sent)
     const outcome = await publishLocationKnowledge({ ...publication, revisionId: attempt.revisionID })
-    const current = readKnowledgeDraft(draftKey) === sent
+    const current = knowledgeDrafts.read(draftKey) === sent
     if (!outcome.ok) {
-      if (current) writeKnowledgeDraft(draftKey, { ...sent, publish: { status: "failed", failure: outcome.failure } })
+      if (current) knowledgeDrafts.write(draftKey, { ...sent, publish: { status: "failed", failure: outcome.failure } })
       return
     }
-    if (current) writeKnowledgeDraft(draftKey, undefined)
+    if (current) knowledgeDrafts.write(draftKey, undefined)
   }
 
   function discard() {
-    writeKnowledgeDraft(draftKey, undefined)
+    knowledgeDrafts.write(draftKey, undefined)
     onDiscard()
   }
 

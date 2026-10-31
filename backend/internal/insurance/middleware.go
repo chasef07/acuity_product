@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,13 +32,30 @@ func middlewareOffice(officeKey string) string {
 	return officeKey
 }
 
-func officeLocations(routes []access.AbitaOfficeRoute) map[string][]string {
-	locations := map[string][]string{}
+func officeRoutes(routes []access.AbitaOfficeRoute) map[string][]access.AbitaOfficeRoute {
+	offices := map[string][]access.AbitaOfficeRoute{}
 	for _, route := range routes {
 		office := middlewareOffice(route.OfficeKey)
-		locations[office] = append(locations[office], route.LocationID)
+		offices[office] = append(offices[office], route)
 	}
-	return locations
+	return offices
+}
+
+func OfficeNames(catalog Catalog, routes []access.AbitaOfficeRoute) map[string]string {
+	byOffice := officeRoutes(routes)
+	names := map[string]string{}
+	for _, office := range catalog.offices() {
+		locations := []string{}
+		for _, route := range byOffice[office] {
+			locations = append(locations, route.LocationName)
+		}
+		slices.Sort(locations)
+		names[office] = strings.Join(slices.Compact(locations), " / ")
+		if names[office] == "" {
+			names[office] = office
+		}
+	}
+	return names
 }
 
 type MiddlewareClient struct {
@@ -55,30 +73,6 @@ func NewMiddlewareClient(baseURL, secret string, client *http.Client) (*Middlewa
 		client = &http.Client{}
 	}
 	return &MiddlewareClient{baseURL: strings.TrimRight(parsed.String(), "/"), secret: secret, client: client}, nil
-}
-
-func (c *MiddlewareClient) Plans(ctx context.Context, office string, coverage Coverage) ([]Plan, error) {
-	office = middlewareOffice(office)
-	query := url.Values{"office": {office}, "coverage": {string(coverage)}}
-	status, raw, err := c.send(ctx, "plans", http.MethodGet, "/api/insurance/plans?"+query.Encode(), nil, 2<<20)
-	if err != nil {
-		return nil, err
-	}
-	if status == http.StatusBadRequest {
-		return nil, fmt.Errorf("%w: middleware plans returned HTTP %d", ErrUnknownOffice, status)
-	}
-	if status < 200 || status > 299 {
-		return nil, fmt.Errorf("middleware plans returned HTTP %d", status)
-	}
-	var body struct {
-		OfficeID string   `json:"officeId"`
-		Coverage Coverage `json:"coverage"`
-		Plans    []Plan   `json:"plans"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil || body.Plans == nil || body.OfficeID != office || body.Coverage != coverage {
-		return nil, fmt.Errorf("middleware plans response is invalid")
-	}
-	return body.Plans, nil
 }
 
 type CatalogError struct {

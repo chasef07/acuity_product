@@ -8,9 +8,6 @@ import type {
   CallOutcome,
   CallState,
   CallingCall,
-  InsuranceCoverage,
-  InsuranceOutcome,
-  InsurancePlanRule,
   MessageAttachment,
   OperatorAiAnalyticsRange,
   OperatorAiCallIssueOutcome,
@@ -18,6 +15,7 @@ import type {
   StaffTaskUrgency,
   Task,
 } from "./api/generated/types.gen.ts"
+import type { DoctorAnswer, RequirementKind } from "./insurance-catalog.ts"
 
 export function labelOptions<Value extends string>(labels: Record<Value, string>) {
   return (Object.keys(labels) as Value[]).map((value) => ({ value, label: labels[value] }))
@@ -105,22 +103,22 @@ export const appointmentActionLabels = {
   CANCELLED: "Cancelled",
 } satisfies Record<AiAppointmentAction, string>
 
-export const insuranceCoverageLabels = {
+export const insuranceCoverageLabels: Record<string, string> = {
   medical: "Medical",
   routine_vision: "Routine vision",
-} satisfies Record<InsuranceCoverage, string>
-
-export const insuranceOutcomeLabels = {
-  accepted: "Accepted",
-  needs_staff_task: "Staff confirms",
-  not_accepted: "Not accepted",
-} satisfies Record<InsuranceOutcome, string>
+}
 
 export const insuranceRequirementLabels = {
   prior_authorization: "Prior auth",
   pcp_referral: "PCP referral",
   staff_verify: "Staff verifies",
-} satisfies Record<InsurancePlanRule["requirements"][number], string>
+} satisfies Record<RequirementKind, string>
+
+export const doctorAnswerLabels = {
+  yes: "Yes",
+  no: "No",
+  pending: "Pending",
+} satisfies Record<DoctorAnswer, string>
 
 export const callIssueOutcomeLabels = {
   CONFIRMED: "Real issue",

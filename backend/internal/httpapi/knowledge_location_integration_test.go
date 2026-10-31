@@ -3,18 +3,15 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
-	"github.com/chasef07/acuity_product/backend/internal/insurance"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/knowledge"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
@@ -24,15 +21,15 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 )
 
-func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) {
+func TestKnowledgeReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	accessModule := access.New(db.As(testdb.Portal), nil)
 	if _, err := access.New(pool, nil).Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "insurance-rules-http-test",
+		RequestedBy: "manage-agent-http-test",
 		Practices: []access.PracticeProvision{{
-			Key:  "synthetic-insurance",
+			Key:  "synthetic-manage-agent",
 			Name: "Abita Eye Group",
 			Locations: []access.LocationProvision{
 				{Key: "hollywood", Name: "Hollywood", AbitaOfficeKeys: []string{"hollywood"}},
@@ -46,7 +43,7 @@ func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) 
 			},
 		}},
 	}); err != nil {
-		t.Fatalf("provision insurance fixture: %v", err)
+		t.Fatalf("provision Manage agent fixture: %v", err)
 	}
 	admin := access.Identity{Subject: "admin-subject", Email: "admin@abita.test", EmailVerified: true}
 	staff := access.Identity{Subject: "staff-subject", Email: "staff@abita.test", EmailVerified: true}
@@ -57,28 +54,6 @@ func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) 
 		locations[location.Name] = location.ID
 	}
 
-	var mu sync.Mutex
-	offices := []string{}
-	middleware := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer synthetic-middleware-secret" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		mu.Lock()
-		offices = append(offices, r.URL.Query().Get("office"))
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"officeId":%q,"coverage":%q,"plans":[{"planId":"synthetic-hmo-medical","label":"Synthetic HMO","outcome":"accepted"}]}`, r.URL.Query().Get("office"), r.URL.Query().Get("coverage"))
-	}))
-	defer middleware.Close()
-	rules, err := insurance.NewMiddlewareClient(middleware.URL, "synthetic-middleware-secret", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	insuranceModule, err := insurance.New(accessModule, rules)
-	if err != nil {
-		t.Fatal(err)
-	}
 	knowledgeModule, err := knowledge.New(db.As(testdb.Portal), accessModule)
 	if err != nil {
 		t.Fatal(err)
@@ -107,19 +82,15 @@ func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) 
 		Messaging:            messaging.New(db.As(testdb.Portal), accessModule, workModule, nil, messaging.Config{}, nil),
 		Work:                 workModule,
 		Workspace:            workspace.New(db.As(testdb.Portal), accessModule),
-		Insurance:            insuranceModule,
 		Knowledge:            knowledgeModule,
 		ServiceAuthenticator: serviceAuthenticator,
 	})
 	if err != nil {
-		t.Fatalf("create insurance portal: %v", err)
+		t.Fatalf("create Manage agent portal: %v", err)
 	}
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	query := func(token, locationID string) (int, string) {
-		return post(t, server, "/v1/insurance/plans/query", token, map[string]string{"practiceId": authorization.Practice.ID, "locationId": locationID, "coverage": "medical"})
-	}
 	readKnowledge := func(token, locationID string) (int, string) {
 		return post(t, server, "/v1/knowledge/query", token, map[string]string{"practiceId": authorization.Practice.ID, "locationId": locationID})
 	}
@@ -143,29 +114,6 @@ func TestManageAgentReadsFollowLocationAccessAndAbitaOfficeRoutes(t *testing.T) 
 	}
 	if status, body := readKnowledge("admin-token", locations["Sweetwater Optical"]); status != http.StatusOK || strings.Contains(body, `"revision"`) {
 		t.Errorf("knowledge without a corpus has a revision: %s", body)
-	}
-	for _, scenario := range []struct {
-		name, token, locationID string
-		status                  int
-		contains                string
-	}{
-		{"staff at granted Location", "staff-token", locations["Hollywood"], http.StatusOK, `"planId":"synthetic-hmo-medical"`},
-		{"staff outside scope", "staff-token", locations["Sweetwater Optical"], http.StatusForbidden, "ACCESS_DENIED"},
-		{"unknown Location", "admin-token", "00000000-0000-0000-0000-0000000000ff", http.StatusForbidden, "ACCESS_DENIED"},
-		{"unauthenticated", "wrong-token", locations["Hollywood"], http.StatusUnauthorized, "UNAUTHENTICATED"},
-		{"admin at optical Location", "admin-token", locations["Sweetwater Optical"], http.StatusOK, `"locationId":"` + locations["Sweetwater Optical"] + `"`},
-		{"Location without a route", "admin-token", locations["Unrouted Office"], http.StatusServiceUnavailable, "aren't available for this Location"},
-		{"Location with several routes", "admin-token", locations["Combined Office"], http.StatusServiceUnavailable, "aren't available for this Location"},
-	} {
-		status, body := query(scenario.token, scenario.locationID)
-		if status != scenario.status || !strings.Contains(body, scenario.contains) {
-			t.Errorf("%s: status = %d, body = %s", scenario.name, status, body)
-		}
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if strings.Join(offices, ",") != "hollywood,sweetwater" {
-		t.Fatalf("middleware offices = %v, want only the authorized single-route Locations", offices)
 	}
 }
 

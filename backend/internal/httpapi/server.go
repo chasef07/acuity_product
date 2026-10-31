@@ -62,7 +62,6 @@ type Config struct {
 
 type PortalDependencies struct {
 	Knowledge            *knowledge.Module
-	Insurance            *insurance.Module
 	InsuranceRevisions   *insurance.Revisions
 	Access               *access.Module
 	Authenticator        IdentityAuthenticator
@@ -82,7 +81,6 @@ type RealtimeDependencies struct {
 
 type Server struct {
 	knowledge          *knowledge.Module
-	insurance          *insurance.Module
 	insuranceRevisions *insurance.Revisions
 	role               string
 	config             Config
@@ -102,7 +100,6 @@ type Server struct {
 
 type serverDependencies struct {
 	knowledge          *knowledge.Module
-	insurance          *insurance.Module
 	insuranceRevisions *insurance.Revisions
 	access             *access.Module
 	authenticator      IdentityAuthenticator
@@ -132,7 +129,6 @@ func NewPortal(
 	}
 	return newServer("portal-api", config, pool, serverDependencies{
 		knowledge:          dependencies.Knowledge,
-		insurance:          dependencies.Insurance,
 		insuranceRevisions: dependencies.InsuranceRevisions,
 		access:             dependencies.Access,
 		authenticator:      dependencies.Authenticator,
@@ -195,7 +191,6 @@ func newServer(
 
 	server := &Server{
 		knowledge:          dependencies.knowledge,
-		insurance:          dependencies.insurance,
 		insuranceRevisions: dependencies.insuranceRevisions,
 		role:               role,
 		config:             config,

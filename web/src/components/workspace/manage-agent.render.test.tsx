@@ -12,9 +12,7 @@ import type {
   AgentCallDetail,
   AgentCallsPage,
   AgentCallsQuery,
-  InsuranceCoverage,
-  InsurancePlanRule,
-  InsurancePlansQuery,
+  InsuranceCatalogQuery,
   KnowledgePublication,
   KnowledgeRevisionHistoryEntry,
   KnowledgeRevisionSummary,
@@ -22,12 +20,12 @@ import type {
   LocationKnowledge,
   LocationKnowledgeHistory,
   LocationKnowledgeQuery,
+  LocationInsuranceCatalog,
   LocationKnowledgeRevisionQuery,
 } from "../../lib/api/generated/types.gen.ts"
 
 Object.defineProperty(globalThis, "document", { configurable: true, value: new JSDOM("").window.document })
 const { SidebarProvider } = await import("@/components/ui/sidebar")
-const { InsuranceList } = await import("./insurance-list.tsx")
 const { KnowledgeHistory } = await import("./knowledge-base.tsx")
 const { ManageAgent } = await import("./manage-agent.tsx")
 
@@ -36,25 +34,25 @@ const locations: Location[] = [
   { id: "00000000-0000-4000-8000-000000000002", name: "Sweetwater" },
 ]
 
-const plans: InsurancePlanRule[] = [
-  plan({ planId: "staff", label: "Demo Advantage HMO", outcome: "needs_staff_task", requirements: ["prior_authorization", "pcp_referral", "staff_verify"], carrierCode: "DEM03" }),
-  plan({ planId: "pending", label: "Pending Plan HMO", outcome: "needs_staff_task", carrierCode: "PEN01" }),
-  plan({ planId: "refused-elsewhere", label: "Sample Medicaid MMA", outcome: "not_accepted", requirements: ["pcp_referral"], acceptedAt: ["Sweetwater"], carrierCode: "SMP02" }),
-  plan({ planId: "accepted-b", label: "example Select", outcome: "accepted", allowedProviders: ["Dr. Rivera"], carrierCode: "EXS01" }),
-  plan({
-    planId: "accepted-a",
-    label: "Example Choice PPO",
-    outcome: "accepted",
-    allowedProviders: ["Dr. Rivera", "Dr. Chen"],
-    names: ["Example Choice", "Choice PPO"],
-    carrierCode: "EXC01",
-    carrierId: "car10001",
-    carrierName: "EXAMPLE CHOICE HEALTH",
-    note: "Synthetic sheet note",
-    callerNotice: "Synthetic caller notice",
-  }),
-  plan({ planId: "self-pay", label: "Zeta Discount Card", outcome: "not_accepted", callerNotice: "Self-pay rates apply" }),
-]
+const insurance: LocationInsuranceCatalog = {
+  revision: { id: "00000000-0000-4000-8000-0000000000c1", createdAt: "2026-10-30T15:00:00Z", createdBy: "operator@abita.test", reason: "initial import", provenance: "import" },
+  officeId: "hollywood",
+  officeNames: { hollywood: "Hollywood", sweetwater: "Sweetwater" },
+  canEdit: true,
+  catalog: {
+    carriers: [{ id: "car10001", name: "EXAMPLE CHOICE HEALTH" }],
+    regions: [{
+      id: "south_florida",
+      plans: [{ id: "example-choice-medical", label: "Example Choice PPO", family: "Example", coverage: "medical", carrierCode: "EXC01", carrierId: "car10001", selfPay: false, aliases: [] }],
+      tables: [{
+        id: "doctors",
+        offices: ["hollywood", "sweetwater"],
+        doctors: ["Dr. Rivera"],
+        rows: [{ planId: "example-choice-medical", doctors: { "Dr. Rivera": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" }],
+      }],
+    }],
+  },
+}
 
 test("Manage agent shows the selected page at full width without its own navigation", async (t) => {
   const page = harness(t)
@@ -65,7 +63,7 @@ test("Manage agent shows the selected page at full width without its own navigat
     assert.equal(page.host.querySelector("h1")?.textContent, heading)
     assert.equal(page.host.querySelector("nav"), null)
   }
-  await waitFor(() => page.plansRequests.length === 1 && page.knowledgeRequests.length === 1)
+  await waitFor(() => page.insuranceRequests.length === 1 && page.knowledgeRequests.length === 1)
   await page.unmount()
 })
 
@@ -136,7 +134,7 @@ test("pages that show one Location use the workspace's office, or the only offic
       if (selected === "home") await act(async () => page.button(/^Knowledge base/).click())
       await waitFor(() =>
         selected === "insurance"
-          ? page.plansRequests.at(-1)?.locationId === expected && page.groups().length === 3
+          ? page.insuranceRequests.at(-1)?.locationId === expected && page.groups().length === 1
           : page.knowledgeRequests.at(-1)?.locationId === expected && /Version 2/.test(page.text()),
       )
       assert.equal(page.host.querySelector("[role='combobox'][aria-label='Location']"), null)
@@ -354,7 +352,7 @@ test("with all offices in scope and several offices, one-Location pages ask for 
     }
   }
   assert.equal(page.host.querySelector("h1")?.textContent, "Insurance list")
-  assert.deepEqual([page.knowledgeRequests, page.plansRequests], [[], []])
+  assert.deepEqual([page.knowledgeRequests, page.insuranceRequests], [[], []])
   assert.deepEqual(page.agentCallsRequests, [allOfficesGapQuery()])
   await page.unmount()
 })
@@ -400,9 +398,9 @@ test("each page keeps its title, actions, and filters inside the panel", async (
   assert.ok(page.host.querySelector("input[type='search']"))
 
   await showPage("insurance")
-  await waitFor(() => page.groups().length === 3)
-  assert.equal(page.host.querySelector("header")?.textContent, "Insurance list")
-  assert.ok(page.host.querySelector("[role='combobox'][aria-label='Visit coverage']"))
+  await waitFor(() => page.groups().length === 1)
+  assert.match(page.host.querySelector("header")?.textContent ?? "", /^Insurance listPublished .+ by operator@abita\.test$/)
+  assert.ok(page.host.querySelector("input[aria-label='Search plans']"))
 
   await showPage("home")
   await act(async () => page.button(/^Knowledge base/).click())
@@ -538,96 +536,6 @@ test("a call that never loaded shows its error, and a failed reload after a flag
   assert.match(page.sheetText(), /Synthetic caller question/)
   assert.deepEqual(page.callReads, ["call-1", "call-1", "call-1", "call-1"])
   assert.ok(page.host.querySelector("tbody [aria-label='Issue flagged']"))
-  await page.unmount()
-})
-
-test("insurance plans are grouped by result, sorted by name, summarized in one row, expand in place, and collapse by group", async (t) => {
-  const page = harness(t)
-  await page.render(insuranceList(locations[1].id))
-  await waitFor(() => page.groups().length === 3)
-  assert.deepEqual(page.plansRequests, [
-    { practiceId: "practice-1", locationId: locations[1].id, coverage: "medical" },
-  ])
-  assert.deepEqual(page.groups(), [
-    { title: "Accepted2", expanded: "true", rows: ["Example Choice PPODr. Rivera, Dr. ChenEXC01", "example SelectDr. RiveraEXS01"] },
-    { title: "Staff confirms2", expanded: "true", rows: ["Demo Advantage HMOPrior auth, PCP referral, Staff verifiesDEM03", "Pending Plan HMOPending on the sheetPEN01"] },
-    { title: "Not accepted2", expanded: "true", rows: ["Sample Medicaid MMASweetwater takes itSMP02", "Zeta Discount CardSelf-pay rates apply"] },
-  ])
-  assert.equal(page.host.querySelector("[role='combobox'][aria-label='Location']"), null)
-  assert.match(page.host.querySelector("[role='combobox'][aria-label='Visit coverage']")?.textContent ?? "", /^Medical/)
-  assert.equal(Array.from(page.host.querySelectorAll("input")).filter((input) => input.getAttribute("aria-hidden") !== "true").length, 0)
-  const row = page.button(/^Example Choice PPO/)
-  assert.equal(row.getAttribute("aria-expanded"), "false")
-  assert.equal(page.panel(row).open, false)
-  assert.match(page.panel(row).text, /Synthetic sheet note/)
-  await act(async () => row.click())
-  assert.equal(row.getAttribute("aria-expanded"), "true")
-  assert.equal(page.panel(row).open, true)
-  const details = Array.from(row.closest("li")!.querySelectorAll("dl div"), (item) => item.textContent)
-  assert.deepEqual(details, [
-    "Callers also sayExample Choice, Choice PPO",
-    "AMD carriercar10001 · EXAMPLE CHOICE HEALTH",
-    "Sheet noteSynthetic sheet note",
-    "Callers hearSynthetic caller notice",
-  ])
-  const accepted = page.button(/^Accepted/)
-  await act(async () => accepted.click())
-  assert.equal(accepted.getAttribute("aria-expanded"), "false")
-  assert.deepEqual(page.groups()[0].rows, [])
-  await page.unmount()
-})
-
-test("changing Location or coverage sends exactly one new request with the new values", async (t) => {
-  const page = harness(t)
-  const render = (locationID: string, coverage: InsuranceCoverage) =>
-    page.render(
-      <InsuranceList
-        practiceID="practice-1"
-        locationID={locationID}
-        coverage={coverage}
-        onCoverage={() => {}}
-      />,
-    )
-  await render(locations[0].id, "medical")
-  await waitFor(() => page.groups().length === 3)
-  await render(locations[1].id, "medical")
-  await waitFor(() => page.plansRequests.length === 2 && page.groups().length === 3)
-  await render(locations[1].id, "routine_vision")
-  await waitFor(() => page.plansRequests.length === 3 && page.groups().length === 3)
-  await act(async () => new Promise((resolve) => setTimeout(resolve, 30)))
-  assert.deepEqual(page.plansRequests, [
-    { practiceId: "practice-1", locationId: locations[0].id, coverage: "medical" },
-    { practiceId: "practice-1", locationId: locations[1].id, coverage: "medical" },
-    { practiceId: "practice-1", locationId: locations[1].id, coverage: "routine_vision" },
-  ])
-  await page.unmount()
-})
-
-test("a Location without the coverage, a 503 and no access each read once", async (t) => {
-  const page = harness(t)
-  page.plansFor = () => []
-  await page.render(insuranceList())
-  await waitFor(() => /No medical plans are on this office's insurance list\./.test(page.text()))
-
-  page.plansStatus = 503
-  page.plansError = { code: "UNAVAILABLE", message: "Insurance rules aren't available for this Location.", correlationId: "synthetic", retryable: false }
-  await page.render(insuranceList(locations[1].id), "second")
-  await waitFor(() => page.alert() !== "")
-  assert.equal(page.alert(), "Insurance rules aren't available for this Location.")
-
-  page.plansError = undefined
-  await page.render(insuranceList(), "third")
-  await waitFor(() => page.alert() !== "")
-  assert.equal(page.alert(), "Insurance rules aren't available right now.Try again")
-  page.plansStatus = 200
-  page.plansFor = () => plans
-  await page.click("Try again")
-  await waitFor(() => page.groups().length === 3)
-
-  page.plansStatus = 403
-  await page.render(insuranceList(locations[1].id), "fourth")
-  await waitFor(() => page.alert() !== "")
-  assert.equal(page.alert(), "You don't have access to this Location's insurance rules.")
   await page.unmount()
 })
 
@@ -844,7 +752,7 @@ test("unpublished changes survive leaving the page and the browser asks before u
   assert.equal(page.unload(), true)
 
   await page.render(insuranceList())
-  await waitFor(() => page.groups().length === 3)
+  await waitFor(() => page.groups().length === 1)
   assert.equal(page.unload(), true)
   await page.render(knowledgeBase())
   await waitFor(() => /Office hours/.test(page.text()))
@@ -891,7 +799,7 @@ test("editing an entry and publishing with a reason sends the full list, stays l
   assert.equal(page.field("Text").closest("fieldset")?.disabled, true)
 
   await page.render(insuranceList())
-  await waitFor(() => page.groups().length === 3)
+  await waitFor(() => page.groups().length === 1)
   await page.render(knowledgeBase(), "returned")
   await waitFor(() => page.maybeButton("Publishing…") !== undefined && /Office hours/.test(page.text()))
   assert.equal(page.maybeButton("Publishing…")!.closest("fieldset")?.disabled, true)
@@ -959,7 +867,7 @@ test("a publish that fails after leaving and returning says why, keeps the chang
     await waitFor(() => page.maybeButton("Publishing…") !== undefined)
 
     await page.render(insuranceList())
-    await waitFor(() => page.groups().length === 3)
+    await waitFor(() => page.groups().length === 1)
     await page.render(knowledgeBase(), "returned")
     await waitFor(() => page.maybeButton("Publishing…") !== undefined)
     release()
@@ -1172,10 +1080,6 @@ function agentCall(id: string, phone: string): AgentCallsPage["calls"][number] {
   return { id, locationId: locations[0].id, phone, startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }
 }
 
-function plan(change: Partial<InsurancePlanRule> & Pick<InsurancePlanRule, "planId" | "label" | "outcome">): InsurancePlanRule {
-  return { names: [], allowedProviders: [], requirements: [], acceptedAt: [], ...change }
-}
-
 type Envelope = { code: string; message: string; correlationId: string; retryable: boolean; entryId?: string }
 
 function harness(t: TestContext) {
@@ -1214,11 +1118,8 @@ function harness(t: TestContext) {
   const page = {
     host,
     scrolls: 0,
-    plansRequests: [] as InsurancePlansQuery[],
+    insuranceRequests: [] as InsuranceCatalogQuery[],
     knowledgeRequests: [] as LocationKnowledgeQuery[],
-    plansStatus: 200,
-    plansError: undefined as Envelope | undefined,
-    plansFor: (() => plans) as (body: InsurancePlansQuery) => InsurancePlanRule[],
     knowledgeStatus: 200,
     knowledgeError: undefined as Envelope | undefined,
     knowledge: { locationId: "", sections: [] } as LocationKnowledge,
@@ -1330,11 +1231,9 @@ function harness(t: TestContext) {
     const request = input as Request
     const url = new URL(request.url)
     assert.equal(request.headers.get("Authorization"), "Bearer synthetic-token")
-    if (url.pathname === "/v1/insurance/plans/query") {
-      const body = (await request.json()) as InsurancePlansQuery
-      page.plansRequests.push(body)
-      if (page.plansStatus !== 200) return failure(page.plansStatus, page.plansError)
-      return Response.json({ locationId: body.locationId, coverage: body.coverage, plans: page.plansFor(body) })
+    if (url.pathname === "/v1/insurance/revisions/query") {
+      page.insuranceRequests.push((await request.json()) as InsuranceCatalogQuery)
+      return Response.json(insurance)
     }
     if (url.pathname === "/v1/knowledge/query") {
       const body = (await request.json()) as LocationKnowledgeQuery
