@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/chasef07/acuity_product/compare/v2.10.0...v3.0.0) (2026-10-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* **insurance:** simplify the insurance list to catalog v2 and rework its editor ([#601](https://github.com/chasef07/acuity_product/issues/601))
+
+### Features
+
+* **insurance:** simplify the insurance list to catalog v2 and rework its editor ([#601](https://github.com/chasef07/acuity_product/issues/601)) ([6a31d58](https://github.com/chasef07/acuity_product/commit/6a31d5812cc27d29a8a905043b86d2978ff0dadc))
+
 ## [2.10.0](https://github.com/chasef07/acuity_product/compare/v2.9.0...v2.10.0) (2026-10-31)
 
 
