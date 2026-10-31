@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import type {
+  InsuranceCarrier,
   InsuranceCatalog,
   InsuranceOfficeTable,
   InsuranceRegion,
@@ -26,39 +27,40 @@ import { draftScope } from "@/lib/drafts"
 import { formatTimestamp } from "@/lib/format-time"
 import {
   carrierChoices,
-  carrierValue,
+  carrierLabel,
   changedPlans,
+  doctorAnswer,
   doctorAnswers,
+  isSelfPay,
   newPlanID,
   officeTables,
   planOffices,
   record,
   replay,
-  requirementKinds,
   same,
   touchedOffices,
+  type BeforeBooking,
   type CarrierChoice,
+  type Coverage,
   type DoctorAnswer,
   type InsuranceEdit,
+  type NewPlan,
   type PlanAt,
 } from "@/lib/insurance-catalog"
 import { insuranceDrafts, type InsuranceDraft as Draft } from "@/lib/insurance-drafts"
 import { fold } from "@/lib/knowledge-publication"
-import { doctorAnswerLabels, insuranceCoverageLabels, insuranceRequirementLabels } from "@/lib/vocabulary"
+import { doctorAnswerLabels, insuranceBeforeBookingLabels, insuranceCoverageLabels } from "@/lib/vocabulary"
 import { InsuranceHistory } from "./insurance-history"
 import { AgentPage, AgentQueryBody, DisclosureRow, type AgentLocationProps } from "./manage-agent-page"
 
 const list = new Intl.ListFormat("en", { type: "conjunction" })
-const coverageOrder = Object.keys(insuranceCoverageLabels)
+const coverageOrder = Object.keys(insuranceCoverageLabels) as Coverage[]
+const beforeBookingOrder = Object.keys(insuranceBeforeBookingLabels) as BeforeBooking[]
 
 type Names = (office: string) => string
 
 function officeNames(loaded: LocationInsuranceCatalog | undefined): Names {
   return (office) => loaded?.officeNames[office] ?? office
-}
-
-function coverageLabel(coverage: string) {
-  return insuranceCoverageLabels[coverage] ?? coverage
 }
 
 function fresh(loaded: LocationInsuranceCatalog): Draft {
@@ -183,6 +185,7 @@ export function InsuranceList({ actorSubject, ...props }: AgentLocationProps & {
 }
 
 type Row = { at: PlanAt; region: InsuranceRegion; table: InsuranceOfficeTable; plan: InsuranceRegionPlan; row: InsuranceTableRow }
+type Carriers = Map<string, InsuranceCarrier>
 
 function officeRows(catalog: InsuranceCatalog, office: string): Row[] {
   return officeTables(catalog, office).flatMap(({ region, table }) => {
@@ -198,9 +201,14 @@ function rowErrors(errors: InsuranceValidationError[], at: PlanAt) {
   return errors.filter((error) => error.region === at.region && error.planId === at.plan && (error.table === "" || error.table === at.table))
 }
 
-function matches(row: Row, carriers: Map<string, string>, words: string[]) {
-  const haystack = fold([row.plan.label, row.plan.family, ...row.plan.aliases, row.plan.carrierCode, carriers.get(row.plan.carrierId) ?? ""].join("\n"))
+function matchesWords(words: string[], values: string[]) {
+  const haystack = fold(values.join("\n"))
   return words.every((word) => haystack.includes(word))
+}
+
+function matches(row: Row, carriers: Carriers, words: string[]) {
+  const carrier = carriers.get(row.plan.carrierId)
+  return matchesWords(words, [row.plan.label, row.plan.family, ...row.plan.aliases, carrier?.code ?? "", carrier?.name ?? ""])
 }
 
 function InsuranceEditor({
@@ -220,8 +228,8 @@ function InsuranceEditor({
 }) {
   const working = draft ?? fresh(loaded)
   const catalog = useMemo(() => replay(working.base.catalog, working.edits), [working.base.catalog, working.edits])
-  const choices = useMemo(() => carrierChoices(working.base.catalog), [working.base.catalog])
-  const carriers = useMemo(() => new Map(catalog.carriers.map((carrier) => [carrier.id, carrier.name])), [catalog.carriers])
+  const choices = useMemo(() => carrierChoices(catalog), [catalog])
+  const carriers = useMemo(() => new Map(catalog.carriers.map((carrier) => [carrier.id, carrier])), [catalog.carriers])
   const [editing, setEditing] = useState("")
   const [adding, setAdding] = useState(false)
   const [seenRevision, setSeenRevision] = useState(loaded.revision.id)
@@ -242,9 +250,7 @@ function InsuranceEditor({
   const shown = rows.filter(
     (row) => JSON.stringify(row.at) === editing || rowErrors(errors, row.at).length > 0 || matches(row, carriers, words),
   )
-  const groups = [...new Set(rows.map((row) => row.plan.coverage))].sort(
-    (left, right) => rank(left) - rank(right) || left.localeCompare(right),
-  )
+  const groups = [...new Set(rows.map((row) => row.plan.coverage))].sort((left, right) => coverageOrder.indexOf(left) - coverageOrder.indexOf(right))
   const tableErrors = errors.filter(
     (error) => error.planId === "" && tables.some(({ region, table }) => error.region === region.id && error.table === table.id),
   )
@@ -264,7 +270,7 @@ function InsuranceEditor({
           .filter((row) => row.plan.coverage === coverage)
           .sort((left, right) => left.plan.label.localeCompare(right.plan.label, undefined, { sensitivity: "base" }))
         return group.length > 0 ? (
-          <DisclosureRow key={`${coverage}:${words.join(" ")}`} group title={coverageLabel(coverage)} detail={group.length}>
+          <DisclosureRow key={`${coverage}:${words.join(" ")}`} group title={insuranceCoverageLabels[coverage]} detail={group.length}>
             <ul className="mt-1 divide-y overflow-hidden rounded-lg border bg-card">
               {group.map((row) => {
                 const id = JSON.stringify(row.at)
@@ -294,6 +300,7 @@ function InsuranceEditor({
           <AddPlan
             region={tables[0].region}
             table={tables[0].table}
+            choices={choices}
             onCancel={() => setAdding(false)}
             onAdd={(edit) => {
               apply(edit)
@@ -313,13 +320,8 @@ function InsuranceEditor({
   )
 }
 
-function rank(coverage: string) {
-  const index = coverageOrder.indexOf(coverage)
-  return index < 0 ? coverageOrder.length : index
-}
-
 function rowSummary(row: Row, names: Names) {
-  const answers = row.table.doctors.map((doctor) => [doctor, row.row.doctors[doctor]] as const)
+  const answers = row.table.doctors.map((doctor) => [doctor, doctorAnswer(row.row, doctor)] as const)
   const yes = answers.filter(([, answer]) => answer === "yes").map(([doctor]) => doctor)
   const pending = answers.filter(([, answer]) => answer === "pending").length
   return [
@@ -329,6 +331,37 @@ function rowSummary(row: Row, names: Names) {
   ]
     .filter(Boolean)
     .join(" · ")
+}
+
+type Detail = { label: string; value: string }
+
+function carrierText(plan: InsuranceRegionPlan, carriers: Carriers) {
+  const carrier = carriers.get(plan.carrierId)
+  return carrier ? carrierLabel(carrier) : plan.carrierId || "No AMD carrier"
+}
+
+function planDetails(plan: InsuranceRegionPlan, carriers: Carriers): Detail[] {
+  return [
+    { label: "Company", value: plan.family },
+    { label: "Visit type", value: insuranceCoverageLabels[plan.coverage] },
+    { label: "AMD carrier", value: carrierText(plan, carriers) },
+    { label: "Callers also say", value: plan.aliases.join(", ") },
+  ]
+}
+
+function Details({ items }: { items: Detail[] }) {
+  return (
+    <dl className="grid gap-x-4 gap-y-1.5 sm:grid-cols-[9rem_1fr]">
+      {items
+        .filter((item) => item.value)
+        .map((item) => (
+          <div key={item.label} className="contents">
+            <dt className="text-muted-foreground">{item.label}</dt>
+            <dd className="whitespace-pre-line">{item.value}</dd>
+          </div>
+        ))}
+    </dl>
+  )
 }
 
 function PlanRow({
@@ -344,7 +377,7 @@ function PlanRow({
   onEdit,
 }: {
   row: Row
-  carriers: Map<string, string>
+  carriers: Carriers
   choices: CarrierChoice[]
   names: Names
   office: string
@@ -356,29 +389,16 @@ function PlanRow({
 }) {
   const { plan, row: entry, table, at } = row
   const [openAtMount] = useState(editing || problems.length > 0)
-  const carrier = [carriers.get(plan.carrierId), plan.carrierCode, plan.carrierId].filter(Boolean).join(" · ")
-  const requires = entry.requires
-    .map((item) => `${insuranceRequirementLabels[item.kind as keyof typeof insuranceRequirementLabels] ?? item.kind}${item.channel ? ` (${item.channel})` : ""}`)
-    .join(", ")
   const details = [
-    { label: "Family", value: plan.family },
-    { label: "Visit coverage", value: `${coverageLabel(plan.coverage)}${plan.selfPay ? " · Self-pay" : ""}` },
-    { label: "AMD carrier", value: carrier },
-    { label: "Callers also say", value: plan.aliases.join(", ") },
-    {
-      label: "Doctors",
-      value: table.doctors
-        .map((doctor) => `${doctor}: ${entry.doctors[doctor] ? doctorAnswerLabels[entry.doctors[doctor] as DoctorAnswer] ?? entry.doctors[doctor] : "Not set"}`)
-        .join("\n"),
-    },
-    { label: "Requires", value: requires },
+    ...planDetails(plan, carriers),
+    { label: "Doctors", value: table.doctors.map((doctor) => `${doctor}: ${doctorAnswerLabels[doctorAnswer(entry, doctor)]}`).join("\n") },
+    { label: "Before booking", value: insuranceBeforeBookingLabels[entry.beforeBooking] },
     { label: "Only at", value: list.format(entry.onlyOffices.map(names)) },
-    { label: "Callers hear", value: entry.notice },
-    { label: "Staff note", value: entry.note },
-  ].filter((item) => item.value)
+    { label: "Note for callers", value: entry.notice },
+  ]
 
   return (
-    <DisclosureRow title={plan.label || "Untitled plan"} detail={rowSummary(row, names)} aside={plan.carrierCode} defaultOpen={openAtMount}>
+    <DisclosureRow title={plan.label || "Untitled plan"} detail={rowSummary(row, names)} aside={carriers.get(plan.carrierId)?.code} defaultOpen={openAtMount}>
       <div className="flex flex-col gap-3 px-3 pb-3 pl-9 text-sm">
         {problems.map((problem) => (
           <p key={`${problem.rule}:${problem.message}`} role="alert" className="text-destructive">
@@ -386,25 +406,20 @@ function PlanRow({
           </p>
         ))}
         {editing ? (
-          <PlanFields row={row} choices={choices} names={names} office={office} onEdit={onEdit} />
+          <PlanFields row={row} carriers={carriers} choices={choices} names={names} office={office} onEdit={onEdit} />
         ) : (
-          <dl className="grid gap-x-4 gap-y-1.5 sm:grid-cols-[9rem_1fr]">
-            {details.map((item) => (
-              <div key={item.label} className="contents">
-                <dt className="text-muted-foreground">{item.label}</dt>
-                <dd className="whitespace-pre-line">{item.value}</dd>
-              </div>
-            ))}
-          </dl>
+          <Details items={details} />
         )}
         {canEdit && (
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={() => onEditing(!editing)}>
               {editing ? "Done" : "Edit"}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => onEdit({ kind: "removeRow", at })}>
-              Remove
-            </Button>
+            {!isSelfPay(plan) && (
+              <Button size="sm" variant="ghost" onClick={() => onEdit({ kind: "removeRow", at })}>
+                Remove
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -412,14 +427,22 @@ function PlanRow({
   )
 }
 
-function Field({ label, children }: { label: string; children: (id: string) => ReactNode }) {
+type Control = { id: string; "aria-describedby"?: string }
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: (control: Control) => ReactNode }) {
   const id = useId()
+  const hintID = useId()
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={id} className="text-sm font-medium">
         {label}
       </label>
-      {children(id)}
+      {children(hint ? { id, "aria-describedby": hintID } : { id })}
+      {hint && (
+        <p id={hintID} className="text-xs text-muted-foreground">
+          {hint}
+        </p>
+      )}
     </div>
   )
 }
@@ -433,14 +456,133 @@ function Check({ label, checked, onChange }: { label: string; checked: boolean; 
   )
 }
 
+function FormSection({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
+  const id = useId()
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-3">
+      <div className="flex flex-col gap-0.5">
+        <h3 id={id} className="font-medium">
+          {title}
+        </h3>
+        {note && <p className="text-muted-foreground">{note}</p>}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+const hints = {
+  label: "Abita says this name to callers.",
+  family: "The insurance company. Pick one this region already lists, or type a new one.",
+  aliases: "Other names callers use for this plan, one per line. Abita treats them as this plan.",
+  carrier: "The AdvancedMD carrier for this plan. A plan needs one before any doctor can say Yes.",
+  doctors: "Yes lets Abita book this plan with that doctor. No and Pending mean Abita won't book it with them.",
+  beforeBooking: "Anything but Nothing stops Abita from booking. Abita tells the caller what's needed instead.",
+  notice: "Abita says this to callers when this plan comes up.",
+}
+
+function splitAliases(text: string) {
+  return text.split("\n").map((alias) => alias.trim()).filter(Boolean)
+}
+
+function CompanyField({ region, value, onChange }: { region: InsuranceRegion; value: string; onChange: (family: string) => void }) {
+  const listID = useId()
+  const families = [...new Set(region.plans.map((plan) => plan.family).filter(Boolean))].sort((left, right) => left.localeCompare(right))
+  return (
+    <Field label="Company" hint={hints.family}>
+      {(control) => (
+        <>
+          <Input {...control} list={listID} autoComplete="off" value={value} maxLength={200} onChange={(event) => onChange(event.target.value)} />
+          <datalist id={listID}>
+            {families.map((family) => (
+              <option key={family} value={family} />
+            ))}
+          </datalist>
+        </>
+      )}
+    </Field>
+  )
+}
+
+function CarrierField({ choices, value, onChange }: { choices: CarrierChoice[]; value: string; onChange: (carrierId: string) => void }) {
+  const known = choices.some((choice) => choice.id === value)
+  return (
+    <Field label="AMD carrier" hint={hints.carrier}>
+      {(control) => (
+        <NativeSelect {...control} className="w-full sm:w-96" value={value} onChange={(event) => onChange(event.target.value)}>
+          {!known && (
+            <NativeSelectOption value={value} disabled>
+              {value}
+            </NativeSelectOption>
+          )}
+          {choices.map((choice) => (
+            <NativeSelectOption key={choice.id} value={choice.id}>
+              {choice.label}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      )}
+    </Field>
+  )
+}
+
+function DoctorFields({ doctors, answer, onChange }: { doctors: string[]; answer: (doctor: string) => DoctorAnswer; onChange: (doctor: string, answer: DoctorAnswer) => void }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {doctors.map((doctor) => (
+          <Field key={doctor} label={doctor}>
+            {(control) => (
+              <NativeSelect {...control} className="w-full" value={answer(doctor)} onChange={(event) => onChange(doctor, event.target.value as DoctorAnswer)}>
+                {doctorAnswers.map((item) => (
+                  <NativeSelectOption key={item} value={item}>
+                    {doctorAnswerLabels[item]}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            )}
+          </Field>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">{hints.doctors}</p>
+    </div>
+  )
+}
+
+function BeforeBookingField({ value, onChange }: { value: BeforeBooking; onChange: (beforeBooking: BeforeBooking) => void }) {
+  return (
+    <Field label="Before booking" hint={hints.beforeBooking}>
+      {(control) => (
+        <NativeSelect {...control} className="w-full sm:w-72" value={value} onChange={(event) => onChange(event.target.value as BeforeBooking)}>
+          {beforeBookingOrder.map((item) => (
+            <NativeSelectOption key={item} value={item}>
+              {insuranceBeforeBookingLabels[item]}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      )}
+    </Field>
+  )
+}
+
+function NoticeField({ value, onChange }: { value: string; onChange: (notice: string) => void }) {
+  return (
+    <Field label="Note for callers" hint={hints.notice}>
+      {(control) => <Textarea {...control} value={value} onChange={(event) => onChange(event.target.value)} />}
+    </Field>
+  )
+}
+
 function PlanFields({
   row,
+  carriers,
   choices,
   names,
   office,
   onEdit,
 }: {
   row: Row
+  carriers: Carriers
   choices: CarrierChoice[]
   names: Names
   office: string
@@ -449,111 +591,55 @@ function PlanFields({
   const { at, plan, row: entry, table, region } = row
   const [aliases, setAliases] = useState(plan.aliases.join("\n"))
   const sharedWith = planOffices(region, plan.id).filter((item) => item !== office).map(names)
-  const current = carrierValue({ code: plan.carrierCode, id: plan.carrierId })
-  const known = choices.some((choice) => choice.value === current)
+  const selfPay = isSelfPay(plan)
 
   return (
-    <div className="flex flex-col gap-4">
-      <section aria-label="Plan details" className="flex flex-col gap-3">
-        {sharedWith.length > 0 && (
-          <p className="text-muted-foreground">
-            The label, family, aliases, carrier and self-pay are shared with {list.format(sharedWith)}.
-          </p>
-        )}
-        <Field label="Label">
-          {(id) => <Input id={id} value={plan.label} maxLength={200} onChange={(event) => onEdit({ kind: "changePlan", at, change: { label: event.target.value } })} />}
-        </Field>
-        <Field label="Family">
-          {(id) => <Input id={id} value={plan.family} maxLength={200} onChange={(event) => onEdit({ kind: "changePlan", at, change: { family: event.target.value } })} />}
-        </Field>
-        <Field label="Callers also say (one per line)">
-          {(id) => (
-            <Textarea
-              id={id}
-              value={aliases}
-              onChange={(event) => {
-                setAliases(event.target.value)
-                onEdit({ kind: "changePlan", at, change: { aliases: event.target.value.split("\n").map((alias) => alias.trim()).filter(Boolean) } })
-              }}
-            />
-          )}
-        </Field>
-        <Field label="AMD carrier">
-          {(id) => (
-            <NativeSelect
-              id={id}
-              className="w-full sm:w-96"
-              value={current}
-              onChange={(event) => {
-                const choice = choices.find((item) => item.value === event.target.value)
-                if (choice) onEdit({ kind: "setCarrier", at, carrier: { code: choice.code, id: choice.id } })
-              }}
-            >
-              {!known && (
-                <NativeSelectOption value={current} disabled>
-                  {[plan.carrierCode, plan.carrierId].join(" · ")}
-                </NativeSelectOption>
-              )}
-              {choices.map((choice) => (
-                <NativeSelectOption key={choice.value} value={choice.value}>
-                  {choice.label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          )}
-        </Field>
-        <Check label="Self-pay" checked={plan.selfPay} onChange={(selfPay) => onEdit({ kind: "changePlan", at, change: { selfPay } })} />
-      </section>
-      <section aria-label="This office's table" className="flex flex-col gap-3">
-        <div className="grid gap-3 sm:grid-cols-2">
-          {table.doctors.map((doctor) => (
-            <Field key={doctor} label={doctor}>
-              {(id) => (
-                <NativeSelect
-                  id={id}
-                  className="w-full"
-                  value={entry.doctors[doctor] ?? ""}
-                  onChange={(event) =>
-                    onEdit({ kind: "setDoctor", at, doctor, answer: (event.target.value || undefined) as DoctorAnswer | undefined })
-                  }
-                >
-                  <NativeSelectOption value="">Not set</NativeSelectOption>
-                  {doctorAnswers.map((answer) => (
-                    <NativeSelectOption key={answer} value={answer}>
-                      {doctorAnswerLabels[answer]}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
+    <div className="flex flex-col gap-5">
+      <FormSection title="This plan" note={sharedWith.length > 0 ? `Shared with ${list.format(sharedWith)}, so changes here apply there too.` : undefined}>
+        {selfPay ? (
+          <>
+            <p className="text-muted-foreground">
+              Abita offers self-pay to callers whose insurance isn&apos;t taken here, so this plan&apos;s details can&apos;t be changed.
+            </p>
+            <Details items={[{ label: "Plan name", value: plan.label }, ...planDetails(plan, carriers)]} />
+          </>
+        ) : (
+          <>
+            <Field label="Plan name" hint={hints.label}>
+              {(control) => (
+                <Input {...control} value={plan.label} maxLength={200} onChange={(event) => onEdit({ kind: "changePlan", at, change: { label: event.target.value } })} />
               )}
             </Field>
-          ))}
-        </div>
-        {requirementKinds.map((kind) => {
-          const requirement = entry.requires.find((item) => item.kind === kind)
-          const label = insuranceRequirementLabels[kind]
-          return (
-            <div key={kind} className="flex flex-wrap items-center gap-3">
-              <Check
-                label={label}
-                checked={Boolean(requirement)}
-                onChange={(checked) => onEdit({ kind: "setRequirement", at, requirement: kind, channel: checked ? "" : undefined })}
-              />
-              {requirement && (
-                <Input
-                  aria-label={`${label} channel`}
-                  placeholder="Channel (optional)"
-                  className="w-48"
-                  value={requirement.channel}
-                  maxLength={100}
-                  onChange={(event) => onEdit({ kind: "setRequirement", at, requirement: kind, channel: event.target.value })}
+            <CompanyField region={region} value={plan.family} onChange={(family) => onEdit({ kind: "changePlan", at, change: { family } })} />
+            <Field label="Callers also say" hint={hints.aliases}>
+              {(control) => (
+                <Textarea
+                  {...control}
+                  value={aliases}
+                  onChange={(event) => {
+                    setAliases(event.target.value)
+                    onEdit({ kind: "changePlan", at, change: { aliases: splitAliases(event.target.value) } })
+                  }}
                 />
               )}
-            </div>
-          )
-        })}
-        {table.offices.length > 1 && (
+            </Field>
+            <CarrierField choices={choices} value={plan.carrierId} onChange={(carrierId) => onEdit({ kind: "setCarrier", at, carrierId })} />
+            <Details items={[{ label: "Visit type", value: insuranceCoverageLabels[plan.coverage] }]} />
+          </>
+        )}
+      </FormSection>
+      <FormSection title={`At ${list.format(table.offices.map(names))}`}>
+        <DoctorFields
+          doctors={table.doctors}
+          answer={(doctor) => doctorAnswer(entry, doctor)}
+          onChange={(doctor, answer) => onEdit({ kind: "setDoctor", at, doctor, answer })}
+        />
+        {!selfPay && (
+          <BeforeBookingField value={entry.beforeBooking} onChange={(beforeBooking) => onEdit({ kind: "setBeforeBooking", at, beforeBooking })} />
+        )}
+        {!selfPay && table.offices.length > 1 && (
           <fieldset className="flex flex-col gap-2">
-            <legend className="mb-1 text-sm font-medium">Only at these offices (none checked means every office on this table)</legend>
+            <legend className="mb-1 text-sm font-medium">Only at these offices (none checked means every office above)</legend>
             {table.offices.map((item) => (
               <Check
                 key={item}
@@ -570,84 +656,165 @@ function PlanFields({
             ))}
           </fieldset>
         )}
-        <Field label="Callers hear">
-          {(id) => <Textarea id={id} value={entry.notice} onChange={(event) => onEdit({ kind: "changeRow", at, change: { notice: event.target.value } })} />}
-        </Field>
-        <Field label="Staff note">
-          {(id) => <Textarea id={id} value={entry.note} onChange={(event) => onEdit({ kind: "changeRow", at, change: { note: event.target.value } })} />}
-        </Field>
-      </section>
+        <NoticeField value={entry.notice} onChange={(notice) => onEdit({ kind: "changeRow", at, change: { notice } })} />
+      </FormSection>
     </div>
   )
 }
 
+type AddEdit = Extract<InsuranceEdit, { kind: "addRow" | "createPlan" }>
+const shownMatches = 8
+
 function AddPlan({
   region,
   table,
+  choices,
   onAdd,
   onCancel,
 }: {
   region: InsuranceRegion
   table: InsuranceOfficeTable
-  onAdd: (edit: Extract<InsuranceEdit, { kind: "addRow" | "createPlan" }>) => void
+  choices: CarrierChoice[]
+  onAdd: (edit: AddEdit) => void
   onCancel: () => void
 }) {
+  const [search, setSearch] = useState("")
+  const [creating, setCreating] = useState(false)
+  const words = fold(search).split(/\s+/).filter(Boolean)
   const listed = new Set(table.rows.map((row) => row.planId))
-  const available = region.plans
-    .filter((plan) => !listed.has(plan.id))
+  const found = region.plans
+    .filter((plan) => !listed.has(plan.id) && words.length > 0 && matchesWords(words, [plan.label, plan.family, ...plan.aliases]))
     .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }))
-  const [choice, setChoice] = useState("")
-  const [label, setLabel] = useState("")
-  const [family, setFamily] = useState("")
-  const [coverage, setCoverage] = useState(coverageOrder[0])
-  const creating = choice === ""
 
-  function add() {
-    if (!creating) {
-      onAdd({ kind: "addRow", at: { region: region.id, table: table.id, plan: choice } })
-      return
-    }
-    const plan = newPlanID(region, label)
-    onAdd({ kind: "createPlan", at: { region: region.id, table: table.id, plan }, label: label.trim(), family: family.trim(), coverage })
+  if (creating) {
+    return <NewPlanForm region={region} table={table} choices={choices} label={search.trim()} onAdd={onAdd} onCancel={onCancel} />
   }
 
   return (
     <section aria-label="Add plan" className="flex flex-col gap-3 rounded-lg border bg-card p-3 text-sm">
-      <Field label="Plan">
-        {(id) => (
-          <NativeSelect id={id} className="w-full sm:w-96" value={choice} onChange={(event) => setChoice(event.target.value)}>
-            <NativeSelectOption value="">A new plan</NativeSelectOption>
-            {available.map((plan) => (
-              <NativeSelectOption key={plan.id} value={plan.id}>
-                {plan.label} ({coverageLabel(plan.coverage)})
+      <Field label="Find a plan" hint="Search the plans other offices in this region already list, by name, company, or what callers call it.">
+        {(control) => <Input {...control} type="search" autoComplete="off" value={search} onChange={(event) => setSearch(event.target.value)} />}
+      </Field>
+      {words.length > 0 &&
+        (found.length > 0 ? (
+          <ul aria-label="Matching plans" className="divide-y rounded-lg border">
+            {found.slice(0, shownMatches).map((plan) => (
+              <li key={plan.id}>
+                <button
+                  type="button"
+                  className="flex w-full flex-wrap items-baseline gap-x-2 px-3 py-2 text-left hover:bg-muted/50"
+                  onClick={() => onAdd({ kind: "addRow", at: { region: region.id, table: table.id, plan: plan.id } })}
+                >
+                  <span className="font-medium">{plan.label}</span>
+                  <span className="text-muted-foreground">
+                    {plan.family} · {insuranceCoverageLabels[plan.coverage]}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-muted-foreground">No plan in this region matches. Create a new plan instead.</p>
+        ))}
+      {found.length > shownMatches && <p className="text-muted-foreground">{found.length - shownMatches} more match. Keep typing to narrow the list.</p>}
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+          Create new plan
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </section>
+  )
+}
+
+type NewPlanDraft = Omit<NewPlan, "coverage" | "aliases"> & { coverage: Coverage | ""; aliases: string }
+
+function missingForNewPlan(plan: NewPlanDraft) {
+  return [
+    plan.label.trim() ? "" : "enter the plan name",
+    plan.family.trim() ? "" : "enter the company",
+    plan.coverage ? "" : "choose the visit type",
+    plan.carrierId || !Object.values(plan.doctors).includes("yes") ? "" : "choose the AMD carrier, because a doctor takes this plan",
+  ].filter(Boolean)
+}
+
+function NewPlanForm({
+  region,
+  table,
+  choices,
+  label,
+  onAdd,
+  onCancel,
+}: {
+  region: InsuranceRegion
+  table: InsuranceOfficeTable
+  choices: CarrierChoice[]
+  label: string
+  onAdd: (edit: AddEdit) => void
+  onCancel: () => void
+}) {
+  const missingID = useId()
+  const [plan, setPlan] = useState<NewPlanDraft>(() => ({
+    label,
+    family: "",
+    coverage: "",
+    carrierId: "",
+    aliases: "",
+    doctors: Object.fromEntries(table.doctors.map((doctor) => [doctor, "no"])),
+    beforeBooking: "none",
+    notice: "",
+  }))
+  const missing = missingForNewPlan(plan)
+  const change = (fields: Partial<NewPlanDraft>) => setPlan((current) => ({ ...current, ...fields }))
+
+  function add() {
+    if (missing.length > 0 || !plan.coverage) return
+    onAdd({
+      kind: "createPlan",
+      at: { region: region.id, table: table.id, plan: newPlanID(region, plan.label) },
+      plan: { ...plan, label: plan.label.trim(), family: plan.family.trim(), coverage: plan.coverage, aliases: splitAliases(plan.aliases), notice: plan.notice.trim() },
+    })
+  }
+
+  return (
+    <section aria-label="Create new plan" className="flex flex-col gap-4 rounded-lg border bg-card p-3 text-sm">
+      <h3 className="font-medium">Create new plan</h3>
+      <Field label="Plan name" hint={hints.label}>
+        {(control) => <Input {...control} value={plan.label} maxLength={200} onChange={(event) => change({ label: event.target.value })} />}
+      </Field>
+      <CompanyField region={region} value={plan.family} onChange={(family) => change({ family })} />
+      <Field label="Visit type">
+        {(control) => (
+          <NativeSelect {...control} className="w-full sm:w-60" value={plan.coverage} onChange={(event) => change({ coverage: event.target.value as Coverage | "" })}>
+            <NativeSelectOption value="">Choose a visit type</NativeSelectOption>
+            {coverageOrder.map((item) => (
+              <NativeSelectOption key={item} value={item}>
+                {insuranceCoverageLabels[item]}
               </NativeSelectOption>
             ))}
           </NativeSelect>
         )}
       </Field>
-      {creating && (
-        <>
-          <Field label="New plan label">
-            {(id) => <Input id={id} value={label} maxLength={200} onChange={(event) => setLabel(event.target.value)} />}
-          </Field>
-          <Field label="New plan family">
-            {(id) => <Input id={id} value={family} maxLength={200} onChange={(event) => setFamily(event.target.value)} />}
-          </Field>
-          <Field label="Visit coverage">
-            {(id) => (
-              <NativeSelect id={id} className="w-full sm:w-60" value={coverage} onChange={(event) => setCoverage(event.target.value)}>
-                {coverageOrder.map((item) => (
-                  <NativeSelectOption key={item} value={item}>
-                    {coverageLabel(item)}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            )}
-          </Field>
-        </>
+      <CarrierField choices={choices} value={plan.carrierId} onChange={(carrierId) => change({ carrierId })} />
+      <Field label="Callers also say" hint={hints.aliases}>
+        {(control) => <Textarea {...control} value={plan.aliases} onChange={(event) => change({ aliases: event.target.value })} />}
+      </Field>
+      <DoctorFields
+        doctors={table.doctors}
+        answer={(doctor) => doctorAnswer(plan, doctor)}
+        onChange={(doctor, answer) => change({ doctors: { ...plan.doctors, [doctor]: answer } })}
+      />
+      <BeforeBookingField value={plan.beforeBooking} onChange={(beforeBooking) => change({ beforeBooking })} />
+      <NoticeField value={plan.notice} onChange={(notice) => change({ notice })} />
+      {missing.length > 0 && (
+        <p id={missingID} className="text-muted-foreground">
+          To add this plan, {list.format(missing)}.
+        </p>
       )}
       <div className="flex gap-2">
-        <Button size="sm" disabled={creating && !label.trim()} onClick={add}>
+        <Button size="sm" disabled={missing.length > 0} aria-describedby={missing.length > 0 ? missingID : undefined} onClick={add}>
           Add
         </Button>
         <Button size="sm" variant="ghost" onClick={onCancel}>

@@ -16,7 +16,7 @@ import type {
   StaffTaskUrgency,
   Task,
 } from "./api/generated/types.gen.ts"
-import type { Change, DoctorAnswer, PlanField, RequirementKind, RowField, TableField } from "./insurance-catalog.ts"
+import type { BeforeBooking, Change, Coverage, DoctorAnswer, PlanField, RowField, TableField } from "./insurance-catalog.ts"
 
 export function labelOptions<Value extends string>(labels: Record<Value, string>) {
   return (Object.keys(labels) as Value[]).map((value) => ({ value, label: labels[value] }))
@@ -104,16 +104,17 @@ export const appointmentActionLabels = {
   CANCELLED: "Cancelled",
 } satisfies Record<AiAppointmentAction, string>
 
-export const insuranceCoverageLabels: Record<string, string> = {
+export const insuranceCoverageLabels = {
   medical: "Medical",
   routine_vision: "Routine vision",
-}
+} satisfies Record<Coverage, string>
 
-export const insuranceRequirementLabels = {
-  prior_authorization: "Prior auth",
+export const insuranceBeforeBookingLabels = {
+  none: "Nothing",
   pcp_referral: "PCP referral",
-  staff_verify: "Staff verifies",
-} satisfies Record<RequirementKind, string>
+  prior_authorization: "Prior auth",
+  staff_verify: "Staff checks coverage",
+} satisfies Record<BeforeBooking, string>
 
 export const doctorAnswerLabels = {
   yes: "Yes",
@@ -134,18 +135,15 @@ export const insuranceChangeLabels = {
 } satisfies Record<Change, string>
 
 export const insuranceFieldLabels = {
-  label: "label",
-  family: "family",
-  coverage: "visit coverage",
-  carrierCode: "AMD carrier",
+  label: "plan name",
+  family: "company",
+  coverage: "visit type",
   carrierId: "AMD carrier",
-  selfPay: "self-pay",
   aliases: "what callers also say",
   doctors: "doctors",
-  requires: "requirements",
-  onlyOffices: "office limits",
-  notice: "what callers hear",
-  note: "staff note",
+  beforeBooking: "before booking",
+  onlyOffices: "only at",
+  notice: "note for callers",
   offices: "offices",
 } satisfies Record<PlanField | RowField | TableField, string>
 

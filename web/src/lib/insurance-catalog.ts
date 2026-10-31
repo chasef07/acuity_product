@@ -10,22 +10,35 @@ import { fold } from "./knowledge-publication.ts"
 export const doctorAnswers = ["yes", "no", "pending"] as const
 export type DoctorAnswer = (typeof doctorAnswers)[number]
 
-export const requirementKinds = ["prior_authorization", "pcp_referral", "staff_verify"] as const
-export type RequirementKind = (typeof requirementKinds)[number]
+export function doctorAnswer(row: Pick<InsuranceTableRow, "doctors">, doctor: string): DoctorAnswer {
+  return doctorAnswers.find((answer) => answer === row.doctors[doctor]) ?? "no"
+}
+
+export type Coverage = InsuranceRegionPlan["coverage"]
+export type BeforeBooking = InsuranceTableRow["beforeBooking"]
+
+const selfPayPlanIDs = {
+  medical: "self-pay-medical",
+  routine_vision: "self-pay-routine-vision",
+} as const satisfies Record<Coverage, string>
+
+export function isSelfPay(plan: InsuranceRegionPlan) {
+  return selfPayPlanIDs[plan.coverage] === plan.id
+}
 
 export type PlanAt = { region: string; table: string; plan: string }
-type PlanChange = Partial<Pick<InsuranceRegionPlan, "label" | "family" | "aliases" | "selfPay">>
-type RowChange = Partial<Pick<InsuranceTableRow, "onlyOffices" | "notice" | "note">>
-export type Carrier = { code: string; id: string }
+type PlanChange = Partial<Pick<InsuranceRegionPlan, "label" | "family" | "aliases">>
+type RowChange = Partial<Pick<InsuranceTableRow, "onlyOffices" | "notice">>
+export type NewPlan = Omit<InsuranceRegionPlan, "id"> & Pick<InsuranceTableRow, "doctors" | "beforeBooking" | "notice">
 
 export type InsuranceEdit =
   | { kind: "addRow"; at: PlanAt }
-  | { kind: "createPlan"; at: PlanAt; label: string; family: string; coverage: string }
+  | { kind: "createPlan"; at: PlanAt; plan: NewPlan }
   | { kind: "removeRow"; at: PlanAt }
   | { kind: "changePlan"; at: PlanAt; change: PlanChange }
-  | { kind: "setCarrier"; at: PlanAt; carrier: Carrier }
-  | { kind: "setDoctor"; at: PlanAt; doctor: string; answer: DoctorAnswer | undefined }
-  | { kind: "setRequirement"; at: PlanAt; requirement: RequirementKind; channel: string | undefined }
+  | { kind: "setCarrier"; at: PlanAt; carrierId: string }
+  | { kind: "setDoctor"; at: PlanAt; doctor: string; answer: DoctorAnswer }
+  | { kind: "setBeforeBooking"; at: PlanAt; beforeBooking: BeforeBooking }
   | { kind: "changeRow"; at: PlanAt; change: RowChange }
 
 function revise(catalog: InsuranceCatalog, edit: InsuranceEdit): InsuranceCatalog {
@@ -54,20 +67,14 @@ function reviseRegion(region: InsuranceRegion, edit: InsuranceEdit): InsuranceRe
   switch (edit.kind) {
     case "createPlan": {
       if (region.plans.some((plan) => plan.id === at.plan)) return region
-      const plan: InsuranceRegionPlan = {
-        id: at.plan,
-        label: edit.label,
-        family: edit.family,
-        coverage: edit.coverage,
-        carrierCode: "",
-        carrierId: "",
-        selfPay: false,
-        aliases: [],
-      }
-      return withTable({ ...region, plans: [...region.plans, plan] }, at, (table) => addRow(table, at.plan))
+      const { doctors, beforeBooking, notice, ...fields } = edit.plan
+      const plan: InsuranceRegionPlan = { id: at.plan, ...fields }
+      return withTable({ ...region, plans: [...region.plans, plan] }, at, (table) =>
+        addRow(table, { ...emptyRow(at.plan), doctors, beforeBooking, notice }),
+      )
     }
     case "addRow":
-      return region.plans.some((plan) => plan.id === at.plan) ? withTable(region, at, (table) => addRow(table, at.plan)) : region
+      return region.plans.some((plan) => plan.id === at.plan) ? withTable(region, at, (table) => addRow(table, emptyRow(at.plan))) : region
     case "removeRow": {
       const removed = withTable(region, at, (table) => ({ ...table, rows: table.rows.filter((row) => row.planId !== at.plan) }))
       const listed = removed.tables.some((table) => table.rows.some((row) => row.planId === at.plan))
@@ -76,32 +83,23 @@ function reviseRegion(region: InsuranceRegion, edit: InsuranceEdit): InsuranceRe
     case "changePlan":
       return withPlan(region, at.plan, (plan) => ({ ...plan, ...edit.change }))
     case "setCarrier":
-      return withPlan(region, at.plan, (plan) => ({ ...plan, carrierCode: edit.carrier.code, carrierId: edit.carrier.id }))
+      return withPlan(region, at.plan, (plan) => ({ ...plan, carrierId: edit.carrierId }))
     case "setDoctor":
-      return withRow(region, at, (row) => {
-        const doctors = { ...row.doctors }
-        if (edit.answer) doctors[edit.doctor] = edit.answer
-        else delete doctors[edit.doctor]
-        return { ...row, doctors }
-      })
-    case "setRequirement":
-      return withRow(region, at, (row) => {
-        const index = row.requires.findIndex((requirement) => requirement.kind === edit.requirement)
-        if (edit.channel === undefined) return { ...row, requires: row.requires.filter((_, position) => position !== index) }
-        const requirement = { kind: edit.requirement, channel: edit.channel }
-        return {
-          ...row,
-          requires: index < 0 ? [...row.requires, requirement] : row.requires.map((item, position) => (position === index ? requirement : item)),
-        }
-      })
+      return withRow(region, at, (row) => ({ ...row, doctors: { ...row.doctors, [edit.doctor]: edit.answer } }))
+    case "setBeforeBooking":
+      return withRow(region, at, (row) => ({ ...row, beforeBooking: edit.beforeBooking }))
     case "changeRow":
       return withRow(region, at, (row) => ({ ...row, ...edit.change }))
   }
 }
 
-function addRow(table: InsuranceOfficeTable, planId: string): InsuranceOfficeTable {
-  if (table.rows.some((row) => row.planId === planId)) return table
-  return { ...table, rows: [...table.rows, { planId, doctors: {}, requires: [], onlyOffices: [], notice: "", note: "" }] }
+function emptyRow(planId: string): InsuranceTableRow {
+  return { planId, doctors: {}, beforeBooking: "none", onlyOffices: [], notice: "" }
+}
+
+function addRow(table: InsuranceOfficeTable, row: InsuranceTableRow): InsuranceOfficeTable {
+  if (table.rows.some((item) => item.planId === row.planId)) return table
+  return { ...table, rows: [...table.rows, row] }
 }
 
 function withTable(region: InsuranceRegion, at: PlanAt, change: (table: InsuranceOfficeTable) => InsuranceOfficeTable) {
@@ -254,31 +252,22 @@ function compare<T extends object>(before: T[], after: T[], key: (item: T) => st
   })
 }
 
-export type CarrierChoice = Carrier & { value: string; label: string }
+export type CarrierChoice = { id: string; label: string }
 
-export function carrierChoices(catalog: InsuranceCatalog): CarrierChoice[] {
-  const names = new Map(catalog.carriers.map((carrier) => [carrier.id, carrier.name]))
-  const choices = new Map<string, CarrierChoice>()
-  for (const plan of catalog.regions.flatMap((region) => region.plans)) {
-    const value = carrierValue({ code: plan.carrierCode, id: plan.carrierId })
-    if (choices.has(value)) continue
-    const label = plan.carrierCode || plan.carrierId
-      ? [names.get(plan.carrierId), plan.carrierCode, plan.carrierId].filter(Boolean).join(" · ")
-      : "No AMD carrier"
-    choices.set(value, { code: plan.carrierCode, id: plan.carrierId, value, label })
-  }
-  return [...choices.values()].sort(
-    (left, right) => Number(left.value !== "|") - Number(right.value !== "|") || left.label.localeCompare(right.label),
-  )
+export function carrierLabel(carrier: InsuranceCatalog["carriers"][number]) {
+  return carrier.code ? `${carrier.name} (${carrier.code})` : carrier.name
 }
 
-export function carrierValue(carrier: Carrier) {
-  return `${carrier.code}|${carrier.id}`
+export function carrierChoices(catalog: InsuranceCatalog): CarrierChoice[] {
+  const carriers = catalog.carriers
+    .map((carrier) => ({ id: carrier.id, label: carrierLabel(carrier) }))
+    .sort((left, right) => left.label.localeCompare(right.label))
+  return [{ id: "", label: "No AMD carrier" }, ...carriers]
 }
 
 export function newPlanID(region: InsuranceRegion, label: string) {
   const slug = fold(label).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 90) || "plan"
-  const used = new Set(region.plans.map((plan) => plan.id))
+  const used = new Set([...region.plans.map((plan) => plan.id), ...Object.values(selfPayPlanIDs)])
   let candidate = slug
   for (let suffix = 2; used.has(candidate); suffix++) candidate = `${slug}-${suffix}`
   return candidate

@@ -40,15 +40,15 @@ const insurance: LocationInsuranceCatalog = {
   officeNames: { hollywood: "Hollywood", sweetwater: "Sweetwater" },
   canEdit: true,
   catalog: {
-    carriers: [{ id: "car10001", name: "EXAMPLE CHOICE HEALTH" }],
+    carriers: [{ id: "car10001", code: "EXC01", name: "EXAMPLE CHOICE HEALTH" }],
     regions: [{
       id: "south_florida",
-      plans: [{ id: "example-choice-medical", label: "Example Choice PPO", family: "Example", coverage: "medical", carrierCode: "EXC01", carrierId: "car10001", selfPay: false, aliases: [] }],
+      plans: [{ id: "example-choice-medical", label: "Example Choice PPO", family: "Example", coverage: "medical", carrierId: "car10001", aliases: [] }],
       tables: [{
         id: "doctors",
         offices: ["hollywood", "sweetwater"],
         doctors: ["Dr. Rivera"],
-        rows: [{ planId: "example-choice-medical", doctors: { "Dr. Rivera": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" }],
+        rows: [{ planId: "example-choice-medical", doctors: { "Dr. Rivera": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "" }],
       }],
     }],
   },

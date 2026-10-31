@@ -19,6 +19,7 @@ type Catalog struct {
 
 type Carrier struct {
 	ID   string `json:"id"`
+	Code string `json:"code"`
 	Name string `json:"name"`
 }
 
@@ -29,14 +30,12 @@ type Region struct {
 }
 
 type RegionPlan struct {
-	ID          string   `json:"id"`
-	Label       string   `json:"label"`
-	Family      string   `json:"family"`
-	Coverage    string   `json:"coverage"`
-	CarrierCode string   `json:"carrierCode"`
-	CarrierID   string   `json:"carrierId"`
-	SelfPay     bool     `json:"selfPay"`
-	Aliases     []string `json:"aliases"`
+	ID        string   `json:"id"`
+	Label     string   `json:"label"`
+	Family    string   `json:"family"`
+	Coverage  string   `json:"coverage"`
+	CarrierID string   `json:"carrierId"`
+	Aliases   []string `json:"aliases"`
 }
 
 type OfficeTable struct {
@@ -47,17 +46,11 @@ type OfficeTable struct {
 }
 
 type TableRow struct {
-	PlanID      string            `json:"planId"`
-	Doctors     map[string]string `json:"doctors"`
-	Requires    []Requirement     `json:"requires"`
-	OnlyOffices []string          `json:"onlyOffices"`
-	Notice      string            `json:"notice"`
-	Note        string            `json:"note"`
-}
-
-type Requirement struct {
-	Kind    string `json:"kind"`
-	Channel string `json:"channel"`
+	PlanID        string            `json:"planId"`
+	Doctors       map[string]string `json:"doctors"`
+	BeforeBooking string            `json:"beforeBooking"`
+	OnlyOffices   []string          `json:"onlyOffices"`
+	Notice        string            `json:"notice"`
 }
 
 func ParseCatalog(body []byte) (Catalog, error) {

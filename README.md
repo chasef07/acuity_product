@@ -287,10 +287,13 @@ own credential for `POST /v1/agent/insurance/read` is
 they are set, that read answers 401.
 
 Seed a Practice's first insurance revision from an `InsuranceCatalog` JSON
-file with the operator command. The file is the middleware's frozen export,
-`internal/insurance/testdata/catalog.json` in amd_middleware, which this repo
-keeps byte for byte as `backend/internal/insurance/testdata/export.json`. The
-command parses the file strictly and has the middleware validate it. Without
+file with the operator command. The file is the middleware's frozen v1
+export, `internal/insurance/testdata/catalog.json` in amd_middleware (kept as
+`backend/internal/migrations/testdata/insurance-catalog-v1.json`), converted to
+the v2 shape by migration `0116` as
+`backend/internal/insurance/testdata/export.json`. Regenerate it with
+`go test ./backend/internal/migrations -run TestInsuranceCatalogV2 -update-insurance-export`.
+The command parses the file strictly and has the middleware validate it. Without
 `--apply` it stops there. `--apply` also needs `INSURANCE_IMPORT_DATABASE_URL`
 and `INSURANCE_OPERATOR_EMAIL` (an existing bound Platform Operator, recorded
 as the author) and publishes it with provenance `import`. Rerunning with the
