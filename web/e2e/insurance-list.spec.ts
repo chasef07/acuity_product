@@ -14,15 +14,19 @@ const imported: InsuranceRevision = {
 function catalog(): InsuranceCatalog {
   return {
     carriers: [
-      { id: "car10001", name: "EXAMPLE CHOICE HEALTH" },
-      { id: "car10003", name: "ZETA VISION" },
+      { id: "car10001", code: "EXC01", name: "EXAMPLE CHOICE HEALTH" },
+      { id: "car10002", code: "EXS01", name: "EXAMPLE SELECT HEALTH" },
+      { id: "car10003", code: "ZET01", name: "ZETA VISION" },
+      { id: "car10004", code: "SELF", name: "SELF-PAY" },
     ],
     regions: [
       {
         id: "spring_hill_crystal_river",
         plans: [
-          { id: "example-choice-medical", label: "Example Choice PPO", family: "Example", coverage: "medical", carrierCode: "EXC01", carrierId: "car10001", selfPay: false, aliases: ["Example Choice"] },
-          { id: "zeta-vision", label: "Zeta Vision Plan", family: "Zeta", coverage: "routine_vision", carrierCode: "ZET01", carrierId: "car10003", selfPay: false, aliases: [] },
+          { id: "example-choice-medical", label: "Example Choice PPO", family: "Example", coverage: "medical", carrierId: "car10001", aliases: ["Example Choice"] },
+          { id: "zeta-vision", label: "Zeta Vision Plan", family: "Zeta", coverage: "routine_vision", carrierId: "car10003", aliases: [] },
+          { id: "self-pay-medical", label: "Self-pay", family: "Self-pay", coverage: "medical", carrierId: "car10004", aliases: ["Cash"] },
+          { id: "example-select-hmo", label: "Example Select HMO", family: "Example", coverage: "medical", carrierId: "car10002", aliases: ["Select HMO"] },
         ],
         tables: [
           {
@@ -30,15 +34,19 @@ function catalog(): InsuranceCatalog {
             offices: ["spring_hill"],
             doctors: ["Dr. Rivera", "Dr. Chen"],
             rows: [
-              { planId: "example-choice-medical", doctors: { "Dr. Chen": "yes", "Dr. Rivera": "yes" }, requires: [{ kind: "prior_authorization", channel: "availity" }], onlyOffices: [], notice: "", note: "Synthetic sheet note" },
-              { planId: "zeta-vision", doctors: { "Dr. Rivera": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" },
+              { planId: "example-choice-medical", doctors: { "Dr. Chen": "yes", "Dr. Rivera": "yes" }, beforeBooking: "prior_authorization", onlyOffices: [], notice: "" },
+              { planId: "zeta-vision", doctors: { "Dr. Rivera": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "" },
+              { planId: "self-pay-medical", doctors: { "Dr. Chen": "yes", "Dr. Rivera": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "" },
             ],
           },
           {
             id: "crystal_river",
             offices: ["crystal_river"],
             doctors: ["Dr. Licht"],
-            rows: [{ planId: "example-choice-medical", doctors: { "Dr. Licht": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" }],
+            rows: [
+              { planId: "example-choice-medical", doctors: { "Dr. Licht": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "" },
+              { planId: "example-select-hmo", doctors: { "Dr. Licht": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "" },
+            ],
           },
         ],
       },
@@ -85,7 +93,7 @@ async function serveInsurance(page: Page, canEdit: boolean) {
     }
     if (answer === "conflict") {
       const theirs = catalog()
-      theirs.regions[0].tables[0].rows[1].note = "Someone else's synthetic note"
+      theirs.regions[0].tables[0].rows[1].notice = "Someone else's synthetic notice"
       state.active = { revision: { ...imported, id: randomUUID(), createdAt: "2026-10-30T17:00:00Z", createdBy: "other@abita.test", provenance: "portal" }, catalog: theirs }
       return route.fulfill({
         status: 409,
@@ -113,7 +121,7 @@ test("staff without access to every office on the table see the insurance list r
   await openAgentPage(page, "Insurance list")
   const plan = page.getByRole("listitem").filter({ hasText: "Example Choice PPO" })
   await plan.getByRole("button", { name: /^Example Choice PPO/ }).click()
-  await expect(plan.getByText("EXAMPLE CHOICE HEALTH · EXC01 · car10001")).toBeVisible()
+  await expect(plan.getByText("EXAMPLE CHOICE HEALTH (EXC01)")).toBeVisible()
   await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Add plan", exact: true })).toHaveCount(0)
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("insurance-read-only.png") })
@@ -134,7 +142,7 @@ test("staff change a doctor and a shared plan field, fix a rejected publish, sur
   await expect(page.getByText("1 unpublished change")).toBeVisible()
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("insurance-editor-change.png") })
 
-  await plan.getByLabel("Family", { exact: true }).fill("")
+  await plan.getByLabel("Company", { exact: true }).fill("")
   await expect(page.getByRole("status").filter({ hasText: "Also changes Crystal River." })).toBeVisible()
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("insurance-shared-row-notice.png") })
 
@@ -147,7 +155,7 @@ test("staff change a doctor and a shared plan field, fix a rejected publish, sur
   await expect(page.getByText("Not published. Fix the problems shown beside each plan, then publish again.")).toBeVisible()
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("insurance-rejected.png") })
 
-  await plan.getByLabel("Family", { exact: true }).fill("Example Health")
+  await plan.getByLabel("Company", { exact: true }).fill("Example Health")
   await publish.click()
   await expect(page.getByText("Someone else changed the insurance list.")).toBeVisible()
   await expect(plan.getByLabel("Dr. Chen", { exact: true })).toHaveValue("no")
@@ -158,7 +166,7 @@ test("staff change a doctor and a shared plan field, fix a rejected publish, sur
   await expect(publish).toHaveCount(0)
   await expect(page.locator('time[datetime="2026-10-30T19:30:00Z"]')).toBeVisible()
   await expect(page.getByText("by selected@abita.test")).toBeVisible()
-  await expect(plan.getByText("Dr. Chen: No")).toBeVisible()
+  await expect(plan.getByText(/Dr\. Chen: No/)).toBeVisible()
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("insurance-published.png") })
 
   expect(state.publications).toHaveLength(3)
@@ -166,7 +174,7 @@ test("staff change a doctor and a shared plan field, fix a rejected publish, sur
   expect(published.expectedRevisionId).not.toEqual(conflicted.expectedRevisionId)
   expect(published.catalog.regions[0].plans[0].family).toBe("Example Health")
   expect(published.catalog.regions[0].tables[0].rows[0].doctors).toEqual({ "Dr. Chen": "no", "Dr. Rivera": "yes" })
-  expect(published.catalog.regions[0].tables[0].rows[1].note).toBe("Someone else's synthetic note")
+  expect(published.catalog.regions[0].tables[0].rows[1].notice).toBe("Someone else's synthetic notice")
   expect(errors).toEqual([])
 })
 
@@ -223,5 +231,82 @@ test("staff publish a change, open History, have a restore rejected, then restor
   expect(restore.reason).toBe(`Restore ${imported.id.slice(0, 8)}`)
   expect(restore.catalog).toEqual(catalog())
   expect(restore.expectedRevisionId).toBe(state.revisions[1].revision.id)
+  expect(errors).toEqual([])
+})
+
+test("staff read and edit a plan in two sections, keep self-pay fixed, add a region plan from search, and create a new plan once its form is complete", async ({ page }, testInfo) => {
+  const state = await serveInsurance(page, true)
+  const errors: string[] = []
+  page.on("pageerror", (error) => errors.push(error.message))
+  await page.setViewportSize({ width: 1280, height: 1600 })
+  await signInAs(page, "selected@abita.test", "Synthetic Staff")
+  await openAgentPage(page, "Insurance list")
+  await expect(page.getByRole("group", { name: "Medical" })).toBeVisible()
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("v2-grouped-list.png") })
+
+  const plan = page.getByRole("listitem").filter({ hasText: "Example Choice PPO" })
+  await plan.getByRole("button", { name: /^Example Choice PPO/ }).click()
+  await expect(plan.getByText("Before booking")).toBeVisible()
+  await expect(plan.getByText("Prior auth")).toBeVisible()
+  await plan.screenshot({ animations: "disabled", path: testInfo.outputPath("v2-plan-read.png") })
+
+  await plan.getByRole("button", { name: "Edit", exact: true }).click()
+  await expect(plan.getByRole("heading", { name: "This plan" })).toBeVisible()
+  await expect(plan.getByRole("heading", { name: "At Spring Hill" })).toBeVisible()
+  await expect(plan.getByText("Shared with Crystal River, so changes here apply there too.")).toBeVisible()
+  await plan.screenshot({ animations: "disabled", path: testInfo.outputPath("v2-plan-edit.png") })
+  await plan.getByRole("button", { name: "Done", exact: true }).click()
+
+  const selfPay = page.getByRole("listitem").filter({ hasText: /^Self-pay/ })
+  await selfPay.getByRole("button", { name: /^Self-pay/ }).click()
+  await expect(selfPay.getByRole("button", { name: "Remove", exact: true })).toHaveCount(0)
+  await selfPay.getByRole("button", { name: "Edit", exact: true }).click()
+  await expect(selfPay.getByText("so this plan's details can't be changed.")).toBeVisible()
+  await expect(selfPay.getByLabel("Plan name")).toHaveCount(0)
+  await selfPay.screenshot({ animations: "disabled", path: testInfo.outputPath("v2-self-pay.png") })
+  await selfPay.getByRole("button", { name: "Done", exact: true }).click()
+
+  await page.getByRole("button", { name: "Add plan", exact: true }).click()
+  const add = page.getByRole("region", { name: "Add plan" })
+  await add.getByLabel("Find a plan").fill("select")
+  await expect(add.getByRole("list", { name: "Matching plans" }).getByRole("button")).toHaveText(["Example Select HMOExample · Medical"])
+  await add.screenshot({ animations: "disabled", path: testInfo.outputPath("v2-add-plan-search.png") })
+  await add.getByRole("button", { name: /^Example Select HMO/ }).click()
+  const added = page.getByRole("listitem").filter({ hasText: "Example Select HMO" })
+  await expect(added.getByRole("heading", { name: "At Spring Hill" })).toBeVisible()
+  await added.getByLabel("Dr. Chen", { exact: true }).selectOption("yes")
+
+  await page.getByRole("button", { name: "Add plan", exact: true }).click()
+  await page.getByRole("region", { name: "Add plan" }).getByLabel("Find a plan").fill("Acme Vision")
+  await page.getByRole("button", { name: "Create new plan" }).click()
+  const form = page.getByRole("region", { name: "Create new plan" })
+  const submit = form.getByRole("button", { name: "Add", exact: true })
+  await form.getByLabel("Dr. Rivera", { exact: true }).selectOption("yes")
+  await expect(submit).toBeDisabled()
+  await expect(form.getByText("To add this plan, enter the company, choose the visit type, and choose the AMD carrier, because a doctor takes this plan.")).toBeVisible()
+  await form.screenshot({ animations: "disabled", path: testInfo.outputPath("v2-create-plan-disabled.png") })
+  await form.getByLabel("Company").fill("Acme")
+  await form.getByLabel("Visit type").selectOption("routine_vision")
+  await form.getByLabel("AMD carrier").selectOption("car10003")
+  await form.getByLabel("Note for callers").fill("Bring your Acme Vision card.")
+  await expect(submit).toBeEnabled()
+  await form.screenshot({ animations: "disabled", path: testInfo.outputPath("v2-create-plan-valid.png") })
+  await submit.click()
+
+  await page.getByLabel("Why are you changing this?").fill("Add Example Select and Acme Vision")
+  await page.getByRole("button", { name: "Publish", exact: true }).click()
+  await expect(page.locator('time[datetime="2026-10-30T19:30:00Z"]')).toBeVisible()
+  const published = state.publications.at(-1)!
+  expect(published.catalog.regions[0].plans.at(-1)).toEqual({ id: "acme-vision", label: "Acme Vision", family: "Acme", coverage: "routine_vision", carrierId: "car10003", aliases: [] })
+  expect(published.catalog.regions[0].tables[0].rows.slice(-2)).toEqual([
+    { planId: "example-select-hmo", doctors: { "Dr. Chen": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "" },
+    { planId: "acme-vision", doctors: { "Dr. Rivera": "yes", "Dr. Chen": "no" }, beforeBooking: "none", onlyOffices: [], notice: "Bring your Acme Vision card." },
+  ])
+
+  await page.getByRole("button", { name: "History", exact: true }).click()
+  const history = page.getByRole("dialog", { name: "History" })
+  await history.getByRole("listitem").nth(1).getByRole("button").click()
+  await expect(history.getByRole("region", { name: "This office's rows" }).getByRole("listitem")).toHaveText(["RemovedExample Select HMO", "RemovedAcme Vision"])
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("v2-history-diff.png") })
   expect(errors).toEqual([])
 })

@@ -52,19 +52,22 @@ const imported: InsuranceRevision = {
 
 const published: InsuranceCatalog = {
   carriers: [
-    { id: "car10002", name: "DEMO MEDICAID" },
-    { id: "car10001", name: "EXAMPLE CHOICE HEALTH" },
-    { id: "car10003", name: "ZETA VISION" },
+    { id: "car10002", code: "DEM03", name: "DEMO MEDICAID" },
+    { id: "car10001", code: "EXC01", name: "EXAMPLE CHOICE HEALTH" },
+    { id: "car10004", code: "EXC02", name: "EXAMPLE SELECT HEALTH" },
+    { id: "car10005", code: "SELF", name: "SELF-PAY" },
+    { id: "car10003", code: "ZET01", name: "ZETA VISION" },
+    { id: "car10006", code: "", name: "UNCODED VISION" },
   ],
   regions: [
     {
       id: "south_florida",
       plans: [
-        { id: "example-choice-medical", label: "Example Choice PPO", family: "Example", coverage: "medical", carrierCode: "EXC01", carrierId: "car10001", selfPay: false, aliases: ["Example Choice", "Choice PPO"] },
-        { id: "demo-medicaid", label: "Demo Medicaid MMA", family: "Demo", coverage: "medical", carrierCode: "DEM03", carrierId: "car10002", selfPay: false, aliases: [] },
-        { id: "zeta-vision", label: "Zeta Vision Plan", family: "Zeta", coverage: "routine_vision", carrierCode: "ZET01", carrierId: "car10003", selfPay: false, aliases: [] },
-        { id: "self-pay-medical", label: "Self-pay", family: "Self-pay", coverage: "medical", carrierCode: "", carrierId: "", selfPay: true, aliases: [] },
-        { id: "example-select", label: "Example Select HMO", family: "Example", coverage: "medical", carrierCode: "EXC02", carrierId: "car10001", selfPay: false, aliases: [] },
+        { id: "example-choice-medical", label: "Example Choice PPO", family: "Example", coverage: "medical", carrierId: "car10001", aliases: ["Example Choice", "Choice PPO"] },
+        { id: "demo-medicaid", label: "Demo Medicaid MMA", family: "Demo", coverage: "medical", carrierId: "car10002", aliases: [] },
+        { id: "zeta-vision", label: "Zeta Vision Plan", family: "Zeta", coverage: "routine_vision", carrierId: "car10003", aliases: [] },
+        { id: "self-pay-medical", label: "Self-pay", family: "Self-pay", coverage: "medical", carrierId: "car10005", aliases: ["Cash"] },
+        { id: "example-select", label: "Example Select HMO", family: "Example", coverage: "medical", carrierId: "car10004", aliases: ["Select"] },
       ],
       tables: [
         {
@@ -72,10 +75,10 @@ const published: InsuranceCatalog = {
           offices: ["hollywood", "sweetwater", "north_miami_beach_optical"],
           doctors: ["Dr. Rivera", "Dr. Chen"],
           rows: [
-            { planId: "example-choice-medical", doctors: { "Dr. Chen": "yes", "Dr. Rivera": "yes" }, requires: [{ kind: "prior_authorization", channel: "availity" }], onlyOffices: [], notice: "Synthetic caller notice", note: "Synthetic sheet note" },
-            { planId: "demo-medicaid", doctors: { "Dr. Chen": "pending", "Dr. Rivera": "no" }, requires: [{ kind: "pcp_referral", channel: "" }], onlyOffices: ["hollywood"], notice: "", note: "" },
-            { planId: "zeta-vision", doctors: { "Dr. Rivera": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" },
-            { planId: "self-pay-medical", doctors: {}, requires: [], onlyOffices: [], notice: "Self-pay rates apply", note: "" },
+            { planId: "example-choice-medical", doctors: { "Dr. Chen": "yes", "Dr. Rivera": "yes" }, beforeBooking: "prior_authorization", onlyOffices: [], notice: "Synthetic caller notice" },
+            { planId: "demo-medicaid", doctors: { "Dr. Chen": "pending", "Dr. Rivera": "no" }, beforeBooking: "pcp_referral", onlyOffices: ["hollywood"], notice: "" },
+            { planId: "zeta-vision", doctors: { "Dr. Rivera": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "" },
+            { planId: "self-pay-medical", doctors: { "Dr. Rivera": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "Self-pay rates apply" },
           ],
         },
       ],
@@ -83,8 +86,8 @@ const published: InsuranceCatalog = {
     {
       id: "spring_hill_crystal_river",
       plans: [
-        { id: "spring-plan", label: "Spring Plan HMO", family: "Spring", coverage: "medical", carrierCode: "EXC01", carrierId: "car10001", selfPay: false, aliases: [] },
-        { id: "spring-select", label: "Spring Select PPO", family: "Spring", coverage: "medical", carrierCode: "EXC02", carrierId: "car10001", selfPay: false, aliases: [] },
+        { id: "spring-plan", label: "Spring Plan HMO", family: "Spring", coverage: "medical", carrierId: "car10001", aliases: [] },
+        { id: "spring-select", label: "Spring Select PPO", family: "Spring", coverage: "medical", carrierId: "car10004", aliases: [] },
       ],
       tables: [
         {
@@ -92,11 +95,11 @@ const published: InsuranceCatalog = {
           offices: ["spring_hill"],
           doctors: ["Dr. Licht"],
           rows: [
-            { planId: "spring-plan", doctors: { "Dr. Licht": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" },
-            { planId: "spring-select", doctors: { "Dr. Licht": "yes" }, requires: [], onlyOffices: [], notice: "", note: "" },
+            { planId: "spring-plan", doctors: { "Dr. Licht": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "" },
+            { planId: "spring-select", doctors: { "Dr. Licht": "yes" }, beforeBooking: "none", onlyOffices: [], notice: "" },
           ],
         },
-        { id: "crystal_river", offices: ["crystal_river"], doctors: ["Dr. Licht"], rows: [{ planId: "spring-plan", doctors: { "Dr. Licht": "pending" }, requires: [], onlyOffices: [], notice: "", note: "" }] },
+        { id: "crystal_river", offices: ["crystal_river"], doctors: ["Dr. Licht"], rows: [{ planId: "spring-plan", doctors: { "Dr. Licht": "pending" }, beforeBooking: "none", onlyOffices: [], notice: "" }] },
       ],
     },
   ],
@@ -117,21 +120,29 @@ test("without access to every office on its table, the office's plans read in co
       rows: [
         "Demo Medicaid MMANo doctors take it · 1 pending · Only at HollywoodDEM03",
         "Example Choice PPODr. Rivera, Dr. ChenEXC01",
-        "Self-payNo doctors take it",
+        "Self-payDr. RiveraSELF",
       ],
     },
     { title: "Routine vision1", rows: ["Zeta Vision PlanDr. RiveraZET01"] },
   ])
   await page.open("Example Choice PPO")
   assert.deepEqual(page.details("Example Choice PPO"), [
-    "FamilyExample",
-    "Visit coverageMedical",
-    "AMD carrierEXAMPLE CHOICE HEALTH · EXC01 · car10001",
+    "CompanyExample",
+    "Visit typeMedical",
+    "AMD carrierEXAMPLE CHOICE HEALTH (EXC01)",
     "Callers also sayExample Choice, Choice PPO",
     "DoctorsDr. Rivera: Yes\nDr. Chen: Yes",
-    "RequiresPrior auth (availity)",
-    "Callers hearSynthetic caller notice",
-    "Staff noteSynthetic sheet note",
+    "Before bookingPrior auth",
+    "Note for callersSynthetic caller notice",
+  ])
+  await page.open("Demo Medicaid MMA")
+  assert.deepEqual(page.details("Demo Medicaid MMA"), [
+    "CompanyDemo",
+    "Visit typeMedical",
+    "AMD carrierDEMO MEDICAID (DEM03)",
+    "DoctorsDr. Rivera: No\nDr. Chen: Pending",
+    "Before bookingPCP referral",
+    "Only atHollywood",
   ])
   assert.deepEqual(page.buttonNames().filter((name) => ["Edit", "Remove", "Add plan", "Publish"].includes(name)), [])
   assert.deepEqual(page.inputs(), ["Search plans"])
@@ -165,18 +176,39 @@ test("removing a plan from the office's table publishes the full catalog without
   await page.unmount()
 })
 
-test("adding a new plan with each doctor set to yes publishes it with a carrier chosen from the catalog's pairs", async (t) => {
+test("a new plan is added from one complete form, and Add stays disabled with the reason until the form is valid", async (t) => {
   const page = harness(t)
   await page.render(insuranceList())
   await waitFor(() => page.groups().length === 2)
   await page.click("Add plan")
-  assert.deepEqual(page.options("Plan"), ["A new plan", "Example Select HMO (Medical)"])
-  await page.fill(page.field("New plan label"), "Acme Health HMO")
-  await page.fill(page.field("New plan family"), "Acme")
-  await page.click("Add")
+  await page.fill(page.field("Find a plan"), "Acme Health HMO")
+  assert.match(page.text(), /No plan in this region matches\. Create a new plan instead\./)
+  await page.click("Create new plan")
+  assert.equal(page.field("Plan name").value, "Acme Health HMO")
+  assert.deepEqual(Array.from(page.host.querySelectorAll("datalist option"), (option) => option.getAttribute("value")), ["Demo", "Example", "Self-pay", "Zeta"])
+  assert.equal(page.field("Dr. Rivera").value, "no")
+  assert.equal(page.field("Before booking").value, "none")
+  assert.equal(page.button("Add").disabled, true)
+  assert.match(page.text(), /To add this plan, enter the company and choose the visit type\./)
+
+  await page.fill(page.field("Company"), "Acme")
+  await page.choose(page.field("Visit type"), "medical")
+  assert.equal(page.button("Add").disabled, false)
   await page.choose(page.field("Dr. Rivera"), "yes")
-  await page.choose(page.field("Dr. Chen"), "yes")
-  await page.choose(page.field("AMD carrier"), "DEM03|car10002")
+  assert.equal(page.button("Add").disabled, true)
+  assert.match(page.text(), /To add this plan, choose the AMD carrier, because a doctor takes this plan\./)
+  await page.fill(page.field("Plan name"), " ")
+  assert.match(page.text(), /To add this plan, enter the plan name and choose the AMD carrier, because a doctor takes this plan\./)
+  await page.fill(page.field("Plan name"), "Acme Health HMO")
+  await page.choose(page.field("AMD carrier"), "car10002")
+  await page.choose(page.field("Dr. Chen"), "pending")
+  await page.fill(page.field("Callers also say"), "Acme\n\n Acme HMO ")
+  await page.choose(page.field("Before booking"), "staff_verify")
+  await page.fill(page.field("Note for callers"), "Bring your Acme card.")
+  assert.equal(page.button("Add").disabled, false)
+  assert.doesNotMatch(page.text(), /To add this plan/)
+  await page.click("Add")
+  assert.equal(page.field("Plan name").value, "Acme Health HMO")
   await page.fill(page.field("Why are you changing this?"), "Office takes Acme now")
   await page.click("Publish")
   await waitFor(() => page.maybeButton("Publish") === undefined && page.header().includes("staff@abita.test"))
@@ -187,56 +219,74 @@ test("adding a new plan with each doctor set to yes publishes it with a carrier 
     label: "Acme Health HMO",
     family: "Acme",
     coverage: "medical",
-    carrierCode: "DEM03",
     carrierId: "car10002",
-    selfPay: false,
-    aliases: [],
+    aliases: ["Acme", "Acme HMO"],
   })
   assert.deepEqual(publication.catalog.regions[0].tables[0].rows.at(-1), {
     planId: "acme-health-hmo",
-    doctors: { "Dr. Rivera": "yes", "Dr. Chen": "yes" },
-    requires: [],
+    doctors: { "Dr. Rivera": "yes", "Dr. Chen": "pending" },
+    beforeBooking: "staff_verify",
     onlyOffices: [],
-    notice: "",
-    note: "",
+    notice: "Bring your Acme card.",
   })
-  assert.ok(page.groups()[0].rows.includes("Acme Health HMODr. Rivera, Dr. ChenDEM03"))
+  assert.ok(page.groups()[0].rows.includes("Acme Health HMODr. Rivera · 1 pendingDEM03"))
   await page.unmount()
 })
 
-test("an existing plan of the region can be put on the office's table", async (t) => {
+test("an existing plan of the region is found by what callers call it, added to the table, and opened for editing", async (t) => {
   const page = harness(t)
   await page.render(insuranceList())
   await waitFor(() => page.groups().length === 2)
   await page.click("Add plan")
-  await page.choose(page.field("Plan"), "example-select")
-  await page.click("Add")
+  await page.fill(page.field("Find a plan"), "zeta")
+  assert.match(page.text(), /No plan in this region matches/)
+  await page.fill(page.field("Find a plan"), "select")
+  assert.deepEqual(Array.from(page.host.querySelectorAll("[aria-label='Matching plans'] button"), (button) => button.textContent), ["Example Select HMOExample · Medical"])
+  await page.click("Example Select HMOExample · Medical")
+  assert.equal(page.maybeButton("Create new plan"), undefined)
   await page.choose(page.field("Dr. Chen"), "yes")
   await page.fill(page.field("Why are you changing this?"), "Dr. Chen takes Example Select")
   await page.click("Publish")
   await waitFor(() => page.publications.length === 1)
   const publication = page.publications[0]
   assert.equal(publication.catalog.regions[0].plans.length, 5)
-  assert.deepEqual(publication.catalog.regions[0].tables[0].rows.at(-1)?.planId, "example-select")
+  assert.deepEqual(publication.catalog.regions[0].tables[0].rows.at(-1), {
+    planId: "example-select",
+    doctors: { "Dr. Chen": "yes" },
+    beforeBooking: "none",
+    onlyOffices: [],
+    notice: "",
+  })
   await page.unmount()
 })
 
-test("changing a doctor from yes to no and editing the row's rules publishes and shows the new values", async (t) => {
+test("editing splits the plan's shared fields from this table's answers, publishes them, and shows the new values", async (t) => {
   const page = harness(t)
   await page.render(insuranceList())
   await waitFor(() => page.groups().length === 2)
   await page.rowAction("Example Choice PPO", "Edit")
+  assert.deepEqual(page.sections(), ["This plan", "At Hollywood, Sweetwater / Sweetwater Optical, and North Miami Beach Optical"])
+  assert.deepEqual(page.sectionFields("This plan"), ["INPUT:Plan name", "INPUT:Company", "TEXTAREA:Callers also say", "SELECT:AMD carrier"])
+  assert.match(page.section("This plan"), /Visit typeMedical/)
+  assert.deepEqual(page.sectionFields("At Hollywood, Sweetwater / Sweetwater Optical, and North Miami Beach Optical"), [
+    "SELECT:Dr. Rivera",
+    "SELECT:Dr. Chen",
+    "SELECT:Before booking",
+    "INPUT:Hollywood",
+    "INPUT:Sweetwater / Sweetwater Optical",
+    "INPUT:North Miami Beach Optical",
+    "TEXTAREA:Note for callers",
+  ])
+  assert.deepEqual(page.options("Dr. Chen"), ["Yes", "No", "Pending"])
+  assert.deepEqual(page.options("Before booking"), ["Nothing", "PCP referral", "Prior auth", "Staff checks coverage"])
+  assert.match(page.text(), /Abita says this to callers when this plan comes up\./)
   await page.choose(page.field("Dr. Chen"), "no")
-  await page.check("Prior auth", false)
-  await page.check("PCP referral", true)
-  await page.fill(page.field("PCP referral channel"), "availity")
-  await page.check("Staff verifies", true)
+  await page.choose(page.field("Before booking"), "staff_verify")
   await page.check("Sweetwater / Sweetwater Optical", true)
-  await page.fill(page.field("Callers hear"), "Bring a referral")
-  await page.fill(page.field("Staff note"), "Referral from the PCP")
-  await page.fill(page.field("Label"), "Example Choice PPO Plus")
-  await page.fill(page.field("Family"), "Example Health")
-  await page.fill(page.field("Callers also say (one per line)"), "Example Choice\n\nChoice Plus ")
+  await page.fill(page.field("Note for callers"), "Bring a referral")
+  await page.fill(page.field("Plan name"), "Example Choice PPO Plus")
+  await page.fill(page.field("Company"), "Example Health")
+  await page.fill(page.field("Callers also say"), "Example Choice\n\nChoice Plus ")
   await page.fill(page.field("Why are you changing this?"), "Dr. Chen left the network")
   await page.click("Publish")
   await waitFor(() => page.maybeButton("Publish") === undefined && page.header().includes("staff@abita.test"))
@@ -245,10 +295,9 @@ test("changing a doctor from yes to no and editing the row's rules publishes and
   assert.deepEqual(publication.catalog.regions[0].tables[0].rows[0], {
     planId: "example-choice-medical",
     doctors: { "Dr. Chen": "no", "Dr. Rivera": "yes" },
-    requires: [{ kind: "pcp_referral", channel: "availity" }, { kind: "staff_verify", channel: "" }],
+    beforeBooking: "staff_verify",
     onlyOffices: ["sweetwater"],
     notice: "Bring a referral",
-    note: "Referral from the PCP",
   })
   assert.deepEqual(publication.catalog.regions[0].plans[0], {
     ...published.regions[0].plans[0],
@@ -258,38 +307,75 @@ test("changing a doctor from yes to no and editing the row's rules publishes and
   })
   await page.open("Example Choice PPO Plus")
   assert.ok(page.details("Example Choice PPO Plus").includes("DoctorsDr. Rivera: Yes\nDr. Chen: No"))
-  assert.ok(page.details("Example Choice PPO Plus").includes("RequiresPCP referral (availity), Staff verifies"))
+  assert.ok(page.details("Example Choice PPO Plus").includes("Before bookingStaff checks coverage"))
   await page.unmount()
 })
 
-test("the carrier is a dropdown of the catalog's code and ID pairs labeled with carrier names, with no field to type an ID", async (t) => {
+test("the AMD carrier is a dropdown of every carrier by name and code, and an unset doctor reads and edits as No", async (t) => {
   const page = harness(t)
   await page.render(insuranceList())
   await waitFor(() => page.groups().length === 2)
-  await page.rowAction("Example Choice PPO", "Edit")
+  await page.rowAction("Zeta Vision Plan", "Edit")
   const carrier = page.field("AMD carrier")
   assert.equal(carrier.tagName, "SELECT")
-  assert.equal(carrier.value, "EXC01|car10001")
+  assert.equal(carrier.value, "car10003")
   assert.deepEqual(page.options("AMD carrier"), [
     "No AMD carrier",
-    "DEMO MEDICAID · DEM03 · car10002",
-    "EXAMPLE CHOICE HEALTH · EXC01 · car10001",
-    "EXAMPLE CHOICE HEALTH · EXC02 · car10001",
-    "ZETA VISION · ZET01 · car10003",
+    "DEMO MEDICAID (DEM03)",
+    "EXAMPLE CHOICE HEALTH (EXC01)",
+    "EXAMPLE SELECT HEALTH (EXC02)",
+    "SELF-PAY (SELF)",
+    "UNCODED VISION",
+    "ZETA VISION (ZET01)",
   ])
-  const details = page.host.querySelector("[aria-label='Plan details']")!
-  assert.deepEqual(
-    Array.from(details.querySelectorAll("input, textarea, select"), (field) => `${field.tagName}:${(field as HTMLInputElement).labels?.[0]?.textContent ?? ""}`),
-    ["INPUT:Label", "INPUT:Family", "TEXTAREA:Callers also say (one per line)", "SELECT:AMD carrier", "INPUT:Self-pay"],
-  )
-  await page.choose(carrier, "|")
-  await page.fill(page.field("Why are you changing this?"), "Billed without a carrier")
+  assert.equal(page.field("Dr. Chen").value, "no")
+  await page.choose(carrier, "car10006")
+  await page.fill(page.field("Why are you changing this?"), "Zeta moved carriers")
   await page.click("Publish")
   await waitFor(() => page.publications.length === 1)
-  assert.deepEqual(
-    [page.publications[0].catalog.regions[0].plans[0].carrierCode, page.publications[0].catalog.regions[0].plans[0].carrierId],
-    ["", ""],
-  )
+  assert.equal(page.publications[0].catalog.regions[0].plans[2].carrierId, "car10006")
+  assert.deepEqual(page.publications[0].catalog.regions[0].tables[0].rows[2].doctors, { "Dr. Rivera": "yes" })
+  await page.unmount()
+})
+
+test("a self-pay plan is a normal row that cannot be removed, whose plan fields are read-only while its doctors and note stay editable", async (t) => {
+  const page = harness(t)
+  await page.render(insuranceList())
+  await waitFor(() => page.groups().length === 2)
+  await page.open("Self-pay")
+  assert.deepEqual(page.details("Self-pay"), [
+    "CompanySelf-pay",
+    "Visit typeMedical",
+    "AMD carrierSELF-PAY (SELF)",
+    "Callers also sayCash",
+    "DoctorsDr. Rivera: Yes\nDr. Chen: No",
+    "Before bookingNothing",
+    "Note for callersSelf-pay rates apply",
+  ])
+  assert.equal(page.rowButton("Self-pay", "Remove"), undefined)
+  await page.rowAction("Self-pay", "Edit")
+  assert.deepEqual(page.sectionFields("This plan"), [])
+  assert.match(page.section("This plan"), /Abita offers self-pay to callers whose insurance isn't taken here, so this plan's details can't be changed\./)
+  assert.match(page.section("This plan"), /Plan nameSelf-payCompanySelf-pay/)
+  assert.deepEqual(page.sectionFields("At Hollywood, Sweetwater / Sweetwater Optical, and North Miami Beach Optical"), [
+    "SELECT:Dr. Rivera",
+    "SELECT:Dr. Chen",
+    "TEXTAREA:Note for callers",
+  ])
+  assert.equal(page.host.querySelectorAll("input[type='checkbox']").length, 0)
+  await page.choose(page.field("Dr. Chen"), "yes")
+  await page.fill(page.field("Note for callers"), "Self-pay rates apply. Ask about the exam price.")
+  await page.fill(page.field("Why are you changing this?"), "Dr. Chen sees self-pay patients")
+  await page.click("Publish")
+  await waitFor(() => page.publications.length === 1)
+  assert.deepEqual(page.publications[0].catalog.regions[0].plans[3], published.regions[0].plans[3])
+  assert.deepEqual(page.publications[0].catalog.regions[0].tables[0].rows[3], {
+    planId: "self-pay-medical",
+    doctors: { "Dr. Rivera": "yes", "Dr. Chen": "yes" },
+    beforeBooking: "none",
+    onlyOffices: [],
+    notice: "Self-pay rates apply. Ask about the exam price.",
+  })
   await page.unmount()
 })
 
@@ -298,20 +384,20 @@ test("before publishing, a shared plan change names the other offices it also ch
   await page.render(insuranceList(locations[1].id))
   await waitFor(() => page.groups().length === 2)
   await page.rowAction("Example Choice PPO", "Edit")
-  assert.match(page.text(), /The label, family, aliases, carrier and self-pay are shared with Hollywood and Sweetwater \/ Sweetwater Optical\./)
+  assert.match(page.section("This plan"), /^This planShared with Hollywood and Sweetwater \/ Sweetwater Optical, so changes here apply there too\./)
   assert.equal(page.status(), "")
-  await page.fill(page.field("Label"), "Example Choice Plus")
+  await page.fill(page.field("Plan name"), "Example Choice Plus")
   assert.equal(page.status(), "Also changes Hollywood and Sweetwater / Sweetwater Optical.")
   await page.click("Discard changes")
 
   await page.render(insuranceList(locations[2].id), "spring hill")
   await waitFor(() => page.groups().length === 1)
   await page.rowAction("Spring Plan HMO", "Edit")
-  assert.match(page.text(), /shared with Crystal River\./)
+  assert.match(page.text(), /Shared with Crystal River, so changes here apply there too\./)
   await page.choose(page.field("Dr. Licht"), "no")
   assert.match(page.text(), /1 unpublished change/)
   assert.equal(page.status(), "")
-  await page.fill(page.field("Family"), "Spring Health")
+  await page.fill(page.field("Company"), "Spring Health")
   assert.equal(page.status(), "Also changes Crystal River.")
   await page.unmount()
 })
@@ -321,8 +407,8 @@ test("a plan only this office's table lists names no other office before or afte
   await page.render(insuranceList(locations[2].id), "spring hill")
   await waitFor(() => page.groups().length === 1)
   await page.rowAction("Spring Select PPO", "Edit")
-  assert.doesNotMatch(page.text(), /shared with/)
-  await page.fill(page.field("Label"), "Spring Select Plus")
+  assert.doesNotMatch(page.text(), /Shared with/)
+  await page.fill(page.field("Plan name"), "Spring Select Plus")
   assert.match(page.text(), /1 unpublished change/)
   assert.equal(page.status(), "")
   await page.unmount()
@@ -333,12 +419,12 @@ test("a rejected publish shows each validation error beside the plan it names, l
   await page.render(insuranceList())
   await waitFor(() => page.groups().length === 2)
   await page.rowAction("Example Choice PPO", "Edit")
-  await page.fill(page.field("Family"), "")
-  await page.fill(page.field("Why are you changing this?"), "Clean up the family")
+  await page.fill(page.field("Company"), "")
+  await page.fill(page.field("Why are you changing this?"), "Clean up the company")
   page.publishStatus = 400
   page.publishErrors = [
     { region: "south_florida", table: "", planId: "example-choice-medical", rule: "empty_family", message: "Plan example-choice-medical needs a family." },
-    { region: "south_florida", table: "doctors", planId: "demo-medicaid", rule: "note_rule_not_encoded", message: "Demo Medicaid's note names a rule that isn't encoded." },
+    { region: "south_florida", table: "doctors", planId: "demo-medicaid", rule: "accepted_without_carrier", message: "Demo Medicaid MMA needs an AMD carrier." },
     { region: "south_florida", table: "doctors", planId: "", rule: "unknown_doctor_column", message: "Table doctors names an unknown doctor." },
     { region: "spring_hill_crystal_river", table: "spring_hill", planId: "spring-plan", rule: "unknown_carrier", message: "Spring Plan HMO uses an unknown carrier." },
   ]
@@ -346,11 +432,11 @@ test("a rejected publish shows each validation error beside the plan it names, l
   await waitFor(() => page.maybeButton("Publishing…") === undefined && page.publications.length === 1)
 
   assert.deepEqual(page.rowAlerts("Example Choice PPO"), ["Plan example-choice-medical needs a family."])
-  assert.deepEqual(page.rowAlerts("Demo Medicaid MMA"), ["Demo Medicaid's note names a rule that isn't encoded."])
+  assert.deepEqual(page.rowAlerts("Demo Medicaid MMA"), ["Demo Medicaid MMA needs an AMD carrier."])
   assert.equal(page.trigger("Demo Medicaid MMA").getAttribute("aria-expanded"), "true")
   assert.match(page.text(), /Table doctors names an unknown doctor\./)
   assert.match(page.text(), /Not published\. Fix the problems shown beside each plan, then publish again\.Spring Plan HMO uses an unknown carrier\./)
-  assert.equal(page.field("Family").value, "")
+  assert.equal(page.field("Company").value, "")
   assert.equal(page.active.revision.id, imported.id)
   assert.equal(page.requests.length, 1)
   assert.match(page.header(), /by operator@abita\.testHistory$/)
@@ -365,7 +451,7 @@ test("a conflict says someone else changed the list, loads their version, and ke
   await page.choose(page.field("Dr. Chen"), "no")
   await page.fill(page.field("Why are you changing this?"), "Dr. Chen left the network")
   const theirs = structuredClone(published)
-  theirs.regions[0].tables[0].rows[2].note = "Their synthetic note"
+  theirs.regions[0].tables[0].rows[2].notice = "Their synthetic notice"
   page.conflictWith = { revision: { ...imported, id: "00000000-0000-4000-8000-0000000000c2", createdBy: "other@abita.test", provenance: "portal" }, catalog: theirs }
   await page.click("Publish")
   await waitFor(() => /Someone else changed the insurance list\./.test(page.text()))
@@ -375,7 +461,7 @@ test("a conflict says someone else changed the list, loads their version, and ke
   assert.equal(page.field("Why are you changing this?").value, "Dr. Chen left the network")
   await waitFor(() => page.header().includes("other@abita.test"))
   await page.open("Zeta Vision Plan")
-  assert.ok(page.details("Zeta Vision Plan").includes("Staff noteTheir synthetic note"))
+  assert.ok(page.details("Zeta Vision Plan").includes("Note for callersTheir synthetic notice"))
 
   await page.click("Publish")
   await waitFor(() => page.publications.length === 2 && page.maybeButton("Publish") === undefined)
@@ -383,7 +469,7 @@ test("a conflict says someone else changed the list, loads their version, and ke
   assert.equal(second.expectedRevisionId, "00000000-0000-4000-8000-0000000000c2")
   assert.notEqual(second.revisionId, first.revisionId)
   assert.equal(second.catalog.regions[0].tables[0].rows[0].doctors["Dr. Chen"], "no")
-  assert.equal(second.catalog.regions[0].tables[0].rows[2].note, "Their synthetic note")
+  assert.equal(second.catalog.regions[0].tables[0].rows[2].notice, "Their synthetic notice")
   await page.unmount()
 })
 
@@ -391,8 +477,8 @@ test("when the change can't be checked nothing is published, and trying again re
   const page = harness(t)
   await page.render(insuranceList())
   await waitFor(() => page.groups().length === 2)
-  await page.rowAction("Self-pay", "Remove")
-  await page.fill(page.field("Why are you changing this?"), "No self-pay row")
+  await page.rowAction("Zeta Vision Plan", "Remove")
+  await page.fill(page.field("Why are you changing this?"), "Zeta Vision left the network")
   page.publishStatus = 503
   await page.click("Publish")
   await waitFor(() => /The change couldn't be checked, so nothing was published\. Try again\./.test(page.text()))
@@ -493,7 +579,7 @@ test("a selected revision names the plans and office rows restoring it would add
   await waitFor(() => /Restoring this version would/.test(page.text()))
   assert.deepEqual(page.readRequests, [{ practiceId: "practice-1", locationId: locations[0].id, revisionId: imported.id }])
   assert.match(page.text(), /make these changes to the active list for Hollywood\./)
-  assert.deepEqual(page.diff("Plans"), ["Changed | Example Choice PPO | label"])
+  assert.deepEqual(page.diff("Plans"), ["Changed | Example Choice PPO | plan name"])
   assert.deepEqual(page.diff("This office's rows"), ["Added | Demo Medicaid MMA"])
   assert.match(page.text(), /1 more change elsewhere in the list\./)
   assert.ok(page.button("Restore this version"))
@@ -686,13 +772,28 @@ function harness(t: TestContext) {
       const trigger = page.trigger(name)
       if (trigger.getAttribute("aria-expanded") === "false") await act(async () => trigger.click())
     },
+    rowButton: (name: string, action: string) => {
+      const plan = Array.from(host.querySelectorAll("li")).find((item) => item.querySelector(":scope > button span span")?.textContent === name)!
+      return Array.from(plan.querySelectorAll("button")).find((item) => item.textContent === action)
+    },
     rowAction: async (name: string, action: string) => {
       await page.open(name)
-      const plan = Array.from(host.querySelectorAll("li")).find((item) => item.querySelector(":scope > button span span")?.textContent === name)!
-      const button = Array.from(plan.querySelectorAll("button")).find((item) => item.textContent === action)
+      const button = page.rowButton(name, action)
       assert.ok(button, `${name}: ${action}`)
       await act(async () => button.click())
     },
+    sections: () => Array.from(host.querySelectorAll("section[aria-labelledby] > div > h3"), (heading) => heading.textContent ?? ""),
+    sectionElement: (title: string) => {
+      const section = Array.from(host.querySelectorAll("section[aria-labelledby]")).find((item) => item.querySelector(":scope > div > h3")?.textContent === title)
+      assert.ok(section, title)
+      return section
+    },
+    section: (title: string) => page.sectionElement(title).textContent ?? "",
+    sectionFields: (title: string) =>
+      Array.from(
+        page.sectionElement(title).querySelectorAll<HTMLInputElement>("input, textarea, select"),
+        (field) => `${field.tagName}:${field.labels?.[0]?.textContent ?? ""}`,
+      ),
     details: (name: string) => {
       const plan = Array.from(host.querySelectorAll("li")).find((item) => item.querySelector(":scope > button span span")?.textContent === name)!
       return Array.from(plan.querySelectorAll("dl div"), (item) => `${item.querySelector("dt")?.textContent}${item.querySelector("dd")?.textContent}`)

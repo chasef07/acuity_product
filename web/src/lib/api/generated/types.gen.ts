@@ -160,6 +160,10 @@ export type InsuranceCatalog = {
 
 export type InsuranceCarrier = {
     id: string;
+    /**
+     * The AdvancedMD carrier code, or empty when the carrier has none.
+     */
+    code: string;
     name: string;
 };
 
@@ -173,13 +177,17 @@ export type InsuranceRegion = {
 };
 
 export type InsuranceRegionPlan = {
+    /**
+     * The plan IDs self-pay-medical and self-pay-routine-vision are reserved for the self-pay plan of that coverage.
+     */
     id: string;
     label: string;
     family: string;
-    coverage: string;
-    carrierCode: string;
+    coverage: 'medical' | 'routine_vision';
+    /**
+     * The AdvancedMD carrier ID, or empty while no doctor accepts the plan.
+     */
     carrierId: string;
-    selfPay: boolean;
     aliases: Array<string>;
 };
 
@@ -196,20 +204,20 @@ export type InsuranceOfficeTable = {
 export type InsuranceTableRow = {
     planId: string;
     /**
-     * Each doctor's answer for this plan; a doctor with no answer is omitted.
+     * Each doctor's answer for this plan; a doctor with no answer does not accept it.
      */
     doctors: {
         [key: string]: string;
     };
-    requires: Array<InsuranceRequirement>;
+    /**
+     * What must happen before Abita can book this plan; anything but none stops Abita from scheduling.
+     */
+    beforeBooking: 'none' | 'pcp_referral' | 'prior_authorization' | 'staff_verify';
     onlyOffices: Array<string>;
+    /**
+     * What Abita tells callers about this plan.
+     */
     notice: string;
-    note: string;
-};
-
-export type InsuranceRequirement = {
-    kind: string;
-    channel: string;
 };
 
 export type InsuranceValidationError = {
