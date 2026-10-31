@@ -289,7 +289,14 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 		}
 	})
 
-	t.Run("staff read the list with their Location's office and whether they can edit its table", func(t *testing.T) {
+	t.Run("staff read the list with their Location's office, every office's Location names, and whether they can edit its table", func(t *testing.T) {
+		officeNames := map[string]string{
+			"hollywood":                 "Hollywood",
+			"sweetwater":                "Sweetwater / Sweetwater Optical",
+			"north_miami_beach_optical": "North Miami Beach Optical",
+			"spring_hill":               "Spring Hill",
+			"crystal_river":             "Crystal River",
+		}
 		for _, tc := range []struct {
 			token, location, office string
 			canEdit                 bool
@@ -302,16 +309,20 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 		} {
 			status, body := send("/v1/insurance/revisions/query", tc.token, map[string]string{"practiceId": practice, "locationId": locations[tc.location]})
 			var view struct {
-				Revision insuranceRevisionView `json:"revision"`
-				Catalog  insurance.Catalog     `json:"catalog"`
-				OfficeID string                `json:"officeId"`
-				CanEdit  bool                  `json:"canEdit"`
+				Revision    insuranceRevisionView `json:"revision"`
+				Catalog     insurance.Catalog     `json:"catalog"`
+				OfficeID    string                `json:"officeId"`
+				OfficeNames map[string]string     `json:"officeNames"`
+				CanEdit     bool                  `json:"canEdit"`
 			}
 			if status != http.StatusOK || json.Unmarshal([]byte(body), &view) != nil {
 				t.Fatalf("%s at %s: status=%d body=%.300s", tc.token, tc.location, status, body)
 			}
 			if view.Revision.ID != seed.ID || view.Revision.Provenance != "import" || view.Revision.CreatedBy != "operator@acuity.test" || view.OfficeID != tc.office || view.CanEdit != tc.canEdit || !reflect.DeepEqual(view.Catalog, seedCatalog) {
 				t.Fatalf("%s at %s: revision=%+v office=%s canEdit=%t", tc.token, tc.location, view.Revision, view.OfficeID, view.CanEdit)
+			}
+			if !reflect.DeepEqual(view.OfficeNames, officeNames) {
+				t.Fatalf("%s at %s: office names=%v", tc.token, tc.location, view.OfficeNames)
 			}
 		}
 		if status, _ := send("/v1/insurance/revisions/query", "spring-hill-token", map[string]string{"practiceId": practice, "locationId": locations["Crystal River"]}); status != http.StatusForbidden {
