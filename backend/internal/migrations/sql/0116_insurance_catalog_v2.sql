@@ -4,7 +4,7 @@
 -- carrierCode and selfPay, a row's requirements collapse to one beforeBooking
 -- (staff_verify wins, else the first kind), notes are dropped, and the
 -- hand-typed self-pay notice (trimmed of what Go's strings.TrimSpace trims) is
--- cleared because the middleware now says it.
+-- cleared so Abita decides for itself when to offer self-pay.
 --
 -- content_hash is the SHA-256 of Go's json.Marshal of the parsed catalog, so
 -- insurance_go_json rebuilds those exact bytes: struct field order, map keys in

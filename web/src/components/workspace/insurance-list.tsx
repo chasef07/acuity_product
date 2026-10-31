@@ -599,7 +599,7 @@ function PlanFields({
         {selfPay ? (
           <>
             <p className="text-muted-foreground">
-              Abita offers self-pay to callers whose insurance isn&apos;t taken here, so this plan&apos;s details can&apos;t be changed.
+              Abita uses this plan for callers paying for their own visit, so its details can&apos;t be changed.
             </p>
             <Details items={[{ label: "Plan name", value: plan.label }, ...planDetails(plan, carriers)]} />
           </>

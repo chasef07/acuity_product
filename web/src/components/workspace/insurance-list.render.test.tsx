@@ -355,7 +355,7 @@ test("a self-pay plan is a normal row that cannot be removed, whose plan fields 
   assert.equal(page.rowButton("Self-pay", "Remove"), undefined)
   await page.rowAction("Self-pay", "Edit")
   assert.deepEqual(page.sectionFields("This plan"), [])
-  assert.match(page.section("This plan"), /Abita offers self-pay to callers whose insurance isn't taken here, so this plan's details can't be changed\./)
+  assert.match(page.section("This plan"), /Abita uses this plan for callers paying for their own visit, so its details can't be changed\./)
   assert.match(page.section("This plan"), /Plan nameSelf-payCompanySelf-pay/)
   assert.deepEqual(page.sectionFields("At Hollywood, Sweetwater / Sweetwater Optical, and North Miami Beach Optical"), [
     "SELECT:Dr. Rivera",

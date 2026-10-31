@@ -261,7 +261,7 @@ test("staff read and edit a plan in two sections, keep self-pay fixed, add a reg
   await selfPay.getByRole("button", { name: /^Self-pay/ }).click()
   await expect(selfPay.getByRole("button", { name: "Remove", exact: true })).toHaveCount(0)
   await selfPay.getByRole("button", { name: "Edit", exact: true }).click()
-  await expect(selfPay.getByText("so this plan's details can't be changed.")).toBeVisible()
+  await expect(selfPay.getByText("so its details can't be changed.")).toBeVisible()
   await expect(selfPay.getByLabel("Plan name")).toHaveCount(0)
   await selfPay.screenshot({ animations: "disabled", path: testInfo.outputPath("v2-self-pay.png") })
   await selfPay.getByRole("button", { name: "Done", exact: true }).click()
