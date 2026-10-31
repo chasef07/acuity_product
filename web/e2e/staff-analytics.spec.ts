@@ -225,9 +225,12 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       path: testInfo.outputPath("admin-staff-analytics.png"),
       fullPage: true,
     })
+    await db.query("DELETE FROM human_calling_call_legs WHERE call_id=$1", [
+      calls[0],
+    ])
     await db.query(
-      "UPDATE human_calling_call_legs SET state='ENDING',ended_at=NULL WHERE call_id=$1",
-      [calls[0]],
+      "INSERT INTO human_calling_call_legs(call_id,role,sequence,staff_subject,state,answered_at,bridge_pending_at,bridged_at) VALUES($1,'STAFF',1,$2,'ENDING',$3,$3,$3)",
+      [calls[0], staff.user_subject, day],
     )
     await page.getByRole("combobox", { name: "Date range", exact: true }).click()
     await page.getByRole("option", { name: "Last 30 days", exact: true }).click()
