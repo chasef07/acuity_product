@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/chasef07/acuity_product/compare/v3.0.0...v3.1.0) (2026-10-31)
+
+
+### Features
+
+* **insurance:** fix calls whose insurance is missing from the list on Home ([#602](https://github.com/chasef07/acuity_product/issues/602)) ([39c7629](https://github.com/chasef07/acuity_product/commit/39c7629a472c4f73cdcf2b2976e5bcffc4018877))
+
 ## [3.0.0](https://github.com/chasef07/acuity_product/compare/v2.10.0...v3.0.0) (2026-10-31)
 
 
