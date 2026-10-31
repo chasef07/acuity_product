@@ -8,6 +8,7 @@ import type {
   CallOutcome,
   CallState,
   CallingCall,
+  InsuranceRevision,
   MessageAttachment,
   OperatorAiAnalyticsRange,
   OperatorAiCallIssueOutcome,
@@ -15,7 +16,7 @@ import type {
   StaffTaskUrgency,
   Task,
 } from "./api/generated/types.gen.ts"
-import type { DoctorAnswer, RequirementKind } from "./insurance-catalog.ts"
+import type { Change, DoctorAnswer, PlanField, RequirementKind, RowField, TableField } from "./insurance-catalog.ts"
 
 export function labelOptions<Value extends string>(labels: Record<Value, string>) {
   return (Object.keys(labels) as Value[]).map((value) => ({ value, label: labels[value] }))
@@ -119,6 +120,34 @@ export const doctorAnswerLabels = {
   no: "No",
   pending: "Pending",
 } satisfies Record<DoctorAnswer, string>
+
+export const insuranceProvenanceLabels = {
+  import: "Imported",
+  portal: "Portal edit",
+  restore: "Restore",
+} satisfies Record<InsuranceRevision["provenance"], string>
+
+export const insuranceChangeLabels = {
+  added: "Added",
+  removed: "Removed",
+  changed: "Changed",
+} satisfies Record<Change, string>
+
+export const insuranceFieldLabels = {
+  label: "label",
+  family: "family",
+  coverage: "visit coverage",
+  carrierCode: "AMD carrier",
+  carrierId: "AMD carrier",
+  selfPay: "self-pay",
+  aliases: "what callers also say",
+  doctors: "doctors",
+  requires: "requirements",
+  onlyOffices: "office limits",
+  notice: "what callers hear",
+  note: "staff note",
+  offices: "offices",
+} satisfies Record<PlanField | RowField | TableField, string>
 
 export const callIssueOutcomeLabels = {
   CONFIRMED: "Real issue",

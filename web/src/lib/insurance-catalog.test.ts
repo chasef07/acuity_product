@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import type { InsuranceCatalog } from "./api/generated/types.gen.ts"
-import { carrierChoices, changedPlans, record, replay, same, touchedOffices, type InsuranceEdit } from "./insurance-catalog.ts"
+import { carrierChoices, changedPlans, diffCatalogs, record, replay, same, touchedOffices, type InsuranceEdit } from "./insurance-catalog.ts"
 
 const catalog: InsuranceCatalog = {
   carriers: [
@@ -122,3 +122,48 @@ test("carrier choices are the code and ID pairs plans already use, named from th
 })
 
 type PlanAtEdit = Extract<InsuranceEdit, { kind: "createPlan" }>
+
+test("the diff names the plans and this office's rows that were added, removed and changed, and counts every other change", () => {
+  const active = replay(catalog, [{ kind: "addRow", at: { ...at, plan: "cash" } }])
+  const restored = replay(active, [
+    { kind: "removeRow", at: { ...at, plan: "cash" } },
+    { kind: "setDoctor", at, doctor: "Dr. A", answer: "no" },
+    { kind: "changeRow", at, change: { note: "Synthetic note" } },
+    { kind: "createPlan", at: { ...at, plan: "gamma" }, label: "Gamma EPO", family: "Gamma", coverage: "medical" },
+    { kind: "changePlan", at: { ...at, plan: "beta" }, change: { label: "Beta Plus" } },
+    { kind: "addRow", at: { region: "south", table: "optical", plan: "beta" } },
+    { kind: "changePlan", at: { region: "north", table: "spring", plan: "alpha" }, change: { family: "Alpha North" } },
+    { kind: "addRow", at: { region: "north", table: "spring", plan: "alpha" } },
+  ])
+  restored.carriers = [...restored.carriers, { id: "car3", name: "GAMMA" }]
+
+  assert.deepEqual(diffCatalogs(active, restored, "hollywood"), {
+    plans: [
+      { change: "changed", region: "south", plan: "beta", label: "Beta Plus", fields: ["label"] },
+      { change: "removed", region: "south", plan: "cash", label: "Self pay", fields: [] },
+      { change: "added", region: "south", plan: "gamma", label: "Gamma EPO", fields: [] },
+    ],
+    rows: [
+      { change: "changed", at, label: "Alpha PPO", fields: ["doctors", "note"] },
+      { change: "removed", at: { ...at, plan: "cash" }, label: "Self pay", fields: [] },
+      { change: "added", at: { ...at, plan: "gamma" }, label: "Gamma EPO", fields: [] },
+    ],
+    tables: [],
+    elsewhere: 4,
+  })
+  assert.deepEqual(diffCatalogs(active, restored, "spring").rows, [
+    { change: "added", at: { region: "north", table: "spring", plan: "alpha" }, label: "Alpha PPO", fields: [] },
+  ])
+})
+
+test("the diff of a list with itself is empty, and a doctor column change on this office's table is named", () => {
+  assert.deepEqual(diffCatalogs(catalog, structuredClone(catalog), "hollywood"), { plans: [], rows: [], tables: [], elsewhere: 0 })
+  const fewerDoctors = structuredClone(catalog)
+  fewerDoctors.regions[0].tables[0].doctors = []
+  assert.deepEqual(diffCatalogs(catalog, fewerDoctors, "sweetwater"), {
+    plans: [],
+    rows: [],
+    tables: [{ change: "changed", region: "south", table: "doctors", fields: ["doctors"] }],
+    elsewhere: 0,
+  })
+})

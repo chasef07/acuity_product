@@ -1,13 +1,14 @@
 "use client"
 
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
-import { PlusIcon, SearchIcon } from "lucide-react"
+import { HistoryIcon, PlusIcon, SearchIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import type {
@@ -44,6 +45,7 @@ import {
 import { insuranceDrafts, type InsuranceDraft as Draft } from "@/lib/insurance-drafts"
 import { fold } from "@/lib/knowledge-publication"
 import { doctorAnswerLabels, insuranceCoverageLabels, insuranceRequirementLabels } from "@/lib/vocabulary"
+import { InsuranceHistory } from "./insurance-history"
 import { AgentPage, AgentQueryBody, DisclosureRow, type AgentLocationProps } from "./manage-agent-page"
 
 const list = new Intl.ListFormat("en", { type: "conjunction" })
@@ -75,6 +77,7 @@ export function InsuranceList({ actorSubject, ...props }: AgentLocationProps & {
   const stored = useSyncExternalStore(insuranceDrafts.subscribe, () => insuranceDrafts.read(key), () => undefined)
   const draft = loaded?.canEdit ? stored : undefined
   const [search, setSearch] = useState("")
+  const [historyOpen, setHistoryOpen] = useState(false)
   const names = useMemo(() => officeNames(loaded), [loaded])
   const words = fold(search).split(/\s+/).filter(Boolean)
   const wasPublishing = useRef(stored?.publish.status === "publishing")
@@ -94,6 +97,14 @@ export function InsuranceList({ actorSubject, ...props }: AgentLocationProps & {
             Published <time dateTime={loaded.revision.createdAt}>{formatTimestamp(loaded.revision.createdAt)}</time> by{" "}
             {loaded.revision.createdBy}
           </>
+        )
+      }
+      actions={
+        loaded && (
+          <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
+            <HistoryIcon data-icon="inline-start" />
+            History
+          </Button>
         )
       }
       controls={
@@ -148,6 +159,25 @@ export function InsuranceList({ actorSubject, ...props }: AgentLocationProps & {
           />
         )}
       </AgentQueryBody>
+      {loaded && (
+        <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+          <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+            <SheetHeader className="border-b px-5 py-4">
+              <SheetTitle>History</SheetTitle>
+              <SheetDescription>
+                Every published version of the practice&apos;s insurance list. Restoring publishes an earlier version as a new one.
+              </SheetDescription>
+            </SheetHeader>
+            <InsuranceHistory
+              practiceID={props.practiceID}
+              locationID={props.locationID}
+              active={loaded}
+              hasDraft={Boolean(draft)}
+              onChanged={() => void reload()}
+            />
+          </SheetContent>
+        </Sheet>
+      )}
     </AgentPage>
   )
 }

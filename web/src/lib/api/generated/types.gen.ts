@@ -108,6 +108,25 @@ export type InsurancePublication = {
      */
     expectedRevisionId: string;
     reason: string;
+    /**
+     * restore when the catalog is an earlier revision published again. Only the seed import records import.
+     */
+    provenance?: 'portal' | 'restore';
+    catalog: InsuranceCatalog;
+};
+
+export type InsuranceRevisionQuery = {
+    practiceId: string;
+    locationId: string;
+    revisionId: string;
+};
+
+export type InsuranceRevisionHistory = {
+    revisions: Array<InsuranceRevision>;
+};
+
+export type InsuranceRevisionCatalog = {
+    revision: InsuranceRevision;
     catalog: InsuranceCatalog;
 };
 
@@ -4771,6 +4790,84 @@ export type QueryInsuranceCatalogResponses = {
 };
 
 export type QueryInsuranceCatalogResponse = QueryInsuranceCatalogResponses[keyof QueryInsuranceCatalogResponses];
+
+export type QueryInsuranceHistoryData = {
+    body: InsuranceCatalogQuery;
+    path?: never;
+    query?: never;
+    url: '/v1/insurance/revisions/history';
+};
+
+export type QueryInsuranceHistoryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The Location has no single Abita Office Route, or the database is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryInsuranceHistoryError = QueryInsuranceHistoryErrors[keyof QueryInsuranceHistoryErrors];
+
+export type QueryInsuranceHistoryResponses = {
+    /**
+     * The Practice's insurance list revisions, newest first.
+     */
+    200: InsuranceRevisionHistory;
+};
+
+export type QueryInsuranceHistoryResponse = QueryInsuranceHistoryResponses[keyof QueryInsuranceHistoryResponses];
+
+export type ReadInsuranceRevisionData = {
+    body: InsuranceRevisionQuery;
+    path?: never;
+    query?: never;
+    url: '/v1/insurance/revisions/read';
+};
+
+export type ReadInsuranceRevisionErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The Practice has no revision with this ID.
+     */
+    404: ErrorEnvelope;
+    /**
+     * The Location has no single Abita Office Route, or the database is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReadInsuranceRevisionError = ReadInsuranceRevisionErrors[keyof ReadInsuranceRevisionErrors];
+
+export type ReadInsuranceRevisionResponses = {
+    /**
+     * The revision and its catalog.
+     */
+    200: InsuranceRevisionCatalog;
+};
+
+export type ReadInsuranceRevisionResponse = ReadInsuranceRevisionResponses[keyof ReadInsuranceRevisionResponses];
 
 export type PublishInsuranceCatalogData = {
     body: InsurancePublication;

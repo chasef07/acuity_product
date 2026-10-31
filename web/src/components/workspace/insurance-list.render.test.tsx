@@ -12,6 +12,7 @@ import type {
   InsuranceCatalogQuery,
   InsurancePublication,
   InsuranceRevision,
+  InsuranceRevisionQuery,
   InsuranceValidationError,
   Location,
   LocationInsuranceCatalog,
@@ -20,6 +21,7 @@ import type {
 Object.defineProperty(globalThis, "document", { configurable: true, value: new JSDOM("").window.document })
 const { SidebarProvider } = await import("@/components/ui/sidebar")
 const { ManageAgent } = await import("./manage-agent.tsx")
+const { InsuranceHistory } = await import("./insurance-history.tsx")
 
 const locations: Location[] = [
   { id: "00000000-0000-4000-8000-000000000001", name: "Hollywood" },
@@ -108,7 +110,7 @@ test("without access to every office on its table, the office's plans read in co
   await page.render(insuranceList())
   await waitFor(() => page.groups().length === 2)
   assert.deepEqual(page.requests, [{ practiceId: "practice-1", locationId: locations[0].id }])
-  assert.match(page.header(), /^Insurance listPublished .+ by operator@abita\.test$/)
+  assert.match(page.header(), /^Insurance listPublished .+ by operator@abita\.testHistory$/)
   assert.deepEqual(page.groups(), [
     {
       title: "Medical3",
@@ -351,7 +353,7 @@ test("a rejected publish shows each validation error beside the plan it names, l
   assert.equal(page.field("Family").value, "")
   assert.equal(page.active.revision.id, imported.id)
   assert.equal(page.requests.length, 1)
-  assert.match(page.header(), /by operator@abita\.test$/)
+  assert.match(page.header(), /by operator@abita\.testHistory$/)
   await page.unmount()
 })
 
@@ -428,6 +430,175 @@ test("before any list is published, the page says so", async (t) => {
   await page.unmount()
 })
 
+const renamed: InsuranceRevision = {
+  id: "00000000-0000-4000-8000-0000000000c2",
+  createdAt: "2026-10-30T16:00:00Z",
+  createdBy: "staff@abita.test",
+  reason: "Rename Example Choice",
+  provenance: "portal",
+  previousRevisionId: imported.id,
+}
+const dropped: InsuranceRevision = {
+  id: "00000000-0000-4000-8000-0000000000c3",
+  createdAt: "2026-10-30T17:00:00Z",
+  createdBy: "north@abita.test",
+  reason: "Drop Demo Medicaid",
+  provenance: "portal",
+  previousRevisionId: renamed.id,
+}
+
+function withHistory(page: ReturnType<typeof harness>) {
+  const second = structuredClone(published)
+  second.regions[0].plans[0].label = "Example Choice Plus"
+  second.regions[1].plans[0].family = "Spring Health"
+  const third = structuredClone(second)
+  third.regions[0].tables[0].rows = third.regions[0].tables[0].rows.filter((row) => row.planId !== "demo-medicaid")
+  page.history = [dropped, renamed, imported]
+  page.catalogs = { [imported.id]: published, [renamed.id]: second, [dropped.id]: third }
+  page.active = { revision: dropped, catalog: third }
+}
+
+function insuranceHistory(page: ReturnType<typeof harness>, onChanged = () => {}, hasDraft = false) {
+  const active: LocationInsuranceCatalog = { ...page.active, officeId: "hollywood", officeNames, canEdit: page.canEdit }
+  return <InsuranceHistory practiceID="practice-1" locationID={locations[0].id} active={active} hasDraft={hasDraft} onChanged={onChanged} />
+}
+
+test("History lists every revision newest first with its provenance, author, time and reason, and marks the active one", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  await page.render(insuranceList())
+  await waitFor(() => page.groups().length === 2)
+  assert.ok(page.button("History"))
+
+  await page.render(insuranceHistory(page), "history")
+  await waitFor(() => page.historyRows().length === 3)
+  assert.deepEqual(page.historyRequests, [{ practiceId: "practice-1", locationId: locations[0].id }])
+  const rows = page.historyRows()
+  assert.match(rows[0], /^Portal edit00000000Active.*north@abita\.test · .+Drop Demo Medicaid$/)
+  assert.match(rows[1], /^Portal edit00000000staff@abita\.test · .+Rename Example Choice$/)
+  assert.match(rows[2], /^Imported00000000operator@abita\.test · .+initial import$/)
+  assert.deepEqual(Array.from(page.host.querySelectorAll("li > button time"), (time) => time.getAttribute("dateTime")), [dropped.createdAt, renamed.createdAt, imported.createdAt])
+  await page.selectRevision("Portal edit00000000Active")
+  await waitFor(() => /This is the active version\./.test(page.text()))
+  assert.equal(page.maybeButton("Restore this version"), undefined)
+  await page.unmount()
+})
+
+test("a selected revision names the plans and office rows restoring it would add, remove and change, and counts changes elsewhere", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  await page.render(insuranceHistory(page))
+  await waitFor(() => page.historyRows().length === 3)
+  await page.selectRevision("Imported")
+  await waitFor(() => /Restoring this version would/.test(page.text()))
+  assert.deepEqual(page.readRequests, [{ practiceId: "practice-1", locationId: locations[0].id, revisionId: imported.id }])
+  assert.match(page.text(), /make these changes to the active list for Hollywood\./)
+  assert.deepEqual(page.diff("Plans"), ["Changed | Example Choice PPO | label"])
+  assert.deepEqual(page.diff("This office's rows"), ["Added | Demo Medicaid MMA"])
+  assert.match(page.text(), /1 more change elsewhere in the list\./)
+  assert.ok(page.button("Restore this version"))
+
+  await page.click("Back to history")
+  await page.selectRevision("Portal edit00000000staff")
+  await waitFor(() => page.diff("This office's rows").length === 1)
+  assert.deepEqual(page.diff("Plans"), [])
+  assert.doesNotMatch(page.text(), /elsewhere/)
+  await page.unmount()
+})
+
+test("restoring publishes the earlier catalog as a restore with the reason Restore and its short ID, then reloads history and the list", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  let changed = 0
+  await page.render(insuranceHistory(page, () => changed++))
+  await waitFor(() => page.historyRows().length === 3)
+  await page.selectRevision("Imported")
+  await waitFor(() => page.maybeButton("Restore this version") !== undefined)
+  await page.click("Restore this version")
+  assert.match(page.text(), /with the reason “Restore 00000000”/)
+  await page.click("Restore")
+  await waitFor(() => page.historyRows().length === 4)
+
+  const [publication] = page.publications
+  assert.match(publication.revisionId, /^[0-9a-f-]{36}$/)
+  assert.deepEqual({ ...publication, revisionId: "" }, {
+    practiceId: "practice-1",
+    locationId: locations[0].id,
+    revisionId: "",
+    expectedRevisionId: dropped.id,
+    reason: "Restore 00000000",
+    provenance: "restore",
+    catalog: published,
+  })
+  assert.equal(changed, 1)
+  assert.match(page.historyRows()[0], /^Restore.*staff@abita\.test.*Restore 00000000$/)
+  await page.unmount()
+})
+
+test("a restore the middleware rejects shows every error and changes nothing", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  let changed = 0
+  await page.render(insuranceHistory(page, () => changed++))
+  await waitFor(() => page.historyRows().length === 3)
+  await page.selectRevision("Imported")
+  await waitFor(() => page.maybeButton("Restore this version") !== undefined)
+  await page.click("Restore this version")
+  page.publishStatus = 400
+  page.publishErrors = [
+    { region: "south_florida", table: "doctors", planId: "demo-medicaid", rule: "unknown_doctor_column", message: "Dr. Moreau is not a doctor column on the doctors table." },
+    { region: "", table: "", planId: "", rule: "unknown_carrier", message: "Carrier car10009 is not in the carrier list." },
+  ]
+  await page.click("Restore")
+  await waitFor(() => page.alert() !== "")
+  assert.match(page.alert(), /^Not restored\. This version no longer passes the insurance list checks\. Nothing changed\./)
+  assert.deepEqual(Array.from(page.host.querySelectorAll("[role='alert'] li"), (item) => item.textContent), [
+    "Dr. Moreau is not a doctor column on the doctors table.",
+    "Carrier car10009 is not in the carrier list.",
+  ])
+  assert.equal(page.publications.length, 1)
+  assert.equal(page.active.revision.id, dropped.id)
+  assert.equal(page.historyRequests.length, 1)
+  assert.equal(changed, 0)
+  await page.unmount()
+})
+
+test("a restore the member is not authorized for shows the 403 message and changes nothing", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  await page.render(insuranceHistory(page))
+  await waitFor(() => page.historyRows().length === 3)
+  await page.selectRevision("Imported")
+  await waitFor(() => page.maybeButton("Restore this version") !== undefined)
+  await page.click("Restore this version")
+  page.publishStatus = 403
+  await page.click("Restore")
+  await waitFor(() => page.alert() !== "")
+  assert.equal(page.alert(), "You don't have access to every office this change affects. Nothing changed.")
+  assert.equal(page.active.revision.id, dropped.id)
+  await page.unmount()
+})
+
+test("members who cannot edit, or who have unpublished changes, see the diff without a Restore button", async (t) => {
+  const page = harness(t)
+  withHistory(page)
+  page.canEdit = false
+  await page.render(insuranceHistory(page))
+  await waitFor(() => page.historyRows().length === 3)
+  await page.selectRevision("Imported")
+  await waitFor(() => page.diff("Plans").length === 1)
+  assert.equal(page.maybeButton("Restore this version"), undefined)
+
+  page.canEdit = true
+  await page.render(insuranceHistory(page, () => {}, true), "with draft")
+  await waitFor(() => page.historyRows().length === 3)
+  await page.selectRevision("Imported")
+  await waitFor(() => page.diff("Plans").length === 1)
+  assert.equal(page.maybeButton("Restore this version"), undefined)
+  assert.match(page.text(), /Publish or discard your unpublished changes before restoring\./)
+  await page.unmount()
+})
+
 function insuranceList(locationScopeID = locations[0].id) {
   return <ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locationScopeID} locations={locations} page="insurance" onPage={() => {}} />
 }
@@ -477,6 +648,10 @@ function harness(t: TestContext) {
     active: { revision: imported, catalog: published } as Pick<LocationInsuranceCatalog, "revision" | "catalog">,
     conflictWith: undefined as Pick<LocationInsuranceCatalog, "revision" | "catalog"> | undefined,
     requests: [] as InsuranceCatalogQuery[],
+    history: [imported] as InsuranceRevision[],
+    catalogs: { [imported.id]: published } as Record<string, InsuranceCatalog>,
+    historyRequests: [] as InsuranceCatalogQuery[],
+    readRequests: [] as InsuranceRevisionQuery[],
     publications: [] as InsurancePublication[],
     publishStatus: 200,
     publishErrors: [] as InsuranceValidationError[],
@@ -556,6 +731,16 @@ function harness(t: TestContext) {
       window.dispatchEvent(event)
       return event.defaultPrevented
     },
+    historyRows: () => Array.from(host.querySelectorAll("li > button"), (row) => row.textContent ?? ""),
+    selectRevision: async (prefix: string) => {
+      const row = Array.from(host.querySelectorAll<HTMLButtonElement>("li > button")).find((item) => item.textContent?.startsWith(prefix))
+      assert.ok(row, prefix)
+      await act(async () => row.click())
+    },
+    diff: (title: string) =>
+      Array.from(host.querySelectorAll(`section[aria-label="${title}"] li`), (item) =>
+        Array.from(item.children, (child) => child.textContent ?? "").join(" | "),
+      ),
     groups: () =>
       Array.from(host.querySelectorAll("[role='group'][aria-labelledby]"), (group) => ({
         title: group.querySelector("button")?.textContent ?? "",
@@ -577,6 +762,16 @@ function harness(t: TestContext) {
       }
       return Response.json({ ...page.active, officeId: offices[body.locationId], officeNames, canEdit: page.canEdit })
     }
+    if (url.pathname === "/v1/insurance/revisions/history") {
+      page.historyRequests.push((await request.json()) as InsuranceCatalogQuery)
+      return Response.json({ revisions: page.history })
+    }
+    if (url.pathname === "/v1/insurance/revisions/read") {
+      const body = (await request.json()) as InsuranceRevisionQuery
+      page.readRequests.push(body)
+      const revision = page.history.find((item) => item.id === body.revisionId)
+      return Response.json({ revision, catalog: page.catalogs[body.revisionId] })
+    }
     assert.equal(url.pathname, "/v1/insurance/revisions")
     const publication = (await request.json()) as InsurancePublication
     page.publications.push(publication)
@@ -594,6 +789,12 @@ function harness(t: TestContext) {
         { status: 400 },
       )
     }
+    if (page.publishStatus === 403) {
+      return Response.json(
+        { error: { code: "ACCESS_DENIED", message: "You don't have access to every office this change affects. Nothing changed.", correlationId: "synthetic", retryable: false } },
+        { status: 403 },
+      )
+    }
     if (page.publishStatus !== 200) {
       return Response.json(
         { error: { code: "UNAVAILABLE", message: "Not published. Nothing changed. Try again.", correlationId: "synthetic", retryable: true } },
@@ -605,10 +806,12 @@ function harness(t: TestContext) {
       createdAt: "2026-10-30T19:00:00Z",
       createdBy: "staff@abita.test",
       reason: publication.reason,
-      provenance: "portal",
+      provenance: publication.provenance ?? "portal",
       previousRevisionId: publication.expectedRevisionId,
     }
     page.active = { revision, catalog: publication.catalog }
+    page.history = [revision, ...page.history]
+    page.catalogs[revision.id] = publication.catalog
     return Response.json(revision)
   })
   return page

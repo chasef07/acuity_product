@@ -69,6 +69,7 @@ type insurancePublication struct {
 	RevisionID         string            `json:"revisionId"`
 	ExpectedRevisionID string            `json:"expectedRevisionId"`
 	Reason             string            `json:"reason"`
+	Provenance         string            `json:"provenance,omitempty"`
 	Catalog            insurance.Catalog `json:"catalog"`
 }
 
@@ -532,6 +533,187 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 			t.Fatalf("import over Portal edits: published=%t err=%v", published, err)
 		}
 		unchanged(t, current, count)
+	})
+
+	history := func(t *testing.T, token, location string) []insuranceRevisionView {
+		t.Helper()
+		status, body := send("/v1/insurance/revisions/history", token, map[string]string{"practiceId": practice, "locationId": locations[location]})
+		var view struct {
+			Revisions []insuranceRevisionView `json:"revisions"`
+		}
+		if status != http.StatusOK || json.Unmarshal([]byte(body), &view) != nil {
+			t.Fatalf("history for %s at %s: status=%d body=%.300s", token, location, status, body)
+		}
+		return view.Revisions
+	}
+	readRevision := func(t *testing.T, token, location, revisionID string) (int, insuranceRevisionView, insurance.Catalog) {
+		t.Helper()
+		status, body := send("/v1/insurance/revisions/read", token, map[string]string{"practiceId": practice, "locationId": locations[location], "revisionId": revisionID})
+		var view struct {
+			Revision insuranceRevisionView `json:"revision"`
+			Catalog  insurance.Catalog     `json:"catalog"`
+		}
+		if status == http.StatusOK && json.Unmarshal([]byte(body), &view) != nil {
+			t.Fatalf("read %s: body=%.300s", revisionID, body)
+		}
+		return status, view.Revision, view.Catalog
+	}
+	type storedRow struct{ id, hash, reason, provenance, createdBy, previous string }
+	storedRevisions := func(t *testing.T) []storedRow {
+		t.Helper()
+		rows, err := db.Owner.Query(ctx, `SELECT id::text, content_hash, reason, provenance, created_by, COALESCE(previous_revision_id::text, '') FROM insurance_revisions WHERE practice_id=$1 ORDER BY created_at, id`, practice)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		stored := []storedRow{}
+		for rows.Next() {
+			var row storedRow
+			if err := rows.Scan(&row.id, &row.hash, &row.reason, &row.provenance, &row.createdBy, &row.previous); err != nil {
+				t.Fatal(err)
+			}
+			stored = append(stored, row)
+		}
+		return stored
+	}
+
+	t.Run("history lists every revision newest first with author, time, reason and provenance", func(t *testing.T) {
+		current, count := active()
+		revisions := history(t, "spring-hill-token", "Spring Hill")
+		if len(revisions) != count || revisions[0].ID != current {
+			t.Fatalf("history has %d revisions starting at %+v, want %d starting at %s", len(revisions), revisions[0], count, current)
+		}
+		for i, revision := range revisions[:len(revisions)-1] {
+			older := revisions[i+1]
+			if revision.PreviousRevisionID == nil || *revision.PreviousRevisionID != older.ID || !revision.CreatedAt.After(older.CreatedAt) {
+				t.Fatalf("revision %d %+v does not follow %+v", i, revision, older)
+			}
+		}
+		authors, provenances := []string{}, []string{}
+		for _, revision := range revisions {
+			authors = append(authors, revision.CreatedBy)
+			provenances = append(provenances, revision.Provenance)
+		}
+		if want := []string{"operator@acuity.test", "north@abita.test", "springhill@abita.test", "operator@acuity.test"}; !reflect.DeepEqual(authors, want) {
+			t.Fatalf("authors=%v, want %v", authors, want)
+		}
+		if want := []string{"portal", "portal", "portal", "import"}; !reflect.DeepEqual(provenances, want) {
+			t.Fatalf("provenances=%v, want %v", provenances, want)
+		}
+		if oldest := revisions[len(revisions)-1]; oldest.ID != seed.ID || oldest.Reason != "Seed from the middleware export" || oldest.PreviousRevisionID != nil || revisions[1].Reason != "Synthetic correction" {
+			t.Fatalf("oldest=%+v second=%+v", oldest, revisions[1])
+		}
+		if got := history(t, "north-token", "Crystal River"); !reflect.DeepEqual(got, revisions) {
+			t.Fatal("history differs between two Locations of the Practice")
+		}
+	})
+
+	t.Run("a revision reads back its catalog and an unknown revision is not found", func(t *testing.T) {
+		status, revision, catalog := readRevision(t, "spring-hill-token", "Spring Hill", seed.ID)
+		if status != http.StatusOK || revision.ID != seed.ID || revision.Provenance != "import" || revision.CreatedBy != "operator@acuity.test" || !reflect.DeepEqual(catalog, seedCatalog) {
+			t.Fatalf("read seed: status=%d revision=%+v", status, revision)
+		}
+		if status, _, _ := readRevision(t, "spring-hill-token", "Spring Hill", uuid.NewString()); status != http.StatusNotFound {
+			t.Fatalf("unknown revision: status=%d", status)
+		}
+		if status, _, _ := readRevision(t, "spring-hill-token", "Spring Hill", "not-a-uuid"); status != http.StatusBadRequest {
+			t.Fatalf("malformed revision ID: status=%d", status)
+		}
+	})
+
+	t.Run("members without access to the Location get 403 from history and read", func(t *testing.T) {
+		for _, tc := range []struct{ token, location string }{{"spring-hill-token", "Crystal River"}, {"demo-token", "Spring Hill"}} {
+			if status, _ := send("/v1/insurance/revisions/history", tc.token, map[string]string{"practiceId": practice, "locationId": locations[tc.location]}); status != http.StatusForbidden {
+				t.Errorf("history for %s at %s: status=%d", tc.token, tc.location, status)
+			}
+			if status, _, _ := readRevision(t, tc.token, tc.location, seed.ID); status != http.StatusForbidden {
+				t.Errorf("read for %s at %s: status=%d", tc.token, tc.location, status)
+			}
+		}
+		if status, _ := send("/v1/insurance/revisions/history", "", map[string]string{"practiceId": practice, "locationId": locations["Spring Hill"]}); status != http.StatusUnauthorized {
+			t.Errorf("unauthenticated history: status=%d", status)
+		}
+	})
+
+	restore := func(location, expected string) insurancePublication {
+		body := publication(location, expected, seedCatalog)
+		body.Provenance = "restore"
+		body.Reason = "Restore " + seed.ID[:8]
+		return body
+	}
+
+	t.Run("clients cannot record an import or an unknown provenance", func(t *testing.T) {
+		current, count := active()
+		for _, provenance := range []string{"import", "git"} {
+			body := restore("Spring Hill", current)
+			body.Provenance = provenance
+			if status, response := send("/v1/insurance/revisions", "operator-token", body); status != http.StatusBadRequest {
+				t.Errorf("provenance %s: status=%d body=%s", provenance, status, response)
+			}
+		}
+		unchanged(t, current, count)
+	})
+
+	t.Run("a restore touching an office the member cannot change is denied and nothing changes", func(t *testing.T) {
+		current, count := active()
+		before := storedRevisions(t)
+		if status, body := send("/v1/insurance/revisions", "admin-token", restore("Spring Hill", current)); status != http.StatusForbidden || !strings.Contains(body, "ACCESS_DENIED") {
+			t.Fatalf("status=%d body=%s", status, body)
+		}
+		unchanged(t, current, count)
+		if !reflect.DeepEqual(storedRevisions(t), before) {
+			t.Fatal("a denied restore changed stored revisions")
+		}
+	})
+
+	t.Run("a restore the middleware rejects returns its errors and changes nothing", func(t *testing.T) {
+		current, count := active()
+		before := storedRevisions(t)
+		validator.respond(http.StatusBadRequest, `{"valid":false,"errors":[{"region":"spring_hill_crystal_river","table":"spring_hill","planId":"","rule":"unknown_doctor_column","message":"Synthetic doctor column no longer exists."}]}`)
+		status, body := send("/v1/insurance/revisions", "operator-token", restore("Spring Hill", current))
+		validator.respond(http.StatusOK, `{"valid":true}`)
+		if status != http.StatusBadRequest || !strings.Contains(body, "INSURANCE_INVALID") || !strings.Contains(body, "Synthetic doctor column no longer exists.") {
+			t.Fatalf("status=%d body=%s", status, body)
+		}
+		if _, sent := validator.validated(); !reflect.DeepEqual(sent, seedCatalog) {
+			t.Fatal("the restore was not validated with the restored catalog")
+		}
+		unchanged(t, current, count)
+		if !reflect.DeepEqual(storedRevisions(t), before) {
+			t.Fatal("a rejected restore changed stored revisions")
+		}
+	})
+
+	t.Run("restoring a revision publishes its catalog as a new restore revision and leaves history unchanged", func(t *testing.T) {
+		current, count := active()
+		before := storedRevisions(t)
+		body := restore("Spring Hill", current)
+		status, response := send("/v1/insurance/revisions", "operator-token", body)
+		var revision insuranceRevisionView
+		if status != http.StatusOK || json.Unmarshal([]byte(response), &revision) != nil {
+			t.Fatalf("status=%d body=%s", status, response)
+		}
+		if revision.ID != body.RevisionID || revision.Provenance != "restore" || revision.Reason != "Restore "+seed.ID[:8] || revision.CreatedBy != "operator@acuity.test" || revision.PreviousRevisionID == nil || *revision.PreviousRevisionID != current {
+			t.Fatalf("restore revision=%+v", revision)
+		}
+		unchanged(t, body.RevisionID, count+1)
+		after := storedRevisions(t)
+		if !reflect.DeepEqual(after[:len(before)], before) {
+			t.Fatal("restoring rewrote an earlier revision")
+		}
+		if restored := after[len(after)-1]; restored.id != body.RevisionID || restored.hash != before[0].hash {
+			t.Fatalf("restored row=%+v, want the seed's content hash %s", restored, before[0].hash)
+		}
+		if _, read, catalog := readRevision(t, "spring-hill-token", "Spring Hill", body.RevisionID); read.Provenance != "restore" || !reflect.DeepEqual(catalog, seedCatalog) {
+			t.Fatalf("read restored revision=%+v", read)
+		}
+		status, revisionID, catalog := agentRead("middleware-token")
+		if status != http.StatusOK || revisionID != body.RevisionID || !bytes.Equal(catalog, bytes.TrimSuffix(export, []byte("\n"))) {
+			t.Fatalf("agent read after restore: status=%d revision=%s", status, revisionID)
+		}
+		if newest := history(t, "spring-hill-token", "Spring Hill")[0]; newest.ID != body.RevisionID || newest.Provenance != "restore" {
+			t.Fatalf("newest history entry=%+v", newest)
+		}
 	})
 
 	t.Run("both Sweetwater Locations guard the one Sweetwater office", func(t *testing.T) {

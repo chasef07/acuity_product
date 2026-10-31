@@ -399,7 +399,7 @@ test("each page keeps its title, actions, and filters inside the panel", async (
 
   await showPage("insurance")
   await waitFor(() => page.groups().length === 1)
-  assert.match(page.host.querySelector("header")?.textContent ?? "", /^Insurance listPublished .+ by operator@abita\.test$/)
+  assert.match(page.host.querySelector("header")?.textContent ?? "", /^Insurance listPublished .+ by operator@abita\.testHistory$/)
   assert.ok(page.host.querySelector("input[aria-label='Search plans']"))
 
   await showPage("home")
