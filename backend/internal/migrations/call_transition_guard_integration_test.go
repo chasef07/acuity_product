@@ -2,13 +2,13 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"testing"
 
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -36,7 +36,7 @@ var callDispositions = []string{
 	"CREATE_TASK", "NO_FOLLOW_UP",
 }
 
-func TestCallTransitionGuardWarnsOnEveryIllegalMoveWithoutBlockingIt(t *testing.T) {
+func TestCallTransitionGuardRejectsEveryIllegalMove(t *testing.T) {
 	db := testdb.Open(t)
 	ctx := context.Background()
 	for constraint, guarded := range map[string][]string{
@@ -80,34 +80,26 @@ func TestCallTransitionGuardWarnsOnEveryIllegalMoveWithoutBlockingIt(t *testing.
 	`, practiceID, locationID).Scan(&callID); err != nil {
 		t.Fatal(err)
 	}
-	config := db.As(testdb.Worker).Config().ConnConfig
-	var warnings []string
-	config.OnNotice = func(_ *pgconn.PgConn, notice *pgconn.Notice) {
-		if notice.Severity == "WARNING" {
-			warnings = append(warnings, notice.Message)
-		}
-	}
-	worker, err := pgx.ConnectConfig(ctx, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = worker.Close(context.Background()) })
-	move := func(update string, id, to string, want string) {
+	worker := db.As(testdb.Worker)
+	move := func(update, read, id, from, to, want string) {
 		t.Helper()
-		warnings = nil
 		var stored string
-		if err := worker.QueryRow(ctx, update, id, to).Scan(&stored); err != nil {
-			t.Fatalf("%s -> %q: %v", id, to, err)
+		err := worker.QueryRow(ctx, update, id, to).Scan(&stored)
+		if want == "" {
+			if err != nil || stored != to {
+				t.Fatalf("legal move %s %q -> %q = stored %q, %v", id, from, to, stored, err)
+			}
+			return
 		}
-		if stored != to {
-			t.Fatalf("observe mode blocked %s -> %q, stored %q", id, to, stored)
+		var guard *pgconn.PgError
+		if !errors.As(err, &guard) || guard.Code != want[:5] || guard.Message != want {
+			t.Fatalf("illegal move %s %q -> %q = %v, want %s %q", id, from, to, err, want[:5], want)
 		}
-		var got string
-		if len(warnings) > 0 {
-			got = warnings[0]
+		if err := db.Owner.QueryRow(ctx, read, id).Scan(&stored); err != nil {
+			t.Fatal(err)
 		}
-		if got != want || len(warnings) > 1 {
-			t.Errorf("warnings = %q, want %q", warnings, want)
+		if stored != from {
+			t.Fatalf("rejected move %s %q -> %q left %q", id, from, to, stored)
 		}
 	}
 
@@ -132,7 +124,7 @@ func TestCallTransitionGuardWarnsOnEveryIllegalMoveWithoutBlockingIt(t *testing.
 				UPDATE human_calling_call_legs
 				SET state = $2, ended_at = CASE WHEN $2 IN ('ENDED', 'FAILED') THEN now() END
 				WHERE id = $1 RETURNING state
-			`, legID, to, want)
+			`, `SELECT state FROM human_calling_call_legs WHERE id = $1`, legID, from, to, want)
 		}
 	}
 
@@ -165,7 +157,7 @@ func TestCallTransitionGuardWarnsOnEveryIllegalMoveWithoutBlockingIt(t *testing.
 				SET terminal_outcome = NULLIF($2, ''),
 					disposition_deadline = CASE WHEN $2 = 'ENDED' THEN now() END
 				WHERE id = $1 RETURNING COALESCE(terminal_outcome, '')
-			`, id, to, want)
+			`, `SELECT COALESCE(terminal_outcome, '') FROM human_calling_calls WHERE id = $1`, id, from, to, want)
 		}
 	}
 
@@ -189,7 +181,7 @@ func TestCallTransitionGuardWarnsOnEveryIllegalMoveWithoutBlockingIt(t *testing.
 			move(`
 				UPDATE human_calling_calls SET disposition_outcome = NULLIF($2, '')
 				WHERE id = $1 RETURNING COALESCE(disposition_outcome, '')
-			`, id, to, want)
+			`, `SELECT COALESCE(disposition_outcome, '') FROM human_calling_calls WHERE id = $1`, id, from, to, want)
 		}
 	}
 }

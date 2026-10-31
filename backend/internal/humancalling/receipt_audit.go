@@ -35,6 +35,7 @@ type ProviderReceiptAudit struct {
 
 var providerReceiptAuditErrorCodes = []string{
 	"HANDOFF_REJECTED",
+	illegalCallTransitionCode,
 	"INVALID_PROVIDER_EVENT",
 	projectionApplyFactConflict,
 	projectionApplyFactRetry,

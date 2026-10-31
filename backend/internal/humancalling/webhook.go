@@ -557,6 +557,8 @@ func (m *Module) replayProviderReceipt(
 		}
 	}
 	switch {
+	case errors.Is(err, ErrIllegalCallTransition):
+		return ReceiptQuarantined, illegalCallTransitionCode
 	case err != nil:
 		return ReceiptPending, retryCode
 	case verdict == factApplied:
