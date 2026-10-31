@@ -49,6 +49,11 @@ test("flow keeps every call, sends only failures to reasons, and marks KB gaps a
   assert.deepEqual(intents, ["New patient booking", "Cancel appointment", "Speak to staff", "No intent"])
 })
 
+test("flow marks an insurance missing from the list as a gap, not an agent mistake", () => {
+  const flow = callFlow([route("new_patient_booking", "transferred", true, ["insurance_listed"], 3)], { insurance_listed: "Insurance list had the plan" })
+  assert.equal(flow.nodes.find((node) => node.name === "Insurance list had the plan")?.tone, "gap")
+})
+
 test("intents past the top seven share one unclickable bucket, apart from the real Other intent", () => {
   const many = ["other", "speak_to_staff", "office_information", "cancel_appointment", "reschedule_appointment", "billing_question", "insurance_question", "records_or_forms", "returning_call"]
     .map((intent, index) => route(intent, "resolved", true, [], 20 - index))

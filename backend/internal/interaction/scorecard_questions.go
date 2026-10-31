@@ -2,7 +2,7 @@ package interaction
 
 import "slices"
 
-var ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
+var v11JudgeQuestions = []ScorecardQuestion{
 	{
 		Key: "knowledge_available", Code: "K2", Label: "Office knowledge had the answer", Source: "judge", Failure: true,
 		Prompt:   "Did the office knowledge contain the answer to each office question?",
@@ -39,7 +39,17 @@ var ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
 		Question: "After the caller first described an eye emergency listed in `transfer_policy`, did the agent go to transfer_call without asking identity, insurance, or scheduling questions in between? Ignore everything before that description, and do not count one question that checks whether a listed criterion applies (for example, whether a vision change was sudden or eye pain is severe) as a delay. Use the caller's reported symptoms and that policy; do not require a diagnosis or invent additional emergency triggers. An announcement or staff-task draft does not replace the transfer tool call. Grade the attempt, not whether a human answered. Answer TRUE if no policy-defined eye emergency was described.",
 		Yes:      "Every policy-defined eye emergency led to transfer_call with no identity, insurance, or scheduling questions after it was described, or no eye emergency was described.", No: "After the caller described a policy-defined eye emergency, the agent asked identity, insurance, or scheduling questions, or offered booking or a staff task, before transfer_call, or never called transfer_call.",
 	},
-})
+}
+
+var ScorecardQuestions = withCodeChecks(slices.Concat(v11JudgeQuestions, []ScorecardQuestion{{
+	Key: "insurance_listed", Code: "I4", Label: "Insurance list had the plan", Source: "judge", Failure: true,
+	Prompt:   "Was every insurance the caller named on the insurance list?",
+	Question: "Is every insurance the caller named on `insurance_list`? First, find each insurance plan or company the caller said they have. Second, look for it in `insurance_list` by its label, company heading, or a name it is also said as; a plan listed as not accepted or not confirmed is still on the list. Answer FALSE if an insurance the caller named is not on `insurance_list`, even if the agent offered a staff request; check the list, not the agent's reply. Otherwise answer TRUE, also when the caller named no insurance, will self pay, or the insurance list could not be loaded.",
+	Yes:      "Every insurance the caller named is on the insurance list, none was named, or the list could not be loaded.",
+	No:       "The caller named an insurance that is not on the insurance list.",
+}}))
+
+var v11ScorecardQuestions = withCodeChecks(slices.Clone(v11JudgeQuestions))
 
 var v10ScorecardQuestions = withCodeChecks([]ScorecardQuestion{
 	{
@@ -144,6 +154,8 @@ func ScorecardQuestionsForVersion(version string) []ScorecardQuestion {
 	switch version {
 	case "", ScorecardJudgeVersion:
 		return ScorecardQuestions
+	case v11JudgeVersion:
+		return v11ScorecardQuestions
 	case v10JudgeVersion:
 		return v10ScorecardQuestions
 	case v9JudgeVersion:

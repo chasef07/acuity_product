@@ -67,6 +67,8 @@ export function AppointmentActions({ call }: { call: AgentCall }) {
   )
 }
 
+export type CallHighlight = { line: string; note: string }
+
 export function AgentCallPanel({
   id,
   onClose,
@@ -94,7 +96,7 @@ export function AgentCallPanel({
   onFlagged: (id: string) => void
   footer?: ReactNode
   footerBusy?: boolean
-  highlight?: string
+  highlight?: CallHighlight
 }) {
   const [saving, setSaving] = useState(false)
   return (
@@ -179,7 +181,7 @@ function CallContent({
   onFlagged: (id: string) => void
   saving: boolean
   onSavingChange: (saving: boolean) => void
-  highlight?: string
+  highlight?: CallHighlight
 }) {
   const call = useAgentCall(id)
   const [flagged, setFlagged] = useState<AgentCallIssue>()
@@ -406,7 +408,7 @@ function CallContent({
   )
 }
 
-export function CallTranscript({ messages, highlight }: { messages: AgentCallMessage[]; highlight?: string }) {
+export function CallTranscript({ messages, highlight }: { messages: AgentCallMessage[]; highlight?: CallHighlight }) {
   if (!messages.length) {
     return (
       <Empty>
@@ -419,7 +421,7 @@ export function CallTranscript({ messages, highlight }: { messages: AgentCallMes
       </Empty>
     )
   }
-  const marked = messages.findIndex((message) => message.speaker === "Caller" && message.text.trim() === highlight?.trim())
+  const marked = messages.findIndex((message) => message.speaker === "Caller" && message.text.trim() === highlight?.line.trim())
   return messages.map((message, index) => {
     const agent = message.speaker === "Agent"
     const align = agent ? "end" : "start"
@@ -435,7 +437,7 @@ export function CallTranscript({ messages, highlight }: { messages: AgentCallMes
           </Bubble>
           {gap && (
             <p ref={scrollToCenter} className="text-xs text-warning">
-              Not in the knowledge base
+              {highlight?.note}
             </p>
           )}
           <MessageFooter>

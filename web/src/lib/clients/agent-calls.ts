@@ -1,4 +1,5 @@
 import {
+  closeAgentCallInsuranceGap,
   closeAgentCallKnowledgeGap,
   flagAgentCallIssue as flagAgentCallIssueRequest,
   getAgentCall,
@@ -12,6 +13,7 @@ import type {
   CallOutcome,
   AgentCallIssueReason,
   AgentCallsPage,
+  InsuranceGapResolution,
   KnowledgeGapResolution,
   OperatorAiAnalyticsPage,
   OperatorAiAnalyticsQueryRequest,
@@ -29,6 +31,7 @@ export function useAgentCalls({
   phone,
   flaggedOnly,
   knowledgeGapOnly = false,
+  insuranceGapOnly = false,
   intent,
   outcome,
 }: {
@@ -38,13 +41,14 @@ export function useAgentCalls({
   phone: string
   flaggedOnly: boolean
   knowledgeGapOnly?: boolean
+  insuranceGapOnly?: boolean
   intent?: CallIntent
   outcome?: CallOutcome
 }) {
   return usePages({
     live: "workspace",
     name: "agent-calls",
-    identity: { practiceID, locationID, range, phone, flaggedOnly, knowledgeGapOnly, intent, outcome },
+    identity: { practiceID, locationID, range, phone, flaggedOnly, knowledgeGapOnly, insuranceGapOnly, intent, outcome },
     read: (identity, cursor, transport) =>
       queryAgentCalls({
         ...transport,
@@ -55,6 +59,7 @@ export function useAgentCalls({
           phone: identity.phone,
           flaggedOnly: identity.flaggedOnly,
           knowledgeGapOnly: identity.knowledgeGapOnly || undefined,
+          insuranceGapOnly: identity.insuranceGapOnly || undefined,
           intent: identity.intent,
           outcome: identity.outcome,
           limit: 50,
@@ -91,6 +96,16 @@ export function flagAgentCallIssue(
 export function closeKnowledgeGap(interactionID: string, resolution: KnowledgeGapResolution) {
   return portalRequest((transport) =>
     closeAgentCallKnowledgeGap({
+      ...transport,
+      path: { interactionId: interactionID },
+      body: { resolution },
+    }),
+  )
+}
+
+export function closeInsuranceGap(interactionID: string, resolution: InsuranceGapResolution) {
+  return portalRequest((transport) =>
+    closeAgentCallInsuranceGap({
       ...transport,
       path: { interactionId: interactionID },
       body: { resolution },

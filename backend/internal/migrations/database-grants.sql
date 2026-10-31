@@ -670,6 +670,8 @@ GRANT SELECT, INSERT ON public.ai_interaction_issues TO acuity_portal;
 GRANT UPDATE (review_outcome, reviewed_by, reviewed_at) ON public.ai_interaction_issues TO acuity_portal;
 -- Staff close calls the judge flagged for missing office knowledge.
 GRANT SELECT, INSERT ON public.ai_interaction_knowledge_gap_reviews TO acuity_portal;
+-- Staff close calls the judge flagged for an insurance missing from the list.
+GRANT SELECT, INSERT ON public.ai_interaction_insurance_gap_reviews TO acuity_portal;
 
 -- Scorecard answers are rebuilt from saved call evidence whenever a call closes.
 GRANT SELECT, INSERT, DELETE ON ai_interaction_scorecard_answers TO acuity_portal, acuity_worker;

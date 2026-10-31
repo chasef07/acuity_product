@@ -1,7 +1,7 @@
 import type { CallIntent, CallOutcome, OperatorAiPathCount } from "@/lib/api/generated/types.gen"
 import { intentLabels, outcomeLabels } from "@/lib/vocabulary"
 
-const knowledgeGapKey = "knowledge_available"
+const gapKeys = new Set(["knowledge_available", "insurance_listed"])
 
 export type CallSelection = { intent?: CallIntent; outcome?: CallOutcome; judge?: "pass" | "fail" | "unjudged"; failure?: string }
 
@@ -129,7 +129,7 @@ export function callFlow(paths: OperatorAiPathCount[], failureLabels: Record<str
   for (const [key] of [...reasonCalls].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
     node(`reason:${key}`, key === "multiple"
       ? { name: "Multiple issues", column: 4, tone: "fail" }
-      : { name: failureLabels[key] ?? key, column: 4, tone: key === knowledgeGapKey ? "gap" : "fail", selection: { failure: key } })
+      : { name: failureLabels[key] ?? key, column: 4, tone: gapKeys.has(key) ? "gap" : "fail", selection: { failure: key } })
   }
   const values = new Map<string, FlowLink>()
   for (const path of paths) {

@@ -300,7 +300,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		t.Fatalf("operator analytics summary = %#v", firstPage.Summary)
 	}
 	judges := firstPage.Summary.Judges
-	if judges == nil || judges.TotalCalls != 2 || judges.ReportedCalls != 0 || judges.UnavailableCalls != 2 || judges.Version != interaction.ScorecardJudgeVersion || judges.YesAbove != 0.4 || len(judges.Questions) != 6 || judges.Models == nil || judges.Lineups == nil || judges.Pairs == nil {
+	if judges == nil || judges.TotalCalls != 2 || judges.ReportedCalls != 0 || judges.UnavailableCalls != 2 || judges.Version != interaction.ScorecardJudgeVersion || judges.YesAbove != 0.4 || len(judges.Questions) != 7 || judges.Models == nil || judges.Lineups == nil || judges.Pairs == nil {
 		t.Fatalf("missing judge evidence must remain explicit: %+v", judges)
 	}
 	for _, question := range judges.Questions {

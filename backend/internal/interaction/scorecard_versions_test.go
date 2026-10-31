@@ -3,13 +3,18 @@ package interaction
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
 
-func TestSixFailuresAreActionableInV11ThroughV8(t *testing.T) {
-	keys := []string{"knowledge_available", "office_question_answered", "appointment_datetime_correct", "call_ended_correctly", "transfer_policy_followed", "emergency_policy_followed"}
-	for _, version := range []string{ScorecardJudgeVersion, v10JudgeVersion, v9JudgeVersion, v8JudgeVersion} {
+func TestFailuresAreActionableInV12ThroughV8(t *testing.T) {
+	six := []string{"knowledge_available", "office_question_answered", "appointment_datetime_correct", "call_ended_correctly", "transfer_policy_followed", "emergency_policy_followed"}
+	for _, version := range []string{ScorecardJudgeVersion, v11JudgeVersion, v10JudgeVersion, v9JudgeVersion, v8JudgeVersion} {
+		keys := six
+		if version == ScorecardJudgeVersion {
+			keys = slices.Concat(six, []string{"insurance_listed"})
+		}
 		var catalog []string
 		for _, question := range ScorecardQuestionsForVersion(version) {
 			if question.Source == "judge" {
@@ -35,7 +40,7 @@ func TestSixFailuresAreActionableInV11ThroughV8(t *testing.T) {
 }
 
 func TestUnknownKnowledgeIsNeitherPassNorFailure(t *testing.T) {
-	for _, version := range []string{ScorecardJudgeVersion, v10JudgeVersion, v9JudgeVersion, v8JudgeVersion} {
+	for _, version := range []string{ScorecardJudgeVersion, v11JudgeVersion, v10JudgeVersion, v9JudgeVersion, v8JudgeVersion} {
 		raw := json.RawMessage(`{"evaluatorVersion":"` + version + `","status":"complete","jurors":["a","b","c"],"results":{"knowledge_available":{"status":"unknown","reason":"no_office_knowledge_result"},"appointment_datetime_correct":{"status":"not_applicable","reason":"no_appointment_action"}}}`)
 		if answers := judgeAnswers(raw); len(answers) != 0 {
 			t.Fatalf("%s unknown/inapplicable checks are not verdicts: %+v", version, answers)
@@ -127,5 +132,42 @@ func TestV11RewordsThreeJudgesWhileV10KeepsItsMeaning(t *testing.T) {
 	}
 	if text(ScorecardJudgeVersion, "knowledge_available") != text(v10JudgeVersion, "knowledge_available") {
 		t.Fatal("v11 keeps the v10 knowledge question")
+	}
+}
+
+func TestV12AddsTheInsuranceListJudgeWhileV11KeepsItsSix(t *testing.T) {
+	if ScorecardJudgeVersion != "typesafe-scorecard-v12" {
+		t.Fatalf("current scorecard = %s", ScorecardJudgeVersion)
+	}
+	judges := func(version string) []ScorecardQuestion {
+		var questions []ScorecardQuestion
+		for _, question := range ScorecardQuestionsForVersion(version) {
+			if question.Source == "judge" {
+				questions = append(questions, question)
+			}
+		}
+		return questions
+	}
+	v12, v11 := judges(ScorecardJudgeVersion), judges(v11JudgeVersion)
+	if !reflect.DeepEqual(v12[:len(v12)-1], v11) {
+		t.Fatalf("v12 keeps the v11 judges unchanged: v12=%+v v11=%+v", v12, v11)
+	}
+	listed := v12[len(v12)-1]
+	want := ScorecardQuestion{
+		Key: "insurance_listed", Code: "I4", Label: "Insurance list had the plan", Source: "judge", Failure: true,
+		Prompt:   "Was every insurance the caller named on the insurance list?",
+		Question: "Is every insurance the caller named on `insurance_list`? First, find each insurance plan or company the caller said they have. Second, look for it in `insurance_list` by its label, company heading, or a name it is also said as; a plan listed as not accepted or not confirmed is still on the list. Answer FALSE if an insurance the caller named is not on `insurance_list`, even if the agent offered a staff request; check the list, not the agent's reply. Otherwise answer TRUE, also when the caller named no insurance, will self pay, or the insurance list could not be loaded.",
+		Yes:      "Every insurance the caller named is on the insurance list, none was named, or the list could not be loaded.",
+		No:       "The caller named an insurance that is not on the insurance list.",
+	}
+	if listed != want {
+		t.Fatalf("insurance_listed = %+v, want %+v", listed, want)
+	}
+	raw := json.RawMessage(`{"evaluatorVersion":"typesafe-scorecard-v12","status":"complete","jurors":["a","b","c"],"results":{"insurance_listed":{"verdict":false,"probability":0.1,"votes":{"a":0,"b":0.1,"c":0.2},"line":"I have Tricare Prime."}}}`)
+	if answers := judgeAnswers(raw); len(answers) != 1 || answers[0].Question != "insurance_listed" || answers[0].Answer {
+		t.Fatalf("a false insurance_listed verdict is stored: %+v", answers)
+	}
+	if answers := judgeAnswers(json.RawMessage(strings.Replace(string(raw), "v12", "v11", 1))); len(answers) != 0 {
+		t.Fatalf("v11 has no insurance_listed judge: %+v", answers)
 	}
 }

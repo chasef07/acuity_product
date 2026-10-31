@@ -27,6 +27,7 @@ type AgentCall struct {
 	Transferred        bool                `json:"transferred"`
 	IssueFlagged       bool                `json:"issueFlagged"`
 	KnowledgeGapLine   *string             `json:"knowledgeGapLine,omitempty"`
+	InsuranceGapLine   *string             `json:"insuranceGapLine,omitempty"`
 }
 type AgentCallIssueReason string
 
@@ -71,12 +72,14 @@ type QueryAgentCallsCommand struct {
 	Phone            string
 	FlaggedOnly      bool
 	KnowledgeGapOnly bool
+	InsuranceGapOnly bool
 }
 type agentCallsCursor struct {
 	analyticsCursor
 	Phone            string `json:"phone"`
 	FlaggedOnly      bool   `json:"flaggedOnly"`
 	KnowledgeGapOnly bool   `json:"knowledgeGapOnly"`
+	InsuranceGapOnly bool   `json:"insuranceGapOnly"`
 }
 
 func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCommand) (AgentCallsPage, error) {
@@ -99,7 +102,7 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	var id any
 	if command.Cursor != "" {
 		var cursor agentCallsCursor
-		if !decodeCursor(command.QueryAnalyticsCommand, &cursor, &cursor.analyticsCursor, through) || cursor.Phone != phone || cursor.FlaggedOnly != command.FlaggedOnly || cursor.KnowledgeGapOnly != command.KnowledgeGapOnly {
+		if !decodeCursor(command.QueryAnalyticsCommand, &cursor, &cursor.analyticsCursor, through) || cursor.Phone != phone || cursor.FlaggedOnly != command.FlaggedOnly || cursor.KnowledgeGapOnly != command.KnowledgeGapOnly || cursor.InsuranceGapOnly != command.InsuranceGapOnly {
 			return AgentCallsPage{}, ErrInvalidInput
 		}
 		through, startedAt, id = cursor.Through, cursor.StartedAt, cursor.ID
@@ -114,7 +117,8 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
    i.appointment_outcome, i.booking_result, i.cancellation_result,
    i.closeout_payload -> 'domainOutcomes', issue.interaction_id IS NOT NULL,
    classification.intent, classification.outcome, classification.status,
-   i.closeout_payload -> 'evaluation' -> 'results' -> 'knowledge_available' ->> 'line'
+   i.closeout_payload -> 'evaluation' -> 'results' -> 'knowledge_available' ->> 'line',
+   i.closeout_payload -> 'evaluation' -> 'results' -> 'insurance_listed' ->> 'line'
   FROM ai_interactions i
   LEFT JOIN ai_interaction_issues issue ON issue.interaction_id = i.id
   LEFT JOIN ai_interaction_classifications classification ON classification.interaction_id = i.id
@@ -125,9 +129,10 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
    AND (NOT $8 OR issue.interaction_id IS NOT NULL)
    AND ($10 = '' OR classification.intent = $10)
    AND ($11 = '' OR classification.outcome = $11)
-   AND (NOT $12 OR (`+openKnowledgeGap+`))
+   AND (NOT $12 OR (`+knowledgeCallGap.open()+`))
+   AND (NOT $13 OR (`+insuranceCallGap.open()+`))
   ORDER BY i.started_at DESC, i.id DESC LIMIT $9
- `, command.PracticeID, locations, through.Add(-duration), through, startedAt, id, phone, command.FlaggedOnly, command.Limit+1, command.Intent, command.Outcome, command.KnowledgeGapOnly)
+ `, command.PracticeID, locations, through.Add(-duration), through, startedAt, id, phone, command.FlaggedOnly, command.Limit+1, command.Intent, command.Outcome, command.KnowledgeGapOnly, command.InsuranceGapOnly)
 	if err != nil {
 		return AgentCallsPage{}, err
 	}
@@ -137,14 +142,14 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 		var receipts json.RawMessage
 		var flagged bool
 		var labels callLabelProjection
-		var line *string
-		if err := rows.Scan(&stored.ID, &stored.LocationID, &stored.Phone, &stored.StartedAt, &stored.EndedAt, &stored.Status, &stored.AppointmentOutcome, &stored.BookingResult, &stored.CancellationResult, &receipts, &flagged, &labels.Intent, &labels.Outcome, &labels.LabelingStatus, &line); err != nil {
+		var knowledgeLine, insuranceLine *string
+		if err := rows.Scan(&stored.ID, &stored.LocationID, &stored.Phone, &stored.StartedAt, &stored.EndedAt, &stored.Status, &stored.AppointmentOutcome, &stored.BookingResult, &stored.CancellationResult, &receipts, &flagged, &labels.Intent, &labels.Outcome, &labels.LabelingStatus, &knowledgeLine, &insuranceLine); err != nil {
 			rows.Close()
 			return AgentCallsPage{}, err
 		}
 		call := agentCall(stored, receipts, flagged)
 		call.Intent, call.Outcome, call.LabelingStatus = labels.Intent, labels.Outcome, labels.LabelingStatus
-		call.KnowledgeGapLine = line
+		call.KnowledgeGapLine, call.InsuranceGapLine = knowledgeLine, insuranceLine
 		page.Calls = append(page.Calls, call)
 	}
 	rows.Close()
@@ -154,7 +159,7 @@ func (m *Module) QueryAgentCalls(ctx context.Context, command QueryAgentCallsCom
 	if len(page.Calls) > command.Limit {
 		page.Calls = page.Calls[:command.Limit]
 		last := page.Calls[len(page.Calls)-1]
-		page.NextCursor, err = encodeCursor(agentCallsCursor{analyticsCursor: newAnalyticsCursor(command.QueryAnalyticsCommand, last.StartedAt, last.ID, through), Phone: phone, FlaggedOnly: command.FlaggedOnly, KnowledgeGapOnly: command.KnowledgeGapOnly})
+		page.NextCursor, err = encodeCursor(agentCallsCursor{analyticsCursor: newAnalyticsCursor(command.QueryAnalyticsCommand, last.StartedAt, last.ID, through), Phone: phone, FlaggedOnly: command.FlaggedOnly, KnowledgeGapOnly: command.KnowledgeGapOnly, InsuranceGapOnly: command.InsuranceGapOnly})
 		if err != nil {
 			return AgentCallsPage{}, err
 		}

@@ -9,7 +9,7 @@ import { AgentHome } from "./agent-home"
 import { clearAccessToken } from "../../lib/auth-client"
 import { DataProvider } from "../../lib/data/provider"
 
-test("Home hydrates its greeting and shows knowledge status, and hides the knowledge-gap card when no calls need knowledge", async (context) => {
+test("Home hydrates its greeting and shows knowledge status, and hides the gap cards when no calls need knowledge or insurance", async (context) => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace" })
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: dom.window },
@@ -29,7 +29,7 @@ test("Home hydrates its greeting and shows knowledge status, and hides the knowl
     value: () => ({ addEventListener() {}, matches: true, removeEventListener() {} }),
   })
   process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
-  let gapQueries = 0
+  const gapQueries: string[] = []
   clearAccessToken()
   context.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
     if (input === "/api/auth/token") return Response.json({ token: "synthetic-token" })
@@ -37,7 +37,8 @@ test("Home hydrates its greeting and shows knowledge status, and hides the knowl
     const pathname = new URL(request.url).pathname
     if (pathname === "/v1/knowledge/query") return Response.json({ locationId: "office-1", sections: [] })
     if (pathname === "/v1/agent-calls/query") {
-      gapQueries++
+      const body = await request.json()
+      gapQueries.push(body.knowledgeGapOnly ? "knowledge" : body.insuranceGapOnly ? "insurance" : "all")
       return Response.json({ calls: [], nextCursor: "" })
     }
     assert.fail(`Unexpected Home request: ${pathname}`)
@@ -62,7 +63,8 @@ test("Home hydrates its greeting and shows knowledge status, and hides the knowl
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
   }
   assert.match(host.textContent ?? "", /No knowledge published yet/)
-  assert.equal(gapQueries, 1)
+  assert.deepEqual(gapQueries.sort(), ["insurance", "knowledge"])
   assert.equal(host.querySelector("[aria-label='Calls that need knowledge']"), null)
+  assert.equal(host.querySelector("[aria-label='Calls that need insurance']"), null)
   assert.doesNotMatch(host.textContent ?? "", /Needs knowledge|Load more calls|office question went unanswered/i)
 })
