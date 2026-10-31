@@ -2585,10 +2585,13 @@ components:
     InsuranceCarrier:
       type: object
       additionalProperties: false
-      required: [id, name]
+      required: [id, code, name]
       properties:
         id:
           type: string
+        code:
+          type: string
+          description: The AdvancedMD carrier code, or empty when the carrier has none.
         name:
           type: string
     InsuranceRegion:
@@ -2610,22 +2613,21 @@ components:
     InsuranceRegionPlan:
       type: object
       additionalProperties: false
-      required: [id, label, family, coverage, carrierCode, carrierId, selfPay, aliases]
+      required: [id, label, family, coverage, carrierId, aliases]
       properties:
         id:
           type: string
+          description: The plan IDs self-pay-medical and self-pay-routine-vision are reserved for the self-pay plan of that coverage.
         label:
           type: string
         family:
           type: string
         coverage:
           type: string
-        carrierCode:
-          type: string
+          enum: [medical, routine_vision]
         carrierId:
           type: string
-        selfPay:
-          type: boolean
+          description: The AdvancedMD carrier ID, or empty while no doctor accepts the plan.
         aliases:
           type: array
           items:
@@ -2653,36 +2655,26 @@ components:
     InsuranceTableRow:
       type: object
       additionalProperties: false
-      required: [planId, doctors, requires, onlyOffices, notice, note]
+      required: [planId, doctors, beforeBooking, onlyOffices, notice]
       properties:
         planId:
           type: string
         doctors:
           type: object
-          description: Each doctor's answer for this plan; a doctor with no answer is omitted.
+          description: Each doctor's answer for this plan; a doctor with no answer does not accept it.
           additionalProperties:
             type: string
-        requires:
-          type: array
-          items:
-            $ref: "#/components/schemas/InsuranceRequirement"
+        beforeBooking:
+          type: string
+          enum: [none, pcp_referral, prior_authorization, staff_verify]
+          description: What must happen before Abita can book this plan; anything but none stops Abita from scheduling.
         onlyOffices:
           type: array
           items:
             type: string
         notice:
           type: string
-        note:
-          type: string
-    InsuranceRequirement:
-      type: object
-      additionalProperties: false
-      required: [kind, channel]
-      properties:
-        kind:
-          type: string
-        channel:
-          type: string
+          description: What Abita tells callers about this plan.
     InsuranceValidationError:
       type: object
       additionalProperties: false

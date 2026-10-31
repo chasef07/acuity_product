@@ -15,13 +15,13 @@ import (
 
 func syntheticCatalog() insurance.Catalog {
 	row := func(plan string) insurance.TableRow {
-		return insurance.TableRow{PlanID: plan, Doctors: map[string]string{"Dr. Example": "yes"}, Requires: []insurance.Requirement{}, OnlyOffices: []string{}}
+		return insurance.TableRow{PlanID: plan, Doctors: map[string]string{"Dr. Example": "yes"}, BeforeBooking: "none", OnlyOffices: []string{}}
 	}
 	plan := func(id string) insurance.RegionPlan {
-		return insurance.RegionPlan{ID: id, Label: "Synthetic " + id, Family: "Synthetic", Coverage: "medical", CarrierCode: "SYN01", CarrierID: "car00001", Aliases: []string{"Synthetic alias"}}
+		return insurance.RegionPlan{ID: id, Label: "Synthetic " + id, Family: "Synthetic", Coverage: "medical", CarrierID: "car00001", Aliases: []string{"Synthetic alias"}}
 	}
 	return insurance.Catalog{
-		Carriers: []insurance.Carrier{{ID: "car00001", Name: "SYNTHETIC CARRIER"}},
+		Carriers: []insurance.Carrier{{ID: "car00001", Code: "SYN01", Name: "SYNTHETIC CARRIER"}},
 		Regions: []insurance.Region{
 			{ID: "south_florida", Plans: []insurance.RegionPlan{plan("south-hmo")}, Tables: []insurance.OfficeTable{
 				{ID: "doctors", Offices: []string{"hollywood", "sweetwater", "north_miami_beach_optical"}, Doctors: []string{"Dr. Example"}, Rows: []insurance.TableRow{row("south-hmo")}},
@@ -70,7 +70,7 @@ func TestTouchedOfficesFollowWhatEachOfficeServes(t *testing.T) {
 			c.Regions[0].Plans[0].Aliases = append(c.Regions[0].Plans[0].Aliases, "Another alias")
 		}, []string{"hollywood", "north_miami_beach_optical", "sweetwater"}},
 		{"moving a plan both northern tables list to another carrier touches both offices", func(c *insurance.Catalog) {
-			c.Regions[1].Plans[0].CarrierCode, c.Regions[1].Plans[0].CarrierID = "SYN02", "car00002"
+			c.Regions[1].Plans[0].CarrierID = "car00002"
 		}, []string{"crystal_river", "spring_hill"}},
 		{"removing a plan only Spring Hill lists touches only Spring Hill", func(c *insurance.Catalog) {
 			c.Regions[1].Plans = c.Regions[1].Plans[:1]
@@ -78,7 +78,7 @@ func TestTouchedOfficesFollowWhatEachOfficeServes(t *testing.T) {
 		}, []string{"spring_hill"}},
 		{"adding a plan to the Spring Hill table touches only Spring Hill", func(c *insurance.Catalog) {
 			c.Regions[1].Plans = append(c.Regions[1].Plans, insurance.RegionPlan{ID: "north-epo", Label: "Synthetic north-epo", Family: "Synthetic", Coverage: "medical", Aliases: []string{}})
-			c.Regions[1].Tables[1].Rows = append(c.Regions[1].Tables[1].Rows, insurance.TableRow{PlanID: "north-epo", Doctors: map[string]string{"Dr. Example": "yes"}, Requires: []insurance.Requirement{}, OnlyOffices: []string{}})
+			c.Regions[1].Tables[1].Rows = append(c.Regions[1].Tables[1].Rows, insurance.TableRow{PlanID: "north-epo", Doctors: map[string]string{"Dr. Example": "yes"}, BeforeBooking: "none", OnlyOffices: []string{}})
 		}, []string{"spring_hill"}},
 		{"renaming a plan only Spring Hill lists touches only Spring Hill", func(c *insurance.Catalog) {
 			c.Regions[1].Plans[1].Label = "Renamed PPO"
@@ -89,8 +89,8 @@ func TestTouchedOfficesFollowWhatEachOfficeServes(t *testing.T) {
 		{"a Crystal River table row touches only Crystal River", func(c *insurance.Catalog) {
 			c.Regions[1].Tables[0].Rows[0].Doctors["Dr. Example"] = "pending"
 		}, []string{"crystal_river"}},
-		{"a Spring Hill table row note touches only Spring Hill", func(c *insurance.Catalog) {
-			c.Regions[1].Tables[1].Rows[1].Note = "Referral from PCP"
+		{"a Spring Hill table row's before-booking step touches only Spring Hill", func(c *insurance.Catalog) {
+			c.Regions[1].Tables[1].Rows[1].BeforeBooking = "pcp_referral"
 		}, []string{"spring_hill"}},
 		{"a doctor column on the shared South Florida table touches its three offices", func(c *insurance.Catalog) {
 			c.Regions[0].Tables[0].Doctors = append(c.Regions[0].Tables[0].Doctors, "Dr. New")
@@ -124,7 +124,7 @@ func TestTouchedOfficesFollowWhatEachOfficeServes(t *testing.T) {
 	}
 }
 
-func TestCatalogRoundTripsTheMiddlewareExportByteForByte(t *testing.T) {
+func TestCatalogRoundTripsTheV2ExportByteForByte(t *testing.T) {
 	export, err := os.ReadFile("testdata/export.json")
 	if err != nil {
 		t.Fatal(err)
@@ -148,8 +148,9 @@ func TestCatalogRoundTripsTheMiddlewareExportByteForByte(t *testing.T) {
 func TestCatalogParsingRejectsUnknownFieldsAndTrailingDocuments(t *testing.T) {
 	for _, body := range []string{
 		`{"carriers":[],"regions":[],"plans":[]}`,
-		`{"carriers":[{"id":"car1","name":"A","code":"X"}],"regions":[]}`,
-		`{"carriers":[],"regions":[{"id":"r","plans":[],"tables":[{"id":"t","offices":[],"doctors":[],"rows":[{"planId":"p","doctors":{},"requires":[],"onlyOffices":[],"notice":"","note":"","patientId":"x"}]}]}]}`,
+		`{"carriers":[],"regions":[{"id":"r","plans":[{"id":"p","label":"P","family":"F","coverage":"medical","carrierCode":"X","carrierId":"","selfPay":false,"aliases":[]}],"tables":[]}]}`,
+		`{"carriers":[],"regions":[{"id":"r","plans":[],"tables":[{"id":"t","offices":[],"doctors":[],"rows":[{"planId":"p","doctors":{},"requires":[],"onlyOffices":[],"notice":"","note":""}]}]}]}`,
+		`{"carriers":[],"regions":[{"id":"r","plans":[],"tables":[{"id":"t","offices":[],"doctors":[],"rows":[{"planId":"p","doctors":{},"beforeBooking":"none","onlyOffices":[],"notice":"","patientId":"x"}]}]}]}`,
 		`{"carriers":[],"regions":[]} {}`,
 		`not json`,
 	} {

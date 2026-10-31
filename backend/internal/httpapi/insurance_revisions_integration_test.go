@@ -257,7 +257,7 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 		return nil
 	}
 	springHillRow := edited(func(c *insurance.Catalog) {
-		table(c, "spring_hill_crystal_river", "spring_hill").Rows[0].Note = "Synthetic note for Spring Hill"
+		table(c, "spring_hill_crystal_river", "spring_hill").Rows[0].Notice = "Synthetic notice for Spring Hill"
 	})
 	sharedNorthPlan := edited(func(c *insurance.Catalog) {
 		region(c, "spring_hill_crystal_river").Plans[0].Label = "Synthetic renamed plan"
@@ -344,7 +344,7 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 	})
 
 	t.Run("South Florida staff without Sweetwater Optical cannot change the shared doctors table", func(t *testing.T) {
-		catalog := edited(func(c *insurance.Catalog) { table(c, "south_florida", "doctors").Rows[0].Note = "Synthetic note" })
+		catalog := edited(func(c *insurance.Catalog) { table(c, "south_florida", "doctors").Rows[0].Notice = "Synthetic notice" })
 		if status, body := send("/v1/insurance/revisions", "south-token", publication("Hollywood", seed.ID, catalog)); status != http.StatusForbidden {
 			t.Fatalf("status=%d body=%s", status, body)
 		}
@@ -475,7 +475,7 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 
 	t.Run("a member with both northern Locations changes their shared plan", func(t *testing.T) {
 		catalog := edited(func(c *insurance.Catalog) {
-			table(c, "spring_hill_crystal_river", "spring_hill").Rows[0].Note = "Synthetic note for Spring Hill"
+			table(c, "spring_hill_crystal_river", "spring_hill").Rows[0].Notice = "Synthetic notice for Spring Hill"
 			region(c, "spring_hill_crystal_river").Plans[0].Label = "Synthetic renamed plan"
 		})
 		body := publication("Crystal River", first.RevisionID, catalog)
@@ -742,7 +742,7 @@ func TestInsuranceListPublishesThroughTheMiddlewareValidatorToTheAgentRead(t *te
 			if !slices.Contains(row.OnlyOffices, "sweetwater") {
 				t.Fatalf("row %s is not a Sweetwater row", row.PlanID)
 			}
-			row.Note = "Synthetic Sweetwater note from " + tc.token + " at " + tc.location
+			row.Notice = "Synthetic Sweetwater notice from " + tc.token + " at " + tc.location
 			publish := publication(tc.location, current, catalog)
 			status, body = send("/v1/insurance/revisions", tc.token, publish)
 			if status != tc.status {
