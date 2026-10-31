@@ -13,6 +13,8 @@ import type {
   AgentCallsPage,
   AgentCallsQuery,
   InsuranceCatalogQuery,
+  InsurancePublication,
+  InsuranceValidationError,
   KnowledgePublication,
   KnowledgeRevisionHistoryEntry,
   KnowledgeRevisionSummary,
@@ -82,8 +84,10 @@ test("Home connects Acuity to knowledge, insurance, and tools", async (t) => {
   assert.deepEqual(Array.from(connections.querySelectorAll("button"), (button) => button.getAttribute("aria-label")), ["Knowledge base", "Insurance", "Tools"])
   assert.equal(connections.querySelectorAll('svg[aria-label="Acuity"] circle').length, 7)
   assert.doesNotMatch(page.text(), /What Acuity can do|Transfer policy|Emergency policy/)
-  await waitFor(() => page.agentCallsRequests.length === 1)
+  await waitFor(() => page.agentCallsRequests.length === 1 && page.insuranceGapRequests.length === 1)
   assert.deepEqual(page.agentCallsRequests, [homeGapQuery(locations[0].id)])
+  assert.deepEqual(page.insuranceGapRequests, [insuranceGapQuery(locations[0].id)])
+  assert.equal(insuranceGapCard(page.host), null)
   await act(async () => page.button(/^Knowledge base/).click())
   await waitFor(() => /Version 14 · published/.test(page.text()))
   assert.equal(gapCard(page.host), null)
@@ -315,6 +319,105 @@ test("on all offices, Home lists every office's calls that need knowledge and fi
   await page.unmount()
 })
 
+test("Home adds a plan for a call that needs insurance, keeps it through a conflict and a rejection, and closes the call as added", async (t) => {
+  const page = harness(t)
+  const call = { ...agentCall("insurance-1", "+15555550111"), startedAt: new Date().toISOString(), insuranceGapLine: "I have Tricare Prime." }
+  page.insuranceGapCalls = { calls: [call], nextCursor: "" }
+  page.callDetail = { call, locationName: "Hollywood", messages: [{ speaker: "Caller", text: "I have Tricare Prime.", occurredAt: "2026-10-31T15:00:05Z" }], scorecard: [] }
+  await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID={locations[0].id} locations={locations} page="home" onPage={() => {}} />)
+  await waitFor(() => /1 call needs insurance/.test(page.text()))
+  assert.deepEqual(page.insuranceGapRequests, [insuranceGapQuery(locations[0].id)])
+  assert.equal(gapCard(page.host), null)
+  assert.match(insuranceGapRows(page.host)[0].textContent ?? "", /“I have Tricare Prime\.”/)
+  await act(async () => insuranceGapRows(page.host)[0].click())
+  await waitFor(() => /Not on the insurance list/.test(page.sheetText()) && Boolean(page.sheet()?.querySelector("[aria-label='Add plan']")))
+  assert.equal(page.insuranceRequests.at(-1)?.locationId, locations[0].id)
+  assert.equal(page.sheet()!.querySelector<HTMLButtonElement>("button[type='submit']")!.disabled, true)
+  await page.fill(sheetField(page, "Find a plan"), "Tricare Prime")
+  await page.sheetClick("Create new plan")
+  assert.equal(sheetField(page, "Plan name").value, "Tricare Prime")
+  await page.fill(sheetField(page, "Company"), "Tricare")
+  await page.choose(sheetSelect(page, "Visit type"), "medical")
+  await page.sheetClick("Add")
+  await page.fill(sheetField(page, "Callers also say"), "Tricare")
+  assert.equal(sheetField(page, "Plan name").value, "Tricare Prime")
+
+  const theirs = { ...insurance, revision: { ...insurance.revision, id: "00000000-0000-4000-8000-0000000000c2", createdBy: "other@abita.test", provenance: "portal" as const } }
+  page.insuranceConflictWith = theirs
+  await page.sheetClick("Save and close")
+  await waitFor(() => page.sheetAlerts().some((alert) => alert.includes("Someone else changed the insurance list. Check the plan and save again.")))
+  assert.equal(sheetField(page, "Plan name").value, "Tricare Prime")
+  assert.deepEqual(page.insuranceGapCloses, [])
+
+  page.insurancePublishErrors = [{ region: "south_florida", table: "doctors", planId: "tricare-prime", rule: "doctor_answer_required", message: "Tricare Prime needs an answer for Dr. Rivera." }]
+  await page.sheetClick("Save and close")
+  await waitFor(() => page.sheetAlerts().some((alert) => alert.includes("Tricare Prime needs an answer for Dr. Rivera.")))
+  assert.deepEqual(page.insuranceGapCloses, [])
+
+  page.insurancePublishErrors = undefined
+  page.gapCloseStatus = 503
+  await page.sheetClick("Save and close")
+  await waitFor(() => page.sheetAlerts().some((alert) => alert.includes("Added to the insurance list, but this call couldn't be closed. Try again.")))
+  const [conflicted, rejected, published] = page.insurancePublishRequests
+  assert.equal(page.insurancePublishRequests.length, 3)
+  assert.equal(conflicted.expectedRevisionId, insurance.revision.id)
+  assert.equal(published.expectedRevisionId, theirs.revision.id)
+  assert.equal(published.revisionId, rejected.revisionId)
+  assert.notEqual(published.revisionId, conflicted.revisionId)
+  assert.equal(published.locationId, locations[0].id)
+  assert.match(published.reason, /^Added “Tricare Prime” from a caller on /)
+  assert.doesNotMatch(published.reason, /Today|Yesterday/)
+  const region = published.catalog.regions[0]
+  assert.deepEqual(region.plans.at(-1), { id: "tricare-prime", label: "Tricare Prime", family: "Tricare", coverage: "medical", carrierId: "", aliases: ["Tricare"] })
+  assert.deepEqual(region.tables[0].rows.at(-1), { planId: "tricare-prime", doctors: { "Dr. Rivera": "no" }, beforeBooking: "none", onlyOffices: [], notice: "" })
+
+  await page.sheetClick("Close")
+  await act(async () => insuranceGapRows(page.host)[0].click())
+  await waitFor(() => /Close call/.test(page.sheetText()))
+  assert.doesNotMatch(page.sheetText(), /Not needed|Find a plan/)
+  page.gapCloseStatus = 200
+  await page.sheetClick("Close call")
+  await waitFor(() => insuranceGapCard(page.host) === null)
+  assert.equal(page.insurancePublishRequests.length, 3)
+  assert.deepEqual(page.insuranceGapCloses, [{ id: "insurance-1", resolution: "ADDED" }, { id: "insurance-1", resolution: "ADDED" }])
+  await page.unmount()
+})
+
+test("Not needed closes a call that needs insurance without publishing, even for staff who can't edit the list", async (t) => {
+  const page = harness(t)
+  page.insurance = { ...insurance, canEdit: false }
+  const call = { ...agentCall("insurance-1", "+15555550111"), locationId: locations[1].id }
+  page.insuranceGapCalls = { calls: [call], nextCursor: "" }
+  page.callDetail = { call, locationName: "Sweetwater", messages: [{ speaker: "Caller", text: "I have Tricare Prime.", occurredAt: "2026-10-31T15:00:05Z" }], scorecard: [] }
+  await page.render(<ManageAgent actorSubject="staff-a" practiceID="practice-1" locationScopeID="" locations={locations} page="home" onPage={() => {}} />)
+  await waitFor(() => insuranceGapRows(page.host).length === 1)
+  assert.match(insuranceGapRows(page.host)[0].textContent ?? "", /· Sweetwater/)
+  await act(async () => insuranceGapRows(page.host)[0].click())
+  await waitFor(() => /You can't change the insurance list/.test(page.sheetText()))
+  assert.equal(page.insuranceRequests.at(-1)?.locationId, locations[1].id)
+  assert.match(page.sheetText(), /Saves to Sweetwater's insurance list/)
+  assert.equal(page.sheet()!.querySelector("[aria-label='Add plan']"), null)
+  await page.sheetClick("Not needed")
+  await waitFor(() => insuranceGapCard(page.host) === null)
+  assert.deepEqual(page.insurancePublishRequests, [])
+  assert.deepEqual(page.insuranceGapCloses, [{ id: "insurance-1", resolution: "NOT_NEEDED" }])
+  await page.unmount()
+})
+
+function sheetSelect(page: ReturnType<typeof harness>, label: string) {
+  const field = Array.from(page.sheet()?.querySelectorAll("select") ?? []).find((item) => item.labels?.[0]?.textContent === label)
+  assert.ok(field, label)
+  return field
+}
+
+function insuranceGapCard(host: HTMLElement) {
+  return host.querySelector("[aria-label='Calls that need insurance']")
+}
+
+function insuranceGapRows(host: HTMLElement) {
+  return Array.from(host.querySelectorAll<HTMLButtonElement>("[aria-label='Calls that need insurance'] li > button"))
+}
+
 function sheetField(page: ReturnType<typeof harness>, label: string) {
   const field = Array.from(page.sheet()?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea") ?? []).find(
     (item) => item.labels?.[0]?.textContent === label,
@@ -354,6 +457,7 @@ test("with all offices in scope and several offices, one-Location pages ask for 
   assert.equal(page.host.querySelector("h1")?.textContent, "Insurance list")
   assert.deepEqual([page.knowledgeRequests, page.insuranceRequests], [[], []])
   assert.deepEqual(page.agentCallsRequests, [allOfficesGapQuery()])
+  assert.deepEqual(page.insuranceGapRequests.map((request) => JSON.stringify(request)), [JSON.stringify(insuranceGapQuery())])
   await page.unmount()
 })
 
@@ -1076,6 +1180,10 @@ function homeGapQuery(locationId: string): AgentCallsQuery {
   return { practiceId: "practice-1", locationId, range: "24h", phone: "", flaggedOnly: false, knowledgeGapOnly: true, limit: 50 }
 }
 
+function insuranceGapQuery(locationId?: string): AgentCallsQuery {
+  return { practiceId: "practice-1", locationId, range: "24h", phone: "", flaggedOnly: false, insuranceGapOnly: true, limit: 50 }
+}
+
 function agentCall(id: string, phone: string): AgentCallsPage["calls"][number] {
   return { id, locationId: locations[0].id, phone, startedAt: "2026-10-13T15:00:00Z", appointmentActions: [], transferred: false, issueFlagged: false }
 }
@@ -1119,6 +1227,13 @@ function harness(t: TestContext) {
     host,
     scrolls: 0,
     insuranceRequests: [] as InsuranceCatalogQuery[],
+    insurance,
+    insuranceConflictWith: undefined as LocationInsuranceCatalog | undefined,
+    insurancePublishRequests: [] as InsurancePublication[],
+    insurancePublishErrors: undefined as InsuranceValidationError[] | undefined,
+    insuranceGapRequests: [] as AgentCallsQuery[],
+    insuranceGapCalls: { calls: [], nextCursor: "" } as AgentCallsPage,
+    insuranceGapCloses: [] as { id: string; resolution: string }[],
     knowledgeRequests: [] as LocationKnowledgeQuery[],
     knowledgeStatus: 200,
     knowledgeError: undefined as Envelope | undefined,
@@ -1197,6 +1312,11 @@ function harness(t: TestContext) {
         Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(field, value)
         field.dispatchEvent(new window.KeyboardEvent("keyup", { bubbles: true }))
       }),
+    choose: (field: HTMLSelectElement, value: string) =>
+      act(async () => {
+        Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")!.set!.call(field, value)
+        field.dispatchEvent(new window.Event("change", { bubbles: true }))
+      }),
     unload: () => {
       const event = new window.Event("beforeunload", { cancelable: true })
       window.dispatchEvent(event)
@@ -1233,7 +1353,22 @@ function harness(t: TestContext) {
     assert.equal(request.headers.get("Authorization"), "Bearer synthetic-token")
     if (url.pathname === "/v1/insurance/revisions/query") {
       page.insuranceRequests.push((await request.json()) as InsuranceCatalogQuery)
-      return Response.json(insurance)
+      return Response.json(page.insurance)
+    }
+    if (url.pathname === "/v1/insurance/revisions") {
+      const publication = (await request.json()) as InsurancePublication
+      page.insurancePublishRequests.push(publication)
+      if (page.insuranceConflictWith) {
+        page.insurance = page.insuranceConflictWith
+        page.insuranceConflictWith = undefined
+        return Response.json({ error: { code: "INSURANCE_CHANGED", message: "Someone else changed the insurance list. Reload to see their changes.", correlationId: "synthetic", retryable: false } }, { status: 409 })
+      }
+      if (page.insurancePublishErrors) {
+        return Response.json({ error: { code: "INSURANCE_INVALID", message: "The insurance list has problems to fix before it can be published. Nothing changed.", correlationId: "synthetic", retryable: false, errors: page.insurancePublishErrors } }, { status: 400 })
+      }
+      const revision = { id: publication.revisionId, createdAt: "2026-10-31T15:00:00Z", createdBy: "staff@abita.test", reason: publication.reason, provenance: "portal" as const }
+      page.insurance = { ...page.insurance, revision, catalog: publication.catalog }
+      return Response.json(revision)
     }
     if (url.pathname === "/v1/knowledge/query") {
       const body = (await request.json()) as LocationKnowledgeQuery
@@ -1258,10 +1393,10 @@ function harness(t: TestContext) {
       if (page.afterPublishHistory) page.history = page.afterPublishHistory
       return Response.json(page.publishResult)
     }
-    const gapPath = /^\/v1\/agent-calls\/([^/]+)\/knowledge-gap$/.exec(url.pathname)
+    const gapPath = /^\/v1\/agent-calls\/([^/]+)\/(knowledge|insurance)-gap$/.exec(url.pathname)
     if (gapPath) {
       const { resolution } = (await request.json()) as { resolution: string }
-      page.gapCloses.push({ id: gapPath[1], resolution })
+      ;(gapPath[2] === "knowledge" ? page.gapCloses : page.insuranceGapCloses).push({ id: gapPath[1], resolution })
       return page.gapCloseStatus === 200 ? Response.json({ resolution, reviewedAt: "2026-10-28T15:00:00Z" }) : new Response("", { status: page.gapCloseStatus })
     }
     const callPath = /^\/v1\/agent-calls\/([^/]+)(\/issue)?$/.exec(url.pathname)
@@ -1276,6 +1411,10 @@ function harness(t: TestContext) {
     }
     assert.equal(url.pathname, "/v1/agent-calls/query")
     const agentCallsQuery = (await request.json()) as AgentCallsQuery
+    if (agentCallsQuery.insuranceGapOnly) {
+      page.insuranceGapRequests.push(agentCallsQuery)
+      return Response.json(page.insuranceGapCalls)
+    }
     page.agentCallsRequests.push(agentCallsQuery)
     await page.agentCallsGate
     return page.agentCallsStatus === 200 ? Response.json(page.agentCallsFor(agentCallsQuery)) : new Response("", { status: page.agentCallsStatus })

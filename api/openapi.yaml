@@ -1105,6 +1105,40 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/agent-calls/{interactionId}/insurance-gap:
+    put:
+      operationId: closeAgentCallInsuranceGap
+      summary: Close a call the judge flagged for an insurance missing from the insurance list; the first close is preserved.
+      parameters:
+        - name: interactionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InsuranceGapCloseInput"
+      responses:
+        "200":
+          description: The saved close.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsuranceGapReview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operator/ai-costs/query:
     post:
       operationId: queryOperatorAICosts
@@ -1756,7 +1790,7 @@ paths:
           description: Evaluator version; omitted selects the current scorecard.
           schema:
             type: string
-            enum: [typesafe-scorecard-v6, typesafe-scorecard-v7, typesafe-scorecard-v8, typesafe-scorecard-v9, typesafe-scorecard-v10, typesafe-scorecard-v11]
+            enum: [typesafe-scorecard-v6, typesafe-scorecard-v7, typesafe-scorecard-v8, typesafe-scorecard-v9, typesafe-scorecard-v10, typesafe-scorecard-v11, typesafe-scorecard-v12]
       responses:
         "200":
           description: Every scorecard question with its plain-English yes and no definitions.
@@ -4052,6 +4086,9 @@ components:
         knowledgeGapOnly:
           type: boolean
           description: Restrict to calls the judge flagged for missing office knowledge that staff have not closed.
+        insuranceGapOnly:
+          type: boolean
+          description: Restrict to calls the judge flagged for an insurance missing from the insurance list that staff have not closed.
         cursor:
           type: string
         limit:
@@ -4094,6 +4131,9 @@ components:
         knowledgeGapLine:
           type: string
           description: The caller's words the judges picked as the office question office knowledge could not answer.
+        insuranceGapLine:
+          type: string
+          description: The caller's words the judges picked as naming the insurance missing from the insurance list.
     AgentCallsPage:
       type: object
       additionalProperties: false
@@ -4136,6 +4176,26 @@ components:
       properties:
         resolution:
           $ref: "#/components/schemas/KnowledgeGapResolution"
+        reviewedAt:
+          type: string
+          format: date-time
+    InsuranceGapResolution:
+      type: string
+      enum: [ADDED, NOT_NEEDED]
+    InsuranceGapCloseInput:
+      type: object
+      additionalProperties: false
+      required: [resolution]
+      properties:
+        resolution:
+          $ref: "#/components/schemas/InsuranceGapResolution"
+    InsuranceGapReview:
+      type: object
+      additionalProperties: false
+      required: [resolution, reviewedAt]
+      properties:
+        resolution:
+          $ref: "#/components/schemas/InsuranceGapResolution"
         reviewedAt:
           type: string
           format: date-time

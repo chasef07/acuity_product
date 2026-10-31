@@ -59,7 +59,7 @@ const beforeBookingOrder = Object.keys(insuranceBeforeBookingLabels) as BeforeBo
 
 type Names = (office: string) => string
 
-function officeNames(loaded: LocationInsuranceCatalog | undefined): Names {
+export function officeNames(loaded: LocationInsuranceCatalog | undefined): Names {
   return (office) => loaded?.officeNames[office] ?? office
 }
 
@@ -187,7 +187,7 @@ export function InsuranceList({ actorSubject, ...props }: AgentLocationProps & {
 type Row = { at: PlanAt; region: InsuranceRegion; table: InsuranceOfficeTable; plan: InsuranceRegionPlan; row: InsuranceTableRow }
 type Carriers = Map<string, InsuranceCarrier>
 
-function officeRows(catalog: InsuranceCatalog, office: string): Row[] {
+export function officeRows(catalog: InsuranceCatalog, office: string): Row[] {
   return officeTables(catalog, office).flatMap(({ region, table }) => {
     const plans = new Map(region.plans.map((plan) => [plan.id, plan]))
     return table.rows.flatMap((row) => {
@@ -573,7 +573,7 @@ function NoticeField({ value, onChange }: { value: string; onChange: (notice: st
   )
 }
 
-function PlanFields({
+export function PlanFields({
   row,
   carriers,
   choices,
@@ -665,7 +665,7 @@ function PlanFields({
 type AddEdit = Extract<InsuranceEdit, { kind: "addRow" | "createPlan" }>
 const shownMatches = 8
 
-function AddPlan({
+export function AddPlan({
   region,
   table,
   choices,
@@ -825,7 +825,7 @@ function NewPlanForm({
   )
 }
 
-function publishMessage(failure: PortalFailure) {
+export function publishMessage(failure: PortalFailure) {
   if (failure.kind === "signedOut" || failure.kind === "unauthenticated") return "Sign in again to publish."
   if (failure.kind === "unauthorized")
     return failure.message ?? "You don't have access to every office this change affects. Nothing changed."

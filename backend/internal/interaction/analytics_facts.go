@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const analyticsFactsVersion = 4
+const analyticsFactsVersion = 5
 
 const analyticsFactsBatchSize = 100
 

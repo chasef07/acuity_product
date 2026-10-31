@@ -17,6 +17,7 @@ import { formatTimestamp } from "@/lib/format-time"
 import { homeDay, homeGreeting } from "@/lib/home-greeting"
 import type { ManageAgentPage } from "@/lib/workspace-projection"
 import { AgentHomeMap, agentAreas, type AgentArea } from "./agent-home-map"
+import { InsuranceGaps } from "./insurance-gaps"
 import { KnowledgeGaps } from "./knowledge-gaps"
 import type { AgentLocationProps } from "./manage-agent-page"
 
@@ -102,6 +103,7 @@ export function AgentHome({
         )}
       </div>
       <KnowledgeGaps practiceID={practiceID} locationID={locationID} locations={locations} />
+      <InsuranceGaps practiceID={practiceID} locationID={locationID} locations={locations} />
     </section>
   )
 }

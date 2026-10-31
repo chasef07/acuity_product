@@ -1,107 +1,22 @@
 "use client"
 
 import { useId, useRef, useState } from "react"
-import { ChevronRightIcon, MessageCircleQuestionIcon, SearchIcon } from "lucide-react"
+import { MessageCircleQuestionIcon, SearchIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import type { AgentCall, KnowledgeGapResolution, KnowledgeSection, Location, LocationKnowledge } from "@/lib/api/generated/types.gen"
-import { closeKnowledgeGap, useAgentCalls } from "@/lib/clients/agent-calls"
+import type { KnowledgeGapResolution, KnowledgeSection, Location, LocationKnowledge } from "@/lib/api/generated/types.gen"
+import { closeKnowledgeGap } from "@/lib/clients/agent-calls"
 import { publishLocationKnowledge, useLocationKnowledge } from "@/lib/clients/location-knowledge"
-import { formatTimestamp } from "@/lib/format-time"
 import { fold, matches, publishedSections, publishFailureMessage } from "@/lib/knowledge-publication"
-import { formatClock } from "@/lib/vocabulary"
-import { AgentCallPanel } from "./agent-call-panel"
+import { callTime, GapCalls, type GapFixProps } from "./call-gaps"
 import { EntryFields } from "./knowledge-base"
 
-export function KnowledgeGaps({ practiceID, locationID, locations }: { practiceID: string; locationID: string; locations: Location[] }) {
-  const gaps = useAgentCalls({ practiceID, locationID, range: "24h", phone: "", flaggedOnly: false, knowledgeGapOnly: true })
-  const [open, setOpen] = useState<AgentCall>()
-  const [published, setPublished] = useState<string[]>([])
-  const [saving, setSaving] = useState(false)
-  const calls = gaps.status === "ready" ? gaps.data.calls : []
-  const more = gaps.status === "ready" && Boolean(gaps.data.nextCursor)
-
-  function officeName(call: AgentCall) {
-    return locations.find((location) => location.id === call.locationId)?.name ?? "Unknown office"
-  }
-
-  function closed(id: string) {
-    setOpen((current) => (current?.id === id ? undefined : current))
-    setPublished((ids) => ids.filter((item) => item !== id))
-    gaps.update((shown) => ({ ...shown, calls: shown.calls.filter((call) => call.id !== id) }))
-  }
-
-  if (gaps.status === "loading" || (gaps.status === "ready" && calls.length === 0 && !open)) return null
-  if (gaps.status === "failed") {
-    return (
-      <Alert variant="destructive" className="mx-4 mb-8 w-auto sm:mx-6">
-        <AlertTitle>Calls that need knowledge are unavailable</AlertTitle>
-        <Button variant="outline" size="sm" className="mt-2 w-fit" onClick={gaps.retry}>
-          Try again
-        </Button>
-      </Alert>
-    )
-  }
-  return (
-    <section aria-label="Calls that need knowledge" className="mx-4 mb-8 rounded-xl border p-4 sm:mx-6">
-      <h2 className="flex items-center gap-2 text-base font-medium">
-        <MessageCircleQuestionIcon aria-hidden="true" className="size-4 text-muted-foreground" />
-        {`${calls.length}${more ? "+" : ""} ${calls.length === 1 && !more ? "call needs" : "calls need"} knowledge`}
-      </h2>
-      <p className="mt-0.5 text-sm text-muted-foreground">Missing from the knowledge base · Last 24 hours</p>
-      {calls.length > 0 && (
-        <ul className="mt-3 border-t">
-          {calls.map((call) => (
-            <li key={call.id} className="border-b last:border-b-0">
-              <button
-                type="button"
-                className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm hover:bg-muted/50"
-                onClick={() => setOpen(call)}
-              >
-                <span className="min-w-0 flex-1">
-                  {formatTimestamp(call.startedAt)}
-                  {!locationID && <span className="text-muted-foreground"> · {officeName(call)}</span>}
-                  {call.knowledgeGapLine && <span className="block truncate text-muted-foreground">“{call.knowledgeGapLine}”</span>}
-                </span>
-                <span className="text-muted-foreground">{formatClock(call.durationSeconds)}</span>
-                <ChevronRightIcon aria-hidden="true" className="size-4 text-muted-foreground" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <AgentCallPanel
-        id={open?.id ?? ""}
-        position={0}
-        loadedCount={calls.length}
-        hasMore={false}
-        loadingNext={false}
-        onClose={() => setOpen(undefined)}
-        onFlagged={() => {}}
-        highlight={open?.knowledgeGapLine}
-        footerBusy={saving}
-        footer={
-          open && (
-            <KnowledgeFix
-              key={open.id}
-              practiceID={practiceID}
-              locationID={open.locationId}
-              officeName={locationID ? undefined : officeName(open)}
-              call={open}
-              published={published.includes(open.id)}
-              onPublished={(id) => setPublished((ids) => [...ids, id])}
-              onSavingChange={setSaving}
-              onClosed={closed}
-            />
-          )
-        }
-      />
-    </section>
-  )
+export function KnowledgeGaps(props: { practiceID: string; locationID: string; locations: Location[] }) {
+  return <GapCalls gap="knowledge" icon={MessageCircleQuestionIcon} fix={KnowledgeFix} {...props} />
 }
 
 type Mode = "add" | "edit"
@@ -115,16 +30,7 @@ function KnowledgeFix({
   onPublished,
   onSavingChange,
   onClosed,
-}: {
-  practiceID: string
-  locationID: string
-  officeName?: string
-  call: AgentCall
-  published: boolean
-  onPublished: (id: string) => void
-  onSavingChange: (saving: boolean) => void
-  onClosed: (id: string) => void
-}) {
+}: GapFixProps) {
   const knowledge = useLocationKnowledge({ practiceID, locationID })
   const [mode, setMode] = useState<Mode>("add")
   const [draft, setDraft] = useState<KnowledgeSection>({ id: "", title: "", text: "" })
@@ -192,7 +98,7 @@ function KnowledgeFix({
       practiceId: practiceID,
       locationId: locationID,
       expectedRevisionId: current.revision?.id,
-      reason: `${replaces ? `Updated “${entry.title}”` : `Added “${entry.title}”`} from a caller question on ${new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(call.startedAt))}`,
+      reason: `${replaces ? `Updated “${entry.title}”` : `Added “${entry.title}”`} from a caller question on ${callTime(call)}`,
       sections: publishedSections(sections),
     }
     const payload = JSON.stringify(publication)

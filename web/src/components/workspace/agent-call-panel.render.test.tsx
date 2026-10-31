@@ -36,7 +36,7 @@ test("an empty transcript says nothing was recorded", () => {
 test("a knowledge gap highlights only the first caller message with the judged words", () => {
   const markup = renderToStaticMarkup(
     <CallTranscript
-      highlight="You open on Thanksgiving?"
+      highlight={{ line: "You open on Thanksgiving?", note: "Not in the knowledge base" }}
       messages={[
         { speaker: "Agent", text: "You open on Thanksgiving?", occurredAt: "2026-08-30T12:00:00Z" },
         { speaker: "Caller", text: "You open on Thanksgiving?", occurredAt: "2026-08-30T12:00:05Z" },

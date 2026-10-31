@@ -585,6 +585,8 @@ func expectedTablePrivileges() map[string]bool {
 	grant("acuity_portal", "INSERT", "ai_interaction_issues")
 	grant("acuity_portal", "SELECT", "ai_interaction_knowledge_gap_reviews")
 	grant("acuity_portal", "INSERT", "ai_interaction_knowledge_gap_reviews")
+	grant("acuity_portal", "SELECT", "ai_interaction_insurance_gap_reviews")
+	grant("acuity_portal", "INSERT", "ai_interaction_insurance_gap_reviews")
 	for _, role := range []string{"acuity_portal", "acuity_worker"} {
 		grant(role, "SELECT", "ai_interaction_scorecard_answers")
 		grant(role, "INSERT", "ai_interaction_scorecard_answers")

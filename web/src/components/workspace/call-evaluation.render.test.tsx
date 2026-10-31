@@ -232,7 +232,7 @@ for (const version of juryScorecardVersions) test(`${version} renders the jury s
   assert.doesNotMatch(html, /shown as recorded/)
 })
 
-for (const version of ["typesafe-scorecard-v8", "typesafe-scorecard-v9", "typesafe-scorecard-v10", "typesafe-scorecard-v11"]) test(`${version} shows unknown knowledge separately from failures and missing sentiment as unavailable`, () => {
+for (const version of ["typesafe-scorecard-v8", "typesafe-scorecard-v9", "typesafe-scorecard-v10", "typesafe-scorecard-v11", "typesafe-scorecard-v12"]) test(`${version} shows unknown knowledge separately from failures and missing sentiment as unavailable`, () => {
  const question = (key: string, prompt: string) => ({ key, prompt, code: "", label: "", source: "judge" as const, question: "", yes: "", no: "", failure: true })
  const html = renderToStaticMarkup(<CallEvaluation questions={[question("knowledge_available", "Did returned knowledge contain the answer?"), question("transfer_policy_followed", "Was transfer policy followed?")]} verdicts={[{question: "transfer_policy_followed", code: "T1", prompt: "", answer: "no"}]} evaluation={{evaluatorVersion: version, evaluator:"jury", status:"complete", jurors:["a","b","c"], results:{knowledge_available:{status:"unknown",reason:"no_office_knowledge_result"}, transfer_policy_followed:{verdict:false, probability:0.2,votes:{a:0.1,b:0.2,c:0.3},errors:{}}}}} />)
  assert.match(html, /Was transfer policy followed\?<\/dt><dd class="shrink-0 font-medium text-destructive">Failed/)
@@ -325,7 +325,7 @@ test("a sentiment-only failure does not make six completed checks incomplete", (
 
 test("a call the agent did not hang up shows call ending as not applicable with its reason", () => {
  const question = (key: string, prompt: string) => ({ key, prompt, code: "", label: "", source: "judge" as const, question: "", yes: "", no: "", failure: true })
- const html = renderToStaticMarkup(<CallEvaluation questions={[question("call_ended_correctly", "Did the agent end the call only after the caller was finished?")]} verdicts={[]} evaluation={{evaluatorVersion: "typesafe-scorecard-v11", evaluator:"jury", status:"complete", jurors:["a","b","c"], results:{call_ended_correctly:{status:"not_applicable",reason:"no_agent_hangup"}}}} />)
+ const html = renderToStaticMarkup(<CallEvaluation questions={[question("call_ended_correctly", "Did the agent end the call only after the caller was finished?")]} verdicts={[]} evaluation={{evaluatorVersion: "typesafe-scorecard-v12", evaluator:"jury", status:"complete", jurors:["a","b","c"], results:{call_ended_correctly:{status:"not_applicable",reason:"no_agent_hangup"}}}} />)
  assert.match(html, />Not applicable<\/dd>/)
  assert.match(html, /The agent did not end the call; it was transferred or the caller hung up\./)
  assert.doesNotMatch(html, /text-destructive/)

@@ -810,6 +810,10 @@ export type AgentCallsQuery = {
      * Restrict to calls the judge flagged for missing office knowledge that staff have not closed.
      */
     knowledgeGapOnly?: boolean;
+    /**
+     * Restrict to calls the judge flagged for an insurance missing from the insurance list that staff have not closed.
+     */
+    insuranceGapOnly?: boolean;
     cursor?: string;
     limit?: number;
 };
@@ -830,6 +834,10 @@ export type AgentCall = {
      * The caller's words the judges picked as the office question office knowledge could not answer.
      */
     knowledgeGapLine?: string;
+    /**
+     * The caller's words the judges picked as naming the insurance missing from the insurance list.
+     */
+    insuranceGapLine?: string;
 };
 
 export type AgentCallsPage = {
@@ -855,6 +863,17 @@ export type KnowledgeGapCloseInput = {
 
 export type KnowledgeGapReview = {
     resolution: KnowledgeGapResolution;
+    reviewedAt: string;
+};
+
+export type InsuranceGapResolution = 'ADDED' | 'NOT_NEEDED';
+
+export type InsuranceGapCloseInput = {
+    resolution: InsuranceGapResolution;
+};
+
+export type InsuranceGapReview = {
+    resolution: InsuranceGapResolution;
     reviewedAt: string;
 };
 
@@ -3647,6 +3666,49 @@ export type CloseAgentCallKnowledgeGapResponses = {
 
 export type CloseAgentCallKnowledgeGapResponse = CloseAgentCallKnowledgeGapResponses[keyof CloseAgentCallKnowledgeGapResponses];
 
+export type CloseAgentCallInsuranceGapData = {
+    body: InsuranceGapCloseInput;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/agent-calls/{interactionId}/insurance-gap';
+};
+
+export type CloseAgentCallInsuranceGapErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CloseAgentCallInsuranceGapError = CloseAgentCallInsuranceGapErrors[keyof CloseAgentCallInsuranceGapErrors];
+
+export type CloseAgentCallInsuranceGapResponses = {
+    /**
+     * The saved close.
+     */
+    200: InsuranceGapReview;
+};
+
+export type CloseAgentCallInsuranceGapResponse = CloseAgentCallInsuranceGapResponses[keyof CloseAgentCallInsuranceGapResponses];
+
 export type QueryOperatorAiCostsData = {
     body: OperatorAiCostQueryRequest;
     path?: never;
@@ -4492,7 +4554,7 @@ export type GetOperatorScorecardQuestionsData = {
         /**
          * Evaluator version; omitted selects the current scorecard.
          */
-        version?: 'typesafe-scorecard-v6' | 'typesafe-scorecard-v7' | 'typesafe-scorecard-v8' | 'typesafe-scorecard-v9' | 'typesafe-scorecard-v10' | 'typesafe-scorecard-v11';
+        version?: 'typesafe-scorecard-v6' | 'typesafe-scorecard-v7' | 'typesafe-scorecard-v8' | 'typesafe-scorecard-v9' | 'typesafe-scorecard-v10' | 'typesafe-scorecard-v11' | 'typesafe-scorecard-v12';
     };
     url: '/v1/operator/scorecard/questions';
 };

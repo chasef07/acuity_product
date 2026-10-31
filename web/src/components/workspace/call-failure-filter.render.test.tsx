@@ -12,7 +12,8 @@ const question = (key: string, label: string, source: "judge" | "code" = "judge"
   key, label, source, failure, code: key, prompt: label, question: label, yes: "Yes", no: "No",
 })
 const catalogs: Record<string, OperatorScorecardQuestion[]> = {
-  "typesafe-scorecard-v11": [question("office_question_answered", "Current office answer"), question("call_ended_correctly", "Call ended correctly")],
+  "typesafe-scorecard-v12": [question("office_question_answered", "Current office answer"), question("call_ended_correctly", "Call ended correctly")],
+  "typesafe-scorecard-v11": [question("office_question_answered", "Previous office answer"), question("call_ended_correctly", "Previous call ending")],
   "typesafe-scorecard-v10": [question("office_question_answered", "Previous office answer"), question("call_ended_correctly", "Previous call ending")],
   "typesafe-scorecard-v9": [question("office_question_answered", "Previous office answer"), question("call_ended_correctly", "Previous call ending")],
   "typesafe-scorecard-v8": [question("office_question_answered", "Previous office answer"), question("call_ended_correctly", "Previous call ending")],
@@ -25,7 +26,7 @@ test("judge filter offers unique current and historical failures using current l
   await view.render()
   await view.open()
   assert.deepEqual(view.options(), ["Any judge failure", "All calls", "Current office answer", "Call ended correctly", "Office facts backed", "Understood every request"])
-  assert.deepEqual(view.requests.sort(), ["typesafe-scorecard-v6", "typesafe-scorecard-v7", "typesafe-scorecard-v8", "typesafe-scorecard-v9", "typesafe-scorecard-v10", "typesafe-scorecard-v11"].sort())
+  assert.deepEqual(view.requests.sort(), ["typesafe-scorecard-v6", "typesafe-scorecard-v7", "typesafe-scorecard-v8", "typesafe-scorecard-v9", "typesafe-scorecard-v10", "typesafe-scorecard-v11", "typesafe-scorecard-v12"].sort())
   const legacy = Array.from(document.querySelectorAll<HTMLElement>("[role='option']")).find((item) => item.textContent === "Office facts backed")
   assert.ok(legacy)
   await act(async () => legacy.click())
@@ -47,6 +48,7 @@ test("a failed historical catalog is visible and retry recovers its missing judg
   assert.equal(view.requests.filter((version) => version === "typesafe-scorecard-v9").length, 1)
   assert.equal(view.requests.filter((version) => version === "typesafe-scorecard-v10").length, 1)
   assert.equal(view.requests.filter((version) => version === "typesafe-scorecard-v11").length, 1)
+  assert.equal(view.requests.filter((version) => version === "typesafe-scorecard-v12").length, 1)
   await view.open()
   assert.ok(view.options().includes("Office facts backed"))
 })
