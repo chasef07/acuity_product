@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -300,6 +301,13 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		},
 		{
 			Practice: "abita-eye-group",
+			Location: "north-miami-beach-optical",
+			Sender:   "+13055095333",
+			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
+			Active:   true,
+		},
+		{
+			Practice: "abita-eye-group",
 			Location: "spring-hill",
 			Sender:   "+17275919997",
 			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
@@ -400,8 +408,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	`).Scan(&grantCount, &abitaGrantCount, &demoGrantCount); err != nil {
 		t.Fatalf("count provisioned Access Grants: %v", err)
 	}
-	if grantCount != 31 || abitaGrantCount != 31 || demoGrantCount != 0 {
-		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 31, 31, 0",
+	if grantCount != 32 || abitaGrantCount != 32 || demoGrantCount != 0 {
+		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 32, 32, 0",
 			grantCount, abitaGrantCount, demoGrantCount)
 	}
 	var brightVuEmail, brightVuRole, brightVuScope, brightVuLocation string
@@ -486,7 +494,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	`).Scan(&hollywoodGrantCount, &sweetwaterOpticalGrantCount); err != nil {
 		t.Fatalf("count expanded Hollywood Access Grants: %v", err)
 	}
-	if hollywoodGrantCount != 4 || sweetwaterOpticalGrantCount != 0 {
+	if hollywoodGrantCount != 4 || sweetwaterOpticalGrantCount != 4 {
 		t.Fatalf(
 			"expanded Access Grant Locations = Hollywood:%d Sweetwater Optical:%d",
 			hollywoodGrantCount, sweetwaterOpticalGrantCount,
@@ -501,8 +509,59 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	if err := json.NewDecoder(outputFile).Decode(&provisioned); err != nil {
 		t.Fatalf("decode provisioning output: %v", err)
 	}
-	if provisioned.AccessGrantCount != 31 {
-		t.Fatalf("provisioning output Access Grant count = %d, want 31", provisioned.AccessGrantCount)
+	if provisioned.AccessGrantCount != 32 {
+		t.Fatalf("provisioning output Access Grant count = %d, want 32", provisioned.AccessGrantCount)
+	}
+}
+
+func TestEveryReleaseReappliesProductionProvisioning(t *testing.T) {
+	pool := testdb.Open(t).Owner
+	directory := t.TempDir()
+	input := filepath.Join("..", "..", "..", "config", "production-provisioning.json")
+	release := func(output string) access.Provisioned {
+		t.Helper()
+		path := filepath.Join(directory, output)
+		if err := runMigrate(context.Background(), app.Config{
+			ProvisioningInput:  input,
+			ProvisioningOutput: path,
+		}, pool); err != nil {
+			t.Fatalf("release %s: %v", output, err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", output, err)
+		}
+		var provisioned access.Provisioned
+		if err := json.Unmarshal(raw, &provisioned); err != nil {
+			t.Fatalf("decode %s: %v", output, err)
+		}
+		return provisioned
+	}
+	release("first.json")
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_location_voice_numbers voice
+		SET voicemail_greeting = 'Stale greeting.', after_hours_voicemail_greeting = NULL
+		FROM access_locations location
+		WHERE location.id = voice.location_id AND location.provisioning_key = 'hollywood'
+	`); err != nil {
+		t.Fatalf("stale Hollywood greeting: %v", err)
+	}
+
+	if created := release("second.json").AccessGrantCount; created != 0 {
+		t.Fatalf("second release created %d Access Grants, want 0", created)
+	}
+	var greeting, afterHours string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT voice.voicemail_greeting, voice.after_hours_voicemail_greeting
+		FROM human_calling_location_voice_numbers voice
+		JOIN access_locations location ON location.id = voice.location_id
+		WHERE location.provisioning_key = 'hollywood'
+	`).Scan(&greeting, &afterHours); err != nil {
+		t.Fatalf("read Hollywood greetings: %v", err)
+	}
+	if !strings.HasSuffix(greeting, "we will return the call promptly.") ||
+		!strings.HasSuffix(afterHours, "please call 305-741-0830.") {
+		t.Fatalf("Hollywood greetings = %q / %q", greeting, afterHours)
 	}
 }
 
