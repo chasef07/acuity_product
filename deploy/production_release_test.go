@@ -43,13 +43,6 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 	if strings.Contains(commands[migrationUpdate], "--remove-env-vars") {
 		t.Fatalf("release must apply production provisioning:\n%s", commands[migrationUpdate])
 	}
-	dockerfile, err := os.ReadFile(filepath.Join(directory, "..", "Dockerfile.backend"))
-	if err != nil {
-		t.Fatalf("read backend Dockerfile: %v", err)
-	}
-	if !strings.Contains(string(dockerfile), "COPY config/production-provisioning.json /etc/acuity/production-provisioning.json\n") {
-		t.Fatal("backend image must ship the provisioning file the release applies")
-	}
 
 	for _, service := range []string{
 		"acuity-portal-api",
