@@ -58,7 +58,9 @@
           "InboundRingEmails": ["brightvumiami@gmail.com"],
           "AbitaOfficeKeys": ["north-miami-beach-optical"],
           "VoiceNumber": "+13055095333",
-          "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly."
+          "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly.",
+          "MessagingSender": "+13055095333",
+          "MessagingProfileID": "40019fbc-d47c-4e6c-86ee-87ab00795371"
         }
       ],
       "AccessGrants": [
@@ -74,7 +76,7 @@
           "Email": "ari@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
         },
         {
           "Key": "everth-sanchez",
@@ -116,7 +118,7 @@
           "Email": "denise@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
         },
         {
           "Key": "doral-office",
@@ -130,7 +132,7 @@
           "Email": "doraloptical@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
         },
         {
           "Key": "bright-vu-miami",
@@ -193,35 +195,42 @@
           "Email": "justin@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
         },
         {
           "Key": "madelyn",
           "Email": "madelyn@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
+        },
+        {
+          "Key": "maria-g",
+          "Email": "maria.g@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "sweetwater", "sweetwater-optical"]
         },
         {
           "Key": "katie-einsohn",
           "Email": "mobileoptical@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
         },
         {
           "Key": "kathia",
           "Email": "optical@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
         },
         {
           "Key": "sasha-ojinaga",
           "Email": "sashao@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
         },
         {
           "Key": "scheduler",
@@ -249,7 +258,7 @@
           "Email": "sweetwateroptical@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
-          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
         },
         {
           "Key": "sweetwater-optical-call-center",
