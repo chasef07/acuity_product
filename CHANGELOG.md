@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/chasef07/acuity_product/compare/v3.1.0...v3.2.0) (2026-11-02)
+
+
+### Features
+
+* **deploy:** apply production provisioning on every release ([#605](https://github.com/chasef07/acuity_product/issues/605)) ([6d4a7a5](https://github.com/chasef07/acuity_product/commit/6d4a7a5446d9b8adeea19be1ef907c2f86f76c8b))
+
 ## [3.1.0](https://github.com/chasef07/acuity_product/compare/v3.0.0...v3.1.0) (2026-10-31)
 
 
