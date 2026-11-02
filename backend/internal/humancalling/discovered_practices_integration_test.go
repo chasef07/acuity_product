@@ -2,6 +2,7 @@ package humancalling_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -56,5 +57,62 @@ func TestCallingStateIncludesEveryDiscoveredPractice(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCallingStateKeepsOperationalAccessDecisions(t *testing.T) {
+	db := testdb.Open(t)
+	pool := db.Owner
+	ctx := context.Background()
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	member := access.Identity{Subject: "access-member", Email: "member@access.test", EmailVerified: true}
+	revoked := access.Identity{Subject: "access-revoked", Email: "revoked@access.test", EmailVerified: true}
+	operator := access.Identity{Subject: "access-operator", Email: "operator@access.test", EmailVerified: true}
+	if _, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{
+		Environment: "test", RequestedBy: "calling-access-decisions-test",
+		PlatformOperators: []string{operator.Email},
+		Practices: []access.PracticeProvision{{
+			Key: "practice", Name: "Practice",
+			Locations: []access.LocationProvision{{Key: "office", Name: "Office"}},
+			AccessGrants: []access.AccessGrantProvision{
+				{Key: "member", Email: member.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
+				{Key: "revoked", Email: revoked.Email, Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
+			},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, identity := range []access.Identity{member, revoked} {
+		if _, err := accessModule.DiscoverActor(ctx, identity); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE access_memberships SET revoked_at = $2 WHERE user_subject = $1
+	`, revoked.Subject, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_platform_operators (email, user_subject)
+		VALUES ('claimed@access.test', 'access-someone-else')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(db.As(testdb.Portal), accessModule, nil, humancalling.Config{}, func() time.Time { return now })
+	for name, identity := range map[string]access.Identity{
+		"outsider":                {Subject: "access-outsider", Email: "outsider@access.test", EmailVerified: true},
+		"revoked member":          revoked,
+		"member with taken email": {Subject: member.Subject, Email: "claimed@access.test", EmailVerified: true},
+	} {
+		if _, _, err := calling.ReadCallingStateConditionally(ctx, identity, ""); !errors.Is(err, humancalling.ErrDenied) {
+			t.Fatalf("%s Calling state error = %v, want ErrDenied", name, err)
+		}
+	}
+	for name, identity := range map[string]access.Identity{"member": member, "unbound Platform Operator": operator} {
+		state, _, err := calling.ReadCallingStateConditionally(ctx, identity, "")
+		if err != nil || len(state.PracticeIDs) != 1 {
+			t.Fatalf("%s Calling state Practices = %v, err %v", name, state.PracticeIDs, err)
+		}
 	}
 }

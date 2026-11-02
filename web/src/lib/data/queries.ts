@@ -65,8 +65,10 @@ export function useRead<const I extends Identity, T>({
   name,
   identity,
   enabled = true,
+  immutable = false,
   read,
 }: ReadOptions<I> & {
+  immutable?: boolean
   read: (identity: I, transport: PortalTransport) => Promise<PortalResult<T>>
 }): PortalRead<T> {
   const queryKey = [live ?? "manual", name, identity]
@@ -74,6 +76,7 @@ export function useRead<const I extends Identity, T>({
     queryKey,
     queryFn: ({ signal }) => settle((transport) => read(identity, transport), signal),
     enabled,
+    ...(immutable ? { staleTime: Infinity, gcTime: Infinity } : {}),
   })
   const retry = useRetry(query.refetch, queryKey, enabled)
   return { ...portalQuery(query, query.isFetching, query.isRefetchError), retry }

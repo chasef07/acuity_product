@@ -114,7 +114,7 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 				for _, kind := range []string{"", "texts", "calls"} {
 					page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Responsibility: "mine", Kind: kind, Grouped: true})
 					want := map[string]int{"": 4, "texts": 1, "calls": 2}[kind]
-					if err != nil || len(page.Items) != want || page.Counts == nil || page.Counts.Tasks != 4 || page.Counts.Texts != 1 || page.Counts.CallRecovery != 2 || page.Counts.Categories.Appointments != 1 {
+					if err != nil || len(page.Items) != want || page.Counts == nil || page.Counts.Tasks != 4 || page.Counts.Texts != 1 || page.Counts.CallRecovery != 2 || page.Counts.Categories[work.TaskCategoryAppointments] != 1 {
 						t.Fatalf("classified=%t kind=%q: rows=%d counts=%+v err=%v; want %d visible shared reviews and counts 4/1/2 with one appointment", classified, kind, len(page.Items), page.Counts, err, want)
 					}
 					for _, task := range page.Items {
@@ -134,7 +134,7 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 		})
 	}
 	followUp, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, Responsibility: "all", Kind: "follow_up"})
-	if err != nil || len(followUp.Items) != 2 || followUp.Counts.Tasks != 2 || followUp.Counts.Categories.Appointments != 0 {
+	if err != nil || len(followUp.Items) != 2 || followUp.Counts.Tasks != 2 || followUp.Counts.Categories[work.TaskCategoryAppointments] != 0 {
 		t.Fatalf("follow-up folder includes communication reviews: %#v, %v", followUp, err)
 	}
 	springHill, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, Kind: "appointments"})
@@ -157,7 +157,7 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	for _, member := range staff {
 		identity := access.Identity{Subject: member.key, Email: member.key + "@shared-review.test", EmailVerified: true}
 		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Responsibility: "mine"})
-		if err != nil || len(page.Items) != 3 || page.Counts.Categories.Appointments != 0 {
+		if err != nil || len(page.Items) != 3 || page.Counts.Categories[work.TaskCategoryAppointments] != 0 {
 			t.Fatalf("%s retained a checked appointment: rows=%d counts=%+v err=%v", member.key, len(page.Items), page.Counts, err)
 		}
 	}

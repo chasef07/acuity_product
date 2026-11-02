@@ -1,9 +1,13 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
+
+	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
 func TestPreflightCachingDoesNotCacheDataOrBypassRequestAuthorization(t *testing.T) {
@@ -34,5 +38,29 @@ func TestPreflightCachingDoesNotCacheDataOrBypassRequestAuthorization(t *testing
 	}
 	if requests != 1 {
 		t.Fatalf("protected request handler calls=%d, want 1", requests)
+	}
+}
+
+func TestTaskPageResponseMapsEveryTaskCategoryCount(t *testing.T) {
+	categories := work.TaskCategoryCounts{}
+	want := map[string]int{}
+	for i, category := range work.TaskCategories {
+		categories[category] = i + 1
+		want[string(category)] = i + 1
+	}
+	response, err := taskPageResponse(work.TaskPage{Counts: &work.TaskFolderCounts{Categories: categories}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(response.Counts.Categories)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]int
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("category counts = %v, want %v", got, want)
 	}
 }

@@ -160,6 +160,11 @@ export function PixelWaveField() {
 
     const observer = new ResizeObserver(resize)
     observer.observe(canvas)
+    const visibility = new IntersectionObserver((entries) => {
+      cancelAnimationFrame(frame)
+      if (entries.at(-1)?.isIntersecting) frame = requestAnimationFrame(draw)
+    })
+    if (!reducedMotion) visibility.observe(canvas)
     canvas.addEventListener("pointermove", onPointerMove)
     canvas.addEventListener("pointerleave", onPointerLeave)
     resize()
@@ -168,6 +173,7 @@ export function PixelWaveField() {
     return () => {
       cancelAnimationFrame(frame)
       observer.disconnect()
+      visibility.disconnect()
       canvas.removeEventListener("pointermove", onPointerMove)
       canvas.removeEventListener("pointerleave", onPointerLeave)
     }

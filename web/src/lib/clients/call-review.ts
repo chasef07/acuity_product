@@ -15,6 +15,7 @@ export function useScorecardQuestions(version?: string) {
   return useRead({
     name: "scorecard-questions",
     identity: { scorecard: supportedVersion },
+    immutable: supportedVersion !== undefined,
     read: (identity, transport) =>
       getOperatorScorecardQuestions({ ...transport, query: { version: identity.scorecard } }),
   })

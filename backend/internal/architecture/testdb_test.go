@@ -34,7 +34,6 @@ var ownerRunBaseline = []struct {
 	{"backend/internal/humancalling/staff_transfer_integration_test.go", 1, 0, "prepareConnectedOutboundStaffTransfer drives provider, worker, and portal paths through one module"},
 	{"backend/internal/interaction/analytics_projection_integration_test.go", 1, 0, "projects against an earlier migration, before the runtime grant contract applies"},
 	{"backend/internal/interaction/cost_usage_projection_integration_test.go", 1, 0, "projects against an earlier migration, before the runtime grant contract applies"},
-	{"backend/internal/interaction/recovery_integration_test.go", 0, 4, "RecoverSourceClock has no production caller, so no runtime role owns it"},
 	{"backend/internal/postgres/executor_integration_test.go", 0, 1, "the platform executor runs no module code"},
 	{"backend/internal/work/responsibility_integration_test.go", 0, 4, "task-maintenance connects with operator-supplied credentials whose runtime role is unknown"},
 	{"backend/internal/workspace/phone_lookup_integration_test.go", 1, 0, "queries an earlier migration, before the runtime grant contract applies"},

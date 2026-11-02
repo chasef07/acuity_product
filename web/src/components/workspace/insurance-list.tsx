@@ -1,15 +1,13 @@
 "use client"
 
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
-import { HistoryIcon, PlusIcon, SearchIcon } from "lucide-react"
+import { PlusIcon, SearchIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import type {
   InsuranceCarrier,
@@ -23,7 +21,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { publishInsuranceCatalog, readInsuranceCatalog, useInsuranceCatalog } from "@/lib/clients/insurance-catalog"
 import type { PortalFailure } from "@/lib/clients/portal-request"
-import { draftScope } from "@/lib/drafts"
+import { draftScope, nextAttempt } from "@/lib/drafts"
 import { formatTimestamp } from "@/lib/format-time"
 import {
   carrierChoices,
@@ -51,7 +49,15 @@ import { insuranceDrafts, type InsuranceDraft as Draft } from "@/lib/insurance-d
 import { fold } from "@/lib/knowledge-publication"
 import { doctorAnswerLabels, insuranceBeforeBookingLabels, insuranceCoverageLabels } from "@/lib/vocabulary"
 import { InsuranceHistory } from "./insurance-history"
-import { AgentPage, AgentQueryBody, DisclosureRow, type AgentLocationProps } from "./manage-agent-page"
+import {
+  AgentPage,
+  AgentQueryBody,
+  DisclosureRow,
+  HistorySheet,
+  PublishBarFrame,
+  publishFailureMessage,
+  type AgentLocationProps,
+} from "./manage-agent-page"
 
 const list = new Intl.ListFormat("en", { type: "conjunction" })
 const coverageOrder = Object.keys(insuranceCoverageLabels) as Coverage[]
@@ -79,7 +85,6 @@ export function InsuranceList({ actorSubject, ...props }: AgentLocationProps & {
   const stored = useSyncExternalStore(insuranceDrafts.subscribe, () => insuranceDrafts.read(key), () => undefined)
   const draft = loaded?.canEdit ? stored : undefined
   const [search, setSearch] = useState("")
-  const [historyOpen, setHistoryOpen] = useState(false)
   const names = useMemo(() => officeNames(loaded), [loaded])
   const words = fold(search).split(/\s+/).filter(Boolean)
   const wasPublishing = useRef(stored?.publish.status === "publishing")
@@ -103,10 +108,15 @@ export function InsuranceList({ actorSubject, ...props }: AgentLocationProps & {
       }
       actions={
         loaded && (
-          <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
-            <HistoryIcon data-icon="inline-start" />
-            History
-          </Button>
+          <HistorySheet description="Every published version of the practice's insurance list. Restoring publishes an earlier version as a new one.">
+            <InsuranceHistory
+              practiceID={props.practiceID}
+              locationID={props.locationID}
+              active={loaded}
+              hasDraft={Boolean(draft)}
+              onChanged={() => void reload()}
+            />
+          </HistorySheet>
         )
       }
       controls={
@@ -161,25 +171,6 @@ export function InsuranceList({ actorSubject, ...props }: AgentLocationProps & {
           />
         )}
       </AgentQueryBody>
-      {loaded && (
-        <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
-          <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
-            <SheetHeader className="border-b px-5 py-4">
-              <SheetTitle>History</SheetTitle>
-              <SheetDescription>
-                Every published version of the practice&apos;s insurance list. Restoring publishes an earlier version as a new one.
-              </SheetDescription>
-            </SheetHeader>
-            <InsuranceHistory
-              practiceID={props.practiceID}
-              locationID={props.locationID}
-              active={loaded}
-              hasDraft={Boolean(draft)}
-              onChanged={() => void reload()}
-            />
-          </SheetContent>
-        </Sheet>
-      )}
     </AgentPage>
   )
 }
@@ -826,11 +817,10 @@ function NewPlanForm({
 }
 
 export function publishMessage(failure: PortalFailure) {
-  if (failure.kind === "signedOut" || failure.kind === "unauthenticated") return "Sign in again to publish."
   if (failure.kind === "unauthorized")
     return failure.message ?? "You don't have access to every office this change affects. Nothing changed."
   if (failure.kind === "unavailable") return "The change couldn't be checked, so nothing was published. Try again."
-  return failure.message ?? "Not published. Nothing changed. Try again."
+  return publishFailureMessage(failure)
 }
 
 function PublishBar({
@@ -850,13 +840,11 @@ function PublishBar({
   locationID: string
   onReload: () => Promise<void>
 }) {
-  const reasonID = useId()
   const catalog = useMemo(() => replay(draft.base.catalog, draft.edits), [draft.base.catalog, draft.edits])
   const changed = !same(catalog, draft.base.catalog)
   const count = changedPlans(draft.base.catalog, catalog)
   const touched = touchedOffices(draft.base.catalog, catalog)
   const others = touched.filter((office) => office !== loaded.officeId).map(names)
-  const publishing = draft.publish.status === "publishing"
   const placed = officeRows(catalog, loaded.officeId).map((row) => row.at)
   const tables = officeTables(catalog, loaded.officeId)
   const unplaced =
@@ -876,8 +864,7 @@ function PublishBar({
       reason: draft.reason.trim(),
       catalog,
     }
-    const payload = JSON.stringify(publication)
-    const attempt = draft.attempt?.payload === payload ? draft.attempt : { payload, revisionID: crypto.randomUUID() }
+    const attempt = nextAttempt(draft.attempt, publication)
     const sent: Draft = { ...draft, publish: { status: "publishing" }, attempt }
     insuranceDrafts.write(draftKey, sent)
     const outcome = await publishInsuranceCatalog({ ...publication, revisionId: attempt.revisionID })
@@ -913,33 +900,14 @@ function PublishBar({
   }
 
   return (
-    <fieldset
-      disabled={publishing}
-      className="flex min-w-0 flex-1 basis-xl flex-wrap items-center gap-2 rounded-lg border border-primary bg-primary/5 p-2"
+    <PublishBarFrame
+      draft={draft}
+      count={count}
+      canPublish={changed && draft.reason.trim() !== ""}
+      onReason={(reason) => save(draftKey, { ...draft, reason })}
+      onDiscard={discard}
+      onPublish={() => void submit()}
     >
-      {count > 0 && (
-        <p className="shrink-0 text-sm font-medium">
-          {count} unpublished {count === 1 ? "change" : "changes"}
-        </p>
-      )}
-      <label htmlFor={reasonID} className="sr-only">
-        Why are you changing this?
-      </label>
-      <Input
-        id={reasonID}
-        className="min-w-40 flex-1 bg-background"
-        placeholder="Why are you changing this?"
-        value={draft.reason}
-        maxLength={2000}
-        onChange={(event) => save(draftKey, { ...draft, reason: event.target.value })}
-      />
-      <Button variant="ghost" onClick={discard}>
-        Discard changes
-      </Button>
-      <Button disabled={!changed || !draft.reason.trim()} onClick={() => void submit()}>
-        {publishing && <Spinner data-icon="inline-start" />}
-        {publishing ? "Publishing…" : "Publish"}
-      </Button>
       {others.length > 0 && (
         <p role="status" className="basis-full text-sm">
           {touched.includes(loaded.officeId) ? "Also changes" : "Changes"} {list.format(others)}.
@@ -974,6 +942,6 @@ function PublishBar({
           </AlertTitle>
         </Alert>
       )}
-    </fieldset>
+    </PublishBarFrame>
   )
 }

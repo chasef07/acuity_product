@@ -16,10 +16,7 @@ import {
   PhoneForwardedIcon,
 } from "lucide-react"
 
-import {
-  latencyLabel,
-  type DiagnosticFocus,
-} from "@/components/analytics/ai-diagnostics"
+import type { DiagnosticFocus } from "@/components/analytics/ai-diagnostics"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
@@ -60,8 +57,10 @@ import {
   formatDurationBetween,
   formatPhone,
   hasAppointmentFacts,
+  latencyLabel,
   visitLabel,
 } from "@/lib/vocabulary"
+import { DetailValue } from "./ai-interaction-context"
 import { CallLabels } from "./call-labels"
 
 export function OperatorAnalyticsDetailSheet({
@@ -598,7 +597,7 @@ export function TimelineItem({
             </Badge>
             {(toolResult?.durationMs ?? item.durationMs) !== undefined && (
               <span className="ml-auto text-[0.625rem] tabular-nums text-muted-foreground">
-                {formatLatency(toolResult?.durationMs ?? item.durationMs)}
+                {latencyLabel(toolResult?.durationMs ?? item.durationMs)}
               </span>
             )}
           </div>
@@ -608,7 +607,7 @@ export function TimelineItem({
             <code>{item.name ?? "unknown_tool"}</code> ·{" "}
             {formatTime(item.occurredAt)} ·{" "}
             {(toolResult?.durationMs ?? item.durationMs) !== undefined
-              ? `${formatLatency(toolResult?.durationMs ?? item.durationMs)} execution`
+              ? `${latencyLabel(toolResult?.durationMs ?? item.durationMs)} execution`
               : "Execution timing unavailable"}
           </p>
           <MiddlewareRequestDetails
@@ -713,17 +712,6 @@ function formatToolLabel(name?: string) {
   }
 }
 
-function DetailValue({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 truncate font-medium" title={value}>
-        {value}
-      </dd>
-    </div>
-  )
-}
-
 function EvidenceIdentifiers({
   appointmentID,
   previousAppointmentID,
@@ -771,13 +759,6 @@ function formatTime(value: string): string {
     minute: "2-digit",
     second: "2-digit",
   }).format(date)
-}
-
-function formatLatency(value?: number): string {
-  if (value === undefined) return "—"
-  return value >= 1000
-    ? `${(value / 1000).toFixed(2)} s`
-    : `${Math.round(value)} ms`
 }
 
 function formatPayload(value: unknown): string {

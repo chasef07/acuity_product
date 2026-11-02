@@ -3,13 +3,12 @@
 import { useState } from "react"
 import {
   ArrowRightIcon,
-  CircleAlertIcon,
   InboxIcon,
   PhoneForwardedIcon,
   RefreshCwIcon,
 } from "lucide-react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AnalyticsFailure } from "@/components/analytics/analytics-failure"
 import { commandCenterPages, type CommandCenterPage } from "./analytics-navigation"
 import {
   DiagnosticsTools,
@@ -62,7 +61,7 @@ import {
   useAiCallAnalytics,
 } from "@/lib/clients/agent-calls"
 import { formatTimestamp } from "@/lib/format-time"
-import { analyticsRangeLabels, formatDuration, formatPhone, labelOptions } from "@/lib/vocabulary"
+import { analyticsRangeLabels, formatDuration, formatPhone, formatShare, labelOptions } from "@/lib/vocabulary"
 
 type AnalyticsNextPageState = AiCallLedger["nextPage"]
 type AnalyticsTab = CommandCenterPage
@@ -293,8 +292,8 @@ function AnalyticsOverview({ summary }: { summary: OperatorAiAnalyticsSummary })
     { label: "Total calls", value: summary.totalCalls.toLocaleString() },
     { label: "Total minutes", value: summary.totalCallMinutes.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
     { label: "Avg. time / call", value: summary.totalCalls ? formatDuration(Math.round(summary.totalCallMinutes * 60 / summary.totalCalls)) : "—" },
-    { label: "Transfer rate", value: summary.totalCalls ? formatRate(summary.transferRate) : "—", note: `${summary.transferCount.toLocaleString()} of ${summary.totalCalls.toLocaleString()} calls` },
-    { label: "Tool failure rate", value: summary.toolCallCount ? formatRate(summary.toolFailureRate) : "—", note: `${summary.toolErrorCount.toLocaleString()} of ${summary.toolCallCount.toLocaleString()} tool calls` },
+    { label: "Transfer rate", value: summary.totalCalls ? formatShare(summary.transferRate) : "—", note: `${summary.transferCount.toLocaleString()} of ${summary.totalCalls.toLocaleString()} calls` },
+    { label: "Tool failure rate", value: summary.toolCallCount ? formatShare(summary.toolFailureRate) : "—", note: `${summary.toolErrorCount.toLocaleString()} of ${summary.toolCallCount.toLocaleString()} tool calls` },
   ]
   return (
     <section aria-label="Overall stats">
@@ -523,32 +522,6 @@ function AnalyticsLoading({ overview }: { overview: boolean }) {
   )
 }
 
-function AnalyticsFailure({
-  title,
-  description,
-  onRetry,
-}: {
-  title: string
-  description: string
-  onRetry?: () => void
-}) {
-  return (
-    <Alert className="max-w-2xl py-3" variant={onRetry ? "default" : "destructive"}>
-      <CircleAlertIcon aria-hidden="true" />
-      <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>
-        <p>{description}</p>
-        {onRetry && (
-          <Button className="mt-3" size="sm" variant="outline" onClick={onRetry}>
-            <RefreshCwIcon aria-hidden="true" />
-            Retry
-          </Button>
-        )}
-      </AlertDescription>
-    </Alert>
-  )
-}
-
 function ActionBadges({ actions }: { actions: string[] }) {
   const visible = actions.slice(0, 2)
   if (visible.length === 0) {
@@ -582,26 +555,15 @@ function TransferBadge({ transferred }: { transferred: boolean }) {
 function CompactValue({
   label,
   value,
-  note,
 }: {
   label: string
   value: string
-  note?: string
 }) {
   return (
     <div className="min-w-0">
       <dt className="text-[0.6875rem] text-muted-foreground">{label}</dt>
       <dd className="mt-1 truncate font-mono text-xs font-semibold">{value}</dd>
-      {note && <dd className="mt-0.5 truncate text-[0.625rem] text-muted-foreground">{note}</dd>}
     </div>
   )
-}
-
-function formatRate(value: number): string {
-  if (!Number.isFinite(value)) return "—"
-  return new Intl.NumberFormat(undefined, {
-    style: "percent",
-    maximumFractionDigits: 1,
-  }).format(value)
 }
 

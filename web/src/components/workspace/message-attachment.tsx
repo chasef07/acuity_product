@@ -25,6 +25,7 @@ import {
   readMessageAttachment,
   retryMessageAttachment,
 } from "@/lib/clients/engagement"
+import { signInRequired } from "@/lib/clients/portal-request"
 
 export function MessageAttachmentView({
   attachment,
@@ -59,8 +60,7 @@ export function MessageAttachmentView({
     const outcome = await readMessageAttachment({ id: attachment.id }, signal)
     if (!outcome.ok) {
       setError(
-        outcome.failure.kind === "signedOut" ||
-          outcome.failure.kind === "unauthenticated"
+        signInRequired(outcome.failure)
           ? "Sign in again to load the attachment."
           : "Attachment unavailable.",
       )
@@ -111,17 +111,20 @@ export function MessageAttachmentView({
   }
 
   async function download() {
-    setPending(true)
-    setError("")
-    const blob = await loadBlob()
-    setPending(false)
-    if (!blob) return
-    const downloadURL = URL.createObjectURL(blob)
+    let downloadURL = objectURL
+    if (!downloadURL) {
+      setPending(true)
+      setError("")
+      const blob = await loadBlob()
+      setPending(false)
+      if (!blob) return
+      downloadURL = URL.createObjectURL(blob)
+    }
     const link = document.createElement("a")
     link.href = downloadURL
     link.download = attachment.fileName
     link.click()
-    URL.revokeObjectURL(downloadURL)
+    if (downloadURL !== objectURL) URL.revokeObjectURL(downloadURL)
   }
 
   return (

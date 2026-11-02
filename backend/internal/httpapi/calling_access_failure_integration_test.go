@@ -500,6 +500,27 @@ func (tx accessLookupFaultTx) QueryRow(
 	return tx.Tx.QueryRow(ctx, sql, arguments...)
 }
 
+func (tx accessLookupFaultTx) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults {
+	for _, query := range batch.QueuedQueries {
+		if tx.database.fails(query.SQL) {
+			return failedBatch{}
+		}
+	}
+	return tx.Tx.SendBatch(ctx, batch)
+}
+
 type failedRow struct{}
 
 func (failedRow) Scan(...any) error { return errAccessLookupConnectionLost }
+
+type failedBatch struct{}
+
+func (failedBatch) Exec() (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errAccessLookupConnectionLost
+}
+
+func (failedBatch) Query() (pgx.Rows, error) { return nil, errAccessLookupConnectionLost }
+
+func (failedBatch) QueryRow() pgx.Row { return failedRow{} }
+
+func (failedBatch) Close() error { return errAccessLookupConnectionLost }

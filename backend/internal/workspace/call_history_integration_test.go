@@ -57,16 +57,6 @@ func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) 
 	if len(page.Items[0].Entries) != 3 {
 		t.Fatalf("call history should retain AI, transfer, and Task evidence, got %d", len(page.Items[0].Entries))
 	}
-	flat, err := reads.QueryPhoneTimeline(ctx, workspace.QueryPhoneTimelineCommand{Identity: identity, PracticeID: authorization.Practice.ID, Phone: phone, Ungrouped: true})
-	if err != nil || len(flat.Items) != 3 {
-		t.Fatalf("legacy flat history lost evidence: %v, %v", flat, err)
-	}
-	for _, entry := range flat.Items {
-		if entry.Type == "CALL_HISTORY" {
-			t.Fatal("grouped response leaked into flat contract")
-		}
-	}
-
 	originalID := page.Items[0].ID
 	var booking, transfer, followUp bool
 	for _, entry := range page.Items[0].Entries {

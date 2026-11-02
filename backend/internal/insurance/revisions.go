@@ -133,7 +133,7 @@ func (r *Revisions) Publish(ctx context.Context, cmd PublishCommand) (Revision, 
 		practiceID: cmd.PracticeID, revisionID: cmd.RevisionID, expectedRevisionID: cmd.ExpectedRevisionID,
 		reason: cmd.Reason, actor: cmd.Identity.Subject, provenance: cmd.Provenance, catalog: cmd.Catalog,
 	}, func(ctx context.Context, tx pgx.Tx, before Catalog) error {
-		return r.authorizeOffices(ctx, tx, cmd.Identity, cmd.PracticeID, cmd.LocationID, TouchedOffices(before, cmd.Catalog))
+		return r.authorizeOffices(ctx, tx, cmd.Identity, cmd.PracticeID, cmd.LocationID, TouchedOffices(before, cmd.Catalog), nil)
 	})
 }
 
@@ -267,29 +267,29 @@ func inspect(ctx context.Context, tx pgx.Tx, cmd replacement) (*Revision, Catalo
 	return replayed, before, nil
 }
 
-func (r *Revisions) authorizeOffices(ctx context.Context, tx pgx.Tx, identity access.Identity, practiceID, locationID string, offices []string) error {
+func (r *Revisions) authorizeOffices(ctx context.Context, tx pgx.Tx, identity access.Identity, practiceID, locationID string, offices []string, routes []access.AbitaOfficeRoute) error {
 	authorization, err := r.access.LockMutationAuthorization(ctx, tx, identity, practiceID, locationID)
 	if err != nil || authorization.PlatformOperator || len(offices) == 0 {
 		return err
 	}
-	routes, err := r.access.ReadAbitaOfficeRoutes(ctx, tx, practiceID)
-	if err != nil {
-		return err
+	if routes == nil {
+		if routes, err = r.access.ReadAbitaOfficeRoutes(ctx, tx, practiceID); err != nil {
+			return err
+		}
+	}
+	allowed := map[string]bool{}
+	for _, location := range authorization.Locations {
+		allowed[location.ID] = true
 	}
 	byOffice := officeRoutes(routes)
-	checked := map[string]bool{locationID: true}
 	for _, office := range offices {
 		if len(byOffice[office]) == 0 {
 			return fmt.Errorf("%w: office %q has no Location, so only a Platform Operator can change it", access.ErrDenied, office)
 		}
 		for _, route := range byOffice[office] {
-			if checked[route.LocationID] {
-				continue
+			if !allowed[route.LocationID] {
+				return access.ErrDenied
 			}
-			if _, err := r.access.LockMutationAuthorization(ctx, tx, identity, practiceID, route.LocationID); err != nil {
-				return err
-			}
-			checked[route.LocationID] = true
 		}
 	}
 	return nil
@@ -321,7 +321,7 @@ func (r *Revisions) Query(ctx context.Context, identity access.Identity, practic
 		_ = tx.Rollback(ctx)
 		return LocationCatalog{}, err
 	}
-	denied := r.authorizeOffices(ctx, tx, identity, practiceID, locationID, active.catalog.tableOffices(office))
+	denied := r.authorizeOffices(ctx, tx, identity, practiceID, locationID, active.catalog.tableOffices(office), routes)
 	_ = tx.Rollback(ctx)
 	if denied != nil && !errors.Is(denied, access.ErrDenied) {
 		return LocationCatalog{}, denied

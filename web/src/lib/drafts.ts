@@ -5,6 +5,13 @@ export function draftScope(...scope: string[]) {
   return scope.join(":")
 }
 
+export type PublishAttempt = { payload: string; revisionID: string }
+
+export function nextAttempt(previous: PublishAttempt | undefined, publication: unknown): PublishAttempt {
+  const payload = JSON.stringify(publication)
+  return previous?.payload === payload ? previous : { payload, revisionID: crypto.randomUUID() }
+}
+
 export function draftStore<T>(kind: string) {
   const id = (key: string) => `${kind}:${key}`
   return {

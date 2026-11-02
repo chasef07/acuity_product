@@ -387,7 +387,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		t,
 		portal.Client(),
 		http.MethodGet,
-		engagementTimelineURL+"&groupCalls=true",
+		engagementTimelineURL,
 		"message-token",
 		nil,
 	)
@@ -438,7 +438,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	pagedIDs := map[string]bool{}
 	cursor := ""
 	for pageNumber := 0; pageNumber < 10; pageNumber++ {
-		endpoint := engagementTimelineURL + "&groupCalls=true&limit=2"
+		endpoint := engagementTimelineURL + "&limit=2"
 		if cursor != "" {
 			endpoint += "&cursor=" + url.QueryEscape(cursor)
 		}

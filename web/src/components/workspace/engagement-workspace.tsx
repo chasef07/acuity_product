@@ -197,16 +197,11 @@ export function EngagementWorkspaceView({
         )}
       </header>
       <MessageConversation
-        timelineSource={{
-          kind: "engagement",
-          practiceID,
-          phone: engagement.phone,
-        }}
+        phone={engagement.phone}
         practiceID={practiceID}
         locationID={route}
         reviewKey={textTaskKey}
         onReviewed={setReviewedTextTaskKey}
-        initialDestination={engagement.phone}
         selectedTaskID={selectedTaskID}
         selectedCallID={selectedCallID}
         selectedAIInteractionID={selectedAIInteractionID}

@@ -5,6 +5,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useSettledState } from "@/hooks/use-settled-state"
 import type { Task } from "@/lib/api/generated/types.gen"
+import { signInRequired } from "@/lib/clients/portal-request"
 import { completeTask, reopenTask } from "@/lib/clients/tasks"
 
 export function TextConversationAction({ task, reviewed, onUpdated, onNext }: { task: Task; reviewed: boolean; onUpdated: (task: Task) => void; onNext?: () => void }) {
@@ -20,8 +21,7 @@ export function TextConversationAction({ task, reviewed, onUpdated, onNext }: { 
     const outcome = await (task.state === "OPEN" ? completeTask : reopenTask)(task)
     setPending(false)
     if (!outcome.ok) {
-      const { kind } = outcome.failure
-      setError(kind === "signedOut" || kind === "unauthenticated"
+      setError(signInRequired(outcome.failure)
         ? "Sign in again to update this conversation."
         : "Could not update this conversation. Review the latest messages and try again.")
       return

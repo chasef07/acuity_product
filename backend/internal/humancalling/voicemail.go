@@ -307,33 +307,9 @@ func (m *Module) applyVoicemailRecordingSaved(
 	fact ProviderFact,
 	state callLegClientState,
 ) (factVerdict, error) {
-	if !fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
-		return factConflict, nil
-	}
-	if fact.RecordingID == "" {
-		var alreadyApplied bool
-		if err := m.database.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM human_calling_projected_facts WHERE event_id = $1
-			)
-		`, fact.EventID).Scan(&alreadyApplied); err != nil {
-			return "", fmt.Errorf("check recording callback replay: %w", err)
-		}
-		if alreadyApplied {
-			return factApplied, nil
-		}
-		provider, ok := m.provider.(RecordingStateProvider)
-		if !ok {
-			return "", fmt.Errorf("%w: provider cannot resolve recording", ErrAmbiguousEffect)
-		}
-		recording, err := provider.ResolveRecording(ctx, fact.CallLegID, fact.CallSessionID)
-		if err != nil {
-			return "", err
-		}
-		fact.RecordingID = recording.ID
-		fact.CallControlID = recording.CallControlID
-		fact.RecordingStartedAt = recording.StartedAt
-		fact.RecordingEndedAt = recording.EndedAt
+	fact, verdict, err := m.resolveSavedRecording(ctx, fact)
+	if err != nil || verdict != "" {
+		return verdict, err
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

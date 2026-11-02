@@ -46,7 +46,7 @@ export function useAgentCalls({
   outcome?: CallOutcome
 }) {
   return usePages({
-    live: "workspace",
+    live: "analytics",
     name: "agent-calls",
     identity: { practiceID, locationID, range, phone, flaggedOnly, knowledgeGapOnly, insuranceGapOnly, intent, outcome },
     read: (identity, cursor, transport) =>

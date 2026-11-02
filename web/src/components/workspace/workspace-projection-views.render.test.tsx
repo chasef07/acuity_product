@@ -1098,8 +1098,6 @@ function projectedWorkspace(task: Task): WorkspaceProjectionState {
       engagement: {
         phone: task.phone,
         locations: [{ id: "location-1", name: "Downtown" }],
-        latestActivity: task.updatedAt,
-        openTaskCount: 1,
       },
       aiInteractionID: "",
       aiInteractionLoading: false,

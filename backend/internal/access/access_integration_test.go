@@ -863,6 +863,14 @@ func TestPlatformOperatorPrecedenceFollowsBoundSubjectAndFailsClosedOnConflict(t
 		Email:         "founder@acuity.test",
 		EmailVerified: true,
 	}
+	expectOperator := func(name string, identity access.Identity, want bool) {
+		t.Helper()
+		got, err := module.IsPlatformOperator(context.Background(), identity)
+		if err != nil || got != want {
+			t.Fatalf("%s IsPlatformOperator = %v, err %v, want %v", name, got, err, want)
+		}
+	}
+	expectOperator("unbound operator", bound, true)
 	discovery, err := module.DiscoverActor(context.Background(), bound)
 	if err != nil || !discovery.PlatformOperator {
 		t.Fatalf("bind configured operator: discovery=%#v err=%v", discovery, err)
@@ -873,11 +881,14 @@ func TestPlatformOperatorPrecedenceFollowsBoundSubjectAndFailsClosedOnConflict(t
 	if err != nil || !discovery.PlatformOperator {
 		t.Fatalf("resolve bound operator by subject: discovery=%#v err=%v", discovery, err)
 	}
+	expectOperator("bound operator with a changed email", changedEmail, true)
 	conflictingSubject := bound
 	conflictingSubject.Subject = "different-subject"
 	if _, err := module.DiscoverActor(context.Background(), conflictingSubject); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("conflicting operator identity error = %v, want denied", err)
 	}
+	expectOperator("conflicting operator identity", conflictingSubject, false)
+	expectOperator("outsider", access.Identity{Subject: "outsider-subject", Email: "outsider@acuity.test", EmailVerified: true}, false)
 }
 
 func TestDiscoverActorWaitsForConcurrentOperatorProvisioningBeforeClaimingGrant(t *testing.T) {
@@ -1341,24 +1352,6 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 	}
 	if got := recorder.count(); got != 6 {
 		t.Fatalf("member discovery statements = %d, want 6 independent of Practice count", got)
-	}
-
-	recorder.reset()
-	readOnlyDiscovery, err := recordedModule.DiscoverActorReadOnly(ctx, member)
-	if err != nil {
-		t.Fatalf("read-only member discovery: %v", err)
-	}
-	if len(readOnlyDiscovery.Practices) != 3 {
-		t.Fatalf("read-only member Practices = %d, want 3", len(readOnlyDiscovery.Practices))
-	}
-	if got := recorder.countContaining("pg_advisory_xact_lock"); got != 0 {
-		t.Fatalf("read-only member advisory locks = %d, want 0", got)
-	}
-	if got := recorder.countContaining("FOR UPDATE"); got != 0 {
-		t.Fatalf("read-only member FOR UPDATE statements = %d, want 0", got)
-	}
-	if got := recorder.count(); got != 2 {
-		t.Fatalf("read-only member discovery statements = %d, want 2", got)
 	}
 
 	recorder.reset()

@@ -64,7 +64,7 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 		observability.ReceiptObsolete, 7*time.Second, 80*time.Millisecond))
 	observer.Observe(observability.DatabasePoolState(4, 1, 4))
 	observer.Observe(observability.DatabaseExecuted(
-		observability.DatabaseDeadlock,
+		observability.DatabaseCause("deadlock"),
 		12*time.Millisecond,
 	))
 	observer.Observe(observability.BackendRequest(
@@ -79,7 +79,7 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 	observer.Observe(observability.StaffAnswered(observability.StaffAnswerLostRace))
 	observer.Observe(observability.CallLegBridged(1250 * time.Millisecond))
 	observer.Observe(observability.VoicemailPlayback(
-		observability.VoicemailPlaybackRateLimited,
+		observability.RecordingPlaybackRateLimited,
 		250*time.Millisecond,
 	))
 	observer.Observe(observability.CallRecordingPlayback(
@@ -221,7 +221,7 @@ func TestLoggerOmitsSuccessfulDatabaseWorkAndPreservesFailuresAndCapacity(t *tes
 		1500*time.Millisecond,
 	))
 	observability.Record(observer, observability.DatabaseExecuted(
-		observability.DatabaseStatementTimeout,
+		observability.DatabaseCause("statement_timeout"),
 		5*time.Second,
 	))
 	observability.Record(observer, observability.DatabasePoolState(2, 0, 2))

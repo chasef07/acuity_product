@@ -9,13 +9,10 @@ import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { formatShare } from "@/lib/vocabulary"
 import { OptionSelect } from "./manage-agent-page"
 
 type JudgeReport = NonNullable<OperatorAiAnalyticsSummary["judges"]>
-
-function percent(value: number, total: number) {
-  return total ? (value / total).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 }) : "—"
-}
 
 export function OperatorJudges({ report, onRetry }: { report?: JudgeReport; onRetry: () => void }) {
   const [question, setQuestion] = useState("all")
@@ -57,8 +54,8 @@ export function OperatorJudges({ report, onRetry }: { report?: JudgeReport; onRe
             <TableBody>{pairs.map((pair) => <TableRow key={`${pair.left}:${pair.right}`}>
               <TableCell className="whitespace-normal">{pair.left}</TableCell><TableCell className="whitespace-normal">{pair.right}</TableCell>
               <TableCell className="text-right tabular-nums">{pair.compared.toLocaleString()}</TableCell>
-              <TableCell className="text-right tabular-nums">{pair.agreed.toLocaleString()} <span className="text-muted-foreground">· {percent(pair.agreed, pair.compared)}</span></TableCell>
-              <TableCell className="text-right tabular-nums">{pair.disagreed.toLocaleString()} <span className="text-muted-foreground">· {percent(pair.disagreed, pair.compared)}</span></TableCell>
+              <TableCell className="text-right tabular-nums">{pair.agreed.toLocaleString()} <span className="text-muted-foreground">· {formatShare(pair.agreed / pair.compared)}</span></TableCell>
+              <TableCell className="text-right tabular-nums">{pair.disagreed.toLocaleString()} <span className="text-muted-foreground">· {formatShare(pair.disagreed / pair.compared)}</span></TableCell>
             </TableRow>)}</TableBody>
           </Table> : <Empty><EmptyHeader><EmptyTitle>No paired votes yet</EmptyTitle><EmptyDescription>Two models need valid votes on the same call and judge to compare them.</EmptyDescription></EmptyHeader></Empty>}
           <p className="text-[11px] text-muted-foreground">Agreement measures consistency, not correctness. Compare against human reviews in Review. Sentiment scores are excluded from this Yes / No comparison.</p>

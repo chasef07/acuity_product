@@ -96,15 +96,17 @@ func TestPhoneTimelineShowsTheCallingProjectionState(t *testing.T) {
 	missed := insertCall(t, "INBOUND", "MISSED", now.Add(-time.Minute))
 
 	page, err := workspace.New(db.As(testdb.Portal), accessModule).QueryPhoneTimeline(ctx, workspace.QueryPhoneTimelineCommand{
-		Identity: viewer, PracticeID: authorization.Practice.ID, Phone: phone, Ungrouped: true,
+		Identity: viewer, PracticeID: authorization.Practice.ID, Phone: phone,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	timelineStates := map[string]humancalling.CallState{}
-	for _, item := range page.Items {
-		if item.Type == "CALL" {
-			timelineStates[item.Call.ID] = item.Call.Outcome
+	for _, history := range page.Items {
+		for _, item := range history.Entries {
+			if item.Type == "CALL" {
+				timelineStates[item.Call.ID] = item.Call.Outcome
+			}
 		}
 	}
 	calling := humancalling.New(db.As(testdb.Portal), accessModule, nil,

@@ -551,7 +551,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     operations.set(slot, operation)
     if (
       Object.keys(update).length > 0 ||
-      previous?.pending !== operation.pending ||
+      (previous?.pending ?? false) !== operation.pending ||
       previous?.failure !== operation.failure
     ) {
       publish(update, operation)
@@ -615,13 +615,28 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     update: Partial<SoftphoneModel>,
   ) {
     const ownershipLost = snapshot.lease?.owner === true && !lease.owner
+    const failure = accessBlocked ? operations.get("ownership")?.failure : ownership
+    if (!failure && onlyRenewsLease(lease, update)) {
+      snapshot = { ...snapshot, lease }
+      return undefined
+    }
     if (operations.get("lease")?.failure) operations.delete("lease")
-    report(
-      "ownership",
-      accessBlocked ? operations.get("ownership")?.failure : ownership,
-      { ...update, lease },
-    )
+    report("ownership", failure, { ...update, lease })
     return ownershipLost ? releaseLocalMedia() : undefined
+  }
+
+  function onlyRenewsLease(lease: SoftphoneState, update: Partial<SoftphoneModel>) {
+    const view = derive(snapshot, operations)
+    return (
+      !operations.has("ownership") &&
+      !operations.get("lease")?.failure &&
+      view.failure === snapshot.failure &&
+      JSON.stringify(view.pending) === JSON.stringify(snapshot.pending) &&
+      leaseRenewedOnly(snapshot.lease, lease) &&
+      Object.entries(update).every(([key, value]) =>
+        sameModelValue(snapshot[key as keyof SoftphoneModel], value),
+      )
+    )
   }
 
   function clearFailures(slots: readonly OperationSlot[] = [...operations.keys()]) {
@@ -3080,6 +3095,27 @@ function callSettled(call: Pick<CallingCall, "state"> | undefined) {
 
 function leaseLapsedForSession(lease: SoftphoneState, sessionID: string) {
   return !lease.owner && lease.sessionId === sessionID && !lease.activeCallId
+}
+
+function leaseRenewedOnly(previous: SoftphoneState | undefined, next: SoftphoneState) {
+  return (
+    previous !== undefined &&
+    previous.sessionId === next.sessionId &&
+    previous.owner === next.owner &&
+    previous.available === next.available &&
+    previous.activeCallId === next.activeCallId &&
+    previous.pendingOutcomeCallId === next.pendingOutcomeCallId
+  )
+}
+
+function sameModelValue(previous: unknown, next: unknown) {
+  return (
+    Object.is(previous, next) ||
+    (Array.isArray(previous) &&
+      Array.isArray(next) &&
+      previous.length === 0 &&
+      next.length === 0)
+  )
 }
 
 function leaseForSession(lease: SoftphoneState, sessionID: string): SoftphoneState {

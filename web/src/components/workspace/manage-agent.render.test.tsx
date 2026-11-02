@@ -537,6 +537,7 @@ test("Calls updates automatically without replacing the table while refreshing a
   assert.match(page.text(), /555.*0222/)
   page.agentCallsStatus = 503
   await show(3)
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 5_100)))
   await waitFor(() => page.alert().includes("Calls aren't available right now."))
   page.agentCallsStatus = 200
   await page.click("Try again")

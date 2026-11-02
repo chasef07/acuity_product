@@ -45,7 +45,6 @@ export function useEngagementTimeline({
         path: { phone: identity.phone },
         query: {
           practiceId: identity.practiceID,
-          groupCalls: true,
           ...(cursor ? { cursor } : {}),
           limit: 50,
         },

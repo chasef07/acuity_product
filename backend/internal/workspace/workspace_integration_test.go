@@ -2,6 +2,7 @@ package workspace_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -161,7 +162,7 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 		t.Fatalf("Workspace Task projection = %#v", read)
 	}
 	timeline, err := reads.QueryPhoneTimeline(context.Background(), workspace.QueryPhoneTimelineCommand{
-		Ungrouped: true, Identity: identity, PracticeID: task.PracticeID, Phone: task.Phone,
+		Identity: identity, PracticeID: task.PracticeID, Phone: task.Phone,
 	})
 	if err != nil {
 		t.Fatalf("query Workspace conversation: %v", err)
@@ -181,6 +182,14 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 	completedRead, err := reads.ReadTask(context.Background(), identity, completed.ID)
 	if err != nil || completedRead.ConversationThreadID != message.Thread.ID {
 		t.Fatalf("completed Workspace Task projection = %#v, %v", completedRead, err)
+	}
+	workRead, err := workModule.ReadTask(context.Background(), identity, completed.ID)
+	if err != nil || workRead.AutomaticAcknowledgement == nil {
+		t.Fatalf("read Work Task = %#v, %v", workRead, err)
+	}
+	completedRead.ConversationThreadID = workRead.ConversationThreadID
+	if !reflect.DeepEqual(completedRead, workRead) {
+		t.Fatalf("Workspace Task projection drifted from Work:\n%#v\n%#v", completedRead, workRead)
 	}
 }
 

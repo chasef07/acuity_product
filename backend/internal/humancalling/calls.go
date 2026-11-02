@@ -561,11 +561,11 @@ func (m *Module) ReadOperatorTimeline(
 	identity access.Identity,
 	callID string,
 ) (OperatorTimeline, error) {
-	if m.access == nil || callID == "" {
+	if m.access == nil || callID == "" || identity.Subject == "" || !identity.EmailVerified {
 		return OperatorTimeline{}, ErrDenied
 	}
-	discovery, err := m.access.DiscoverActorReadOnly(ctx, identity)
-	if err != nil || !discovery.PlatformOperator {
+	operator, err := m.access.IsPlatformOperator(ctx, identity)
+	if err != nil || !operator {
 		return OperatorTimeline{}, ErrDenied
 	}
 	call, err := m.loadCallProjection(ctx, m.database, callID)

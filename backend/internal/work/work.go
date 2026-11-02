@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -74,6 +75,19 @@ const (
 	TaskCategoryPostOp        TaskCategory = "post_op"
 )
 
+var TaskCategories = []TaskCategory{
+	TaskCategoryBilling,
+	TaskCategoryAppointments,
+	TaskCategoryDocumentation,
+	TaskCategoryOptical,
+	TaskCategoryMedication,
+	TaskCategoryReferrals,
+	TaskCategoryOther,
+	TaskCategoryInsurance,
+	TaskCategoryPreOp,
+	TaskCategoryPostOp,
+}
+
 type TaskCreateStatus string
 
 const (
@@ -119,11 +133,7 @@ var (
 	ErrConflict     = errors.New("work transition conflict")
 )
 
-var (
-	canonicalPhone = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
-	officeKey      = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
-	idempotencyKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
-)
+var idempotencyKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
 
 type ActorSnapshot struct {
 	Kind    access.ActorKind
@@ -275,18 +285,7 @@ type TaskFolderCounts struct {
 	Categories         TaskCategoryCounts
 }
 
-type TaskCategoryCounts struct {
-	Insurance     int
-	PreOp         int
-	PostOp        int
-	Billing       int
-	Appointments  int
-	Documentation int
-	Optical       int
-	Medication    int
-	Referrals     int
-	Other         int
-}
+type TaskCategoryCounts map[TaskCategory]int
 
 type Module struct {
 	database productpostgres.Database
@@ -320,7 +319,7 @@ func (m *Module) EnsureCallFollowUp(
 		strings.TrimSpace(command.CallID) == "" ||
 		strings.TrimSpace(command.PracticeID) == "" ||
 		strings.TrimSpace(command.LocationID) == "" ||
-		!canonicalPhone.MatchString(command.Phone) ||
+		!contactcontext.IsCanonicalPhone(command.Phone) ||
 		!textLengthBetween(title, 1, 500) ||
 		strings.TrimSpace(command.Creator.Subject) == "" ||
 		command.Creator.Email == "" {
@@ -378,7 +377,7 @@ func (m *Module) EnsureMessageFollowUp(
 		strings.TrimSpace(command.ThreadID) == "" ||
 		strings.TrimSpace(command.PracticeID) == "" ||
 		strings.TrimSpace(command.LocationID) == "" ||
-		!canonicalPhone.MatchString(command.Phone) ||
+		!contactcontext.IsCanonicalPhone(command.Phone) ||
 		!textLengthBetween(title, 1, 500) ||
 		strings.TrimSpace(command.Creator.Subject) == "" ||
 		command.Creator.Email == "" {
@@ -512,7 +511,7 @@ func (m *Module) EnsureRecoveryTask(
 		command.CallID == "" ||
 		command.PracticeID == "" ||
 		command.LocationID == "" ||
-		!canonicalPhone.MatchString(command.Phone) ||
+		!contactcontext.IsCanonicalPhone(command.Phone) ||
 		!textLengthBetween(command.CallerName, 0, 200) {
 		return Task{}, ErrInvalidInput
 	}
@@ -734,7 +733,7 @@ func (m *Module) ResolveRecoveryTasks(
 	if tx == nil ||
 		m.access == nil ||
 		command.PracticeID == "" ||
-		!canonicalPhone.MatchString(command.Phone) ||
+		!contactcontext.IsCanonicalPhone(command.Phone) ||
 		command.OccurredAt.IsZero() ||
 		(command.Kind != RecoveryResolutionInboundCall &&
 			!callbackAttempt &&
@@ -959,7 +958,7 @@ func (m *Module) LockOpenMessageTask(
 		strings.TrimSpace(practiceID) == "" ||
 		strings.TrimSpace(locationID) == "" ||
 		strings.TrimSpace(threadID) == "" ||
-		!canonicalPhone.MatchString(phone) {
+		!contactcontext.IsCanonicalPhone(phone) {
 		return Task{}, ErrInvalidInput
 	}
 	task, err := loadTask(ctx, tx, taskID, true)
@@ -1185,7 +1184,14 @@ func (m *Module) ApplyCallTaskDisposition(
 	if newerEvidence {
 		return task, ErrConflict
 	}
-	return m.completeLockedTask(ctx, tx, authorization, task)
+	task, err = m.completeLockedTask(ctx, tx, authorization, task)
+	if err != nil {
+		return Task{}, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+		return Task{}, err
+	}
+	return task, nil
 }
 
 func (m *Module) CreateAITask(
@@ -1470,6 +1476,9 @@ func (m *Module) CompleteTask(
 	if err != nil {
 		return Task{}, err
 	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+		return Task{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Task{}, fmt.Errorf("commit Task completion: %w", err)
 	}
@@ -1726,12 +1735,8 @@ func insertTask(
 	title string,
 	now time.Time,
 ) (Task, bool, error) {
-	var task Task
-	var category, callerName, sourceCall, sourceMessage *string
-	var messageID, messageThreadID, recoveryOutcome *string
-	var createdEmail, completedSubject, completedEmail *string
 	var inserted bool
-	err := tx.QueryRow(ctx, `
+	task, err := ScanTask(tx.QueryRow(ctx, `
 		WITH inserted AS (
 			INSERT INTO work_tasks (
 				practice_id,
@@ -1755,33 +1760,7 @@ func insertTask(
 			ON CONFLICT DO NOTHING
 			RETURNING *
 		)
-		SELECT
-			task.id::text,
-			task.practice_id::text,
-			task.location_id::text,
-			location.name,
-			task.call_id::text,
-			task.phone,
-			task.title,
-			task.state,
-			task.origin,
-			task.urgency,
-			task.category,
-			task.caller_name,
-			task.source_call_id,
-			task.source_message,
-			task.source_message_id::text,
-			task.message_thread_id::text,
-			task.recovery_outcome,
-			task.created_by_kind,
-			task.created_by_subject,
-			task.created_by_email,
-			task.created_at,
-			task.completed_by_subject,
-			task.completed_by_email,
-			task.completed_at,
-			task.version,
-			task.updated_at,
+		SELECT `+TaskColumns+`,
 			EXISTS (SELECT 1 FROM inserted)
 		FROM (
 			SELECT * FROM inserted
@@ -1818,50 +1797,10 @@ func insertTask(
 			AND location.id = task.location_id
 	`, command.PracticeID, command.LocationID, command.CallID, command.Phone,
 		title, command.Creator.Subject, command.Creator.Email, now,
-	).Scan(
-		&task.ID,
-		&task.PracticeID,
-		&task.LocationID,
-		&task.LocationName,
-		&task.CallID,
-		&task.Phone,
-		&task.Title,
-		&task.State,
-		&task.Origin,
-		&task.Urgency,
-		&category,
-		&callerName,
-		&sourceCall,
-		&sourceMessage,
-		&messageID,
-		&messageThreadID,
-		&recoveryOutcome,
-		&task.CreatedBy.Kind,
-		&task.CreatedBy.Subject,
-		&createdEmail,
-		&task.CreatedAt,
-		&completedSubject,
-		&completedEmail,
-		&task.CompletedAt,
-		&task.Version,
-		&task.UpdatedAt,
-		&inserted,
-	)
+	), nil, &inserted)
 	if err != nil {
 		return Task{}, false, fmt.Errorf("ensure Call follow-up Task: %w", err)
 	}
-	setTaskSource(
-		&task,
-		category,
-		callerName,
-		sourceCall,
-		sourceMessage,
-		messageID,
-		messageThreadID,
-		recoveryOutcome,
-		createdEmail,
-	)
-	setCompletionActor(&task, completedSubject, completedEmail)
 	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
 		return Task{}, false, err
 	}
@@ -1875,33 +1814,7 @@ func loadTask(
 	lock bool,
 ) (Task, error) {
 	query := `
-		SELECT
-			task.id::text,
-			task.practice_id::text,
-			task.location_id::text,
-			location.name,
-			task.call_id::text,
-			task.phone,
-			task.title,
-			task.state,
-			task.origin,
-			task.urgency,
-			task.category,
-			task.caller_name,
-			task.source_call_id,
-			task.source_message,
-			task.source_message_id::text,
-			task.message_thread_id::text,
-			task.recovery_outcome,
-			task.created_by_kind,
-			task.created_by_subject,
-			task.created_by_email,
-			task.created_at,
-			task.completed_by_subject,
-			task.completed_by_email,
-			task.completed_at,
-			task.version,
-			task.updated_at
+		SELECT ` + TaskColumns + `
 		FROM work_tasks task
 		JOIN access_locations location
 			ON location.practice_id = task.practice_id
@@ -1911,7 +1824,7 @@ func loadTask(
 		query += `
 		FOR UPDATE OF task`
 	}
-	task, err := scanTask(tx.QueryRow(ctx, query, taskID))
+	task, err := ScanTask(tx.QueryRow(ctx, query, taskID), nil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
@@ -1952,16 +1865,40 @@ func loadTaskAcknowledgement(ctx context.Context, tx pgx.Tx, task *Task) error {
 	return nil
 }
 
-type taskScanner interface {
-	Scan(...any) error
-}
+const TaskColumns = `
+			task.id::text,
+			task.practice_id::text,
+			task.location_id::text,
+			location.name,
+			task.call_id::text,
+			task.phone,
+			task.title,
+			task.state,
+			task.origin,
+			task.urgency,
+			task.category,
+			task.caller_name,
+			task.source_call_id,
+			task.source_message,
+			task.source_message_id::text,
+			task.message_thread_id::text,
+			task.recovery_outcome,
+			task.created_by_kind,
+			task.created_by_subject,
+			task.created_by_email,
+			task.created_at,
+			task.completed_by_subject,
+			task.completed_by_email,
+			task.completed_at,
+			task.version,
+			task.updated_at`
 
-func scanTask(scanner taskScanner) (Task, error) {
+func ScanTask(row pgx.Row, prefix []any, suffix ...any) (Task, error) {
 	var task Task
 	var callID, category, callerName, sourceCall, sourceMessage *string
 	var messageID, messageThreadID, recoveryOutcome *string
 	var createdEmail, completedSubject, completedEmail *string
-	destinations := []any{
+	if err := row.Scan(slices.Concat(prefix, []any{
 		&task.ID,
 		&task.PracticeID,
 		&task.LocationID,
@@ -1988,8 +1925,7 @@ func scanTask(scanner taskScanner) (Task, error) {
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
-	}
-	if err := scanner.Scan(destinations...); err != nil {
+	}, suffix)...); err != nil {
 		return Task{}, err
 	}
 	if callID != nil {
@@ -2100,13 +2036,13 @@ func normalizeAITaskCommand(command *CreateAITaskCommand) {
 }
 
 func validAITaskCommand(command CreateAITaskCommand) bool {
-	return officeKey.MatchString(command.OfficeKey) &&
+	return access.ValidOfficeKey(command.OfficeKey) &&
 		textLengthBetween(command.SourceCallID, 1, 255) &&
 		idempotencyKey.MatchString(command.IdempotencyKey) &&
-		canonicalPhone.MatchString(command.Phone) &&
-		canonicalPhone.MatchString(command.OfficePhone) &&
+		contactcontext.IsCanonicalPhone(command.Phone) &&
+		contactcontext.IsCanonicalPhone(command.OfficePhone) &&
 		(command.InboundOfficePhone == "" ||
-			canonicalPhone.MatchString(command.InboundOfficePhone)) &&
+			contactcontext.IsCanonicalPhone(command.InboundOfficePhone)) &&
 		textLengthBetween(command.Summary, 1, 240) &&
 		textLengthBetween(command.Message, 1, 2500) &&
 		textLengthBetween(command.CallerName, 0, 200) &&
@@ -2117,18 +2053,7 @@ func validAITaskCommand(command CreateAITaskCommand) bool {
 }
 
 func validTaskCategory(category TaskCategory) bool {
-	switch category {
-	case TaskCategoryBilling,
-		TaskCategoryAppointments,
-		TaskCategoryDocumentation,
-		TaskCategoryOptical,
-		TaskCategoryMedication,
-		TaskCategoryReferrals,
-		TaskCategoryOther, TaskCategoryInsurance, TaskCategoryPreOp, TaskCategoryPostOp:
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(TaskCategories, category)
 }
 
 func validTaskUrgency(urgency TaskUrgency) bool {
@@ -2232,9 +2157,6 @@ func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorizatio
 		"task.completed",
 		completedAt,
 	); err != nil {
-		return Task{}, err
-	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
 		return Task{}, err
 	}
 	return task, nil

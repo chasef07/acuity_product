@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,14 @@ const (
 	attachmentOperationTimeout     = 20 * time.Second
 	attachmentClaimTTL             = 30 * time.Second
 )
+
+var attachmentExtensions = map[string][]string{
+	"image/jpeg":      {".jpg", ".jpeg"},
+	"image/png":       {".png"},
+	"image/gif":       {".gif"},
+	"image/webp":      {".webp"},
+	"application/pdf": {".pdf"},
+}
 
 type AttachmentState string
 
@@ -710,45 +719,22 @@ func detectAttachmentType(content []byte, maximumBytes int) (string, error) {
 		string(content[8:12]) == "WEBP" {
 		contentType = "image/webp"
 	}
-	switch contentType {
-	case "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf":
-		return contentType, nil
-	default:
+	if _, ok := attachmentExtensions[contentType]; !ok {
 		return "", ErrInvalidInput
 	}
+	return contentType, nil
 }
 
 func fileNameMatchesType(fileName string, contentType string) bool {
-	extension := strings.ToLower(filepath.Ext(fileName))
-	switch contentType {
-	case "image/jpeg":
-		return extension == ".jpg" || extension == ".jpeg"
-	case "image/png":
-		return extension == ".png"
-	case "image/gif":
-		return extension == ".gif"
-	case "image/webp":
-		return extension == ".webp"
-	case "application/pdf":
-		return extension == ".pdf"
-	default:
-		return false
-	}
+	return slices.Contains(attachmentExtensions[contentType], strings.ToLower(filepath.Ext(fileName)))
 }
 
-func attachmentFileName(contentType string) string {
-	switch contentType {
-	case "image/jpeg":
-		return "attachment.jpg"
-	case "image/png":
-		return "attachment.png"
-	case "image/gif":
-		return "attachment.gif"
-	case "image/webp":
-		return "attachment.webp"
-	default:
+func AttachmentFileName(contentType string) string {
+	extensions, ok := attachmentExtensions[contentType]
+	if !ok {
 		return "attachment.pdf"
 	}
+	return "attachment" + extensions[0]
 }
 
 func signMediaURL(key []byte, attachmentID string, expires int64) string {

@@ -1,5 +1,4 @@
 import type { KnowledgeSection } from "./api/generated/types.gen"
-import type { PortalFailure } from "./clients/portal-request"
 
 export function fold(text: string) {
   return text.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase()
@@ -20,10 +19,4 @@ export function publishedSections(entries: KnowledgeSection[]): KnowledgeSection
     used.add(candidate)
     return { id: candidate, title, text }
   })
-}
-
-export function publishFailureMessage(failure: PortalFailure) {
-  if (failure.kind === "signedOut" || failure.kind === "unauthenticated") return "Sign in again to publish."
-  if (failure.kind === "unauthorized") return "You don't have access to change this Location's knowledge."
-  return failure.message ?? "Not published. Nothing changed. Try again."
 }

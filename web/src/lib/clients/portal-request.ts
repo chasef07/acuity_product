@@ -66,12 +66,12 @@ export async function portalRequest<T>(
   return failed(portalFailure(result?.response?.status, result?.error))
 }
 
+export function signInRequired(failure?: PortalFailure): boolean {
+  return failure?.kind === "signedOut" || failure?.kind === "unauthenticated"
+}
+
 export function accessDenied(failure?: PortalFailure): boolean {
-  return (
-    failure?.kind === "signedOut" ||
-    failure?.kind === "unauthenticated" ||
-    failure?.kind === "unauthorized"
-  )
+  return signInRequired(failure) || failure?.kind === "unauthorized"
 }
 
 function failed(failure: PortalFailure): { ok: false; failure: PortalFailure } {

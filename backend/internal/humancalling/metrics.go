@@ -284,35 +284,7 @@ func (m *Module) recordProviderCommand(
 	claimedAt time.Time,
 	duration time.Duration,
 ) {
-	action := observability.CommandAction(command.Action)
-	switch command.Action {
-	case CommandAnswerCaller:
-		action = observability.CommandAnswerCaller
-	case CommandStartRingWindow:
-		action = observability.CommandStartRingWindow
-	case CommandDialStaff:
-		action = observability.CommandDialStaff
-	case CommandBridge:
-		action = observability.CommandBridge
-	case CommandStopRingWindow:
-		action = observability.CommandStopRingWindow
-	case CommandHangupLeg:
-		action = observability.CommandHangupLeg
-	case CommandSpeakVoicemail:
-		action = observability.CommandSpeakVoicemail
-	case CommandStartVoicemailRecording:
-		action = observability.CommandStartVoicemailRecording
-	case CommandDialOutboundStaff:
-		action = observability.CommandDialOutboundStaff
-	case CommandDialOutboundDestination:
-		action = observability.CommandDialOutboundDestination
-	case CommandCreateCredential:
-		action = observability.CommandCreateCredential
-	case CommandDisableCredential:
-		action = observability.CommandDisableCredential
-	case CommandCreateJWT:
-		action = observability.CommandCreateJWT
-	}
+	action := observability.CommandAction(strings.ToLower(string(command.Action)))
 	outcome := observability.CommandRejected
 	switch state {
 	case "SENT":

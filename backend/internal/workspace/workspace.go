@@ -30,7 +30,6 @@ func New(database productpostgres.Database, accessModule *access.Module) *Module
 }
 
 type QueryPhoneTimelineCommand struct {
-	Ungrouped  bool
 	Identity   access.Identity
 	PracticeID string
 	Phone      string
