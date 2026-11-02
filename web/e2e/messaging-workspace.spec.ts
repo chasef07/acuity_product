@@ -624,6 +624,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   })
   const latestScrollTop = await timeline.evaluate((element) => element.scrollTop)
   expect(latestScrollTop).toBeGreaterThan(0)
+  await page.waitForTimeout(600)
   await timeline.hover()
   await page.mouse.wheel(0, -1_000)
   await expect
