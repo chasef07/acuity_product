@@ -10,7 +10,12 @@ import {
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Message as MessageRow,
   MessageContent,
@@ -33,13 +38,13 @@ import { useCopyState } from "@/hooks/use-copy-state"
 export function MessageEntry({
   message,
   showLocation,
-  showMeta,
+  endsMessageGroup,
   onChanged,
   onTaskCreated,
 }: {
   message: Message
   showLocation: boolean
-  showMeta: boolean
+  endsMessageGroup: boolean
   onChanged: () => void
   onTaskCreated: (task: Task) => void
 }) {
@@ -125,10 +130,10 @@ export function MessageEntry({
           </BubbleContent>
           {(message.body || !message.taskId) && (
             <div
-              role="toolbar"
+              role="group"
               aria-label="Message actions"
               className={cn(
-                "pointer-events-none absolute top-0 z-10 flex items-center gap-0.5 rounded-md border bg-background p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 motion-reduce:transition-none [@media(hover:hover)]:group-hover/message:pointer-events-auto [@media(hover:hover)]:group-hover/message:opacity-100",
+                "pointer-events-none absolute top-0 z-10 flex items-center gap-0.5 rounded-md border bg-background p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 motion-reduce:transition-none group-hover/message:pointer-events-auto group-hover/message:opacity-100",
                 outbound ? "right-full mr-1" : "left-full ml-1",
                 selected && "pointer-events-auto opacity-100",
               )}
@@ -175,7 +180,7 @@ export function MessageEntry({
             </div>
           )}
         </Bubble>
-        {(showMeta || deliveryProblem || pending || error) && (
+        {(endsMessageGroup || deliveryProblem || pending || error) && (
           <MessageFooter className="flex-wrap gap-x-1.5 gap-y-1 font-normal tabular-nums">
             <time dateTime={message.createdAt}>
               {formatClockTime(message.createdAt)}
@@ -241,10 +246,10 @@ export function MessageEntry({
       <Dialog open={confirmingSendAgain} onOpenChange={setConfirmingSendAgain}>
         <DialogContent>
           <DialogTitle>Send this text again?</DialogTitle>
-          <p className="text-muted-foreground">
+          <DialogDescription>
             The carrier never confirmed whether the first text arrived. Sending
             again may deliver a duplicate.
-          </p>
+          </DialogDescription>
           <div className="flex justify-end gap-2">
             <Button
               type="button"

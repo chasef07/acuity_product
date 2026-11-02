@@ -103,7 +103,7 @@ export function TimelineEntry({
       <MessageEntry
         message={item.message}
         showLocation={item.message.thread.locationId !== contextLocationID}
-        showMeta={endsMessageGroup}
+        endsMessageGroup={endsMessageGroup}
         onChanged={onChanged}
         onTaskCreated={onTaskCreated}
       />

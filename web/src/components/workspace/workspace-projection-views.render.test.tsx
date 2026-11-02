@@ -711,8 +711,10 @@ test("texts sent close together show their time once, after the last one", async
   assert.deepEqual(times, [0, 1, 1])
 })
 
-test("Enter sends a text and Shift+Enter keeps writing", async (t) => {
+test("Enter sends a text and Shift+Enter keeps writing, and touch keyboards keep Enter for new lines", async (t) => {
   const conversation = conversationHarness(t)
+  let coarsePointer = true
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: coarsePointer }) })
   await conversation.render(0)
   const textarea = conversation.host.querySelector<HTMLTextAreaElement>('form[aria-label="Message composer"] textarea')!
   await typeInto(textarea, "Synthetic reply")
@@ -720,6 +722,9 @@ test("Enter sends a text and Shift+Enter keeps writing", async (t) => {
     textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", shiftKey, bubbles: true, cancelable: true }))
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
+  await press(false)
+  assert.equal(conversation.sends.length, 0, "a touch keyboard Enter adds a line")
+  coarsePointer = false
   await press(true)
   assert.equal(conversation.sends.length, 0)
   await press(false)
