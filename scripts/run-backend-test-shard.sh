@@ -37,6 +37,7 @@ case "${1:-}" in
       ./backend/internal/messaging
       ./backend/internal/observability
       ./backend/internal/postgres
+      ./backend/internal/telnyxapi
       ./backend/internal/testaccess
       ./backend/internal/testdb
       ./backend/internal/work
