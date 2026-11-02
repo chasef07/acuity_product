@@ -24,7 +24,6 @@ import { MessageEntry } from "./message-entry"
 
 export function TimelineEntry({
   item,
-  endsMessageGroup,
   contextLocationID,
   onChanged,
   onTaskCreated,
@@ -36,7 +35,6 @@ export function TimelineEntry({
   selectedAIInteractionID,
 }: {
   item: ConversationTimelineItem
-  endsMessageGroup: boolean
   contextLocationID: string
   onChanged: () => void
   onTaskCreated: (task: Task) => void
@@ -103,7 +101,6 @@ export function TimelineEntry({
       <MessageEntry
         message={item.message}
         showLocation={item.message.thread.locationId !== contextLocationID}
-        endsMessageGroup={endsMessageGroup}
         onChanged={onChanged}
         onTaskCreated={onTaskCreated}
       />

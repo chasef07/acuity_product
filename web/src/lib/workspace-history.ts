@@ -206,20 +206,3 @@ export function openTaskCallbackNotice(
 export function sameConversationDate(left: string, right: string) {
   return sameLocalDay(new Date(left), new Date(right))
 }
-
-const messageGroupWindowMs = 5 * 60 * 1_000
-
-export function continuesMessageGroup(
-  item: ConversationTimelineItem,
-  next: ConversationTimelineItem | undefined,
-) {
-  const current = item.message
-  const following = next?.message
-  if (!current || !following || !next) return false
-  return following.direction === current.direction &&
-    following.thread.locationId === current.thread.locationId &&
-    following.createdBy?.kind === current.createdBy?.kind &&
-    following.createdBy?.subject === current.createdBy?.subject &&
-    sameConversationDate(item.occurredAt, next.occurredAt) &&
-    Date.parse(next.occurredAt) - Date.parse(item.occurredAt) < messageGroupWindowMs
-}

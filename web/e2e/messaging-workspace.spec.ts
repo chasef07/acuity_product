@@ -573,7 +573,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toHaveCount(0)
 
   await page.setViewportSize({ width: 390, height: 844 })
-  const messageActions = inbound.getByRole("group", { name: "Message actions" })
+  const messageActions = inbound.locator('[data-slot="message-footer"]')
   await expect(messageActions).toHaveCSS("opacity", "0")
   const composerSurface = page
     .getByRole("form", { name: "Message composer" })

@@ -38,13 +38,11 @@ import { useCopyState } from "@/hooks/use-copy-state"
 export function MessageEntry({
   message,
   showLocation,
-  endsMessageGroup,
   onChanged,
   onTaskCreated,
 }: {
   message: Message
   showLocation: boolean
-  endsMessageGroup: boolean
   onChanged: () => void
   onTaskCreated: (task: Task) => void
 }) {
@@ -113,10 +111,7 @@ export function MessageEntry({
       }}
     >
       <MessageContent className="gap-1">
-        <Bubble
-          variant={outbound ? "muted" : "ghost"}
-          className="data-[variant=ghost]:max-w-[80%]"
-        >
+        <Bubble variant={outbound ? "muted" : "ghost"}>
           <BubbleContent>
             {message.body && (
               <p className="whitespace-pre-wrap">{message.body}</p>
@@ -128,113 +123,110 @@ export function MessageEntry({
               />
             )}
           </BubbleContent>
-          {(message.body || !message.taskId) && (
-            <div
-              role="group"
-              aria-label="Message actions"
-              className={cn(
-                "pointer-events-none absolute top-0 z-10 flex items-center gap-0.5 rounded-md border bg-background p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 motion-reduce:transition-none group-hover/message:pointer-events-auto group-hover/message:opacity-100",
-                outbound ? "right-full mr-1" : "left-full ml-1",
-                selected && "pointer-events-auto opacity-100",
-              )}
-            >
-              {message.body && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label="Copy message"
-                        onClick={copyMessage}
-                      />
-                    }
-                  >
-                    {copyState === "copied" ? <CheckIcon /> : <CopyIcon />}
-                  </TooltipTrigger>
-                  <TooltipContent data-testid="copy-message-tooltip">
-                    {copyState === "copied" ? "Copied" : "Copy message"}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {!message.taskId && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label="Create task"
-                        disabled={pending}
-                        onClick={() => void createTask()}
-                      />
-                    }
-                  >
-                    <CheckSquareIcon />
-                  </TooltipTrigger>
-                  <TooltipContent>Create task</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-          )}
         </Bubble>
-        {(endsMessageGroup || deliveryProblem || pending || error) && (
-          <MessageFooter className="flex-wrap gap-x-1.5 gap-y-1 font-normal tabular-nums">
-            <time dateTime={message.createdAt}>
-              {formatClockTime(message.createdAt)}
-            </time>
-            {showLocation && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>{message.thread.locationName}</span>
-              </>
-            )}
-            {outbound && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className={cn(deliveryProblem && "text-destructive")}>
-                  {message.delivery}
-                </span>
-              </>
-            )}
-            {message.createdBy?.kind === "SERVICE" && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>Automated</span>
-              </>
-            )}
-            {message.safeFailureCode && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>{message.safeFailureCode}</span>
-              </>
-            )}
-            {deliveryProblem && (
-              <Button
-                type="button"
-                size="xs"
-                variant="ghost"
-                disabled={pending}
-                onClick={() =>
-                  message.delivery === "Status unknown"
-                    ? setConfirmingSendAgain(true)
-                    : void sendAgain()
+        <MessageFooter
+          className={cn(
+            "min-h-5 flex-wrap gap-x-1.5 gap-y-1 font-normal tabular-nums transition-opacity duration-150 motion-reduce:transition-none",
+            !deliveryProblem && !pending && !error &&
+              "pointer-events-none opacity-0 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 group-hover/message:pointer-events-auto group-hover/message:opacity-100",
+            selected && "pointer-events-auto opacity-100",
+          )}
+        >
+          <time dateTime={message.createdAt}>
+            {formatClockTime(message.createdAt)}
+          </time>
+          {showLocation && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{message.thread.locationName}</span>
+            </>
+          )}
+          {outbound && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className={cn(deliveryProblem && "text-destructive")}>
+                {message.delivery}
+              </span>
+            </>
+          )}
+          {message.createdBy?.kind === "SERVICE" && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>Automated</span>
+            </>
+          )}
+          {message.safeFailureCode && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{message.safeFailureCode}</span>
+            </>
+          )}
+          {message.body && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Copy message"
+                    onClick={copyMessage}
+                  />
                 }
               >
-                <RefreshCwIcon data-icon="inline-start" />
-                Send again
-              </Button>
-            )}
-            {pending && <Spinner />}
-            {error && (
-              <p role="alert" className="basis-full text-destructive">
-                {error}
-              </p>
-            )}
-          </MessageFooter>
-        )}
+                {copyState === "copied" ? (
+                  <CheckIcon className="size-3" />
+                ) : (
+                  <CopyIcon className="size-3" />
+                )}
+              </TooltipTrigger>
+              <TooltipContent data-testid="copy-message-tooltip">
+                {copyState === "copied" ? "Copied" : "Copy message"}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          {!message.taskId && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Create task"
+                    disabled={pending}
+                    onClick={() => void createTask()}
+                  />
+                }
+              >
+                <CheckSquareIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipContent>Create task</TooltipContent>
+            </Tooltip>
+          )}
+          {deliveryProblem && (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={pending}
+              onClick={() =>
+                message.delivery === "Status unknown"
+                  ? setConfirmingSendAgain(true)
+                  : void sendAgain()
+              }
+            >
+              <RefreshCwIcon data-icon="inline-start" />
+              Send again
+            </Button>
+          )}
+          {pending && <Spinner />}
+          {error && (
+            <p role="alert" className="basis-full text-destructive">
+              {error}
+            </p>
+          )}
+        </MessageFooter>
         <span role="status" className="sr-only">
           {copyState === "copied"
             ? "Message copied"

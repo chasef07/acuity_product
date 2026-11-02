@@ -695,22 +695,6 @@ test("a refused send keeps its draft attempt and a sent Message reloads after it
   assert.equal(conversation.timelineRequests, 2, "the Sending Message reloads once its hold ends")
 })
 
-test("texts sent close together show their time once, after the last one", async (t) => {
-  const conversation = conversationHarness(t)
-  const text = (id: string, createdAt: string): ConversationTimelineItem => ({
-    type: "MESSAGE", id, occurredAt: createdAt,
-    message: { ...message, id, body: id, attachment: undefined, createdAt, updatedAt: createdAt },
-  })
-  conversation.items = [
-    text("first", "2026-09-25T12:00:00Z"),
-    text("second", "2026-09-25T12:01:00Z"),
-    text("later", "2026-09-25T12:30:00Z"),
-  ]
-  await conversation.render(0)
-  const times = [...conversation.host.querySelectorAll('[role="article"]')].map((article) => article.querySelectorAll("time").length)
-  assert.deepEqual(times, [0, 1, 1])
-})
-
 test("Enter sends a text and Shift+Enter keeps writing, and touch keyboards keep Enter for new lines", async (t) => {
   const conversation = conversationHarness(t)
   let coarsePointer = true

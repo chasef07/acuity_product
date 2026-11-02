@@ -4,7 +4,6 @@ import type { ConversationTimelineItem, Task } from "./api/generated/types.gen.t
 import {
   callbackCompletionLabel,
   callHistoryPresentation,
-  continuesMessageGroup,
   linkedTaskLabel,
   openTaskCallbackNotice,
   presentTimeline,
@@ -154,26 +153,13 @@ test("thread Task Activity names who acted and keeps automation automatic", () =
   assert.equal(taskActivityDetail(automatic), "Missed call review completed after caller@example.test's callback attempt")
 })
 
-test("texts sent close together by the same side read as one group", () => {
-  const text = (id: string, occurredAt: string, direction: "INBOUND" | "OUTBOUND", subject = "staff") =>
-    ({
-      id, type: "MESSAGE", occurredAt,
-      message: { id, direction, createdAt: occurredAt, thread: { locationId: "office" }, createdBy: direction === "OUTBOUND" ? { kind: "HUMAN", subject } : undefined },
-    }) as ConversationTimelineItem
-  const first = text("first", "2026-08-13T12:00:00Z", "INBOUND")
-  assert.equal(continuesMessageGroup(first, text("next", "2026-08-13T12:01:00Z", "INBOUND")), true)
-  assert.equal(continuesMessageGroup(first, text("late", "2026-08-13T12:06:00Z", "INBOUND")), false)
-  assert.equal(continuesMessageGroup(first, text("reply", "2026-08-13T12:01:00Z", "OUTBOUND")), false)
-  assert.equal(continuesMessageGroup(first, { ...base, type: "TASK", occurredAt: "2026-08-13T12:01:00Z" } as ConversationTimelineItem), false)
-  assert.equal(continuesMessageGroup(first, undefined), false)
-  const staff = text("staff", "2026-08-13T12:00:00Z", "OUTBOUND")
-  assert.equal(continuesMessageGroup(staff, text("same", "2026-08-13T12:02:00Z", "OUTBOUND")), true)
-  assert.equal(continuesMessageGroup(staff, text("teammate", "2026-08-13T12:02:00Z", "OUTBOUND", "other")), false)
-  const otherOffice = text("office", "2026-08-13T12:01:00Z", "INBOUND")
-  otherOffice.message!.thread.locationId = "other-office"
-  assert.equal(continuesMessageGroup(first, otherOffice), false)
+test("the text review Task stays out of the thread", () => {
+  const text = (id: string, occurredAt: string) =>
+    ({ id, type: "MESSAGE", occurredAt, message: { id, direction: "INBOUND", createdAt: occurredAt } }) as ConversationTimelineItem
   const review = { ...base, id: "review", type: "TASK", occurredAt: "2026-08-13T12:00:30Z", task: { origin: "INBOUND_MESSAGE_REVIEW" } } as ConversationTimelineItem
-  const presented = presentTimeline([first, review, text("next", "2026-08-13T12:01:00Z", "INBOUND")])
-  assert.deepEqual(presented.map((item) => item.id), ["first", "next"], "the text review Task stays out of the thread")
-  assert.equal(continuesMessageGroup(presented[0]!, presented[1]), true)
+  const followUp = { ...base, id: "follow-up", type: "TASK", occurredAt: "2026-08-13T12:00:40Z", task: { origin: "STAFF_MESSAGE_FOLLOW_UP" } } as ConversationTimelineItem
+  assert.deepEqual(
+    presentTimeline([text("first", "2026-08-13T12:00:00Z"), review, followUp, text("next", "2026-08-13T12:01:00Z")]).map((item) => item.id),
+    ["first", "follow-up", "next"],
+  )
 })
