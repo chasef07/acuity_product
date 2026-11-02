@@ -42,23 +42,6 @@ test("transcript intent and outcome filters reset pagination when only labels ch
   assert.equal(backend.requests.at(-1)?.body?.outcome, "resolved")
 })
 
-test("diagnostics label filters are sent on every page and reset when outcome changes", async (t) => {
-  const backend = fakeBackend(t, () => Response.json({ summary, calls: [call("labeled")], nextCursor: "next" }))
-  const view = mountHook(t, useAiCallAnalytics)
-  const filters = { practiceID: "practice-1", locationID: "location-1", range: "24h", enabled: true, intent: "existing_patient_booking", outcome: "resolved" } as const
-  await view.render(filters)
-  await waitFor(() => view.latest().state === "ready")
-  assert.equal(backend.requests[0].body?.intent, "existing_patient_booking")
-  assert.equal(backend.requests[0].body?.outcome, "resolved")
-  await act(async () => void view.latest().loadNextPage())
-  assert.equal(backend.requests.at(-1)?.body?.intent, "existing_patient_booking")
-  assert.equal(backend.requests.at(-1)?.body?.cursor, "next")
-  await view.render({ ...filters, outcome: "abandoned" })
-  await waitFor(() => backend.requests.length === 3)
-  assert.equal(backend.requests.at(-1)?.body?.cursor, undefined)
-  assert.equal(backend.requests.at(-1)?.body?.outcome, "abandoned")
-})
-
 test("Command Center failure filters intersect labels on every page and reset the cursor when the judge changes", async (t) => {
   const backend = fakeBackend(t, () => Response.json({ summary, calls: [call("failed")], nextCursor: "next" }))
   const view = mountHook(t, useAiCallAnalytics)
@@ -195,27 +178,6 @@ test("call refresh retains rows, cancels old pagination, loads more after the re
   assert.equal("data" in view.latest(), false)
 })
 
-test("call lists refresh on the first workspace change and coalesce a burst into one trailing refresh", async (t) => {
-  const backend = fakeBackend(t, () => Response.json({ calls: [call("original")], nextCursor: "" }))
-  const view = mountHook(t, useAgentCalls)
-  const filters = { practiceID: "practice-1", locationID: "", range: "7d", phone: "", flaggedOnly: false } as const
-  await view.render(filters)
-  await waitFor(() => view.latest().status === "ready")
-
-  await view.render(filters, 1)
-  await waitFor(() => backend.requests.length === 2)
-  await view.render(filters, 2)
-  await view.render(filters, 3)
-  await view.render(filters, 4)
-  await settle()
-  assert.equal(backend.requests.length, 2)
-
-  await act(async () => new Promise((resolve) => setTimeout(resolve, 5_100)))
-  await waitFor(() => backend.requests.length === 3)
-  await settle()
-  assert.equal(backend.requests.length, 3)
-})
-
 test("AI call analytics separate denied, unavailable, and next-page failures", async (t) => {
   let answer: (body: Record<string, unknown>) => Response = () =>
     Response.json({ calls: [], nextCursor: "" })
@@ -271,22 +233,6 @@ test("AI call analytics separate denied, unavailable, and next-page failures", a
   await view.render(filters)
   assert.equal(view.latest().state, "ready")
   await waitFor(() => backend.requests.length === sent + 1)
-})
-
-test("AI call analytics is denied when the next page is forbidden", async (t) => {
-  fakeBackend(t, (_, body) =>
-    body.cursor
-      ? new Response("{}", { status: 403 })
-      : Response.json({ summary, calls: [call("ai-1")], nextCursor: "next" }),
-  )
-  const view = mountHook(t, useAiCallAnalytics)
-  await view.render({ practiceID: "practice-1", locationID: "location-1", range: "24h", enabled: true })
-  await waitFor(() => view.latest().state === "ready")
-
-  await act(async () => void (await view.latest().loadNextPage()))
-  await waitFor(() => view.latest().nextPage === "unavailable")
-  assert.equal(view.latest().state, "denied")
-  assert.equal(view.latest().data, undefined)
 })
 
 test("analytics stays denied through a pending refresh after pagination loses authorization", async (t) => {

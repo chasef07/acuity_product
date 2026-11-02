@@ -328,14 +328,14 @@ used by [CI](.github/workflows/ci.yml) through its
 With `TEST_DATABASE_URL` set to the disposable `_test` database:
 
 ```sh
-go test -p 1 ./backend/... ./deploy -count=1
+go test ./backend/... ./deploy -count=1
 ```
 
-Keep database-backed packages serial: they share and reset schemas. Without
-`TEST_DATABASE_URL`, integration tests may skip; a green exit is not proof that
-database behavior passed. CI shards the complete package set across isolated
-databases for pull requests, main, and exact-release verification. Packages
-within each shard remain serial, and every shard must pass.
+Each package resets its own database, named after the package, on the
+`TEST_DATABASE_URL` server, so packages run in parallel. Tests within a package
+stay serial. Without `TEST_DATABASE_URL`, integration tests may skip; a green
+exit is not proof that database behavior passed. CI runs this same command for
+pull requests, main, and exact-release verification.
 
 Integration tests open the database with `testdb.Open`, which creates the
 runtime roles and applies `database-grants.sql`. Seed with SQL and provisioning

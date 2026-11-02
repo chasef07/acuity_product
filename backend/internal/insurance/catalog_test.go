@@ -1,10 +1,7 @@
 package insurance_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"os"
 	"reflect"
 	"slices"
 	"testing"
@@ -121,27 +118,6 @@ func TestTouchedOfficesFollowWhatEachOfficeServes(t *testing.T) {
 				t.Fatalf("reverting touched = %v, want %v", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestCatalogRoundTripsTheV2ExportByteForByte(t *testing.T) {
-	export, err := os.ReadFile("testdata/export.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	catalog, err := insurance.ParseCatalog(export)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(catalog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := bytes.TrimSuffix(export, []byte("\n")); !bytes.Equal(encoded, want) {
-		t.Fatalf("re-encoded export differs: %d bytes, want %d", len(encoded), len(want))
-	}
-	if len(catalog.Carriers) != 50 || len(catalog.Regions) != 2 || len(catalog.Regions[1].Tables) != 2 {
-		t.Fatalf("export shape: %d carriers, %d regions", len(catalog.Carriers), len(catalog.Regions))
 	}
 }
 

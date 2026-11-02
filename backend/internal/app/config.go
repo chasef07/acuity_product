@@ -74,6 +74,7 @@ type HumanCallingConfig struct {
 	RingWindowDuration     time.Duration
 	LeaseDuration          time.Duration
 	ReadinessGrace         time.Duration
+	CredentialReconcile    time.Duration
 }
 
 type MessagingConfig struct {
@@ -374,6 +375,11 @@ func loadTelnyxCommandConfig(
 	if result.ReadinessGrace >= result.LeaseDuration {
 		return fmt.Errorf("calling readiness grace must be shorter than the lease")
 	}
+	reconcileSeconds, err := positiveIntOrDefault(getenv, "HUMAN_CALLING_CREDENTIAL_RECONCILE_SECONDS", 30)
+	if err != nil {
+		return err
+	}
+	result.CredentialReconcile = time.Duration(reconcileSeconds) * time.Second
 	return nil
 }
 

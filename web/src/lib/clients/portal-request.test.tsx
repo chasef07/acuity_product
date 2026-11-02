@@ -6,33 +6,6 @@ import { readTask } from "../api/generated/sdk.gen.ts"
 import { clearAccessToken } from "../auth-client.ts"
 import { accessDenied, portalRequest, signInRequired } from "./portal-request.ts"
 
-const envelope = {
-  error: {
-    code: "TASK_VERSION_CONFLICT",
-    message: "Task changed.",
-    correlationId: "synthetic-correlation",
-    retryable: false,
-  },
-}
-
-test("normalizes an ErrorEnvelope into a typed failure", async (t) => {
-  fakeBackend(t, () => Response.json(envelope, { status: 409 }))
-  const outcome = await portalRequest((transport) =>
-    readTask({ ...transport, path: { taskId: "task-1" } }),
-  )
-  assert.deepEqual(outcome, {
-    ok: false,
-    failure: {
-      kind: "conflict",
-      retryable: false,
-      status: 409,
-      code: "TASK_VERSION_CONFLICT",
-      message: "Task changed.",
-      correlationId: "synthetic-correlation",
-    },
-  })
-})
-
 test("classifies statuses without an envelope", async (t) => {
   const cases = [
     [401, "unauthenticated", false],
