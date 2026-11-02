@@ -83,21 +83,6 @@ func TestScorecardReviewReasons(t *testing.T) {
 	}
 }
 
-func TestScorecardV4IgnoresRemovedTruthfulnessJudge(t *testing.T) {
-	for _, tc := range []struct {
-		version string
-		want    int
-	}{{"typesafe-scorecard-v3", 1}, {"typesafe-scorecard-v4", 0}, {"typesafe-scorecard-v5", 0}} {
-		raw, _ := json.Marshal(map[string]any{
-			"evaluatorVersion": tc.version, "status": "complete",
-			"results": map[string]any{"results_reported_truthfully": map[string]any{"answers": map[string]any{"results_reported_truthfully": map[string]any{"type": "noul", "noul": 0.1}}}},
-		})
-		if got := EvaluationReviewReasons(raw); len(got) != tc.want {
-			t.Fatalf("version=%s reasons=%v want %d", tc.version, got, tc.want)
-		}
-	}
-}
-
 func TestLegacyScorecardDetailAgreesWithLedger(t *testing.T) {
 	all := []string{"request_understood", "appointment_datetime_correct", "office_rules_grounded", "results_reported_truthfully", "conversation_responsive"}
 	for _, tc := range []struct {

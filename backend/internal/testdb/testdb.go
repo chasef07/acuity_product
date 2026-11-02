@@ -2,14 +2,17 @@ package testdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -71,7 +74,7 @@ func OpenAsOwner(t *testing.T) *pgxpool.Pool {
 	return Open(t).Owner
 }
 
-func open(t *testing.T, last string) *pgxpool.Pool {
+func URL(t *testing.T) string {
 	t.Helper()
 
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
@@ -82,10 +85,59 @@ func open(t *testing.T, last string) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("parse TEST_DATABASE_URL: %v", err)
 	}
-	if !strings.HasSuffix(strings.TrimPrefix(parsed.Path, "/"), "_test") {
+	base, isTest := strings.CutSuffix(strings.TrimPrefix(parsed.Path, "/"), "_test")
+	if !isTest {
 		t.Fatalf("refusing to reset non-test database %q", parsed.Path)
 	}
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("find test package: %v", err)
+	}
+	name := base + "_" + packageName(t, directory) + "_test"
+	if len(name) > 63 {
+		t.Fatalf("test database name %q exceeds 63 bytes", name)
+	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	server, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open TEST_DATABASE_URL: %v", err)
+	}
+	defer server.Close()
+	_, err = server.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize())
+	var pgErr *pgconn.PgError
+	if err != nil && !(errors.As(err, &pgErr) && pgErr.Code == "42P04") {
+		t.Fatalf("create test database %s: %v", name, err)
+	}
+	parsed.Path = "/" + name
+	return parsed.String()
+}
+
+func packageName(t *testing.T, directory string) string {
+	t.Helper()
+	root := directory
+	for {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			t.Fatalf("no go.mod above %s", directory)
+		}
+		root = parent
+	}
+	relative, err := filepath.Rel(root, directory)
+	if err != nil {
+		t.Fatalf("locate test package: %v", err)
+	}
+	return strings.NewReplacer("/", "_", "-", "_", ".", "_").Replace(relative)
+}
+
+func open(t *testing.T, last string) *pgxpool.Pool {
+	t.Helper()
+
+	databaseURL := URL(t)
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		t.Fatalf("parse pool config: %v", err)

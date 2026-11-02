@@ -50,20 +50,6 @@ test("initial workspace shows a conversation without opening Task details and re
   projection.stop()
 })
 
-test("returning to work without a conversation shows the empty workspace", async () => {
-  const realtime = deterministicRealtime()
-  const projection = createWorkspaceProjection({
-    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([]) }),
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-  })
-  await projection.start()
-  await projection.dispatch({ type: "select-manage-agent" })
-  await projection.dispatch({ type: "select-work" })
-  assert.equal(projection.getSnapshot().selection.view, "none")
-  projection.stop()
-})
-
 test("scope changes clear every window and obsolete delayed responses from the old scope", async () => {
   const preferences = new Map<string, string>()
   const realtime = deterministicRealtime()

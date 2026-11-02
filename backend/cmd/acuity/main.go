@@ -384,7 +384,7 @@ func runWorker(
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
 	interactions := interaction.New(database, accessModule, nil)
-	runner, err := worker.New(productionWorkerConfig(config.AcquireTimeout), calling, messages, interactions, pool)
+	runner, err := worker.New(productionWorkerConfig(config.AcquireTimeout, config.HumanCalling.CredentialReconcile), calling, messages, interactions, pool)
 	if err != nil {
 		return err
 	}
@@ -397,11 +397,11 @@ const (
 	productionReceiptWorkers         = 4
 )
 
-func productionWorkerConfig(acquireTimeout time.Duration) worker.Config {
+func productionWorkerConfig(acquireTimeout, credentialInterval time.Duration) worker.Config {
 	return worker.Config{
 		WorkInterval:                  250 * time.Millisecond,
 		WorkTimeout:                   10 * time.Second,
-		CredentialInterval:            30 * time.Second,
+		CredentialInterval:            credentialInterval,
 		CredentialTimeout:             acquireTimeout,
 		HealthInterval:                30 * time.Second,
 		HealthTimeout:                 acquireTimeout,

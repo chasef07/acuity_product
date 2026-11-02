@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -76,7 +75,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	streams, err := realtime.New(realtime.Config{
-		DatabaseURL:        testDatabaseURL(t),
+		DatabaseURL:        testdb.URL(t),
 		AccessTimeout:      500 * time.Millisecond,
 		HeartbeatInterval:  50 * time.Millisecond,
 		StreamLifetime:     2 * time.Second,
@@ -391,7 +390,7 @@ func TestRealtimeReconnectAndRevalidationBurstStaysAvailableDuringUnrelatedOpera
 	hubContext, stopHub := context.WithCancel(context.Background())
 	t.Cleanup(stopHub)
 	hub, err := realtime.New(realtime.Config{
-		DatabaseURL:        testDatabaseURL(t),
+		DatabaseURL:        testdb.URL(t),
 		AccessTimeout:      time.Second,
 		HeartbeatInterval:  time.Second,
 		StreamLifetime:     5 * time.Second,
@@ -624,7 +623,7 @@ func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 	hubContext, stopHub := context.WithCancel(context.Background())
 	t.Cleanup(stopHub)
 	hub, err := realtime.New(realtime.Config{
-		DatabaseURL:        testDatabaseURL(t),
+		DatabaseURL:        testdb.URL(t),
 		AccessTimeout:      500 * time.Millisecond,
 		HeartbeatInterval:  time.Second,
 		StreamLifetime:     3 * time.Second,
@@ -762,7 +761,7 @@ func TestRealtimeListenerDeathClosesStreamsAndRecoveryAcceptsFreshStreams(t *tes
 	hubContext, stopHub := context.WithCancel(context.Background())
 	defer stopHub()
 	hub, err := realtime.New(realtime.Config{
-		DatabaseURL:        testDatabaseURL(t),
+		DatabaseURL:        testdb.URL(t),
 		AccessTimeout:      500 * time.Millisecond,
 		HeartbeatInterval:  time.Second,
 		StreamLifetime:     5 * time.Second,
@@ -859,7 +858,7 @@ func TestRealtimePlannedRotationIsJitteredAcrossConcurrentClients(t *testing.T) 
 	hubContext, stopHub := context.WithCancel(context.Background())
 	defer stopHub()
 	hub, err := realtime.New(realtime.Config{
-		DatabaseURL:          testDatabaseURL(t),
+		DatabaseURL:          testdb.URL(t),
 		AccessTimeout:        500 * time.Millisecond,
 		HeartbeatInterval:    20 * time.Millisecond,
 		StreamLifetime:       200 * time.Millisecond,
@@ -982,7 +981,7 @@ func TestRealtimeCallingHintsStayScopedToTheStreamedPractice(t *testing.T) {
 	hubContext, stopHub := context.WithCancel(context.Background())
 	t.Cleanup(stopHub)
 	hub, err := realtime.New(realtime.Config{
-		DatabaseURL:        testDatabaseURL(t),
+		DatabaseURL:        testdb.URL(t),
 		AccessTimeout:      500 * time.Millisecond,
 		HeartbeatInterval:  time.Second,
 		StreamLifetime:     3 * time.Second,
@@ -1286,13 +1285,4 @@ func readAnySSEEvent(t *testing.T, reader *bufio.Reader) sseEvent {
 			return event
 		}
 	}
-}
-
-func testDatabaseURL(t *testing.T) string {
-	t.Helper()
-	value := "postgres://127.0.0.1:55424/acuity_test?sslmode=disable"
-	if configured := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL")); configured != "" {
-		value = configured
-	}
-	return value
 }

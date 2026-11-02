@@ -70,8 +70,20 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 	}
 	if config.HumanCalling.RingWindowDuration != 20*time.Second ||
 		config.HumanCalling.LeaseDuration != 30*time.Second ||
-		config.HumanCalling.ReadinessGrace != 15*time.Second {
+		config.HumanCalling.ReadinessGrace != 15*time.Second ||
+		config.HumanCalling.CredentialReconcile != 30*time.Second {
 		t.Fatalf("calling timings = %#v", config.HumanCalling)
+	}
+	for value, want := range map[string]time.Duration{"1": time.Second, "0": 0, "soon": 0} {
+		reconcile, err := LoadConfig(func(name string) string {
+			if name == "HUMAN_CALLING_CREDENTIAL_RECONCILE_SECONDS" {
+				return value
+			}
+			return base[name]
+		})
+		if (want == 0) != (err != nil) || reconcile.HumanCalling.CredentialReconcile != want {
+			t.Fatalf("credential reconcile %q = %s, %v", value, reconcile.HumanCalling.CredentialReconcile, err)
+		}
 	}
 	if config.HumanCalling.HandoffSIPDomain != "synthetic.sip.telnyx.com" ||
 		config.HumanCalling.StaffSIPDomain != "sip.telnyx.com" {
