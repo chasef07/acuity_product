@@ -38,6 +38,7 @@ export function MessageAttachmentView({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const isPDF = attachment.contentType === "application/pdf"
+  const showImage = Boolean(objectURL) && !isPDF
   const unavailable =
     attachment.state === "Attachment unavailable" || Boolean(error)
   const isPreparing =
@@ -125,52 +126,54 @@ export function MessageAttachmentView({
 
   return (
     <Sheet>
-      <Attachment
-        state={presentationState}
-        size="sm"
-        className="mt-2 w-64 max-w-full"
-      >
-        <AttachmentMedia variant={objectURL && !isPDF ? "image" : "icon"}>
-          {objectURL && !isPDF ? (
-            <SheetTrigger
-              type="button"
-              aria-label={`Preview ${attachment.fileName}`}
-              className="size-full cursor-zoom-in rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element -- private object URL */}
-              <img src={objectURL} alt={attachment.fileName} className="size-full object-cover" />
-            </SheetTrigger>
-          ) : isPDF ? (
-            <FileTextIcon aria-hidden="true" />
-          ) : (
-            <ImageIcon aria-hidden="true" />
-          )}
-        </AttachmentMedia>
-        <AttachmentContent>
-          <AttachmentTitle>{attachment.fileName}</AttachmentTitle>
-          <AttachmentDescription>{description}</AttachmentDescription>
-        </AttachmentContent>
-        <AttachmentActions>
-          {attachment.state === "Stored" && (
-            <AttachmentAction
-              aria-label={`Download ${attachment.fileName}`}
-              disabled={pending}
-              onClick={() => void download()}
-            >
-              {pending ? <Spinner /> : <DownloadIcon data-icon="inline-start" />}
-            </AttachmentAction>
-          )}
-          {(attachment.state === "Attachment unavailable" || (attachment.state === "Stored" && !isPDF && !objectURL)) && (
-            <AttachmentAction
-              aria-label={`Retry ${attachment.fileName}`}
-              disabled={pending}
-              onClick={() => void retry()}
-            >
-              {pending ? <Spinner /> : <RefreshCwIcon data-icon="inline-start" />}
-            </AttachmentAction>
-          )}
-        </AttachmentActions>
-      </Attachment>
+      {showImage ? (
+        <SheetTrigger
+          type="button"
+          aria-label={`Preview ${attachment.fileName}`}
+          className="mt-2 block max-w-full cursor-zoom-in overflow-hidden rounded-xl border bg-muted transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- private object URL */}
+          <img src={objectURL} alt={attachment.fileName} className="block max-h-80 w-auto max-w-full object-contain sm:max-w-72" />
+        </SheetTrigger>
+      ) : (
+        <Attachment
+          state={presentationState}
+          size="sm"
+          className="mt-2 w-64 max-w-full"
+        >
+          <AttachmentMedia>
+            {isPDF ? (
+              <FileTextIcon aria-hidden="true" />
+            ) : (
+              <ImageIcon aria-hidden="true" />
+            )}
+          </AttachmentMedia>
+          <AttachmentContent>
+            <AttachmentTitle>{attachment.fileName}</AttachmentTitle>
+            <AttachmentDescription>{description}</AttachmentDescription>
+          </AttachmentContent>
+          <AttachmentActions>
+            {attachment.state === "Stored" && (
+              <AttachmentAction
+                aria-label={`Download ${attachment.fileName}`}
+                disabled={pending}
+                onClick={() => void download()}
+              >
+                {pending ? <Spinner /> : <DownloadIcon data-icon="inline-start" />}
+              </AttachmentAction>
+            )}
+            {(attachment.state === "Attachment unavailable" || (attachment.state === "Stored" && !isPDF)) && (
+              <AttachmentAction
+                aria-label={`Retry ${attachment.fileName}`}
+                disabled={pending}
+                onClick={() => void retry()}
+              >
+                {pending ? <Spinner /> : <RefreshCwIcon data-icon="inline-start" />}
+              </AttachmentAction>
+            )}
+          </AttachmentActions>
+        </Attachment>
+      )}
       <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
         <SheetHeader className="shrink-0 border-b pr-14">
           <SheetTitle className="break-words">{attachment.fileName}</SheetTitle>
@@ -195,5 +198,6 @@ export function MessageAttachmentView({
 
 export function formatBytes(bytes: number) {
   if (bytes < 1_024) return `${bytes} B`
-  return `${Math.round(bytes / 1_024)} KB`
+  if (bytes < 1_048_576) return `${Math.round(bytes / 1_024)} KB`
+  return `${(bytes / 1_048_576).toFixed(1)} MB`
 }

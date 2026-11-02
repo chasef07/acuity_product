@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -22,9 +23,10 @@ import (
 )
 
 const (
-	maximumAttachmentBytes     = 600 * 1024
-	attachmentOperationTimeout = 20 * time.Second
-	attachmentClaimTTL         = 30 * time.Second
+	maximumOutboundAttachmentBytes = 600 * 1024
+	maximumInboundAttachmentBytes  = 5 * 1024 * 1024
+	attachmentOperationTimeout     = 20 * time.Second
+	attachmentClaimTTL             = 30 * time.Second
 )
 
 type AttachmentState string
@@ -85,7 +87,7 @@ func (m *Module) uploadAttachment(
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	command.FileName = strings.TrimSpace(filepath.Base(command.FileName))
 	command.DeclaredType = strings.ToLower(strings.TrimSpace(command.DeclaredType))
-	contentType, err := detectAttachmentType(command.Content)
+	contentType, err := detectAttachmentType(command.Content, maximumOutboundAttachmentBytes)
 	if m.database == nil ||
 		m.access == nil ||
 		m.config.AttachmentStore == nil ||
@@ -512,6 +514,7 @@ func (m *Module) ProcessNextAttachment(ctx context.Context) (bool, error) {
 	state := AttachmentStored
 	if copyErr != nil {
 		state = AttachmentUnavailable
+		slog.Warn("inbound_attachment_copy_failed", "attachment_id", attachment.ID, "cause", attachmentCopyFailureCause(copyErr))
 	}
 	tag, err := finishTx.Exec(ctx, `
 		UPDATE messaging_attachments
@@ -634,11 +637,11 @@ func (m *Module) downloadAttachment(
 		response.StatusCode >= http.StatusMultipleChoices {
 		return nil, "", ErrObjectNotFound
 	}
-	content, err := io.ReadAll(io.LimitReader(response.Body, maximumAttachmentBytes+1))
+	content, err := io.ReadAll(io.LimitReader(response.Body, maximumInboundAttachmentBytes+1))
 	if err != nil {
 		return nil, "", err
 	}
-	contentType, err := detectAttachmentType(content)
+	contentType, err := detectAttachmentType(content, maximumInboundAttachmentBytes)
 	if err != nil {
 		return nil, "", err
 	}
@@ -686,8 +689,19 @@ func loadAttachment(
 	return attachment, practiceID, locationID, objectKey, err
 }
 
-func detectAttachmentType(content []byte) (string, error) {
-	if len(content) == 0 || len(content) > maximumAttachmentBytes {
+func attachmentCopyFailureCause(err error) string {
+	switch {
+	case errors.Is(err, ErrInvalidInput):
+		return "unsupported_media"
+	case errors.Is(err, ErrObjectNotFound):
+		return "provider_media_missing"
+	default:
+		return "copy_failed"
+	}
+}
+
+func detectAttachmentType(content []byte, maximumBytes int) (string, error) {
+	if len(content) == 0 || len(content) > maximumBytes {
 		return "", ErrInvalidInput
 	}
 	contentType := http.DetectContentType(content)

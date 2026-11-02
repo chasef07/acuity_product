@@ -1927,7 +1927,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
 	var mediaAvailable bool
-	pdf := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("safe-pdf"), 16)...)
+	pdf := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("safe-pdf"), 900*1024/8)...)
 	mediaServer := httptest.NewTLSServer(http.HandlerFunc(func(
 		response http.ResponseWriter,
 		_ *http.Request,
