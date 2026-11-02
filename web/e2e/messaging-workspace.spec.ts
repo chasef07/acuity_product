@@ -463,21 +463,14 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await sentAttachment.getByRole("button", { name: "Download fixture-photo.png", exact: true }).click()
   expect((await download).suggestedFilename()).toBe("fixture-photo.png")
   await sentAttachment.getByRole("button", { name: "Retry fixture-photo.png", exact: true }).click()
-  await expect(sentAttachment).toHaveAttribute("data-state", "done")
+  const previewButton = outgoing.getByRole("button", { name: "Preview fixture-photo.png" })
+  await expect(
+    previewButton.getByRole("img", { name: "fixture-photo.png" }),
+  ).toBeVisible()
   await page.unroute(`${portalURL}/v1/attachments/*`, previewRoute)
-  await expect(sentAttachment).not.toContainText("Stored")
-  await expect(
-    sentAttachment.getByRole("button", { name: "Download fixture-photo.png" }),
-  ).toBeVisible()
-  await expect(
-    outgoing.getByRole("img", { name: "fixture-photo.png" }),
-  ).toBeVisible()
-  expect(
-    (await sentAttachment.locator('[data-slot="attachment-media"]').boundingBox())
-      ?.width,
-  ).toBeLessThanOrEqual(32)
+  await expect(sentAttachment).toHaveCount(0)
+  await expect(outgoing).not.toContainText("Stored")
 
-  const previewButton = sentAttachment.getByRole("button", { name: "Preview fixture-photo.png" })
   await previewButton.click()
   const imagePreview = page.getByRole("dialog", { name: "fixture-photo.png", exact: true })
   await expect(imagePreview.getByRole("img", { name: "fixture-photo.png" })).toBeVisible()

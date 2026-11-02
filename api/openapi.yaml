@@ -6118,7 +6118,7 @@ components:
         byteSize:
           type: integer
           minimum: 0
-          maximum: 614400
+          maximum: 5242880
         createdAt:
           type: string
           format: date-time
