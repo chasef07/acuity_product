@@ -351,7 +351,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       ? manageAgentPages.find((item) => item.value === state.selection.agentPage)?.label
       : view === "analytics" ? practiceAnalyticsPages.find((item) => item.value === analyticsPage)?.label
       : view === "operator-analytics" ? commandCenterPages.find((item) => item.value === commandCenterPage)?.label
-      : isWorkView(view) ? selectedTask?.title : undefined
+      : isWorkView(view) ? (textTask ? "Texts" : selectedTask?.title) : undefined
     return (
       <>
         <WorkspaceNavRail

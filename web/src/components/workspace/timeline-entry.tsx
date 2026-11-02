@@ -24,6 +24,7 @@ import { MessageEntry } from "./message-entry"
 
 export function TimelineEntry({
   item,
+  endsMessageGroup,
   contextLocationID,
   onChanged,
   onTaskCreated,
@@ -35,6 +36,7 @@ export function TimelineEntry({
   selectedAIInteractionID,
 }: {
   item: ConversationTimelineItem
+  endsMessageGroup: boolean
   contextLocationID: string
   onChanged: () => void
   onTaskCreated: (task: Task) => void
@@ -101,6 +103,7 @@ export function TimelineEntry({
       <MessageEntry
         message={item.message}
         showLocation={item.message.thread.locationId !== contextLocationID}
+        showMeta={endsMessageGroup}
         onChanged={onChanged}
         onTaskCreated={onTaskCreated}
       />
@@ -155,7 +158,6 @@ export function TimelineEntry({
   }
   if (item.type === "TASK" && item.task) {
     const task = item.task
-    if (task.origin === "INBOUND_MESSAGE_REVIEW") return null
     return (
       <ActivityItem
         selected={task.id === selectedTaskID}
@@ -202,7 +204,7 @@ function ActivityItem({
 
   if (!onOpen) {
     return (
-      <Item size="sm" className="mx-auto max-w-xl">
+      <Item size="sm" className="-mx-3">
         {content}
       </Item>
     )
@@ -212,7 +214,7 @@ function ActivityItem({
     <Item
       size="sm"
       data-selected={selected || undefined}
-      className="relative mx-auto max-w-xl cursor-pointer text-left before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent hover:bg-muted data-[selected=true]:bg-transparent data-[selected=true]:before:bg-foreground data-[selected=true]:hover:bg-transparent"
+      className="relative -mx-3 cursor-pointer text-left before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent hover:bg-muted data-[selected=true]:bg-transparent data-[selected=true]:before:bg-foreground data-[selected=true]:hover:bg-transparent"
       render={relatedActions ? <div /> : (
         <button
           type="button"

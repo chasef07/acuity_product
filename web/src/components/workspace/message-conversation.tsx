@@ -26,6 +26,7 @@ import type { Task } from "@/lib/api/generated/types.gen"
 import { useEngagementTimeline } from "@/lib/clients/engagement"
 import { formatDate } from "@/lib/format-time"
 import {
+  continuesMessageGroup,
   type NumberHistory,
   presentTimeline,
   sameConversationDate,
@@ -209,6 +210,9 @@ export function MessageConversation({
                     )}
                     <TimelineEntry
                       item={item}
+                      endsMessageGroup={
+                        !continuesMessageGroup(item, presentedItems[index + 1])
+                      }
                       contextLocationID={locationID}
                       onChanged={loadLatest}
                       onTaskCreated={onTaskCreated}

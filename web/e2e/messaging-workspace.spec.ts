@@ -573,10 +573,8 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toHaveCount(0)
 
   await page.setViewportSize({ width: 390, height: 844 })
-  const mobileCopy = inbound.getByRole("button", { name: "Copy message" })
-  const mobileCreateTask = inbound.getByRole("button", { name: "Create task" })
-  await expect(mobileCopy).toHaveCSS("opacity", "1")
-  await expect(mobileCreateTask).toHaveCSS("opacity", "1")
+  const messageActions = inbound.getByRole("toolbar", { name: "Message actions" })
+  await expect(messageActions).toHaveCSS("opacity", "0")
   const composerSurface = page
     .getByRole("form", { name: "Message composer" })
     .locator('[data-slot="input-group"]')
@@ -650,15 +648,13 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
 
   const copyMessage = inbound.getByRole("button", { name: "Copy message" })
   const createTask = inbound.getByRole("button", { name: "Create task" })
-  await expect(copyMessage).toHaveCSS("opacity", "0")
+  await expect(messageActions).toHaveCSS("opacity", "0")
   await inbound.hover()
-  await expect(copyMessage).toHaveCSS("opacity", "1")
-  await expect(createTask).toHaveCSS("opacity", "1")
+  await expect(messageActions).toHaveCSS("opacity", "1")
   await copyMessage.hover()
   const copyTooltip = page.getByTestId("copy-message-tooltip")
   await expect(copyTooltip).toBeVisible()
   await expect(copyTooltip).toHaveCSS("opacity", "1")
-  await expect(copyTooltip).toHaveCSS("background-color", "rgb(0, 0, 0)")
   await page.screenshot({
     path: testInfo.outputPath("message-copy-hover.png"),
     fullPage: true,
@@ -666,7 +662,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await copyMessage.click()
   await expect(inbound.getByRole("status")).toContainText("Message copied")
   await inbound.focus()
-  await expect(createTask).toHaveCSS("opacity", "1")
+  await expect(messageActions).toHaveCSS("opacity", "1")
   await createTask.click()
   const taskTouchpoint = page.getByRole("button", {
     name: /View task: Follow up on text/,
@@ -896,7 +892,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   const taskHoverDetails = page.getByTestId("rail-hover-details")
   await expect(taskHoverDetails).toContainText("(727) 555-0196")
   await expect(taskHoverDetails).toContainText("Fixture Location 1")
-  await expect(taskHoverDetails).toContainText("Normal priority · Updated")
+  await expect(taskHoverDetails).toContainText("Normal priority · Created")
   await expect(completeTask).toHaveCSS("opacity", "1")
   await expect(relativeTime).toHaveCSS("opacity", "0")
   expect(await taskRow.boundingBox()).toEqual(beforeHover)
