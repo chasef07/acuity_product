@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.1](https://github.com/chasef07/acuity_product/compare/v3.2.0...v3.2.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **messaging:** copy patient MMS photos up to 5 MiB and show them inline ([#607](https://github.com/chasef07/acuity_product/issues/607)) ([0ef2729](https://github.com/chasef07/acuity_product/commit/0ef27297724713a722b171230e9fd1a747cebd98))
+
 ## [3.2.0](https://github.com/chasef07/acuity_product/compare/v3.1.0...v3.2.0) (2026-11-02)
 
 
