@@ -6,7 +6,8 @@ import { newestFirst, oldestFirst } from "./workspace-ordering.ts"
 
 export function presentTimeline(items: ConversationTimelineItem[]) {
   return oldestFirst(
-    [...new Map(items.map((item) => [`${item.type}:${item.id}`, item])).values()],
+    [...new Map(items.map((item) => [`${item.type}:${item.id}`, item])).values()]
+      .filter((item) => !(item.type === "TASK" && item.task?.origin === "INBOUND_MESSAGE_REVIEW")),
     (item) => item.occurredAt,
   )
 }

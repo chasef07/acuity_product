@@ -1,8 +1,10 @@
 "use client"
 
 import { useState } from "react"
+import { CheckIcon, RotateCcwIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import { useSettledState } from "@/hooks/use-settled-state"
 import type { Task } from "@/lib/api/generated/types.gen"
 import { signInRequired } from "@/lib/clients/portal-request"
@@ -30,9 +32,9 @@ export function TextConversationAction({ task, reviewed, onUpdated, onNext }: { 
   }
   return <div className="flex items-center gap-2">
     {error && <span role="alert" className="max-w-52 text-xs text-destructive">{error}</span>}
-    {task.state === "COMPLETED" && <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" disabled={pending || !stateSettled} onClick={() => void transition()}>{pending ? "Saving…" : "Reopen"}</Button>}
-    {task.state === "COMPLETED" && <span className="text-xs text-muted-foreground">Completed</span>}
+    {task.state === "COMPLETED" && <span className="hidden text-xs text-muted-foreground sm:inline">Completed</span>}
+    {task.state === "COMPLETED" && <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={pending || !stateSettled} onClick={() => void transition()}>{pending ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}Reopen</Button>}
     {task.state === "COMPLETED" && onNext && <Button size="sm" onClick={onNext}>Next task</Button>}
-    {task.state === "OPEN" && <Button size="sm" variant="ghost" disabled={pending || needsReview} title={needsReview ? "Load the latest messages before marking done." : undefined} onClick={() => void transition()}>{pending ? "Saving…" : "Mark done"}</Button>}
+    {task.state === "OPEN" && <Button size="sm" variant="outline" disabled={pending || needsReview} title={needsReview ? "Load the latest messages before marking done." : undefined} onClick={() => void transition()}>{pending ? <Spinner data-icon="inline-start" /> : <CheckIcon data-icon="inline-start" />}Mark done</Button>}
   </div>
 }

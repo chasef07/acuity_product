@@ -155,7 +155,6 @@ export function TimelineEntry({
   }
   if (item.type === "TASK" && item.task) {
     const task = item.task
-    if (task.origin === "INBOUND_MESSAGE_REVIEW") return null
     return (
       <ActivityItem
         selected={task.id === selectedTaskID}

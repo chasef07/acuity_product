@@ -695,6 +695,27 @@ test("a refused send keeps its draft attempt and a sent Message reloads after it
   assert.equal(conversation.timelineRequests, 2, "the Sending Message reloads once its hold ends")
 })
 
+test("Enter sends a text and Shift+Enter keeps writing, and touch keyboards keep Enter for new lines", async (t) => {
+  const conversation = conversationHarness(t)
+  let coarsePointer = true
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: coarsePointer }) })
+  await conversation.render(0)
+  const textarea = conversation.host.querySelector<HTMLTextAreaElement>('form[aria-label="Message composer"] textarea')!
+  await typeInto(textarea, "Synthetic reply")
+  const press = (shiftKey: boolean) => act(async () => {
+    textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", shiftKey, bubbles: true, cancelable: true }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  await press(false)
+  assert.equal(conversation.sends.length, 0, "a touch keyboard Enter adds a line")
+  coarsePointer = false
+  await press(true)
+  assert.equal(conversation.sends.length, 0)
+  await press(false)
+  assert.equal(conversation.sends.length, 1)
+  assert.equal(conversation.sends[0]!.body, "Synthetic reply")
+})
+
 test("a live update while scrolled up keeps every loaded item and offers New activity", async (t) => {
   const conversation = conversationHarness(t)
   const task = projectedTask()

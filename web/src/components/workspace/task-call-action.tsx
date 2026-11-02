@@ -29,7 +29,7 @@ export function TaskCallAction({ task, canCall, pending, onCall }: {
         ? current.reason
         : "Call eligibility is temporarily unavailable."
 
-  return <Button variant="outline" size="sm" className="h-7 shadow-xs" disabled={!taskCallingEligible || pending} title={taskCallingEligible ? "Call this Task" : taskCallingReason} onClick={() => onCall(task)}>
+  return <Button variant="outline" size="sm" disabled={!taskCallingEligible || pending} title={taskCallingEligible ? "Call this Task" : taskCallingReason} onClick={() => onCall(task)}>
     {pending ? <Spinner /> : <PhoneCallIcon />} {pending ? "Preparing…" : "Call"}
   </Button>
 }

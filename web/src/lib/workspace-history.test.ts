@@ -152,3 +152,14 @@ test("thread Task Activity names who acted and keeps automation automatic", () =
   const automatic = { ...callbackCompletion, taskActivityActor: { kind: "SERVICE", subject: "work-recovery-resolution" } } as ConversationTimelineItem
   assert.equal(taskActivityDetail(automatic), "Missed call review completed after caller@example.test's callback attempt")
 })
+
+test("the text review Task stays out of the thread", () => {
+  const text = (id: string, occurredAt: string) =>
+    ({ id, type: "MESSAGE", occurredAt, message: { id, direction: "INBOUND", createdAt: occurredAt } }) as ConversationTimelineItem
+  const review = { ...base, id: "review", type: "TASK", occurredAt: "2026-08-13T12:00:30Z", task: { origin: "INBOUND_MESSAGE_REVIEW" } } as ConversationTimelineItem
+  const followUp = { ...base, id: "follow-up", type: "TASK", occurredAt: "2026-08-13T12:00:40Z", task: { origin: "STAFF_MESSAGE_FOLLOW_UP" } } as ConversationTimelineItem
+  assert.deepEqual(
+    presentTimeline([text("first", "2026-08-13T12:00:00Z"), review, followUp, text("next", "2026-08-13T12:01:00Z")]).map((item) => item.id),
+    ["first", "follow-up", "next"],
+  )
+})

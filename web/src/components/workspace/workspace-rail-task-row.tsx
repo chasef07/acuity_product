@@ -43,6 +43,7 @@ export function TaskRow({
   const grouped = groupCount > 1
   const urgent = task.urgency === "high_priority"
   const urgencyID = useId()
+  const relative = taskRelativeTime(task)
   return (
     <SidebarMenuItem
       data-testid={grouped ? "task-group-row" : "task-row"}
@@ -54,7 +55,7 @@ export function TaskRow({
         title={textReview && task.preview ? task.preview : task.title}
         phone={task.phone}
         office={task.locationName}
-        meta={`${taskUrgencyLabels[task.urgency]} · Updated ${formatRelativeTime(taskRelativeAt(task))}`}
+        meta={`${taskUrgencyLabels[task.urgency]} · ${relative.label} ${formatRelativeTime(relative.at)}`}
       >
         <SidebarMenuButton
           aria-label={
@@ -62,7 +63,10 @@ export function TaskRow({
           }
           aria-describedby={urgent ? urgencyID : undefined}
           isActive={active}
-          className="h-8 rounded-md px-2 pr-9 text-sidebar-foreground"
+          className={cn(
+            "rounded-md px-2 pr-9 text-sidebar-foreground",
+            textReview && task.preview ? "h-auto py-1.5" : "h-8",
+          )}
           onClick={onSelect}
         >
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -82,15 +86,20 @@ export function TaskRow({
                 </span>
               )}
             </span>
+            {textReview && task.preview && (
+              <span className="truncate text-xs leading-4 text-muted-foreground">
+                {task.preview}
+              </span>
+            )}
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>
       <span className="pointer-events-none absolute top-0 right-1 h-8 w-7 [@media(pointer:coarse)]:h-11">
         <time
           className={`absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
-          dateTime={taskRelativeAt(task)}
+          dateTime={relative.at}
         >
-          {formatRelativeTime(taskRelativeAt(task))}
+          {formatRelativeTime(relative.at)}
         </time>
         {task.state === "OPEN" &&
           task.origin !== "APPOINTMENT_REVIEW" &&
@@ -216,8 +225,12 @@ function HoverDetail({
   )
 }
 
-function taskRelativeAt(task: Task) {
-  return task.state === "OPEN"
-    ? task.createdAt
-    : (task.completedAt ?? task.updatedAt)
+function taskRelativeTime(task: Task) {
+  if (task.state === "COMPLETED") {
+    return { at: task.completedAt ?? task.updatedAt, label: "Completed" }
+  }
+  if (task.origin === "INBOUND_MESSAGE_REVIEW") {
+    return { at: task.updatedAt, label: "Updated" }
+  }
+  return { at: task.createdAt, label: "Created" }
 }

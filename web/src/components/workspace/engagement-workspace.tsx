@@ -88,11 +88,11 @@ export function EngagementWorkspaceView({
     startOutbound,
   } = calling
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <header className="group/conversation-header relative flex h-16 min-w-0 shrink-0 items-center gap-3 px-4 sm:h-13 sm:px-6">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <header className="group/conversation-header relative flex min-h-16 min-w-0 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 sm:min-h-13 sm:px-6">
         <div className="flex min-w-0 items-center gap-1">
           <div className="flex min-w-0 flex-col sm:flex-row sm:items-center sm:gap-2">
-            <span className="truncate text-xs text-muted-foreground sm:text-base md:text-sm">
+            <span className="truncate text-xs text-muted-foreground sm:text-sm">
               {practiceName}
             </span>
             <span aria-hidden="true" className="hidden text-muted-foreground sm:inline">/</span>
@@ -141,7 +141,7 @@ export function EngagementWorkspaceView({
         </div>
         {callAction ?? (
           <Button
-            className="h-7 shrink-0 shadow-xs"
+            className="shrink-0"
             type="button"
             size="sm"
             variant="outline"
