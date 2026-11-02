@@ -1,19 +1,18 @@
 "use client"
 
-import { useId, useRef, useState } from "react"
+import { useRef, useState } from "react"
 import { MessageCircleQuestionIcon, SearchIcon } from "lucide-react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
-import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import type { KnowledgeGapResolution, KnowledgeSection, Location, LocationKnowledge } from "@/lib/api/generated/types.gen"
-import { closeKnowledgeGap } from "@/lib/clients/agent-calls"
+import type { KnowledgeSection, Location, LocationKnowledge } from "@/lib/api/generated/types.gen"
 import { publishLocationKnowledge, useLocationKnowledge } from "@/lib/clients/location-knowledge"
-import { fold, matches, publishedSections, publishFailureMessage } from "@/lib/knowledge-publication"
-import { callTime, GapCalls, type GapFixProps } from "./call-gaps"
+import { nextAttempt, type PublishAttempt } from "@/lib/drafts"
+import { fold, matches, publishedSections } from "@/lib/knowledge-publication"
+import { callTime, GapCalls, GapFixForm, type GapFixProps } from "./call-gaps"
 import { EntryFields } from "./knowledge-base"
+import { publishFailureMessage } from "./manage-agent-page"
 
 export function KnowledgeGaps(props: { practiceID: string; locationID: string; locations: Location[] }) {
   return <GapCalls gap="knowledge" icon={MessageCircleQuestionIcon} fix={KnowledgeFix} {...props} />
@@ -21,24 +20,13 @@ export function KnowledgeGaps(props: { practiceID: string; locationID: string; l
 
 type Mode = "add" | "edit"
 
-function KnowledgeFix({
-  practiceID,
-  locationID,
-  officeName,
-  call,
-  published,
-  onPublished,
-  onSavingChange,
-  onClosed,
-}: GapFixProps) {
+function KnowledgeFix(props: GapFixProps) {
+  const { practiceID, locationID, call } = props
   const knowledge = useLocationKnowledge({ practiceID, locationID })
   const [mode, setMode] = useState<Mode>("add")
   const [draft, setDraft] = useState<KnowledgeSection>({ id: "", title: "", text: "" })
   const [search, setSearch] = useState("")
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState("")
-  const attempt = useRef<{ payload: string; revisionID: string }>(undefined)
-  const errorID = useId()
+  const attempt = useRef<PublishAttempt>(undefined)
   const base = knowledge.status === "ready" ? knowledge.data : undefined
   const stale = knowledge.status === "ready" && Boolean(knowledge.refreshFailure)
   const editing = mode === "edit" && draft.id !== ""
@@ -47,50 +35,7 @@ function KnowledgeFix({
   const unchanged = picked !== undefined && picked.title === draft.title.trim() && picked.text === draft.text.trim()
   const ready = draft.title.trim() !== "" && draft.text.trim() !== "" && (mode === "add" || editing) && !unchanged && !stale
 
-  function busy(value: boolean) {
-    setSaving(value)
-    onSavingChange(value)
-  }
-
-  function switchMode(next: Mode) {
-    setMode(next)
-    setDraft({ id: "", title: "", text: "" })
-    setError("")
-  }
-
-  async function close(resolution: KnowledgeGapResolution) {
-    const outcome = await closeKnowledgeGap(call.id, resolution)
-    if (!outcome.ok && outcome.failure.kind !== "conflict" && outcome.failure.kind !== "rejected") {
-      setError(resolution === "ANSWERED" ? "Saved to knowledge, but this call couldn't be closed. Try again." : "This call couldn't be closed. Try again.")
-      return
-    }
-    onClosed(call.id)
-  }
-
-  async function saveAndClose() {
-    if (saving || (!published && (!base || !ready))) return
-    busy(true)
-    setError("")
-    if (!published && base) {
-      const outcome = await publish(base)
-      if (!outcome.ok) {
-        if (outcome.failure.kind === "conflict") {
-          setError("Someone else changed this office's knowledge. Check the topic and save again.")
-          await knowledge.retry()
-        } else {
-          setError(publishFailureMessage(outcome.failure))
-        }
-        busy(false)
-        return
-      }
-      onPublished(call.id)
-      void knowledge.retry()
-    }
-    await close("ANSWERED")
-    busy(false)
-  }
-
-  function publish(current: LocationKnowledge) {
+  async function publish(current: LocationKnowledge) {
     const entry = { id: draft.id, title: draft.title.trim(), text: draft.text.trim() }
     const replaces = editing && current.sections.some((section) => section.id === entry.id)
     const sections = replaces ? current.sections.map((section) => (section.id === entry.id ? entry : section)) : [...current.sections, entry]
@@ -101,53 +46,20 @@ function KnowledgeFix({
       reason: `${replaces ? `Updated “${entry.title}”` : `Added “${entry.title}”`} from a caller question on ${callTime(call)}`,
       sections: publishedSections(sections),
     }
-    const payload = JSON.stringify(publication)
-    if (attempt.current?.payload !== payload) attempt.current = { payload, revisionID: crypto.randomUUID() }
-    return publishLocationKnowledge({ ...publication, revisionId: attempt.current.revisionID })
-  }
-
-  async function notNeeded() {
-    if (saving) return
-    busy(true)
-    setError("")
-    await close("NOT_NEEDED")
-    busy(false)
+    attempt.current = nextAttempt(attempt.current, publication)
+    const outcome = await publishLocationKnowledge({ ...publication, revisionId: attempt.current.revisionID })
+    if (outcome.ok) return undefined
+    if (outcome.failure.kind !== "conflict") return publishFailureMessage(outcome.failure)
+    await knowledge.retry()
+    return "Someone else changed this office's knowledge. Check the topic and save again."
   }
 
   const words = fold(search).split(/\s+/).filter(Boolean)
   const found = (base?.sections ?? []).filter((section) => matches(section, words))
 
   return (
-    <form
-      aria-label="Fix this"
-      aria-describedby={error ? errorID : undefined}
-      className="flex flex-col gap-3"
-      onSubmit={(event) => {
-        event.preventDefault()
-        void saveAndClose()
-      }}
-    >
-      <h3 className="text-sm font-medium">Fix this</h3>
-      {officeName && <p className="-mt-2 text-sm text-muted-foreground">Saves to {officeName}&apos;s knowledge base</p>}
-      {published ? (
-        <p className="text-sm text-muted-foreground">Saved to knowledge.</p>
-      ) : knowledge.status === "failed" ? (
-        <Alert variant="destructive">
-          <AlertTitle>Office knowledge couldn&apos;t load</AlertTitle>
-          <Button type="button" variant="outline" size="sm" className="mt-2 w-fit" onClick={knowledge.retry}>
-            Try again
-          </Button>
-        </Alert>
-      ) : !base ? (
-        <p role="status" className="text-sm text-muted-foreground">Loading office knowledge…</p>
-      ) : stale ? (
-        <Alert variant="destructive">
-          <AlertTitle>Office knowledge couldn&apos;t reload</AlertTitle>
-          <Button type="button" variant="outline" size="sm" className="mt-2 w-fit" onClick={knowledge.retry}>
-            Try again
-          </Button>
-        </Alert>
-      ) : (
+    <GapFixForm gap="knowledge" fix={props} query={knowledge} publish={base && ready ? () => publish(base) : undefined}>
+      {(clearError) => (
         <>
           <ToggleGroup
             aria-label="How to fix this"
@@ -157,7 +69,11 @@ function KnowledgeFix({
             value={[mode]}
             onValueChange={(values) => {
               const value = values[0]
-              if (value === "add" || value === "edit") switchMode(value)
+              if (value === "add" || value === "edit") {
+                setMode(value)
+                setDraft({ id: "", title: "", text: "" })
+                clearError()
+              }
             }}
           >
             <ToggleGroupItem value="add" className="h-7 text-xs data-pressed:bg-background data-pressed:shadow-xs">
@@ -204,22 +120,6 @@ function KnowledgeFix({
           )}
         </>
       )}
-      {error && (
-        <Alert id={errorID} variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-      <div className="flex flex-wrap justify-end gap-2">
-        {!published && (
-          <Button type="button" variant="ghost" disabled={saving} onClick={() => void notNeeded()}>
-            Not needed
-          </Button>
-        )}
-        <Button type="submit" disabled={saving || (!published && !ready)}>
-          {saving && <Spinner data-icon="inline-start" />}
-          {published ? "Close call" : "Save and close"}
-        </Button>
-      </div>
-    </form>
+    </GapFixForm>
   )
 }

@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react"
 import type { Task } from "@/lib/api/generated/types.gen"
+import { signInRequired } from "@/lib/clients/portal-request"
 import { type ReviewFolderKind, useReviewFolder } from "@/lib/clients/tasks"
 import { readFailure } from "@/lib/data/queries"
 import { SidebarMenuItem } from "@/components/ui/sidebar"
@@ -26,7 +27,7 @@ export function ReviewFolder({
   const { items, nextCursor } = page.status === "ready" ? page.data : { items: [], nextCursor: "" }
   const failure = readFailure(page) ?? page.moreFailure
   const error = failure
-    ? failure.kind === "signedOut" || failure.kind === "unauthenticated"
+    ? signInRequired(failure)
       ? "Sign in again to load this folder."
       : "This folder could not be loaded. Try again."
     : ""

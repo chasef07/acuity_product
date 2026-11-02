@@ -56,10 +56,7 @@ type WorkspaceRailState = {
 
 export type EngagementSummary = {
   phone: string
-  displayName?: string
   locations: Array<{ id: string; name: string }>
-  latestActivity: string
-  openTaskCount: number
 }
 
 type WorkspaceScope = {
@@ -228,7 +225,6 @@ export type WorkspaceProjectionIntent =
   | { type: "set-search"; value: string }
   | { type: "submit-search" }
   | { type: "complete-task"; task: Task }
-  | { type: "select-engagement"; engagement: EngagementSummary }
   | { type: "select-task"; task: Task; rememberForCall?: boolean }
   | { type: "select-analytics" }
   | { type: "select-operator-analytics" }
@@ -826,10 +822,6 @@ export function createWorkspaceProjection({
       await completeTaskIntent(intent.task)
       return
     }
-    if (intent.type === "select-engagement") {
-      selectEngagement(intent.engagement)
-      return
-    }
     if (intent.type === "select-task") {
       if (intent.rememberForCall) returnTaskID = intent.task.id
       selectEngagement(taskEngagement(intent.task), intent.task)
@@ -1219,13 +1211,13 @@ export function createWorkspaceProjection({
     else patch((current) => ({ ...current, selection: { ...current.selection, task: undefined, taskGroup: undefined, contextPanelOpen: false } }))
   }
 
-  function selectEngagement(engagement: EngagementSummary, task?: Task) {
+  function selectEngagement(engagement: EngagementSummary, task: Task) {
     patch((current) => ({
       ...current,
       selection: {
         ...current.selection,
         task,
-        taskGroup: task?.groupMembers && task.groupMembers.length > 1 ? task : undefined,
+        taskGroup: task.groupMembers && task.groupMembers.length > 1 ? task : undefined,
         taskError: "",
         engagement,
         aiInteractionID: "",
@@ -1234,8 +1226,8 @@ export function createWorkspaceProjection({
         aiInteractionError: "",
         historicalCall: undefined,
         view: "engagement",
-        contextView: task ? "task" : current.selection.contextView,
-        contextPanelOpen: Boolean(task),
+        contextView: "task",
+        contextPanelOpen: true,
       },
     }))
   }
@@ -1701,20 +1693,14 @@ function completedTaskQueryRequest(
 function taskEngagement(task: Task): EngagementSummary {
   return {
     phone: task.phone,
-    ...(task.callerName ? { displayName: task.callerName } : {}),
     locations: [{ id: task.locationId, name: task.locationName }],
-    latestActivity: task.updatedAt,
-    openTaskCount: task.state === "OPEN" ? 1 : 0,
   }
 }
 
 function callEngagement(call: CallingCall): EngagementSummary {
   return {
     phone: call.phone,
-    ...(call.displayName ? { displayName: call.displayName } : {}),
     locations: [{ id: call.locationId, name: call.locationName }],
-    latestActivity: call.connectedAt ?? new Date().toISOString(),
-    openTaskCount: call.recoveryTask?.state === "OPEN" ? 1 : 0,
   }
 }
 
@@ -1728,8 +1714,6 @@ function newNumberEngagement(
     locations: locationScopeID
       ? locations.filter((location) => location.id === locationScopeID)
       : locations,
-    latestActivity: new Date().toISOString(),
-    openTaskCount: 0,
   }
 }
 

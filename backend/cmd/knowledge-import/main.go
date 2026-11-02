@@ -15,7 +15,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/knowledge"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/chasef07/acuity_product/backend/internal/postgres"
 )
 
 func main() {
@@ -100,7 +100,7 @@ func applyPublication(command knowledge.ImportCommand, apply bool) error {
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	pool, err := openPool(ctx)
+	pool, err := postgres.OpenOperatorPool(ctx, "KNOWLEDGE_IMPORT_DATABASE_URL", "KNOWLEDGE_DATABASE_HOST")
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func runExport(practice, office, revision string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool, err := openPool(ctx)
+	pool, err := postgres.OpenOperatorPool(ctx, "KNOWLEDGE_IMPORT_DATABASE_URL", "KNOWLEDGE_DATABASE_HOST")
 	if err != nil {
 		return err
 	}
@@ -149,31 +149,4 @@ func runExport(practice, office, revision string) error {
 		return err
 	}
 	return json.NewEncoder(os.Stderr).Encode(map[string]string{"officeKey": office, "revisionId": exported})
-}
-
-func openPool(ctx context.Context) (*pgxpool.Pool, error) {
-	config, err := pgxpool.ParseConfig(os.Getenv("KNOWLEDGE_IMPORT_DATABASE_URL"))
-	if err != nil {
-		return nil, errors.New("invalid import database configuration")
-	}
-	if host := os.Getenv("KNOWLEDGE_DATABASE_HOST"); host != "" {
-		if host != "127.0.0.1" {
-			return nil, errors.New("KNOWLEDGE_DATABASE_HOST override only supports the loopback Cloud SQL proxy")
-		}
-		config.ConnConfig.Host = host
-		config.ConnConfig.Port = 5432
-		config.ConnConfig.TLSConfig = nil
-		config.ConnConfig.Fallbacks = nil
-	}
-	config.MaxConns = 1
-	config.MinConns = 0
-	config.ConnConfig.ConnectTimeout = 5 * time.Second
-	config.ConnConfig.RuntimeParams["statement_timeout"] = "10000"
-	config.ConnConfig.RuntimeParams["lock_timeout"] = "2000"
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		return nil, errors.New("could not open import database")
-	}
-
-	return pool, nil
 }

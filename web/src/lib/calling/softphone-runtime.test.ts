@@ -1215,6 +1215,55 @@ test("routine heartbeats use a stable per-session stagger without surfacing avai
   assert.notEqual(firstHeartbeatAt, secondHeartbeatAt)
 })
 
+test("a heartbeat that only renews the lease expiry does not notify subscribers", async () => {
+  const clock = new ManualClock()
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    availabilityIntent: true,
+    clock,
+    visibility: visible(),
+  })
+  await runtime.start()
+  await clock.advance(4_000)
+  await drainMicrotasks()
+  const writesBefore = backend.readinessWrites.length
+  backend.writeReadinessHandler = async (input) => ({
+    ...backend.lease,
+    available: input.available,
+    leaseExpiresAt: "2026-08-27T00:05:00Z",
+  })
+  let notifications = 0
+  const unsubscribe = runtime.subscribe(() => {
+    notifications += 1
+  })
+
+  await clock.advance(4_000)
+  await drainMicrotasks()
+
+  assert.equal(backend.readinessWrites.length, writesBefore + 1)
+  assert.equal(notifications, 0)
+  assert.equal(runtime.getSnapshot().lease?.leaseExpiresAt, "2026-08-27T00:05:00Z")
+  assert.equal(runtime.getSnapshot().lease?.available, true)
+
+  backend.writeReadinessHandler = async () => ({
+    ...backend.lease,
+    available: false,
+  })
+  await clock.advance(4_000)
+  await drainMicrotasks()
+
+  assert.ok(notifications > 0)
+  assert.equal(runtime.getSnapshot().lease?.available, false)
+  unsubscribe()
+  await runtime.stop()
+})
+
 test("temporary heartbeat failures back off before retrying readiness", async () => {
   const clock = new ManualClock()
   const backend = new DeterministicBackend()

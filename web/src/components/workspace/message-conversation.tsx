@@ -34,19 +34,12 @@ import {
 import { MessageComposer } from "./message-composer"
 import { TimelineEntry } from "./timeline-entry"
 
-type TimelineSource = {
-  kind: "engagement"
-  practiceID: string
-  phone: string
-}
-
 export function MessageConversation({
   reviewKey,
   onReviewed,
-  timelineSource,
+  phone,
   practiceID,
   locationID,
-  initialDestination,
   selectedTaskID,
   selectedCallID,
   selectedAIInteractionID,
@@ -58,10 +51,9 @@ export function MessageConversation({
 }: {
   reviewKey: string
   onReviewed: (reviewKey: string) => void
-  timelineSource: TimelineSource
+  phone: string
   practiceID: string
   locationID: string
-  initialDestination?: string
   selectedTaskID?: string
   selectedCallID?: string
   selectedAIInteractionID?: string
@@ -85,14 +77,13 @@ export function MessageConversation({
     refresh,
     showOlder,
     showSent,
-  } = useEngagementTimeline({ ...timelineSource, hold: awayFromLatest })
+  } = useEngagementTimeline({ practiceID, phone, hold: awayFromLatest })
   const error = failure ? "The conversation could not be loaded." : ""
   const scroller = useRef<HTMLDivElement | null>(null)
   const reviewSeenAt = useRef(0)
-  const historyPhone = timelineSource.phone
   useEffect(() => {
-    onHistoryChange?.({ phone: historyPhone, items })
-  }, [historyPhone, items, onHistoryChange])
+    onHistoryChange?.({ phone, items })
+  }, [phone, items, onHistoryChange])
 
   const sentVisibleUntil = sent?.visibleUntil
   useEffect(() => {
@@ -201,7 +192,7 @@ export function MessageConversation({
                         presentedItems[index - 1]!.occurredAt,
                         item.occurredAt,
                       )) && (
-                      <Marker variant="separator" className="my-2">
+                      <Marker className="my-2">
                         <MarkerContent>
                           {formatDate(item.occurredAt)}
                         </MarkerContent>
@@ -272,7 +263,7 @@ export function MessageConversation({
         threadID={composerThreadID}
         practiceID={practiceID}
         locationID={locationID}
-        destination={initialDestination ?? ""}
+        destination={phone}
         disabled={
           !locationID ||
           Boolean(conversationThread?.outboundBlocked)

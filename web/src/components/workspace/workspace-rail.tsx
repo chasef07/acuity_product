@@ -192,7 +192,7 @@ export function WorkspaceRail({
 
   return (
     <>
-      <Sidebar collapsible="offcanvas" className="absolute h-full [&_[data-slot=sidebar-inner]]:bg-canvas">
+      <Sidebar className="absolute h-full [&_[data-slot=sidebar-inner]]:bg-canvas">
         <SidebarHeader className="gap-3 px-4 pt-5 pb-4">
           <div className="flex items-center gap-2 px-1">
             <AcuityMark className="size-7 shrink-0" />

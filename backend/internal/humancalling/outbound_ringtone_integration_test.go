@@ -2,12 +2,10 @@ package humancalling_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
-	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 )
 
@@ -15,13 +13,9 @@ func TestOutboundRingtoneEndedUsesExactHangupCommand(t *testing.T) {
 	for _, scenario := range []struct {
 		name       string
 		staffEnded bool
-		blockedBy  string
 	}{
 		{name: "destination_unanswered"},
 		{name: "staff_hangup", staffEnded: true},
-		{name: "unconfirmed_hangup", blockedBy: "SENT"},
-		{name: "bridge_state_without_hangup", blockedBy: "outbound_media"},
-		{name: "other_quarantine", blockedBy: "other_quarantine"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -132,90 +126,6 @@ func TestOutboundRingtoneEndedUsesExactHangupCommand(t *testing.T) {
 			}
 			if terminal != "UNANSWERED" || activeLegs != 0 || activeCommands != 0 || recordings != 0 || projected != 1 {
 				t.Fatalf("terminal=%s legs=%d commands=%d recordings=%d facts=%d", terminal, activeLegs, activeCommands, recordings, projected)
-			}
-			receiptClientState := playback.ClientState
-			if scenario.blockedBy == "outbound_media" {
-				receiptClientState = bridge.Payload["client_state"].(string)
-				if _, err := fixture.pool.Exec(ctx, `DELETE FROM human_calling_provider_commands WHERE call_id=$1 AND action='HANGUP_LEG'`, call.ID); err != nil {
-					t.Fatal(err)
-				}
-			}
-			raw, err := json.Marshal(map[string]any{"data": map[string]any{
-				"record_type": "event", "event_type": "call.playback.ended", "id": "quarantined-ringtone",
-				"occurred_at": playback.OccurredAt.Format(time.RFC3339Nano), "payload": map[string]any{
-					"call_control_id": playback.CallControlID, "call_leg_id": playback.CallLegID,
-					"call_session_id": playback.CallSessionID, "client_state": receiptClientState, "status": "call_hangup",
-				},
-			}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := fixture.pool.Exec(ctx, `INSERT INTO human_calling_provider_receipts(event_id,call_id,event_type,received_at,signature_timestamp,raw_body,state,projection_attempts,projection_error_code,quarantined_at,last_attempt_at) VALUES('quarantined-ringtone',$1,'call.playback.ended',$2,1,$3,'QUARANTINED',10,'PROJECTION_APPLY_FACT_CONFLICT',$2,$2)`, call.ID, now, raw); err != nil {
-				t.Fatal(err)
-			}
-			operator := access.Identity{Subject: "ringtone-operator", Email: "operator@example.test", EmailVerified: true}
-			if _, err := fixture.pool.Exec(ctx, `INSERT INTO access_platform_operators(email,user_subject) VALUES($1,$2)`, operator.Email, operator.Subject); err != nil {
-				t.Fatal(err)
-			}
-			timeline, err := calling.ReadOperatorTimeline(ctx, operator, call.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var reference string
-			for _, entry := range timeline.Entries {
-				if entry.RecoveryReference != "" {
-					reference = entry.RecoveryReference
-				}
-			}
-			command := humancalling.RequeueQuarantinedReceiptCommand{Identity: fixture.identity, PracticeID: fixture.authorization.Practice.ID, ReceiptReference: reference}
-			if err := calling.RecoverQuarantinedRingtone(ctx, command); !errors.Is(err, humancalling.ErrDenied) {
-				t.Fatalf("ordinary Staff recovery error=%v", err)
-			}
-			command.Identity = operator
-			if scenario.blockedBy == "SENT" {
-				if _, err := fixture.pool.Exec(ctx, `UPDATE human_calling_provider_commands SET state='SENT' WHERE call_id=$1 AND call_leg_id=$2 AND action='HANGUP_LEG'`, call.ID, staffDial.CallLegID); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if scenario.blockedBy == "other_quarantine" {
-				if _, err := fixture.pool.Exec(ctx, `
-					INSERT INTO human_calling_provider_receipts(event_id,call_id,event_type,received_at,signature_timestamp,raw_body,state,projection_attempts,projection_error_code,quarantined_at,last_attempt_at)
-					SELECT 'sibling-quarantine',call_id,event_type,received_at,signature_timestamp,raw_body,state,projection_attempts,projection_error_code,quarantined_at,last_attempt_at
-					FROM human_calling_provider_receipts WHERE event_id='quarantined-ringtone' AND call_id=$1
-				`, call.ID); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if scenario.blockedBy != "" {
-				if err := calling.RecoverQuarantinedRingtone(ctx, command); !errors.Is(err, humancalling.ErrConflict) {
-					t.Errorf("recovery with %s error=%v, want conflict", scenario.blockedBy, err)
-				}
-				var unchanged bool
-				if err := fixture.pool.QueryRow(ctx, `
-					SELECT state='QUARANTINED' AND projection_attempts=10 AND raw_body=$1
-						AND projection_error_code='PROJECTION_APPLY_FACT_CONFLICT' AND quarantined_at=$2
-						AND NOT EXISTS(SELECT 1 FROM access_audit_events WHERE action='provider_receipt.recovered')
-						AND NOT EXISTS(SELECT 1 FROM human_calling_projected_facts WHERE event_id='quarantined-ringtone')
-					FROM human_calling_provider_receipts WHERE event_id='quarantined-ringtone'
-				`, raw, now).Scan(&unchanged); err != nil {
-					t.Fatal(err)
-				}
-				if !unchanged {
-					t.Fatal("blocked recovery changed receipt evidence, projected a fact, or wrote a success audit")
-				}
-				return
-			}
-			if err := calling.RecoverQuarantinedRingtone(ctx, command); err != nil {
-				t.Fatalf("audited recovery: %v", err)
-			}
-			var receiptState string
-			var attempts, audits int
-			var rawUnchanged bool
-			if err := fixture.pool.QueryRow(ctx, `SELECT state,projection_attempts,raw_body=$1,(SELECT count(*) FROM access_audit_events WHERE action='provider_receipt.recovered') FROM human_calling_provider_receipts WHERE event_id='quarantined-ringtone'`, raw).Scan(&receiptState, &attempts, &rawUnchanged, &audits); err != nil {
-				t.Fatal(err)
-			}
-			if receiptState != "APPLIED" || attempts != 10 || !rawUnchanged || audits != 1 {
-				t.Fatalf("recovery state=%s attempts=%d raw=%v audits=%d", receiptState, attempts, rawUnchanged, audits)
 			}
 		})
 	}

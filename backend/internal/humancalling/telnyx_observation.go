@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chasef07/acuity_product/backend/internal/telnyxapi"
 )
 
 const maxTelnyxObservationPages = 100
@@ -88,7 +90,7 @@ func readTelnyxPages[T any](ctx context.Context, adapter *TelnyxAdapter, path st
 }
 
 func (adapter *TelnyxAdapter) ObserveCall(ctx context.Context, connectionID, callControlID, callLegID, clientState string, since time.Time) (ProviderCallObservation, error) {
-	if !validTelnyxResourceID(connectionID) || since.IsZero() ||
+	if !telnyxapi.ValidResourceID(connectionID) || since.IsZero() ||
 		(strings.TrimSpace(callLegID) == "" && strings.TrimSpace(clientState) == "") {
 		return ProviderCallObservation{}, ErrInvalidInput
 	}

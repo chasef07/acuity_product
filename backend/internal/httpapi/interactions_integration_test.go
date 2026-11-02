@@ -864,7 +864,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 
 	timeline := request(
 		t, server.Client(), http.MethodGet,
-		server.URL+"/v1/engagements/+17275550199/timeline?groupCalls=true&practiceId="+
+		server.URL+"/v1/engagements/+17275550199/timeline?practiceId="+
 			url.QueryEscape(practiceID),
 		"admin-token", nil,
 	)

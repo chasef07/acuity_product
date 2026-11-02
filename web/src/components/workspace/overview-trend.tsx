@@ -4,6 +4,7 @@ import { useState } from "react"
 import type { OperatorAiAnalyticsDay } from "@/lib/api/generated/types.gen"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart"
+import { formatShare } from "@/lib/vocabulary"
 import { OptionSelect } from "./manage-agent-page"
 
 const metrics = [
@@ -67,13 +68,13 @@ export function OverviewTrend({ days }: { days: OperatorAiAnalyticsDay[] }) {
   const selected = metrics.find((item) => item.value === metric)!
   const percent = metric === "transfers" || metric === "failures"
   const format = (value: number) => percent
-    ? value.toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })
+    ? formatShare(value)
     : `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}${metric === "average" ? " min" : ""}`
   let description = `${selected.label}${metric === "average" || percent ? " · Days without a denominator have no bar." : ""}`
   if (isIntentMetric(metric)) {
     const { calls, booked } = intentBookingTotals(days, metric)
     description = calls
-      ? `${selected.label} · ${booked.toLocaleString()} of ${calls.toLocaleString()} booked (${(booked / calls).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })})`
+      ? `${selected.label} · ${booked.toLocaleString()} of ${calls.toLocaleString()} booked (${formatShare(booked / calls)})`
       : `${selected.label} · No calls with this intent`
   }
   return (

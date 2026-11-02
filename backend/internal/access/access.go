@@ -37,6 +37,8 @@ var (
 
 var abitaOfficeKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
 
+func ValidOfficeKey(value string) bool { return abitaOfficeKey.MatchString(value) }
+
 type Identity struct {
 	Subject       string
 	Email         string
@@ -885,19 +887,55 @@ func (m *Module) LockOperationalActor(
 	return practiceIDs, nil
 }
 
+const platformOperatorMatch = `
+		WITH operator AS (
+			SELECT count(*) > 0 AS matched,
+				COALESCE(bool_or(email = $2 AND user_subject <> $1), false) AS conflicted
+			FROM access_platform_operators
+			WHERE user_subject = $1 OR email = $2
+		)`
+
+func (m *Module) IsPlatformOperator(ctx context.Context, identity Identity) (bool, error) {
+	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" {
+		return false, nil
+	}
+	var operator bool
+	if err := m.database.QueryRow(ctx, platformOperatorMatch+`
+		SELECT matched AND NOT conflicted FROM operator
+	`, identity.Subject, normalizeEmail(identity.Email)).Scan(&operator); err != nil {
+		return false, fmt.Errorf("resolve Platform Operator: %w", err)
+	}
+	return operator, nil
+}
+
+func (m *Module) QueueOperationalPracticeIDs(batch *pgx.Batch, identity Identity, practiceIDs *[]string) {
+	batch.Queue(platformOperatorMatch+`
+		SELECT practice.id::text
+		FROM access_practices practice
+		CROSS JOIN operator
+		WHERE NOT operator.conflicted
+			AND (
+				operator.matched
+				OR EXISTS (
+					SELECT 1
+					FROM access_memberships membership
+					WHERE membership.practice_id = practice.id
+						AND membership.user_subject = $1
+						AND membership.revoked_at IS NULL
+				)
+			)
+		ORDER BY practice.name, practice.id
+	`, identity.Subject, normalizeEmail(identity.Email)).Query(func(rows pgx.Rows) error {
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return fmt.Errorf("read operational Practices: %w", err)
+		}
+		*practiceIDs = ids
+		return nil
+	})
+}
+
 func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discovery, error) {
-	return m.discoverActor(ctx, identity, true)
-}
-
-func (m *Module) DiscoverActorReadOnly(ctx context.Context, identity Identity) (Discovery, error) {
-	return m.discoverActor(ctx, identity, false)
-}
-
-func (m *Module) discoverActor(
-	ctx context.Context,
-	identity Identity,
-	signIn bool,
-) (Discovery, error) {
 	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" {
 		return Discovery{}, ErrDenied
 	}
@@ -908,7 +946,7 @@ func (m *Module) discoverActor(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
-	if err == nil && signIn && !isOperator {
+	if err == nil && !isOperator {
 		_, isOperator, err = bindPlatformOperator(ctx, tx, identity)
 	}
 	if err != nil {
@@ -918,7 +956,7 @@ func (m *Module) discoverActor(
 	if isOperator {
 		auditActorType = "PLATFORM_OPERATOR"
 	}
-	if signIn && !isOperator {
+	if !isOperator {
 		if err := m.activateProvisionedEmail(ctx, tx, identity, m.now(), auditActorType); err != nil {
 			return Discovery{}, err
 		}
@@ -1491,22 +1529,15 @@ func (m *Module) RecordWorkspaceChange(
 		UPDATE access_practices
 		SET workspace_version = workspace_version + 1
 		WHERE id = $1
-		RETURNING workspace_version
-	`, practiceID).Scan(&version); err != nil {
-		return 0, fmt.Errorf("increment workspace version: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		SELECT pg_notify(
+		RETURNING workspace_version, pg_notify(
 			'acuity_workspace_hints',
 			json_build_object(
 				'practiceId', id,
 				'version', workspace_version
 			)::text
 		)
-		FROM access_practices
-		WHERE id = $1
-	`, practiceID); err != nil {
-		return 0, fmt.Errorf("publish workspace hint: %w", err)
+	`, practiceID).Scan(&version, nil); err != nil {
+		return 0, fmt.Errorf("record workspace change: %w", err)
 	}
 	return version, nil
 }

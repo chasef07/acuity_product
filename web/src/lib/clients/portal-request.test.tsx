@@ -4,7 +4,7 @@ import { act } from "react"
 
 import { readTask } from "../api/generated/sdk.gen.ts"
 import { clearAccessToken } from "../auth-client.ts"
-import { portalRequest } from "./portal-request.ts"
+import { accessDenied, portalRequest, signInRequired } from "./portal-request.ts"
 
 const envelope = {
   error: {
@@ -96,6 +96,19 @@ test("an aborted request rejects instead of reporting an outcome", async (t) => 
   controller.abort()
   gate.resolve()
   await assert.rejects(pending, { name: "AbortError" })
+})
+
+test("only a signed-out or unauthenticated failure asks to sign in again, and unauthorized also denies access", () => {
+  const kinds = ["signedOut", "unauthenticated", "unauthorized", "unavailable"] as const
+  assert.deepEqual(
+    kinds.map((kind) => signInRequired({ kind, retryable: false })),
+    [true, true, false, false],
+  )
+  assert.deepEqual(
+    kinds.map((kind) => accessDenied({ kind, retryable: false })),
+    [true, true, true, false],
+  )
+  assert.equal(signInRequired(undefined), false)
 })
 
 function fakeBackend(t: TestContext, respond: (url: URL) => Response) {

@@ -1,11 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {
-  clearAccessToken,
-  getAccessToken,
-  getAccessTokenResult,
-} from "./auth-client.ts"
+import { clearAccessToken, getAccessTokenResult } from "./auth-client.ts"
 
 test("one valid access token serves concurrent callers until it is invalidated", async () => {
   const originalFetch = globalThis.fetch
@@ -25,17 +21,20 @@ test("one valid access token serves concurrent callers until it is invalidated",
   clearAccessToken()
 
   try {
-    const concurrent = Array.from({ length: 30 }, () => getAccessToken())
+    const concurrent = Array.from({ length: 30 }, () => getAccessTokenResult())
     await new Promise((resolve) => setTimeout(resolve, 0))
     assert.equal(requests, 1)
 
     releaseFirstRequest()
-    assert.deepEqual(await Promise.all(concurrent), Array(30).fill(firstToken))
-    assert.equal(await getAccessToken(), firstToken)
+    assert.deepEqual(
+      await Promise.all(concurrent),
+      Array(30).fill(authenticated(firstToken)),
+    )
+    assert.deepEqual(await getAccessTokenResult(), authenticated(firstToken))
     assert.equal(requests, 1)
 
     clearAccessToken()
-    assert.equal(await getAccessToken(), secondToken)
+    assert.deepEqual(await getAccessTokenResult(), authenticated(secondToken))
     assert.equal(requests, 2)
   } finally {
     clearAccessToken()
@@ -60,9 +59,9 @@ test("a transient refresh failure keeps using an unexpired access token", async 
   clearAccessToken()
 
   try {
-    assert.equal(await getAccessToken(), token)
-    assert.equal(await getAccessToken(), token)
-    assert.equal(await getAccessToken(), token)
+    assert.deepEqual(await getAccessTokenResult(), authenticated(token))
+    assert.deepEqual(await getAccessTokenResult(), authenticated(token))
+    assert.deepEqual(await getAccessTokenResult(), authenticated(token))
     assert.equal(requests, 2)
   } finally {
     clearAccessToken()
@@ -87,13 +86,13 @@ test("initial token acquisition retries one transient failure", async () => {
   clearAccessToken()
 
   try {
-    const firstCaller = getAccessToken()
+    const firstCaller = getAccessTokenResult()
     await new Promise((resolve) => setTimeout(resolve, 10))
     assert.equal(requests, 1)
-    const staggeredCaller = getAccessToken()
+    const staggeredCaller = getAccessTokenResult()
     assert.deepEqual(await Promise.all([firstCaller, staggeredCaller]), [
-      token,
-      token,
+      authenticated(token),
+      authenticated(token),
     ])
     assert.equal(requests, 2)
   } finally {
@@ -143,6 +142,10 @@ test("rejected token sessions are reported as authentication loss", async () => 
     globalThis.fetch = originalFetch
   }
 })
+
+function authenticated(token: string) {
+  return { status: "authenticated", token }
+}
 
 function tokenWithExpiration(expiration: number, marker: string) {
   const payload = Buffer.from(

@@ -6,9 +6,8 @@ type Clock = {
 }
 
 type WorkspaceRequestBudgetOptions = {
-  refreshDetails?: () => void
-  clock?: Clock
-  detailDelayMilliseconds?: number
+  refreshDetails: () => void
+  clock: Clock
 }
 
 export type WorkspaceRequestBudget = {
@@ -17,15 +16,12 @@ export type WorkspaceRequestBudget = {
   stop: () => void
 }
 
-export function createWorkspaceRequestBudget(
-  options: WorkspaceRequestBudgetOptions = {},
-): WorkspaceRequestBudget {
-  const clock = options.clock ?? {
-    setTimeout: (callback, milliseconds) =>
-      window.setTimeout(callback, milliseconds),
-    clearTimeout: (id) => window.clearTimeout(id),
-  }
-  const detailDelayMilliseconds = options.detailDelayMilliseconds ?? 500
+const detailDelayMilliseconds = 500
+
+export function createWorkspaceRequestBudget({
+  refreshDetails,
+  clock,
+}: WorkspaceRequestBudgetOptions): WorkspaceRequestBudget {
   let detailTimer: TimerID | undefined
   let detailRefreshMounted = false
 
@@ -33,7 +29,7 @@ export function createWorkspaceRequestBudget(
     if (!detailRefreshMounted || detailTimer !== undefined) return
     detailTimer = clock.setTimeout(() => {
       detailTimer = undefined
-      options.refreshDetails?.()
+      refreshDetails()
     }, detailDelayMilliseconds)
   }
 

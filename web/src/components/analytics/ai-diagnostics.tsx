@@ -8,16 +8,13 @@ import type {
   OperatorAiToolDiagnostics,
 } from "@/lib/api/generated/types.gen"
 import { formatTimestamp } from "@/lib/format-time"
+import { latencyLabel } from "@/lib/vocabulary"
 import styles from "./ai-diagnostics.module.css"
 export type DiagnosticFocus = { itemID?: string; callID?: string }
 export type SelectDiagnostic = (
   interactionID: string,
   focus?: DiagnosticFocus,
 ) => void
-export function latencyLabel(value?: number): string {
-  if (value === undefined) return "—"
-  return value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${value} ms`
-}
 function ToolName({ name }: { name: string }) {
   return <span className={styles.toolName}>{name.replaceAll("_", " ")}</span>
 }

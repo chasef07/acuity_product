@@ -13,13 +13,20 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func callingScopeLocationFilter(scopeAlias, resourceAlias string) string {
+func callingScopeCoversLocation(scopeAlias, locationExpr string) string {
 	return `(` + scopeAlias + `.location_scope = 'ALL'
 		OR EXISTS (
 			SELECT 1 FROM access_membership_locations allowed
 			WHERE allowed.membership_id = ` + scopeAlias + `.membership_id
-				AND allowed.location_id = ` + resourceAlias + `.location_id
+				AND allowed.location_id = ` + locationExpr + `
 		)
+	)`
+}
+
+func staffMayTakeCall(scopeAlias, directionExpr string) string {
+	return `(` + directionExpr + ` = 'OUTBOUND'
+		OR ` + scopeAlias + `.role = 'STAFF'
+		OR ` + scopeAlias + `.role IS NULL
 	)`
 }
 
@@ -72,20 +79,9 @@ func (m *Module) ReadCallingStateConditionally(
 	if identity.Subject == "" || !identity.EmailVerified {
 		return CallingState{}, false, ErrDenied
 	}
-	discovery, err := m.access.DiscoverActorReadOnly(ctx, identity)
-	if err != nil {
-		return CallingState{}, false, callingAccessError(err)
-	}
-	if !hasOperationalCallingAccess(discovery) {
-		return CallingState{}, false, ErrDenied
-	}
-	state, err := m.readCallingState(ctx, identity.Subject)
+	state, err := m.readCallingState(ctx, identity)
 	if err != nil {
 		return CallingState{}, false, err
-	}
-	state.PracticeIDs = []string{}
-	for _, practice := range discovery.Practices {
-		state.PracticeIDs = append(state.PracticeIDs, practice.ID)
 	}
 	state.ETag, err = callingStateETag(state)
 	if err != nil {
@@ -113,8 +109,9 @@ func withoutVolatileFields(state CallingState) CallingState {
 
 func (m *Module) readCallingState(
 	ctx context.Context,
-	staffSubject string,
+	identity access.Identity,
 ) (CallingState, error) {
+	staffSubject := identity.Subject
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
 		AccessMode: pgx.ReadOnly,
@@ -125,7 +122,9 @@ func (m *Module) readCallingState(
 	defer func() { _ = tx.Rollback(ctx) }()
 	state := CallingState{Ringing: []RingingCallLeg{}, Transfers: []StaffTransfer{}}
 	leased := true
+	var practiceIDs []string
 	batch := &pgx.Batch{}
+	m.access.QueueOperationalPracticeIDs(batch, identity, &practiceIDs)
 	batch.Queue(`
 		SELECT session_id, lease_expires_at,
 			lease_expires_at > $2,
@@ -202,12 +201,8 @@ func (m *Module) readCallingState(
 			AND leg.staff_subject = $1
 			AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'ANSWERED', 'BRIDGE_PENDING')
 			AND (transfer.id IS NOT NULL OR ring.sent_at IS NOT NULL)
-			AND (
-				call.direction = 'OUTBOUND'
-				OR operational_scope.role = 'STAFF'
-				OR operational_scope.role IS NULL
-			)
-			AND `+callingScopeLocationFilter("operational_scope", "call")+`
+			AND `+staffMayTakeCall("operational_scope", "call.direction")+`
+			AND `+callingScopeCoversLocation("operational_scope", "call.location_id")+`
 		ORDER BY leg.created_at, leg.id
 	`, staffSubject, m.config.RingWindowDuration.String()).Query(func(rows pgx.Rows) error {
 		for rows.Next() {
@@ -249,7 +244,7 @@ func (m *Module) readCallingState(
 			AND calling_scope.user_subject = $1
 		WHERE (transfer.requested_by_subject = $1 OR transfer.recipient_subject = $1)
 			AND transfer.state IN ('REQUESTED', 'ACCEPTED')
-			AND `+callingScopeLocationFilter("calling_scope", "transfer")+`
+			AND `+callingScopeCoversLocation("calling_scope", "transfer.location_id")+`
 		ORDER BY transfer.created_at, transfer.id
 	`, staffSubject).Query(func(rows pgx.Rows) error {
 		for rows.Next() {
@@ -268,14 +263,14 @@ func (m *Module) readCallingState(
 	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
 		return CallingState{}, fmt.Errorf("read Calling state: %w", err)
 	}
-	if !leased {
-		return CallingState{Ringing: []RingingCallLeg{}, Transfers: []StaffTransfer{}}, nil
+	if len(practiceIDs) == 0 {
+		return CallingState{}, ErrDenied
 	}
+	if !leased {
+		state = CallingState{Ringing: []RingingCallLeg{}, Transfers: []StaffTransfer{}}
+	}
+	state.PracticeIDs = practiceIDs
 	return state, nil
-}
-
-func hasOperationalCallingAccess(discovery access.Discovery) bool {
-	return len(discovery.Practices) > 0
 }
 
 func staffStateCallQuery(predicate string) string {
@@ -291,12 +286,8 @@ func staffStateCallQuery(predicate string) string {
 			ON operational_scope.practice_id = call.practice_id
 			AND operational_scope.user_subject = leg.staff_subject
 		WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
-			AND (
-				call.direction = 'OUTBOUND'
-				OR operational_scope.role = 'STAFF'
-				OR operational_scope.role IS NULL
-			)
-			AND ` + callingScopeLocationFilter("operational_scope", "call") + `
+			AND ` + staffMayTakeCall("operational_scope", "call.direction") + `
+			AND ` + callingScopeCoversLocation("operational_scope", "call.location_id") + `
 			AND (` + predicate + `)
 		ORDER BY call.updated_at DESC, call.id
 		LIMIT 1
@@ -333,7 +324,7 @@ var scopedVoicemailQuery = `
 			)
 		)
 			AND call.disposition_at IS NULL
-			AND ` + callingScopeLocationFilter("calling_scope", "call") + `
+			AND ` + callingScopeCoversLocation("calling_scope", "call.location_id") + `
 		ORDER BY call.updated_at DESC, call.id
 		LIMIT 1
 	`

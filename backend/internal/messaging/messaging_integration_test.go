@@ -831,7 +831,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		providerCommand.CallbackToken == "" {
 		t.Fatalf("provider command = %#v", providerCommand)
 	}
-	sent, err := module.ReadMessage(context.Background(), identity, first.ID)
+	sent, err := messaging.LoadMessage(context.Background(), pool, first.ID)
 	if err != nil {
 		t.Fatalf("read accepted Message: %v", err)
 	}
@@ -909,9 +909,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	); !errors.Is(err, messaging.ErrConflict) {
 		t.Fatalf("conflicting duplicate provider event error = %v", err)
 	}
-	beforeProjection, err := module.ReadMessage(
+	beforeProjection, err := messaging.LoadMessage(
 		context.Background(),
-		identity,
+		pool,
 		first.ID,
 	)
 	if err != nil || beforeProjection.Delivery != messaging.DeliverySent {
@@ -934,7 +934,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil || !processed {
 		t.Fatalf("process delivery receipt = %t, %v", processed, err)
 	}
-	delivered, err := module.ReadMessage(context.Background(), identity, first.ID)
+	delivered, err := messaging.LoadMessage(context.Background(), pool, first.ID)
 	if err != nil {
 		t.Fatalf("read delivered Message: %v", err)
 	}
@@ -1019,7 +1019,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil || !processed {
 		t.Fatalf("process ambiguous Message command = %t, %v", processed, err)
 	}
-	unknown, err = module.ReadMessage(context.Background(), identity, unknown.ID)
+	unknown, err = messaging.LoadMessage(context.Background(), pool, unknown.ID)
 	if err != nil {
 		t.Fatalf("read unknown Message: %v", err)
 	}
@@ -1051,7 +1051,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil || !reconciled {
 		t.Fatalf("reconcile unknown Message = %t, %v", reconciled, err)
 	}
-	unknown, err = module.ReadMessage(context.Background(), identity, unknown.ID)
+	unknown, err = messaging.LoadMessage(context.Background(), pool, unknown.ID)
 	if err != nil || unknown.Delivery != messaging.DeliveryDelivered {
 		t.Fatalf("provider-reconciled Message = %#v, %v", unknown, err)
 	}
@@ -1139,7 +1139,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	newerPage, err := reads.QueryPhoneTimeline(
 		context.Background(),
 		workspace.QueryPhoneTimelineCommand{
-			Ungrouped:  true,
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
 			Phone:      "+17275550199",
@@ -1152,7 +1151,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	olderPage, err := reads.QueryPhoneTimeline(
 		context.Background(),
 		workspace.QueryPhoneTimelineCommand{
-			Ungrouped:  true,
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
 			Phone:      "+17275550199",
@@ -1211,7 +1209,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		!processed {
 		t.Fatalf("process STOP = %t, %v", processed, err)
 	}
-	queued, err = module.ReadMessage(context.Background(), identity, queued.ID)
+	queued, err = messaging.LoadMessage(context.Background(), pool, queued.ID)
 	if err != nil ||
 		queued.Delivery != messaging.DeliveryFailed ||
 		queued.SafeFailureCode != "OUTBOUND_BLOCKED" {
@@ -1480,7 +1478,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	timelineWithTask, err := reads.QueryPhoneTimeline(
 		context.Background(),
 		workspace.QueryPhoneTimelineCommand{
-			Ungrouped:  true,
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
 			Phone:      "+17275550199",
@@ -1616,7 +1613,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	timelineWithCall, err := reads.QueryPhoneTimeline(
 		context.Background(),
 		workspace.QueryPhoneTimelineCommand{
-			Ungrouped:  true,
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
 			Phone:      "+17275550199",
@@ -1626,7 +1622,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		t.Fatalf("query timeline with Call: %v", err)
 	}
 	callLocations := map[string]bool{}
-	for _, item := range timelineWithCall.Items {
+	for _, item := range timelineEvidence(timelineWithCall.Items) {
 		if item.Type == "CALL" {
 			callLocations[item.Call.LocationID] = true
 			if item.Call.Direction != "INBOUND" ||
@@ -1678,7 +1674,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	timelineWithTask, err = reads.QueryPhoneTimeline(
 		context.Background(),
 		workspace.QueryPhoneTimelineCommand{
-			Ungrouped:  true,
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
 			Phone:      "+17275550199",
@@ -1863,6 +1858,18 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	}
 }
 
+func timelineEvidence(items []workspace.TimelineItem) []workspace.TimelineItem {
+	var evidence []workspace.TimelineItem
+	for _, item := range items {
+		if item.Type == "CALL_HISTORY" {
+			evidence = append(evidence, item.Entries...)
+		} else {
+			evidence = append(evidence, item)
+		}
+	}
+	return evidence
+}
+
 func phoneTimelineMessages(
 	t *testing.T,
 	reads *workspace.Module,
@@ -1874,7 +1881,6 @@ func phoneTimelineMessages(
 	page, err := reads.QueryPhoneTimeline(
 		context.Background(),
 		workspace.QueryPhoneTimelineCommand{
-			Ungrouped:  true,
 			Identity:   identity,
 			PracticeID: practiceID,
 			Phone:      phone,

@@ -170,38 +170,12 @@ func (m *Module) ReadTask(
 	return task, nil
 }
 
-const taskColumns = `
-		task.id::text,
-		task.practice_id::text,
-		task.location_id::text,
-		location.name,
-		task.call_id::text,
-		task.phone,
-		task.title,
-		task.state,
-		task.origin,
-		task.urgency,
-		task.category,
-		task.caller_name,
-		task.source_call_id,
-		task.source_message,
+const taskColumns = work.TaskColumns + `,
         COALESCE(CASE WHEN ` + work.TaskIsTextReviewSQL + ` THEN (
           SELECT COALESCE(NULLIF(message.body,''),'Attachment') FROM messaging_messages message
           WHERE message.thread_id=task.message_thread_id AND message.direction='INBOUND'
           ORDER BY message.created_at DESC,message.id DESC LIMIT 1
         ) END,''),
-		task.source_message_id::text,
-		task.message_thread_id::text,
-		task.recovery_outcome,
-		task.created_by_kind,
-		task.created_by_subject,
-		task.created_by_email,
-		task.created_at,
-		task.completed_by_subject,
-		task.completed_by_email,
-		task.completed_at,
-		task.version,
-		task.updated_at,
 		acknowledgement.state,
 		acknowledgement.safe_failure_code,
 		acknowledgement.message_id::text,
@@ -453,75 +427,26 @@ const phoneTaskActivityQuery = `
 	ORDER BY activity.occurred_at DESC, activity.id DESC
 	LIMIT $6`
 
-func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
-	var task work.Task
-	var callID, category, callerName, sourceCall, sourceMessage *string
-	var messageID, messageThreadID, recoveryOutcome *string
-	var createdEmail, completedSubject, completedEmail *string
+func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
+	var preview, conversationThreadID string
+	var relatedInteractionCount int
 	var acknowledgementState, acknowledgementFailure, acknowledgementMessageID *string
 	var acknowledgementUpdatedAt *time.Time
-	destinations := append(prefix,
-		&task.ID,
-		&task.PracticeID,
-		&task.LocationID,
-		&task.LocationName,
-		&callID,
-		&task.Phone,
-		&task.Title,
-		&task.State,
-		&task.Origin,
-		&task.Urgency,
-		&category,
-		&callerName,
-		&sourceCall,
-		&sourceMessage,
-		&task.Preview,
-		&messageID,
-		&messageThreadID,
-		&recoveryOutcome,
-		&task.CreatedBy.Kind,
-		&task.CreatedBy.Subject,
-		&createdEmail,
-		&task.CreatedAt,
-		&completedSubject,
-		&completedEmail,
-		&task.CompletedAt,
-		&task.Version,
-		&task.UpdatedAt,
+	task, err := work.ScanTask(row, prefix,
+		&preview,
 		&acknowledgementState,
 		&acknowledgementFailure,
 		&acknowledgementMessageID,
 		&acknowledgementUpdatedAt,
-		&task.ConversationThreadID,
-		&task.RelatedInteractionCount,
+		&conversationThreadID,
+		&relatedInteractionCount,
 	)
-	if err := scanner.Scan(destinations...); err != nil {
+	if err != nil {
 		return work.Task{}, err
 	}
-	if callID != nil {
-		task.CallID = *callID
-	}
-	if category != nil {
-		task.Category = work.TaskCategory(*category)
-	}
-	if callerName != nil {
-		task.CallerName = *callerName
-	}
-	if sourceCall != nil {
-		task.SourceCallID = *sourceCall
-	}
-	if sourceMessage != nil {
-		task.SourceMessage = *sourceMessage
-	}
-	if messageID != nil {
-		task.MessageID = *messageID
-	}
-	if messageThreadID != nil {
-		task.MessageThreadID = *messageThreadID
-	}
-	if recoveryOutcome != nil {
-		task.RecoveryOutcome = work.RecoveryOutcome(*recoveryOutcome)
-	}
+	task.Preview = preview
+	task.ConversationThreadID = conversationThreadID
+	task.RelatedInteractionCount = relatedInteractionCount
 	if acknowledgementState != nil && acknowledgementUpdatedAt != nil {
 		task.AutomaticAcknowledgement = &work.TaskAcknowledgement{
 			State:     *acknowledgementState,
@@ -532,20 +457,6 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 		}
 		if acknowledgementMessageID != nil {
 			task.AutomaticAcknowledgement.MessageID = *acknowledgementMessageID
-		}
-	}
-	if createdEmail != nil {
-		task.CreatedBy.Email = *createdEmail
-	}
-	if completedSubject != nil {
-		kind := access.ActorService
-		email := ""
-		if completedEmail != nil {
-			kind = access.ActorHuman
-			email = *completedEmail
-		}
-		task.CompletedBy = &work.ActorSnapshot{
-			Kind: kind, Subject: *completedSubject, Email: email,
 		}
 	}
 	return task, nil
@@ -559,6 +470,12 @@ func queryTaskFolderCounts(
 	search taskSearch,
 ) (work.TaskFolderCounts, error) {
 	var counts work.TaskFolderCounts
+	categoryCounts := make([]int, len(work.TaskCategories))
+	destinations := []any{&counts.Tasks}
+	for i := range categoryCounts {
+		destinations = append(destinations, &categoryCounts[i])
+	}
+	destinations = append(destinations, &counts.Texts, &counts.CallRecovery, &counts.AppointmentReviews)
 	err := tx.QueryRow(ctx, `
 		WITH scoped AS (
 			SELECT
@@ -573,38 +490,29 @@ func queryTaskFolderCounts(
 				AND task.state = $5`+taskResponsibilityFilter("$6", "$7")+`
 		)
 		SELECT
-			count(*) FILTER (WHERE listed),
-			count(*) FILTER (WHERE listed AND category = 'billing'),
-			count(*) FILTER (WHERE listed AND category = 'appointments'),
-			count(*) FILTER (WHERE listed AND category = 'documentation'),
-			count(*) FILTER (WHERE listed AND category = 'optical'),
-			count(*) FILTER (WHERE listed AND category = 'medication'),
-			count(*) FILTER (WHERE listed AND category = 'referrals'),
-			count(*) FILTER (WHERE listed AND category = 'other'),
-			count(*) FILTER (WHERE listed AND category = 'insurance'),
-			count(*) FILTER (WHERE listed AND category = 'pre_op'),
-			count(*) FILTER (WHERE listed AND category = 'post_op'),
+			count(*) FILTER (WHERE listed),`+taskCategoryCountColumns+`
 			count(*) FILTER (WHERE text_review AND recent_text_attention),
 			count(*) FILTER (WHERE call_recovery),
 			count(*) FILTER (WHERE spring_hill_review)
 		FROM scoped
-	`, search.arguments(command.PracticeID, locationIDs, search.pattern, search.digits, command.State, command.Responsibility, strings.ToLower(command.Identity.Email), command.Kind)...).Scan(
-		&counts.Tasks,
-		&counts.Categories.Billing,
-		&counts.Categories.Appointments,
-		&counts.Categories.Documentation,
-		&counts.Categories.Optical,
-		&counts.Categories.Medication,
-		&counts.Categories.Referrals,
-		&counts.Categories.Other,
-		&counts.Categories.Insurance, &counts.Categories.PreOp, &counts.Categories.PostOp,
-		&counts.Texts, &counts.CallRecovery, &counts.AppointmentReviews,
-	)
+	`, search.arguments(command.PracticeID, locationIDs, search.pattern, search.digits, command.State, command.Responsibility, strings.ToLower(command.Identity.Email), command.Kind)...).Scan(destinations...)
 	if err != nil {
 		return work.TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)
 	}
+	counts.Categories = make(work.TaskCategoryCounts, len(work.TaskCategories))
+	for i, category := range work.TaskCategories {
+		counts.Categories[category] = categoryCounts[i]
+	}
 	return counts, nil
 }
+
+var taskCategoryCountColumns = func() string {
+	var columns strings.Builder
+	for _, category := range work.TaskCategories {
+		columns.WriteString("\n\t\t\tcount(*) FILTER (WHERE listed AND category = '" + string(category) + "'),")
+	}
+	return columns.String()
+}()
 
 type taskCursor struct {
 	Kind      string            `json:"kind,omitempty"`

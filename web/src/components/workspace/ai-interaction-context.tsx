@@ -185,7 +185,7 @@ function AppointmentSummary({
   )
 }
 
-function DetailValue({ label, value }: { label: string; value: string }) {
+export function DetailValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>

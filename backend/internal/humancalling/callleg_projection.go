@@ -310,14 +310,7 @@ func (m *Module) applyCallerAnswered(
 				WHERE member.id = calling_scope.membership_id
 					AND member.email = ANY(ring_group.member_emails)
 			))
-			AND (
-				calling_scope.location_scope = 'ALL'
-				OR EXISTS (
-					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = calling_scope.membership_id
-						AND allowed.location_id = $2
-				)
-			)
+			AND `+callingScopeCoversLocation("calling_scope", "$2")+`
 			AND lease.desired_available
 			AND lease.registered
 			AND lease.microphone_ready
@@ -541,19 +534,8 @@ func (m *Module) applyStaffInitiated(
 				FROM access_operational_scopes operational_scope
 				WHERE operational_scope.practice_id = $1
 					AND operational_scope.user_subject = $2
-					AND (
-						$4 = 'OUTBOUND'
-						OR operational_scope.role = 'STAFF'
-						OR operational_scope.role IS NULL
-					)
-					AND (
-						operational_scope.location_scope = 'ALL'
-						OR EXISTS (
-							SELECT 1 FROM access_membership_locations allowed
-							WHERE allowed.membership_id = operational_scope.membership_id
-								AND allowed.location_id = $3
-						)
-					)
+					AND `+staffMayTakeCall("operational_scope", "$4")+`
+					AND `+callingScopeCoversLocation("operational_scope", "$3")+`
 			)
 		`, practiceID, staffSubject, locationID, direction).Scan(&staffEligible); err != nil {
 			return "", fmt.Errorf("revalidate Staff answer authorization: %w", err)
@@ -696,8 +678,10 @@ func (m *Module) applyStaffInitiated(
 		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return "", err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
-		return "", err
+	if fact.Type == FactCallAnswered || direction == CallOutbound {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+			return "", err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", fmt.Errorf("commit Staff CallLeg projection: %w", err)

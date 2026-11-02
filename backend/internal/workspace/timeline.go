@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
@@ -31,7 +31,7 @@ func (m *Module) QueryPhoneTimeline(
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.Phone = strings.TrimSpace(command.Phone)
 	if m.database == nil || m.access == nil || command.PracticeID == "" ||
-		!isCanonicalPhone(command.Phone) {
+		!contactcontext.IsCanonicalPhone(command.Phone) {
 		return TimelinePage{}, ErrInvalidInput
 	}
 	limit, err := timelineLimit(command.Limit)
@@ -54,12 +54,7 @@ func (m *Module) QueryPhoneTimeline(
 		return TimelinePage{}, err
 	}
 
-	var page TimelinePage
-	if command.Ungrouped {
-		page, err = queryFlatPhoneHistory(ctx, tx, command.PracticeID, locationIDs, command.Phone, cursor, limit)
-	} else {
-		page, err = queryPhoneHistory(ctx, tx, command.PracticeID, locationIDs, command.Phone, cursor, limit)
-	}
+	page, err := queryPhoneHistory(ctx, tx, command.PracticeID, locationIDs, command.Phone, cursor, limit)
 	if err != nil {
 		return TimelinePage{}, err
 	}
@@ -70,67 +65,8 @@ func (m *Module) QueryPhoneTimeline(
 	return page, nil
 }
 
-func queryFlatPhoneHistory(ctx context.Context, tx pgx.Tx, practiceID string, locationIDs []string,
-	phone string, cursor *pageCursor, limit int,
-) (TimelinePage, error) {
-	messages, err := queryTimelineMessages(ctx, tx, practiceID, locationIDs, phone, cursor, limit, nil)
-	if err != nil {
-		return TimelinePage{}, err
-	}
-	calls, err := queryTimelineCalls(ctx, tx, practiceID, locationIDs, phone, cursor, limit, nil)
-	if err != nil {
-		return TimelinePage{}, err
-	}
-	ai, err := queryPhoneInteractions(ctx, tx, practiceID, locationIDs, phone, cursor, limit, nil)
-	if err != nil {
-		return TimelinePage{}, err
-	}
-	tasks, err := queryPhoneTaskActivities(ctx, tx, practiceID, locationIDs, phone, cursor, limit, nil)
-	if err != nil {
-		return TimelinePage{}, err
-	}
-	items := append(messages, calls...)
-	items = append(items, ai...)
-	items = append(items, tasks...)
-	return paginateTimeline(items, limit), nil
-}
-
 const messageProjectionSQL = `
-	SELECT
-		thread.id::text,
-		thread.practice_id::text,
-		thread.location_id::text,
-		location.name,
-		thread.office_phone,
-		thread.external_phone,
-		COALESCE(thread.display_name, ''),
-		COALESCE(thread.name_source, ''),
-		thread.outbound_blocked,
-		thread.created_at,
-		thread.updated_at,
-		message.id::text,
-		message.direction,
-		COALESCE(message.body, ''),
-		message.sender,
-		message.destination,
-		message.delivery_state,
-		COALESCE(message.safe_failure_code, ''),
-		COALESCE(message.provider_message_id, ''),
-		COALESCE(message.task_id::text, ''),
-		COALESCE(message.retry_of_message_id::text, ''),
-		COALESCE(message.created_by_kind, ''),
-		COALESCE(message.created_by_subject, ''),
-		COALESCE(attachment.id::text, ''),
-		COALESCE(attachment.direction, ''),
-		COALESCE(attachment.state, ''),
-		COALESCE(attachment.file_name, ''),
-		COALESCE(attachment.content_type, ''),
-		COALESCE(attachment.byte_size, 0),
-		COALESCE(attachment.created_at, message.created_at),
-		COALESCE(attachment.updated_at, message.updated_at),
-		message.created_at,
-		message.updated_at,
-		message.version
+	SELECT ` + messaging.MessageColumns + `
 	FROM messaging_messages message
 	JOIN messaging_threads thread ON thread.id = message.thread_id
 	JOIN access_locations location
@@ -172,7 +108,7 @@ func queryTimelineMessages(
 	defer rows.Close()
 	items := make([]TimelineItem, 0, limit+1)
 	for rows.Next() {
-		message, err := scanMessageProjection(rows)
+		message, err := messaging.ScanMessage(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan Message: %w", err)
 		}
@@ -184,65 +120,6 @@ func queryTimelineMessages(
 		return nil, fmt.Errorf("iterate Messages: %w", err)
 	}
 	return items, nil
-}
-
-type rowScanner interface {
-	Scan(...any) error
-}
-
-func scanMessageProjection(scanner rowScanner) (messaging.Message, error) {
-	var message messaging.Message
-	var attachment messaging.Attachment
-	var createdByKind access.ActorKind
-	var createdBySubject string
-	if err := scanner.Scan(
-		&message.Thread.ID,
-		&message.Thread.PracticeID,
-		&message.Thread.LocationID,
-		&message.Thread.LocationName,
-		&message.Thread.OfficePhone,
-		&message.Thread.ExternalPhone,
-		&message.Thread.DisplayName,
-		&message.Thread.NameSource,
-		&message.Thread.OutboundBlocked,
-		&message.Thread.CreatedAt,
-		&message.Thread.UpdatedAt,
-		&message.ID,
-		&message.Direction,
-		&message.Body,
-		&message.Sender,
-		&message.Destination,
-		&message.Delivery,
-		&message.SafeFailureCode,
-		&message.ProviderMessageID,
-		&message.TaskID,
-		&message.RetryOfMessageID,
-		&createdByKind,
-		&createdBySubject,
-		&attachment.ID,
-		&attachment.Direction,
-		&attachment.State,
-		&attachment.FileName,
-		&attachment.ContentType,
-		&attachment.ByteSize,
-		&attachment.CreatedAt,
-		&attachment.UpdatedAt,
-		&message.CreatedAt,
-		&message.UpdatedAt,
-		&message.Version,
-	); err != nil {
-		return messaging.Message{}, err
-	}
-	if attachment.ID != "" {
-		attachment.MessageID = message.ID
-		message.Attachment = &attachment
-	}
-	if createdByKind != "" {
-		message.CreatedBy = &messaging.ActorSnapshot{
-			Kind: createdByKind, Subject: createdBySubject,
-		}
-	}
-	return message, nil
 }
 
 const callProjectionSQL = `
@@ -565,9 +442,4 @@ func nullableCursorID(cursor *pageCursor) any {
 		return nil
 	}
 	return cursor.ID
-}
-
-func isCanonicalPhone(phone string) bool {
-	normalized, err := messaging.NormalizePhone(phone)
-	return err == nil && normalized == phone
 }

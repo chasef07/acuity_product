@@ -1,18 +1,8 @@
 "use client"
 
-import {
-  Bar,
-  CartesianGrid,
-  BarChart,
-  XAxis,
-  YAxis,
-} from "recharts"
+import { Bar } from "recharts"
 
-import {
-  ChartContainer,
-  ChartTooltip,
-  type ChartConfig,
-} from "@/components/ui/chart"
+import type { ChartConfig } from "@/components/ui/chart"
 import {
   Table,
   TableBody,
@@ -33,6 +23,7 @@ import { formatDuration } from "@/lib/vocabulary"
 import { useReducedMotion } from "@/lib/reduced-motion"
 import { dailyTotalComparison } from "@/lib/analytics-trend"
 import styles from "./booking-overview.module.css"
+import { DailyChartFrame } from "./daily-bar-chart"
 
 type Metric = BookingMetric
 const chartConfig = {
@@ -131,64 +122,35 @@ function BookingTrend({
 }) {
   const reducedMotion = useReducedMotion()
   return (
-    <ChartContainer
-      config={chartConfig}
-      className="h-[300px] w-full aspect-auto"
-      aria-label={
+    <DailyChartFrame
+      label={
         metric === "bookings"
           ? "Daily confirmed bookings"
           : metric === "volume"
             ? "Daily calls by patient status"
             : "Daily p50 duration by patient status"
       }
+      config={chartConfig}
+      data={daily}
+      yAxis={{
+        domain: [0, "auto"],
+        tickFormatter: (value: number) => (metric === "duration" ? formatDuration(value) : String(value)),
+        allowDecimals: false,
+      }}
+      tooltip={<DayTooltip metric={metric} series={series} />}
     >
-      <BarChart
-        accessibilityLayer
-        data={daily}
-        margin={{ top: 20, right: 16, bottom: 8, left: 8 }}
-      >
-        <CartesianGrid
-          vertical={false}
-          stroke="var(--border)"
-          strokeOpacity={0.65}
+      {series.map((cohort) => (
+        <Bar
+          key={cohort}
+          name={chartConfig[cohort].label}
+          dataKey={(day: BookingDay) => chartValue(day[cohort], metric)}
+          fill={`var(--color-${cohort})`}
+          stackId={metric === "duration" ? undefined : metric}
+          maxBarSize={36}
+          isAnimationActive={!reducedMotion}
         />
-        <XAxis
-          height={40}
-          dataKey="day"
-          tickFormatter={formatDay}
-          axisLine={false}
-          tickLine={false}
-          tickMargin={14}
-          minTickGap={48}
-        />
-        <YAxis
-          domain={[0, "auto"]}
-          tickFormatter={(value: number) =>
-            metric === "duration" ? formatDuration(value) : String(value)
-          }
-          axisLine={false}
-          tickLine={false}
-          width="auto"
-          tickMargin={10}
-          allowDecimals={false}
-        />
-        <ChartTooltip
-          content={<DayTooltip metric={metric} series={series} />}
-          cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
-        />
-        {series.map((cohort) => (
-          <Bar
-            key={cohort}
-            name={chartConfig[cohort].label}
-            dataKey={(day: BookingDay) => chartValue(day[cohort], metric)}
-            fill={`var(--color-${cohort})`}
-            stackId={metric === "duration" ? undefined : metric}
-            maxBarSize={36}
-            isAnimationActive={!reducedMotion}
-          />
-        ))}
-      </BarChart>
-    </ChartContainer>
+      ))}
+    </DailyChartFrame>
   )
 }
 

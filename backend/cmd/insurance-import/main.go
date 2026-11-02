@@ -16,7 +16,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/insurance"
 	"github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const importReason = "Imported from the middleware's insurance files"
@@ -69,7 +68,7 @@ func run(practice, fromFile string, apply bool) error {
 	if os.Getenv("INSURANCE_IMPORT_DATABASE_URL") == "" || os.Getenv("INSURANCE_OPERATOR_EMAIL") == "" {
 		return errors.New("INSURANCE_IMPORT_DATABASE_URL and INSURANCE_OPERATOR_EMAIL are required")
 	}
-	pool, err := openPool(ctx)
+	pool, err := postgres.OpenOperatorPool(ctx, "INSURANCE_IMPORT_DATABASE_URL", "INSURANCE_DATABASE_HOST")
 	if err != nil {
 		return err
 	}
@@ -141,30 +140,4 @@ func describe(err error) error {
 		lines = append(lines, fmt.Sprintf("  %s/%s/%s %s: %s", reason.Region, reason.Table, reason.PlanID, reason.Rule, reason.Message))
 	}
 	return errors.New(strings.Join(lines, "\n"))
-}
-
-func openPool(ctx context.Context) (*pgxpool.Pool, error) {
-	config, err := pgxpool.ParseConfig(os.Getenv("INSURANCE_IMPORT_DATABASE_URL"))
-	if err != nil {
-		return nil, errors.New("invalid import database configuration")
-	}
-	if host := os.Getenv("INSURANCE_DATABASE_HOST"); host != "" {
-		if host != "127.0.0.1" {
-			return nil, errors.New("INSURANCE_DATABASE_HOST override only supports the loopback Cloud SQL proxy")
-		}
-		config.ConnConfig.Host = host
-		config.ConnConfig.Port = 5432
-		config.ConnConfig.TLSConfig = nil
-		config.ConnConfig.Fallbacks = nil
-	}
-	config.MaxConns = 1
-	config.MinConns = 0
-	config.ConnConfig.ConnectTimeout = 5 * time.Second
-	config.ConnConfig.RuntimeParams["statement_timeout"] = "10000"
-	config.ConnConfig.RuntimeParams["lock_timeout"] = "2000"
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		return nil, errors.New("could not open import database")
-	}
-	return pool, nil
 }

@@ -18,13 +18,6 @@ func (m *Module) AcquireSoftphone(
 	if sessionID == "" || identity.Subject == "" || !identity.EmailVerified {
 		return SoftphoneState{}, ErrDenied
 	}
-	discovery, err := m.access.DiscoverActorReadOnly(ctx, identity)
-	if err != nil {
-		return SoftphoneState{}, callingAccessError(err)
-	}
-	if !hasOperationalCallingAccess(discovery) {
-		return SoftphoneState{}, ErrDenied
-	}
 	now := m.now()
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -43,19 +36,8 @@ func (m *Module) AcquireSoftphone(
 			ON operational_scope.practice_id = call.practice_id
 			AND operational_scope.user_subject = leg.staff_subject
 		WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
-			AND (
-				call.direction = 'OUTBOUND'
-				OR operational_scope.role = 'STAFF'
-				OR operational_scope.role IS NULL
-			)
-			AND (
-				operational_scope.location_scope = 'ALL'
-				OR EXISTS (
-					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = operational_scope.membership_id
-						AND allowed.location_id = call.location_id
-				)
-			)
+			AND `+staffMayTakeCall("operational_scope", "call.direction")+`
+			AND `+callingScopeCoversLocation("operational_scope", "call.location_id")+`
 			AND leg.state NOT IN ('ENDED', 'FAILED')
 		ORDER BY call.id
 		FOR UPDATE OF call
@@ -151,19 +133,8 @@ func (m *Module) AcquireSoftphone(
 			AND operational_scope.practice_id = call.practice_id
 			AND operational_scope.user_subject = leg.staff_subject
 			AND leg.role = 'STAFF' AND leg.staff_subject = $1
-			AND (
-				call.direction = 'OUTBOUND'
-				OR operational_scope.role = 'STAFF'
-				OR operational_scope.role IS NULL
-			)
-			AND (
-				operational_scope.location_scope = 'ALL'
-				OR EXISTS (
-					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = operational_scope.membership_id
-						AND allowed.location_id = call.location_id
-				)
-			)
+			AND `+staffMayTakeCall("operational_scope", "call.direction")+`
+			AND `+callingScopeCoversLocation("operational_scope", "call.location_id")+`
 			AND leg.state NOT IN ('ENDED', 'FAILED')
 			AND leg.staff_session_id IS DISTINCT FROM $2
 	`, identity.Subject, sessionID, now); err != nil {
@@ -350,19 +321,8 @@ func occupiedCallQuery(sessionID string) string {
 			JOIN access_operational_scopes operational_scope
 				ON operational_scope.practice_id = occupied.practice_id
 				AND operational_scope.user_subject = $1
-			WHERE (
-					occupied.direction = 'OUTBOUND'
-					OR operational_scope.role = 'STAFF'
-					OR operational_scope.role IS NULL
-				)
-				AND (
-					operational_scope.location_scope = 'ALL'
-					OR EXISTS (
-						SELECT 1 FROM access_membership_locations allowed
-						WHERE allowed.membership_id = operational_scope.membership_id
-							AND allowed.location_id = occupied.location_id
-					)
-				)
+			WHERE ` + staffMayTakeCall("operational_scope", "occupied.direction") + `
+				AND ` + callingScopeCoversLocation("operational_scope", "occupied.location_id") + `
 				AND (
 					occupied.direction <> 'OUTBOUND'
 					OR occupied.state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
@@ -374,7 +334,7 @@ func occupiedCallQuery(sessionID string) string {
 	`
 }
 
-const pendingOutcomeCallQuery = `
+var pendingOutcomeCallQuery = `
 		SELECT COALESCE((
 			SELECT call.id::text
 			FROM human_calling_calls call
@@ -383,19 +343,8 @@ const pendingOutcomeCallQuery = `
 				ON operational_scope.practice_id = call.practice_id
 				AND operational_scope.user_subject = leg.staff_subject
 			WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
-				AND (
-					call.direction = 'OUTBOUND'
-					OR operational_scope.role = 'STAFF'
-					OR operational_scope.role IS NULL
-				)
-				AND (
-					operational_scope.location_scope = 'ALL'
-					OR EXISTS (
-						SELECT 1 FROM access_membership_locations allowed
-						WHERE allowed.membership_id = operational_scope.membership_id
-							AND allowed.location_id = call.location_id
-					)
-				)
+				AND ` + staffMayTakeCall("operational_scope", "call.direction") + `
+				AND ` + callingScopeCoversLocation("operational_scope", "call.location_id") + `
 				AND leg.bridged_at IS NOT NULL
 				AND call.terminal_outcome = 'ENDED'
 				AND call.disposition_at IS NULL

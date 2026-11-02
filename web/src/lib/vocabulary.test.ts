@@ -7,6 +7,8 @@ import {
   formatDurationBetween,
   formatPhone,
   formatRelativeTime,
+  formatShare,
+  latencyLabel,
   taskGroupLabel,
   taskGroups,
 } from "./vocabulary.ts"
@@ -31,6 +33,21 @@ test("formats a duration between timestamps", () => {
   assert.equal(formatDurationBetween("2026-10-01T12:00:00Z", "2026-10-01T12:00:59Z"), "59s")
   assert.equal(formatDurationBetween("2026-10-01T12:00:00Z", "2026-10-01T13:00:00Z"), "1h 0m 0s")
   assert.equal(formatDurationBetween("not a time", "2026-10-01T12:00:00Z"), "—")
+})
+
+test("formats a share as a percent and a missing denominator as a dash", () => {
+  assert.equal(formatShare(0.1234), "12.3%")
+  assert.equal(formatShare(1), "100%")
+  assert.equal(formatShare(0 / 0), "—")
+  assert.equal(formatShare(3 / 0), "—")
+})
+
+test("formats latency in milliseconds under a second and seconds above", () => {
+  assert.equal(latencyLabel(undefined), "—")
+  assert.equal(latencyLabel(0), "0 ms")
+  assert.equal(latencyLabel(999), "999 ms")
+  assert.equal(latencyLabel(1000), "1.00 s")
+  assert.equal(latencyLabel(2345), "2.35 s")
 })
 
 test("formats an elapsed clock", () => {

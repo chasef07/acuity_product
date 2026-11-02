@@ -9,6 +9,8 @@ import (
 var ErrInvalidInput = errors.New("invalid phone context")
 var canonicalPhone = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
 
+func IsCanonicalPhone(value string) bool { return canonicalPhone.MatchString(value) }
+
 func NormalizePhone(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if canonicalPhone.MatchString(value) {

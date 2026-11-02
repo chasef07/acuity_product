@@ -43,11 +43,6 @@ accessTokenChannel?.addEventListener("message", (event) => {
   if (event.data === accessTokenInvalidationMessage) invalidateAccessToken()
 })
 
-export async function getAccessToken(): Promise<string | undefined> {
-  const result = await getAccessTokenResult()
-  return result.status === "authenticated" ? result.token : undefined
-}
-
 export async function getAccessTokenResult(): Promise<AccessTokenResult> {
   const now = Date.now()
   if (

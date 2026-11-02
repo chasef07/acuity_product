@@ -202,7 +202,7 @@ function ActivityItem({
 
   if (!onOpen) {
     return (
-      <Item size="sm" className="mx-auto max-w-xl">
+      <Item className="mx-auto max-w-xl">
         {content}
       </Item>
     )
@@ -210,7 +210,6 @@ function ActivityItem({
 
   return (
     <Item
-      size="sm"
       data-selected={selected || undefined}
       className="relative mx-auto max-w-xl cursor-pointer text-left before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent hover:bg-muted data-[selected=true]:bg-transparent data-[selected=true]:before:bg-foreground data-[selected=true]:hover:bg-transparent"
       render={relatedActions ? <div /> : (

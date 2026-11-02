@@ -25,14 +25,13 @@ const (
 )
 
 type acceptedReceipt struct {
-	ID                  string
-	ServiceSubject      string
-	PracticeID          string
-	LocationID          string
-	SourceCallID        string
-	State               receiptState
-	InteractionID       string
-	ProjectionErrorCode string
+	ID             string
+	ServiceSubject string
+	PracticeID     string
+	LocationID     string
+	SourceCallID   string
+	State          receiptState
+	InteractionID  string
 }
 
 type storedReceiptPayload struct {
@@ -279,8 +278,7 @@ func (m *Module) acceptReceipt(
 				service_subject,
 				location_id::text,
 				state,
-				COALESCE(interaction_id::text, ''),
-				COALESCE(projection_error_code, '')
+				COALESCE(interaction_id::text, '')
 			FROM ai_interaction_receipts
 			WHERE practice_id = $1
 				AND source_call_id = $2
@@ -292,7 +290,6 @@ func (m *Module) acceptReceipt(
 			&receipt.LocationID,
 			&receipt.State,
 			&receipt.InteractionID,
-			&receipt.ProjectionErrorCode,
 		); err != nil {
 			return acceptedReceipt{}, fmt.Errorf("load duplicate AI Interaction receipt: %w", err)
 		}
@@ -348,17 +345,6 @@ func (m *Module) projectReceipt(
 	stage LifecycleStage,
 	projectedAt time.Time,
 ) (Interaction, UpsertStatus, error) {
-	return m.projectReceiptWithRecovery(ctx, receipt, command, stage, projectedAt, nil)
-}
-
-func (m *Module) projectReceiptWithRecovery(
-	ctx context.Context,
-	receipt acceptedReceipt,
-	command IngestCommand,
-	stage LifecycleStage,
-	projectedAt time.Time,
-	operator *access.Identity,
-) (Interaction, UpsertStatus, error) {
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Interaction{}, "", fmt.Errorf("begin AI Interaction projection: %w", err)
@@ -367,26 +353,17 @@ func (m *Module) projectReceiptWithRecovery(
 	if err := tx.QueryRow(ctx, `
 		SELECT
 			state,
-			COALESCE(interaction_id::text, ''),
-			COALESCE(projection_error_code, '')
+			COALESCE(interaction_id::text, '')
 		FROM ai_interaction_receipts
 		WHERE id = $1
 		FOR UPDATE
 	`, receipt.ID).Scan(
 		&receipt.State,
 		&receipt.InteractionID,
-		&receipt.ProjectionErrorCode,
 	); err != nil {
 		return Interaction{}, "", fmt.Errorf("lock AI Interaction receipt: %w", err)
 	}
-	var authorization access.Authorization
-	if operator != nil {
-		authorization, err = m.authorize(ctx, tx, *operator, receipt.PracticeID, receipt.LocationID, true, audienceOperator)
-		if err != nil {
-			return Interaction{}, "", err
-		}
-	}
-	if receipt.State == receiptQuarantined && (operator == nil || receipt.ProjectionErrorCode != "SOURCE_CONFLICT") {
+	if receipt.State == receiptQuarantined {
 		return Interaction{}, "", ErrConflict
 	}
 	if receipt.State == receiptRetired {
@@ -415,17 +392,6 @@ func (m *Module) projectReceiptWithRecovery(
 		}
 		return current, StatusUpdated, nil
 	}
-	if operator != nil {
-		if !found || receipt.State != receiptQuarantined ||
-			current.ServiceSubject != receipt.ServiceSubject ||
-			current.LocationID != receipt.LocationID || current.Phone != command.CallerPhone ||
-			current.OfficePhone != command.OfficePhone ||
-			current.StartedAt.Equal(command.StartedAt) ||
-			(command.EndedAt != nil && command.EndedAt.Before(current.StartedAt)) {
-			return Interaction{}, "", ErrConflict
-		}
-		command.StartedAt = current.StartedAt
-	}
 	status := StatusUpdated
 	if !found {
 		current = Interaction{
@@ -450,9 +416,6 @@ func (m *Module) projectReceiptWithRecovery(
 		return m.quarantineReceipt(ctx, tx, receipt.ID, "SOURCE_CONFLICT")
 	}
 	if err := applyMessage(&current, command, stage, projectedAt); err != nil {
-		if operator != nil {
-			return Interaction{}, "", err
-		}
 		if errors.Is(err, ErrConflict) {
 			return m.quarantineReceipt(ctx, tx, receipt.ID, "EVIDENCE_CONFLICT")
 		}
@@ -491,7 +454,7 @@ func (m *Module) projectReceiptWithRecovery(
 			return Interaction{}, "", err
 		}
 	}
-	if reviewableOutcome(current) || recoveryCompleted > 0 || operator != nil {
+	if reviewableOutcome(current) || recoveryCompleted > 0 {
 		if _, err := m.access.RecordWorkspaceChange(
 			ctx,
 			tx,
@@ -510,14 +473,6 @@ func (m *Module) projectReceiptWithRecovery(
 		WHERE id = $1 AND state = $4
 	`, receipt.ID, current.ID, projectedAt, receipt.State); err != nil {
 		return Interaction{}, "", fmt.Errorf("complete AI Interaction receipt: %w", err)
-	}
-	if operator != nil {
-		if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{
-			Action: "ai_interaction.source_clock_recovered", ResourceType: "ai_interaction_receipt",
-			ResourceID: receipt.ID, ResourceVersion: 1, OccurredAt: projectedAt,
-		}); err != nil {
-			return Interaction{}, "", err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Interaction{}, "", fmt.Errorf("commit AI Interaction projection: %w", err)

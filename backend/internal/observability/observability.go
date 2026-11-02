@@ -44,23 +44,6 @@ const (
 
 type CommandAction string
 
-const (
-	CommandAnswerCaller            CommandAction = "answer_caller"
-	CommandStartRingWindow         CommandAction = "start_ring_window"
-	CommandDialStaff               CommandAction = "dial_staff"
-	CommandBridge                  CommandAction = "bridge"
-	CommandStopRingWindow          CommandAction = "stop_ring_window"
-	CommandHangupLeg               CommandAction = "hangup_leg"
-	CommandSpeakVoicemail          CommandAction = "speak_voicemail"
-	CommandStartVoicemailRecording CommandAction = "start_voicemail_recording"
-	CommandDialOutboundStaff       CommandAction = "dial_outbound_staff"
-	CommandDialOutboundDestination CommandAction = "dial_outbound_destination"
-	CommandCreateCredential        CommandAction = "create_credential"
-	CommandDisableCredential       CommandAction = "disable_credential"
-	CommandCreateJWT               CommandAction = "create_jwt"
-	CommandTransferStaff           CommandAction = "transfer_staff"
-)
-
 type CommandOutcome string
 
 const (
@@ -101,16 +84,7 @@ const (
 type DatabaseCause string
 
 const (
-	DatabaseSucceeded        DatabaseCause = "succeeded"
-	DatabaseAcquireTimeout   DatabaseCause = "acquire_timeout"
-	DatabaseOperationTimeout DatabaseCause = "operation_timeout"
-	DatabaseStatementTimeout DatabaseCause = "statement_timeout"
-	DatabaseLockTimeout      DatabaseCause = "lock_timeout"
-	DatabaseSerialization    DatabaseCause = "serialization"
-	DatabaseDeadlock         DatabaseCause = "deadlock"
-	DatabaseConnection       DatabaseCause = "connection"
-	DatabaseCanceled         DatabaseCause = "canceled"
-	DatabaseOther            DatabaseCause = "other"
+	DatabaseSucceeded DatabaseCause = "succeeded"
 )
 
 type AvailabilityRoute string
@@ -170,19 +144,7 @@ const (
 	RecordingPlaybackUnavailable     RecordingPlaybackOutcome = "unavailable"
 	RecordingPlaybackInvalidResponse RecordingPlaybackOutcome = "invalid_response"
 	RecordingPlaybackURLExpired      RecordingPlaybackOutcome = "url_expired"
-
-	VoicemailPlaybackSucceeded       = RecordingPlaybackSucceeded
-	VoicemailPlaybackDenied          = RecordingPlaybackDenied
-	VoicemailPlaybackNotFound        = RecordingPlaybackNotFound
-	VoicemailPlaybackProviderAuth    = RecordingPlaybackProviderAuth
-	VoicemailPlaybackRateLimited     = RecordingPlaybackRateLimited
-	VoicemailPlaybackTimeout         = RecordingPlaybackTimeout
-	VoicemailPlaybackUnavailable     = RecordingPlaybackUnavailable
-	VoicemailPlaybackInvalidResponse = RecordingPlaybackInvalidResponse
-	VoicemailPlaybackURLExpired      = RecordingPlaybackURLExpired
 )
-
-type VoicemailPlaybackOutcome = RecordingPlaybackOutcome
 
 type RecordingMaintenanceOperation string
 

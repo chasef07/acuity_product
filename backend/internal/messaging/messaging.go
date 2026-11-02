@@ -21,11 +21,11 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
+	"github.com/chasef07/acuity_product/backend/internal/telnyxapi"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/team-telnyx/telnyx-go/v4"
-	"github.com/team-telnyx/telnyx-go/v4/option"
 )
 
 type Direction string
@@ -74,10 +74,7 @@ var (
 	errUnmatchedProviderEvent = errors.New("unmatched messaging provider event")
 )
 
-var (
-	canonicalPhone = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
-	idempotencyKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
-)
+var idempotencyKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
 
 type Thread struct {
 	ID              string
@@ -1771,25 +1768,12 @@ func unwrapTelnyxWebhook(
 	signature string,
 	publicKeys [][]byte,
 ) (normalizedWebhookEvent, bool) {
-	headers := make(http.Header)
-	headers.Set("telnyx-timestamp", strings.TrimSpace(signatureTimestamp))
-	headers.Set("telnyx-signature-ed25519", strings.TrimSpace(signature))
-	webhooks := telnyx.NewWebhookService()
-	for _, publicKey := range publicKeys {
-		if len(publicKey) == 0 {
-			continue
-		}
-		event, err := webhooks.Unwrap(
-			rawBody,
-			headers,
-			option.WithPublicKey(base64.StdEncoding.EncodeToString(publicKey)),
-		)
-		if err == nil {
-			envelope, decodeErr := normalizeSDKWebhook(event)
-			return envelope, decodeErr == nil
-		}
+	event, err := telnyxapi.VerifyWebhook(rawBody, signatureTimestamp, signature, publicKeys)
+	if err != nil {
+		return normalizedWebhookEvent{}, false
 	}
-	return normalizedWebhookEvent{}, false
+	envelope, decodeErr := normalizeSDKWebhook(event)
+	return envelope, decodeErr == nil
 }
 
 func sameWebhookEventData(left []byte, right []byte) bool {
@@ -1917,41 +1901,6 @@ func (m *Module) finishProjectionError(
 	default:
 		return projectionErr
 	}
-}
-
-func (m *Module) ReadMessage(
-	ctx context.Context,
-	identity access.Identity,
-	messageID string,
-) (Message, error) {
-	if m.database == nil || m.access == nil || strings.TrimSpace(messageID) == "" {
-		return Message{}, ErrDenied
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return Message{}, fmt.Errorf("begin Message read: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	message, err := loadMessage(ctx, tx, messageID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Message{}, ErrDenied
-	}
-	if err != nil {
-		return Message{}, err
-	}
-	if _, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		identity,
-		message.Thread.PracticeID,
-		message.Thread.LocationID,
-	); err != nil {
-		return Message{}, ErrDenied
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Message{}, fmt.Errorf("commit Message read: %w", err)
-	}
-	return message, nil
 }
 
 func (m *Module) CreateFollowUpTask(
@@ -2446,9 +2395,7 @@ func (m *Module) projectInboundReceipt(
 		provisionalType := strings.ToLower(strings.TrimSpace(
 			payload.Media[0].ContentType,
 		))
-		switch provisionalType {
-		case "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf":
-		default:
+		if _, ok := attachmentExtensions[provisionalType]; !ok {
 			if strings.EqualFold(filepath.Ext(providerMediaURL), ".pdf") {
 				provisionalType = "application/pdf"
 			} else {
@@ -2480,7 +2427,7 @@ func (m *Module) projectInboundReceipt(
 				$1, $2, $3, $4, 'INBOUND', $5, $6, $7, $8, $9, $9
 			)
 		`, uuid.NewString(), practiceID, locationID, messageID, state,
-			attachmentFileName(provisionalType), provisionalType,
+			AttachmentFileName(provisionalType), provisionalType,
 			providerMediaURL, occurredAt,
 		); err != nil {
 			return fmt.Errorf("record inbound attachment: %w", err)
@@ -2635,7 +2582,7 @@ func isStart(body string) bool {
 	}
 }
 
-const messageColumns = `
+const MessageColumns = `
 	message.id::text,
 	thread.id::text,
 	thread.practice_id::text,
@@ -2671,7 +2618,7 @@ const messageColumns = `
 	message.updated_at,
 	message.version`
 
-func scanMessage(row pgx.Row, extra ...any) (Message, error) {
+func ScanMessage(row pgx.Row, extra ...any) (Message, error) {
 	var result Message
 	var attachment Attachment
 	var createdByKind access.ActorKind
@@ -2733,8 +2680,8 @@ func loadMessageByIdempotency(
 	key string,
 ) (Message, []byte, error) {
 	var fingerprint []byte
-	result, err := scanMessage(tx.QueryRow(ctx, `
-		SELECT `+messageColumns+`,
+	result, err := ScanMessage(tx.QueryRow(ctx, `
+		SELECT `+MessageColumns+`,
 			command.input_fingerprint
 		FROM messaging_provider_commands command
 		JOIN messaging_messages message ON message.id = command.message_id
@@ -2756,8 +2703,8 @@ func loadMessage(
 	tx pgx.Tx,
 	messageID string,
 ) (Message, error) {
-	result, err := scanMessage(tx.QueryRow(ctx, `
-		SELECT `+messageColumns+`
+	result, err := ScanMessage(tx.QueryRow(ctx, `
+		SELECT `+MessageColumns+`
 		FROM messaging_messages message
 		LEFT JOIN messaging_attachments attachment
 			ON attachment.message_id = message.id
@@ -2856,7 +2803,6 @@ func normalizePhone(value string) (string, error) {
 	}
 	return phone, nil
 }
-func NormalizePhone(value string) (string, error) { return normalizePhone(value) }
 
 func sendFingerprint(command SendCommand) ([32]byte, error) {
 	encoded, err := json.Marshal(struct {

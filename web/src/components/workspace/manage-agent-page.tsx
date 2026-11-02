@@ -1,7 +1,7 @@
 "use client"
 
 import { useId, type ReactNode } from "react"
-import { ChevronRightIcon } from "lucide-react"
+import { ChevronRightIcon, HistoryIcon } from "lucide-react"
 
 import { Alert, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -24,8 +24,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { PortalFailure } from "@/lib/clients/portal-request"
+import { Spinner } from "@/components/ui/spinner"
+import { signInRequired, type PortalFailure } from "@/lib/clients/portal-request"
 import type { PortalQuery } from "@/lib/data/queries"
 import { WorkspacePageHeader } from "./workspace-page-header"
 
@@ -57,6 +60,82 @@ export function AgentPage({
       <div className="min-h-0 flex-1 overflow-auto px-4 pt-4 pb-6 sm:px-6">{children}</div>
     </section>
   )
+}
+
+export function HistorySheet({ description, children }: { description: string; children: ReactNode }) {
+  return (
+    <Sheet>
+      <SheetTrigger render={<Button variant="outline" size="sm" />}>
+        <HistoryIcon data-icon="inline-start" />
+        History
+      </SheetTrigger>
+      <SheetContent className="h-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+        <SheetHeader className="border-b px-5 py-4">
+          <SheetTitle>History</SheetTitle>
+          <SheetDescription>{description}</SheetDescription>
+        </SheetHeader>
+        {children}
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+export function PublishBarFrame({
+  draft,
+  count,
+  canPublish,
+  onReason,
+  onDiscard,
+  onPublish,
+  children,
+}: {
+  draft: { reason: string; publish: { status: string } }
+  count: number
+  canPublish: boolean
+  onReason: (reason: string) => void
+  onDiscard: () => void
+  onPublish: () => void
+  children: ReactNode
+}) {
+  const reasonID = useId()
+  const publishing = draft.publish.status === "publishing"
+  return (
+    <fieldset
+      disabled={publishing}
+      className="flex min-w-0 flex-1 basis-xl flex-wrap items-center gap-2 rounded-lg border border-primary bg-primary/5 p-2"
+    >
+      {count > 0 && (
+        <p className="shrink-0 text-sm font-medium">
+          {count} unpublished {count === 1 ? "change" : "changes"}
+        </p>
+      )}
+      <label htmlFor={reasonID} className="sr-only">
+        Why are you changing this?
+      </label>
+      <Input
+        id={reasonID}
+        className="min-w-40 flex-1 bg-background"
+        placeholder="Why are you changing this?"
+        value={draft.reason}
+        maxLength={2000}
+        onChange={(event) => onReason(event.target.value)}
+      />
+      <Button variant="ghost" onClick={onDiscard}>
+        Discard changes
+      </Button>
+      <Button disabled={!canPublish} onClick={onPublish}>
+        {publishing && <Spinner data-icon="inline-start" />}
+        {publishing ? "Publishing…" : "Publish"}
+      </Button>
+      {children}
+    </fieldset>
+  )
+}
+
+export function publishFailureMessage(failure: PortalFailure) {
+  if (signInRequired(failure)) return "Sign in again to publish."
+  if (failure.kind === "unauthorized") return "You don't have access to change this Location's knowledge."
+  return failure.message || "Not published. Nothing changed. Try again."
 }
 
 export function OptionSelect<V extends string>({
@@ -161,8 +240,7 @@ function QueryFailure({
 }
 
 function failureMessage(failure: PortalFailure, subject: string, unavailable: string) {
-  if (failure.kind === "signedOut" || failure.kind === "unauthenticated")
-    return `Sign in again to view ${subject}.`
+  if (signInRequired(failure)) return `Sign in again to view ${subject}.`
   if (failure.kind === "unauthorized") return `You don't have access to this Location's ${subject}.`
   if (failure.kind === "unavailable") return failure.message ?? unavailable
   return `The ${subject} could not be loaded.`

@@ -846,12 +846,6 @@ paths:
             type: integer
             minimum: 1
             maximum: 50
-        - name: groupCalls
-          in: query
-          description: Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
-          schema:
-            type: boolean
-            default: false
       responses:
         "200":
           description: Chronological exact-phone Engagement History.

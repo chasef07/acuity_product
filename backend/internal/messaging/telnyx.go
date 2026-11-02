@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
+	"github.com/chasef07/acuity_product/backend/internal/telnyxapi"
 	"github.com/team-telnyx/telnyx-go/v4"
 	"github.com/team-telnyx/telnyx-go/v4/option"
 )
@@ -71,8 +73,8 @@ func (adapter *TelnyxAdapter) Send(
 		command.MessageID == "" ||
 		command.CallbackToken == "" ||
 		command.MessagingProfileID == "" ||
-		!canonicalPhone.MatchString(command.Sender) ||
-		!canonicalPhone.MatchString(command.Destination) ||
+		!contactcontext.IsCanonicalPhone(command.Sender) ||
+		!contactcontext.IsCanonicalPhone(command.Destination) ||
 		(command.Body == "" && command.MediaURL == "") {
 		return ProviderResult{}, ErrInvalidInput
 	}
@@ -113,7 +115,7 @@ func (adapter *TelnyxAdapter) Reconcile(
 	ctx context.Context,
 	providerMessageID string,
 ) (ProviderResult, error) {
-	if !validTelnyxResourceID(providerMessageID) {
+	if !telnyxapi.ValidResourceID(providerMessageID) {
 		return ProviderResult{}, ErrInvalidInput
 	}
 	response, err := adapter.client.Messages.Get(ctx, providerMessageID)
@@ -148,13 +150,6 @@ func (adapter *TelnyxAdapter) Reconcile(
 		result.State = state
 	}
 	return result, nil
-}
-
-func validTelnyxResourceID(value string) bool {
-	return value != "" &&
-		value == strings.TrimSpace(value) &&
-		value != "." && value != ".." &&
-		!strings.ContainsAny(value, "/\\?#%")
 }
 
 func classifyTelnyxError(err error) error {

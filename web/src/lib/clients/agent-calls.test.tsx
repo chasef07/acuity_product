@@ -188,10 +188,32 @@ test("call refresh retains rows, cancels old pagination, loads more after the re
   pending[4].resolve(Response.json({ calls: [call("other-office")], nextCursor: "" }))
   await waitFor(() => view.latest().status === "ready")
   await view.render({ ...filters, locationID: "office-2" }, 3)
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 5_100)))
   await waitFor(() => pending.length === 6)
   pending[5].resolve(new Response("", { status: 403 }))
   await waitFor(() => view.latest().status === "failed")
   assert.equal("data" in view.latest(), false)
+})
+
+test("call lists refresh on the first workspace change and coalesce a burst into one trailing refresh", async (t) => {
+  const backend = fakeBackend(t, () => Response.json({ calls: [call("original")], nextCursor: "" }))
+  const view = mountHook(t, useAgentCalls)
+  const filters = { practiceID: "practice-1", locationID: "", range: "7d", phone: "", flaggedOnly: false } as const
+  await view.render(filters)
+  await waitFor(() => view.latest().status === "ready")
+
+  await view.render(filters, 1)
+  await waitFor(() => backend.requests.length === 2)
+  await view.render(filters, 2)
+  await view.render(filters, 3)
+  await view.render(filters, 4)
+  await settle()
+  assert.equal(backend.requests.length, 2)
+
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 5_100)))
+  await waitFor(() => backend.requests.length === 3)
+  await settle()
+  assert.equal(backend.requests.length, 3)
 })
 
 test("AI call analytics separate denied, unavailable, and next-page failures", async (t) => {

@@ -3,6 +3,7 @@ package workspace_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -92,7 +93,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 	}
 	assertWorkspaceTaskIDs(t, first.Items, high.ID, normalOld.ID)
 	if first.NextCursor == "" || first.Counts.Tasks != 4 ||
-		first.Counts.Categories.Documentation != 4 {
+		first.Counts.Categories[work.TaskCategoryDocumentation] != 4 {
 		t.Fatalf("first priority page metadata = %#v", first)
 	}
 	second, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
@@ -103,7 +104,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		t.Fatalf("query second priority page: %v", err)
 	}
 	assertWorkspaceTaskIDs(t, second.Items, normalNew.ID, nonUrgent.ID)
-	if second.NextCursor != "" || second.Counts == nil || first.Counts == nil || *second.Counts != *first.Counts {
+	if second.NextCursor != "" || second.Counts == nil || first.Counts == nil || !reflect.DeepEqual(second.Counts, first.Counts) {
 		t.Fatalf("second priority page metadata = %#v, want counts %#v", second, first.Counts)
 	}
 	timeOrdered, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
@@ -149,7 +150,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 			if responsibility == "mine" {
 				wantTotal, wantOther = 5, 0
 			}
-			if baseline.Counts == nil || baseline.Counts.Tasks != wantTotal || baseline.Counts.Categories.Other != wantOther {
+			if baseline.Counts == nil || baseline.Counts.Tasks != wantTotal || baseline.Counts.Categories[work.TaskCategoryOther] != wantOther {
 				t.Fatalf("responsibility-scoped counts = %+v", baseline.Counts)
 			}
 			for _, category := range []work.TaskCategory{work.TaskCategoryDocumentation, work.TaskCategoryOptical, work.TaskCategoryOther} {
@@ -163,7 +164,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 						t.Fatalf("category %s returned %s", category, item.Category)
 					}
 				}
-				if filtered.Counts == nil || *filtered.Counts != *baseline.Counts {
+				if filtered.Counts == nil || !reflect.DeepEqual(filtered.Counts, baseline.Counts) {
 					t.Errorf("category %s changed menu totals: got %+v, want %+v", category, filtered.Counts, baseline.Counts)
 				}
 			}

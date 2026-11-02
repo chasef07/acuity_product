@@ -5,6 +5,7 @@ import { CheckCircle2Icon, ArrowUpRightIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import type { Task } from "@/lib/api/generated/types.gen"
+import { signInRequired } from "@/lib/clients/portal-request"
 import { completeTask, completeTaskGroup } from "@/lib/clients/tasks"
 import { formatTimestamp } from "@/lib/format-time"
 import { taskGroupLabel, taskUrgencyLabels } from "@/lib/vocabulary"
@@ -41,7 +42,7 @@ export function TaskGroupContext({ group, taskRows, onSelect, onUpdated }: {
     setPending(false)
     if (!outcome.ok) {
       const { kind } = outcome.failure
-      setError(kind === "signedOut" || kind === "unauthenticated"
+      setError(signInRequired(outcome.failure)
         ? "Sign in again to resolve this Task."
         : kind === "conflict"
           ? "This group changed. Reopen it from Tasks to review the latest requests."

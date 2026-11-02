@@ -1,6 +1,6 @@
 import type { InsuranceCatalog, InsuranceRevision, InsuranceValidationError } from "./api/generated/types.gen.ts"
 import type { PortalFailure } from "./clients/portal-request.ts"
-import { draftStore } from "./drafts.ts"
+import { draftStore, type PublishAttempt } from "./drafts.ts"
 import type { InsuranceEdit } from "./insurance-catalog.ts"
 
 type InsurancePublish =
@@ -15,7 +15,7 @@ export type InsuranceDraft = {
   edits: InsuranceEdit[]
   reason: string
   publish: InsurancePublish
-  attempt?: { payload: string; revisionID: string }
+  attempt?: PublishAttempt
 }
 
 export const insuranceDrafts = draftStore<InsuranceDraft>("insurance")

@@ -2,11 +2,9 @@ package humancalling
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"reflect"
 	"slices"
 	"strconv"
@@ -14,10 +12,10 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/telnyxapi"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/team-telnyx/telnyx-go/v4"
-	"github.com/team-telnyx/telnyx-go/v4/option"
 )
 
 type ReceiptState string
@@ -151,33 +149,20 @@ func unwrapTelnyxWebhook(
 	signatureHeader string,
 	publicKeys [][]byte,
 ) (*telnyx.UnwrapWebhookEventUnion, error) {
-	if len(raw) == 0 || len(raw) > 256*1024 || len(publicKeys) == 0 {
+	if len(raw) == 0 || len(raw) > 256*1024 {
 		return nil, ErrInvalidWebhook
 	}
-	headers := http.Header{}
-	headers.Set("telnyx-timestamp", timestampHeader)
-	headers.Set("telnyx-signature-ed25519", signatureHeader)
-	webhooks := telnyx.NewWebhookService()
-	for _, publicKey := range publicKeys {
-		if len(publicKey) == 0 {
-			continue
-		}
-		event, err := webhooks.Unwrap(
-			raw,
-			headers,
-			option.WithPublicKey(base64.StdEncoding.EncodeToString(publicKey)),
-		)
-		if err == nil && validTelnyxEvent(
-			event.Data.RecordType,
-			event.Data.ID,
-			event.Data.EventType,
-			event.Data.OccurredAt,
-			event.Data.JSON.Payload.Valid(),
-		) {
-			return event, nil
-		}
+	event, err := telnyxapi.VerifyWebhook(raw, timestampHeader, signatureHeader, publicKeys)
+	if err != nil || !validTelnyxEvent(
+		event.Data.RecordType,
+		event.Data.ID,
+		event.Data.EventType,
+		event.Data.OccurredAt,
+		event.Data.JSON.Payload.Valid(),
+	) {
+		return nil, ErrInvalidWebhook
 	}
-	return nil, ErrInvalidWebhook
+	return event, nil
 }
 
 func sameWebhookEventData(left []byte, right []byte) bool {

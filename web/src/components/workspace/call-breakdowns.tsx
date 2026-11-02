@@ -10,7 +10,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
-import { intentLabels, outcomeLabels } from "@/lib/vocabulary"
+import { formatShare, intentLabels, outcomeLabels } from "@/lib/vocabulary"
 import { breakdownLists, callFlow, judgeLabels, matchesSelection, mergeSelection, rankProblems, type BreakdownRow, type CallSelection, type FlowLink, type FlowNode, type FlowTone } from "./call-paths"
 
 const minGapIntentCalls = 10
@@ -116,7 +116,7 @@ function BreakdownBar({ row, total, onRow }: { row: BreakdownRow; total: number;
       <dt className={cn(!row.selection && "text-muted-foreground")}>{row.selection
         ? <Button variant="link" size="sm" className="h-auto max-w-full justify-start p-0 text-left whitespace-normal" aria-label={`Select ${row.label}`} onClick={() => onRow(row.selection!)}>{row.label}<ArrowRightIcon data-icon="inline-end" /></Button>
         : row.label}</dt>
-      <dd className="flex shrink-0 gap-3 tabular-nums"><span className="text-muted-foreground">{row.calls.toLocaleString()} {row.calls === 1 ? "call" : "calls"}</span><span className="w-11 text-right font-medium">{share.toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })}</span></dd>
+      <dd className="flex shrink-0 gap-3 tabular-nums"><span className="text-muted-foreground">{row.calls.toLocaleString()} {row.calls === 1 ? "call" : "calls"}</span><span className="w-11 text-right font-medium">{formatShare(share)}</span></dd>
     </div>
     <div aria-hidden="true" className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"><div className={cn("h-full rounded-full", row.selection ? "bg-foreground/75" : "bg-muted-foreground/30")} style={{ width: `${share * 100}%` }} /></div>
   </div>

@@ -3,15 +3,7 @@
 import { useMemo, useState } from "react"
 import { ArrowDownIcon, ArrowUpIcon, ArrowUpDownIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import {
-  Bar,
-  CartesianGrid,
-  BarChart,
-  ReferenceLine,
-  XAxis,
-  YAxis,
-} from "recharts"
-import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
+import { Bar, ReferenceLine } from "recharts"
 import {
   Table,
   TableBody,
@@ -29,6 +21,7 @@ import { formatDay, formatPercent } from "@/lib/booking-analytics"
 import { formatDuration } from "@/lib/vocabulary"
 import { dailyTotalComparison } from "@/lib/analytics-trend"
 import styles from "./booking-overview.module.css"
+import { DailyChartFrame } from "./daily-bar-chart"
 import { useReducedMotion } from "@/lib/reduced-motion"
 
 function hours(seconds: number | null) {
@@ -211,69 +204,40 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
               <Button size="sm" variant={metric === "duration" ? "secondary" : "ghost"} aria-pressed={metric === "duration"} onClick={() => setMetric("duration")}>Completion time</Button>
             </div>
           </div>
-          <ChartContainer
+          <DailyChartFrame
+            label={metric === "completed" ? "Tasks completed by day" : "Median task completion time by day"}
             config={{
               p50Seconds: {
                 label: "Median completion time",
                 color: "var(--foreground)",
               },
             }}
-            className="h-[300px] w-full aspect-auto"
-            aria-label={metric === "completed" ? "Tasks completed by day" : "Median task completion time by day"}
+            data={report.daily}
+            yAxis={{
+              domain: metric === "completed" ? [0, "auto"] : [0, Math.ceil(upper / (24 * 3600)) * 24 * 3600],
+              allowDecimals: false,
+              tickFormatter: (value: number) => (metric === "completed" ? count(value) : `${Math.round(value / 3600)}h`),
+            }}
+            tooltip={<TaskTooltip />}
           >
-            <BarChart
-              data={report.daily}
-              accessibilityLayer
-              margin={{ top: 20, right: 24, bottom: 8, left: 8 }}
-            >
-              <CartesianGrid
-                vertical={false}
-                stroke="var(--border)"
-                strokeOpacity={0.65}
-              />
-              <XAxis
-                height={40}
-                dataKey="day"
-                tickFormatter={formatDay}
-                axisLine={false}
-                tickLine={false}
-                tickMargin={14}
-                minTickGap={48}
-              />
-              <YAxis
-                domain={metric === "completed" ? [0, "auto"] : [0, Math.ceil(upper / (24 * 3600)) * 24 * 3600]}
-                allowDecimals={false}
-                tickFormatter={(value: number) =>
-                  metric === "completed" ? count(value) : `${Math.round(value / 3600)}h`
-                }
-                axisLine={false}
-                tickLine={false}
-                width="auto"
-                tickMargin={10}
-              />
-              {metric === "duration" && <ReferenceLine
-                y={48 * 3600}
-                stroke="var(--muted-foreground)"
-                strokeDasharray="4 4"
-                label={{
-                  value: "48-hour target",
-                  position: "insideTopRight",
-                  fill: "var(--muted-foreground)",
-                  fontSize: 11,
-                }}
-              />}
-              <ChartTooltip
-                content={<TaskTooltip />}
-                cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
-              />
-              <Bar
-                dataKey={(day: StaffTaskDay) => metric === "completed" ? day.completed : day.p50Seconds}
-                fill="var(--foreground)"
-                maxBarSize={36}
-                isAnimationActive={!reducedMotion}
-              />
-            </BarChart>
-          </ChartContainer>
+            {metric === "duration" && <ReferenceLine
+              y={48 * 3600}
+              stroke="var(--muted-foreground)"
+              strokeDasharray="4 4"
+              label={{
+                value: "48-hour target",
+                position: "insideTopRight",
+                fill: "var(--muted-foreground)",
+                fontSize: 11,
+              }}
+            />}
+            <Bar
+              dataKey={(day: StaffTaskDay) => metric === "completed" ? day.completed : day.p50Seconds}
+              fill="var(--foreground)"
+              maxBarSize={36}
+              isAnimationActive={!reducedMotion}
+            />
+          </DailyChartFrame>
           <p className={styles.chartCaption}>
             {metric === "completed"
               ? dailyTotalComparison(report.daily.map((day) => day.completed))

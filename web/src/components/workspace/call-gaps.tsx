@@ -1,12 +1,14 @@
 "use client"
 
-import { useState, type ComponentType } from "react"
+import { useId, useState, type ComponentType, type ReactNode } from "react"
 import { ChevronRightIcon, type LucideIcon } from "lucide-react"
 
-import { Alert, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import type { AgentCall, Location } from "@/lib/api/generated/types.gen"
-import { useAgentCalls } from "@/lib/clients/agent-calls"
+import { closeInsuranceGap, closeKnowledgeGap, useAgentCalls } from "@/lib/clients/agent-calls"
+import type { PortalQuery } from "@/lib/data/queries"
 import { formatTimestamp } from "@/lib/format-time"
 import { formatClock } from "@/lib/vocabulary"
 import { AgentCallPanel } from "./agent-call-panel"
@@ -23,8 +25,26 @@ export type GapFixProps = {
 }
 
 const gaps = {
-  knowledge: { missing: "Missing from the knowledge base", note: "Not in the knowledge base", line: (call: AgentCall) => call.knowledgeGapLine },
-  insurance: { missing: "Missing from the insurance list", note: "Not on the insurance list", line: (call: AgentCall) => call.insuranceGapLine },
+  knowledge: {
+    missing: "Missing from the knowledge base",
+    note: "Not in the knowledge base",
+    line: (call: AgentCall) => call.knowledgeGapLine,
+    list: "knowledge base",
+    saved: "Saved to knowledge",
+    resource: "Office knowledge",
+    loading: "Loading office knowledge…",
+    close: (id: string, fixed: boolean) => closeKnowledgeGap(id, fixed ? "ANSWERED" : "NOT_NEEDED"),
+  },
+  insurance: {
+    missing: "Missing from the insurance list",
+    note: "Not on the insurance list",
+    line: (call: AgentCall) => call.insuranceGapLine,
+    list: "insurance list",
+    saved: "Added to the insurance list",
+    resource: "The insurance list",
+    loading: "Loading the insurance list…",
+    close: (id: string, fixed: boolean) => closeInsuranceGap(id, fixed ? "ADDED" : "NOT_NEEDED"),
+  },
 }
 
 export function callTime(call: AgentCall) {
@@ -140,5 +160,122 @@ export function GapCalls({
         }
       />
     </section>
+  )
+}
+
+export function GapFixForm<T>({
+  gap,
+  fix: { officeName, call, published, onPublished, onSavingChange, onClosed },
+  query,
+  publish,
+  children,
+}: {
+  gap: keyof typeof gaps
+  fix: GapFixProps
+  query: PortalQuery<T> & { retry: () => void }
+  publish: (() => Promise<ReactNode>) | undefined
+  children: (clearError: () => void, data: T) => ReactNode
+}) {
+  const { list, saved, resource, loading, close } = gaps[gap]
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<ReactNode>("")
+  const errorID = useId()
+
+  function busy(value: boolean) {
+    setSaving(value)
+    onSavingChange(value)
+  }
+
+  async function closeCall(fixed: boolean) {
+    const outcome = await close(call.id, fixed)
+    if (!outcome.ok && outcome.failure.kind !== "conflict" && outcome.failure.kind !== "rejected") {
+      setError(fixed ? `${saved}, but this call couldn't be closed. Try again.` : "This call couldn't be closed. Try again.")
+      return
+    }
+    onClosed(call.id)
+  }
+
+  async function saveAndClose() {
+    if (saving || (!published && !publish)) return
+    busy(true)
+    setError("")
+    if (!published && publish) {
+      const problem = await publish()
+      if (problem !== undefined) {
+        setError(problem)
+        busy(false)
+        return
+      }
+      onPublished(call.id)
+      void query.retry()
+    }
+    await closeCall(true)
+    busy(false)
+  }
+
+  async function notNeeded() {
+    if (saving) return
+    busy(true)
+    setError("")
+    await closeCall(false)
+    busy(false)
+  }
+
+  return (
+    <form
+      aria-label="Fix this"
+      aria-describedby={error ? errorID : undefined}
+      className="flex flex-col gap-3"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void saveAndClose()
+      }}
+    >
+      <h3 className="text-sm font-medium">Fix this</h3>
+      {officeName && (
+        <p className="-mt-2 text-sm text-muted-foreground">
+          Saves to {officeName}&apos;s {list}
+        </p>
+      )}
+      {published ? (
+        <p className="text-sm text-muted-foreground">{saved}.</p>
+      ) : query.status === "failed" ? (
+        <Alert variant="destructive">
+          <AlertTitle>{resource} couldn&apos;t load</AlertTitle>
+          <Button type="button" variant="outline" size="sm" className="mt-2 w-fit" onClick={query.retry}>
+            Try again
+          </Button>
+        </Alert>
+      ) : query.status !== "ready" ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {loading}
+        </p>
+      ) : query.refreshFailure ? (
+        <Alert variant="destructive">
+          <AlertTitle>{resource} couldn&apos;t reload</AlertTitle>
+          <Button type="button" variant="outline" size="sm" className="mt-2 w-fit" onClick={query.retry}>
+            Try again
+          </Button>
+        </Alert>
+      ) : (
+        children(() => setError(""), query.data)
+      )}
+      {error && (
+        <Alert id={errorID} variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      <div className="flex flex-wrap justify-end gap-2">
+        {!published && (
+          <Button type="button" variant="ghost" disabled={saving} onClick={() => void notNeeded()}>
+            Not needed
+          </Button>
+        )}
+        <Button type="submit" disabled={saving || (!published && !publish)}>
+          {saving && <Spinner data-icon="inline-start" />}
+          {published ? "Close call" : "Save and close"}
+        </Button>
+      </div>
+    </form>
   )
 }

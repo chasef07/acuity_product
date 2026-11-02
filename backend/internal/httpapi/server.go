@@ -21,6 +21,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
+	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/insurance"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
@@ -987,9 +988,9 @@ func (server *Server) GetEngagementTimeline(
 	if !ok {
 		return
 	}
-	normalized, err := messaging.NormalizePhone(phone)
+	normalized, err := contactcontext.NormalizePhone(phone)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 		return
 	}
 	ctx, cancel := server.requestContext(r)
@@ -997,7 +998,6 @@ func (server *Server) GetEngagementTimeline(
 	timeline, err := server.workspace.QueryPhoneTimeline(
 		ctx,
 		workspace.QueryPhoneTimelineCommand{
-			Ungrouped:  params.GroupCalls == nil || !*params.GroupCalls,
 			Identity:   identity,
 			PracticeID: params.PracticeId.String(),
 			Phone:      normalized,
@@ -2084,27 +2084,12 @@ func writeAttachmentContent(
 	}
 	w.Header().Set(
 		"Content-Disposition",
-		disposition+`; filename="`+safeAttachmentFileName(
+		disposition+`; filename="`+messaging.AttachmentFileName(
 			content.Attachment.ContentType,
 		)+`"`,
 	)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content.Content)
-}
-
-func safeAttachmentFileName(contentType string) string {
-	switch contentType {
-	case "image/jpeg":
-		return "attachment.jpg"
-	case "image/png":
-		return "attachment.png"
-	case "image/gif":
-		return "attachment.gif"
-	case "image/webp":
-		return "attachment.webp"
-	default:
-		return "attachment.pdf"
-	}
 }
 
 func (server *Server) writeAccessError(w http.ResponseWriter, r *http.Request, err error) {
@@ -3172,20 +3157,24 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 		NextCursor: page.NextCursor,
 	}
 	if page.Counts != nil {
+		categories := page.Counts.Categories
+		insurance := categories[work.TaskCategoryInsurance]
+		preOp := categories[work.TaskCategoryPreOp]
+		postOp := categories[work.TaskCategoryPostOp]
 		response.Counts = &api.TaskFolderCounts{
 			Tasks:              page.Counts.Tasks,
 			Texts:              &page.Counts.Texts,
 			CallRecovery:       &page.Counts.CallRecovery,
 			AppointmentReviews: &page.Counts.AppointmentReviews,
 			Categories: api.TaskCategoryCounts{
-				Billing:       page.Counts.Categories.Billing,
-				Appointments:  page.Counts.Categories.Appointments,
-				Documentation: page.Counts.Categories.Documentation,
-				Optical:       page.Counts.Categories.Optical,
-				Medication:    page.Counts.Categories.Medication,
-				Referrals:     page.Counts.Categories.Referrals,
-				Other:         page.Counts.Categories.Other,
-				Insurance:     &page.Counts.Categories.Insurance, PreOp: &page.Counts.Categories.PreOp, PostOp: &page.Counts.Categories.PostOp,
+				Billing:       categories[work.TaskCategoryBilling],
+				Appointments:  categories[work.TaskCategoryAppointments],
+				Documentation: categories[work.TaskCategoryDocumentation],
+				Optical:       categories[work.TaskCategoryOptical],
+				Medication:    categories[work.TaskCategoryMedication],
+				Referrals:     categories[work.TaskCategoryReferrals],
+				Other:         categories[work.TaskCategoryOther],
+				Insurance:     &insurance, PreOp: &preOp, PostOp: &postOp,
 			},
 		}
 	}

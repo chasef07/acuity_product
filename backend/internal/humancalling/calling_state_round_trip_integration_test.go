@@ -46,18 +46,20 @@ func TestConditionalCallingStateReadUsesThreeDatabaseRoundTrips(t *testing.T) {
 		t.Fatalf("warm Calling state read: owner=%t err=%v", state.Softphone.Owner, err)
 	}
 	trips.count.Store(0)
-	if _, err := accessModule.DiscoverActorReadOnly(ctx, staff); err != nil {
-		t.Fatal(err)
-	}
-	discovery := trips.count.Swap(0)
 	_, notModified, err := calling.ReadCallingStateConditionally(ctx, staff, state.ETag)
 	if err != nil || !notModified {
 		t.Fatalf("conditional Calling state read: notModified=%t err=%v", notModified, err)
 	}
-	read := trips.count.Load() - discovery
-	t.Logf("conditional Calling state read: %d round trips for access discovery, %d after it", discovery, read)
-	if read != 3 {
-		t.Fatalf("conditional Calling state read made %d database round trips after access discovery, want 3", read)
+	if read := trips.count.Load(); read != 3 {
+		t.Fatalf("conditional Calling state read made %d database round trips, want 3", read)
+	}
+
+	trips.count.Store(0)
+	if _, err := calling.AcquireSoftphone(ctx, staff, "round-trips-session", false); err != nil {
+		t.Fatal(err)
+	}
+	if acquire := trips.count.Load(); acquire != 11 {
+		t.Fatalf("softphone lease renewal made %d database round trips, want 11", acquire)
 	}
 }
 

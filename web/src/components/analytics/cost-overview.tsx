@@ -1,16 +1,6 @@
 "use client"
 
-import {
-  Bar,
-  Cell,
-  CartesianGrid,
-  BarChart,
-  XAxis,
-  YAxis,
-} from "recharts"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
+import { Bar, Cell } from "recharts"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -29,7 +19,9 @@ import { useAiCostReport } from "@/lib/clients/analytics"
 import { formatDay, formatPercent } from "@/lib/booking-analytics"
 import { useReducedMotion } from "@/lib/reduced-motion"
 import { dailyTotalComparison } from "@/lib/analytics-trend"
+import { AnalyticsFailure } from "./analytics-failure"
 import styles from "./booking-overview.module.css"
+import { DailyChartFrame } from "./daily-bar-chart"
 
 function dollars(value: number | null) {
   if (value === null) return "—"
@@ -117,25 +109,21 @@ export function CostOverview({
     )
   if (current.state !== "ready")
     return (
-      <Alert>
-        <AlertTitle>
-          {current.state === "denied"
+      <AnalyticsFailure
+        title={
+          current.state === "denied"
             ? "Cost access unavailable"
             : current.state === "busy"
               ? "Analytics is busy"
-              : "Costs couldn’t load"}
-        </AlertTitle>
-        <AlertDescription>
-          <p>
-            {current.state === "denied"
-              ? "AI costs require Platform Operator access."
-              : "Try again to load the cost breakdown."}
-          </p>
-          <Button variant="outline" onClick={current.retry}>
-            Retry
-          </Button>
-        </AlertDescription>
-      </Alert>
+              : "Costs couldn’t load"
+        }
+        description={
+          current.state === "denied"
+            ? "AI costs require Platform Operator access."
+            : "Try again to load the cost breakdown."
+        }
+        onRetry={current.retry}
+      />
     )
   return <CostReport report={current.report} />
 }
@@ -205,56 +193,26 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
               USD · {report.timeZone}
             </span>
           </div>
-          <ChartContainer
+          <DailyChartFrame
+            label="Daily estimated AI cost in US dollars"
             config={{
               cost: { label: "Estimated cost", color: "var(--foreground)" },
             }}
-            className="h-[300px] w-full aspect-auto"
-            aria-label="Daily estimated AI cost in US dollars"
+            data={report.daily}
+            yAxis={{ domain: [0, "auto"], tickFormatter: dollars }}
+            tooltip={<CostTooltip />}
           >
-            <BarChart
-              accessibilityLayer
-              data={report.daily}
-              margin={{ top: 20, right: 16, bottom: 8, left: 8 }}
+            <Bar
+              dataKey="costUsd"
+              fill="var(--color-cost)"
+              maxBarSize={36}
+              isAnimationActive={!reducedMotion}
             >
-              <CartesianGrid
-                vertical={false}
-                stroke="var(--border)"
-                strokeOpacity={0.65}
-              />
-              <XAxis
-                dataKey="day"
-                height={40}
-                tickFormatter={formatDay}
-                axisLine={false}
-                tickLine={false}
-                tickMargin={14}
-                minTickGap={48}
-              />
-              <YAxis
-                domain={[0, "auto"]}
-                tickFormatter={dollars}
-                axisLine={false}
-                tickLine={false}
-                width="auto"
-                tickMargin={10}
-              />
-              <ChartTooltip
-                content={<CostTooltip />}
-                cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
-              />
-              <Bar
-                dataKey="costUsd"
-                fill="var(--color-cost)"
-                maxBarSize={36}
-                isAnimationActive={!reducedMotion}
-              >
-                {report.daily.map((day) => (
-                  <Cell key={day.day} fillOpacity={day.pricedCalls < day.calls ? 0.35 : 1} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ChartContainer>
+              {report.daily.map((day) => (
+                <Cell key={day.day} fillOpacity={day.pricedCalls < day.calls ? 0.35 : 1} />
+              ))}
+            </Bar>
+          </DailyChartFrame>
           <p className={styles.chartCaption}>
             {dailyTotalComparison(report.daily.slice(1, -1).map((day) => day.pricedCalls < day.calls ? null : day.costUsd))}
             {" · "}First and last days may be partial. Faded bars have incomplete usage.

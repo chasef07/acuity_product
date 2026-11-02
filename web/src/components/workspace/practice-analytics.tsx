@@ -5,10 +5,9 @@ import {
   AnalyticsLayout,
   type AnalyticsTab,
 } from "@/components/analytics/analytics-layout"
+import { AnalyticsFailure } from "@/components/analytics/analytics-failure"
 import { BookingOverview } from "@/components/analytics/booking-overview"
 import { StaffOverview } from "@/components/analytics/staff-overview"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePracticeReport } from "@/lib/clients/analytics"
 
@@ -54,27 +53,23 @@ export function PracticeAnalytics({
           />
         )
       ) : (
-        <Alert>
-          <AlertTitle>
-            {current.state === "denied"
+        <AnalyticsFailure
+          title={
+            current.state === "denied"
               ? "Analytics access unavailable"
               : current.state === "busy"
                 ? "Analytics is busy"
-                : "Analytics couldn’t load"}
-          </AlertTitle>
-          <AlertDescription>
-            <p>
-              {current.state === "denied"
-                ? "Analytics requires Admin access to this Practice."
-                : current.state === "busy"
-                  ? "Another report is loading. Try again in a moment."
-                  : "Your analytics are temporarily unavailable. Try again."}
-            </p>
-            <Button variant="outline" onClick={current.retry}>
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
+                : "Analytics couldn’t load"
+          }
+          description={
+            current.state === "denied"
+              ? "Analytics requires Admin access to this Practice."
+              : current.state === "busy"
+                ? "Another report is loading. Try again in a moment."
+                : "Your analytics are temporarily unavailable. Try again."
+          }
+          onRetry={current.retry}
+        />
       )}
     </AnalyticsLayout>
   )

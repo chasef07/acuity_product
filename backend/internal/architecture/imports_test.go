@@ -46,6 +46,7 @@ var packageRoles = map[string]role{
 
 	"observability": platform,
 	"postgres":      platform,
+	"telnyxapi":     platform,
 
 	"app":        composition,
 	"migrations": composition,

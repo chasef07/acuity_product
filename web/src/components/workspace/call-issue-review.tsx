@@ -6,6 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import type { OperatorAiCallIssue, OperatorAiCallIssueOutcome } from "@/lib/api/generated/types.gen"
 import { reviewCallIssue } from "@/lib/clients/agent-calls"
+import { signInRequired } from "@/lib/clients/portal-request"
 import { formatTimestamp } from "@/lib/format-time"
 import { callIssueOutcomeLabels, formatPhone, issueReasons, labelOptions } from "@/lib/vocabulary"
 
@@ -58,8 +59,7 @@ export function CallIssueReview({ interactionID, initialIssue, onChange }: {
       setIssue(result.data)
       onChange(result.data)
     } else {
-      const { kind } = result.failure
-      setError(kind === "signedOut" || kind === "unauthenticated" ? "Sign in again to save the review." : "The review could not be saved. Please try again.")
+      setError(signInRequired(result.failure) ?"Sign in again to save the review." : "The review could not be saved. Please try again.")
     }
   }
 

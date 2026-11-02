@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Spinner } from "@/components/ui/spinner"
 import type { StaffTaskCategory, Task } from "@/lib/api/generated/types.gen"
+import { signInRequired } from "@/lib/clients/portal-request"
 import { changeTaskCategory } from "@/lib/clients/tasks"
 import { taskGroups, taskGroupLabel } from "@/lib/vocabulary"
 
@@ -44,7 +45,7 @@ function TaskGroupMenu({ task, onUpdated, compact }: {
       return
     }
     const { kind } = outcome.failure
-    setError(kind === "signedOut" || kind === "unauthenticated"
+    setError(signInRequired(outcome.failure)
       ? "Sign in again to move this Task."
       : kind === "conflict"
         ? "This Task changed. Reopen it to review the latest group before moving."

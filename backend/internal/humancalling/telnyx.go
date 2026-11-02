@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/telnyxapi"
 	"github.com/team-telnyx/telnyx-go/v4"
 	"github.com/team-telnyx/telnyx-go/v4/option"
 )
@@ -93,7 +94,7 @@ func (adapter *TelnyxAdapter) Execute(
 	command ProviderCommand,
 ) (ProviderResult, error) {
 	if command.ID == "" || command.Action == "" ||
-		(command.TargetID != "" && !validTelnyxResourceID(command.TargetID)) {
+		(command.TargetID != "" && !telnyxapi.ValidResourceID(command.TargetID)) {
 		return ProviderResult{}, ErrInvalidInput
 	}
 	payload := clonePayload(command.Payload)
@@ -520,7 +521,7 @@ func (adapter *TelnyxAdapter) DeleteRecording(
 	ctx context.Context,
 	recordingID string,
 ) error {
-	if !validTelnyxResourceID(recordingID) {
+	if !telnyxapi.ValidResourceID(recordingID) {
 		return ErrInvalidInput
 	}
 	_, err := adapter.client.Recordings.Delete(ctx, recordingID)
@@ -544,7 +545,7 @@ func (adapter *TelnyxAdapter) OpenRecording(
 	recordingID string,
 	rangeHeader string,
 ) (PlaybackContent, error) {
-	if !validTelnyxResourceID(recordingID) {
+	if !telnyxapi.ValidResourceID(recordingID) {
 		return PlaybackContent{}, ErrInvalidInput
 	}
 	metadataContext, cancel := context.WithTimeout(ctx, telnyxRecordingRequestTimeout)
@@ -809,13 +810,6 @@ func safeRetryAfter(value string) string {
 		return ""
 	}
 	return strconv.Itoa(seconds)
-}
-
-func validTelnyxResourceID(value string) bool {
-	return value != "" &&
-		value == strings.TrimSpace(value) &&
-		value != "." && value != ".." &&
-		!strings.ContainsAny(value, "/\\?#%")
 }
 
 func classifyTelnyxError(status int, body []byte) *ProviderError {

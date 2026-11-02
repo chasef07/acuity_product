@@ -240,6 +240,16 @@ export function formatClock(seconds?: number) {
     : `${minutes}:${remainder}`
 }
 
+export function formatShare(value: number) {
+  if (!Number.isFinite(value)) return "—"
+  return value.toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })
+}
+
+export function latencyLabel(value?: number): string {
+  if (value === undefined) return "—"
+  return value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${value} ms`
+}
+
 export function formatPhone(value: string) {
   if (/^\s*\+(?!1)/.test(value)) return value
   const digits = value.replace(/\D/g, "")

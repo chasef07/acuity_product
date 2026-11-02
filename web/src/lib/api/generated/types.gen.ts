@@ -3300,10 +3300,6 @@ export type GetEngagementTimelineData = {
         practiceId: string;
         cursor?: string;
         limit?: number;
-        /**
-         * Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
-         */
-        groupCalls?: boolean;
     };
     url: '/v1/engagements/{phone}/timeline';
 };
