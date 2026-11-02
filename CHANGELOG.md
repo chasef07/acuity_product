@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.2](https://github.com/chasef07/acuity_product/compare/v3.2.1...v3.2.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* **workspace:** tighten the staff texting thread, header, and Texts list ([#609](https://github.com/chasef07/acuity_product/issues/609)) ([0c09c44](https://github.com/chasef07/acuity_product/commit/0c09c440b4acaab987b52f40f8fe354dd6d80f7a))
+
 ## [3.2.1](https://github.com/chasef07/acuity_product/compare/v3.2.0...v3.2.1) (2026-11-02)
 
 
