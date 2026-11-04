@@ -3,7 +3,7 @@ import { Client } from "pg"
 import { expect, test } from "@playwright/test"
 import { selectCommandCenterPage, signInAs } from "./support"
 
-test("call breakdowns use the full selection and keep missing labels and judge coverage visible", async ({ page }, testInfo) => {
+test("call breakdowns use the full selection, leave unlabeled calls out of label shares, and keep judge coverage visible", async ({ page }, testInfo) => {
   const databaseURL = process.env.E2E_DATABASE_URL
   test.skip(!databaseURL, "E2E_DATABASE_URL is required")
   if (!new URL(databaseURL!).pathname.endsWith("_e2e")) throw new Error("Disposable E2E database required")
@@ -49,7 +49,7 @@ test("call breakdowns use the full selection and keep missing labels and judge c
     await expect(command.getByRole("combobox", { name: "Intent", exact: true })).toHaveCount(0)
     await expect(command.getByRole("button", { name: "Judge failures", exact: true })).toHaveCount(0)
     await expect(chips).toContainText("ShowingAll calls")
-    await expect(flow.getByText("All calls 70", { exact: true })).toBeVisible()
+    await expect(flow.getByText("Labeled calls 65", { exact: true })).toBeVisible()
     await expect(gaps.getByRole("button")).toHaveText([
       "Existing patient booking · Failed: Office question answered correctly · 23%",
       "Existing patient booking · Abandoned · 14%",
@@ -90,7 +90,7 @@ test("call breakdowns use the full selection and keep missing labels and judge c
     await expect(chips).toContainText("ShowingAll calls")
 
     await page.setViewportSize({ width: 390, height: 1150 })
-    await expect(flow.getByText("All calls 70", { exact: true })).toBeHidden()
+    await expect(flow.getByText("Labeled calls 65", { exact: true })).toBeHidden()
     await expect(flow.locator('section[aria-label="Intents"]')).toBeVisible()
     expect(await command.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
     await expect(flow.locator('section[aria-label="Intents"]')).toContainText("35 calls")
