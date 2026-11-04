@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.3.0](https://github.com/chasef07/acuity_product/compare/v3.2.2...v3.3.0) (2026-11-04)
+
+
+### Features
+
+* **analytics:** accept jury call labels and leave unlabeled calls out of label shares ([#613](https://github.com/chasef07/acuity_product/issues/613)) ([c7b3672](https://github.com/chasef07/acuity_product/commit/c7b367240bba564333d49a2f93d968c2268a467d))
+* **analytics:** show resolution over time, overall and by intent ([#614](https://github.com/chasef07/acuity_product/issues/614)) ([3eaa67f](https://github.com/chasef07/acuity_product/commit/3eaa67fe5d67d39f6ecee948d73f353f3d00bcb8))
+
+
+### Bug Fixes
+
+* **e2e:** start the portal server directly so the harness stops it ([#615](https://github.com/chasef07/acuity_product/issues/615)) ([9475a7a](https://github.com/chasef07/acuity_product/commit/9475a7a81f96e34b8d308eeeedc1cdd932fe9d10))
+
 ## [3.2.2](https://github.com/chasef07/acuity_product/compare/v3.2.1...v3.2.2) (2026-11-02)
 
 
