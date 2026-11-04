@@ -37,14 +37,21 @@ test("biggest gaps lead the page, skipping intents with too few calls", () => {
   ])
 })
 
-test("with no selection every call shows, and unlabeled calls stay in the totals without a link", () => {
+test("with no selection every call shows, and label shares count labeled calls only and say how many were left out", () => {
   const page = render({})
   assert.match(page.querySelector('[aria-label="Selection"]')!.textContent!, /ShowingAll calls/)
   const intents = page.querySelector('section[aria-label="Intents"]')!
-  assert.match(intents.textContent!, /New patient booking28 calls80%/)
-  assert.match(intents.textContent!, /Unlabeled5 calls14.3%/)
-  assert.equal(intents.querySelector('[aria-label="Select Unlabeled"]'), null)
+  assert.match(intents.textContent!, /New patient booking28 calls93.3%/)
+  assert.doesNotMatch(intents.textContent!, /Unlabeled/)
+  assert.match(intents.textContent!, /Leaves out 5 calls without an intent\./)
+  assert.match(page.querySelector('section[aria-label="Outcomes"]')!.textContent!, /Leaves out 5 calls without an outcome\./)
+  assert.doesNotMatch(page.querySelector('section[aria-label="Judge results"]')!.textContent!, /Leaves out/)
   assert.ok(intents.querySelector('[aria-label="Select New patient booking"]'))
+})
+
+test("a flow with no fully labeled calls says so instead of drawing an empty chart", () => {
+  const page = render({}, { ...data, paths: [paths[3]] })
+  assert.match(page.querySelector('[aria-label="Call flow"]')!.textContent!, /No calls in this range have both an intent and an outcome\./)
 })
 
 test("a selection shows removable chips and narrows every list to its calls", () => {

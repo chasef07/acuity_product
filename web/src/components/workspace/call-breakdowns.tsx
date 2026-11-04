@@ -11,7 +11,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/u
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { formatShare, intentLabels, outcomeLabels } from "@/lib/vocabulary"
-import { breakdownLists, callFlow, judgeLabels, matchesSelection, mergeSelection, rankProblems, type BreakdownRow, type CallSelection, type FlowLink, type FlowNode, type FlowTone } from "./call-paths"
+import { breakdownLists, callFlow, judgeLabels, matchesSelection, mergeSelection, rankProblems, sumCalls, type BreakdownRow, type CallSelection, type FlowLink, type FlowNode, type FlowTone } from "./call-paths"
 
 const minGapIntentCalls = 10
 
@@ -42,7 +42,7 @@ export function CallBreakdowns({ data, selection, onSelection, mode, onMode, onR
   )
   const labels = Object.fromEntries(data.failures.map((failure) => [failure.key, failure.label]))
   const selected = data.paths.filter((path) => matchesSelection(path, selection))
-  const chips = <SelectionChips selection={selection} labels={labels} calls={selected.reduce((sum, path) => sum + path.calls, 0)} onSelection={onSelection} />
+  const chips = <SelectionChips selection={selection} labels={labels} calls={sumCalls(selected)} onSelection={onSelection} />
   if (!data.totalCalls) return <div className="grid gap-4">{chips}<Empty><EmptyHeader><EmptyTitle>No calls in this date range</EmptyTitle><EmptyDescription>Change the date range or office.</EmptyDescription></EmptyHeader></Empty></div>
   const gaps = rankProblems(data.paths, labels, minGapIntentCalls).slice(0, 3)
   return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
@@ -69,7 +69,7 @@ export function CallBreakdowns({ data, selection, onSelection, mode, onMode, onR
           <BreakdownLists lists={breakdownLists(selected, labels)} onRow={(row) => onSelection(mergeSelection(selection, row))} />
         </div>
       </CardContent>
-      <CardFooter><p className="text-[11px] leading-relaxed text-muted-foreground">Select a box, band, or row to see its calls below. Amber marks office knowledge gaps; red marks agent mistakes. Gray calls have no label or no judge result and stay in the total.</p></CardFooter>
+      <CardFooter><p className="text-[11px] leading-relaxed text-muted-foreground">Select a box, band, or row to see its calls below. Amber marks office knowledge gaps; red marks agent mistakes; gray marks calls with no judge result. The flow counts only calls with both an intent and an outcome; intent and outcome shares count only calls with that label.</p></CardFooter>
     </Card>
   </div>
 }
@@ -105,6 +105,7 @@ function BreakdownLists({ lists, onRow }: { lists: ReturnType<typeof breakdownLi
       {list.rows.length ? <dl className="flex flex-col gap-4">
         {list.rows.map((row) => <BreakdownBar key={row.label} row={row} total={list.total} onRow={onRow} />)}
       </dl> : <p className="text-xs text-muted-foreground">None in this selection.</p>}
+      {list.missing && list.unlabeled > 0 && <p className="mt-3 text-[11px] text-muted-foreground">Leaves out {list.unlabeled.toLocaleString()} {list.unlabeled === 1 ? "call" : "calls"} without {list.missing}.</p>}
     </section>)}
   </div>
 }
@@ -113,18 +114,17 @@ function BreakdownBar({ row, total, onRow }: { row: BreakdownRow; total: number;
   const share = total ? row.calls / total : 0
   return <div>
     <div className="flex items-baseline justify-between gap-4 text-xs">
-      <dt className={cn(!row.selection && "text-muted-foreground")}>{row.selection
-        ? <Button variant="link" size="sm" className="h-auto max-w-full justify-start p-0 text-left whitespace-normal" aria-label={`Select ${row.label}`} onClick={() => onRow(row.selection!)}>{row.label}<ArrowRightIcon data-icon="inline-end" /></Button>
-        : row.label}</dt>
+      <dt><Button variant="link" size="sm" className="h-auto max-w-full justify-start p-0 text-left whitespace-normal" aria-label={`Select ${row.label}`} onClick={() => onRow(row.selection)}>{row.label}<ArrowRightIcon data-icon="inline-end" /></Button></dt>
       <dd className="flex shrink-0 gap-3 tabular-nums"><span className="text-muted-foreground">{row.calls.toLocaleString()} {row.calls === 1 ? "call" : "calls"}</span><span className="w-11 text-right font-medium">{formatShare(share)}</span></dd>
     </div>
-    <div aria-hidden="true" className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"><div className={cn("h-full rounded-full", row.selection ? "bg-foreground/75" : "bg-muted-foreground/30")} style={{ width: `${share * 100}%` }} /></div>
+    <div aria-hidden="true" className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-foreground/75" style={{ width: `${share * 100}%` }} /></div>
   </div>
 }
 
 type Flow = ReturnType<typeof callFlow>
 
 function CallFlowChart({ flow, highlight, onSelection }: { flow: Flow; highlight: boolean; onSelection: (selection: CallSelection) => void }) {
+  if (!flow.links.length) return <p className="py-16 text-center text-sm text-muted-foreground">No calls in this range have both an intent and an outcome.</p>
   const litNodes = new Set(flow.links.filter((link) => link.selected).flatMap((link) => [link.source, link.target]))
   return <div className="h-[520px] w-full">
     <ResponsiveContainer width="100%" height="100%">

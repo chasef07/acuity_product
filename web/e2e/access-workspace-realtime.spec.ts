@@ -509,7 +509,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     })
     await selectCommandCenterPage(operatorPage, "Breakdowns")
     const callFlow = analyticsRegion.getByRole("region", { name: "Call flow", exact: true })
-    await expect(callFlow.getByText("All calls 42", { exact: true })).toBeVisible()
+    await expect(callFlow.getByText("Labeled calls 40", { exact: true })).toBeVisible()
     await callFlow.getByRole("button", { name: "List", exact: true }).click()
     await expect(callFlow.locator('section[aria-label="Intents"]')).toContainText("Existing patient booking")
     await expect(callFlow.locator('section[aria-label="Outcomes"]')).toContainText("Resolved")
