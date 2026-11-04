@@ -136,7 +136,7 @@ GOOGLE_CLIENT_ID=e2e-google-client \
 GOOGLE_CLIENT_SECRET=e2e-google-secret \
 NEXT_PUBLIC_PORTAL_API_URL=http://127.0.0.1:18080 \
 NEXT_PUBLIC_REALTIME_URL=http://127.0.0.1:18081 \
-pnpm start >"$runtime_dir/web.log" 2>&1 &
+./node_modules/.bin/next start --hostname 127.0.0.1 --port 13000 >"$runtime_dir/web.log" 2>&1 &
 web_pid=$!
 
 cd "$root"
