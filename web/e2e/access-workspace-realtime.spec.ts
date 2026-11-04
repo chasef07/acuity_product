@@ -18,6 +18,17 @@ const browserReconnectMaximumMilliseconds = 30_000
 const browserReconnectAssertionMilliseconds =
   browserReconnectMaximumMilliseconds + 5_000
 
+const operatorAnalyticsPaths = [
+  { intent: "existing_patient_booking", outcome: "resolved", evaluated: true, failures: [], calls: 21 },
+  { intent: "office_information", outcome: "resolved", evaluated: true, failures: [], calls: 8 },
+  { intent: "existing_patient_booking", outcome: "resolved", evaluated: true, failures: ["office_question_answered"], calls: 3 },
+  { intent: "existing_patient_booking", outcome: "transferred", evaluated: true, failures: [], calls: 3 },
+  { intent: "existing_patient_booking", outcome: "abandoned", evaluated: true, failures: ["call_ended_correctly"], calls: 2 },
+  { intent: "office_information", outcome: "transferred", evaluated: true, failures: [], calls: 2 },
+  { evaluated: false, failures: [], calls: 2 },
+  { intent: "existing_patient_booking", outcome: "resolved", evaluated: true, failures: ["call_ended_correctly", "office_question_answered"], calls: 1 },
+]
+
 const operatorAnalyticsFixture = {
   summary: {
     diagnostics: {
@@ -34,6 +45,7 @@ const operatorAnalyticsFixture = {
     daily: [{ date: "2026-08-10", totalCalls: 42, callMinutes: 126.5, transferCount: 5, transferRate: 5 / 42 }],
     distributions: {
       totalCalls: 42,
+      daily: [{ date: "2026-08-10", paths: operatorAnalyticsPaths }],
       intents: [{ intent: "existing_patient_booking", calls: 30 }, { intent: "office_information", calls: 10 }],
       outcomes: [{ outcome: "resolved", calls: 33 }, { outcome: "transferred", calls: 5 }, { outcome: "abandoned", calls: 2 }],
       unlabeledIntentCalls: 2,
@@ -42,16 +54,7 @@ const operatorAnalyticsFixture = {
       evaluatedCalls: 40,
       failedCalls: 6,
       unevaluatedCalls: 2,
-      paths: [
-        { intent: "existing_patient_booking", outcome: "resolved", evaluated: true, failures: [], calls: 21 },
-        { intent: "office_information", outcome: "resolved", evaluated: true, failures: [], calls: 8 },
-        { intent: "existing_patient_booking", outcome: "resolved", evaluated: true, failures: ["office_question_answered"], calls: 3 },
-        { intent: "existing_patient_booking", outcome: "transferred", evaluated: true, failures: [], calls: 3 },
-        { intent: "existing_patient_booking", outcome: "abandoned", evaluated: true, failures: ["call_ended_correctly"], calls: 2 },
-        { intent: "office_information", outcome: "transferred", evaluated: true, failures: [], calls: 2 },
-        { evaluated: false, failures: [], calls: 2 },
-        { intent: "existing_patient_booking", outcome: "resolved", evaluated: true, failures: ["call_ended_correctly", "office_question_answered"], calls: 1 },
-      ],
+      paths: operatorAnalyticsPaths,
     },
     quality: {
       daily: [{

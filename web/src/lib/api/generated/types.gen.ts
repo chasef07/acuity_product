@@ -1603,6 +1603,10 @@ export type OperatorAiAnalyticsDistributionDay = OperatorAiAnalyticsDistribution
      * Eastern calendar date in YYYY-MM-DD format.
      */
     date: string;
+    /**
+     * This date's call routes, grouped and ordered like the aggregate paths. Path calls sum to this date's totalCalls, and every date's paths sum to the aggregate paths.
+     */
+    paths: Array<OperatorAiPathCount>;
 };
 
 /**

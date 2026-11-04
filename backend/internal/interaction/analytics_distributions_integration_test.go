@@ -115,6 +115,7 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 		t.Fatal("distribution days must match summary days")
 	}
 	totals := newDistributionAccumulator()
+	dailyRoutes := map[string]int{}
 	for i, day := range d.Daily {
 		if day.Date != page.Summary.Daily[i].Date {
 			t.Fatal("daily dates out of order")
@@ -138,6 +139,14 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 		if intents != total || outcomes != total {
 			t.Fatalf("daily labels do not cover every call: %+v", day)
 		}
+		dayPathCalls := 0
+		for _, path := range day.Paths {
+			dayPathCalls += path.Calls
+			dailyRoutes[pathKey(path)] += path.Calls
+		}
+		if dayPathCalls != total || day.Paths == nil {
+			t.Fatalf("daily paths do not cover every call: %+v", day)
+		}
 		totals.summary.TotalCalls += day.TotalCalls
 		totals.summary.UnlabeledIntentCalls += day.UnlabeledIntentCalls
 		totals.summary.UnlabeledOutcomeCalls += day.UnlabeledOutcomeCalls
@@ -150,6 +159,9 @@ func TestAnalyticsDistributionsCoverFullScopedWindow(t *testing.T) {
 	}
 	if !reflect.DeepEqual(totals.finish(), d.AnalyticsDistributionCounts) {
 		t.Fatal("daily distribution counts do not sum to aggregate")
+	}
+	if !reflect.DeepEqual(dailyRoutes, routes) {
+		t.Fatalf("daily paths %v do not sum to aggregate paths %v", dailyRoutes, routes)
 	}
 	for _, failure := range d.Failures {
 		if failure.Label == "" {
