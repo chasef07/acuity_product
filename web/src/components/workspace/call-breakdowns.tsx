@@ -11,6 +11,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/u
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { formatShare, intentLabels, outcomeLabels } from "@/lib/vocabulary"
+import { ResolutionTrend } from "./resolution-trend"
 import { breakdownLists, callFlow, judgeLabels, matchesSelection, mergeSelection, rankProblems, sumCalls, type BreakdownRow, type CallSelection, type FlowLink, type FlowNode, type FlowTone } from "./call-paths"
 
 const minGapIntentCalls = 10
@@ -71,6 +72,7 @@ export function CallBreakdowns({ data, selection, onSelection, mode, onMode, onR
       </CardContent>
       <CardFooter><p className="text-[11px] leading-relaxed text-muted-foreground">Select a box, band, or row to see its calls below. Amber marks office knowledge gaps; red marks agent mistakes; gray marks calls with no judge result. The flow counts only calls with both an intent and an outcome; intent and outcome shares count only calls with that label.</p></CardFooter>
     </Card>
+    <ResolutionTrend days={data.daily} selection={selection} />
   </div>
 }
 

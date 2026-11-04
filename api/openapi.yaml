@@ -5208,9 +5208,13 @@ components:
       allOf:
         - $ref: "#/components/schemas/OperatorAIAnalyticsDistributionCounts"
         - type: object
-          required: [date]
+          required: [date, paths]
           properties:
             date: {type: string, description: Eastern calendar date in YYYY-MM-DD format.}
+            paths:
+              type: array
+              description: This date's call routes, grouped and ordered like the aggregate paths. Path calls sum to this date's totalCalls, and every date's paths sum to the aggregate paths.
+              items: {$ref: "#/components/schemas/OperatorAIPathCount"}
     OperatorAIAnalyticsDistributionCounts:
       type: object
       required: [totalCalls, intents, outcomes, failures, unlabeledIntentCalls, unlabeledOutcomeCalls, evaluatedCalls, failedCalls, unevaluatedCalls]

@@ -39,6 +39,7 @@ type AnalyticsPathCount struct {
 type AnalyticsDistributionDay struct {
 	Date string
 	AnalyticsDistributionCounts
+	Paths []AnalyticsPathCount
 }
 
 type AnalyticsDistributionCounts struct {

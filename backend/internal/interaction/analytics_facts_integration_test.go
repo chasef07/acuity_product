@@ -302,6 +302,7 @@ func evidenceAnalyticsSummary(ctx context.Context, tx pgx.Tx, command QueryAnaly
 	dailyDistributions := map[string]*distributionAccumulator{}
 	for _, day := range summary.Daily {
 		dailyDistributions[day.Date] = newDistributionAccumulator()
+		dailyDistributions[day.Date].routes = map[string]*AnalyticsPathCount{}
 	}
 	for rows.Next() {
 		var projection analyticsProjection
@@ -342,7 +343,7 @@ func evidenceAnalyticsSummary(ctx context.Context, tx pgx.Tx, command QueryAnaly
 	summary.Judges = judges.finish()
 	summary.Distributions = AnalyticsDistributions{AnalyticsDistributionCounts: distributions.finish(), Daily: []AnalyticsDistributionDay{}, Paths: distributions.paths()}
 	for _, day := range summary.Daily {
-		summary.Distributions.Daily = append(summary.Distributions.Daily, AnalyticsDistributionDay{Date: day.Date, AnalyticsDistributionCounts: dailyDistributions[day.Date].finish()})
+		summary.Distributions.Daily = append(summary.Distributions.Daily, AnalyticsDistributionDay{Date: day.Date, AnalyticsDistributionCounts: dailyDistributions[day.Date].finish(), Paths: dailyDistributions[day.Date].paths()})
 	}
 	return summary, nil
 }
