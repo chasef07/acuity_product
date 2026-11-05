@@ -80,7 +80,7 @@ func TestV8SentimentReadsOnlyMeasuredScoresWithoutChangingChecks(t *testing.T) {
 			score := jurySentiment(raw)
 			reading := readEvaluation(raw)
 			if !reflect.DeepEqual(score, tc.want) || !reflect.DeepEqual(reading.Sentiment, tc.want) {
-				t.Fatalf("sentiment parser=%v analytics=%v want=%v", score, reading.Sentiment, tc.want)
+				t.Fatalf("sentiment parser=%v reading=%v want=%v", score, reading.Sentiment, tc.want)
 			}
 			if reading.Evaluated || len(reading.Scored) != 0 || len(reading.Flags) != 0 || len(judgeAnswers(raw)) != 0 {
 				t.Fatalf("sentiment must not create checks or flags: %+v", reading)

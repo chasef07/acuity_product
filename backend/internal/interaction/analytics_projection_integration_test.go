@@ -142,3 +142,48 @@ func projectionLatencySamples(projection analyticsProjection) latencyValueSet {
 	turnMetrics, _ := json.Marshal(arrayValue(decodeRecord(projection.closeoutPayload)["turnMetrics"]))
 	return analyticsLatencySamples(projection.transcript, turnMetrics)
 }
+
+func TestAnalyticsSummaryCountsFinishedAndInProgressCalls(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.Open(t)
+	pool := db.Owner
+	var practiceID, locationID string
+	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('summary-counts','Summary Counts') RETURNING id::text`).Scan(&practiceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO access_locations(practice_id,provisioning_key,name) VALUES($1,'main','Main') RETURNING id::text`, practiceID).Scan(&locationID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for i, call := range []struct {
+		status  string
+		minutes int
+	}{
+		{"COMPLETED", 5},
+		{"COMPLETED", 3},
+		{"ESCALATED", 2},
+		{"IN_PROGRESS", 0},
+	} {
+		started := now.Add(-time.Duration(30-i) * time.Minute)
+		var ended any
+		if call.status != "IN_PROGRESS" {
+			ended = started.Add(time.Duration(call.minutes) * time.Minute)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript,closeout_payload) VALUES('agent',$1,$2,$3,'+15555550101','+15555550102',$4,$5,$6,3,'{"items":[]}','{}')`,
+			practiceID, locationID, fmt.Sprint("summary-count-", i), started, ended, call.status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	summary, err := queryAnalyticsSummary(ctx, tx, QueryAnalyticsCommand{PracticeID: practiceID}, []string{locationID}, now.Add(-time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.TotalCalls != 4 || summary.TotalCallMinutes != 10 {
+		t.Fatalf("calls = %d, minutes = %v, want 4 and 10", summary.TotalCalls, summary.TotalCallMinutes)
+	}
+}

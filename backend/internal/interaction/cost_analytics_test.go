@@ -35,6 +35,22 @@ func TestGPTLiveAndLunaRecordedCosts(t *testing.T) {
 	assertCostClose(t, report.CacheSavingsUSD, .00018)
 }
 
+func TestLunaCostsReadCamelCaseTokenCounts(t *testing.T) {
+	started := time.Date(2026, 9, 25, 1, 0, 0, 0, time.UTC)
+	report := newCostAnalytics(started, started.Add(time.Hour))
+	report.addCall(started, started.Add(2*time.Minute), json.RawMessage(`[
+ {"provider":"api.openai.com","model":"gpt-live-1","session_duration":91.5},
+ {"provider":"api.openai.com","model":"gpt-6-luna","inputTokens":10000,"inputCachedTokens":2000,"outputTokens":500}
+ ]`))
+	report.finalize()
+	if report.PricedCalls != 1 || report.UnpricedUsage != 0 {
+		t.Fatalf("missing coverage: %+v", report)
+	}
+	assertCostClose(t, *costItemForID(report.Items, costLunaInput).CostUSD, .0008)
+	assertCostClose(t, *costItemForID(report.Items, costLunaCached).CostUSD, .00002)
+	assertCostClose(t, *costItemForID(report.Items, costLunaOutput).CostUSD, .00025)
+}
+
 func TestGPTLiveCostsKeepUnknownUsageVisible(t *testing.T) {
 	started := time.Date(2026, 9, 25, 1, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -50,6 +66,7 @@ func TestGPTLiveCostsKeepUnknownUsageVisible(t *testing.T) {
 		{"invalid cache writes", `[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10,"input_cached_tokens":5,"input_cache_creation_tokens":6}]`, 1},
 		{"missing delegator", `[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-live-1","session_duration":60}]`, 0},
 		{"typeless unknown model", `[{"provider":"livekit","model":"unknown","audio_duration":60}]`, 1},
+		{"non-numeric tokens", `[{"type":"llm_usage","provider":"api.openai.com","model":"gpt-live-1","session_duration":60},{"type":"llm_usage","provider":"api.openai.com","model":"gpt-6-luna","input_tokens":"x"}]`, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			report := newCostAnalytics(started, started.Add(time.Hour))

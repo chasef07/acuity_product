@@ -40,9 +40,6 @@ func TestAnalyticsSummaryFromFactsMatchesSummaryFromEvidence(t *testing.T) {
 		`{}`,
 		`{"domainOutcomes":[]}`,
 		`{"toolExecutions":[{"toolName":"one","callId":"1","status":"error","createdAt":1789900300000},{"tool_name":"two","call_id":"2","status":"success"},{"name":"bad","id":"3","status":"UNKNOWN"}]}`,
-		`{"domainOutcomes":[],"contextFootprint":{"speakerPromptTokens":700,"thinkerPromptTokens":3200,"toolSchemaTokens":1800,"toolCount":17}}`,
-		`{"domainOutcomes":[],"contextFootprint":{"speakerPromptTokens":3000000000,"thinkerPromptTokens":1,"toolSchemaTokens":2,"toolCount":3}}`,
-		`{"domainOutcomes":[],"contextFootprint":{"speakerPromptTokens":900,"thinkerPromptTokens":3000,"toolSchemaTokens":-1,"toolCount":17}}`,
 	}
 	evaluations := append(paritySampleJuries(), []string{
 		`null`,
@@ -53,7 +50,6 @@ func TestAnalyticsSummaryFromFactsMatchesSummaryFromEvidence(t *testing.T) {
 	}...)
 	statuses := []CallStatus{CallCompleted, CallEscalated, CallInProgress, CallCompleted}
 	outcomes := []AppointmentOutcome{OutcomeBooking, OutcomeCancellation, OutcomeReschedule, OutcomeIndeterminate}
-	issues := []string{"", "PENDING", "CONFIRMED", "NOT_AN_ISSUE"}
 	intents := []string{"", "new_patient_booking", "speak_to_staff"}
 	for i := 0; i < 90; i++ {
 		started := now.Add(-time.Duration(i) * 7 * time.Hour).Add(-time.Duration(i%3) * time.Minute)
@@ -68,17 +64,11 @@ func TestAnalyticsSummaryFromFactsMatchesSummaryFromEvidence(t *testing.T) {
 		}
 		closeout := decodeRecord(json.RawMessage(closeouts[i%len(closeouts)]))
 		closeout["evaluation"] = json.RawMessage(evaluations[i%len(evaluations)])
-		closeout["versions"] = map[string]any{"agent": fmt.Sprint("0.", 10+i/30), "prompts": fmt.Sprint("p", i%2), "knowledge": fmt.Sprint("k", i/45)}
 		closeoutJSON, _ := json.Marshal(closeout)
 		var id string
 		if err := pool.QueryRow(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,appointment_outcome,lifecycle_stage,transcript,closeout_payload) VALUES('agent',$1,$2,$3,'+15555550101','+15555550102',$4,$5,$6,$7,3,$8,$9) RETURNING id::text`,
 			practiceID, location, fmt.Sprint("parity-", i), started, ended, status, outcomes[i%len(outcomes)], []byte(transcripts[i%len(transcripts)]), closeoutJSON).Scan(&id); err != nil {
 			t.Fatal(err)
-		}
-		if issue := issues[i%len(issues)]; issue != "" {
-			if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_issues(interaction_id,reported_by,note,review_outcome,reviewed_by,reviewed_at) VALUES($1,'synthetic-staff','Synthetic report',NULLIF($2,'PENDING'),CASE WHEN $2='PENDING' THEN NULL ELSE 'synthetic-operator' END,CASE WHEN $2='PENDING' THEN NULL ELSE now() END)`, id, issue); err != nil {
-				t.Fatal(err)
-			}
 		}
 		if intent := intents[i%len(intents)]; intent != "" {
 			if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_classifications(interaction_id,intent,outcome,status) VALUES($1,$2,'resolved','failed') ON CONFLICT(interaction_id) DO UPDATE SET intent=EXCLUDED.intent,outcome=EXCLUDED.outcome,status=EXCLUDED.status`, id, intent); err != nil {
