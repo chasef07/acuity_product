@@ -550,7 +550,8 @@ func TestAutomaticTaskAcknowledgementProjectsProviderRejectionAndUnknownOutcome(
 			`, fixture.task.ID).Scan(&delivery, &failure); err != nil {
 				t.Fatalf("read provider acknowledgement outcome: %v", err)
 			}
-			if delivery != test.delivery || failure != test.failure || len(fixture.provider.commands) != 1 {
+			if delivery != test.delivery || failure != test.failure || len(fixture.provider.commands) != 1 ||
+				fixture.provider.commands[0].Body != automaticTaskAcknowledgementCopy {
 				t.Fatalf("provider acknowledgement outcome = (%q, %q), commands %#v", delivery, failure, fixture.provider.commands)
 			}
 		})

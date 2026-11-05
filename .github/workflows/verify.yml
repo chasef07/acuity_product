@@ -135,6 +135,9 @@ jobs:
             web/src/lib/api/generated
       - run: bash ./scripts/test-release-container.sh
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks 'SA*,U1000,S1*' ./backend/... ./deploy
+      - run: go vet ./backend/... ./deploy
+      - run: test -z "$(gofmt -l backend deploy)"
 
   browser:
     runs-on: ubuntu-latest

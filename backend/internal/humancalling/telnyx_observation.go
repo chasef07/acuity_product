@@ -229,17 +229,17 @@ func (adapter *TelnyxAdapter) recordingFailed(ctx context.Context, callLegID, ca
 	if err != nil {
 		return time.Time{}, err
 	}
-	for _, event := range events {
-		fact, known, err := event.fact(callLegID, callSessionID)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if !known || fact.Type != FactRecordingError {
-			return time.Time{}, fmt.Errorf("%w: contradictory Telnyx recording error identity", ErrDefinitiveProviderFailure)
-		}
-		return fact.OccurredAt, nil
+	if len(events) == 0 {
+		return time.Time{}, nil
 	}
-	return time.Time{}, nil
+	fact, known, err := events[0].fact(callLegID, callSessionID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !known || fact.Type != FactRecordingError {
+		return time.Time{}, fmt.Errorf("%w: contradictory Telnyx recording error identity", ErrDefinitiveProviderFailure)
+	}
+	return fact.OccurredAt, nil
 }
 
 func rawCallEvent(metadata map[string]any) ([]byte, bool) {
