@@ -731,10 +731,14 @@ func (m *Module) failBridgeCallLeg(
 	}
 	var callID, subject, controlID string
 	var role callLegRole
+	var direction CallDirection
 	if err := tx.QueryRow(ctx, `
-		SELECT call_id::text, role, COALESCE(staff_subject, ''), provider_call_control_id
-		FROM human_calling_call_legs WHERE id = $1
-	`, callLegID).Scan(&callID, &role, &subject, &controlID); err != nil {
+		SELECT leg.call_id::text, leg.role, COALESCE(leg.staff_subject, ''),
+			leg.provider_call_control_id, call.direction
+		FROM human_calling_call_legs leg
+		JOIN human_calling_calls call ON call.id = leg.call_id
+		WHERE leg.id = $1
+	`, callLegID).Scan(&callID, &role, &subject, &controlID, &direction); err != nil {
 		return fmt.Errorf("read rejected Bridge CallLeg: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -754,18 +758,10 @@ func (m *Module) failBridgeCallLeg(
 	); err != nil {
 		return err
 	}
-	if role != roleDestination {
-		return m.maybeStartVoicemailAfterRingCompleted(ctx, tx, callID)
+	if direction == CallOutbound {
+		return m.failRoutingCall(ctx, tx, callID, errorCode)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
-			updated_at = $2
-		WHERE id = $1 AND terminal_outcome IS NULL
-	`, callID, m.now()); err != nil {
-		return fmt.Errorf("end rejected outbound Bridge: %w", err)
-	}
-	return m.endRemainingCallLegs(ctx, tx, callID)
+	return m.maybeStartVoicemailAfterRingCompleted(ctx, tx, callID)
 }
 
 func (m *Module) insertCallLegCommand(
