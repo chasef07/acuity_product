@@ -79,6 +79,13 @@
           "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
         },
         {
+          "Key": "ashley-pierre",
+          "Email": "ashley.p@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood"]
+        },
+        {
           "Key": "everth-sanchez",
           "Email": "everth@abitaeye.com",
           "Role": "STAFF",
