@@ -143,54 +143,35 @@ func projectionLatencySamples(projection analyticsProjection) latencyValueSet {
 	return analyticsLatencySamples(projection.transcript, turnMetrics)
 }
 
-func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
+func TestAnalyticsSummaryCountsFinishedAndInProgressCalls(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.Open(t)
 	pool := db.Owner
 	var practiceID, locationID string
-	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('quality-trends','Quality Trends') RETURNING id::text`).Scan(&practiceID); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO access_practices(provisioning_key,name) VALUES('summary-counts','Summary Counts') RETURNING id::text`).Scan(&practiceID); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `INSERT INTO access_locations(practice_id,provisioning_key,name) VALUES($1,'main','Main') RETURNING id::text`, practiceID).Scan(&locationID); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	if _, err := pool.Exec(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript,closeout_payload) VALUES('agent',$1,$2,'baseline','+15555550101','+15555550102',$3,$3,'COMPLETED',3,'{"items":[]}',$4)`,
-		practiceID, locationID, now.Add(-2*time.Hour), []byte(`{"versions":{"agent":"0.10.0","prompts":"0.9.0","knowledge":"revision-a"}}`)); err != nil {
-		t.Fatal(err)
-	}
-	flagged := `{"versions":{"agent":"0.11.0","prompts":"0.10.0","knowledge":"revision-a"},"evaluation":{"evaluatorVersion":"typesafe-scorecard-v4","status":"complete","results":{"request_understood":{"answers":{"request_understood":{"type":"noul","noul":0.2}}},"conversation_responsive":{"answers":{"conversation_responsive":{"type":"noul","noul":0.9}}},"expressed_sentiment":{"answers":{"expressed_sentiment":{"type":"score","score":1.2}}}}},"contextFootprint":{"speakerPromptTokens":700,"thinkerPromptTokens":3200,"toolSchemaTokens":1800,"toolCount":17}}`
-	clean := `{"agentVersion":"0.11.0","versions":{"prompts":"0.10.0"},"evaluation":{"evaluatorVersion":"typesafe-scorecard-v4","status":"complete","results":{"request_understood":{"answers":{"request_understood":{"type":"noul","noul":0.95}}},"expressed_sentiment":{"answers":{"expressed_sentiment":{"type":"score","score":3}}}}}}`
-	skipped := `{"evaluation":{"evaluatorVersion":"typesafe-scorecard-v4","status":"skipped","reason":"call_too_short"},"contextFootprint":{"speakerPromptTokens":700,"thinkerPromptTokens":3200,"toolSchemaTokens":1800}}`
-	usage := `{"items":[],"usage":[{"type":"llm_usage","provider":"openai","model":"gpt-6-luna","input_tokens":12000,"input_cached_tokens":8000,"output_tokens":300},{"type":"llm_usage","provider":"openai","model":"gpt-live-1","session_duration":90}]}`
 	for i, call := range []struct {
-		status, transcript, closeout, issue string
-		minutes                             int
+		status  string
+		minutes int
 	}{
-		{"COMPLETED", usage, flagged, "PENDING", 5},
-		{"COMPLETED", `{"items":[]}`, clean, "NOT_AN_ISSUE", 3},
-		{"ESCALATED", `{"items":[]}`, skipped, "CONFIRMED", 2},
-		{"IN_PROGRESS", `{"items":[]}`, `{}`, "", 0},
+		{"COMPLETED", 5},
+		{"COMPLETED", 3},
+		{"ESCALATED", 2},
+		{"IN_PROGRESS", 0},
 	} {
 		started := now.Add(-time.Duration(30-i) * time.Minute)
 		var ended any
 		if call.status != "IN_PROGRESS" {
 			ended = started.Add(time.Duration(call.minutes) * time.Minute)
 		}
-		var id string
-		if err := pool.QueryRow(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript,closeout_payload) VALUES('agent',$1,$2,$3,'+15555550101','+15555550102',$4,$5,$6,1,$7,$8) RETURNING id::text`, practiceID, locationID, fmt.Sprint(i), started, ended, call.status, []byte(call.transcript), []byte(call.closeout)).Scan(&id); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript,closeout_payload) VALUES('agent',$1,$2,$3,'+15555550101','+15555550102',$4,$5,$6,3,'{"items":[]}','{}')`,
+			practiceID, locationID, fmt.Sprint("summary-count-", i), started, ended, call.status); err != nil {
 			t.Fatal(err)
-		}
-		if call.issue == "" {
-			continue
-		}
-		if _, err := pool.Exec(ctx, `INSERT INTO ai_interaction_issues(interaction_id,reported_by,note) VALUES($1,'synthetic-staff','Synthetic report')`, id); err != nil {
-			t.Fatal(err)
-		}
-		if call.issue != "PENDING" {
-			if _, err := pool.Exec(ctx, `UPDATE ai_interaction_issues SET review_outcome=$2,reviewed_by='synthetic-operator',reviewed_at=now() WHERE interaction_id=$1`, id, call.issue); err != nil {
-				t.Fatal(err)
-			}
 		}
 	}
 	tx, err := pool.Begin(ctx)
@@ -202,44 +183,7 @@ func TestAnalyticsSummaryTrendsQualityEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := summary.Quality
 	if summary.TotalCalls != 4 || summary.TotalCallMinutes != 10 {
-		t.Fatalf("calls=%d minutes=%v", summary.TotalCalls, summary.TotalCallMinutes)
-	}
-	if q.EvaluatedCalls != 2 || q.UnevaluatedCalls != 2 || q.FlaggedCalls != 1 ||
-		!reflect.DeepEqual(q.CheckFlags, []CheckFlagCount{{Check: "request_understood", Calls: 1, ScoredCalls: 2}, {Check: "conversation_responsive", Calls: 0, ScoredCalls: 1}}) {
-		t.Fatalf("flags=%+v", q)
-	}
-	if q.StaffFlags != (StaffFlagCounts{Pending: 1, Confirmed: 1, NotAnIssue: 1}) {
-		t.Fatalf("staff flags=%+v", q.StaffFlags)
-	}
-	if q.SentimentCalls != 2 || q.MeanSentiment == nil || *q.MeanSentiment != 2.1 {
-		t.Fatalf("sentiment calls=%d mean=%v", q.SentimentCalls, q.MeanSentiment)
-	}
-	if q.TokenCalls != 1 || *q.P50InputTokens != 12000 || *q.P50CachedTokens != 8000 || *q.P50OutputTokens != 300 {
-		t.Fatalf("tokens=%+v", q)
-	}
-	if q.FootprintCalls != 1 || q.LatestFootprint == nil || *q.LatestFootprint != (ContextFootprint{700, 3200, 1800, 17}) {
-		t.Fatalf("footprint calls=%d latest=%+v", q.FootprintCalls, q.LatestFootprint)
-	}
-	var day *QualityDay
-	for i := range q.Daily {
-		if q.Daily[i].EvaluatedCalls+q.Daily[i].UnevaluatedCalls > 0 {
-			day = &q.Daily[i]
-		}
-	}
-	if len(q.Daily) != len(summary.Daily) || day == nil || len(day.SentimentCounts) != 5 || day.SentimentCounts[1] != 1 || day.SentimentCounts[3] != 1 {
-		t.Fatalf("daily=%+v", q.Daily)
-	}
-	versions := summary.Versions
-	wantInEffect := []VersionInEffect{{"agent", "0.10.0", ""}, {"prompts", "0.9.0", ""}, {"knowledge", "revision-a", locationID}}
-	if !reflect.DeepEqual(versions.InEffect, wantInEffect) {
-		t.Fatalf("in effect=%+v", versions.InEffect)
-	}
-	if len(versions.Changes) != 2 ||
-		versions.Changes[0].Dimension != "agent" || versions.Changes[0].Version != "0.11.0" || versions.Changes[0].PreviousVersion != "0.10.0" ||
-		versions.Changes[1].Dimension != "prompts" || versions.Changes[1].Version != "0.10.0" || versions.Changes[1].PreviousVersion != "0.9.0" ||
-		!versions.Changes[0].FirstSeenAt.Equal(now.Add(-30*time.Minute)) || !versions.Changes[1].FirstSeenAt.Equal(now.Add(-30*time.Minute)) {
-		t.Fatalf("changes=%+v", versions.Changes)
+		t.Fatalf("calls = %d, minutes = %v, want 4 and 10", summary.TotalCalls, summary.TotalCallMinutes)
 	}
 }

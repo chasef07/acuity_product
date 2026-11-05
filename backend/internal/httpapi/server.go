@@ -461,7 +461,7 @@ func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	if body.Source != api.CreateStaffTaskRequestSourceAgent {
+	if body.Source != api.Agent {
 		server.writeDomainError(w, r, work.ErrInvalidInput)
 		return
 	}
@@ -3367,17 +3367,11 @@ func operatorAIAnalyticsPageResponse(
 			return api.OperatorAIAnalyticsPage{}, err
 		}
 		response.PendingIssues = pendingIssues
-		versions, err := analyticsVersionsResponse(page.Summary.Versions)
-		if err != nil {
-			return api.OperatorAIAnalyticsPage{}, err
-		}
 		response.Summary = &api.OperatorAIAnalyticsSummary{
 			Judges:            analyticsJudgesResponse(page.Summary.Judges),
 			Distributions:     analyticsDistributionsResponse(page.Summary.Distributions),
 			Daily:             make([]api.OperatorAIAnalyticsDay, 0, len(page.Summary.Daily)),
 			Diagnostics:       analyticsDiagnosticsResponse(page.Summary.Diagnostics),
-			Quality:           analyticsQualityResponse(page.Summary.Quality),
-			Versions:          versions,
 			TotalCalls:        page.Summary.TotalCalls,
 			TotalCallMinutes:  page.Summary.TotalCallMinutes,
 			BookingCount:      page.Summary.BookingCount,

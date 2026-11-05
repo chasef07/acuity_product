@@ -34,7 +34,7 @@ func TestStoredAnalyticsFactsRejectMalformedRows(t *testing.T) {
 	valid := func() analyticsFactsRow {
 		return analyticsFactsRow{
 			version: &version, toolNames: []string{"lookup"}, toolCallIDs: []string{"a"}, toolStatuses: []string{"SUCCESS"}, toolDurations: []*int{nil},
-			footprint: []int{1, 2, 3, 4}, juryModels: []string{"a", "b"}, juryResults: results(juryQuestionQuorumMet), juryVotes: results("yn"),
+			juryModels: []string{"a", "b"}, juryResults: results(juryQuestionQuorumMet), juryVotes: results("yn"),
 		}
 	}
 	if _, err := valid().facts(questions); err != nil {
@@ -44,7 +44,6 @@ func TestStoredAnalyticsFactsRejectMalformedRows(t *testing.T) {
 		"missing version":        func(row *analyticsFactsRow) { row.version = nil },
 		"older version":          func(row *analyticsFactsRow) { row.version = &stale },
 		"tool arrays disagree":   func(row *analyticsFactsRow) { row.toolStatuses = nil },
-		"footprint length":       func(row *analyticsFactsRow) { row.footprint = []int{1, 2, 3} },
 		"results without models": func(row *analyticsFactsRow) { row.juryModels = nil },
 		"question count":         func(row *analyticsFactsRow) { row.juryResults = row.juryResults[1:] },
 		"unknown result":         func(row *analyticsFactsRow) { row.juryResults[0] = "maybe" },

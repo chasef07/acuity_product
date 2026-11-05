@@ -84,11 +84,7 @@ type AnalyticsSummary struct {
 	Distributions     AnalyticsDistributions
 	Daily             []AnalyticsDay
 	Diagnostics       AnalyticsDiagnostics
-	Quality           AnalyticsQuality
-	Versions          AnalyticsVersions
 	diagnostics       *diagnosticsAccumulator
-	quality           *qualityAccumulator
-	versions          *versionAccumulator
 	TotalCalls        int
 	TotalCallMinutes  float64
 	BookingCount      int
@@ -208,8 +204,6 @@ type analyticsProjection struct {
 	intent             CallIntent
 	transcript         json.RawMessage
 	closeoutPayload    json.RawMessage
-	quality            qualitySample
-	versions           callVersions
 }
 
 func (m *Module) QueryAnalytics(
@@ -283,10 +277,6 @@ func queryAnalyticsSummary(
 	from time.Time,
 	to time.Time,
 ) (AnalyticsSummary, error) {
-	versions := newVersionAccumulator()
-	if err := queryVersionBaseline(ctx, tx, command.PracticeID, locationIDs, from, versions); err != nil {
-		return AnalyticsSummary{}, err
-	}
 	rows, err := tx.Query(ctx, `
 		SELECT
 			interaction.id::text,
@@ -294,14 +284,6 @@ func queryAnalyticsSummary(
 			interaction.ended_at,
 			interaction.status,
 			interaction.appointment_outcome,`+analyticsFactsColumns+`,
-			CASE WHEN issue.interaction_id IS NULL THEN '' ELSE COALESCE(issue.review_outcome, 'PENDING') END,
-			interaction.location_id::text,
-			COALESCE(interaction.version_agent, ''),
-			COALESCE(interaction.version_prompts, ''),
-			COALESCE(interaction.version_tools, ''),
-			COALESCE(interaction.version_knowledge, ''),
-			COALESCE(interaction.version_judges, ''),
-			COALESCE(interaction.version_evaluator, ''),
 			classification.intent, classification.outcome, judged.evaluated, judged.failures
 		FROM ai_interactions interaction
 		LEFT JOIN ai_interaction_classifications classification ON classification.interaction_id = interaction.id
@@ -312,7 +294,6 @@ func queryAnalyticsSummary(
 			WHERE answer.interaction_id = interaction.id AND answer.source = 'judge'
 				AND answer.scorecard_version || ':' || answer.question = ANY($5::text[])
 		) judged ON true
-		LEFT JOIN ai_interaction_issues issue ON issue.interaction_id = interaction.id
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.started_at >= $3
@@ -324,8 +305,6 @@ func queryAnalyticsSummary(
 	}
 	defer rows.Close()
 	summary := AnalyticsSummary{Daily: analyticsDays(from, to), diagnostics: newDiagnosticsAccumulator()}
-	summary.quality = newQualityAccumulator(summary.Daily)
-	summary.versions = versions
 	distributions := newDistributionAccumulator()
 	distributions.routes = map[string]*AnalyticsPathCount{}
 	judges := newJudgeAccumulator()
@@ -344,7 +323,6 @@ func queryAnalyticsSummary(
 		var intent, outcome *string
 		var evaluated bool
 		var failures []string
-		values := make([]string, len(versionDimensions))
 		targets := []any{
 			&projection.call.ID,
 			&projection.call.StartedAt,
@@ -354,9 +332,6 @@ func queryAnalyticsSummary(
 		}
 		targets = append(targets, stored.targets()...)
 		targets = append(targets,
-			&projection.quality.staffFlag,
-			&projection.versions.locationID,
-			&values[0], &values[1], &values[2], &values[3], &values[4], &values[5],
 			&intent, &outcome, &evaluated, &failures,
 		)
 		if err := rows.Scan(targets...); err != nil {
@@ -377,15 +352,7 @@ func queryAnalyticsSummary(
 		if intent != nil {
 			projection.intent = CallIntent(*intent)
 		}
-		projection.quality.startedAt = projection.call.StartedAt
-		projection.quality.evaluation = facts.evaluation
-		projection.quality.footprint = facts.footprint
-		projection.quality.usage = facts.usage
 		judges.add(facts.jury)
-		projection.versions.values = map[string]string{}
-		for i, dimension := range versionDimensions {
-			projection.versions.values[dimension] = values[i]
-		}
 		if (command.Intent == "" || intent != nil && *intent == command.Intent) &&
 			(command.Outcome == "" || outcome != nil && *outcome == command.Outcome) {
 			distributions.add(intent, outcome, evaluated, failures)
@@ -450,14 +417,6 @@ func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analytic
 		summary.diagnostics = newDiagnosticsAccumulator()
 	}
 	summary.diagnostics.add(projection)
-	if summary.quality == nil {
-		summary.quality = newQualityAccumulator(summary.Daily)
-	}
-	summary.quality.add(projection.quality)
-	if summary.versions == nil {
-		summary.versions = newVersionAccumulator()
-	}
-	summary.versions.add(projection.call.StartedAt, projection.versions)
 	switch projection.appointmentOutcome {
 	case OutcomeBooking:
 		summary.BookingCount++
@@ -486,16 +445,6 @@ func finalizeAnalyticsSummary(summary *AnalyticsSummary) {
 	}
 	summary.Diagnostics = summary.diagnostics.finish()
 	summary.diagnostics = nil
-	if summary.quality == nil {
-		summary.quality = newQualityAccumulator(summary.Daily)
-	}
-	summary.Quality = summary.quality.finish()
-	summary.quality = nil
-	if summary.versions == nil {
-		summary.versions = newVersionAccumulator()
-	}
-	summary.Versions = summary.versions.finish()
-	summary.versions = nil
 	if summary.TotalCalls > 0 {
 		summary.TransferRate = float64(summary.TransferCount) / float64(summary.TotalCalls)
 	}
