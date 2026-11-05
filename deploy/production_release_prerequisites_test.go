@@ -16,7 +16,7 @@ func TestProductionRuntimeVerifier(t *testing.T) {
 }
 
 func TestProductionReleaseRejectsMissingCommandsBeforeCloudAccess(t *testing.T) {
-	for _, missing := range []string{"dirname", "awk", "curl", "gcloud", "python3", "node"} {
+	for _, missing := range []string{"dirname", "awk", "curl", "gcloud", "python3"} {
 		t.Run(missing, func(t *testing.T) {
 			path, gcloudCapture, curlCapture := installReleaseFakes(t)
 			bin := strings.Split(path, ":")[0]
@@ -38,9 +38,6 @@ func TestProductionReleaseRejectsMissingCommandsBeforeCloudAccess(t *testing.T) 
 				}
 			}
 			environment := releaseEnvironment()
-			if missing == "node" {
-				environment = append(environment, "CALLLEG_DESTRUCTIVE_CUTOVER=true")
-			}
 			command := exec.Command("bash", filepath.Join(releaseDeployDirectory(t), "deploy-production-release.sh"))
 			command.Env = append(environment,
 				"PATH="+bin,

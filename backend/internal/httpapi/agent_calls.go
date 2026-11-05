@@ -23,7 +23,7 @@ func (server *Server) QueryAgentCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validCallLabelFilters(body.Intent, body.Outcome) {
-		server.writeInteractionError(w, r, interaction.ErrInvalidInput)
+		server.writeDomainError(w, r, interaction.ErrInvalidInput)
 		return
 	}
 	ctx, cancel := server.requestContext(r)
@@ -44,7 +44,7 @@ func (server *Server) QueryAgentCalls(w http.ResponseWriter, r *http.Request) {
 		InsuranceGapOnly: body.InsuranceGapOnly != nil && *body.InsuranceGapOnly,
 	})
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, page)
@@ -61,7 +61,7 @@ func (server *Server) GetAgentCall(w http.ResponseWriter, r *http.Request, id op
 	defer cancel()
 	detail, err := server.interactions.ReadAgentCall(ctx, identity, id.String())
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, detail)
@@ -86,7 +86,7 @@ func (server *Server) FlagAgentCallIssue(w http.ResponseWriter, r *http.Request,
 	defer cancel()
 	issue, err := server.interactions.FlagAgentCallIssue(ctx, identity, id.String(), interaction.AgentCallIssueReason(body.Reason), note)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, issue)
@@ -118,7 +118,7 @@ func (server *Server) closeCallGap(w http.ResponseWriter, r *http.Request, body 
 	defer cancel()
 	review, err := close(ctx, identity)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, review)

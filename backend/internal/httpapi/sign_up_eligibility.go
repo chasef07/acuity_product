@@ -17,7 +17,7 @@ func (server *Server) InspectSignUpEligibility(w http.ResponseWriter, r *http.Re
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	if err := server.access.InspectSignUpEligibility(ctx, string(body.Email)); err != nil {
-		server.writeAccessError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

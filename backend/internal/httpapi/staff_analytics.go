@@ -27,7 +27,7 @@ func (server *Server) QueryStaffAnalytics(w http.ResponseWriter, r *http.Request
 		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: uuidString(body.LocationId), Days: int(body.Days),
 	})
 	if err != nil {
-		server.writeWorkspaceError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, report)

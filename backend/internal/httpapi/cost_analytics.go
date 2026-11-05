@@ -29,7 +29,7 @@ func (server *Server) QueryOperatorAICosts(w http.ResponseWriter, r *http.Reques
 		Range: interaction.AnalyticsRange(body.Range),
 	})
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, report)
