@@ -513,16 +513,7 @@ func TestProductionReleaseRestoresStagedServiceTrafficWhenDeployFails(t *testing
 }
 
 func TestProductionReleaseRestoresTrafficWhenWorkerIsNotReady(t *testing.T) {
-	directory := releaseDeployDirectory(t)
-	path, gcloudCapture, curlCapture := installReleaseFakes(t)
-	command := exec.Command("bash", filepath.Join(directory, "deploy-production-release.sh"))
-	command.Env = append([]string{
-		"PATH=" + path,
-		"GCLOUD_CAPTURE=" + gcloudCapture,
-		"CURL_CAPTURE=" + curlCapture,
-		"GCLOUD_WORKER_READY=False",
-	}, releaseEnvironment()...)
-	output, err := command.CombinedOutput()
+	gcloudCapture, output, err := runRelease(t, "GCLOUD_WORKER_READY=False")
 	if err == nil {
 		t.Fatalf("release accepted a worker that did not become ready:\n%s", output)
 	}
@@ -549,12 +540,14 @@ func TestProductionReleaseNeverExitsPastItsRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, armed, found := strings.Cut(string(script), "trap rollback ERR\n")
-	if !found {
-		t.Fatal("release script does not arm its rollback")
+	armed, _, disarmed := strings.Cut(armed, "trap - ERR\n")
+	if !found || !disarmed {
+		t.Fatal("release script does not arm and then disarm its rollback")
 	}
-	for number, line := range strings.Split(armed, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "exit") {
-			t.Errorf("line %d after the rollback trap skips rollback: %s", number+1, line)
+	exitCommand := regexp.MustCompile(`(^|[\s;&|(])exit(\s|;|$)`)
+	for _, line := range strings.Split(armed, "\n") {
+		if exitCommand.MatchString(line) {
+			t.Errorf("exit skips rollback while it is armed: %s", line)
 		}
 	}
 }
