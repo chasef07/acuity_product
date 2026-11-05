@@ -408,8 +408,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	`).Scan(&grantCount, &abitaGrantCount, &demoGrantCount); err != nil {
 		t.Fatalf("count provisioned Access Grants: %v", err)
 	}
-	if grantCount != 32 || abitaGrantCount != 32 || demoGrantCount != 0 {
-		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 32, 32, 0",
+	if grantCount != 33 || abitaGrantCount != 33 || demoGrantCount != 0 {
+		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 33, 33, 0",
 			grantCount, abitaGrantCount, demoGrantCount)
 	}
 	var brightVuEmail, brightVuRole, brightVuScope, brightVuLocation string
@@ -509,8 +509,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	if err := json.NewDecoder(outputFile).Decode(&provisioned); err != nil {
 		t.Fatalf("decode provisioning output: %v", err)
 	}
-	if provisioned.AccessGrantCount != 32 {
-		t.Fatalf("provisioning output Access Grant count = %d, want 32", provisioned.AccessGrantCount)
+	if provisioned.AccessGrantCount != 33 {
+		t.Fatalf("provisioning output Access Grant count = %d, want 33", provisioned.AccessGrantCount)
 	}
 }
 
