@@ -294,9 +294,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		firstPage.Summary.BookingCount != 1 || firstPage.Summary.CancellationCount != 0 ||
 		firstPage.Summary.RescheduleCount != 0 ||
 		firstPage.Summary.ToolCallCount != 3 || firstPage.Summary.ToolErrorCount != 1 ||
-		math.Abs(firstPage.Summary.ToolFailureRate-(1.0/3.0)) > 0.0001 ||
-		len(firstPage.Summary.Quality.Daily) != len(firstPage.Summary.Daily) ||
-		firstPage.Summary.Quality.EvaluatedCalls+firstPage.Summary.Quality.UnevaluatedCalls != 2 {
+		math.Abs(firstPage.Summary.ToolFailureRate-(1.0/3.0)) > 0.0001 {
 		t.Fatalf("operator analytics summary = %#v", firstPage.Summary)
 	}
 	judges := firstPage.Summary.Judges
@@ -576,11 +574,6 @@ type operatorAIAnalyticsTestPage struct {
 			TransferCount     int      `json:"transferCount"`
 			TransferRate      *float64 `json:"transferRate"`
 		} `json:"daily"`
-		Quality struct {
-			Daily            []json.RawMessage `json:"daily"`
-			EvaluatedCalls   int               `json:"evaluatedCalls"`
-			UnevaluatedCalls int               `json:"unevaluatedCalls"`
-		} `json:"quality"`
 		TotalCalls        int     `json:"totalCalls"`
 		TotalCallMinutes  float64 `json:"totalCallMinutes"`
 		BookingCount      int     `json:"bookingCount"`

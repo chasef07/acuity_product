@@ -98,8 +98,8 @@ func TestAgentCallsScopePaginationTranscriptAndIssuePersistence(t *testing.T) {
 		name, result, errors string
 		want                 *float64
 	}{
-		{"v8 measured zero", `{"expressed_sentiment":{"score":0,"votes":{"a":0,"b":0,"c":0},"errors":{}}}`, `{}`, qualityFloat(0)},
-		{"v8 measured mean", `{"expressed_sentiment":{"score":1.5,"votes":{"a":1,"b":2},"errors":{"c":"TimeoutError"}}}`, `{}`, qualityFloat(1.5)},
+		{"v8 measured zero", `{"expressed_sentiment":{"score":0,"votes":{"a":0,"b":0,"c":0},"errors":{}}}`, `{}`, evaluationFloat(0)},
+		{"v8 measured mean", `{"expressed_sentiment":{"score":1.5,"votes":{"a":1,"b":2},"errors":{"c":"TimeoutError"}}}`, `{}`, evaluationFloat(1.5)},
 		{"historical v8 missing sentiment", `{}`, `{}`, nil},
 		{"v8 invalid sentiment", `{"expressed_sentiment":{"score":"2"}}`, `{}`, nil},
 		{"v8 no quorum", `{"expressed_sentiment":{"score":2}}`, `{"expressed_sentiment":{"cause":"no_quorum","votes":{"a":2},"errors":{"b":"TimeoutError","c":"TimeoutError"}}}`, nil},

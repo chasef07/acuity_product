@@ -96,7 +96,7 @@ func TestAnalyticsSummaryFromFactsMatchesSummaryFromEvidence(t *testing.T) {
 			from := now.Add(-time.Duration(days) * 24 * time.Hour)
 			locations := []string{locationID, otherLocationID}
 			fromFacts, fromEvidence := paritySummaries(t, pool, command, locations, from, now)
-			if fromFacts.TotalCalls == 0 || fromFacts.ToolCallCount == 0 || fromFacts.Judges.ReportedCalls == 0 || fromFacts.Quality.EvaluatedCalls == 0 {
+			if fromFacts.TotalCalls == 0 || fromFacts.ToolCallCount == 0 || fromFacts.Judges.ReportedCalls == 0 {
 				t.Fatalf("%dd fixture exercised too little: %+v", days, fromFacts)
 			}
 			if !reflect.DeepEqual(fromFacts, fromEvidence) {
@@ -261,19 +261,11 @@ func paritySummaries(t *testing.T, pool interface {
 }
 
 func evidenceAnalyticsSummary(ctx context.Context, tx pgx.Tx, command QueryAnalyticsCommand, locationIDs []string, from, to time.Time) (AnalyticsSummary, error) {
-	versions := newVersionAccumulator()
-	if err := queryVersionBaseline(ctx, tx, command.PracticeID, locationIDs, from, versions); err != nil {
-		return AnalyticsSummary{}, err
-	}
 	rows, err := tx.Query(ctx, `
 		SELECT
 			interaction.id::text, interaction.started_at, interaction.ended_at, interaction.status, interaction.appointment_outcome,
 			interaction.analytics_evidence -> 'transcript', interaction.analytics_evidence -> 'closeout',
-			interaction.closeout_payload -> 'evaluation', interaction.closeout_payload -> 'contextFootprint', interaction.cost_usage_evidence,
-			CASE WHEN issue.interaction_id IS NULL THEN '' ELSE COALESCE(issue.review_outcome, 'PENDING') END,
-			interaction.location_id::text,
-			COALESCE(interaction.version_agent, ''), COALESCE(interaction.version_prompts, ''), COALESCE(interaction.version_tools, ''),
-			COALESCE(interaction.version_knowledge, ''), COALESCE(interaction.version_judges, ''), COALESCE(interaction.version_evaluator, ''),
+			interaction.closeout_payload -> 'evaluation',
 			classification.intent, classification.outcome, judged.evaluated, judged.failures
 		FROM ai_interactions interaction
 		LEFT JOIN ai_interaction_classifications classification ON classification.interaction_id = interaction.id
@@ -284,7 +276,6 @@ func evidenceAnalyticsSummary(ctx context.Context, tx pgx.Tx, command QueryAnaly
 			WHERE answer.interaction_id = interaction.id AND answer.source = 'judge'
 				AND answer.scorecard_version || ':' || answer.question = ANY($5::text[])
 		) judged ON true
-		LEFT JOIN ai_interaction_issues issue ON issue.interaction_id = interaction.id
 		WHERE interaction.practice_id = $1 AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.started_at >= $3 AND interaction.started_at <= $4
 		ORDER BY interaction.started_at, interaction.id
@@ -294,8 +285,6 @@ func evidenceAnalyticsSummary(ctx context.Context, tx pgx.Tx, command QueryAnaly
 	}
 	defer rows.Close()
 	summary := AnalyticsSummary{Daily: analyticsDays(from, to), diagnostics: newDiagnosticsAccumulator()}
-	summary.quality = newQualityAccumulator(summary.Daily)
-	summary.versions = versions
 	distributions := newDistributionAccumulator()
 	distributions.routes = map[string]*AnalyticsPathCount{}
 	judges := newJudgeAccumulator()
@@ -306,29 +295,19 @@ func evidenceAnalyticsSummary(ctx context.Context, tx pgx.Tx, command QueryAnaly
 	}
 	for rows.Next() {
 		var projection analyticsProjection
-		var evaluation, footprint, usage json.RawMessage
+		var evaluation json.RawMessage
 		var intent, outcome *string
 		var evaluated bool
 		var failures []string
-		values := make([]string, len(versionDimensions))
 		if err := rows.Scan(&projection.call.ID, &projection.call.StartedAt, &projection.call.EndedAt, &projection.call.Status, &projection.appointmentOutcome,
-			&projection.transcript, &projection.closeoutPayload, &evaluation, &footprint, &usage, &projection.quality.staffFlag, &projection.versions.locationID,
-			&values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &intent, &outcome, &evaluated, &failures); err != nil {
+			&projection.transcript, &projection.closeoutPayload, &evaluation, &intent, &outcome, &evaluated, &failures); err != nil {
 			return AnalyticsSummary{}, err
 		}
 		projectAnalyticsEvidence(&projection)
 		if intent != nil {
 			projection.intent = CallIntent(*intent)
 		}
-		projection.quality.startedAt = projection.call.StartedAt
-		projection.quality.evaluation = readEvaluation(evaluation)
 		judges.add(readJuryFacts(evaluation))
-		projection.quality.footprint = contextFootprint(footprint)
-		projection.quality.usage = callTokenUsage(usage)
-		projection.versions.values = map[string]string{}
-		for i, dimension := range versionDimensions {
-			projection.versions.values[dimension] = values[i]
-		}
 		if (command.Intent == "" || intent != nil && *intent == command.Intent) &&
 			(command.Outcome == "" || outcome != nil && *outcome == command.Outcome) {
 			distributions.add(intent, outcome, evaluated, failures)
