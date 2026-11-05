@@ -162,6 +162,13 @@ func TestMessagingRoutesReportDatabaseFailuresAsUnavailable(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &attachment); err != nil {
 		t.Fatalf("decode seed attachment: %v", err)
 	}
+	attachmentSend := sendBody("seed-attachment-send")
+	attachmentSend.Body = ""
+	attachmentSend.AttachmentId = &attachment.Id
+	status, body = call(http.MethodPost, "/v1/messages", "staff-token", attachmentSend)
+	if status != http.StatusCreated {
+		t.Fatalf("seed attachment send = %d %s", status, body)
+	}
 	attachmentPath := "/v1/attachments/" + attachment.Id.String()
 	sendAgain := map[string]any{"idempotencyKey": "seed-again", "duplicateRiskAcknowledged": true}
 	followUp := map[string]any{"title": "Call the patient back"}
@@ -182,6 +189,9 @@ func TestMessagingRoutesReportDatabaseFailuresAsUnavailable(t *testing.T) {
 		{"follow-up Task", http.MethodPost, "/v1/messages/" + sent.Message.Id.String() + "/follow-up-task", followUp},
 		{"attachment upload", http.MethodPost, "/v1/attachments", upload},
 		{"attachment read", http.MethodGet, attachmentPath, nil},
+	}
+	if status, body := call(http.MethodGet, attachmentPath, "staff-token", nil); status != http.StatusOK {
+		t.Fatalf("read stored attachment = %d %s", status, body)
 	}
 	database.failQueriesContaining("FROM access_platform_operators")
 	for _, route := range routes {

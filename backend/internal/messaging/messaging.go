@@ -74,6 +74,13 @@ var (
 	errUnmatchedProviderEvent = errors.New("unmatched messaging provider event")
 )
 
+func messagingAccessError(err error) error {
+	if errors.Is(err, access.ErrDenied) {
+		return ErrDenied
+	}
+	return fmt.Errorf("check messaging access: %w", err)
+}
+
 var idempotencyKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
 
 type Thread struct {
@@ -370,7 +377,7 @@ func (m *Module) Send(
 		command.LocationID,
 	)
 	if err != nil {
-		return Message{}, "", ErrDenied
+		return Message{}, "", messagingAccessError(err)
 	}
 	var originalAttachmentFileName, originalAttachmentType string
 	var originalAttachmentBytes int
@@ -1177,7 +1184,7 @@ func (m *Module) readMessageForRetry(
 		practiceID,
 		locationID,
 	); err != nil {
-		return Message{}, ErrDenied
+		return Message{}, messagingAccessError(err)
 	}
 	message, err := loadMessage(ctx, tx, command.MessageID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1216,7 +1223,7 @@ func (m *Module) loadSendAgainReplay(
 		replayed.Thread.PracticeID,
 		replayed.Thread.LocationID,
 	); err != nil {
-		return Message{}, false, ErrDenied
+		return Message{}, false, messagingAccessError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Message{}, false, fmt.Errorf("commit Message new-attempt replay: %w", err)
@@ -1951,7 +1958,7 @@ func (m *Module) CreateFollowUpTask(
 		locationID,
 	)
 	if err != nil {
-		return work.Task{}, "", ErrDenied
+		return work.Task{}, "", messagingAccessError(err)
 	}
 	task, status, err := m.work.EnsureMessageFollowUp(
 		ctx,
