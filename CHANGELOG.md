@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.3.1](https://github.com/chasef07/acuity_product/compare/v3.3.0...v3.3.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **calling,messaging:** end rejected outbound Bridges and keep outages out of denials ([#619](https://github.com/chasef07/acuity_product/issues/619)) ([725a88e](https://github.com/chasef07/acuity_product/commit/725a88e1a3b9019d787bcc5f2b97fd5cbd00eeaa))
+* **deploy:** roll back when the worker does not become ready ([#624](https://github.com/chasef07/acuity_product/issues/624)) ([c678b23](https://github.com/chasef07/acuity_product/commit/c678b23cabd988c0930e3d1e32c3ac0e758c26d5))
+
 ## [3.3.0](https://github.com/chasef07/acuity_product/compare/v3.2.2...v3.3.0) (2026-11-04)
 
 
