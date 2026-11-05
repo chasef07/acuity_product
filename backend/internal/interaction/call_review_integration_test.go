@@ -52,13 +52,12 @@ func TestScorecardReviewQueueBlindReviewAndAccuracy(t *testing.T) {
 		return id
 	}
 	healthy := map[string]float64{"new_booking_requested": 0.1, "promises_backed": 0.9, "ended_while_caller_active": 0.9, "office_question_answered": 0.9, "office_rules_grounded": 0.9}
-	ids := []string{}
 	for index := 0; index < 30; index++ {
 		judged := healthy
 		if index%5 == 0 {
 			judged = map[string]float64{"new_booking_requested": 0.1, "promises_backed": 0.9, "ended_while_caller_active": 0.9, "office_question_answered": 0.2, "office_rules_grounded": 0.9}
 		}
-		ids = append(ids, insert(index, 60, nil, judged))
+		insert(index, 60, nil, judged)
 	}
 	insert(40, 10, nil, healthy)
 	booked := insert(41, 90, []syntheticTool{
