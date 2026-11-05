@@ -4,7 +4,37 @@ import (
 	"context"
 	"net/http"
 	"testing"
+
+	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 )
+
+func TestOutboundStartReportsACredentialReadFailureAsUnavailable(t *testing.T) {
+	fixture := newCallingAccessFailureFixture(t, httpCallingProvider{})
+	if status, body := fixture.lease("staff-token", "browser-a"); status != http.StatusOK {
+		t.Fatalf("acquire lease = %d %s", status, body)
+	}
+	if status, body := fixture.readiness("staff-token", "browser-a"); status != http.StatusOK {
+		t.Fatalf("readiness = %d %s", status, body)
+	}
+	if err := humancalling.New(fixture.pool, access.New(fixture.pool, fixture.now), httpCallingProvider{},
+		humancalling.Config{}, fixture.now).ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "calling-access-failure", LocationKey: "main",
+			Number: "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+	fixture.database.failQueriesContaining("FROM human_calling_credentials")
+	status, body := fixture.call(http.MethodPost, "/v1/calling/outbound-calls", "staff-token", map[string]any{
+		"sessionId":      "browser-a",
+		"idempotencyKey": "credential-failure-outbound",
+		"practiceId":     fixture.authorization.Practice.ID,
+		"locationId":     fixture.authorization.Locations[0].ID,
+		"destination":    "+15555550102",
+	})
+	fixture.expect("outbound start credential read", http.StatusServiceUnavailable, "UNAVAILABLE", status, body)
+}
 
 func TestCallCommandsReportDatabaseFailuresAsUnavailable(t *testing.T) {
 	provider := &rotatingCredentialProvider{}

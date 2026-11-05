@@ -121,8 +121,10 @@ func TestRejectedOutboundBridgeEndsTheCallWithoutVoicemail(t *testing.T) {
 	for _, command := range provider.all(humancalling.CommandHangupLeg) {
 		hungUp[command.TargetID] = true
 	}
-	if !hungUp["staff-control"] || !hungUp["destination-control"] {
-		t.Fatalf("Hangup targets = %v, want the staff and destination legs", hungUp)
+	if !hungUp["staff-control"] || !hungUp["destination-control"] ||
+		provider.count(humancalling.CommandHangupLeg) != 2 {
+		t.Fatalf("Hangup targets = %v from %d sends, want one each for the staff and destination legs",
+			hungUp, provider.count(humancalling.CommandHangupLeg))
 	}
 	if count := provider.count(humancalling.CommandSpeakVoicemail); count != 0 {
 		t.Fatalf("voicemail greetings = %d, want none on an outbound Call", count)

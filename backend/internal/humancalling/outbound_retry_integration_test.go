@@ -190,18 +190,23 @@ func TestStartOutboundCallReportsAClosedOrMissingTask(t *testing.T) {
 		t.Fatalf("complete synthetic Task: %v", err)
 	}
 
-	start := func(key, taskID string) error {
+	start := func(identity access.Identity, key, taskID string) error {
 		_, err := fixture.calling.StartOutboundCall(ctx, humancalling.StartOutboundCallCommand{
-			Identity: fixture.identity, SessionID: fixture.sessionID,
+			Identity: identity, SessionID: fixture.sessionID,
 			IdempotencyKey: key, TaskID: taskID,
 		})
 		return err
 	}
-	if err := start("outbound-closed-task", task.ID); !errors.Is(err, humancalling.ErrConflict) {
+	if err := start(fixture.identity, "outbound-closed-task", task.ID); !errors.Is(err, humancalling.ErrConflict) {
 		t.Fatalf("Call on a closed Task error = %v, want conflict", err)
 	}
 	missing := "00000000-0000-4000-8000-000000000001"
-	if err := start("outbound-missing-task", missing); !errors.Is(err, humancalling.ErrDenied) {
+	if err := start(fixture.identity, "outbound-missing-task", missing); !errors.Is(err, humancalling.ErrDenied) {
 		t.Fatalf("Call on a missing Task error = %v, want denied", err)
+	}
+	_, otherPractice := provisionConcurrentStaff(t, fixture.pool,
+		access.New(fixture.pool, func() time.Time { return now }), now, "outbound-other-practice", 1)
+	if err := start(otherPractice[0], "outbound-foreign-task", task.ID); !errors.Is(err, humancalling.ErrDenied) {
+		t.Fatalf("Call on another Practice's closed Task error = %v, want denied", err)
 	}
 }

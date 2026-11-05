@@ -290,13 +290,15 @@ func (m *Module) StartOutboundCall(
 	entryPoint := CallEntryStandalone
 	taskID, practiceID, locationID, destination := "", command.PracticeID,
 		command.LocationID, command.Destination
+	taskOpen := true
 	if command.TaskID != "" {
-		task, err := m.work.LockOpenOutboundTask(ctx, tx, command.TaskID)
+		task, err := m.work.LockOutboundTask(ctx, tx, command.TaskID)
 		if err != nil {
 			return Call{}, callingWorkError(err)
 		}
 		entryPoint, taskID = CallEntryTask, task.ID
 		practiceID, locationID, destination = task.PracticeID, task.LocationID, task.Phone
+		taskOpen = task.State == work.TaskOpen
 	}
 	if !supportedUSDestination(destination) {
 		return Call{}, ErrInvalidInput
@@ -305,6 +307,9 @@ func (m *Module) StartOutboundCall(
 		ctx, tx, command.Identity, practiceID, locationID,
 	); err != nil {
 		return Call{}, callingAccessError(err)
+	}
+	if !taskOpen {
+		return Call{}, ErrConflict
 	}
 	var leaseReady bool
 	if err := tx.QueryRow(ctx, `
