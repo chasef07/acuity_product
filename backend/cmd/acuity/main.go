@@ -449,7 +449,6 @@ func humanCallingConfig(
 ) humancalling.Config {
 	return humancalling.Config{
 		HandoffSIPDomain:       config.HumanCalling.HandoffSIPDomain,
-		HandoffAdmissionClosed: config.HumanCalling.HandoffAdmissionClosed,
 		StaffSIPDomain:         config.HumanCalling.StaffSIPDomain,
 		RingWindowDuration:     config.HumanCalling.RingWindowDuration,
 		HandoffTokenKey:        config.HumanCalling.HandoffTokenKey,

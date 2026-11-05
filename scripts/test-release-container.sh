@@ -24,4 +24,4 @@ docker run --rm --platform linux/amd64 --network none --read-only \
   --entrypoint /bin/bash \
   "$image" \
   -ec 'gcloud version; curl --version; exec /tests/deploy.test "$@"' -- \
-  -test.v -test.run '^Test(ProductionRelease|ProductionRuntimeVerifier|Destructive)' -test.count=1
+  -test.v -test.run '^Test(ProductionRelease|ProductionRuntimeVerifier)' -test.count=1

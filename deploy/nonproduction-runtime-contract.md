@@ -70,10 +70,7 @@ Each database authority is delivered through a distinct Secret Manager secret;
 runtime roles never share a database credential.
 
 Deploy migrations as a blocking Cloud Run job before starting a new revision.
-Most migrations expand first, but migration 0020 is an intentional CallLeg
-replacement: run the Telnyx cutover preflight, drain the old runtime completely,
-apply the migration, and deploy only the replacement. Never overlap a pre-0020
-revision with the CallLeg schema. Never run migrations from application startup.
+Migrations expand first. Never run migrations from application startup.
 
 Required service configuration:
 

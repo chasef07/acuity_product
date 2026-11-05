@@ -48,7 +48,6 @@ jobs:
     if: >-
       !cancelled() &&
       needs.release-please.outputs.release_created == 'true' &&
-      vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE == 'true' &&
       (needs.verify-release.result == 'success' || (needs.verify-release.result == 'skipped' && needs.release-please.outputs.release_sha == github.event.workflow_run.head_sha))
     needs: [release-please, verify-release]
     runs-on: ubuntu-latest
@@ -78,7 +77,6 @@ jobs:
 
       - name: Build and release the verified commit
         env:
-          CALLLEG_SCHEMA_CUTOVER_COMPLETE: ${{ vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE }}
           RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
           USABLE_DATABASE_CONNECTIONS: ${{ vars.USABLE_DATABASE_CONNECTIONS }}
           MIDDLEWARE_BASE_URL: ${{ vars.MIDDLEWARE_BASE_URL }}
@@ -92,5 +90,5 @@ jobs:
             --region="${{ vars.GCP_REGION }}" \
             --service-account="projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" \
             --config=cloudbuild.release.yaml \
-            --substitutions="_IMAGE_TAG=${RELEASE_SHA},_CALLLEG_SCHEMA_CUTOVER_COMPLETE=${CALLLEG_SCHEMA_CUTOVER_COMPLETE},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS},_MIDDLEWARE_BASE_URL=${MIDDLEWARE_BASE_URL},_MIDDLEWARE_API_SECRET_SECRET=${MIDDLEWARE_API_SECRET_SECRET}" \
+            --substitutions="_IMAGE_TAG=${RELEASE_SHA},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS},_MIDDLEWARE_BASE_URL=${MIDDLEWARE_BASE_URL},_MIDDLEWARE_API_SECRET_SECRET=${MIDDLEWARE_API_SECRET_SECRET}" \
             .

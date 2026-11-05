@@ -168,7 +168,7 @@ promoted and its smoke checks pass. It compares each request service's
 minimum, maximum, concurrency, and application pool plus the worker pool's
 fixed instance count, concurrency, and application pool against
 `production-runtime-contract.json`. Any missing or different value keeps the
-release incomplete; the same check runs after a destructive cutover.
+release incomplete.
 
 Messaging adds one shared private Cloud Storage volume mounted at
 `MESSAGING_ATTACHMENT_DIRECTORY` by `portal-api`, `provider-ingress`, and

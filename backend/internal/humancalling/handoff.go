@@ -20,9 +20,6 @@ func (m *Module) CreateHandoff(
 	ctx context.Context,
 	command CreateHandoffCommand,
 ) (Handoff, error) {
-	if m.config.HandoffAdmissionClosed {
-		return Handoff{}, ErrHandoffAdmissionClosed
-	}
 	if (strings.TrimSpace(command.OfficeKey) == "") ==
 		(strings.TrimSpace(command.LocationID) == "") {
 		return Handoff{}, ErrInvalidInput

@@ -60,7 +60,6 @@ type ServiceCredentialConfig struct {
 
 type HumanCallingConfig struct {
 	HandoffSIPDomain       string
-	HandoffAdmissionClosed bool
 	StaffSIPDomain         string
 	HandoffTokenKey        []byte
 	WebhookPublicKeys      [][]byte
@@ -279,15 +278,6 @@ func loadHandoffConfig(getenv func(string) string) (HumanCallingConfig, error) {
 		32,
 	); err != nil {
 		return HumanCallingConfig{}, err
-	}
-	switch strings.TrimSpace(getenv("HUMAN_CALLING_HANDOFF_ADMISSION")) {
-	case "", "open":
-	case "closed":
-		result.HandoffAdmissionClosed = true
-	default:
-		return HumanCallingConfig{}, fmt.Errorf(
-			"HUMAN_CALLING_HANDOFF_ADMISSION must be open or closed",
-		)
 	}
 	return result, nil
 }
