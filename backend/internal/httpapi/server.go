@@ -251,12 +251,12 @@ func (server *Server) DiscoverAccess(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	discovery, err := server.access.DiscoverActor(ctx, identity)
 	if err != nil {
-		server.writeAccessError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := discoveryResponse(discovery)
 	if err != nil {
-		server.writeAccessError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -283,12 +283,12 @@ func (server *Server) GetWorkspace(
 		params.LocationId.String(),
 	)
 	if err != nil {
-		server.writeAccessError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := workspaceResponse(authorization)
 	if err != nil {
-		server.writeAccessError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -319,12 +319,12 @@ func (server *Server) AddLocation(
 		Name:       body.Name,
 	})
 	if err != nil {
-		server.writeAccessError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := locationMutationResponse(mutation)
 	if err != nil {
-		server.writeAccessError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusCreated, response)
@@ -350,7 +350,7 @@ func (server *Server) GetEvents(
 		params.PracticeId.String(),
 		params.LocationId.String(),
 	); err != nil {
-		server.writeAccessError(w, r, err)
+		server.writeDomainError(w, r, err)
 	}
 }
 
@@ -368,7 +368,7 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 	}
 	input, valid := normalizeCreateHandoffRequest(body)
 	if !valid {
-		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		server.writeDomainError(w, r, humancalling.ErrInvalidInput)
 		return
 	}
 	if !service.Allows(access.ServiceCapabilityHumanHandoff) ||
@@ -394,12 +394,12 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	handoffID, err := uuid.Parse(handoff.ID)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusCreated, api.Handoff{
@@ -462,7 +462,7 @@ func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Source != api.CreateStaffTaskRequestSourceAgent {
-		server.writeWorkError(w, r, work.ErrInvalidInput)
+		server.writeDomainError(w, r, work.ErrInvalidInput)
 		return
 	}
 	var patientID, patientDOB, patientName string
@@ -490,12 +490,12 @@ func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
 		Urgency:                 work.TaskUrgency(body.Urgency),
 	})
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	taskID, err := uuid.Parse(task.ID)
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	httpStatus := http.StatusCreated
@@ -551,12 +551,12 @@ func (server *Server) IngestAIInteraction(w http.ResponseWriter, r *http.Request
 	defer cancel()
 	stored, status, err := server.interactions.Ingest(ctx, command)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	interactionID, err := uuid.Parse(stored.ID)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	httpStatus := http.StatusOK
@@ -585,12 +585,12 @@ func (server *Server) GetAIInteraction(
 	defer cancel()
 	stored, err := server.interactions.Read(ctx, identity, interactionID.String())
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := aiInteractionDetailResponse(stored)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -612,7 +612,7 @@ func (server *Server) QueryOperatorAIAnalytics(
 		return
 	}
 	if !validCallLabelFilters(body.Intent, body.Outcome) {
-		server.writeInteractionError(w, r, interaction.ErrInvalidInput)
+		server.writeDomainError(w, r, interaction.ErrInvalidInput)
 		return
 	}
 	ctx, finish, ok := server.beginAnalytics(w, r)
@@ -637,12 +637,12 @@ func (server *Server) QueryOperatorAIAnalytics(
 		},
 	)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := operatorAIAnalyticsPageResponse(page)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -668,12 +668,12 @@ func (server *Server) GetOperatorAIInteractionAnalytics(
 		interactionID.String(),
 	)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := operatorAIInteractionAnalyticsResponse(detail)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -712,7 +712,7 @@ func (server *Server) ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Reques
 			server.writeError(w, r, http.StatusBadRequest, "INVALID_WEBHOOK", "The provider webhook is invalid.", false)
 			return
 		}
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	outcome = observability.WebhookAccepted
@@ -735,7 +735,7 @@ func (server *Server) AcquireSoftphone(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	state, err := server.calling.AcquireSoftphone(ctx, identity, body.SessionId, body.Takeover)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, softphoneResponse(state))
@@ -762,7 +762,7 @@ func (server *Server) SetCallingReadiness(w http.ResponseWriter, r *http.Request
 		Available:       body.Available,
 	})
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, softphoneResponse(state))
@@ -781,7 +781,7 @@ func (server *Server) IssueCallingMediaToken(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 	token, err := server.calling.IssueMediaJWT(ctx, identity, body.SessionId)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, api.MediaToken{
@@ -807,7 +807,7 @@ func (server *Server) GetCallingState(w http.ResponseWriter, r *http.Request) {
 		r.Header.Get("If-None-Match"),
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	if notModified {
@@ -818,7 +818,7 @@ func (server *Server) GetCallingState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", state.ETag)
 	response, err := callingStateResponse(state)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -837,12 +837,12 @@ func (server *Server) GetCallingCall(
 	defer cancel()
 	call, err := server.calling.ReadCall(ctx, identity, callID.String())
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := callingCallResponse(call)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -864,7 +864,7 @@ func (server *Server) ListStaffTransferCandidates(
 		ctx, identity, callID.String(), params.SessionId,
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response := api.StaffTransferCandidateList{
@@ -902,12 +902,12 @@ func (server *Server) RequestStaffTransfer(
 		},
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := staffTransferResponse(transfer)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusAccepted, response)
@@ -963,16 +963,16 @@ func (server *Server) respondStaffTransfer(
 	case staffTransferCancel:
 		transfer, err = server.calling.CancelStaffTransfer(ctx, command)
 	default:
-		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		server.writeDomainError(w, r, humancalling.ErrInvalidInput)
 		return
 	}
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := staffTransferResponse(transfer)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1006,12 +1006,12 @@ func (server *Server) GetEngagementTimeline(
 		},
 	)
 	if err != nil {
-		server.writeWorkspaceError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := conversationTimelineResponse(timeline)
 	if err != nil {
-		server.writeWorkspaceError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1044,12 +1044,12 @@ func (server *Server) StartOutboundCall(
 		},
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := callingCallResponse(call)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusCreated, response)
@@ -1080,12 +1080,12 @@ func (server *Server) ConfirmCallingMediaReady(
 		},
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := callingCallResponse(call)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1108,7 +1108,7 @@ func (server *Server) GetTaskOutboundEligibility(
 		taskID.String(),
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, api.OutboundCallEligibility{
@@ -1142,12 +1142,12 @@ func (server *Server) RetryOutboundCall(
 		},
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := callingCallResponse(call)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusCreated, response)
@@ -1170,7 +1170,7 @@ func (server *Server) IssueCallingVoicemailPlayback(
 		callID.String(),
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, api.VoicemailPlaybackCapability{
@@ -1196,7 +1196,7 @@ func (server *Server) IssueCallingRecordingPlayback(
 		callID.String(),
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, api.RecordingPlaybackCapability{
@@ -1331,12 +1331,12 @@ func (server *Server) RequestCallingHangup(
 		callID.String(),
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := callingCallResponse(call)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusAccepted, response)
@@ -1365,19 +1365,19 @@ func (server *Server) RecordCallingDisposition(
 		humancalling.Disposition(body.Outcome),
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	callResponse, err := callingCallResponse(result.Call)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response := api.CallingDispositionResult{Call: callResponse}
 	if result.TaskID != "" {
 		taskID, err := uuid.Parse(result.TaskID)
 		if err != nil {
-			server.writeCallingError(w, r, err)
+			server.writeDomainError(w, r, err)
 			return
 		}
 		response.TaskId = &taskID
@@ -1420,12 +1420,12 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 		Limit:          intValue(body.Limit),
 	})
 	if err != nil {
-		server.writeWorkspaceError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := taskPageResponse(page)
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1444,12 +1444,12 @@ func (server *Server) ReadTask(
 	defer cancel()
 	task, err := server.workspace.ReadTask(ctx, identity, taskID.String())
 	if err != nil {
-		server.writeWorkspaceError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := taskResponse(task)
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1477,12 +1477,12 @@ func (server *Server) RenameTask(
 		Title:           body.Title,
 	})
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := taskResponse(task)
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1509,12 +1509,12 @@ func (server *Server) CompleteTask(
 		ExpectedVersion: body.ExpectedVersion,
 	})
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := taskResponse(task)
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1542,12 +1542,12 @@ func (server *Server) ChangeTaskCategory(
 		Category:        work.TaskCategory(body.Category),
 	})
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := taskResponse(task)
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1578,12 +1578,12 @@ func (server *Server) CompleteTaskGroup(
 		Members:  members,
 	})
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := taskResponse(task)
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1610,12 +1610,12 @@ func (server *Server) ReopenTask(
 		ExpectedVersion: body.ExpectedVersion,
 	})
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := taskResponse(task)
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1644,12 +1644,12 @@ func (server *Server) SendMessage(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey: body.IdempotencyKey,
 	})
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	converted, err := messageResponse(message)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	httpStatus := http.StatusCreated
@@ -1676,7 +1676,7 @@ func (server *Server) UploadMessageAttachment(
 	}
 	content, err := base64.StdEncoding.DecodeString(body.ContentBase64)
 	if err != nil {
-		server.writeMessagingError(w, r, messaging.ErrInvalidInput)
+		server.writeDomainError(w, r, messaging.ErrInvalidInput)
 		return
 	}
 	ctx, cancel := server.requestContext(r)
@@ -1693,12 +1693,12 @@ func (server *Server) UploadMessageAttachment(
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := messageAttachmentResponse(attachment)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusCreated, response)
@@ -1721,7 +1721,7 @@ func (server *Server) GetMessageAttachment(
 		attachmentID.String(),
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	writeAttachmentContent(w, content)
@@ -1750,12 +1750,12 @@ func (server *Server) RetryInboundMessageAttachment(
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := messageAttachmentResponse(attachment)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1786,12 +1786,12 @@ func (server *Server) SendMessageAgain(
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := messageResponse(message)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	httpStatus := http.StatusCreated
@@ -1828,12 +1828,12 @@ func (server *Server) CreateMessageFollowUpTask(
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := taskResponse(task)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	httpStatus := http.StatusCreated
@@ -1877,7 +1877,7 @@ func (server *Server) GetProviderMessageMedia(
 		params.Signature,
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	writeAttachmentContent(w, content)
@@ -1906,7 +1906,7 @@ func (server *Server) receiveMessagingWebhook(
 		r.Header.Get("telnyx-timestamp"),
 		r.Header.Get("telnyx-signature-ed25519"),
 	); err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1928,12 +1928,12 @@ func (server *Server) GetOperatorCallingTimeline(
 	defer cancel()
 	timeline, err := server.calling.ReadOperatorTimeline(ctx, identity, callID.String())
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := operatorTimelineResponse(timeline)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1954,7 +1954,7 @@ func (server *Server) RequeueOperatorProviderReceipt(
 	}
 	decodedReference, err := base64.RawURLEncoding.DecodeString(receiptReference)
 	if err != nil || len(decodedReference) != 32 {
-		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		server.writeDomainError(w, r, humancalling.ErrInvalidInput)
 		return
 	}
 	var body api.ProviderReceiptRecoveryRequest
@@ -1972,7 +1972,7 @@ func (server *Server) RequeueOperatorProviderReceipt(
 		},
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, api.ProviderReceiptRecovery{
@@ -2092,36 +2092,73 @@ func writeAttachmentContent(
 	_, _ = w.Write(content.Content)
 }
 
-func (server *Server) writeAccessError(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, access.ErrInvalidInput):
-		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, access.ErrDenied):
-		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
-	case errors.Is(err, access.ErrLocationConflict):
-		server.writeError(w, r, http.StatusConflict, "LOCATION_CONFLICT", "This Location key already belongs to a Location with a different name.", false)
-	default:
-		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
-	}
+type domainErrorResponse struct {
+	sentinels []error
+	status    int
+	code      string
+	message   string
 }
 
-func (server *Server) writeCallingError(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, humancalling.ErrInvalidInput),
-		errors.Is(err, humancalling.ErrInvalidWebhook):
-		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, humancalling.ErrOccupied):
-		server.writeError(w, r, http.StatusConflict, "CALL_OCCUPIED", "Another Call is pending or active.", false)
-	case errors.Is(err, humancalling.ErrDenied),
-		errors.Is(err, humancalling.ErrInvalidHandoff),
-		errors.Is(err, humancalling.ErrIneligible):
-		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
-	case errors.Is(err, humancalling.ErrConflict),
-		errors.Is(err, humancalling.ErrExpired):
-		server.writeError(w, r, http.StatusConflict, "CALL_CONFLICT", "The Call state changed. Refresh and try again.", false)
-	default:
-		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+var domainErrorResponses = []domainErrorResponse{
+	{
+		[]error{
+			access.ErrInvalidInput, humancalling.ErrInvalidInput, humancalling.ErrInvalidWebhook,
+			interaction.ErrInvalidInput, messaging.ErrInvalidInput, work.ErrInvalidInput,
+			workspace.ErrInvalidInput,
+		},
+		http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.",
+	},
+	{
+		[]error{
+			access.ErrDenied, humancalling.ErrDenied, humancalling.ErrInvalidHandoff,
+			humancalling.ErrIneligible, interaction.ErrDenied, messaging.ErrDenied, work.ErrDenied,
+			workspace.ErrDenied,
+		},
+		http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.",
+	},
+	{
+		[]error{access.ErrLocationConflict},
+		http.StatusConflict, "LOCATION_CONFLICT", "This Location key already belongs to a Location with a different name.",
+	},
+	{
+		[]error{humancalling.ErrOccupied},
+		http.StatusConflict, "CALL_OCCUPIED", "Another Call is pending or active.",
+	},
+	{
+		[]error{humancalling.ErrConflict, humancalling.ErrExpired},
+		http.StatusConflict, "CALL_CONFLICT", "The Call state changed. Refresh and try again.",
+	},
+	{
+		[]error{work.ErrConflict},
+		http.StatusConflict, "TASK_CONFLICT", "The Task state changed. Refresh and try again.",
+	},
+	{
+		[]error{interaction.ErrConflict},
+		http.StatusConflict, "INTERACTION_CONFLICT", "The source call conflicts with the stored Interaction.",
+	},
+	{
+		[]error{messaging.ErrBlocked},
+		http.StatusConflict, "MESSAGE_BLOCKED", "This conversation has opted out of outbound Messages.",
+	},
+	{
+		[]error{messaging.ErrConflict},
+		http.StatusConflict, "MESSAGE_CONFLICT", "The Message state changed. Refresh and try again.",
+	},
+}
+
+func (server *Server) writeDomainError(w http.ResponseWriter, r *http.Request, err error) {
+	for _, response := range domainErrorResponses {
+		for _, sentinel := range response.sentinels {
+			if errors.Is(err, sentinel) {
+				server.writeError(w, r, response.status, response.code, response.message, false)
+				return
+			}
+		}
 	}
+	if r.Context().Err() == nil {
+		slog.Warn("request_failed", "route", r.Pattern, "error", err.Error())
+	}
+	server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 }
 
 func (server *Server) writePlaybackError(
@@ -2132,7 +2169,7 @@ func (server *Server) writePlaybackError(
 ) {
 	var unavailable *humancalling.RecordingUnavailableError
 	if !errors.As(err, &unavailable) {
-		server.writeCallingError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	label, title, code := playbackPresentation(kind)
@@ -2171,69 +2208,6 @@ func playbackPresentation(kind humancalling.PlaybackKind) (string, string, strin
 		return "call recording", "Call recording", "CALL_RECORDING_UNAVAILABLE"
 	}
 	return "voicemail", "Voicemail", "VOICEMAIL_UNAVAILABLE"
-}
-
-func (server *Server) writeWorkError(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, work.ErrInvalidInput):
-		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, work.ErrDenied):
-		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
-	case errors.Is(err, work.ErrConflict):
-		server.writeError(w, r, http.StatusConflict, "TASK_CONFLICT", "The Task state changed. Refresh and try again.", false)
-	default:
-		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
-	}
-}
-
-func (server *Server) writeWorkspaceError(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, workspace.ErrInvalidInput):
-		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, workspace.ErrDenied):
-		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
-	default:
-		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
-	}
-}
-
-func (server *Server) writeInteractionError(
-	w http.ResponseWriter,
-	r *http.Request,
-	err error,
-) {
-	switch {
-	case errors.Is(err, interaction.ErrInvalidInput):
-		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, interaction.ErrDenied):
-		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
-	case errors.Is(err, interaction.ErrConflict):
-		server.writeError(w, r, http.StatusConflict, "INTERACTION_CONFLICT", "The source call conflicts with the stored Interaction.", false)
-	default:
-		if r.Context().Err() == nil {
-			slog.Warn("interaction_request_failed", "route", r.Pattern, "error", err.Error())
-		}
-		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
-	}
-}
-
-func (server *Server) writeMessagingError(
-	w http.ResponseWriter,
-	r *http.Request,
-	err error,
-) {
-	switch {
-	case errors.Is(err, messaging.ErrInvalidInput):
-		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, messaging.ErrDenied):
-		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
-	case errors.Is(err, messaging.ErrBlocked):
-		server.writeError(w, r, http.StatusConflict, "MESSAGE_BLOCKED", "This conversation has opted out of outbound Messages.", false)
-	case errors.Is(err, messaging.ErrConflict):
-		server.writeError(w, r, http.StatusConflict, "MESSAGE_CONFLICT", "The Message state changed. Refresh and try again.", false)
-	default:
-		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
-	}
 }
 
 func (server *Server) writeError(

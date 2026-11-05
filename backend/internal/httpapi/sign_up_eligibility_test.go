@@ -66,13 +66,13 @@ func TestKnowledgeReadDeniesServicesWithTheSharedAccessCode(t *testing.T) {
 func TestLocationKeyConflictIsAConflict(t *testing.T) {
 	server := &Server{}
 	response := httptest.NewRecorder()
-	server.writeAccessError(response, httptest.NewRequest(http.MethodPost, "/", nil), access.ErrLocationConflict)
+	server.writeDomainError(response, httptest.NewRequest(http.MethodPost, "/", nil), access.ErrLocationConflict)
 	var envelope api.ErrorEnvelope
 	if response.Code != http.StatusConflict || json.Unmarshal(response.Body.Bytes(), &envelope) != nil || envelope.Error.Code != "LOCATION_CONFLICT" || envelope.Error.Retryable {
 		t.Fatalf("Location conflict status = %d, body = %s", response.Code, response.Body.String())
 	}
 	response = httptest.NewRecorder()
-	server.writeAccessError(response, httptest.NewRequest(http.MethodPost, "/", nil), access.ErrInvalidInput)
+	server.writeDomainError(response, httptest.NewRequest(http.MethodPost, "/", nil), access.ErrInvalidInput)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid Location status = %d", response.Code)
 	}

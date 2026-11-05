@@ -18,7 +18,7 @@ func (server *Server) GetOperatorScorecardQuestions(w http.ResponseWriter, r *ht
 	}
 	questions := interaction.ScorecardQuestionsForVersion(version)
 	if questions == nil {
-		server.writeInteractionError(w, r, interaction.ErrInvalidInput)
+		server.writeDomainError(w, r, interaction.ErrInvalidInput)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, map[string]any{"questions": questions})
@@ -39,7 +39,7 @@ func (server *Server) OpenOperatorCallReviewQueue(w http.ResponseWriter, r *http
 		Identity: identity, PracticeID: body.PracticeId.String(), Date: body.Date.String(),
 	})
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, queue)
@@ -61,7 +61,7 @@ func (server *Server) QueryOperatorJudgeAccuracy(w http.ResponseWriter, r *http.
 	defer finish()
 	accuracy, err := server.interactions.QueryJudgeAccuracy(ctx, identity, body.PracticeId.String())
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, accuracy)
@@ -76,7 +76,7 @@ func (server *Server) GetOperatorCallReview(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 	review, err := server.interactions.ReadCallReview(ctx, identity, interactionID.String())
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, review)
@@ -99,7 +99,7 @@ func (server *Server) SubmitOperatorCallReview(w http.ResponseWriter, r *http.Re
 	defer cancel()
 	review, err := server.interactions.SubmitCallReview(ctx, identity, interactionID.String(), submission)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, review)

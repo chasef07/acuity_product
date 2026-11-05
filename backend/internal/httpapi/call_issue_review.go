@@ -25,12 +25,12 @@ func (server *Server) ReviewOperatorAICallIssue(w http.ResponseWriter, r *http.R
 	defer cancel()
 	issue, err := server.interactions.ReviewCallIssue(ctx, identity, id.String(), interaction.CallIssueOutcome(body.Outcome))
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	response, err := operatorAICallIssueResponse(issue)
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)

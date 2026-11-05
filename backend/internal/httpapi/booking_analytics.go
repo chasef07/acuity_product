@@ -29,7 +29,7 @@ func (server *Server) QueryBookingAnalytics(w http.ResponseWriter, r *http.Reque
 		Days: int(body.Days),
 	})
 	if err != nil {
-		server.writeInteractionError(w, r, err)
+		server.writeDomainError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, page)
