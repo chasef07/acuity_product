@@ -18,6 +18,7 @@ done
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 database_contract="$script_directory/production-runtime-contract.json"
 python3 "$script_directory/verify-production-runtime.py" "$database_contract" --check-contract
+
 require_value() {
   local name="$1"
   local value="${!name:-}"
@@ -441,8 +442,6 @@ stage_backend_services() {
 }
 
 stage_worker() {
-  local instances="$1"
-  local worker_environment="DATABASE_POOL_MAX=$worker_contract_pool,DATABASE_ACQUIRE_TIMEOUT_MS=$worker_contract_acquire_timeout,HUMAN_CALLING_RING_WINDOW_SECONDS=20"
   worker_revision="acuity-worker-$DEPLOYMENT_ID"
   gcloud run worker-pools deploy acuity-worker \
     --project "$PROJECT_ID" \
@@ -452,8 +451,8 @@ stage_worker() {
     --no-promote \
     --cpu 1 \
     --memory 512Mi \
-    --instances "$instances" \
-    --update-env-vars "$worker_environment" \
+    --instances "$worker_contract_instances" \
+    --update-env-vars "DATABASE_POOL_MAX=$worker_contract_pool,DATABASE_ACQUIRE_TIMEOUT_MS=$worker_contract_acquire_timeout,HUMAN_CALLING_RING_WINDOW_SECONDS=20" \
     --quiet
   worker_image="$(
     gcloud run worker-pools revisions describe "$worker_revision" \
@@ -491,7 +490,7 @@ run_migration() {
 
 run_migration
 stage_backend_services
-stage_worker "$worker_contract_instances"
+stage_worker
 for service in "${backend_services[@]}"; do
   revision="$service-$DEPLOYMENT_ID"
   gcloud run services update-traffic "$service" \

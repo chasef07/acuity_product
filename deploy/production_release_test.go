@@ -552,9 +552,6 @@ case "$*" in
   "run services describe acuity-web "*"spec.template.spec.containers[0].env[].name"*)
     printf '%s\n' "GOOGLE_CLIENT_ID;GOOGLE_CLIENT_SECRET"
     ;;
-	"run services describe "*"status.conditions[0].status"*)
-		printf '%s\n' "True"
-		;;
   "run services describe acuity-portal-api "*"status.url"*)
     printf '%s\n' "https://portal.example"
     ;;
