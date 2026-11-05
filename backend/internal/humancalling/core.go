@@ -113,7 +113,6 @@ var (
 	)
 	ErrIllegalCallTransition     = fmt.Errorf("%w: illegal Call transition", ErrConflict)
 	errRelatedFactPending        = errors.New("related provider fact is pending")
-	ErrHandoffAdmissionClosed    = errors.New("human calling handoff admission is closed")
 	ErrAmbiguousEffect           = errors.New("provider effect is ambiguous")
 	ErrDefinitiveProviderFailure = errors.New("provider effect definitely failed")
 	ErrProviderRecordingFailed   = errors.New("provider recording failed")
@@ -189,7 +188,6 @@ const (
 
 type Config struct {
 	HandoffSIPDomain       string
-	HandoffAdmissionClosed bool
 	StaffSIPDomain         string
 	RingWindowDuration     time.Duration
 	HandoffLifetime        time.Duration

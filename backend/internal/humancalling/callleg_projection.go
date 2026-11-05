@@ -83,9 +83,6 @@ func (m *Module) admitHandoff(
 	fact ProviderFact,
 	_ callLegClientState,
 ) (factVerdict, error) {
-	if m.config.HandoffAdmissionClosed {
-		return "", ErrHandoffAdmissionClosed
-	}
 	if fact.CallControlID == "" || fact.CallLegID == "" ||
 		fact.CallSessionID == "" || fact.ConnectionID == "" {
 		observability.Record(m.observer, observability.HandoffRejected("provider_identity"))
