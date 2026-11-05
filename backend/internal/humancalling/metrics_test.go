@@ -16,7 +16,7 @@ func TestProviderCommandMetricLabelsEveryAction(t *testing.T) {
 		CommandStartRingWindow:         "start_ring_window",
 		CommandDialStaff:               "dial_staff",
 		CommandBridge:                  "bridge",
-		CommandTransferStaff:           "other",
+		CommandTransferStaff:           "transfer_staff",
 		CommandStopRingWindow:          "stop_ring_window",
 		CommandHangupLeg:               "hangup_leg",
 		CommandSpeakVoicemail:          "speak_voicemail",

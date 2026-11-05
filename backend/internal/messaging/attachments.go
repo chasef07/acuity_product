@@ -158,7 +158,7 @@ func (m *Module) uploadAttachment(
 	}
 	authorization, err := m.access.LockMutationAuthorization(ctx, tx, command.Identity, command.PracticeID, command.LocationID)
 	if err != nil {
-		return Attachment{}, ErrDenied
+		return Attachment{}, messagingAccessError(err)
 	}
 	now := m.now()
 	tag, err := tx.Exec(ctx, `
@@ -206,7 +206,7 @@ func (m *Module) claimAttachmentUpload(
 	}
 	authorization, err := m.access.LockMutationAuthorization(ctx, tx, command.Identity, command.PracticeID, command.LocationID)
 	if err != nil {
-		return Attachment{}, "", ErrDenied
+		return Attachment{}, "", messagingAccessError(err)
 	}
 	now, token := m.now(), uuid.NewString()
 	digest := sha256.Sum256(command.Content)
@@ -296,13 +296,23 @@ func (m *Module) OpenAttachment(
 	}
 	content, err := m.config.AttachmentStore.Get(ctx, objectKey)
 	if err != nil {
-		return AttachmentContent{}, ErrDenied
+		return AttachmentContent{}, attachmentObjectError(err)
 	}
 	current, currentKey, err := m.authorizeAttachmentRead(ctx, identity, attachmentID)
-	if err != nil || currentKey != objectKey || current.State != attachment.State {
+	if err != nil {
+		return AttachmentContent{}, err
+	}
+	if currentKey != objectKey || current.State != attachment.State {
 		return AttachmentContent{}, ErrDenied
 	}
 	return AttachmentContent{Attachment: current, Content: content}, nil
+}
+
+func attachmentObjectError(err error) error {
+	if errors.Is(err, ErrObjectNotFound) {
+		return ErrDenied
+	}
+	return fmt.Errorf("read attachment object: %w", err)
 }
 
 func (m *Module) authorizeAttachmentRead(ctx context.Context, identity access.Identity, attachmentID string) (Attachment, string, error) {
@@ -322,7 +332,7 @@ func (m *Module) authorizeAttachmentRead(ctx context.Context, identity access.Id
 		return Attachment{}, "", ErrDenied
 	}
 	if _, err := m.access.LockReadAuthorization(ctx, tx, identity, practiceID, locationID); err != nil {
-		return Attachment{}, "", ErrDenied
+		return Attachment{}, "", messagingAccessError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Attachment{}, "", fmt.Errorf("commit attachment read: %w", err)
@@ -407,11 +417,14 @@ func (m *Module) OpenProviderAttachment(
 		&attachment.UpdatedAt,
 		&objectKey,
 	); err != nil {
-		return AttachmentContent{}, ErrDenied
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AttachmentContent{}, ErrDenied
+		}
+		return AttachmentContent{}, fmt.Errorf("read provider attachment: %w", err)
 	}
 	content, err := m.config.AttachmentStore.Get(ctx, objectKey)
 	if err != nil {
-		return AttachmentContent{}, ErrDenied
+		return AttachmentContent{}, attachmentObjectError(err)
 	}
 	var authorized bool
 	if !m.now().Before(time.Unix(expires, 0)) {
@@ -421,7 +434,10 @@ func (m *Module) OpenProviderAttachment(
 		SELECT EXISTS (SELECT 1 FROM messaging_attachments
 		WHERE id = $1 AND direction = 'OUTBOUND' AND state = 'STORED'
 			AND message_id = $2 AND object_key = $3)
-	`, attachment.ID, attachment.MessageID, objectKey).Scan(&authorized); err != nil || !authorized {
+	`, attachment.ID, attachment.MessageID, objectKey).Scan(&authorized); err != nil {
+		return AttachmentContent{}, fmt.Errorf("recheck provider attachment: %w", err)
+	}
+	if !authorized {
 		return AttachmentContent{}, ErrDenied
 	}
 	return AttachmentContent{Attachment: attachment, Content: content}, nil
@@ -590,7 +606,7 @@ func (m *Module) RetryAttachment(
 		locationID,
 	)
 	if err != nil {
-		return Attachment{}, ErrDenied
+		return Attachment{}, messagingAccessError(err)
 	}
 	now := m.now()
 	if _, err := tx.Exec(ctx, `

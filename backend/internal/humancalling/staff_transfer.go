@@ -199,7 +199,7 @@ func (m *Module) RequestStaffTransfer(
 	`, command.CallID, command.Identity.Subject).Scan(
 		&sourceLegID, &customerLegID, &customerRole, &customerControlID,
 	); err != nil {
-		return StaffTransfer{}, ErrConflict
+		return StaffTransfer{}, missingRowAs(err, ErrConflict)
 	}
 	var recipientSession, sipUsername string
 	if err := tx.QueryRow(ctx, `
@@ -216,7 +216,7 @@ func (m *Module) RequestStaffTransfer(
 	`, command.RecipientSubject, m.now(), m.config.ReadinessGrace.String()).Scan(
 		&recipientSession, &sipUsername,
 	); err != nil {
-		return StaffTransfer{}, ErrIneligible
+		return StaffTransfer{}, missingRowAs(err, ErrIneligible)
 	}
 
 	transferID := uuid.NewString()
@@ -405,7 +405,10 @@ func (m *Module) respondStaffTransfer(
 		if err := tx.QueryRow(ctx, `
 			SELECT recipient_session_id
 			FROM human_calling_staff_transfers WHERE id = $1
-		`, transfer.ID).Scan(&expectedSession); err != nil || expectedSession != command.SessionID {
+		`, transfer.ID).Scan(&expectedSession); err != nil {
+			return StaffTransfer{}, missingRowAs(err, ErrConflict)
+		}
+		if expectedSession != command.SessionID {
 			return StaffTransfer{}, ErrConflict
 		}
 	}
@@ -414,7 +417,10 @@ func (m *Module) respondStaffTransfer(
 		SELECT session_id = $2 AND lease_expires_at > $3
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1 FOR UPDATE
-	`, actorSubject, command.SessionID, m.now()).Scan(&ownsSession); err != nil || !ownsSession {
+	`, actorSubject, command.SessionID, m.now()).Scan(&ownsSession); err != nil {
+		return StaffTransfer{}, missingRowAs(err, ErrConflict)
+	}
+	if !ownsSession {
 		return StaffTransfer{}, ErrConflict
 	}
 	if _, err := m.access.LockMutationAuthorization(
@@ -509,7 +515,7 @@ func (m *Module) lockTransferSource(
 	`, callID, identity.Subject).Scan(
 		&practiceID, &locationID, &version, &ownerSession,
 	); err != nil {
-		return "", "", 0, ErrConflict
+		return "", "", 0, missingRowAs(err, ErrConflict)
 	}
 	if ownerSession != sessionID {
 		return "", "", 0, ErrConflict
@@ -524,7 +530,10 @@ func (m *Module) lockTransferSource(
 		SELECT session_id = $2 AND lease_expires_at > $3
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1 FOR UPDATE
-	`, identity.Subject, sessionID, m.now()).Scan(&ownsLease); err != nil || !ownsLease {
+	`, identity.Subject, sessionID, m.now()).Scan(&ownsLease); err != nil {
+		return "", "", 0, missingRowAs(err, ErrConflict)
+	}
+	if !ownsLease {
 		return "", "", 0, ErrConflict
 	}
 	return practiceID, locationID, version, nil

@@ -230,16 +230,20 @@ func ReceiptProcessed(outcome ReceiptOutcome, queueAge, duration time.Duration) 
 		"processing_seconds", positive(duration).Seconds())
 }
 
+var providerCommandActions = []string{
+	"answer_caller", "start_ring_window", "dial_staff", "bridge", "transfer_staff",
+	"stop_ring_window", "hangup_leg", "speak_voicemail", "start_voicemail_recording",
+	"dial_outbound_staff", "dial_outbound_destination",
+	"create_credential", "disable_credential", "create_jwt",
+}
+
 func ProviderCommandCompleted(
 	action CommandAction,
 	outcome CommandOutcome,
 	queueAge, duration time.Duration,
 ) Event {
 	return event("acuity_call_center_provider_command",
-		"action", bounded(string(action), "answer_caller", "start_ring_window", "dial_staff",
-			"bridge", "stop_ring_window", "hangup_leg", "speak_voicemail",
-			"start_voicemail_recording", "dial_outbound_staff",
-			"dial_outbound_destination", "create_credential", "disable_credential", "create_jwt"),
+		"action", bounded(string(action), providerCommandActions...),
 		"outcome", bounded(string(outcome), "sent", "ambiguous", "rejected", "reconciled", "obsolete"),
 		"queue_seconds", positive(queueAge).Seconds(),
 		"duration_seconds", positive(duration).Seconds())
@@ -247,10 +251,7 @@ func ProviderCommandCompleted(
 
 func ProviderCommandStage(action CommandAction, stage CommandStage, outcome CommandStageOutcome, duration time.Duration) Event {
 	return event("acuity_call_center_provider_command_stage",
-		"action", bounded(string(action), "answer_caller", "start_ring_window", "dial_staff",
-			"bridge", "stop_ring_window", "hangup_leg", "speak_voicemail",
-			"start_voicemail_recording", "dial_outbound_staff", "dial_outbound_destination",
-			"create_credential", "disable_credential", "create_jwt", "transfer_staff"),
+		"action", bounded(string(action), providerCommandActions...),
 		"stage", bounded(string(stage), "claim", "created_to_first_claim", "claim_to_dispatch", "provider", "persist"),
 		"outcome", bounded(string(outcome), "succeeded", "failed"),
 		"seconds", positive(duration).Seconds())

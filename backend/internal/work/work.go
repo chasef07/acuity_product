@@ -1133,7 +1133,7 @@ func (m *Module) MarkTaskAcknowledgementNotNeeded(
 	return nil
 }
 
-func (m *Module) LockOpenOutboundTask(
+func (m *Module) LockOutboundTask(
 	ctx context.Context,
 	tx pgx.Tx,
 	taskID string,
@@ -1141,14 +1141,7 @@ func (m *Module) LockOpenOutboundTask(
 	if tx == nil || strings.TrimSpace(taskID) == "" {
 		return Task{}, ErrInvalidInput
 	}
-	task, err := loadTask(ctx, tx, taskID, true)
-	if err != nil {
-		return Task{}, err
-	}
-	if task.State != TaskOpen {
-		return Task{}, ErrConflict
-	}
-	return task, nil
+	return loadTask(ctx, tx, taskID, true)
 }
 
 func (m *Module) ApplyCallTaskDisposition(

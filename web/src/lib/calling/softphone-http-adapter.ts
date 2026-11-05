@@ -145,7 +145,7 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
         )
       }
       throw requestFailure(result, {
-        conflict: "Another Call is pending or active.",
+        conflict: outboundConflict(result),
         fallback: "The outbound Call could not be started. Try again.",
       })
     },
@@ -178,7 +178,7 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       }).catch(networkFailure)
       if (result.data) return result.data
       throw requestFailure(result, {
-        conflict: "Another Call is pending or active.",
+        conflict: outboundConflict(result),
         fallback: "The retry could not be started. Try again.",
       })
     },
@@ -264,6 +264,12 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
   }
+}
+
+function outboundConflict(result: FailedResponse) {
+  return result.error?.error?.code === "CALL_OCCUPIED"
+    ? "Another Call is pending or active."
+    : "This Task or Call changed. Refresh and try again."
 }
 
 async function authenticatedClient() {

@@ -4534,6 +4534,10 @@ export type GetProviderMessageMediaErrors = {
      * Current identity lacks the requested authority.
      */
     403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
 };
 
 export type GetProviderMessageMediaError = GetProviderMessageMediaErrors[keyof GetProviderMessageMediaErrors];

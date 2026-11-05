@@ -148,3 +148,65 @@ func TestRetryOutboundCallCopiesTheEarlierEntryPoint(t *testing.T) {
 		}
 	})
 }
+
+func TestStartOutboundCallReportsAClosedOrMissingTask(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, time.November, 5, 12, 0, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(t, "outbound-closed-task", now, &recordingProvider{})
+	practiceID := fixture.authorization.Practice.ID
+	locationID := fixture.authorization.Locations[0].ID
+	workModule := work.New(fixture.pool,
+		access.New(fixture.pool, func() time.Time { return now }),
+		func() time.Time { return now })
+	var sourceID string
+	if err := fixture.pool.QueryRow(ctx, `
+		INSERT INTO human_calling_calls (
+			practice_id, location_id, direction, entry_point, terminal_outcome,
+			caller_phone, ended_at, created_at, updated_at
+		) VALUES ($1, $2, 'INBOUND', 'STANDALONE', 'VOICEMAIL', '+15555550134', $3, $3, $3)
+		RETURNING id::text
+	`, practiceID, locationID, now.Add(-time.Minute)).Scan(&sourceID); err != nil {
+		t.Fatalf("insert synthetic source Call: %v", err)
+	}
+	tx, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	task, err := workModule.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
+		CallID: sourceID, PracticeID: practiceID, LocationID: locationID,
+		Phone: "+15555550134", Outcome: work.RecoveryOutcomeVoicemail,
+		OccurredAt: now.Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("create synthetic Task: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workModule.CompleteTask(ctx, work.CompleteTaskCommand{
+		Identity: fixture.identity, TaskID: task.ID, ExpectedVersion: task.Version,
+	}); err != nil {
+		t.Fatalf("complete synthetic Task: %v", err)
+	}
+
+	start := func(identity access.Identity, key, taskID string) error {
+		_, err := fixture.calling.StartOutboundCall(ctx, humancalling.StartOutboundCallCommand{
+			Identity: identity, SessionID: fixture.sessionID,
+			IdempotencyKey: key, TaskID: taskID,
+		})
+		return err
+	}
+	if err := start(fixture.identity, "outbound-closed-task", task.ID); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("Call on a closed Task error = %v, want conflict", err)
+	}
+	missing := "00000000-0000-4000-8000-000000000001"
+	if err := start(fixture.identity, "outbound-missing-task", missing); !errors.Is(err, humancalling.ErrDenied) {
+		t.Fatalf("Call on a missing Task error = %v, want denied", err)
+	}
+	_, otherPractice := provisionConcurrentStaff(t, fixture.pool,
+		access.New(fixture.pool, func() time.Time { return now }), now, "outbound-other-practice", 1)
+	if err := start(otherPractice[0], "outbound-foreign-task", task.ID); !errors.Is(err, humancalling.ErrDenied) {
+		t.Fatalf("Call on another Practice's closed Task error = %v, want denied", err)
+	}
+}

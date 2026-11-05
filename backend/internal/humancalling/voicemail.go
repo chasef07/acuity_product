@@ -700,11 +700,11 @@ func (m *Module) openPlayback(
 	if err := row.Scan(
 		&practiceID, &locationID, &recordingID, &contentExpiresAt,
 	); err != nil {
-		return PlaybackContent{}, ErrDenied
+		return PlaybackContent{}, missingRowAs(err, ErrDenied)
 	}
 	if _, err := m.access.LockReadAuthorization(authorizationContext, tx,
 		identity, practiceID, locationID); err != nil {
-		return PlaybackContent{}, ErrDenied
+		return PlaybackContent{}, callingAccessError(err)
 	}
 	if err := appendTimeline(authorizationContext, tx, claims.CallID, practiceID,
 		timelineKind, identity.Subject, "", "",

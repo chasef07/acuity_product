@@ -18,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -136,6 +137,25 @@ func callingAccessError(err error) error {
 		return ErrDenied
 	}
 	return fmt.Errorf("check calling access: %w", err)
+}
+
+func missingRowAs(err, missing error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return missing
+	}
+	return fmt.Errorf("read calling state: %w", err)
+}
+
+func callingWorkError(err error) error {
+	switch {
+	case errors.Is(err, work.ErrDenied):
+		return ErrDenied
+	case errors.Is(err, work.ErrConflict):
+		return ErrConflict
+	case errors.Is(err, work.ErrInvalidInput):
+		return ErrInvalidInput
+	}
+	return fmt.Errorf("update Call Task: %w", err)
 }
 
 type providerRecordingFailure struct {
