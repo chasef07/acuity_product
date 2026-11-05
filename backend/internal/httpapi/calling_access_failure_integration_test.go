@@ -279,7 +279,15 @@ func newCallingAccessFailureFixture(
 		httpapi.Config{AcquireTimeout: time.Second},
 		db.As(testdb.Portal),
 		accessModule,
-		staticAuthenticator{"staff-token": fixture.staff, "outsider-token": outsider},
+		staticAuthenticator{
+			"staff-token":    fixture.staff,
+			"outsider-token": outsider,
+			"operator-token": access.Identity{
+				Subject:       "calling-access-failure-operator",
+				Email:         "operator@calling-access-failure.test",
+				EmailVerified: true,
+			},
+		},
 		calling,
 	)
 	if err != nil {
@@ -460,6 +468,17 @@ func (database *accessLookupFaultDatabase) BeginTx(
 		return nil, err
 	}
 	return accessLookupFaultTx{Tx: tx, database: database}, nil
+}
+
+func (database *accessLookupFaultDatabase) QueryRow(
+	ctx context.Context,
+	sql string,
+	arguments ...any,
+) pgx.Row {
+	if database.fails(sql) {
+		return failedRow{}
+	}
+	return database.Database.QueryRow(ctx, sql, arguments...)
 }
 
 type accessLookupFaultTx struct {

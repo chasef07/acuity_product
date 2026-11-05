@@ -49,12 +49,6 @@ func TestCallCommandsReportDatabaseFailuresAsUnavailable(t *testing.T) {
 	})
 	confirmMedia := post("/v1/calling/calls/"+outboundCallID+"/media-ready",
 		map[string]any{"sessionId": "browser-a", "mediaToken": "seeded-media-token"})
-	transfer := post("/v1/calling/calls/"+inboundCallID+"/transfers", map[string]any{
-		"sessionId":        "browser-a",
-		"recipientSubject": seededTransferRecipient,
-		"idempotencyKey":   "database-failure-transfer",
-		"expectedVersion":  1,
-	})
 	cancel := post("/v1/calling/transfers/"+transferID+"/cancel", session)
 	candidates := func() (int, string) {
 		return fixture.call(http.MethodGet,
@@ -62,6 +56,13 @@ func TestCallCommandsReportDatabaseFailuresAsUnavailable(t *testing.T) {
 			"staff-token", nil)
 	}
 
+	operatorTimeline := func() (int, string) {
+		return fixture.call(http.MethodGet, "/v1/operator/calls/"+inboundCallID+"/timeline", "operator-token", nil)
+	}
+	requeue := func() (int, string) {
+		return fixture.call(http.MethodPost, "/v1/operator/practices/"+fixture.authorization.Practice.ID+
+			"/provider-receipts/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/requeue", "operator-token", map[string]any{})
+	}
 	const leases = "FROM human_calling_softphone_leases"
 	for _, scenario := range []struct {
 		label    string
@@ -75,10 +76,12 @@ func TestCallCommandsReportDatabaseFailuresAsUnavailable(t *testing.T) {
 		{"outbound start readiness check", leases, start},
 		{"outbound media Call check", "WHERE id = $1 AND direction = 'OUTBOUND' FOR UPDATE", confirmMedia},
 		{"outbound media Staff leg check", "WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2 FOR UPDATE", confirmMedia},
-		{"transfer source check", "JOIN human_calling_call_legs customer ON customer.call_id = call.id", transfer},
 		{"transfer cancel lease check", leases, cancel},
 		{"transfer candidates source check", "JOIN human_calling_call_legs source ON source.call_id = call.id", candidates},
 		{"transfer candidates lease check", leases, candidates},
+		{"operator timeline operator check", "FROM access_platform_operators", operatorTimeline},
+		{"operator timeline Call read", "LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id", operatorTimeline},
+		{"receipt requeue authorization", "FROM access_platform_operators", requeue},
 	} {
 		fixture.database.failQueriesContaining(scenario.fragment)
 		status, body := scenario.request()

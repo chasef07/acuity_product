@@ -231,7 +231,7 @@ func (m *Module) RequeueQuarantinedReceipt(
 		locationID,
 	)
 	if err != nil {
-		return WebhookReceipt{}, ErrDenied
+		return WebhookReceipt{}, callingAccessError(err)
 	}
 	if !authorization.PlatformOperator {
 		return WebhookReceipt{}, ErrDenied

@@ -314,7 +314,10 @@ func (m *Module) StartOutboundCall(
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1 FOR UPDATE
 	`, command.Identity.Subject, command.SessionID, m.now(),
-		m.config.ReadinessGrace.String()).Scan(&leaseReady); err != nil || !leaseReady {
+		m.config.ReadinessGrace.String()).Scan(&leaseReady); err != nil {
+		return Call{}, missingRowAs(err, ErrIneligible)
+	}
+	if !leaseReady {
 		return Call{}, ErrIneligible
 	}
 	var occupied bool
@@ -350,7 +353,7 @@ func (m *Module) StartOutboundCall(
 		SELECT provider_sip_username FROM human_calling_credentials
 		WHERE user_subject = $1 AND state = 'ACTIVE' FOR UPDATE
 	`, command.Identity.Subject).Scan(&sipUsername); err != nil {
-		return Call{}, ErrIneligible
+		return Call{}, missingRowAs(err, ErrIneligible)
 	}
 	if command.RetryOfCallID != "" {
 		var retryOwner string
@@ -358,8 +361,10 @@ func (m *Module) StartOutboundCall(
 		if err := tx.QueryRow(ctx, `
 			SELECT initiating_subject, terminal_outcome FROM human_calling_calls
 			WHERE id = $1 AND direction = 'OUTBOUND' FOR UPDATE
-		`, command.RetryOfCallID).Scan(&retryOwner, &retryTerminal); err != nil ||
-			retryOwner != command.Identity.Subject || retryTerminal == nil {
+		`, command.RetryOfCallID).Scan(&retryOwner, &retryTerminal); err != nil {
+			return Call{}, missingRowAs(err, ErrConflict)
+		}
+		if retryOwner != command.Identity.Subject || retryTerminal == nil {
 			return Call{}, ErrConflict
 		}
 	}
@@ -531,7 +536,10 @@ func (m *Module) ConfirmOutboundMedia(
 		FROM human_calling_calls
 		WHERE id = $1 AND direction = 'OUTBOUND' FOR UPDATE
 	`, command.CallID).Scan(&practiceID, &locationID, &destination,
-		&callerID, &terminal); err != nil || terminal != "" {
+		&callerID, &terminal); err != nil {
+		return Call{}, missingRowAs(err, ErrConflict)
+	}
+	if terminal != "" {
 		return Call{}, ErrConflict
 	}
 	if _, err := m.access.LockMutationAuthorization(ctx, tx, command.Identity,
@@ -547,14 +555,14 @@ func (m *Module) ConfirmOutboundMedia(
 		WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2 FOR UPDATE
 	`, command.CallID, command.Identity.Subject).Scan(&staffLegID, &staffControlID,
 		&staffSession, &staffState, &answered); err != nil {
-		return Call{}, ErrConflict
+		return Call{}, missingRowAs(err, ErrConflict)
 	}
 	var ownsLease bool
 	if err := tx.QueryRow(ctx, `
 		SELECT session_id = $2 AND lease_expires_at > $3
 		FROM human_calling_softphone_leases WHERE user_subject = $1 FOR UPDATE
 	`, command.Identity.Subject, command.SessionID, m.now()).Scan(&ownsLease); err != nil {
-		return Call{}, ErrConflict
+		return Call{}, missingRowAs(err, ErrConflict)
 	}
 	if !ownsLease || staffSession != command.SessionID || !answered ||
 		!hmac.Equal([]byte(m.staffMediaToken(command.CallID, staffLegID)),
