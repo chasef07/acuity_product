@@ -76,10 +76,7 @@ func (m *Module) TaskOutboundEligibility(
 	}
 	task, err := m.work.ReadTask(ctx, identity, taskID)
 	if err != nil {
-		if errors.Is(err, work.ErrDenied) {
-			return OutboundEligibility{}, ErrDenied
-		}
-		return OutboundEligibility{}, err
+		return OutboundEligibility{}, callingWorkError(err)
 	}
 	if task.State != work.TaskOpen {
 		return OutboundEligibility{Reason: "Complete Tasks must be reopened before calling."}, nil
@@ -296,7 +293,7 @@ func (m *Module) StartOutboundCall(
 	if command.TaskID != "" {
 		task, err := m.work.LockOpenOutboundTask(ctx, tx, command.TaskID)
 		if err != nil {
-			return Call{}, err
+			return Call{}, callingWorkError(err)
 		}
 		entryPoint, taskID = CallEntryTask, task.ID
 		practiceID, locationID, destination = task.PracticeID, task.LocationID, task.Phone

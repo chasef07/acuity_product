@@ -138,6 +138,18 @@ func callingAccessError(err error) error {
 	return fmt.Errorf("check calling access: %w", err)
 }
 
+func callingWorkError(err error) error {
+	switch {
+	case errors.Is(err, work.ErrDenied):
+		return ErrDenied
+	case errors.Is(err, work.ErrConflict):
+		return ErrConflict
+	case errors.Is(err, work.ErrInvalidInput):
+		return ErrInvalidInput
+	}
+	return fmt.Errorf("update Call Task: %w", err)
+}
+
 type providerRecordingFailure struct {
 	OccurredAt time.Time
 }

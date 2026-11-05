@@ -397,11 +397,8 @@ func (m *Module) RecordDisposition(
 		(disposition == DispositionResolved && taskID != "") {
 		updated, err := m.work.ApplyCallTaskDisposition(ctx, tx, authorization, taskID,
 			disposition != DispositionKeepOpen, placedAt)
-		if errors.Is(err, work.ErrConflict) {
-			return DispositionResult{}, ErrConflict
-		}
 		if err != nil {
-			return DispositionResult{}, err
+			return DispositionResult{}, callingWorkError(err)
 		}
 		taskID = updated.ID
 	}
@@ -411,7 +408,7 @@ func (m *Module) RecordDisposition(
 			Phone: phone, Reason: reason, Creator: authorization.Actor,
 		})
 		if err != nil {
-			return DispositionResult{}, err
+			return DispositionResult{}, callingWorkError(err)
 		}
 		taskID = task.ID
 	}
