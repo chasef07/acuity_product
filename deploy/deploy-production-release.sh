@@ -508,7 +508,7 @@ worker_ready="$(
 )"
 if [[ "$worker_ready" != "True" ]]; then
   echo "$worker_revision did not become ready." >&2
-  exit 1
+  false
 fi
 for service in "${backend_services[@]}"; do
   smoke "$(service_url "$service")/health/ready"

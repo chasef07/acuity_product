@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -359,6 +360,46 @@ func TestProductionReleaseRestoresStagedServiceTrafficWhenDeployFails(t *testing
 	}
 }
 
+func TestProductionReleaseRestoresTrafficWhenWorkerIsNotReady(t *testing.T) {
+	gcloudCapture, output, err := runRelease(t, "GCLOUD_WORKER_READY=False")
+	if err == nil {
+		t.Fatalf("release accepted a worker that did not become ready:\n%s", output)
+	}
+	if !strings.Contains(string(output), "did not become ready") {
+		t.Fatalf("worker readiness error = %q", output)
+	}
+	commands := capturedGcloudCommands(t, gcloudCapture)
+	for _, service := range []string{"acuity-realtime", "acuity-provider-ingress", "acuity-portal-api"} {
+		assertCapturedCommand(t, commands, "run\tservices\tupdate-traffic\t"+service,
+			"--to-revisions\t"+service+"-old=100",
+		)
+	}
+	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate-instance-split\tacuity-worker",
+		"--to-revisions\tacuity-worker-old=100",
+	)
+	if commandIndex(commands, "run\tdeploy\tacuity-web") >= 0 {
+		t.Fatalf("release deployed web after the worker failed:\n%s", strings.Join(commands, "\n"))
+	}
+}
+
+func TestProductionReleaseNeverExitsPastItsRollback(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join(releaseDeployDirectory(t), "deploy-production-release.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, armed, found := strings.Cut(string(script), "trap rollback ERR\n")
+	armed, _, disarmed := strings.Cut(armed, "trap - ERR\n")
+	if !found || !disarmed {
+		t.Fatal("release script does not arm and then disarm its rollback")
+	}
+	exitCommand := regexp.MustCompile(`(^|[\s;&|(])exit(\s|;|$)`)
+	for _, line := range strings.Split(armed, "\n") {
+		if exitCommand.MatchString(line) {
+			t.Errorf("exit skips rollback while it is armed: %s", line)
+		}
+	}
+}
+
 func TestProductionReleaseRepairsStaleDesiredTrafficBeforeMigration(t *testing.T) {
 	directory := releaseDeployDirectory(t)
 	path, gcloudCapture, curlCapture := installReleaseFakes(t)
@@ -588,7 +629,7 @@ case "$*" in
     printf '%s\n' "us-central1-docker.pkg.dev/acuity-test/acuity-product/backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     ;;
   "run worker-pools describe "*"status.conditions"*)
-    printf '%s\n' "True"
+    printf '%s\n' "${GCLOUD_WORKER_READY:-True}"
     ;;
   "run services describe "*"--format json"*)
     service="$4"
