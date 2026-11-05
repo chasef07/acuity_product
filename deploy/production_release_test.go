@@ -512,6 +512,53 @@ func TestProductionReleaseRestoresStagedServiceTrafficWhenDeployFails(t *testing
 	}
 }
 
+func TestProductionReleaseRestoresTrafficWhenWorkerIsNotReady(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	command := exec.Command("bash", filepath.Join(directory, "deploy-production-release.sh"))
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+		"GCLOUD_WORKER_READY=False",
+	}, releaseEnvironment()...)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("release accepted a worker that did not become ready:\n%s", output)
+	}
+	if !strings.Contains(string(output), "did not become ready") {
+		t.Fatalf("worker readiness error = %q", output)
+	}
+	commands := capturedGcloudCommands(t, gcloudCapture)
+	for _, service := range []string{"acuity-realtime", "acuity-provider-ingress", "acuity-portal-api"} {
+		assertCapturedCommand(t, commands, "run\tservices\tupdate-traffic\t"+service,
+			"--to-revisions\t"+service+"-old=100",
+		)
+	}
+	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate-instance-split\tacuity-worker",
+		"--to-revisions\tacuity-worker-old=100",
+	)
+	if commandIndex(commands, "run\tdeploy\tacuity-web") >= 0 {
+		t.Fatalf("release deployed web after the worker failed:\n%s", strings.Join(commands, "\n"))
+	}
+}
+
+func TestProductionReleaseNeverExitsPastItsRollback(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join(releaseDeployDirectory(t), "deploy-production-release.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, armed, found := strings.Cut(string(script), "trap rollback ERR\n")
+	if !found {
+		t.Fatal("release script does not arm its rollback")
+	}
+	for number, line := range strings.Split(armed, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "exit") {
+			t.Errorf("line %d after the rollback trap skips rollback: %s", number+1, line)
+		}
+	}
+}
+
 func TestProductionReleaseRepairsStaleDesiredTrafficBeforeMigration(t *testing.T) {
 	directory := releaseDeployDirectory(t)
 	path, gcloudCapture, curlCapture := installReleaseFakes(t)
@@ -765,7 +812,7 @@ case "$*" in
     printf '%s\n' "closed"
     ;;
   "run worker-pools describe "*"status.conditions"*)
-    printf '%s\n' "True"
+    printf '%s\n' "${GCLOUD_WORKER_READY:-True}"
     ;;
   "run worker-pools describe "*"spec.template.scaling.manualInstanceCount"*)
     printf '%s\n' "0"
