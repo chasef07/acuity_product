@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,18 +83,35 @@ func TestDomainErrorResponses(t *testing.T) {
 	}
 }
 
-func TestUnavailableRequestsFromEveryDomainLogTheirCause(t *testing.T) {
+func TestUnavailableRequestsLogTheirCause(t *testing.T) {
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	defer slog.SetDefault(previous)
+	server := &Server{}
 	request := httptest.NewRequest(http.MethodPost, "/v1/calling/outbound-calls", nil)
 	request.Pattern = "POST /v1/calling/outbound-calls"
-	(&Server{}).writeDomainError(httptest.NewRecorder(), request,
-		fmt.Errorf("read calling state: %w", errors.New("synthetic statement timeout")))
-	if !strings.Contains(logs.String(), "request_failed") ||
+
+	rejected := httptest.NewRecorder()
+	server.writeDomainError(rejected, request, interaction.ErrInvalidInput)
+	if rejected.Code != http.StatusBadRequest || logs.Len() != 0 {
+		t.Fatalf("client error status=%d logs=%s", rejected.Code, logs.String())
+	}
+
+	failed := httptest.NewRecorder()
+	server.writeDomainError(failed, request, fmt.Errorf("read calling state: %w", context.DeadlineExceeded))
+	if failed.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(logs.String(), "request_failed") ||
 		!strings.Contains(logs.String(), `route="POST /v1/calling/outbound-calls"`) ||
-		!strings.Contains(logs.String(), "read calling state: synthetic statement timeout") {
-		t.Fatalf("logs = %s", logs.String())
+		!strings.Contains(logs.String(), "read calling state: context deadline exceeded") {
+		t.Fatalf("dependency failure status=%d logs=%s", failed.Code, logs.String())
+	}
+
+	logs.Reset()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	server.writeDomainError(httptest.NewRecorder(), request.WithContext(ctx), context.Canceled)
+	if logs.Len() != 0 {
+		t.Fatalf("caller cancellation logged as a failure: %s", logs.String())
 	}
 }
