@@ -437,6 +437,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   let stopped = true
   let stopInFlight: Promise<void> | undefined
   let etag: string | undefined
+  let ownershipConnectOwed = false
   let temporaryFailures = 0
   let heartbeatFailures = 0
   let readinessInFlight: Promise<void> | undefined
@@ -844,6 +845,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
 
   async function failClosedAccess(failure: SoftphoneFailure) {
     etag = undefined
+    ownershipConnectOwed = false
     authoritativeRingingMedia.clear()
     persistCallRecoveryID(undefined)
     accessBlocked = true
@@ -1140,9 +1142,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         ),
       )
       stateRead = true
-      if (result.etag) etag = result.etag
       if (!live(refresh)) return
       if (result.status === "not-modified") {
+        if (result.etag) etag = result.etag
         if (snapshot.expectedCallID) {
           const detail = open("detail")
           const call = await backendRequest((signal) =>
@@ -1157,6 +1159,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         settle(refresh)
         return
       }
+      etag = undefined
       const state = result.state
       callingChanges.observe(changeRead, state)
       callingPracticeIDs = state.callingPracticeIds
@@ -1168,7 +1171,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         ? hideLeaseAfterAccessFailure(authoritativeLease)!
         : authoritativeLease
       rememberAuthoritativeRingingMedia(lease.owner, state.ringing)
-      const ownershipAcquired = snapshot.lease?.owner !== true && lease.owner
+      ownershipConnectOwed = lease.owner && (ownershipConnectOwed || snapshot.lease?.owner !== true)
       const ownershipLost = snapshot.lease?.owner && !lease.owner
       const ownLeaseLapsed = leaseLapsedForSession(lease, options.sessionID)
       const authoritativeCallID =
@@ -1390,9 +1393,11 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         await attachExpectedMedia(queuedExpectedLeg)
       }
       rejectExpiredUnmatchedMedia(correlatedMediaTokens())
-      if (ownershipAcquired) {
+      if (ownershipConnectOwed) {
+        ownershipConnectOwed = false
         void connectMedia().then(() => scheduleHeartbeat())
       }
+      if (result.etag) etag = result.etag
       temporaryFailures = 0
       settle(refresh)
     } catch (error) {
@@ -2353,6 +2358,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         refreshInFlight = undefined
         requestedReadiness = undefined
         etag = undefined
+        ownershipConnectOwed = false
         authoritativeRingingMedia.clear()
         temporaryFailures = 0
         heartbeatFailures = 0

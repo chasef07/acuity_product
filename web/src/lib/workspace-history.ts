@@ -156,20 +156,9 @@ function historyEvidence(items: readonly ConversationTimelineItem[]) {
   return items.flatMap((item) => [item, ...(item.entries ?? [])])
 }
 
-export function callbackCompletionLabel(
-  items: readonly ConversationTimelineItem[],
-  task: Pick<Task, "id" | "origin" | "state" | "completedAt">,
-) {
-  if (task.state !== "COMPLETED" || !task.completedAt) return undefined
-  const completedAt = Date.parse(task.completedAt)
-  const completion = historyEvidence(items).find((item) =>
-    item.type === "TASK" &&
-    item.task?.id === task.id &&
-    item.taskActivity === "TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT" &&
-    Date.parse(item.occurredAt) === completedAt,
-  )
-  if (!completion) return undefined
-  return `${taskKindLabel(task)} ${callbackCompletionPhrase(callbackCallerEmail(completion))}`
+export function callbackCompletionLabel(task: Pick<Task, "origin" | "state" | "callbackCompletion">) {
+  if (task.state !== "COMPLETED" || !task.callbackCompletion) return undefined
+  return `${taskKindLabel(task)} ${callbackCompletionPhrase(task.callbackCompletion.callerEmail)}`
 }
 
 export function openTaskCallbackNotice(

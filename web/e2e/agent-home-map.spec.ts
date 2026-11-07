@@ -28,6 +28,7 @@ test("Home connects the animated Acuity mark to three keyboard-accessible areas"
   expect(brand).not.toBeNull()
   expect(homeBox).not.toBeNull()
   expect(Math.abs(homeBox!.y + homeBox!.height / 2 - brand!.y - brand!.height / 2)).toBeLessThanOrEqual(2)
+  await page.mouse.move(600, 600)
   await homeIcon.hover()
   await expect(page.locator('[data-slot="tooltip-content"]').filter({ hasText: /^Home$/ })).toBeVisible()
   await page.mouse.move(600, 600)

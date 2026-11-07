@@ -498,6 +498,35 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	if len(legacyDetail.LegacyScorecard) != 5 || !slices.Equal(flagged, []string{"conversation_responsive"}) || !slices.Equal(reasons, []string{"Conversation responsive needs review · 0.30"}) {
 		t.Fatalf("legacy detail %+v disagrees with ledger reasons %v", legacyDetail.LegacyScorecard, reasons)
 	}
+	juryResults := map[string]any{}
+	for _, question := range interaction.ScorecardQuestionsForVersion(interaction.ScorecardJudgeVersion) {
+		if question.Source == "judge" {
+			juryResults[question.Key] = map[string]any{"verdict": true, "probability": 0.9}
+		}
+	}
+	sentimentOnly, err := json.Marshal(map[string]any{
+		"evaluatorVersion": interaction.ScorecardJudgeVersion, "status": "incomplete", "jurors": []string{"synthetic"},
+		"results": juryResults, "errors": map[string]any{"expressed_sentiment": map[string]any{"cause": "no_quorum"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ evaluation, want string }{
+		{legacyEvaluation, "unknown"},
+		{string(sentimentOnly), "pass"},
+	} {
+		if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET closeout_payload=jsonb_set(closeout_payload,'{evaluation}',$2::jsonb) WHERE id=$1::uuid`, richID, tc.evaluation); err != nil {
+			t.Fatal(err)
+		}
+		response := request(t, server.Client(), http.MethodGet, server.URL+"/v1/operator/ai-interactions/"+richID+"/analytics", "operator-token", nil)
+		var result struct {
+			CheckResult string `json:"checkResult"`
+		}
+		decode(t, response, &result)
+		if result.CheckResult != tc.want {
+			t.Fatalf("operator check result = %q, want %q", result.CheckResult, tc.want)
+		}
+	}
 
 	deniedDetail := request(t, server.Client(), http.MethodGet,
 		server.URL+"/v1/operator/ai-interactions/"+richID+"/analytics", "admin-token", nil)

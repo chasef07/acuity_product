@@ -2903,6 +2903,13 @@ func taskResponse(task work.Task) (api.Task, error) {
 		}
 	}
 	response.CompletedAt = task.CompletedAt
+	if task.CallbackCompletion != nil {
+		response.CallbackCompletion = &api.TaskCallbackCompletion{}
+		if task.CallbackCompletion.CallerEmail != "" {
+			email := openapi_types.Email(task.CallbackCompletion.CallerEmail)
+			response.CallbackCompletion.CallerEmail = &email
+		}
+	}
 	return response, nil
 }
 
@@ -3471,6 +3478,7 @@ func operatorAIInteractionAnalyticsResponse(
 		Timeline:              make([]api.OperatorAITimelineItem, 0, len(detail.Timeline)),
 		ToolExecutions:        make([]api.OperatorAIToolExecution, 0, len(detail.ToolExecutions)),
 		Scorecard:             make([]api.AgentCallVerdict, 0, len(detail.Scorecard)),
+		CheckResult:           api.CallCheckResult(detail.CheckResult),
 	}
 	for _, verdict := range detail.Scorecard {
 		response.Scorecard = append(response.Scorecard, api.AgentCallVerdict{

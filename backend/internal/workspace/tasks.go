@@ -170,6 +170,20 @@ func (m *Module) ReadTask(
 	return task, nil
 }
 
+const activityCallerEmail = `COALESCE(
+					(
+						SELECT caller_membership.email
+						FROM access_memberships caller_membership
+						WHERE caller_membership.practice_id = task.practice_id
+							AND caller_membership.user_subject = activity.details ->> 'callerSubject'
+					),
+					(
+						SELECT caller_operator.email
+						FROM access_platform_operators caller_operator
+						WHERE caller_operator.user_subject = activity.details ->> 'callerSubject'
+					)
+				)`
+
 const taskColumns = work.TaskColumns + `,
         COALESCE(CASE WHEN ` + work.TaskIsTextReviewSQL + ` THEN (
           SELECT COALESCE(NULLIF(message.body,''),'Attachment') FROM messaging_messages message
@@ -179,7 +193,15 @@ const taskColumns = work.TaskColumns + `,
 		acknowledgement.state,
 		acknowledgement.safe_failure_code,
 		acknowledgement.message_id::text,
-		acknowledgement.updated_at`
+		acknowledgement.updated_at,
+		CASE WHEN task.state = 'COMPLETED' AND task.completed_by_subject = 'work-recovery-resolution' THEN (
+			SELECT COALESCE(` + activityCallerEmail + `, '')
+			FROM work_task_activities activity
+			WHERE activity.task_id = task.id
+				AND activity.kind = 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'
+				AND activity.occurred_at = task.completed_at
+			LIMIT 1
+		) END`
 
 const taskAcknowledgementJoin = `
 	LEFT JOIN work_task_acknowledgements acknowledgement
@@ -383,19 +405,7 @@ const phoneTaskActivityQuery = `
 		activity.occurred_at,
 		CASE WHEN activity.kind = 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'
 			THEN activity.details || jsonb_strip_nulls(jsonb_build_object(
-				'callerEmail', COALESCE(
-					(
-						SELECT caller_membership.email
-						FROM access_memberships caller_membership
-						WHERE caller_membership.practice_id = task.practice_id
-							AND caller_membership.user_subject = activity.details ->> 'callerSubject'
-					),
-					(
-						SELECT caller_operator.email
-						FROM access_platform_operators caller_operator
-						WHERE caller_operator.user_subject = activity.details ->> 'callerSubject'
-					)
-				)
+				'callerEmail', ` + activityCallerEmail + `
 			))
 			ELSE activity.details
 		END,
@@ -432,12 +442,14 @@ func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
 	var relatedInteractionCount int
 	var acknowledgementState, acknowledgementFailure, acknowledgementMessageID *string
 	var acknowledgementUpdatedAt *time.Time
+	var callbackCallerEmail *string
 	task, err := work.ScanTask(row, prefix,
 		&preview,
 		&acknowledgementState,
 		&acknowledgementFailure,
 		&acknowledgementMessageID,
 		&acknowledgementUpdatedAt,
+		&callbackCallerEmail,
 		&conversationThreadID,
 		&relatedInteractionCount,
 	)
@@ -447,6 +459,9 @@ func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
 	task.Preview = preview
 	task.ConversationThreadID = conversationThreadID
 	task.RelatedInteractionCount = relatedInteractionCount
+	if callbackCallerEmail != nil {
+		task.CallbackCompletion = &work.TaskCallbackCompletion{CallerEmail: *callbackCallerEmail}
+	}
 	if acknowledgementState != nil && acknowledgementUpdatedAt != nil {
 		task.AutomaticAcknowledgement = &work.TaskAcknowledgement{
 			State:     *acknowledgementState,

@@ -449,7 +449,7 @@ test("the thread names the callback caller and marks which Task each entry descr
   assert.equal(histories.at(-1)?.items.length, history.length)
 })
 
-test("the Task panel credits the callback caller and flags an open Task only with loaded evidence", () => {
+test("the Task panel credits the callback caller from the Task and flags an open Task only with loaded evidence", () => {
   const { selected, review, history } = callbackFixture()
   const panel = (task: Task, numberHistory?: ConversationTimelineItem[]) => renderToStaticMarkup(
     <DataProvider>
@@ -469,8 +469,9 @@ test("the Task panel credits the callback caller and flags an open Task only wit
   assert.ok(open.indexOf("This Task is still open.") < open.indexOf("Complete &amp; next"))
   assert.doesNotMatch(panel(selected), /still open/)
   assert.doesNotMatch(panel(selected, history.filter((item) => item.type !== "CALL_HISTORY")), /still open/)
-  assert.match(panel(review, history), /Missed call review completed after caller@example\.test&#x27;s callback attempt/)
-  assert.doesNotMatch(panel(review, history), /Completed by the team/)
+  const callbackReview = { ...review, callbackCompletion: { callerEmail: "caller@example.test" } }
+  assert.match(panel(callbackReview), /Missed call review completed after caller@example\.test&#x27;s callback attempt/)
+  assert.doesNotMatch(panel(callbackReview), /Completed by the team/)
   assert.match(panel(review), /Completed by the team/)
 })
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -348,20 +349,24 @@ func (m *Module) IssueMediaJWT(
 	if err != nil {
 		return MediaToken{}, err
 	}
+	if m.provider == nil {
+		return MediaToken{}, fmt.Errorf("provider is unavailable")
+	}
+	startedAt := m.now()
 	command := ProviderCommand{
 		ID: uuid.NewString(), Action: CommandCreateJWT,
-		TargetID: credentialID, Payload: map[string]any{},
+		TargetID: credentialID, Payload: map[string]any{}, createdAt: startedAt,
 	}
-	if _, err := m.database.Exec(ctx, `
-		INSERT INTO human_calling_provider_commands (
-			id, user_subject, action, target_id, payload, next_attempt_at
-		) VALUES ($1, $2, 'CREATE_JWT', $3, '{}'::jsonb, $4)
-	`, command.ID, identity.Subject, credentialID, m.now()); err != nil {
-		return MediaToken{}, fmt.Errorf("commit media JWT command: %w", err)
-	}
-	result, err := m.processCommand(ctx, command.ID)
+	result, err := m.provider.Execute(ctx, command)
+	finishedAt := m.now()
+	stageOutcome, commandState := observability.CommandStageSucceeded, "SENT"
 	if err != nil {
-		return MediaToken{}, err
+		stageOutcome, commandState = observability.CommandStageFailed, "FAILED"
+	}
+	m.recordCommandStage(command.Action, observability.CommandStageProvider, stageOutcome, finishedAt.Sub(startedAt))
+	m.recordProviderCommand(command, commandState, startedAt, finishedAt.Sub(startedAt))
+	if err != nil {
+		return MediaToken{}, fmt.Errorf("issue media JWT: %w", err)
 	}
 	if result.JWT == "" || !result.JWTExpiresAt.After(m.now()) ||
 		result.JWTExpiresAt.After(m.now().Add(29*24*time.Hour)) {

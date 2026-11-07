@@ -141,7 +141,7 @@ export function TaskWorkspace({
   const recovery =
     task.origin === "VOICEMAIL_RECOVERY" ||
     task.origin === "MISSED_CALL_RECOVERY"
-  const completion = callbackCompletionLabel(numberHistory, task) ??
+  const completion = callbackCompletionLabel(task) ??
     `Completed by ${task.completedBy?.email ?? "the team"}`
   const callbackNotice = openTaskCallbackNotice(numberHistory, task, formatTimestamp)
 

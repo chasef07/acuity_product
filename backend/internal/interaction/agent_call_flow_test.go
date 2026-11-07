@@ -12,6 +12,17 @@ func TestAgentCallCheckResult(t *testing.T) {
 	}{
 		{name: "complete pass", status: "complete", want: "pass"},
 		{name: "partial evaluation", status: "incomplete", want: "unknown"},
+		{name: "sentiment judge failed alone", status: "incomplete", want: "pass", change: func(results, errors map[string]any) {
+			errors["expressed_sentiment"] = map[string]any{"cause": "no_quorum"}
+		}},
+		{name: "sentiment judge failed with another judge", status: "incomplete", want: "unknown", change: func(results, errors map[string]any) {
+			errors["expressed_sentiment"] = map[string]any{"cause": "no_quorum"}
+			errors["call_ended_correctly"] = map[string]any{"cause": "no_quorum"}
+		}},
+		{name: "sentiment judge failed with an unknown check", status: "incomplete", want: "unknown", change: func(results, errors map[string]any) {
+			errors["expressed_sentiment"] = map[string]any{"cause": "no_quorum"}
+			results["knowledge_available"] = map[string]any{"status": "unknown"}
+		}},
 		{name: "failed check", status: "complete", want: "fail", change: func(results, errors map[string]any) {
 			results["call_ended_correctly"] = map[string]any{"verdict": false, "probability": 0.1}
 		}},

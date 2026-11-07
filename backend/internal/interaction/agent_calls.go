@@ -292,7 +292,10 @@ func agentCallCheckResult(evaluation json.RawMessage) string {
 	for _, answer := range juryAnswers(jury, questions) {
 		answers[answer.Question] = answer.Answer
 	}
-	complete, passed := jury.Status == "complete", false
+	_, sentimentFailed := jury.Errors["expressed_sentiment"]
+	complete := jury.Status == "complete" ||
+		(jury.Status == "incomplete" && sentimentFailed && len(jury.Errors) == 1)
+	passed := false
 	for _, question := range questions {
 		if answer, found := answers[question.key]; found {
 			if question.failureLabel != "" {
