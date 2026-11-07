@@ -153,3 +153,94 @@ func TestTaskCallCompletionRecordsStaffActor(t *testing.T) {
 		t.Fatalf("Call completion = %#v", task)
 	}
 }
+
+func TestDispositionReplayReturnsTheRecordedOutcome(t *testing.T) {
+	ctx := context.Background()
+	current := startConnectedTaskCall(t, "task-call-replay")
+	first, err := current.fixture.calling.RecordDisposition(ctx, current.fixture.identity,
+		current.fixture.sessionID, current.call.ID, humancalling.DispositionCompleteTask)
+	if err != nil {
+		t.Fatalf("record disposition: %v", err)
+	}
+	replay, err := current.fixture.calling.RecordDisposition(ctx, current.fixture.identity,
+		current.fixture.sessionID, current.call.ID, humancalling.DispositionCompleteTask)
+	if err != nil || replay.TaskID != first.TaskID || replay.Call.Version != first.Call.Version {
+		t.Fatalf("same-outcome replay = %#v, %v; want %#v", replay, err, first)
+	}
+	if _, err := current.fixture.calling.RecordDisposition(ctx, current.fixture.identity,
+		current.fixture.sessionID, current.call.ID, humancalling.DispositionKeepOpen); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("different-outcome replay error = %v, want conflict", err)
+	}
+	var recorded int
+	if err := current.fixture.pool.QueryRow(ctx, `
+		SELECT count(*) FROM human_calling_timeline
+		WHERE call_id = $1 AND kind = 'call.dispositioned'
+	`, current.call.ID).Scan(&recorded); err != nil || recorded != 1 {
+		t.Fatalf("recorded dispositions = %d, %v", recorded, err)
+	}
+}
+
+func endSyntheticCall(t *testing.T, fixture outboundEndFixture, callID string, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := fixture.pool.Exec(ctx, `
+		UPDATE human_calling_call_legs
+		SET state = 'ENDED', answered_at = $2, bridge_pending_at = $2, bridged_at = $2,
+			ending_at = $2, ended_at = $2, updated_at = $2
+		WHERE call_id = $1
+	`, callID, at); err != nil {
+		t.Fatalf("connect synthetic Call: %v", err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `
+		UPDATE human_calling_calls
+		SET terminal_outcome = 'ENDED', ended_at = $2, disposition_deadline = $2, updated_at = $2
+		WHERE id = $1
+	`, callID, at); err != nil {
+		t.Fatalf("end synthetic Call: %v", err)
+	}
+}
+
+func TestFollowUpDispositionReplayNeverCreatesAnotherTask(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(t, "follow-up-replay", now, &recordingProvider{})
+	workModule := work.New(fixture.pool,
+		access.New(fixture.pool, func() time.Time { return now }),
+		func() time.Time { return now })
+	createFollowUp := func(callID string) humancalling.DispositionResult {
+		t.Helper()
+		result, err := fixture.calling.RecordDisposition(ctx, fixture.identity, fixture.sessionID, callID, humancalling.DispositionCreateTask)
+		if err != nil || result.TaskID == "" {
+			t.Fatalf("create follow-up Task = %#v, %v", result, err)
+		}
+		return result
+	}
+	first := fixture.startCall(t, "follow-up-replay-first")
+	endSyntheticCall(t, fixture, first.ID, now)
+	created := createFollowUp(first.ID)
+	second := fixture.startCall(t, "follow-up-replay-second")
+	endSyntheticCall(t, fixture, second.ID, now)
+	reused := createFollowUp(second.ID)
+	if reused.TaskID != created.TaskID {
+		t.Fatalf("second Call Task = %q, want the open Task %q", reused.TaskID, created.TaskID)
+	}
+	task, err := workModule.ReadTask(ctx, fixture.identity, created.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workModule.CompleteTask(ctx, work.CompleteTaskCommand{
+		Identity: fixture.identity, TaskID: task.ID, ExpectedVersion: task.Version,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := fixture.calling.RecordDisposition(ctx, fixture.identity, fixture.sessionID, second.ID, humancalling.DispositionCreateTask)
+	if err != nil || replay.TaskID != created.TaskID {
+		t.Fatalf("follow-up replay Task = %q, %v; want %q", replay.TaskID, err, created.TaskID)
+	}
+	var tasks int
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT count(*) FROM work_tasks WHERE practice_id = $1
+	`, fixture.authorization.Practice.ID).Scan(&tasks); err != nil || tasks != 1 {
+		t.Fatalf("Tasks after replay = %d, %v; want 1", tasks, err)
+	}
+}

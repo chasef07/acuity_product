@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { ScorecardFlow, checkLabels, type FlowCall } from "./scorecard-flow"
-import { checkState } from "@/lib/scorecard-flow"
+import { checkState, flowResult, type FlowResult } from "@/lib/scorecard-flow"
 import type {
   OperatorCallReview,
   OperatorScorecardQuestion,
@@ -23,6 +23,7 @@ export function ScorecardPanel({
   call,
   evaluation,
   evidenceReady = false,
+  checkResult = "unknown",
 }: {
   review: OperatorCallReview
   catalog: Map<string, OperatorScorecardQuestion>
@@ -31,6 +32,7 @@ export function ScorecardPanel({
   call?: FlowCall
   evaluation?: Record<string, unknown>
   evidenceReady?: boolean
+  checkResult?: FlowResult
 }) {
   const [shown, setShown] = useState(review)
   const [answers, setAnswers] = useState<Record<string, boolean>>(
@@ -71,6 +73,10 @@ export function ScorecardPanel({
           : checkState(result, undefined, question.failure, Object.hasOwn(errors, question.key)),
     }
   })
+
+  const result = revealed && evidenceReady
+    ? checkResult
+    : flowResult(checks.map((check) => check.state), complete && evidenceReady && evaluation?.status !== "incomplete" && applicable.every((key) => catalog.has(key)))
 
   function answer(question: string, value: boolean) {
     setAnswers((current) => ({ ...current, [question]: value }))
@@ -113,7 +119,7 @@ export function ScorecardPanel({
           </p>
         </div>
         <p className="mt-2 text-xs font-medium text-muted-foreground">{revealed ? "Judge results · Your answers below remain editable" : "Your review · Judge results stay hidden until you save"}</p>
-        <ScorecardFlow call={call} checks={checks} complete={(revealed || complete) && evidenceReady && evaluation?.status !== "incomplete" && applicable.every((key) => catalog.has(key))}>
+        <ScorecardFlow call={call} checks={checks} result={result}>
         <ol className="divide-y px-3">
           {applicable.map((key) => {
             const question = catalog.get(key)

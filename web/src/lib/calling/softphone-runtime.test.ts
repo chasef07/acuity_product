@@ -26,6 +26,123 @@ import {
   type SoftphoneClock,
 } from "./softphone-runtime.ts"
 
+function conditionalReads(backend: DeterministicBackend) {
+  backend.readStateHandler = async (input) => {
+    backend.reads.push({ etag: input.etag, at: backend.now })
+    return input.etag === backend.etag
+      ? { status: "not-modified", etag: backend.etag }
+      : { status: "modified", state: backend.state, etag: backend.etag }
+  }
+}
+
+function failFirstCallRead(backend: DeterministicBackend) {
+  let failed = false
+  backend.readCallHandler = async (callID) => {
+    if (!failed) {
+      failed = true
+      throw new SoftphoneAdapterError("temporary-request", "Calling could not reach the service.", true)
+    }
+    return backend.calls.get(callID)!
+  }
+}
+
+test("a failed follow-up Call read retries the state instead of losing the outcome prompt", async () => {
+  const backend = new DeterministicBackend()
+  const pending = call({ id: "call-awaiting-outcome", state: "NEEDS_DISPOSITION", version: 3 })
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: {
+      ...stateCall(pending.id, "awaiting-outcome-leg", pending.version),
+      state: "NEEDS_DISPOSITION",
+    },
+  })
+  backend.calls.set(pending.id, pending)
+  conditionalReads(backend)
+  failFirstCallRead(backend)
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  await runtime.signalRefresh()
+
+  assert.equal(runtime.getSnapshot().pendingDisposition?.id, pending.id)
+  await runtime.signalRefresh()
+  assert.equal(backend.reads.at(-1)?.etag, backend.etag)
+  await runtime.stop()
+})
+
+test("a failed follow-up Call read drops the stale ETag so a reverted state still reads as modified", async () => {
+  const backend = new DeterministicBackend()
+  const pending = call({ id: "call-reverted", state: "NEEDS_DISPOSITION", version: 3 })
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.calls.set(pending.id, pending)
+  conditionalReads(backend)
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  await drainMicrotasks()
+  const original = { state: backend.state, etag: backend.etag }
+
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.etag = '"awaiting-outcome"'
+  failFirstCallRead(backend)
+  await runtime.signalRefresh()
+
+  backend.state = original.state
+  backend.etag = original.etag
+  backend.lease = original.state.softphone
+  await runtime.signalRefresh()
+
+  assert.equal(backend.reads.at(-1)?.etag, undefined)
+  assert.equal(runtime.getSnapshot().lease?.pendingOutcomeCallId, "")
+  await runtime.stop()
+})
+
+test("a failed follow-up Call read still connects media after taking ownership", async () => {
+  const backend = new DeterministicBackend()
+  const media = new DeterministicMedia()
+  const pending = call({ id: "call-owned-later", state: "NEEDS_DISPOSITION", version: 3 })
+  backend.lease = lease({ owner: false })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.calls.set(pending.id, pending)
+  conditionalReads(backend)
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  assert.equal(media.connects, 0)
+
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.etag = '"owned"'
+  failFirstCallRead(backend)
+  await runtime.signalRefresh()
+  await runtime.signalRefresh()
+  await drainMicrotasks()
+
+  assert.equal(media.connects, 1)
+  await runtime.stop()
+})
+
 test("start restores the owned lease and never regresses a Call version", async () => {
   const clock = new ManualClock()
   const backend = new DeterministicBackend()

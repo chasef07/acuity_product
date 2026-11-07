@@ -3802,6 +3802,8 @@ components:
         completedAt:
           type: string
           format: date-time
+        callbackCompletion:
+          $ref: "#/components/schemas/TaskCallbackCompletion"
         version:
           type: integer
           format: int64
@@ -4222,15 +4224,25 @@ components:
         occurredAt:
           type: string
           format: date-time
+    CallCheckResult:
+      type: string
+      enum: [pass, fail, unknown]
+      description: Aggregate judge check result. Missing or incomplete evidence is unknown; a confirmed failed check takes precedence. The sentiment judge is context, so its failure alone does not make the result unknown.
+    TaskCallbackCompletion:
+      type: object
+      additionalProperties: false
+      description: Present when a staff callback attempt automatically completed this Task.
+      properties:
+        callerEmail:
+          type: string
+          format: email
     AgentCallDetail:
       type: object
       additionalProperties: false
       required: [call, locationName, messages, scorecard]
       properties:
         checkResult:
-          type: string
-          enum: [pass, fail, unknown]
-          description: Aggregate judge check result. Missing or incomplete evidence is unknown; a confirmed failed check takes precedence.
+          $ref: "#/components/schemas/CallCheckResult"
         call:
           $ref: "#/components/schemas/AgentCall"
         locationName:
@@ -5560,7 +5572,10 @@ components:
         - timeline
         - toolExecutions
         - scorecard
+        - checkResult
       properties:
+        checkResult:
+          $ref: "#/components/schemas/CallCheckResult"
         intent:
           $ref: "#/components/schemas/CallIntent"
         outcome:

@@ -1,5 +1,5 @@
 import { ScorecardFlow, checkLabels, type FlowCall } from "./scorecard-flow"
-import { checkState, hasFailureJudges, isJuryScorecard } from "@/lib/scorecard-flow"
+import { checkState, hasFailureJudges, isJuryScorecard, type FlowResult } from "@/lib/scorecard-flow"
 import { Badge } from "@/components/ui/badge"
 import type { AgentCallVerdict, OperatorAiLegacyScorecardCheck, OperatorScorecardQuestion } from "@/lib/api/generated/types.gen"
 import { verdictLabels } from "@/lib/vocabulary"
@@ -92,7 +92,7 @@ function jurorName(model: string): string {
   return model.split("/").pop() ?? model
 }
 
-function JuryScorecard({ evaluation, verdicts, questions, call }: { evaluation: Record<string, unknown>; verdicts: AgentCallVerdict[]; questions: OperatorScorecardQuestion[]; call?: FlowCall }) {
+function JuryScorecard({ evaluation, verdicts, questions, call, checkResult }: { evaluation: Record<string, unknown>; verdicts: AgentCallVerdict[]; questions: OperatorScorecardQuestion[]; call?: FlowCall; checkResult: FlowResult }) {
   const results = record(evaluation.results)
   const errors = record(evaluation.errors)
   const jurors = Array.isArray(evaluation.jurors) ? evaluation.jurors.map(String) : []
@@ -111,12 +111,10 @@ function JuryScorecard({ evaluation, verdicts, questions, call }: { evaluation: 
   const sentimentEvidence = sentimentFailed ? record(errors.expressed_sentiment) : sentiment
   const sentimentVotes = record(sentimentEvidence.votes)
   const sentimentErrors = record(sentimentEvidence.errors)
-  const checksComplete = questions.length > 0 && (evaluation.status === "complete" ||
-    (evaluation.status === "incomplete" && sentimentFailed && Object.keys(errors).every((name) => name === "expressed_sentiment")))
   const score = !sentimentFailed && typeof sentiment.score === "number" && sentiment.score >= 0 && sentiment.score <= 4 ? sentiment.score : undefined
   return <>
     {!hasFailureJudges(evaluation.evaluatorVersion) && <p className="mt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer.</p>}
-    <ScorecardFlow call={call} checks={checks} complete={checksComplete}>
+    <ScorecardFlow call={call} checks={checks} result={questions.length > 0 ? checkResult : "unknown"}>
     {hasFailureJudges(evaluation.evaluatorVersion) && <p className="px-3 pt-3 text-xs text-muted-foreground">Jury: {jurors.map(jurorName).join(", ") || "none"}. The verdict is the majority, and needs most jurors to answer.</p>}
     <dl className="divide-y px-3">
       {checks.map(({ key: name, state }) => {
@@ -158,7 +156,7 @@ function JuryScorecard({ evaluation, verdicts, questions, call }: { evaluation: 
   </>
 }
 
-export function CallEvaluation({ evaluation, legacyScorecard, verdicts = [], questions = [], call }: { evaluation?: Record<string, unknown>; legacyScorecard?: OperatorAiLegacyScorecardCheck[]; verdicts?: AgentCallVerdict[]; questions?: OperatorScorecardQuestion[]; call?: FlowCall }) {
+export function CallEvaluation({ evaluation, legacyScorecard, verdicts = [], questions = [], call, checkResult = "unknown" }: { evaluation?: Record<string, unknown>; legacyScorecard?: OperatorAiLegacyScorecardCheck[]; verdicts?: AgentCallVerdict[]; questions?: OperatorScorecardQuestion[]; call?: FlowCall; checkResult?: FlowResult }) {
   const results = record(evaluation?.results)
   const currentVersion = evaluation?.evaluatorVersion === "typesafe-trace-v4"
   return (
@@ -174,7 +172,7 @@ export function CallEvaluation({ evaluation, legacyScorecard, verdicts = [], que
           ))}
         </dl>}
         {typeof evaluation.reason === "string" && <p className="mt-3 text-xs">{evaluation.status === "incomplete" ? "Evaluation incomplete" : "Evaluation unavailable"}: {title(evaluation.reason)}</p>}
-        {isJuryScorecard(evaluation.evaluatorVersion) ? <JuryScorecard evaluation={evaluation} verdicts={verdicts} questions={questions} call={call} /> : legacyScorecard ? <Scorecard evaluation={evaluation} checks={legacyScorecard} /> : <>
+        {isJuryScorecard(evaluation.evaluatorVersion) ? <JuryScorecard checkResult={checkResult} evaluation={evaluation} verdicts={verdicts} questions={questions} call={call} /> : legacyScorecard ? <Scorecard evaluation={evaluation} checks={legacyScorecard} /> : <>
         {!currentVersion && <p className="mt-3 text-xs text-muted-foreground">This evaluator version is shown as recorded. Automatic red highlights apply only to typesafe-trace-v4.</p>}
         {Object.entries(results).map(([group, raw]) => {
           const result = record(raw)

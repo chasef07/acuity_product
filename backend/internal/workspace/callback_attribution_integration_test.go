@@ -149,6 +149,17 @@ func TestPhoneHistoryNamesTheStaffMemberWhoPlacedAnUnansweredCallback(t *testing
 		actor.Subject != "work-recovery-resolution" || actor.Email != "" {
 		t.Fatalf("automatic completion Activity must read as automation: %#v", actor)
 	}
+	reads := workspace.New(db.As(testdb.Portal), accessModule)
+	readBack, err := reads.ReadTask(ctx, viewer, review.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readBack.CallbackCompletion == nil || readBack.CallbackCompletion.CallerEmail != caller.Email {
+		t.Fatalf("a Task read must credit the callback caller without the timeline: %#v", readBack.CallbackCompletion)
+	}
+	if completion.Task.CallbackCompletion == nil || completion.Task.CallbackCompletion.CallerEmail != caller.Email {
+		t.Fatalf("a timeline Task must credit the callback caller: %#v", completion.Task.CallbackCompletion)
+	}
 
 	lateAt := now.Add(-7 * time.Minute)
 	lateCallID := insertRecoveryCall(t, pool, authorization, locationID, phone, lateAt)
@@ -195,5 +206,25 @@ func TestPhoneHistoryNamesTheStaffMemberWhoPlacedAnUnansweredCallback(t *testing
 	}
 	if reopenActor == nil || reopenActor.Kind != access.ActorHuman || reopenActor.Email != caller.Email || reopenActor.Subject != caller.Subject {
 		t.Fatalf("a staff reopen must name who reopened the Task: %#v", reopenActor)
+	}
+	reopenedRead, err := reads.ReadTask(ctx, viewer, review.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopenedRead.CallbackCompletion != nil {
+		t.Fatalf("a reopened Task must not keep its callback completion: %#v", reopenedRead.CallbackCompletion)
+	}
+	completedByStaff, err := writes.CompleteTask(ctx, work.CompleteTaskCommand{
+		Identity: caller, TaskID: review.ID, ExpectedVersion: reopenedReview.Version,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staffRead, err := reads.ReadTask(ctx, viewer, completedByStaff.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staffRead.CallbackCompletion != nil {
+		t.Fatalf("a staff completion must not read as a callback completion: %#v", staffRead.CallbackCompletion)
 	}
 }

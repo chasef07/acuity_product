@@ -83,7 +83,7 @@ test("revealing the judge exposes failures above collapsed details even when the
   const question = { key: "transfer_policy_followed", code: "T1", label: "Transfer policy followed", prompt: "Transfer policy?", source: "judge" as const, question: "", yes: "", no: "", failure: true }
   const html = renderToStaticMarkup(<ScorecardPanel
     review={{ ...review, submitted: true, questions: [question.key], answers: [{ question: question.key, answer: true, note: "" }], judge: [{ question: question.key, answer: false, version: "typesafe-scorecard-v8" }] }}
-    catalog={new Map([[question.key, question]])} evidenceReady onSaved={() => {}}
+    catalog={new Map([[question.key, question]])} evidenceReady checkResult="fail" onSaved={() => {}}
   />)
   const summary = html.slice(0, html.indexOf("<details"))
   assert.match(summary, /Judge results/)
@@ -92,22 +92,31 @@ test("revealing the judge exposes failures above collapsed details even when the
   assert.doesNotMatch(summary, /All applicable checks passed/)
 })
 
-test("revealed judges include failures outside human question gates and preserve unavailable evidence", () => {
+test("a revealed failure stays visible while the call evidence is loading", () => {
+  const question = { key: "transfer_policy_followed", code: "T1", label: "Transfer policy followed", prompt: "Transfer policy?", source: "judge" as const, question: "", yes: "", no: "", failure: true }
+  const html = renderToStaticMarkup(<ScorecardPanel
+    review={{ ...review, submitted: true, questions: [question.key], answers: [{ question: question.key, answer: true, note: "" }], judge: [{ question: question.key, answer: false, version: "typesafe-scorecard-v8" }] }}
+    catalog={new Map([[question.key, question]])} onSaved={() => {}}
+  />)
+  assert.match(html.slice(0, html.indexOf("<details")), /1 failed check/)
+})
+
+test("revealed judges show the backend result and list failures outside human question gates", () => {
   const questions = ["call_ended_correctly", "appointment_datetime_correct"].map((key) => ({ key, code: key, label: key, prompt: key, source: "judge" as const, question: "", yes: "", no: "", failure: true }))
-  const render = (result: Record<string, unknown>, errors = {}) => renderToStaticMarkup(<ScorecardPanel
+  const render = (result: Record<string, unknown>, checkResult: "pass" | "fail" | "unknown", errors = {}) => renderToStaticMarkup(<ScorecardPanel
     review={{ ...review, submitted: true, questions: ["call_ended_correctly"], answers: [{ question: "call_ended_correctly", answer: true, note: "" }], judge: questions.map((question) => ({ question: question.key, answer: question.key === "call_ended_correctly", version: "typesafe-scorecard-v8" })) }}
-    catalog={new Map(questions.map((question) => [question.key, question]))} evidenceReady onSaved={() => {}}
+    catalog={new Map(questions.map((question) => [question.key, question]))} evidenceReady checkResult={checkResult} onSaved={() => {}}
     evaluation={{ results: { call_ended_correctly: { verdict: true }, appointment_datetime_correct: result }, errors }}
   />)
-  const failed = render({ verdict: false })
+  const failed = render({ verdict: false }, "fail")
   assert.match(failed.slice(0, failed.indexOf("<details")), /1 failed check/)
   assert.match(failed, /appointment_datetime_correct<\/span><span class="shrink-0">Failed/)
   assert.equal((failed.match(/role="group"/g) ?? []).length, 1)
-  for (const html of [render({ status: "unknown" }), render({ verdict: false }, { appointment_datetime_correct: { reason: "quorum" } })]) {
+  for (const html of [render({ status: "unknown" }, "unknown"), render({ verdict: false }, "unknown", { appointment_datetime_correct: { reason: "quorum" } })]) {
     assert.match(html, /Checks incomplete/)
     assert.doesNotMatch(html, /1 failed check|All applicable checks passed/)
   }
-  const inapplicable = render({ status: "not_applicable", verdict: false })
+  const inapplicable = render({ status: "not_applicable", verdict: false }, "pass")
   assert.match(inapplicable, /All applicable checks passed/)
   assert.doesNotMatch(inapplicable, /1 failed check/)
 })

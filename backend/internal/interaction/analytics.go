@@ -180,6 +180,7 @@ type OperatorAnalyticsDetail struct {
 	Timeline          []TimelineItem
 	ToolExecutions    []ToolExecution
 	Scorecard         []AgentCallVerdict
+	CheckResult       string
 	LegacyScorecard   []LegacyScorecardCheck
 }
 
@@ -624,6 +625,7 @@ func (m *Module) ReadOperatorAnalytics(
 			stored.StartedAt,
 		),
 		Scorecard:       agentCallScorecard(closeout.Evaluation),
+		CheckResult:     agentCallCheckResult(closeout.Evaluation),
 		LegacyScorecard: legacyScorecardChecks(closeout.Evaluation),
 	}, nil
 }

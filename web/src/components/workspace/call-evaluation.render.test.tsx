@@ -245,21 +245,21 @@ for (const version of ["typesafe-scorecard-v8", "typesafe-scorecard-v9", "typesa
 
 test("the intent/outcome flow cannot hide an expected missing check or turn a resolved call into a pass", () => {
   const questions = ["transfer_policy_followed", "call_ended_correctly"].map((key) => ({ key, code: key, label: key, prompt: key, source: "judge" as const, question: "", yes: "", no: "", failure: true }))
-  const render = (answer: "yes" | "no", results: Record<string, unknown>) => renderToStaticMarkup(<CallEvaluation
-    call={{ intent: "speak_to_staff", outcome: "resolved" }} questions={questions}
+  const render = (answer: "yes" | "no", results: Record<string, unknown>, checkResult: "pass" | "fail" | "unknown") => renderToStaticMarkup(<CallEvaluation
+    call={{ intent: "speak_to_staff", outcome: "resolved" }} questions={questions} checkResult={checkResult}
     verdicts={[{ question: "transfer_policy_followed", code: "T1", prompt: "", answer }]}
     evaluation={{ evaluatorVersion: "typesafe-scorecard-v8", status: "complete", results }}
   />)
-  const missing = render("yes", { transfer_policy_followed: { verdict: true } })
+  const missing = render("yes", { transfer_policy_followed: { verdict: true } }, "unknown")
   assert.match(missing, /Speak to staff/)
   assert.match(missing, /Resolved/)
   assert.match(missing, /Checks incomplete/)
   assert.match(missing, /call_ended_correctly/)
   assert.doesNotMatch(missing, /All applicable checks passed/)
-  const failed = render("no", { transfer_policy_followed: { verdict: false }, call_ended_correctly: { status: "not_applicable" } })
+  const failed = render("no", { transfer_policy_followed: { verdict: false }, call_ended_correctly: { status: "not_applicable" } }, "fail")
   assert.match(failed, /1 failed check/)
   assert.doesNotMatch(failed, /All applicable checks passed/)
-  const passed = render("yes", { transfer_policy_followed: { verdict: true }, call_ended_correctly: { status: "not_applicable" } })
+  const passed = render("yes", { transfer_policy_followed: { verdict: true }, call_ended_correctly: { status: "not_applicable" } }, "pass")
   assert.match(passed, /All applicable checks passed/)
 })
 
@@ -298,14 +298,14 @@ test("v8 sentiment no quorum overrides a stale score and shows retained votes an
   assert.doesNotMatch(html, /Neutral or mixed|failed check|>Failed</)
 })
 
-test("a sentiment-only failure does not make six completed checks incomplete", () => {
+test("the result banner shows the backend result even when the sentiment judge failed", () => {
   const keys = ["knowledge_available", "office_question_answered", "appointment_datetime_correct", "call_ended_correctly", "transfer_policy_followed", "emergency_policy_followed"]
   const questions = keys.map((key) => ({ key, code: key, label: key, prompt: key, source: "judge" as const, question: "", yes: "", no: "", failure: true }))
   const verdicts = keys.map((question) => ({ question, code: question, prompt: question, answer: "yes" as const }))
   const results = Object.fromEntries(keys.map((key) => [key, { verdict: true, probability: 0.9 }]))
   const sentimentError = { cause: "no_quorum", votes: { a: 2 }, errors: { b: "TimeoutError", c: "TimeoutError" } }
-  const render = (result: Record<string, unknown>, errors: Record<string, unknown>) => renderToStaticMarkup(<CallEvaluation
-    questions={questions} verdicts={verdicts}
+  const render = (result: Record<string, unknown>, errors: Record<string, unknown>, checkResult: "pass" | "unknown" = "pass") => renderToStaticMarkup(<CallEvaluation
+    questions={questions} verdicts={verdicts} checkResult={checkResult}
     evaluation={{ evaluatorVersion: "typesafe-scorecard-v8", status: "incomplete", jurors: ["a", "b", "c"], results: result, errors }}
   />)
   const html = render(results, { expressed_sentiment: sentimentError })
@@ -313,14 +313,18 @@ test("a sentiment-only failure does not make six completed checks incomplete", (
   assert.match(html, /Caller sentiment<\/dt><dd[^>]*>Unavailable/)
   assert.match(html, /No quorum/)
   assert.doesNotMatch(html, /Checks incomplete/)
-  for (const incomplete of [
-    render(results, {}),
-    render(results, { expressed_sentiment: sentimentError, call_ended_correctly: { cause: "no_quorum" } }),
-    render({ ...results, call_ended_correctly: { status: "unknown" } }, { expressed_sentiment: sentimentError }),
-  ]) {
-    assert.match(incomplete, /Checks incomplete/)
-    assert.doesNotMatch(incomplete, /All applicable checks passed/)
-  }
+  const incomplete = render(results, { expressed_sentiment: sentimentError, call_ended_correctly: { cause: "no_quorum" } }, "unknown")
+  assert.match(incomplete, /Checks incomplete/)
+  assert.doesNotMatch(incomplete, /All applicable checks passed/)
+})
+
+test("the result banner stays incomplete until the check catalog loads", () => {
+  const html = renderToStaticMarkup(<CallEvaluation
+    questions={[]} verdicts={[]} checkResult="fail"
+    evaluation={{ evaluatorVersion: "typesafe-scorecard-v8", status: "complete", jurors: ["a"], results: { call_ended_correctly: { verdict: false, probability: 0.1 } } }}
+  />)
+  assert.match(html, /Checks incomplete/)
+  assert.doesNotMatch(html, /failed check|All applicable checks passed/)
 })
 
 test("a call the agent did not hang up shows call ending as not applicable with its reason", () => {

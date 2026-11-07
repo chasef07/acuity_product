@@ -105,11 +105,12 @@ test("in-flight calls in number history say what is happening", () => {
   assert.equal(detailFor("VOICEMAIL_RECORDING", "INBOUND"), "Recording voicemail")
 })
 
-test("a callback-attempt completion credits the caller only with its exact Activity evidence", () => {
-  assert.equal(callbackCompletionLabel([callbackCompletion], review), "Missed call review completed after caller@example.test's callback attempt")
-  assert.equal(callbackCompletionLabel([], review), undefined)
-  assert.equal(callbackCompletionLabel([callbackCompletion], { ...review, completedAt: "2026-09-08T14:30:00Z" }), undefined)
-  assert.equal(callbackCompletionLabel([callbackCompletion], { ...review, state: "OPEN" }), undefined)
+test("a callback-attempt completion credits the caller from the Task itself", () => {
+  const withCaller = { ...review, callbackCompletion: { callerEmail: "caller@example.test" } }
+  assert.equal(callbackCompletionLabel(withCaller), "Missed call review completed after caller@example.test's callback attempt")
+  assert.equal(callbackCompletionLabel({ ...review, callbackCompletion: {} }), "Missed call review completed after callback attempt")
+  assert.equal(callbackCompletionLabel(review), undefined)
+  assert.equal(callbackCompletionLabel({ ...withCaller, state: "OPEN" }), undefined)
 })
 
 test("an open Task names a later callback attempt only when that call is loaded", () => {

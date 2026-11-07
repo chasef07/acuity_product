@@ -678,6 +678,7 @@ export type Task = {
     createdAt: string;
     completedBy?: TaskActor;
     completedAt?: string;
+    callbackCompletion?: TaskCallbackCompletion;
     version: number;
     updatedAt: string;
     automaticAcknowledgement?: TaskAutomaticAcknowledgement;
@@ -892,11 +893,20 @@ export type AgentCallMessage = {
     occurredAt: string;
 };
 
+/**
+ * Aggregate judge check result. Missing or incomplete evidence is unknown; a confirmed failed check takes precedence. The sentiment judge is context, so its failure alone does not make the result unknown.
+ */
+export type CallCheckResult = 'pass' | 'fail' | 'unknown';
+
+/**
+ * Present when a staff callback attempt automatically completed this Task.
+ */
+export type TaskCallbackCompletion = {
+    callerEmail?: string;
+};
+
 export type AgentCallDetail = {
-    /**
-     * Aggregate judge check result. Missing or incomplete evidence is unknown; a confirmed failed check takes precedence.
-     */
-    checkResult?: 'pass' | 'fail' | 'unknown';
+    checkResult?: CallCheckResult;
     call: AgentCall;
     locationName: string;
     messages: Array<AgentCallMessage>;
@@ -1825,6 +1835,7 @@ export type OperatorAiLegacyScorecardCheck = {
 };
 
 export type OperatorAiInteractionAnalytics = {
+    checkResult: CallCheckResult;
     intent?: CallIntent;
     outcome?: CallOutcome;
     labelingStatus?: CallLabelingStatus;

@@ -354,6 +354,7 @@ function ReviewCall({
             call={evidence.status === "ready" ? evidence.data : undefined}
             evaluation={evidence.status === "ready" ? evidence.data.evaluation : undefined}
             evidenceReady={evidence.status === "ready"}
+            checkResult={evidence.status === "ready" ? evidence.data.checkResult : undefined}
             catalog={callCatalog}
             onSaved={onSaved}
             onNext={onNext}

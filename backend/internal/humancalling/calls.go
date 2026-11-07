@@ -389,13 +389,6 @@ func (m *Module) RecordDisposition(
 	if !ownsLease {
 		return DispositionResult{}, ErrConflict
 	}
-	connected, err := m.callHasBridge(ctx, tx, callID)
-	if err != nil {
-		return DispositionResult{}, err
-	}
-	if !dispositionAllowed(direction, entryPoint, terminal, connected, disposition) {
-		return DispositionResult{}, ErrConflict
-	}
 	if existing != "" {
 		if existing != string(disposition) {
 			return DispositionResult{}, ErrConflict
@@ -405,6 +398,13 @@ func (m *Module) RecordDisposition(
 		}
 		call, err := m.ReadCall(ctx, identity, callID)
 		return DispositionResult{Call: call, TaskID: taskID}, err
+	}
+	connected, err := m.callHasBridge(ctx, tx, callID)
+	if err != nil {
+		return DispositionResult{}, err
+	}
+	if !dispositionAllowed(direction, entryPoint, terminal, connected, disposition) {
+		return DispositionResult{}, ErrConflict
 	}
 	if disposition == DispositionCompleteTask || disposition == DispositionKeepOpen ||
 		(disposition == DispositionResolved && taskID != "") {
@@ -434,8 +434,9 @@ func (m *Module) RecordDisposition(
 		UPDATE human_calling_calls SET disposition_actor_subject = $2,
 			disposition_at = $3, disposition_outcome = $4,
 			disposition_deadline = NULL, terminal_outcome = $5,
+			surfaced_task_id = NULLIF($6, '')::uuid,
 			updated_at = $3 WHERE id = $1
-	`, callID, identity.Subject, now, disposition, terminalOutcome); err != nil {
+	`, callID, identity.Subject, now, disposition, terminalOutcome, taskID); err != nil {
 		return DispositionResult{}, fmt.Errorf("record Call disposition: %w", err)
 	}
 	if err := appendTimeline(ctx, tx, callID, practiceID, "call.dispositioned",

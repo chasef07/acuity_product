@@ -3,7 +3,7 @@ import { ArrowRightIcon, CheckIcon, ChevronRightIcon, CircleHelpIcon, XIcon } fr
 
 import { CallLabel } from "./call-labels"
 import type { CallIntent, CallOutcome, CallLabelingStatus } from "@/lib/api/generated/types.gen"
-import { flowResult, type CheckState, type FlowResult } from "@/lib/scorecard-flow"
+import type { CheckState, FlowResult } from "@/lib/scorecard-flow"
 
 export type FlowCall = { intent?: CallIntent; outcome?: CallOutcome; labelingStatus?: CallLabelingStatus }
 
@@ -13,13 +13,13 @@ export const checkLabels: Record<CheckState, string> = {
   pass: "Passed", fail: "Failed", unknown: "Unknown", not_applicable: "Not applicable", context: "Context",
 }
 
-export function ScorecardFlow({ call = {}, checks, complete = true, children }: {
+export function ScorecardFlow({ call = {}, checks, result, children }: {
   call?: FlowCall
   checks: FlowCheck[]
-  complete?: boolean
+  result: FlowResult
   children: ReactNode
 }) {
-  const result = flowResult(checks.map((check) => check.state), complete)
+  const graded = checks.some((check) => check.state === "pass" || check.state === "fail")
   const failures = checks.filter((check) => check.state === "fail")
   const unknown = checks.filter((check) => check.state === "unknown")
   return (
@@ -31,8 +31,9 @@ export function ScorecardFlow({ call = {}, checks, complete = true, children }: 
             {result === "pass" ? "All applicable checks passed" : result === "fail" ? `${failures.length} failed ${failures.length === 1 ? "check" : "checks"}` : "Checks incomplete"}
           </p>
           {failures.length > 0 && <ul className="mt-2 space-y-1.5 text-destructive">{failures.map((check) => <li key={check.key} className="flex items-start gap-2"><XIcon aria-hidden="true" className="mt-0.5 size-3 shrink-0" /><span>{check.label}</span></li>)}</ul>}
-          {(unknown.length > 0 || !complete || checks.length === 0) && <p className="mt-2 text-muted-foreground">{unknown.length > 0 ? `${unknown.length} ${unknown.length === 1 ? "check needs" : "checks need"} an answer or more evidence.` : "Check evidence is not complete."}</p>}
-          {result === "unknown" && complete && unknown.length === 0 && checks.length > 0 && <p className="mt-2 text-muted-foreground">No applicable graded checks were recorded.</p>}
+          {unknown.length > 0
+            ? <p className="mt-2 text-muted-foreground">{unknown.length} {unknown.length === 1 ? "check needs" : "checks need"} an answer or more evidence.</p>
+            : result === "unknown" && <p className="mt-2 text-muted-foreground">{graded || checks.length === 0 ? "Check evidence is not complete." : "No applicable graded checks were recorded."}</p>}
         </div>
       </div>
       <p className="mt-2 text-[0.6875rem] leading-4 text-muted-foreground">Recorded outcome and check results are assessed separately. Resolved can include an accepted next step.</p>

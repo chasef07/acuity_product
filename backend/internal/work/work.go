@@ -168,9 +168,14 @@ type Task struct {
 	CreatedAt                time.Time
 	CompletedBy              *ActorSnapshot
 	CompletedAt              *time.Time
+	CallbackCompletion       *TaskCallbackCompletion
 	Version                  int64
 	UpdatedAt                time.Time
 	AutomaticAcknowledgement *TaskAcknowledgement
+}
+
+type TaskCallbackCompletion struct {
+	CallerEmail string
 }
 
 type TaskAcknowledgement struct {
