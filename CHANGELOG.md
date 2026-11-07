@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.2](https://github.com/chasef07/acuity_product/compare/v3.3.1...v3.3.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* close six calling, scorecard, and Task bugs from the code audit ([#626](https://github.com/chasef07/acuity_product/issues/626)) ([fe9d0ec](https://github.com/chasef07/acuity_product/commit/fe9d0ec71d5a8fde5bddd1c36a89b42b47b75cff))
+
 ## [3.3.1](https://github.com/chasef07/acuity_product/compare/v3.3.0...v3.3.1) (2026-11-05)
 
 
