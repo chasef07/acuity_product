@@ -434,7 +434,7 @@ function callLineFixture(
       ...(ai ? [{ id: `ai-${id}`, type: "AI_INTERACTION" as const, occurredAt, aiInteraction: {
         id: `ai-${id}`, locationId: location.locationId, locationName: "Office", sourceCallId: "source", phone: location.phone,
         startedAt: occurredAt, status: "ESCALATED" as const, appointmentOutcome: "BOOKING" as const,
-        summary: "Caller booked a visit and asked about insurance.",
+        summary: "Caller booked a visit and asked about insurance.", resolved: false,
       } }] : []),
       { id, type: "CALL", occurredAt, call: {
         id, type: "CALL", direction: "INBOUND", startedAt: occurredAt,

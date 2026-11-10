@@ -973,6 +973,10 @@ export type AiInteractionDetail = {
 };
 
 export type AiOutcomeItem = {
+    /**
+     * True only when the stored call label for this AI Interaction is complete and its outcome is resolved. False while the label is pending, failed or skipped, and for a transferred or abandoned call.
+     */
+    resolved: boolean;
     id: string;
     locationId: string;
     locationName: string;
@@ -2115,7 +2119,7 @@ export type CallHistoryItem = {
      */
     taskTitle?: string;
     /**
-     * Length of the voicemail the caller left on this call. Absent when no voicemail was recorded.
+     * Length of the voicemail the caller left on this call, rounded to the nearest second and never below 1. Absent when no voicemail was recorded.
      */
     voicemailDurationSeconds?: number;
 };

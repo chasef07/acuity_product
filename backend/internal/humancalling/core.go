@@ -375,6 +375,8 @@ type RecoveryTask struct {
 	RelatedInteractionCount int
 }
 
+const VoicemailSecondsSQL = `GREATEST(1, ROUND(voicemail.duration_millis / 1000.0))::bigint`
+
 type CallHistoryItem struct {
 	ID                       string
 	Type                     string

@@ -322,6 +322,37 @@ func (m *Module) Send(
 	ctx context.Context,
 	command SendCommand,
 ) (Message, MessageCreateStatus, error) {
+	message, status, err := m.send(ctx, command)
+	if err != nil {
+		return Message{}, "", err
+	}
+	message, err = m.withSender(ctx, message)
+	if err != nil {
+		return Message{}, "", err
+	}
+	return message, status, nil
+}
+
+func (m *Module) withSender(ctx context.Context, message Message) (Message, error) {
+	if message.CreatedBy == nil || message.CreatedBy.Kind != access.ActorHuman {
+		return message, nil
+	}
+	emails, err := m.access.ReadSubjectEmails(
+		ctx, message.Thread.PracticeID, []string{message.CreatedBy.Subject},
+	)
+	if err != nil {
+		return Message{}, fmt.Errorf("read Message sender: %w", err)
+	}
+	sender := *message.CreatedBy
+	sender.Email = emails[sender.Subject]
+	message.CreatedBy = &sender
+	return message, nil
+}
+
+func (m *Module) send(
+	ctx context.Context,
+	command SendCommand,
+) (Message, MessageCreateStatus, error) {
 	normalizeSendCommand(&command)
 	if m.database == nil ||
 		m.access == nil ||
@@ -1093,6 +1124,10 @@ func (m *Module) SendAgain(
 		return Message{}, "", err
 	}
 	if found {
+		replayed, err = m.withSender(ctx, replayed)
+		if err != nil {
+			return Message{}, "", err
+		}
 		return replayed, MessageDuplicate, nil
 	}
 	if original.Delivery != DeliveryFailed &&

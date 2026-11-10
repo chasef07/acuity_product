@@ -7,7 +7,11 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
+	"github.com/google/uuid"
 )
 
 func TestPreflightCachingDoesNotCacheDataOrBypassRequestAuthorization(t *testing.T) {
@@ -62,5 +66,48 @@ func TestTaskPageResponseMapsEveryTaskCategoryCount(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("category counts = %v, want %v", got, want)
+	}
+}
+
+func TestConversationTimelineResponseMapsCallTaskVoicemailLengthAndResolvedLabel(t *testing.T) {
+	id := func(last byte) string {
+		return uuid.UUID{15: last}.String()
+	}
+	placed := humancalling.CallHistoryItem{
+		ID: id(1), Type: "CALL", Direction: "OUTBOUND", LocationID: id(9), Outcome: humancalling.CallUnanswered,
+		TaskID: id(2), TaskTitle: "Return missed call",
+	}
+	voicemail := humancalling.CallHistoryItem{
+		ID: id(3), Type: "CALL", Direction: "INBOUND", LocationID: id(9), Outcome: humancalling.CallVoicemail,
+		VoicemailDurationSeconds: 23,
+	}
+	page, err := conversationTimelineResponse(workspace.TimelinePage{Items: []workspace.TimelineItem{
+		{Type: "CALL", ID: placed.ID, Call: placed},
+		{Type: "CALL", ID: voicemail.ID, Call: voicemail},
+		{Type: "AI_INTERACTION", ID: id(4), AIInteraction: interaction.OutcomeItem{ID: id(4), LocationID: id(9), Resolved: true}},
+		{Type: "AI_INTERACTION", ID: id(5), AIInteraction: interaction.OutcomeItem{ID: id(5), LocationID: id(9)}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(page.Items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items []struct {
+		Call          map[string]any `json:"call"`
+		AiInteraction map[string]any `json:"aiInteraction"`
+	}
+	if err := json.Unmarshal(encoded, &items); err != nil {
+		t.Fatal(err)
+	}
+	if got := items[0].Call; got["taskId"] != placed.TaskID || got["taskTitle"] != placed.TaskTitle || got["voicemailDurationSeconds"] != nil {
+		t.Fatalf("placed call = %v, want its Task and no voicemail length", got)
+	}
+	if got := items[1].Call; got["voicemailDurationSeconds"] != float64(23) || got["taskId"] != nil || got["taskTitle"] != nil {
+		t.Fatalf("voicemail call = %v, want 23 seconds and no Task", got)
+	}
+	if items[2].AiInteraction["resolved"] != true || items[3].AiInteraction["resolved"] != false {
+		t.Fatalf("resolved = %v/%v, want true/false", items[2].AiInteraction["resolved"], items[3].AiInteraction["resolved"])
 	}
 }

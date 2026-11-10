@@ -144,6 +144,7 @@ type OutcomeItem struct {
 	AppointmentOccurredAt *time.Time
 	OldAppointmentID      string
 	NewAppointmentID      string
+	Resolved              bool
 }
 
 func (m *Module) Read(

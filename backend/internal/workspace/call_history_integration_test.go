@@ -171,13 +171,30 @@ func TestPhoneHistoryNamesCallbackTaskVoicemailLengthAndTextSender(t *testing.T)
 	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{
 		Environment: "test", RequestedBy: "call-line-test",
-		Practices: []access.PracticeProvision{{Key: "lines", Name: "Lines", Locations: []access.LocationProvision{{Key: "office", Name: "Office"}, {Key: "hidden", Name: "Hidden office"}}, AccessGrants: []access.AccessGrantProvision{
-			{Key: "staff", Email: "staff@lines.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"office"}},
-			{Key: "hidden-staff", Email: "hidden@lines.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"hidden"}},
-		}}},
+		Practices: []access.PracticeProvision{
+			{Key: "lines", Name: "Lines", Locations: []access.LocationProvision{{Key: "office", Name: "Office"}, {Key: "hidden", Name: "Hidden office"}}, AccessGrants: []access.AccessGrantProvision{
+				{Key: "staff", Email: "staff@lines.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"office"}},
+				{Key: "hidden-staff", Email: "hidden@lines.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"hidden"}},
+				{Key: "leaver", Email: "leaver@lines.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"office"}},
+			}},
+			{Key: "elsewhere", Name: "Elsewhere", Locations: []access.LocationProvision{{Key: "office", Name: "Elsewhere office"}}, AccessGrants: []access.AccessGrantProvision{
+				{Key: "staff", Email: "staff@elsewhere.test", Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
+			}},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	leaver := access.Identity{Subject: "lines-leaver", Email: "leaver@lines.test", EmailVerified: true}
+	testaccess.Activate(t, accessModule, leaver)
+	if _, err := pool.Exec(ctx, `UPDATE access_memberships SET revoked_at = $2 WHERE user_subject = $1`, leaver.Subject, now); err != nil {
+		t.Fatalf("revoke membership: %v", err)
+	}
+	outsider := access.Identity{Subject: "elsewhere-staff", Email: "staff@elsewhere.test", EmailVerified: true}
+	elsewhere := testaccess.Activate(t, accessModule, outsider)
+	operator := access.Identity{Subject: "lines-operator", Email: "operator@platform.test", EmailVerified: true}
+	if _, err := pool.Exec(ctx, `INSERT INTO access_platform_operators(email,user_subject) VALUES($1,$2)`, operator.Email, operator.Subject); err != nil {
+		t.Fatalf("insert platform operator: %v", err)
 	}
 	identity := access.Identity{Subject: "lines-staff", Email: "staff@lines.test", EmailVerified: true}
 	authorization := testaccess.Activate(t, accessModule, identity)
@@ -188,15 +205,15 @@ func TestPhoneHistoryNamesCallbackTaskVoicemailLengthAndTextSender(t *testing.T)
 	phone := "+12025550125"
 	writes := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 
-	recoveryTask := func(location string, outcome work.RecoveryOutcome, at time.Time) (string, work.Task) {
+	recoveryTask := func(owner access.Authorization, location string, outcome work.RecoveryOutcome, at time.Time) (string, work.Task) {
 		t.Helper()
-		callID := insertRecoveryCall(t, pool, authorization, location, phone, at)
+		callID := insertRecoveryCall(t, pool, owner, location, phone, at)
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		task, err := writes.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
-			CallID: callID, PracticeID: authorization.Practice.ID, LocationID: location,
+			CallID: callID, PracticeID: owner.Practice.ID, LocationID: location,
 			Phone: phone, CallerName: "Synthetic caller", Outcome: outcome, OccurredAt: at,
 		})
 		if err != nil {
@@ -208,7 +225,7 @@ func TestPhoneHistoryNamesCallbackTaskVoicemailLengthAndTextSender(t *testing.T)
 		}
 		return callID, task
 	}
-	placeCallback := func(key string, taskID string, at time.Time) string {
+	placeCallback := func(key string, entryPoint string, taskID any, subject string, at time.Time) string {
 		t.Helper()
 		var id string
 		if err := pool.QueryRow(ctx, `
@@ -217,11 +234,11 @@ func TestPhoneHistoryNamesCallbackTaskVoicemailLengthAndTextSender(t *testing.T)
 				direction, entry_point, task_id, destination_phone, outbound_caller_id,
 				initiating_subject, outbound_idempotency_key, outbound_input_fingerprint,
 				created_at, updated_at
-			) VALUES ($1, $2, 'NO_ANSWER', 'UNANSWERED', $3, 'OUTBOUND', 'TASK', $4, $5,
+			) VALUES ($1, $2, 'NO_ANSWER', 'UNANSWERED', $3, 'OUTBOUND', $10, $4, $5,
 				'+12025550100', $6, $7, $8, $9, $3)
 			RETURNING id::text
 		`, authorization.Practice.ID, locationID, at.Add(30*time.Second), taskID, phone,
-			identity.Subject, key, make([]byte, 32), at).Scan(&id); err != nil {
+			subject, key, make([]byte, 32), at, entryPoint).Scan(&id); err != nil {
 			t.Fatalf("place callback %s: %v", key, err)
 		}
 		return id
@@ -247,21 +264,46 @@ func TestPhoneHistoryNamesCallbackTaskVoicemailLengthAndTextSender(t *testing.T)
 		return id
 	}
 
-	voicemailCallID, voicemailTask := recoveryTask(locationID, work.RecoveryOutcomeVoicemail, now)
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO human_calling_voicemails (
-			call_id, practice_id, location_id, task_id, outcome, audio_state,
-			provider_recording_id, recording_started_at, recording_ended_at,
-			duration_millis, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, 'VOICEMAIL', 'READY', 'call-line-recording', $5, $6, 22400, $5, $6)
-	`, voicemailCallID, authorization.Practice.ID, locationID, voicemailTask.ID, now, now.Add(22*time.Second)); err != nil {
-		t.Fatalf("insert voicemail evidence: %v", err)
+	leaveVoicemail := func(callID string, taskID string, millis int, at time.Time) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO human_calling_voicemails (
+				call_id, practice_id, location_id, task_id, outcome, audio_state,
+				provider_recording_id, recording_started_at, recording_ended_at,
+				duration_millis, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, 'VOICEMAIL', 'READY', $5, $6, $7, $8, $6, $7)
+		`, callID, authorization.Practice.ID, locationID, taskID, "recording-"+callID, at, at.Add(time.Duration(millis)*time.Millisecond), millis); err != nil {
+			t.Fatalf("insert voicemail evidence: %v", err)
+		}
 	}
-	_, hiddenTask := recoveryTask(hiddenLocationID, work.RecoveryOutcomeMissedCall, now.Add(time.Minute))
-	callbackID := placeCallback("callback-from-task", voicemailTask.ID, now.Add(2*time.Minute))
-	crossLocationCallbackID := placeCallback("callback-from-hidden-task", hiddenTask.ID, now.Add(3*time.Minute))
-	staffTextID := sendText(locationID, "HUMAN", identity.Subject, now.Add(4*time.Minute))
-	automatedTextID := sendText(locationID, "SERVICE", "text-automation", now.Add(5*time.Minute))
+
+	voicemailCallID, voicemailTask := recoveryTask(authorization, locationID, work.RecoveryOutcomeVoicemail, now)
+	leaveVoicemail(voicemailCallID, voicemailTask.ID, 22400, now)
+	roundedUpCallID := insertRecoveryCall(t, pool, authorization, locationID, phone, now.Add(10*time.Second))
+	leaveVoicemail(roundedUpCallID, voicemailTask.ID, 22999, now.Add(10*time.Second))
+	briefCallID := insertRecoveryCall(t, pool, authorization, locationID, phone, now.Add(20*time.Second))
+	leaveVoicemail(briefCallID, voicemailTask.ID, 999, now.Add(20*time.Second))
+	if _, err := pool.Exec(ctx, `UPDATE human_calling_calls SET surfaced_task_id = $2 WHERE id = $1`, briefCallID, voicemailTask.ID); err != nil {
+		t.Fatalf("surface recovery Task on inbound call: %v", err)
+	}
+	_, hiddenTask := recoveryTask(authorization, hiddenLocationID, work.RecoveryOutcomeMissedCall, now.Add(time.Minute))
+	_, foreignTask := recoveryTask(elsewhere, elsewhere.Locations[0].ID, work.RecoveryOutcomeMissedCall, now.Add(time.Minute))
+	callbackID := placeCallback("callback-from-task", "TASK", voicemailTask.ID, identity.Subject, now.Add(2*time.Minute))
+	crossLocationCallbackID := placeCallback("callback-from-hidden-task", "TASK", hiddenTask.ID, identity.Subject, now.Add(3*time.Minute))
+	crossPracticeCallbackID := placeCallback("callback-from-foreign-task", "TASK", foreignTask.ID, identity.Subject, now.Add(3*time.Minute+time.Second))
+	callers := map[string]string{
+		placeCallback("callback-by-operator", "STANDALONE", nil, operator.Subject, now.Add(3*time.Minute+10*time.Second)): operator.Email,
+		placeCallback("callback-by-leaver", "STANDALONE", nil, leaver.Subject, now.Add(3*time.Minute+20*time.Second)):     leaver.Email,
+		placeCallback("callback-by-outsider", "STANDALONE", nil, outsider.Subject, now.Add(3*time.Minute+30*time.Second)): "",
+	}
+	texts := map[string]string{
+		sendText(locationID, "HUMAN", identity.Subject, now.Add(4*time.Minute)):                identity.Email,
+		sendText(locationID, "SERVICE", identity.Subject, now.Add(5*time.Minute)):              "",
+		sendText(locationID, "HUMAN", operator.Subject, now.Add(5*time.Minute+10*time.Second)): operator.Email,
+		sendText(locationID, "HUMAN", leaver.Subject, now.Add(5*time.Minute+20*time.Second)):   leaver.Email,
+		sendText(locationID, "HUMAN", outsider.Subject, now.Add(5*time.Minute+30*time.Second)): "",
+		sendText(locationID, "HUMAN", "lines-unknown", now.Add(5*time.Minute+40*time.Second)):  "",
+	}
 	sendText(hiddenLocationID, "HUMAN", hiddenIdentity.Subject, now.Add(6*time.Minute))
 
 	reads := workspace.New(db.As(testdb.Portal), accessModule)
@@ -272,34 +314,112 @@ func TestPhoneHistoryNamesCallbackTaskVoicemailLengthAndTextSender(t *testing.T)
 	calls := map[string]workspace.TimelineItem{}
 	senders := map[string]string{}
 	for _, item := range page.Items {
-		for _, entry := range item.Entries {
+		for _, entry := range append([]workspace.TimelineItem{item}, item.Entries...) {
 			if entry.Type == "CALL" {
 				calls[entry.Call.ID] = entry
 			}
-			if entry.Task.ID == hiddenTask.ID {
-				t.Fatal("history linked a Task from a Location the reader cannot access")
+			if entry.Task.ID == hiddenTask.ID || entry.Task.ID == foreignTask.ID {
+				t.Fatal("history linked a Task the reader cannot access")
 			}
 		}
 		if item.Type == "MESSAGE" {
 			senders[item.Message.ID] = item.Message.CreatedBy.Email
 		}
 	}
-	if got := calls[voicemailCallID].Call; got.VoicemailDurationSeconds != 22 || got.TaskID != "" || got.TaskTitle != "" {
-		t.Fatalf("voicemail call length/Task = %d/%q/%q, want 22 seconds and no placed-from Task", got.VoicemailDurationSeconds, got.TaskID, got.TaskTitle)
+	for callID, want := range map[string]int64{voicemailCallID: 22, roundedUpCallID: 23, briefCallID: 1} {
+		if got := calls[callID].Call; got.VoicemailDurationSeconds != want || got.TaskID != "" || got.TaskTitle != "" {
+			t.Fatalf("voicemail call length/Task = %d/%q/%q, want %d seconds and no placed-from Task", got.VoicemailDurationSeconds, got.TaskID, got.TaskTitle, want)
+		}
 	}
 	if got := calls[callbackID].Call; got.TaskID != voicemailTask.ID || got.TaskTitle != voicemailTask.Title || got.TaskTitle == "" || got.VoicemailDurationSeconds != 0 {
 		t.Fatalf("callback Task/voicemail = %q/%q/%d, want %q/%q/0", got.TaskID, got.TaskTitle, got.VoicemailDurationSeconds, voicemailTask.ID, voicemailTask.Title)
 	}
-	if got, found := calls[crossLocationCallbackID]; !found || got.Call.TaskID != "" || got.Call.TaskTitle != "" {
-		t.Fatalf("callback from a Task in an inaccessible Location = found %v, Task %q/%q; want the call without its Task", found, got.Call.TaskID, got.Call.TaskTitle)
+	for name, callID := range map[string]string{"an inaccessible Location": crossLocationCallbackID, "another Practice": crossPracticeCallbackID} {
+		if got, found := calls[callID]; !found || got.Call.TaskID != "" || got.Call.TaskTitle != "" {
+			t.Fatalf("callback from a Task in %s = found %v, Task %q/%q; want the call without its Task", name, found, got.Call.TaskID, got.Call.TaskTitle)
+		}
 	}
-	if len(senders) != 2 {
-		t.Fatalf("history returned %d Messages, want only the 2 in the accessible Location", len(senders))
+	for callID, want := range callers {
+		if got, found := calls[callID]; !found || got.Call.PlacedByEmail != want {
+			t.Fatalf("callback caller = found %v, %q; want %q", found, got.Call.PlacedByEmail, want)
+		}
 	}
-	if senders[staffTextID] != "staff@lines.test" {
-		t.Fatalf("staff text sender = %q, want staff@lines.test", senders[staffTextID])
+	if len(senders) != len(texts) {
+		t.Fatalf("history returned %d Messages, want only the %d in the accessible Location", len(senders), len(texts))
 	}
-	if senders[automatedTextID] != "" {
-		t.Fatalf("automated text sender = %q, want none", senders[automatedTextID])
+	for messageID, want := range texts {
+		if senders[messageID] != want {
+			t.Fatalf("text sender = %q, want %q", senders[messageID], want)
+		}
+	}
+}
+
+func TestPhoneHistoryMarksAnAICallResolvedOnlyFromACompleteResolvedLabel(t *testing.T) {
+	db := testdb.Open(t)
+	pool := db.Owner
+	ctx := context.Background()
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{
+		Environment: "test", RequestedBy: "resolved-label-test",
+		Practices: []access.PracticeProvision{{Key: "labels", Name: "Labels", Locations: []access.LocationProvision{{Key: "office", Name: "Office"}}, AccessGrants: []access.AccessGrantProvision{
+			{Key: "staff", Email: "staff@labels.test", Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := access.Identity{Subject: "labels-staff", Email: "staff@labels.test", EmailVerified: true}
+	authorization := testaccess.Activate(t, accessModule, identity)
+	phone := "+12025550126"
+	want := map[string]bool{}
+	for index, label := range []struct {
+		name, outcome, status string
+		resolved              bool
+	}{
+		{"complete and resolved", "resolved", "complete", true},
+		{"complete and abandoned", "abandoned", "complete", false},
+		{"complete and transferred", "transferred", "complete", false},
+		{"resolved by a label that failed", "resolved", "failed", false},
+		{"still pending", "", "pending", false},
+		{"never labelled", "", "", false},
+	} {
+		var id string
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO ai_interactions (service_subject, practice_id, location_id, source_call_id, phone, office_phone, started_at, ended_at, status, lifecycle_stage)
+			VALUES ('labels-ai', $1, $2, $3, $4, '+12025550100', $5, $6, 'COMPLETED', 3)
+			RETURNING id::text
+		`, authorization.Practice.ID, authorization.Locations[0].ID, label.name, phone, now.Add(time.Duration(index)*time.Minute), now.Add(time.Duration(index)*time.Minute+time.Second)).Scan(&id); err != nil {
+			t.Fatalf("insert AI Interaction %s: %v", label.name, err)
+		}
+		if label.status != "" {
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO ai_interaction_classifications(interaction_id,intent,outcome,status)
+				VALUES($1,'office_information',NULLIF($2,''),$3)
+			`, id, label.outcome, label.status); err != nil {
+				t.Fatalf("label AI Interaction %s: %v", label.name, err)
+			}
+		}
+		want[label.name] = label.resolved
+	}
+	page, err := workspace.New(db.As(testdb.Portal), accessModule).QueryPhoneTimeline(ctx, workspace.QueryPhoneTimelineCommand{Identity: identity, PracticeID: authorization.Practice.ID, Phone: phone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, item := range page.Items {
+		for _, entry := range append([]workspace.TimelineItem{item}, item.Entries...) {
+			if entry.Type == "AI_INTERACTION" {
+				got[entry.AIInteraction.SourceCallID] = entry.AIInteraction.Resolved
+			}
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("history returned %d AI Interactions, want %d", len(got), len(want))
+	}
+	for name, resolved := range want {
+		if got[name] != resolved {
+			t.Errorf("%s: resolved = %v, want %v", name, got[name], resolved)
+		}
 	}
 }

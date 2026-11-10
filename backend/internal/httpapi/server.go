@@ -3453,6 +3453,7 @@ func aiOutcomeItemResponse(
 		AppointmentOccurredAt: item.AppointmentOccurredAt,
 		OldAppointmentId:      stringPointer(item.OldAppointmentID),
 		NewAppointmentId:      stringPointer(item.NewAppointmentID),
+		Resolved:              item.Resolved,
 	}
 	return response, nil
 }

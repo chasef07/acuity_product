@@ -4407,7 +4407,11 @@ components:
         - startedAt
         - status
         - appointmentOutcome
+        - resolved
       properties:
+        resolved:
+          description: True only when the stored call label for this AI Interaction is complete and its outcome is resolved. False while the label is pending, failed or skipped, and for a transferred or abandoned call.
+          type: boolean
         id:
           type: string
           format: uuid
@@ -5922,7 +5926,7 @@ components:
           type: string
           format: uuid
         createdBy:
-          description: Who created this Message. The Engagement timeline adds the email of a staff member who sent an outbound Message. Every other Message response omits the email.
+          description: Who created this Message. Every Message response carries the email of the staff member who sent it, read from that Practice's memberships and then from the platform operators. Inbound and automated Messages, and a sender neither list names, carry no email.
           $ref: "#/components/schemas/TaskActor"
         attachment:
           $ref: "#/components/schemas/MessageAttachment"
@@ -6239,7 +6243,7 @@ components:
           description: Title of the Task named by taskId. Absent whenever taskId is absent.
           type: string
         voicemailDurationSeconds:
-          description: Length of the voicemail the caller left on this call. Absent when no voicemail was recorded.
+          description: Length of the voicemail the caller left on this call, rounded to the nearest second and never below 1. Absent when no voicemail was recorded.
           type: integer
           format: int64
           minimum: 1
