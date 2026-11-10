@@ -2,6 +2,7 @@ package workspace_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,79 +14,89 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestTextAttentionExpiresWithoutCompletingWorkAndReturnsOnInbound(t *testing.T) {
+func TestTextsFolderListsExactlyTheOpenTextReviews(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.Open(t)
 	pool := db.Owner
 	now := time.Now().UTC()
-	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
-	_, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "text-age-test", Practices: []access.PracticeProvision{{Key: "text-age", Name: "Synthetic Text Age", Locations: []access.LocationProvision{{Key: "office", Name: "Synthetic Office"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: "staff@text-age.test", Role: access.RoleAdmin, LocationScope: access.LocationScopeAll}}}}})
+	clock := func() time.Time { return now }
+	a := access.New(db.As(testdb.Portal), clock)
+	_, err := access.New(pool, clock).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "text-age-test", Practices: []access.PracticeProvision{{Key: "text-age", Name: "Synthetic Text Age", Locations: []access.LocationProvision{{Key: "office", Name: "Synthetic Office"}}, AccessGrants: []access.AccessGrantProvision{{Key: "staff", Email: "staff@text-age.test", Role: access.RoleAdmin, LocationScope: access.LocationScopeAll}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	identity := access.Identity{Subject: "text-age-staff", Email: "staff@text-age.test", EmailVerified: true}
 	auth := testaccess.Activate(t, a, identity)
-	var locationID, threadID string
+	var locationID string
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM access_locations WHERE practice_id=$1`, auth.Practice.ID).Scan(&locationID); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone) VALUES($1,$2,'+15555550100','+15555550123') RETURNING id::text`, auth.Practice.ID, locationID).Scan(&threadID); err != nil {
-		t.Fatal(err)
-	}
-	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
-	addMessage := func(direction string, at time.Time) {
+	m := work.New(db.As(testdb.Portal), a, clock)
+	sweep := work.New(db.As(testdb.Worker), access.New(db.As(testdb.Worker), clock), clock)
+	inboundText := func(patient int, age time.Duration) {
 		t.Helper()
+		phone := fmt.Sprintf("+1555555%04d", patient)
+		at := now.Add(-age)
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(ctx)
-		id := uuid.NewString()
-		if _, err = tx.Exec(ctx, `INSERT INTO messaging_messages(id,thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,provider_message_id,created_by_subject,created_at,updated_at) VALUES($1::uuid,$2,$3,$4,$5,'Synthetic question','+15555550123','+15555550100','DELIVERED',$1::text,CASE WHEN $5='OUTBOUND' THEN 'synthetic-staff' END,$6,$6)`, id, threadID, auth.Practice.ID, locationID, direction, at); err != nil {
+		var threadID string
+		if err := tx.QueryRow(ctx, `INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone) VALUES($1,$2,'+15555550100',$3) RETURNING id::text`, auth.Practice.ID, locationID, phone).Scan(&threadID); err != nil {
 			t.Fatal(err)
 		}
-		if direction == "INBOUND" {
-			if err = m.EnsureInboundMessageReview(ctx, tx, auth.Practice.ID, locationID, "+15555550123", threadID, id, at); err != nil {
-				t.Fatal(err)
-			}
+		id := uuid.NewString()
+		if _, err = tx.Exec(ctx, `INSERT INTO messaging_messages(id,thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,provider_message_id,created_at,updated_at) VALUES($1::uuid,$2,$3,$4,'INBOUND','Synthetic question',$5,'+15555550100','DELIVERED',$1::text,$6,$6)`, id, threadID, auth.Practice.ID, locationID, phone, at); err != nil {
+			t.Fatal(err)
+		}
+		if err = m.EnsureInboundMessageReview(ctx, tx, auth.Practice.ID, locationID, phone, threadID, id, at); err != nil {
+			t.Fatal(err)
 		}
 		if err = tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	addMessage("INBOUND", now.Add(-120*time.Hour-time.Minute))
 	reads := workspace.New(db.As(testdb.Portal), a)
-	check := func(want int) {
+	assertTextsFolderIsTheOpenReviews := func(want int) {
 		t.Helper()
+		var open int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW' AND state='OPEN'`).Scan(&open); err != nil || open != want {
+			t.Fatalf("open text reviews = %d, %v; want %d", open, err, want)
+		}
 		for _, grouped := range []bool{false, true} {
-			page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Kind: "texts", Grouped: grouped, Limit: 1})
-			if err != nil || len(page.Items) != want || page.Counts == nil || page.Counts.Texts != want {
-				t.Fatalf("text attention grouped=%v: %#v, %v; want %d", grouped, page, err, want)
+			page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Kind: "texts", Grouped: grouped, Limit: 10})
+			if err != nil || len(page.Items) != open || page.Counts == nil || page.Counts.Texts != open {
+				t.Fatalf("Texts folder grouped=%v lists %d and counts %#v, %v; want the %d open text reviews", grouped, len(page.Items), page.Counts, err, open)
 			}
 		}
-		all, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID})
-		if err != nil || len(all.Items) != 1 || all.Items[0].State != work.TaskOpen || all.Counts.Texts != want {
-			t.Fatalf("preserved open work = %#v, %v", all, err)
+		all, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Limit: 10})
+		if err != nil || len(all.Items) != open || all.Counts == nil || all.Counts.Texts != open {
+			t.Fatalf("all open Tasks = %d with counts %#v, %v; want %d", len(all.Items), all.Counts, err, open)
 		}
 	}
-	check(0)
-	addMessage("OUTBOUND", now)
-	if _, err := pool.Exec(ctx, `UPDATE work_tasks SET updated_at=$2 WHERE message_thread_id=$1`, threadID, now); err != nil {
-		t.Fatal(err)
+
+	for patient, age := range []time.Duration{time.Hour, 50 * time.Hour, 119 * time.Hour, 121 * time.Hour, 300 * time.Hour} {
+		inboundText(patient, age)
 	}
-	check(0)
-	addMessage("INBOUND", now.Add(-120*time.Hour+time.Minute))
-	check(1)
-	page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID})
-	if err != nil {
-		t.Fatal(err)
+	assertTextsFolderIsTheOpenReviews(5)
+
+	closed, err := sweep.ExpireTextReviews(ctx)
+	if err != nil || closed != 2 {
+		t.Fatalf("ExpireTextReviews = %d, %v; want the 2 reviews older than 120 hours closed", closed, err)
 	}
-	task := page.Items[0]
-	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version}); err != nil {
-		t.Fatal(err)
+	assertTextsFolderIsTheOpenReviews(3)
+
+	completed, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Kind: "texts", State: work.TaskCompleted, Limit: 10})
+	if err != nil || len(completed.Items) != 2 {
+		t.Fatalf("completed text reviews = %#v, %v; want the 2 expired ones", completed, err)
 	}
-	completed, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Kind: "texts", State: work.TaskCompleted})
-	if err != nil || len(completed.Items) != 1 {
-		t.Fatalf("completed history = %#v, %v", completed, err)
+	for _, task := range completed.Items {
+		if task.CloseReason != work.CloseReasonExpired || task.CompletedBy == nil || task.CompletedBy.Kind != "SERVICE" {
+			t.Fatalf("expired text review = %#v, want it closed as EXPIRED by a service", task)
+		}
 	}
+
+	inboundText(9, 0)
+	assertTextsFolderIsTheOpenReviews(4)
 }

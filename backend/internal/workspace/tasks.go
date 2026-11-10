@@ -236,15 +236,6 @@ const taskProjectionJoins = `
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin
 
-const taskHasRecentTextAttention = `(NOT ` + work.TaskIsTextReviewSQL + `
- OR task.state <> 'OPEN'
- OR EXISTS (
-   SELECT 1 FROM messaging_messages recent_message
-   WHERE recent_message.thread_id=task.message_thread_id
-     AND recent_message.direction='INBOUND'
-     AND recent_message.created_at >= CURRENT_TIMESTAMP - INTERVAL '120 hours'
- ))`
-
 const taskIsSpringHillReview = `(` + work.TaskIsAppointmentReviewSQL + ` AND EXISTS (
  SELECT 1 FROM access_abita_office_locations route
  WHERE route.practice_id=task.practice_id AND route.location_id=task.location_id
@@ -332,7 +323,6 @@ func taskQueryFilter(search taskSearch) string {
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter("$10", "$11") + `
  AND ($12::text = '' OR task.category=$12)
- AND ($13::text <> 'texts' OR ` + taskHasRecentTextAttention + `)
  AND ($13::text = '' OR ($13='texts' AND ` + work.TaskIsTextReviewSQL + `) OR ($13='calls' AND ` + work.TaskIsCallRecoverySQL + `)
  OR ($13='appointments' AND ` + taskIsSpringHillReview + `)
  OR ($13='follow_up' AND ` + work.TaskIsFollowUpSQL + `))` + search.filter("$14")
@@ -498,7 +488,6 @@ func queryTaskFolderCounts(
 				($8::text <> 'follow_up' OR `+work.TaskIsFollowUpSQL+`) AS listed,
 				`+work.TaskIsCallRecoverySQL+` AS call_recovery,
 				`+work.TaskIsTextReviewSQL+` AS text_review,
-				`+taskHasRecentTextAttention+` AS recent_text_attention,
 				`+taskIsSpringHillReview+` AS spring_hill_review`+taskMatchSource+`
 			WHERE task.practice_id = $1
 				AND task.location_id = ANY($2::uuid[])`+search.filter("$9")+`
@@ -506,7 +495,7 @@ func queryTaskFolderCounts(
 		)
 		SELECT
 			count(*) FILTER (WHERE listed),`+taskCategoryCountColumns+`
-			count(*) FILTER (WHERE text_review AND recent_text_attention),
+			count(*) FILTER (WHERE text_review),
 			count(*) FILTER (WHERE call_recovery),
 			count(*) FILTER (WHERE spring_hill_review)
 		FROM scoped
