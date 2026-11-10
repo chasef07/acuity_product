@@ -137,7 +137,7 @@ export function TaskRow({
                   <CheckIcon aria-hidden="true" className="size-4" />
                 )}
               </TooltipTrigger>
-              <TooltipContent side="right">Complete Task</TooltipContent>
+              <TooltipContent side="top">Complete Task</TooltipContent>
             </Tooltip>
             <TaskCloseMenu
               trigger={

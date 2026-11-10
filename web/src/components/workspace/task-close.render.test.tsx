@@ -49,6 +49,16 @@ test("the rail tick completes as done after the row, and the menu after it sends
     [task.title, `Complete Task: ${task.title}`, `Close Task as: ${task.title}`],
     "Tab moves from the row to the tick, then to the menu",
   )
+  await act(async () => controls[1].focus())
+  const tickTooltip = () =>
+    [...document.querySelectorAll<HTMLElement>("[data-slot='tooltip-content']")]
+      .find((popup) => popup.textContent === "Complete Task")
+  await page.waitFor(() => tickTooltip() !== undefined)
+  assert.equal(
+    tickTooltip()!.getAttribute("data-side"),
+    "top",
+    "the tick's tooltip opens above it, clear of the menu trigger on its right",
+  )
   await act(async () => controls[1].click())
   await page.choose(controls[2], "Not needed")
   await page.choose(controls[2], "Couldn't reach")
