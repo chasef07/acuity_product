@@ -491,6 +491,19 @@ func runMigrate(
 	if err := decoder.Decode(&input); err != nil {
 		return fmt.Errorf("decode provisioning input: %w", err)
 	}
+	var roster work.ResponsibilityProvision
+	if config.ResponsibilitiesInput != "" {
+		rosterFile, err := os.Open(config.ResponsibilitiesInput)
+		if err != nil {
+			return fmt.Errorf("open responsibilities input: %w", err)
+		}
+		defer rosterFile.Close()
+		rosterDecoder := json.NewDecoder(rosterFile)
+		rosterDecoder.DisallowUnknownFields()
+		if err := rosterDecoder.Decode(&roster); err != nil {
+			return fmt.Errorf("decode responsibilities input: %w", err)
+		}
+	}
 	output, err := os.OpenFile(
 		config.ProvisioningOutput,
 		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
@@ -590,9 +603,26 @@ func runMigrate(
 	if err := callingModule.ProvisionOutboundVoiceFallbacksInTx(ctx, tx, voiceFallbacks); err != nil {
 		return err
 	}
+	result := struct {
+		access.Provisioned
+		Responsibilities *work.ResponsibilityReport `json:"responsibilities,omitempty"`
+	}{Provisioned: provisioned}
+	logged := []any{"provisioning", true, "access_grant_count", provisioned.AccessGrantCount}
+	if config.ResponsibilitiesInput != "" {
+		report, err := work.New(pool, accessModule, nil).ProvisionResponsibilitiesInTx(ctx, tx, roster)
+		if err != nil {
+			return fmt.Errorf("provision task responsibilities: %w", err)
+		}
+		result.Responsibilities = &report
+		logged = append(logged,
+			"responsibilities_applied", report.Applied,
+			"responsibilities_unmatched", len(report.Unmatched),
+			"responsibilities_coverage_gaps", len(report.CoverageGaps),
+		)
+	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(provisioned); err != nil {
+	if err := encoder.Encode(result); err != nil {
 		return fmt.Errorf("write provisioning output: %w", err)
 	}
 	if err := output.Sync(); err != nil {
@@ -605,10 +635,7 @@ func runMigrate(
 		return fmt.Errorf("commit atomic provisioning: %w", err)
 	}
 	keepOutput = true
-	slog.Info("migrations_applied",
-		"provisioning", true,
-		"access_grant_count", provisioned.AccessGrantCount,
-	)
+	slog.Info("migrations_applied", logged...)
 	return nil
 }
 
