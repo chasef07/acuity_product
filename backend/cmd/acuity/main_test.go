@@ -613,8 +613,8 @@ func TestEveryReleaseLoadsTheTaskResponsibilityRoster(t *testing.T) {
 
 	first, firstRows := release("first.json")
 	t.Logf("production roster report: applied=%d unmatched=%v coverageGaps=%v", first.Applied, first.Unmatched, first.CoverageGaps)
-	if first.Applied != 98 || len(first.Unmatched) != 8 || len(first.CoverageGaps) != 13 {
-		t.Fatalf("roster report = applied %d, unmatched %d, coverage gaps %d; want 98, 8, 13",
+	if first.Applied != 98 || len(first.Unmatched) != 8 || len(first.CoverageGaps) != 0 {
+		t.Fatalf("roster report = applied %d, unmatched %d, coverage gaps %d; want 98, 8, 0",
 			first.Applied, len(first.Unmatched), len(first.CoverageGaps))
 	}
 	if loaded := strings.Count(firstRows, ",") + 1; loaded != first.Applied {
@@ -624,7 +624,7 @@ func TestEveryReleaseLoadsTheTaskResponsibilityRoster(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM work_responsibility_locations`).Scan(&configuredLocations); err != nil || configuredLocations != 4 {
 		t.Fatalf("configured roster Locations = %d, %v; want 4", configuredLocations, err)
 	}
-	if !strings.Contains(logs.String(), `"msg":"migrations_applied","provisioning":true,"access_grant_count":33,"responsibilities_applied":98,"responsibilities_unmatched":8,"responsibilities_coverage_gaps":13`) {
+	if !strings.Contains(logs.String(), `"msg":"migrations_applied","provisioning":true,"access_grant_count":33,"responsibilities_applied":98,"responsibilities_unmatched":8,"responsibilities_coverage_gaps":0`) {
 		t.Fatalf("release log lost the roster counts: %s", logs.String())
 	}
 

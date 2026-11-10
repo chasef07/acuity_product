@@ -345,17 +345,7 @@
           "Role": "primary"
         },
         {
-          "Email": "jianna@abitaeye.com",
-          "Category": "medication",
-          "Role": "primary"
-        },
-        {
           "Email": "aileen@abitaeye.com",
-          "Category": "pre_op",
-          "Role": "primary"
-        },
-        {
-          "Email": "v.vicuna@abitaeye.com",
           "Category": "pre_op",
           "Role": "primary"
         },
@@ -420,21 +410,6 @@
           "Role": "primary"
         },
         {
-          "Email": "frontdesk@abitaeye.com",
-          "Category": "referrals",
-          "Role": "primary"
-        },
-        {
-          "Email": "doraloffice@abitaeye.com",
-          "Category": "referrals",
-          "Role": "primary"
-        },
-        {
-          "Email": "doraloffice@abitaeye.com",
-          "Category": "other",
-          "Role": "primary"
-        },
-        {
           "Email": "everth@abitaeye.com",
           "Category": "other",
           "Role": "primary"
@@ -452,16 +427,6 @@
         {
           "Email": "doralreception@abitaeye.com",
           "Category": "other",
-          "Role": "primary"
-        },
-        {
-          "Email": "eligibility@abitaeye.com",
-          "Category": "insurance",
-          "Role": "primary"
-        },
-        {
-          "Email": "hollywoodreception@abitaeye.com",
-          "Category": "insurance",
           "Role": "primary"
         }
       ]
@@ -490,27 +455,12 @@
           "Role": "primary"
         },
         {
-          "Email": "maria.g@abitaeye.com",
-          "Category": "documentation",
-          "Role": "primary"
-        },
-        {
           "Email": "christina@abitaeye.com",
           "Category": "documentation",
           "Role": "primary"
         },
         {
-          "Email": "jianna@abitaeye.com",
-          "Category": "medication",
-          "Role": "primary"
-        },
-        {
           "Email": "aileen@abitaeye.com",
-          "Category": "pre_op",
-          "Role": "primary"
-        },
-        {
-          "Email": "v.vicuna@abitaeye.com",
           "Category": "pre_op",
           "Role": "primary"
         },
@@ -572,21 +522,6 @@
         {
           "Email": "sweetwateroptical@abitaeye.com",
           "Category": "optical",
-          "Role": "primary"
-        },
-        {
-          "Email": "frontdesk@abitaeye.com",
-          "Category": "referrals",
-          "Role": "primary"
-        },
-        {
-          "Email": "doraloffice@abitaeye.com",
-          "Category": "referrals",
-          "Role": "primary"
-        },
-        {
-          "Email": "doraloffice@abitaeye.com",
-          "Category": "other",
           "Role": "primary"
         },
         {
