@@ -44,6 +44,23 @@ export const callDirectionLabels = {
   OUTBOUND: "Outbound call",
 } satisfies Record<CallingCall["direction"], string>
 
+export const callLineLabels = {
+  calledIn: "Called in",
+  resolvedByAI: "Resolved by AI",
+  messageTaken: "Message taken",
+  staffAnswered: "Staff answered",
+  answered: "Answered",
+  missed: "Missed",
+  nobodyAnswered: "Nobody answered, no voicemail",
+  leftVoicemail: "Nobody answered, caller left a voicemail",
+  aiAnswered: "AI answered",
+  aiTransferred: "AI answered and transferred",
+  transferRequested: "Transfer requested",
+  aiFailed: "AI call failed",
+  aiInProgress: "AI call in progress",
+  unknown: "Outcome unknown",
+} as const
+
 export const callEntryPointLabels = {
   AI_HANDOFF: "AI handoff",
   TASK: "Task",

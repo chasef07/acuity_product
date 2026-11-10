@@ -421,39 +421,116 @@ test("the sender office follows the offices of the selected Task", async (t) => 
   assert.deepEqual(started, [officeB.id])
 })
 
-test("linked call history stays brief and opens its existing detail panels", async (t) => {
-  const conversation = conversationHarness(t)
-  const task = projectedTask()
+function callLineFixture(
+  call: Partial<NonNullable<ConversationTimelineItem["call"]>>,
+  { ai = true, task }: { ai?: boolean; task?: Task } = {},
+): ConversationTimelineItem {
+  const location = projectedTask()
   const occurredAt = "2026-09-05T12:00:00Z"
-  conversation.items = [{
-    id: "history", type: "CALL_HISTORY", occurredAt,
+  const id = call.id ?? "call"
+  return {
+    id: `history-${id}`, type: "CALL_HISTORY", occurredAt,
     entries: [
-      { id: "ai", type: "AI_INTERACTION", occurredAt, aiInteraction: {
-        id: "ai", locationId: task.locationId, locationName: "Office", sourceCallId: "source", phone: task.phone,
-        startedAt: occurredAt, status: "ESCALATED", appointmentOutcome: "BOOKING",
+      ...(ai ? [{ id: `ai-${id}`, type: "AI_INTERACTION" as const, occurredAt, aiInteraction: {
+        id: `ai-${id}`, locationId: location.locationId, locationName: "Office", sourceCallId: "source", phone: location.phone,
+        startedAt: occurredAt, status: "ESCALATED" as const, appointmentOutcome: "BOOKING" as const,
+        summary: "Caller booked a visit and asked about insurance.",
+      } }] : []),
+      { id, type: "CALL", occurredAt, call: {
+        id, type: "CALL", direction: "INBOUND", startedAt: occurredAt,
+        durationSeconds: 0, locationId: location.locationId, locationName: "Office",
+        answeredByEmail: "", transferReason: "", sourceCallId: "source", outcome: "MISSED", ...call,
       } },
-      { id: "call", type: "CALL", occurredAt, call: {
-        id: "call", type: "CALL", direction: "INBOUND", startedAt: occurredAt,
-        durationSeconds: 0, locationId: task.locationId, locationName: "Office",
-        answeredByEmail: "", transferReason: "", sourceCallId: "source", outcome: "VOICEMAIL",
-      } },
-      { id: "created", type: "TASK", occurredAt, taskActivity: "TASK_CREATED", task },
+      ...(task ? [{ id: `created-${task.id}`, type: "TASK" as const, occurredAt, taskActivity: "TASK_CREATED" as const, task }] : []),
     ],
-  }]
-  await conversation.render(0)
-  const timeline = conversation.host.querySelector('[aria-label="Conversation activity"]')!
-  assert.equal(timeline.querySelectorAll("button[aria-expanded]").length, 0)
-  const call = timeline.querySelector<HTMLButtonElement>('button[aria-label="View AI call: Appointment booked"]')!
-  assert.ok(call)
-  assert.match(call.textContent!, /Voicemail · Office/)
-  assert.match(call.textContent!, /Projected follow-up/)
-  for (const label of ["View AI call", "View voicemail", "View task"]) {
-    const button = [...timeline.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label")?.startsWith(label))
-    assert.ok(button, label)
-    await act(async () => button.click())
   }
-  assert.deepEqual(conversation.opened, ["ai:ai", "call:call", `task:${task.id}`])
+}
 
+function callLines(host: HTMLElement) {
+  const timeline = host.querySelector('[aria-label="Conversation activity"]')!
+  const lines = () => [...timeline.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")]
+  const outcome = (line: HTMLButtonElement) => line.lastElementChild!
+  const button = (name: string) => [...timeline.querySelectorAll<HTMLButtonElement>("button")]
+    .find((element) => (element.getAttribute("aria-label") ?? element.textContent?.trim()) === name)
+  return { timeline, lines, outcome, button }
+}
+
+test("a call reads as one line with its outcome and expands in place to its steps, Tasks and detail panels", async (t) => {
+  const conversation = conversationHarness(t)
+  const task: Task = {
+    ...projectedTask(), state: "COMPLETED", closeReason: "UNREACHABLE", completedAt: "2026-09-06T12:00:00Z",
+    completedBy: { kind: "HUMAN", subject: "staff", email: "staff@example.test" },
+  }
+  conversation.items = [callLineFixture({
+    outcome: "RESOLVED", answeredByEmail: "dana@example.test", durationSeconds: 362, transferReason: "Insurance question",
+  }, { task })]
+  await conversation.render(0)
+  const { timeline, lines, outcome, button } = callLines(conversation.host)
+  assert.equal(lines().length, 1)
+  const line = lines()[0]!
+  assert.equal(line.getAttribute("aria-expanded"), "false")
+  assert.match(line.textContent!, /^Called in · Insurance question · \d/)
+  assert.equal(outcome(line).textContent, "dana@example.test answered")
+  assert.match(outcome(line).className, /text-success/)
+  assert.doesNotMatch(timeline.textContent!, /AI answered|Projected follow-up|View AI call/)
+
+  await act(async () => line.click())
+  assert.equal(lines()[0]!.getAttribute("aria-expanded"), "true")
+  const expanded = timeline.textContent!
+  assert.match(expanded, /AI answered and transferred: Insurance question/)
+  assert.match(expanded, /Appointment booked/)
+  assert.match(expanded, /Caller booked a visit and asked about insurance\./)
+  assert.match(expanded, /dana@example\.test answered, 6m 2s/)
+  assert.match(expanded, /Resolved on call/)
+  assert.match(expanded, /Projected follow-up · Couldn't reach, by staff@example\.test/)
+  for (const name of ["View AI call", "View call", `View task: ${task.title}`]) {
+    const action = button(name)
+    assert.ok(action, name)
+    await act(async () => action.click())
+  }
+  assert.deepEqual(conversation.opened, ["ai:ai-call", "call:call", `task:${task.id}`])
+})
+
+test("a missed transfer reads Missed, a voicemail offers its recording, and a callback names its Task", async (t) => {
+  const conversation = conversationHarness(t)
+  conversation.items = [
+    callLineFixture({ id: "missed", outcome: "MISSED" }),
+    callLineFixture({ id: "voicemail", outcome: "VOICEMAIL", voicemailDurationSeconds: 22 }),
+    callLineFixture({
+      id: "callback", direction: "OUTBOUND", outcome: "UNANSWERED", placedByEmail: "caller@example.test",
+      taskId: "task-callback", taskTitle: "Reschedule post-op visit",
+    }, { ai: false }),
+    callLineFixture({ id: "reached", direction: "OUTBOUND", outcome: "NEEDS_DISPOSITION", durationSeconds: 192 }, { ai: false }),
+  ]
+  await conversation.render(0, { selectedCallID: "voicemail" })
+  const { lines, outcome, button } = callLines(conversation.host)
+  const read = (text: string) => {
+    const line = lines().find((element) => element.textContent!.includes(text))
+    assert.ok(line, text)
+    return { tone: outcome(line).className.match(/text-(success|warning|destructive|muted-foreground)/)?.[1], label: outcome(line).textContent, line }
+  }
+  assert.equal(lines().length, 4)
+  const outcomes = lines().map((line) => outcome(line).textContent).sort()
+  assert.deepEqual(outcomes, ["Answered · 3m 12s", "Missed", "No answer", "Voicemail"])
+  const missed = lines().find((line) => outcome(line).textContent === "Missed")!
+  assert.match(outcome(missed).className, /text-destructive/)
+  const voicemail = lines().find((line) => outcome(line).textContent === "Voicemail")!
+  assert.match(outcome(voicemail).className, /text-warning/)
+  assert.equal(voicemail.getAttribute("aria-current"), "true")
+  assert.equal(missed.getAttribute("aria-current"), null)
+  const callback = read('caller@example.test called · about "Reschedule post-op visit"')
+  assert.deepEqual([callback.label, callback.tone], ["No answer", "warning"])
+  const reached = read("Outbound call")
+  assert.deepEqual([reached.label, reached.tone], ["Answered · 3m 12s", "success"])
+
+  const play = button("View voicemail")
+  assert.ok(play)
+  assert.equal(play.textContent, "Voicemail0:22")
+  await act(async () => play.click())
+  assert.deepEqual(conversation.opened, ["call:voicemail"])
+  await act(async () => voicemail.click())
+  assert.match(conversation.host.textContent!, /Nobody answered, caller left a voicemail, 0:22/)
+  assert.equal([...conversation.host.querySelectorAll('button[aria-label="View voicemail"]')].length, 1)
 })
 
 test("the thread names the callback caller and marks which Task each entry describes", async (t) => {
@@ -464,8 +541,7 @@ test("the thread names the callback caller and marks which Task each entry descr
   await conversation.render(0, { selectedTaskID: selected.id, onHistoryChange: (value) => histories.push(value) })
   const timeline = conversation.host.querySelector('[aria-label="Conversation activity"]')!
   const text = timeline.textContent ?? ""
-  assert.match(text, /Outbound call by caller@example\.test/)
-  assert.match(text, /No answer/)
+  assert.match(text, /caller@example\.test called · \d[^A-Za-z]*[AP]MNo answer/)
   assert.match(text, /Missed call review completed after caller@example\.test's callback attempt/)
   assert.match(text, /This Task created by AI/)
   assert.doesNotMatch(text, /Task completed after callback attempt/)

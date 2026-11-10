@@ -313,7 +313,11 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     ).toBeVisible({ timeout: 30_000 })
     await page.getByLabel("Search tasks, names, or phone").fill(missedPhone)
     await page.getByLabel("Search tasks, names, or phone").press("Enter")
-    await page.getByRole("button", { name: /View call:/ }).last().click()
+    const activity = page.getByRole("region", { name: "Conversation activity" })
+    const missedLine = activity.locator("button[aria-expanded]").last()
+    await expect(missedLine).toContainText("Missed")
+    await missedLine.click()
+    await activity.getByRole("button", { name: "View call", exact: true }).click()
     const missedCallContext = page.getByRole("complementary", {
       name: "Call context",
     })
