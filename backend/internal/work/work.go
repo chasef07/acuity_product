@@ -47,6 +47,7 @@ var systemCloseReasons = map[string]CloseReason{
 	"TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT": CloseReasonDone,
 	"TASK_AUTO_COMPLETED_BOOKING":          CloseReasonDone,
 	"TASK_AUTO_COMPLETED_DUPLICATE":        CloseReasonNotNeeded,
+	textReviewExpiredKind:                  CloseReasonExpired,
 }
 
 var systemCloseReasonsJSON = func() string {
