@@ -479,7 +479,7 @@ run_migration() {
     --image "$backend_digest" \
     --tasks 1 \
     --max-retries 0 \
-    --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,PROVISIONING_INPUT=/etc/acuity/production-provisioning.json,PROVISIONING_OUTPUT=/tmp/production-provisioning-output.json" \
+    --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,PROVISIONING_INPUT=/etc/acuity/production-provisioning.json,PROVISIONING_OUTPUT=/tmp/production-provisioning-output.json,RESPONSIBILITIES_INPUT=/etc/acuity/task-responsibilities.json" \
     --quiet
   gcloud run jobs execute acuity-migrate \
     --project "$PROJECT_ID" \

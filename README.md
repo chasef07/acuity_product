@@ -85,7 +85,7 @@ microservices: they share domain code and committed PostgreSQL state.
 | `provider-ingress` | Verify provider webhooks and commit durable receipts | Cloud Run service |
 | `realtime` | Send authorized server-sent event (SSE) version hints | Cloud Run service |
 | `worker` | Project receipts, execute durable commands, retry, and reconcile | Cloud Run worker pool |
-| `migrate` | Apply reviewed schema migrations, grants, and provisioning | Cloud Run job |
+| `migrate` | Apply reviewed schema migrations, grants, provisioning, and the Task responsibility roster | Cloud Run job |
 
 The frontend runs as a separate Cloud Run service. Production uses Cloud SQL
 PostgreSQL 16 and private storage for messaging attachments. Telnyx owns call
@@ -407,7 +407,7 @@ api/                 OpenAPI source contract and generator configuration
 backend/cmd/         Runtime entry point and receipt-audit command
 backend/internal/    Domain modules, adapters, migrations, and tests
 web/                 Next.js app, Better Auth, generated client, and browser tests
-config/              Reviewed development and production provisioning inputs
+config/              Reviewed provisioning inputs and the Task responsibility roster
 scripts/             Test harnesses and schema verification
 deploy/              Runtime contracts, release automation, and operational controls
 .github/             CI, release workflows, and pull request template
