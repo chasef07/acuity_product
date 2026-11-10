@@ -376,6 +376,7 @@ func taskPageWindow(state work.TaskState, ordering work.TaskOrdering) (string, s
 		AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))`, `task.updated_at DESC, task.id DESC`
 	default:
 		return `task.state = 'COMPLETED'
+		AND ($3::text <> '' OR task.close_reason IS DISTINCT FROM 'EXPIRED')
 		AND $8::int >= 0
 		AND (NOT $5 OR (task.completed_at, task.id::text) < ($6, $7))`, `task.completed_at DESC, task.id DESC`
 	}
