@@ -1890,7 +1890,7 @@ export type OperatorAiInteractionAnalytics = {
 
 export type TaskQueryRequest = {
     /**
-     * Mine filters categorized follow-up by primary and backup responsibility. Appointment, text, missed-call, and voicemail reviews remain shared within authorized Locations, regardless of category. All removes only responsibility filtering.
+     * Mine filters categorized follow-up by primary and backup responsibility. A category nobody is responsible for at the Task's Location stays visible to everyone. Appointment, text, missed-call, and voicemail reviews remain shared within authorized Locations, regardless of category. All removes only responsibility filtering.
      */
     responsibility?: 'mine' | 'all';
     kind?: 'texts' | 'calls' | 'appointments' | 'follow_up';

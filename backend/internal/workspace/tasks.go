@@ -610,7 +610,9 @@ func taskResponsibilityFilter(responsibility string, email string) string {
 	return `
  AND (` + responsibility + `::text <> 'mine' OR task.category IS NULL
  OR ` + work.TaskIsCommunicationReviewSQL + `
- OR NOT EXISTS (SELECT 1 FROM work_responsibility_locations configured WHERE configured.practice_id=task.practice_id AND configured.location_id=task.location_id)
+ OR NOT EXISTS (SELECT 1 FROM work_responsibilities owned
+ WHERE owned.practice_id=task.practice_id AND owned.location_id=task.location_id
+ AND owned.category=task.category)
  OR EXISTS (SELECT 1 FROM work_responsibilities responsibility
  WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
  AND responsibility.category=task.category AND responsibility.account_email=` + email + `))`

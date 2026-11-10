@@ -53,6 +53,9 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO work_responsibility_locations VALUES($1,$2)`, auth.Practice.ID, locationID); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := pool.Exec(ctx, `INSERT INTO work_responsibilities VALUES($1,$2,'records@shared-review.test','documentation','primary')`, auth.Practice.ID, locationID); err != nil {
+			t.Fatal(err)
+		}
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)

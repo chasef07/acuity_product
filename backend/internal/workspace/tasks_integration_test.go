@@ -136,7 +136,8 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO work_responsibilities (practice_id, location_id, account_email, category, role)
-		VALUES ($1,$2,$3,'documentation','primary'), ($1,$2,$3,'optical','backup')`, authorization.Practice.ID, authorization.Locations[0].ID, identity.Email); err != nil {
+		VALUES ($1,$2,$3,'documentation','primary'), ($1,$2,$3,'optical','backup'),
+			($1,$2,'colleague@workspace-queue.test','other','primary')`, authorization.Practice.ID, authorization.Locations[0].ID, identity.Email); err != nil {
 		t.Fatal(err)
 	}
 	for _, responsibility := range []string{"all", "mine"} {

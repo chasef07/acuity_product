@@ -8,9 +8,63 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 )
+
+const (
+	colleagueCoveringEveryLocation = "colleague@synthetic.test"
+	colleagueCoveringOnlyLocation2 = "elsewhere@synthetic.test"
+)
+
+func provisionColleagues(t *testing.T, owner *pgxpool.Pool, now time.Time) {
+	t.Helper()
+	_, err := access.New(owner, func() time.Time { return now }).Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "work-roster-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "synthetic-practice",
+			Name: "Synthetic Practice",
+			Locations: []access.LocationProvision{
+				{Key: "synthetic-location-1", Name: "Synthetic Location 1", AbitaOfficeKeys: []string{"spring-hill"}},
+				{Key: "synthetic-location-2", Name: "Synthetic Location 2"},
+			},
+			AccessGrants: []access.AccessGrantProvision{
+				{Key: "synthetic-staff", Email: "staff@synthetic.test", Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
+				{Key: "synthetic-colleague", Email: colleagueCoveringEveryLocation, Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
+				{Key: "synthetic-elsewhere", Email: colleagueCoveringOnlyLocation2, Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"synthetic-location-2"}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision roster colleagues: %v", err)
+	}
+}
+
+func createRosterTask(t *testing.T, m *work.Module, practiceID string, category work.TaskCategory) {
+	t.Helper()
+	_, _, err := m.CreateAITask(context.Background(), work.CreateAITaskCommand{Service: access.ServiceIdentity{Subject: "synthetic-agent", PracticeID: practiceID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}}, OfficeKey: "spring-hill", OfficePhone: "+12025550100", SourceCallID: "roster-call", IdempotencyKey: string(category), Phone: "+12025550123", Summary: string(category), Message: "Synthetic staff follow-up", Category: category, Urgency: work.TaskUrgencyNormal})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func myTaskCategories(t *testing.T, reads *workspace.Module, identity access.Identity, practiceID string) ([]string, int) {
+	t.Helper()
+	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{Identity: identity, PracticeID: practiceID, Responsibility: "mine"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	categories := []string{}
+	for _, item := range page.Items {
+		categories = append(categories, string(item.Category))
+	}
+	sort.Strings(categories)
+	return categories, page.Counts.Tasks
+}
 
 func TestResponsibilitiesFilterWithoutGrantingAccess(t *testing.T) {
 	db := testdb.Open(t)
@@ -18,31 +72,104 @@ func TestResponsibilitiesFilterWithoutGrantingAccess(t *testing.T) {
 	now := time.Now().UTC()
 	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
 	auth, identity := provisionStaff(t, db.Owner, a, now)
+	provisionColleagues(t, pool, now)
 	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
-	report, err := work.New(pool, a, func() time.Time { return now }).ProvisionResponsibilities(context.Background(), work.ResponsibilityProvision{PracticeKey: "synthetic-practice", Locations: []work.ResponsibilityLocation{{LocationKey: "synthetic-location-1", Members: []work.ResponsibilityMember{{Email: identity.Email, Category: "medication", Role: "primary"}, {Email: identity.Email, Category: "medication", Role: "backup"}, {Email: "pending@synthetic.test", Category: "documentation", Role: "primary"}}}}})
+	report, err := work.New(pool, a, func() time.Time { return now }).ProvisionResponsibilities(context.Background(), work.ResponsibilityProvision{PracticeKey: "synthetic-practice", Locations: []work.ResponsibilityLocation{{LocationKey: "synthetic-location-1", Members: []work.ResponsibilityMember{
+		{Email: identity.Email, Category: "medication", Role: "primary"},
+		{Email: identity.Email, Category: "medication", Role: "backup"},
+		{Email: colleagueCoveringEveryLocation, Category: "optical", Role: "primary"},
+		{Email: "pending@synthetic.test", Category: "documentation", Role: "primary"},
+		{Email: colleagueCoveringOnlyLocation2, Category: "referrals", Role: "primary"},
+	}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Unmatched) != 1 {
-		t.Fatalf("unmatched: %#v", report)
+	want := work.ResponsibilityReport{
+		Applied:      3,
+		Unmatched:    []string{"synthetic-location-1:pending@synthetic.test"},
+		CoverageGaps: []string{"synthetic-location-1:" + colleagueCoveringOnlyLocation2},
 	}
-	for _, category := range []work.TaskCategory{"medication", "optical", "pre_op"} {
-		_, _, err = m.CreateAITask(context.Background(), work.CreateAITaskCommand{Service: access.ServiceIdentity{Subject: "synthetic-agent", PracticeID: auth.Practice.ID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}}, OfficeKey: "spring-hill", OfficePhone: "+12025550100", SourceCallID: "roster-call", IdempotencyKey: string(category), Phone: "+12025550123", Summary: string(category), Message: "Synthetic staff follow-up", Category: category, Urgency: work.TaskUrgencyNormal})
-		if err != nil {
-			t.Fatal(err)
-		}
+	if !reflect.DeepEqual(report, want) {
+		t.Fatalf("report = %#v, want %#v", report, want)
+	}
+	for _, category := range []work.TaskCategory{"medication", "optical", "pre_op", "referrals"} {
+		createRosterTask(t, m, auth.Practice.ID, category)
 	}
 	reads := workspace.New(db.As(testdb.Portal), a)
-	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Responsibility: "mine"})
+	mine, count := myTaskCategories(t, reads, identity, auth.Practice.ID)
+	if !reflect.DeepEqual(mine, []string{"medication", "pre_op", "referrals"}) || count != 3 {
+		t.Fatalf("mine = %v count=%d, want my medication plus pre_op and referrals, which nobody owns; a colleague owns optical", mine, count)
+	}
+	all, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Responsibility: "all"})
+	if err != nil || len(all.Items) != 4 {
+		t.Fatalf("All tasks: %#v %v", all, err)
+	}
+}
+
+func TestResponsibilityProvisioningConvergesOnTheInput(t *testing.T) {
+	db := testdb.Open(t)
+	pool := db.Owner
+	now := time.Now().UTC()
+	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	auth, identity := provisionStaff(t, db.Owner, a, now)
+	provisionColleagues(t, pool, now)
+	ctx := context.Background()
+	provision := func(input work.ResponsibilityProvision) (work.ResponsibilityReport, error) {
+		return work.New(pool, a, func() time.Time { return now }).ProvisionResponsibilities(ctx, input)
+	}
+	rows := func() string {
+		t.Helper()
+		var snapshot string
+		if err := pool.QueryRow(ctx, `SELECT
+			(SELECT coalesce(string_agg(l.provisioning_key, ',' ORDER BY l.provisioning_key), '') FROM work_responsibility_locations c JOIN access_locations l ON l.id=c.location_id)
+			|| ' | ' ||
+			(SELECT coalesce(string_agg(concat_ws(':', l.provisioning_key, r.account_email, r.category, r.role), ',' ORDER BY l.provisioning_key, r.account_email, r.category, r.role), '') FROM work_responsibilities r JOIN access_locations l ON l.id=r.location_id)`).Scan(&snapshot); err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	second := work.ResponsibilityLocation{LocationKey: "synthetic-location-2", Members: []work.ResponsibilityMember{{Email: colleagueCoveringOnlyLocation2, Category: "insurance", Role: "primary"}}}
+	both := work.ResponsibilityProvision{PracticeKey: "synthetic-practice", Locations: []work.ResponsibilityLocation{
+		{LocationKey: "synthetic-location-1", Members: []work.ResponsibilityMember{{Email: colleagueCoveringEveryLocation, Category: "optical", Role: "primary"}}},
+		second,
+	}}
+	first, err := provision(both)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 1 || page.Items[0].Category != "medication" || page.Counts.Tasks != 1 {
-		t.Fatalf("My groups: %#v", page)
+	loaded := rows()
+	wantLoaded := "synthetic-location-1,synthetic-location-2 | synthetic-location-1:" + colleagueCoveringEveryLocation + ":optical:primary,synthetic-location-2:" + colleagueCoveringOnlyLocation2 + ":insurance:primary"
+	if loaded != wantLoaded {
+		t.Fatalf("roster rows = %q, want %q", loaded, wantLoaded)
 	}
-	all, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Responsibility: "all"})
-	if err != nil || len(all.Items) != 3 {
-		t.Fatalf("All tasks: %#v %v", all, err)
+	again, err := provision(both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows() != loaded || !reflect.DeepEqual(again, first) {
+		t.Fatalf("second run changed the roster: rows %q -> %q, report %#v -> %#v", loaded, rows(), first, again)
+	}
+
+	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
+	createRosterTask(t, m, auth.Practice.ID, "optical")
+	reads := workspace.New(db.As(testdb.Portal), a)
+	if mine, _ := myTaskCategories(t, reads, identity, auth.Practice.ID); len(mine) != 0 {
+		t.Fatalf("a colleague's optical Task showed in mine: %v", mine)
+	}
+
+	if _, err := provision(work.ResponsibilityProvision{PracticeKey: "synthetic-practice", Locations: []work.ResponsibilityLocation{second}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := rows(), "synthetic-location-2 | synthetic-location-2:"+colleagueCoveringOnlyLocation2+":insurance:primary"; got != want {
+		t.Fatalf("rows after dropping synthetic-location-1 = %q, want %q", got, want)
+	}
+	if mine, count := myTaskCategories(t, reads, identity, auth.Practice.ID); !reflect.DeepEqual(mine, []string{"optical"}) || count != 1 {
+		t.Fatalf("dropped Location still filtered mine: %v count=%d", mine, count)
+	}
+
+	_, err = provision(work.ResponsibilityProvision{PracticeKey: "synthetic-practice", Locations: []work.ResponsibilityLocation{{LocationKey: "missing-location"}}})
+	if err == nil || rows() != "synthetic-location-2 | synthetic-location-2:"+colleagueCoveringOnlyLocation2+":insurance:primary" {
+		t.Fatalf("unknown Location: err=%v rows=%q", err, rows())
 	}
 }
 

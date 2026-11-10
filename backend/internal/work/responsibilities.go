@@ -28,21 +28,35 @@ type ResponsibilityReport struct {
 }
 
 func (m *Module) ProvisionResponsibilities(ctx context.Context, input ResponsibilityProvision) (ResponsibilityReport, error) {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ResponsibilityReport{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	report, err := m.ProvisionResponsibilitiesInTx(ctx, tx, input)
+	if err != nil {
+		return report, err
+	}
+	return report, tx.Commit(ctx)
+}
+
+func (m *Module) ProvisionResponsibilitiesInTx(ctx context.Context, tx pgx.Tx, input ResponsibilityProvision) (ResponsibilityReport, error) {
 	report := ResponsibilityReport{Unmatched: []string{}, CoverageGaps: []string{}}
 	if input.PracticeKey == "" {
 		return report, ErrInvalidInput
 	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return report, err
+	var practiceID string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM access_practices WHERE provisioning_key=$1`, input.PracticeKey).Scan(&practiceID); err != nil {
+		return report, fmt.Errorf("resolve responsibility Practice %s: %w", input.PracticeKey, err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	locationIDs := make([]string, 0, len(input.Locations))
 	for _, location := range input.Locations {
-		var practiceID, locationID string
-		err := tx.QueryRow(ctx, `SELECT p.id::text,l.id::text FROM access_practices p JOIN access_locations l ON l.practice_id=p.id WHERE p.provisioning_key=$1 AND l.provisioning_key=$2`, input.PracticeKey, location.LocationKey).Scan(&practiceID, &locationID)
+		var locationID string
+		err := tx.QueryRow(ctx, `SELECT id::text FROM access_locations WHERE practice_id=$1 AND provisioning_key=$2`, practiceID, location.LocationKey).Scan(&locationID)
 		if err != nil {
 			return report, fmt.Errorf("resolve responsibility Location %s: %w", location.LocationKey, err)
 		}
+		locationIDs = append(locationIDs, locationID)
 		if _, err := tx.Exec(ctx, `INSERT INTO work_responsibility_locations VALUES($1,$2) ON CONFLICT DO NOTHING`, practiceID, locationID); err != nil {
 			return report, err
 		}
@@ -80,11 +94,13 @@ func (m *Module) ProvisionResponsibilities(ctx context.Context, input Responsibi
 			}
 			report.Applied += int(result.RowsAffected())
 		}
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	}
+	for _, table := range []string{"work_responsibilities", "work_responsibility_locations"} {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE practice_id=$1 AND NOT (location_id = ANY($2::uuid[]))`, practiceID, locationIDs); err != nil {
 			return report, err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return report, err
 	}
 	return report, nil
