@@ -4,6 +4,8 @@ steps:
       - build
       - --file
       - Dockerfile.backend
+      - --build-arg
+      - RELEASE_ENVIRONMENT=${_RELEASE_ENVIRONMENT}
       - --tag
       - ${_IMAGE}
       - .

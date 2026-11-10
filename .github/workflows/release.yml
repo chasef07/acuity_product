@@ -90,5 +90,5 @@ jobs:
             --region="${{ vars.GCP_REGION }}" \
             --service-account="projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" \
             --config=cloudbuild.release.yaml \
-            --substitutions="_IMAGE_TAG=${RELEASE_SHA},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS},_MIDDLEWARE_BASE_URL=${MIDDLEWARE_BASE_URL},_MIDDLEWARE_API_SECRET_SECRET=${MIDDLEWARE_API_SECRET_SECRET},_PORTAL_API_URL=https://acuity-portal-api-cbuqwpsdsq-ue.a.run.app,_REALTIME_URL=https://acuity-realtime-cbuqwpsdsq-ue.a.run.app" \
+            --substitutions="_RELEASE_ENVIRONMENT=production,_IMAGE_TAG=${RELEASE_SHA},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS},_MIDDLEWARE_BASE_URL=${MIDDLEWARE_BASE_URL},_MIDDLEWARE_API_SECRET_SECRET=${MIDDLEWARE_API_SECRET_SECRET},_PORTAL_API_URL=https://acuity-portal-api-cbuqwpsdsq-ue.a.run.app,_REALTIME_URL=https://acuity-realtime-cbuqwpsdsq-ue.a.run.app" \
             .

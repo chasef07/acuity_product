@@ -1,0 +1,138 @@
+{
+  "Environment": "staging",
+  "RequestedBy": "acuity-staging",
+  "RequireEmptyAccessState": false,
+  "PlatformOperators": [
+    "chase@acuityhealth.io",
+    "kyle@acuityhealth.io"
+  ],
+  "Practices": [
+    {
+      "Key": "abita-eye-group",
+      "Name": "Abita Eye Group",
+      "ConnectedCallRecordingEnabled": true,
+      "ConnectedCallRecordingRetentionDays": 90,
+      "Locations": [
+        {
+          "Key": "hollywood",
+          "Name": "Hollywood",
+          "AbitaOfficeKeys": [
+            "hollywood"
+          ]
+        },
+        {
+          "Key": "sweetwater",
+          "Name": "Sweetwater",
+          "AbitaOfficeKeys": [
+            "sweetwater"
+          ]
+        },
+        {
+          "Key": "sweetwater-optical",
+          "Name": "Sweetwater Optical",
+          "AbitaOfficeKeys": [
+            "sweetwater-optical"
+          ]
+        },
+        {
+          "Key": "spring-hill",
+          "Name": "Spring Hill",
+          "AbitaOfficeKeys": [
+            "spring-hill"
+          ]
+        },
+        {
+          "Key": "crystal-river",
+          "Name": "Crystal River",
+          "AbitaOfficeKeys": [
+            "crystal-river"
+          ]
+        },
+        {
+          "Key": "north-miami-beach-optical",
+          "Name": "North Miami Beach Optical",
+          "AbitaOfficeKeys": [
+            "north-miami-beach-optical"
+          ]
+        }
+      ],
+      "AccessGrants": [
+        {
+          "Key": "staging-admin",
+          "Email": "admin@staging.acuity.test",
+          "Role": "ADMIN",
+          "LocationScope": "ALL"
+        },
+        {
+          "Key": "staging-front-desk",
+          "Email": "front-desk@staging.acuity.test",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": [
+            "hollywood",
+            "north-miami-beach-optical",
+            "sweetwater",
+            "sweetwater-optical"
+          ]
+        },
+        {
+          "Key": "staging-optical",
+          "Email": "optical@staging.acuity.test",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": [
+            "north-miami-beach-optical",
+            "sweetwater-optical"
+          ]
+        },
+        {
+          "Key": "staging-spring-hill",
+          "Email": "spring-hill@staging.acuity.test",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": [
+            "spring-hill"
+          ]
+        },
+        {
+          "Key": "staging-crystal-river",
+          "Email": "crystal-river@staging.acuity.test",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": [
+            "crystal-river"
+          ]
+        }
+      ]
+    },
+    {
+      "Key": "acuity-demo",
+      "Name": "Acuity Demo",
+      "Locations": [
+        {
+          "Key": "demo-484",
+          "Name": "Rheumatology",
+          "AbitaOfficeKeys": [
+            "dev",
+            "rheumatology-demo"
+          ]
+        },
+        {
+          "Key": "ophthalmology-demo",
+          "Name": "Ophthalmology",
+          "AbitaOfficeKeys": [
+            "ophthalmology-demo"
+          ]
+        },
+        {
+          "Key": "new-tampa-demo",
+          "Name": "New Tampa Eye Institute",
+          "AbitaOfficeKeys": [
+            "new-tampa-demo",
+            "mental-health-demo"
+          ]
+        }
+      ]
+    }
+  ]
+}

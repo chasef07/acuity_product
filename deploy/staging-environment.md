@@ -10,22 +10,28 @@ Staging keeps production's service names (`acuity-web`, `acuity-portal-api`,
 live service against `production-runtime-contract.json`, so staging runs the
 production profile, not `nonproduction-runtime-contract.md`.
 
-Staging must hold synthetic data only: no patients, production numbers, real
-staff, or production credentials.
+Staging must hold synthetic data only: no patients, production numbers, clinic
+staff, or production credentials. The only real accounts are the Acuity team's.
 
-## Unmet prerequisite: staging provisioning
+## Staging data
 
-Every release runs `acuity-migrate` with
-`PROVISIONING_INPUT=/etc/acuity/production-provisioning.json` and
-`RESPONSIBILITIES_INPUT=/etc/acuity/task-responsibilities.json`, which
-`Dockerfile.backend` bakes in from `config/`. Those files hold production
-practices, Telnyx numbers and messaging profiles, real staff Access Grants, and
-the real staff roster for task responsibilities. Deploying today's release to
-staging would write all of it into the staging database.
+Each backend image carries one environment's data, chosen at build time by
+`_RELEASE_ENVIRONMENT` (`production` or `staging`):
 
-Before the staging job is wired, add synthetic staging versions of both files,
-built from the staging Telnyx resources in step 5. Then make both files release
-inputs, so staging and production each migrate with their own.
+- `config/<environment>-provisioning.json`: practices, locations, Telnyx
+  numbers, and Access Grants.
+- `config/<environment>-task-responsibilities.json`: the task roster.
+
+The migration loads both on every release. The staging files keep production's
+practice, location, and Abita office keys. Staff are synthetic
+`@staging.acuity.test` accounts, and Platform Operators are the Acuity team.
+`TestStagingReleaseReusesNoProductionStaffOrNumbers` fails if a staging file
+reuses a production staff email, number, or messaging profile.
+
+The staging files have no Telnyx numbers yet, so staging calling and messaging
+stay off. Once step 5 exists, add its numbers and messaging profile to
+`config/staging-provisioning.json`. To let an Acuity team member sign in as
+staff, add an Access Grant for their Google account.
 
 ## Provision once
 
@@ -57,7 +63,8 @@ inputs, so staging and production each migrate with their own.
    Use those exact values. The release fails before any change when they
    differ from the URLs baked into the web image. Cloud Run's
    `-<project-number>` alias URL does not match.
-7. Build the web image with those URLs, then bootstrap every service with
+7. Build the backend image with `RELEASE_ENVIRONMENT=staging` and the web image
+   with those URLs, then bootstrap every service with
    `cloud-run-commands.example.sh` and `ACUITY_DEPLOYMENT_PROFILE=production`.
    The release script needs a ready revision of every service to roll back to.
 8. Create a deploy service account with the production deploy account's roles,
@@ -71,6 +78,7 @@ inputs, so staging and production each migrate with their own.
 ## Then
 
 Add a staging job to `.github/workflows/release.yml` that deploys each verified
-push to `main`. Like the production job, it passes its own
-`_PORTAL_API_URL` and `_REALTIME_URL` (from step 6) as literals. Production then
-deploys a release only when its commit has already passed staging.
+push to `main` with `_RELEASE_ENVIRONMENT=staging` and its own
+`_PORTAL_API_URL` and `_REALTIME_URL` (from step 6) as literals, as the
+production job does. Production then deploys a release only when its commit has
+already passed staging.

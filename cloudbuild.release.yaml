@@ -6,6 +6,8 @@ steps:
       - build
       - --file
       - Dockerfile.backend
+      - --build-arg
+      - RELEASE_ENVIRONMENT=${_RELEASE_ENVIRONMENT}
       - --tag
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_BACKEND_IMAGE}:${_IMAGE_TAG}
       - .
@@ -60,6 +62,7 @@ steps:
 
 substitutions:
   _IMAGE_TAG: DO_NOT_DEPLOY
+  _RELEASE_ENVIRONMENT: DO_NOT_DEPLOY
   _REGION: us-east1
   _REPOSITORY: acuity-product
   _BACKEND_IMAGE: backend
