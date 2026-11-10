@@ -74,3 +74,28 @@ test("a completed Task row reads why it closed and who closed it", () => {
   assert.match(html, /Not needed, by ines@abita\.test/)
   assert.doesNotMatch(html, /Close Task as/)
 })
+
+test("a completed Task row credits the team when no email is known and stays quiet when no reason was recorded", () => {
+  const completed = {
+    ...railTask,
+    state: "COMPLETED",
+    completedBy: { kind: "HUMAN", subject: "user-1" },
+    completedAt: "2026-08-30T13:00:00Z",
+    version: 2,
+  } as const
+  assert.match(row({ ...completed, closeReason: "DONE" }), /Done, by the team/)
+  const withoutReason = row(completed)
+  assert.match(withoutReason, /Call back about refill/)
+  assert.doesNotMatch(withoutReason, /undefined|by the team|text-xs leading-4 text-muted-foreground/)
+})
+
+test("the row menu follows the tick and uses the more icon", () => {
+  const html = row(railTask)
+  const tick = html.indexOf('aria-label="Complete Task: Call back about refill"')
+  const menu = html.indexOf('aria-label="Close Task as: Call back about refill"')
+  assert.ok(tick > 0 && menu > tick, "the tick comes before the menu in tab order")
+  assert.match(html.slice(menu), /^[^>]*>\s*<svg[^>]*lucide-ellipsis/)
+  for (const origin of ["APPOINTMENT_REVIEW", "INBOUND_MESSAGE_REVIEW"] as const) {
+    assert.doesNotMatch(row({ ...railTask, origin }), /Close Task as|Complete Task:/)
+  }
+})

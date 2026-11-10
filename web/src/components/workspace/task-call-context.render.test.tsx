@@ -103,11 +103,18 @@ test("a completed Task names why it closed and who closed it", () => {
     task: { ...completed, completedBy: { kind: "SERVICE", subject: "task-expiry" }, closeReason: "EXPIRED" },
   })
   assert.ok(expired.includes("Expired, automatically"))
+  const anonymous = { kind: "HUMAN", subject: "user-1" } as const
+  assert.ok(panel({ task: { ...completed, completedBy: anonymous, closeReason: "NOT_NEEDED" } }).includes("Not needed, by the team"))
+  const withoutReason = panel({ task: { ...completed, completedBy: staff } })
+  assert.ok(withoutReason.includes("Completed by ines@abita.test"), "a Task closed before reasons were recorded reads as it did")
+  assert.doesNotMatch(withoutReason, /undefined/)
+  assert.ok(panel({ task: { ...completed, completedBy: anonymous } }).includes("Completed by the team"))
 })
 
 test("an open Task completes as done from the button and offers the other reasons beside it", () => {
   const markup = panel({ task: { ...task, origin: "ABITA_AI" } })
   assert.match(markup, /Complete &amp; next/)
-  const menu = /<button[^>]*aria-label="Close as"[^>]*>/.exec(markup)?.[0] ?? ""
+  const menu = /<button[^>]*aria-label="Close as"[^>]*>\s*<svg[^>]*>/.exec(markup)?.[0] ?? ""
   assert.match(menu, /aria-haspopup="menu"/)
+  assert.match(menu, /lucide-ellipsis/)
 })

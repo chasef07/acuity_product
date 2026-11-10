@@ -8,8 +8,12 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import type { StaffTaskCloseReason } from "@/lib/api/generated/types.gen"
+import type { StaffTaskCloseReason, Task } from "@/lib/api/generated/types.gen"
 import { taskCloseMenuReasons, taskCloseReasonLabels } from "@/lib/vocabulary"
+
+export function offersTaskCloseMenu(task: Pick<Task, "origin">) {
+  return task.origin !== "APPOINTMENT_REVIEW" && task.origin !== "INBOUND_MESSAGE_REVIEW"
+}
 
 export function TaskCloseMenu({
   trigger,

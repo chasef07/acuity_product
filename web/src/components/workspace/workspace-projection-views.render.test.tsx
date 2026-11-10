@@ -10,6 +10,8 @@ import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
 import { TaskCallContext } from "./task-call-context.tsx"
 import { TaskCallAction } from "./task-call-action.tsx"
+import { TaskGroupContext } from "./task-group-context.tsx"
+import { VoicemailSource } from "./recording-source.tsx"
 import { CallingDock } from "./calling-dock.tsx"
 import { WorkEmptyState } from "./work-empty-state.tsx"
 import { CallingRailControl, RailButton } from "./workspace-rail-button.tsx"
@@ -17,6 +19,7 @@ import { WorkspaceRail } from "./workspace-rail.tsx"
 import { WorkspaceTopBar } from "./workspace-page-header.tsx"
 import { clearAccessToken } from "../../lib/auth-client.ts"
 import { DataProvider } from "../../lib/data/provider.tsx"
+import { createWorkspaceAuthorityAdapter } from "../../lib/workspace-projection-http.ts"
 import { useLiveRefresh } from "../../lib/data/queries.ts"
 import type {
   AiInteractionDetail,
@@ -998,6 +1001,131 @@ test("text completion requires a successful conversation reload for the current 
   await waitFor(() => !done().disabled)
   await act(async () => done().click())
   assert.deepEqual(conversation.completions, [{ expectedVersion: 3, reason: "DONE" }], "completion submits the version whose conversation loaded as done")
+})
+
+function completionRequests(t: TestContext, respond: (url: string) => unknown) {
+  const previousAPIURL = process.env.NEXT_PUBLIC_PORTAL_API_URL
+  process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
+  clearAccessToken()
+  const sent: { path: string; body: unknown }[] = []
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+    if (url === "/api/auth/token") return Response.json({ token: "synthetic-token" })
+    const path = new URL(url).pathname
+    if (/\/complete(-group)?$/.test(path)) sent.push({ path, body: await (input as Request).json() })
+    return Response.json(respond(path))
+  })
+  t.after(() => {
+    clearAccessToken()
+    if (previousAPIURL === undefined) delete process.env.NEXT_PUBLIC_PORTAL_API_URL
+    else process.env.NEXT_PUBLIC_PORTAL_API_URL = previousAPIURL
+  })
+  return sent
+}
+
+test("the rail tick asks to complete the Task as done", async () => {
+  const dom = installDOM()
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  const task: Task = { ...projectedTask(), origin: "ABITA_AI" }
+  const intents: WorkspaceProjectionIntent[] = []
+  try {
+    await act(async () => root.render(
+      <SidebarProvider>
+        <WorkspaceRail projection={projectedWorkspace(task)} onIntent={(intent) => intents.push(intent)} />
+      </SidebarProvider>,
+    ))
+    await act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="Complete Task: ${task.title}"]`)!.click())
+    assert.deepEqual(intents, [{ type: "complete-task", task, reason: "DONE" }])
+  } finally {
+    await act(async () => root.unmount())
+    dom.window.close()
+  }
+})
+
+test("the rail completion request carries the reason it was given", async (t) => {
+  const task = projectedTask()
+  const sent = completionRequests(t, () => ({ ...task, state: "COMPLETED", version: 2 }))
+  const authority = createWorkspaceAuthorityAdapter()
+  for (const reason of ["DONE", "NOT_NEEDED", "UNREACHABLE"] as const) {
+    await authority.completeTask("synthetic-token", task, reason, new AbortController().signal)
+  }
+  assert.deepEqual(sent.map((request) => request.body), [
+    { expectedVersion: task.version, reason: "DONE" },
+    { expectedVersion: task.version, reason: "NOT_NEEDED" },
+    { expectedVersion: task.version, reason: "UNREACHABLE" },
+  ])
+})
+
+test("a group completes one request or all of them as done", async (t) => {
+  const dom = installDOM()
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  const members: Task[] = ["first", "second", "third"].map((name) => ({
+    ...projectedTask(), id: `task-${name}`, title: `Synthetic ${name} request`, origin: "ABITA_AI", category: "optical",
+  }))
+  const group: Task = { ...members[0], groupMembers: members }
+  const sent = completionRequests(t, (path) => ({ ...members[0], id: path.split("/")[3], state: "COMPLETED", version: 2 }))
+  const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === name)
+  try {
+    await act(async () => root.render(
+      <DataProvider>
+        <TaskGroupContext group={group} taskRows={[group]} onSelect={() => {}} onUpdated={() => {}} />
+      </DataProvider>,
+    ))
+    await act(async () => button("Complete")!.click())
+    await waitFor(() => sent.length === 1)
+    await act(async () => root.render(
+      <DataProvider>
+        <TaskGroupContext group={group} taskRows={[{ ...members[1], groupMembers: members.slice(1) }]} onSelect={() => {}} onUpdated={() => {}} />
+      </DataProvider>,
+    ))
+    await act(async () => button("Complete all 2 requests")!.click())
+    await waitFor(() => sent.length === 2)
+    assert.deepEqual(sent, [
+      { path: "/v1/tasks/task-first/complete", body: { expectedVersion: 1, reason: "DONE" } },
+      {
+        path: "/v1/tasks/task-second/complete-group",
+        body: { reason: "DONE", members: [{ id: "task-second", expectedVersion: 1 }, { id: "task-third", expectedVersion: 1 }] },
+      },
+    ])
+  } finally {
+    await act(async () => root.unmount())
+    dom.window.close()
+  }
+})
+
+test("a voicemail played to the end completes its Task as done", async (t) => {
+  const dom = installDOM()
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  const task: Task = {
+    ...projectedTask(), origin: "VOICEMAIL_RECOVERY", recoveryOutcome: "VOICEMAIL", callId: "call-1",
+  }
+  const sent = completionRequests(t, (path) => path.endsWith("/voicemail-playback")
+    ? { token: "synthetic-playback", expiresAt: "2026-08-30T13:00:00Z" }
+    : path.endsWith("/complete") ? { ...task, state: "COMPLETED", version: 2 } : task)
+  const call = {
+    id: "call-1",
+    voicemail: { audioState: "READY", durationSeconds: 12, outcome: "VOICEMAIL" },
+  } as ComponentProps<typeof VoicemailSource>["call"]
+  try {
+    await act(async () => root.render(
+      <DataProvider><VoicemailSource call={call} taskID={task.id} /></DataProvider>,
+    ))
+    dom.window.HTMLMediaElement.prototype.play = async () => {}
+    await act(async () => [...host.querySelectorAll("button")].find((candidate) => candidate.textContent === "Play")!.click())
+    await waitFor(() => host.querySelector("audio") !== null)
+    await act(async () => { host.querySelector("audio")!.dispatchEvent(new dom.window.Event("ended")) })
+    await waitFor(() => sent.length === 1)
+    assert.deepEqual(sent, [{ path: "/v1/tasks/task-1/complete", body: { expectedVersion: task.version, reason: "DONE" } }])
+  } finally {
+    await act(async () => root.unmount())
+    dom.window.close()
+  }
 })
 
 async function waitFor(ready: () => boolean) {

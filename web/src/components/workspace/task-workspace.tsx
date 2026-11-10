@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import {
   CheckIcon,
   CheckCircle2Icon,
-  ChevronDownIcon,
+  EllipsisIcon,
   PencilIcon,
   PhoneCallIcon,
   RotateCcwIcon,
@@ -33,7 +33,7 @@ import {
   openTaskCallbackNotice,
 } from "@/lib/workspace-history"
 
-import { TaskCloseMenu } from "./task-close-menu"
+import { offersTaskCloseMenu, TaskCloseMenu } from "./task-close-menu"
 import { TaskMetadata } from "./task-metadata"
 import { RecoveryTaskSource } from "./recording-source"
 import { actorLabel, Metadata, TaskSourceDetails } from "./task-details"
@@ -144,7 +144,9 @@ export function TaskWorkspace({
   const recovery =
     task.origin === "VOICEMAIL_RECOVERY" ||
     task.origin === "MISSED_CALL_RECOVERY"
-  const completion = callbackCompletionLabel(task) ?? taskCloseSummary(task)
+  const completion = callbackCompletionLabel(task) ??
+    taskCloseSummary(task) ??
+    `Completed by ${task.completedBy?.email ?? "the team"}`
   const callbackNotice = openTaskCallbackNotice(numberHistory, task, formatTimestamp)
 
   return (
@@ -233,19 +235,21 @@ export function TaskWorkspace({
               >
                 {pending ? <Spinner /> : <CheckCircle2Icon />} {task.origin === "APPOINTMENT_REVIEW" ? "Verify & next" : recovery ? "Mark done" : "Complete & next"}
               </Button>
-              <TaskCloseMenu
-                trigger={
-                  <Button
-                    variant={recovery ? "ghost" : "outline"}
-                    size="icon"
-                    aria-label="Close as"
-                    disabled={pending || needsReview}
-                  />
-                }
-                onClose={(reason) => void transition(reason)}
-              >
-                <ChevronDownIcon />
-              </TaskCloseMenu>
+              {offersTaskCloseMenu(task) && (
+                <TaskCloseMenu
+                  trigger={
+                    <Button
+                      variant={recovery ? "ghost" : "outline"}
+                      size="icon"
+                      aria-label="Close as"
+                      disabled={pending || needsReview}
+                    />
+                  }
+                  onClose={(reason) => void transition(reason)}
+                >
+                  <EllipsisIcon />
+                </TaskCloseMenu>
+              )}
             </div>
             {activeCall ? (
               <Button variant="outline" onClick={onReturnToCall}>

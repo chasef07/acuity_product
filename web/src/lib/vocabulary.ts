@@ -68,8 +68,8 @@ export const taskCloseMenuReasons = ["NOT_NEEDED", "UNREACHABLE"] satisfies Staf
 export function taskCloseSummary(task: Pick<Task, "closeReason" | "completedBy">) {
   if (!task.closeReason) return undefined
   const label = taskCloseReasonLabels[task.closeReason]
-  if (task.completedBy?.kind === "HUMAN" && task.completedBy.email) return `${label}, by ${task.completedBy.email}`
-  return task.completedBy?.kind === "SERVICE" ? `${label}, automatically` : label
+  if (task.completedBy?.kind === "SERVICE") return `${label}, automatically`
+  return `${label}, by ${task.completedBy?.email ?? "the team"}`
 }
 
 export const taskOriginLabels = {

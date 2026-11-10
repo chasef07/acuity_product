@@ -1,7 +1,7 @@
 "use client"
 
 import { useId } from "react"
-import { Building2Icon, CheckIcon, ChevronDownIcon, PhoneIcon } from "lucide-react"
+import { Building2Icon, CheckIcon, EllipsisIcon, PhoneIcon } from "lucide-react"
 
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
@@ -19,7 +19,7 @@ import {
 } from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
 
-import { TaskCloseMenu } from "./task-close-menu"
+import { offersTaskCloseMenu, TaskCloseMenu } from "./task-close-menu"
 
 const rowActionClass =
   "pointer-events-none absolute inset-y-0 flex w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-hidden transition-[color,background-color,opacity] duration-150 hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-within/task:pointer-events-auto group-focus-within/task:opacity-100 group-has-[[data-popup-open]]/task:pointer-events-auto group-has-[[data-popup-open]]/task:opacity-100 disabled:pointer-events-none motion-reduce:duration-0 motion-reduce:transition-none"
@@ -50,14 +50,9 @@ export function TaskRow({
   const urgent = task.urgency === "high_priority"
   const urgencyID = useId()
   const relative = taskRelativeTime(task)
-  const completable =
-    task.state === "OPEN" &&
-    task.origin !== "APPOINTMENT_REVIEW" &&
-    !textReview &&
-    !grouped
-  const detail =
-    (task.state === "COMPLETED" ? taskCloseSummary(task) : undefined) ??
-    (textReview ? task.preview : undefined)
+  const completable = task.state === "OPEN" && offersTaskCloseMenu(task) && !grouped
+  const closed = task.state === "COMPLETED" ? taskCloseSummary(task) : undefined
+  const detail = textReview ? task.preview : closed
   return (
     <SidebarMenuItem
       data-testid={grouped ? "task-group-row" : "task-row"}
@@ -69,6 +64,7 @@ export function TaskRow({
         title={textReview && task.preview ? task.preview : task.title}
         phone={task.phone}
         office={task.locationName}
+        closed={textReview ? closed : undefined}
         meta={`${taskUrgencyLabels[task.urgency]} · ${relative.label} ${formatRelativeTime(relative.at)}`}
       >
         <SidebarMenuButton
@@ -119,19 +115,6 @@ export function TaskRow({
         </time>
         {completable && (
           <>
-            <TaskCloseMenu
-              trigger={
-                <button
-                  type="button"
-                  aria-label={`Close Task as: ${task.title}`}
-                  disabled={completionDisabled}
-                  className={cn(rowActionClass, "left-0 hover:text-foreground")}
-                />
-              }
-              onClose={onComplete}
-            >
-              <ChevronDownIcon aria-hidden="true" className="size-4" />
-            </TaskCloseMenu>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -140,7 +123,7 @@ export function TaskRow({
                     aria-label={`Complete Task: ${task.title}`}
                     aria-busy={completionPending || undefined}
                     disabled={completionDisabled}
-                    className={cn(rowActionClass, "right-0 hover:text-success")}
+                    className={cn(rowActionClass, "left-0 hover:text-success")}
                     onClick={(event) => {
                       event.stopPropagation()
                       onComplete("DONE")
@@ -156,6 +139,19 @@ export function TaskRow({
               </TooltipTrigger>
               <TooltipContent side="right">Complete Task</TooltipContent>
             </Tooltip>
+            <TaskCloseMenu
+              trigger={
+                <button
+                  type="button"
+                  aria-label={`Close Task as: ${task.title}`}
+                  disabled={completionDisabled}
+                  className={cn(rowActionClass, "right-0 hover:text-foreground")}
+                />
+              }
+              onClose={onComplete}
+            >
+              <EllipsisIcon aria-hidden="true" className="size-4" />
+            </TaskCloseMenu>
           </>
         )}
       </span>
@@ -176,6 +172,7 @@ function RailHoverDetails({
   title,
   phone,
   office,
+  closed,
   meta,
   children,
 }: {
@@ -183,6 +180,7 @@ function RailHoverDetails({
   title: string
   phone: string
   office: string
+  closed?: string
   meta: string
   children: React.ReactElement
 }) {
@@ -214,6 +212,11 @@ function RailHoverDetails({
           />
           <HoverDetail icon={<Building2Icon />} label="Office" value={office} />
         </div>
+        {closed && (
+          <p className="truncate border-t border-border px-4 py-2.5 text-xs leading-4 text-popover-foreground">
+            {closed}
+          </p>
+        )}
         <p className="truncate border-t border-border px-4 py-2.5 text-xs leading-4 text-muted-foreground">
           {meta}
         </p>
