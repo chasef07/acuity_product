@@ -217,9 +217,21 @@ test("a long list shows eight rows until asked for all, and says when the server
 
   await page.render(view({ summary: ready(manyTasks(50), [], { openTaskCount: 63 }) }))
   assert.match(page.host.innerHTML, /<h2[^>]*>Open Tasks<\/h2><span[^>]*>63<\/span>/)
+  assert.equal(shown(), 8)
+  assert.equal(toggle()?.textContent, "Show 50 of 63")
   await act(async () => toggle()!.click())
   assert.equal(shown(), 50)
+  assert.equal(toggle()?.textContent, "Show fewer")
   assert.match(page.host.textContent ?? "", /Showing 50 of 63/)
+  assert.doesNotMatch(page.host.textContent ?? "", /\ball\b/i, "a capped list never claims to be all of them")
+  await act(async () => toggle()!.click())
+
+  const twelve = manyTasks(12)
+  await page.render(view({ summary: ready(twelve), otherThan: [twelve[0].id] }))
+  assert.equal(toggle()?.textContent, "Show all 11", "the count is of the Tasks the list can show")
+  const fifty = manyTasks(50)
+  await page.render(view({ summary: ready(fifty, [], { openTaskCount: 63 }), otherThan: [fifty[0].id] }))
+  assert.equal(toggle()?.textContent, "Show 49 of 62")
 })
 
 test("on a call the titles are text, and the call's own Task comes first with its marker", (t) => {

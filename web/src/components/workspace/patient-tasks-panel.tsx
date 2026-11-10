@@ -225,7 +225,7 @@ export function PatientTasksPanelView({
           aria-expanded={showAll}
           onClick={() => setShowAll((value) => !value)}
         >
-          {showAll ? "Show fewer" : `Show all ${open.length}`}
+          {showAll ? "Show fewer" : capped ? `Show ${open.length} of ${count}` : `Show all ${count}`}
         </Button>
       )}
       {showAll && capped && (
