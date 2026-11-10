@@ -12,7 +12,6 @@ const (
 	textReviewLifetime    = 120 * time.Hour
 	textReviewExpiryBatch = 500
 	textReviewExpiryActor = "text-review-expiry"
-	textReviewExpiredKind = "TASK_EXPIRED"
 )
 
 func (m *Module) ExpireTextReviews(ctx context.Context) (int, error) {
@@ -71,7 +70,7 @@ func (m *Module) expireTextReviewBatch(ctx context.Context) (int, error) {
 				occurred_at,
 				details
 			)
-			SELECT id, version, $6, 'SERVICE', $3, NULL, $4,
+			SELECT id, version, 'TASK_COMPLETED', 'SERVICE', $3, NULL, $4,
 				jsonb_build_object('closeReason', $5::text)
 			FROM expired
 		)
@@ -79,7 +78,7 @@ func (m *Module) expireTextReviewBatch(ctx context.Context) (int, error) {
 		FROM expired
 		GROUP BY practice_id
 	`, now.Add(-textReviewLifetime), textReviewExpiryBatch, textReviewExpiryActor,
-		now, systemCloseReasons[textReviewExpiredKind], textReviewExpiredKind)
+		now, CloseReasonExpired)
 	if err != nil {
 		return 0, fmt.Errorf("expire text reviews: %w", err)
 	}

@@ -168,7 +168,7 @@ func TestExpireTextReviewsClosesAReviewOnceItsNewestTextIsOlderThan120Hours(t *t
 		Scan(&kind, &actorKind, &actorSubject, &activityVersion, &occurredAt, &closeReason); err != nil {
 		t.Fatalf("read expiry activity: %v", err)
 	}
-	if kind != "TASK_EXPIRED" || actorKind != "SERVICE" || actorSubject != "text-review-expiry" ||
+	if kind != "TASK_COMPLETED" || actorKind != "SERVICE" || actorSubject != "text-review-expiry" ||
 		activityVersion != expired.version || !occurredAt.Equal(s.now) || closeReason != string(work.CloseReasonExpired) {
 		t.Fatalf("expiry activity = %s by %s/%s at version %d, %s, reason %s; review version %d",
 			kind, actorKind, actorSubject, activityVersion, occurredAt, closeReason, expired.version)
@@ -337,7 +337,7 @@ func TestExpireTextReviewsClosesABacklogLargerThanOneBatch(t *testing.T) {
 	if open := s.count(`SELECT count(*) FROM work_tasks WHERE state='OPEN'`); open != 1 {
 		t.Fatalf("open Tasks after the backlog sweep = %d, want only the fresh review", open)
 	}
-	if expired := s.count(`SELECT count(*) FROM work_task_activities WHERE kind='TASK_EXPIRED'`); expired != backlog {
+	if expired := s.count(`SELECT count(*) FROM work_task_activities WHERE kind='TASK_COMPLETED' AND details->>'closeReason'='EXPIRED'`); expired != backlog {
 		t.Fatalf("expiry activities = %d, want %d", expired, backlog)
 	}
 	s.expire(0)
