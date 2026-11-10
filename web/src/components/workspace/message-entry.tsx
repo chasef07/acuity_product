@@ -53,6 +53,9 @@ export function MessageEntry({
   const [confirmingSendAgain, setConfirmingSendAgain] = useState(false)
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
+  const sentBy = message.createdBy?.kind === "SERVICE"
+    ? "Automated"
+    : outbound ? message.createdBy?.email : undefined
 
   async function createTask() {
     setPending(true)
@@ -149,10 +152,10 @@ export function MessageEntry({
               </span>
             </>
           )}
-          {message.createdBy?.kind === "SERVICE" && (
+          {sentBy && (
             <>
               <span aria-hidden="true">·</span>
-              <span>Automated</span>
+              <span>{sentBy}</span>
             </>
           )}
           {message.safeFailureCode && (

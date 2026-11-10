@@ -591,6 +591,27 @@ test("the thread tabs show everything, only texts or only calls and keep the com
   assert.deepEqual(threadTabs(conversation.host).pressed(), ["Everything"], "another conversation starts on Everything")
 })
 
+test("an outbound text names the staff member who sent it and an automated text stays Automated", async (t) => {
+  const conversation = conversationHarness(t)
+  const outbound = { direction: "OUTBOUND", delivery: "Delivered" } as const
+  conversation.items = [
+    textFixture("inbound", "2026-09-05T11:00:00Z"),
+    textFixture("staff", "2026-09-05T11:01:00Z", { ...outbound, createdBy: { kind: "HUMAN", subject: "staff", email: "staff@example.test" } }),
+    textFixture("automated", "2026-09-05T11:02:00Z", { ...outbound, createdBy: { kind: "SERVICE", subject: "text-automation" } }),
+    textFixture("unresolved", "2026-09-05T11:03:00Z", { ...outbound, createdBy: { kind: "HUMAN", subject: "former-staff" } }),
+  ]
+  await conversation.render(0)
+  const footer = (id: string) => {
+    const text = threadTabs(conversation.host).texts().find((value) => value!.includes(`Synthetic text ${id}`))
+    assert.ok(text, id)
+    return text.slice(text.indexOf(id) + id.length).replace(/^\d+:\d+\s[AP]M·?/, "")
+  }
+  assert.equal(footer("inbound"), "")
+  assert.equal(footer("staff"), "Delivered·staff@example.test")
+  assert.equal(footer("automated"), "Delivered·Automated")
+  assert.equal(footer("unresolved"), "Delivered")
+})
+
 test("a tab with nothing loaded keeps loading earlier activity until something matches or the history ends", async (t) => {
   const conversation = conversationHarness(t)
   const pages: ConversationTimelinePage[] = [
