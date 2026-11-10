@@ -10,6 +10,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
 )
@@ -114,6 +115,9 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO work_tasks (id,practice_id,location_id,phone,title,state,created_by_kind,created_by_subject,created_at,updated_at,origin,source_call_id,source_message,category,ai_idempotency_key,ai_input_fingerprint,completed_by_kind,completed_by_subject,completed_by_email,completed_at) VALUES ($1::uuid,$2,$3,'+15555550199','Synthetic task',$4,'SERVICE','fixture',$5,$5,'ABITA_AI',$1::text,'Synthetic task evidence','other',$1::text,decode(repeat('00',32),'hex'),$6,$7,$8,$9)`, id, practice, locA, state, day.Add(-time.Duration(i)*time.Hour), completedKind, subject, email, completed); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO work_tasks (id,practice_id,location_id,phone,title,state,created_by_kind,created_by_subject,created_at,updated_at,origin,source_call_id,category,source_review_key,source_message,completed_by_kind,completed_by_subject,completed_at) VALUES (gen_random_uuid(),$1,$2,'+15555550199','Review booked appointment','COMPLETED','SERVICE','appointment-review',$3,$3,'APPOINTMENT_REVIEW','retired-review','appointments','retired-review','Verify insurance','SERVICE',$4,$3)`, practice, locA, day.Add(-time.Hour), work.HiddenReviewRetirementSubject); err != nil {
+		t.Fatal(err)
 	}
 	module := workspace.New(db.As(testdb.Portal), a)
 	command := workspace.QueryStaffAnalyticsCommand{Identity: admin, PracticeID: practice, LocationID: locA, Days: 7}

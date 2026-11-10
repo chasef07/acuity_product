@@ -10,6 +10,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -257,7 +258,8 @@ func (m *Module) QueryStaffAnalytics(ctx context.Context, command QueryStaffAnal
   FROM work_tasks WHERE practice_id=$1::uuid AND location_id=ANY($2::uuid[])
    AND ((created_at >= $3 AND created_at < $4)
         OR (state='COMPLETED' AND completed_at >= $3 AND completed_at < $4))
-  LIMIT 50001`, command.PracticeID, locations, from, to)
+   AND completed_by_subject IS DISTINCT FROM $5
+  LIMIT 50001`, command.PracticeID, locations, from, to, work.HiddenReviewRetirementSubject)
 	if err != nil {
 		return StaffAnalytics{}, fmt.Errorf("staff task activity: %w", err)
 	}
