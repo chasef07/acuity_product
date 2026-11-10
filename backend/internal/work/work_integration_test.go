@@ -354,6 +354,215 @@ func TestNewTaskAbsorbsTheCallersOpenMissedCall(t *testing.T) {
 	}
 }
 
+func TestAITaskFiledAfterItsOwnCallWasMissedAbsorbsTheRecoveryTask(t *testing.T) {
+	scenario := newRecoveryScenario(t)
+	recovery, missedCallID := scenario.miss("same-ai-call", work.RecoveryOutcomeMissedCall)
+	if recovery.Origin != work.TaskOriginMissedCall || recovery.State != work.TaskOpen {
+		t.Fatalf("missed call before any AI Task = %#v, want an open recovery Task", recovery)
+	}
+	aiTask := scenario.fileAITask("same-ai-call")
+
+	assertAbsorbed := func(step string) {
+		t.Helper()
+		closed := scenario.read(recovery.ID)
+		if closed.State != work.TaskCompleted || closed.CloseReason != work.CloseReasonNotNeeded ||
+			len(closed.Interactions) != 0 {
+			t.Fatalf("%s: recovery Task = %#v, want closed as not needed with no calls", step, closed)
+		}
+		read := scenario.read(aiTask.ID)
+		if read.State != work.TaskOpen || read.Origin != work.TaskOriginAbitaAI ||
+			len(read.Interactions) != 1 || read.Interactions[0].CallID != missedCallID {
+			t.Fatalf("%s: AI Task = %#v, want it open holding missed call %s", step, read, missedCallID)
+		}
+		scenario.assertTasks(step, 2, aiTask.ID)
+	}
+	assertAbsorbed("AI Task filed")
+
+	replayed := scenario.ensureRecovery(missedCallID, "same-ai-call", work.RecoveryOutcomeVoicemail)
+	if replayed.ID != aiTask.ID {
+		t.Fatalf("replayed voicemail went to Task %s, want AI Task %s", replayed.ID, aiTask.ID)
+	}
+	assertAbsorbed("voicemail replayed")
+}
+
+func TestMissedHandoffAfterItsAITaskWasCompletedGetsANewRecoveryTask(t *testing.T) {
+	scenario := newRecoveryScenario(t)
+	aiTask := scenario.fileAITask("same-ai-call")
+	completed, err := scenario.module.CompleteTask(scenario.ctx, work.CompleteTaskCommand{
+		Identity: scenario.identity, TaskID: aiTask.ID, ExpectedVersion: aiTask.Version,
+		Reason: work.CloseReasonDone,
+	})
+	if err != nil {
+		t.Fatalf("complete AI Task: %v", err)
+	}
+
+	recovery, missedCallID := scenario.miss("same-ai-call", work.RecoveryOutcomeMissedCall)
+	if recovery.ID == aiTask.ID || recovery.Origin != work.TaskOriginMissedCall ||
+		recovery.State != work.TaskOpen {
+		t.Fatalf("missed handoff after its AI Task closed = %#v, want a new open recovery Task", recovery)
+	}
+	read := scenario.read(recovery.ID)
+	if len(read.Interactions) != 1 || read.Interactions[0].CallID != missedCallID {
+		t.Fatalf("recovery Task interactions = %#v, want missed call %s", read.Interactions, missedCallID)
+	}
+	closed := scenario.read(aiTask.ID)
+	if closed.State != work.TaskCompleted || closed.CloseReason != work.CloseReasonDone ||
+		closed.Version != completed.Version || len(closed.Interactions) != 0 {
+		t.Fatalf("completed AI Task after the missed call = %#v, want it unchanged", closed)
+	}
+	scenario.assertTasks("missed handoff", 2, recovery.ID)
+}
+
+func TestAITaskFromALaterCallAbsorbsAnEarlierCallsRecoveryTask(t *testing.T) {
+	scenario := newRecoveryScenario(t)
+	firstTask := scenario.fileAITask("call-0")
+	recovery, missedCallID := scenario.miss("call-1", work.RecoveryOutcomeMissedCall)
+	if recovery.ID == firstTask.ID || recovery.Origin != work.TaskOriginMissedCall {
+		t.Fatalf("missed call 1 = %#v, want its own recovery Task", recovery)
+	}
+	laterTask := scenario.fileAITask("call-2")
+
+	assertAbsorbed := func(step string) {
+		t.Helper()
+		closed := scenario.read(recovery.ID)
+		if closed.State != work.TaskCompleted || closed.CloseReason != work.CloseReasonNotNeeded ||
+			len(closed.Interactions) != 0 {
+			t.Fatalf("%s: call 1 recovery Task = %#v, want closed as not needed with no calls", step, closed)
+		}
+		read := scenario.read(laterTask.ID)
+		if read.State != work.TaskOpen || len(read.Interactions) != 1 ||
+			read.Interactions[0].CallID != missedCallID {
+			t.Fatalf("%s: call 2 Task = %#v, want it open holding missed call %s", step, read, missedCallID)
+		}
+		untouched := scenario.read(firstTask.ID)
+		if untouched.State != work.TaskOpen || untouched.Version != firstTask.Version ||
+			len(untouched.Interactions) != 0 {
+			t.Fatalf("%s: call 0 Task = %#v, want it open and unchanged", step, untouched)
+		}
+		scenario.assertTasks(step, 3, firstTask.ID, laterTask.ID)
+	}
+	assertAbsorbed("call 2 Task filed")
+
+	replayed := scenario.ensureRecovery(missedCallID, "call-1", work.RecoveryOutcomeVoicemail)
+	if replayed.ID != laterTask.ID {
+		t.Fatalf("replayed call 1 voicemail went to Task %s, want call 2 Task %s", replayed.ID, laterTask.ID)
+	}
+	assertAbsorbed("call 1 voicemail replayed")
+}
+
+type recoveryScenario struct {
+	t             *testing.T
+	ctx           context.Context
+	db            *testdb.DB
+	module        *work.Module
+	authorization access.Authorization
+	identity      access.Identity
+	now           time.Time
+	phone         string
+}
+
+func newRecoveryScenario(t *testing.T) *recoveryScenario {
+	t.Helper()
+	scenario := &recoveryScenario{
+		t: t, ctx: context.Background(), db: testdb.Open(t),
+		now:   time.Date(2026, time.October, 14, 9, 0, 0, 0, time.UTC),
+		phone: "+15555550100",
+	}
+	clock := func() time.Time { return scenario.now }
+	accessModule := access.New(scenario.db.As(testdb.Portal), clock)
+	scenario.authorization, scenario.identity = provisionStaff(
+		t, scenario.db.Owner, accessModule, scenario.now,
+	)
+	scenario.module = work.New(scenario.db.As(testdb.Portal), accessModule, clock)
+	return scenario
+}
+
+func (scenario *recoveryScenario) fileAITask(sourceCallID string) work.Task {
+	scenario.t.Helper()
+	scenario.now = scenario.now.Add(time.Minute)
+	task, _, err := scenario.module.CreateAITask(scenario.ctx, work.CreateAITaskCommand{
+		Service: access.ServiceIdentity{
+			Subject: "abita-synthetic", PracticeID: scenario.authorization.Practice.ID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+		},
+		OfficeKey: "spring-hill", OfficePhone: "+17275919997", SourceCallID: sourceCallID,
+		IdempotencyKey: "task-" + sourceCallID, Phone: scenario.phone,
+		Summary:  "Caller needs a refill.",
+		Message:  "Caller asked the office to refill eye drops on " + sourceCallID + ".",
+		Category: work.TaskCategoryMedication, Urgency: work.TaskUrgencyNormal,
+	})
+	if err != nil {
+		scenario.t.Fatalf("file AI Task for %s: %v", sourceCallID, err)
+	}
+	return task
+}
+
+func (scenario *recoveryScenario) miss(
+	sourceCallID string,
+	outcome work.RecoveryOutcome,
+) (work.Task, string) {
+	scenario.t.Helper()
+	scenario.now = scenario.now.Add(time.Minute)
+	callID := insertCallAt(
+		scenario.t, scenario.db.Owner, scenario.authorization,
+		scenario.authorization.Locations[0].ID, scenario.phone, "Missed "+sourceCallID, scenario.now,
+	)
+	return scenario.ensureRecovery(callID, sourceCallID, outcome), callID
+}
+
+func (scenario *recoveryScenario) ensureRecovery(
+	callID string,
+	sourceCallID string,
+	outcome work.RecoveryOutcome,
+) work.Task {
+	scenario.t.Helper()
+	tx, err := scenario.db.As(testdb.Worker).Begin(scenario.ctx)
+	if err != nil {
+		scenario.t.Fatalf("begin recovery transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(scenario.ctx) }()
+	task, err := scenario.module.EnsureRecoveryTask(scenario.ctx, tx, work.EnsureRecoveryTaskCommand{
+		CallID: callID, SourceCallID: sourceCallID,
+		PracticeID: scenario.authorization.Practice.ID,
+		LocationID: scenario.authorization.Locations[0].ID,
+		Phone:      scenario.phone, Outcome: outcome, OccurredAt: scenario.now,
+	})
+	if err != nil {
+		scenario.t.Fatalf("ensure recovery Task: %v", err)
+	}
+	if err := tx.Commit(scenario.ctx); err != nil {
+		scenario.t.Fatalf("commit recovery Task: %v", err)
+	}
+	return task
+}
+
+func (scenario *recoveryScenario) read(taskID string) work.Task {
+	scenario.t.Helper()
+	task, err := scenario.module.ReadTask(scenario.ctx, scenario.identity, taskID)
+	if err != nil {
+		scenario.t.Fatalf("read Task %s: %v", taskID, err)
+	}
+	return task
+}
+
+func (scenario *recoveryScenario) assertTasks(step string, total int, open ...string) {
+	scenario.t.Helper()
+	var gotTotal int
+	var gotOpen []string
+	if err := scenario.db.Owner.QueryRow(scenario.ctx, `
+		SELECT count(*),
+			COALESCE(array_agg(id::text ORDER BY created_at) FILTER (WHERE state = 'OPEN'), '{}')
+		FROM work_tasks
+	`).Scan(&gotTotal, &gotOpen); err != nil {
+		scenario.t.Fatal(err)
+	}
+	if gotTotal != total || strings.Join(gotOpen, ",") != strings.Join(open, ",") {
+		scenario.t.Fatalf("%s: %d Tasks with open %v; want %d with open %v",
+			step, gotTotal, gotOpen, total, open)
+	}
+}
+
 func assertTaskAcknowledgementIntentCount(
 	t *testing.T,
 	pool *pgxpool.Pool,
