@@ -162,7 +162,7 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	}
 }
 
-func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
+func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	now := time.Date(2026, time.October, 14, 9, 0, 0, 0, time.UTC)
@@ -172,38 +172,18 @@ func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
 	ctx := context.Background()
 	locationID := authorization.Locations[0].ID
 	phone := "+15555550100"
-	createAITask := func(sourceCallID string) work.Task {
-		t.Helper()
-		task, _, err := module.CreateAITask(ctx, work.CreateAITaskCommand{
-			Service: access.ServiceIdentity{
-				Subject:       "abita-synthetic",
-				PracticeID:    authorization.Practice.ID,
-				LocationScope: access.LocationScopeAll,
-				Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
-			},
-			OfficeKey:      "spring-hill",
-			OfficePhone:    "+17275919997",
-			SourceCallID:   sourceCallID,
-			IdempotencyKey: "task-" + sourceCallID,
-			Phone:          phone,
-			Summary:        "Caller needs a refill.",
-			Message:        "Caller asked the office to refill eye drops.",
-			Category:       work.TaskCategoryMedication,
-			Urgency:        work.TaskUrgencyNormal,
-		})
-		if err != nil {
-			t.Fatalf("create AI Task: %v", err)
-		}
-		return task
-	}
-	ensureRecovery := func(command work.EnsureRecoveryTaskCommand) work.Task {
+	ensureRecovery := func(callID string, outcome work.RecoveryOutcome) work.Task {
 		t.Helper()
 		tx, err := db.As(testdb.Worker).Begin(ctx)
 		if err != nil {
 			t.Fatalf("begin recovery transaction: %v", err)
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
-		task, err := module.EnsureRecoveryTask(ctx, tx, command)
+		task, err := module.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
+			CallID:     callID,
+			PracticeID: authorization.Practice.ID, LocationID: locationID,
+			Phone: phone, Outcome: outcome, OccurredAt: now,
+		})
 		if err != nil {
 			t.Fatalf("ensure recovery Task: %v", err)
 		}
@@ -212,21 +192,61 @@ func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
 		}
 		return task
 	}
+	assertAITaskUntouched := func(aiTask work.Task) {
+		t.Helper()
+		read, err := module.ReadTask(ctx, identity, aiTask.ID)
+		if err != nil || read.State != work.TaskOpen || read.Version != aiTask.Version ||
+			len(read.Interactions) != 0 {
+			t.Fatalf("AI Task after the missed call = %#v, %v; want it open and unchanged", read, err)
+		}
+	}
 
-	aiTask := createAITask("earlier-ai-call")
-	handoffCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill", now)
-	attached := ensureRecovery(work.EnsureRecoveryTaskCommand{
-		CallID:     handoffCallID,
-		PracticeID: authorization.Practice.ID, LocationID: locationID,
-		Phone: phone, Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: now,
+	aiTask, _, err := module.CreateAITask(ctx, work.CreateAITaskCommand{
+		Service: access.ServiceIdentity{
+			Subject:       "abita-synthetic",
+			PracticeID:    authorization.Practice.ID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+		},
+		OfficeKey:      "spring-hill",
+		OfficePhone:    "+17275919997",
+		SourceCallID:   "earlier-ai-call",
+		IdempotencyKey: "task-earlier-ai-call",
+		Phone:          phone,
+		Summary:        "Caller needs a refill.",
+		Message:        "Caller asked the office to refill eye drops.",
+		Category:       work.TaskCategoryMedication,
+		Urgency:        work.TaskUrgencyNormal,
 	})
-	if attached.ID != aiTask.ID || attached.Origin != work.TaskOriginAbitaAI || attached.State != work.TaskOpen {
-		t.Fatalf("voicemail after AI Task = %#v, want AI Task %s", attached, aiTask.ID)
+	if err != nil {
+		t.Fatalf("create AI Task: %v", err)
 	}
-	read, err := module.ReadTask(ctx, identity, aiTask.ID)
-	if err != nil || len(read.Interactions) != 1 || read.Interactions[0].CallID != handoffCallID {
-		t.Fatalf("AI Task interactions = %#v, %v", read.Interactions, err)
+
+	now = now.Add(time.Hour)
+	missedCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill", now)
+	recovery := ensureRecovery(missedCallID, work.RecoveryOutcomeMissedCall)
+	if recovery.ID == aiTask.ID || recovery.Origin != work.TaskOriginMissedCall ||
+		recovery.State != work.TaskOpen {
+		t.Fatalf("missed call after an open AI Task = %#v, want its own recovery Task", recovery)
 	}
+	assertAITaskUntouched(aiTask)
+	read, err := module.ReadTask(ctx, identity, recovery.ID)
+	if err != nil || len(read.Interactions) != 1 || read.Interactions[0].CallID != missedCallID {
+		t.Fatalf("recovery Task interactions = %#v, %v; want the missed call", read.Interactions, err)
+	}
+
+	replayed := ensureRecovery(missedCallID, work.RecoveryOutcomeMissedCall)
+	if replayed.ID != recovery.ID || replayed.Version != recovery.Version {
+		t.Fatalf("replayed missed call = %#v, want unchanged %#v", replayed, recovery)
+	}
+
+	now = now.Add(time.Hour)
+	voicemailCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill again", now)
+	joined := ensureRecovery(voicemailCallID, work.RecoveryOutcomeVoicemail)
+	if joined.ID != recovery.ID || joined.Origin != work.TaskOriginVoicemail {
+		t.Fatalf("second missed call = %#v, want it joined to recovery Task %s", joined, recovery.ID)
+	}
+	assertAITaskUntouched(aiTask)
 	var recoveryTasks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM work_tasks
@@ -234,42 +254,8 @@ func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
 	`).Scan(&recoveryTasks); err != nil {
 		t.Fatal(err)
 	}
-	if recoveryTasks != 0 {
-		t.Fatalf("recovery Tasks = %d, want 0 while the caller has an open Task", recoveryTasks)
-	}
-	replayed := ensureRecovery(work.EnsureRecoveryTaskCommand{
-		CallID:     handoffCallID,
-		PracticeID: authorization.Practice.ID, LocationID: locationID,
-		Phone: phone, Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: now,
-	})
-	if replayed.ID != aiTask.ID || replayed.Origin != work.TaskOriginAbitaAI ||
-		replayed.Title != aiTask.Title || replayed.Version != attached.Version {
-		t.Fatalf("replayed voicemail changed the AI Task: %#v, attached %#v", replayed, attached)
-	}
-	read, err = module.ReadTask(ctx, identity, aiTask.ID)
-	if err != nil || len(read.Interactions) != 1 {
-		t.Fatalf("replay duplicated interactions: %#v, %v", read.Interactions, err)
-	}
-
-	now = now.Add(time.Hour)
-	laterCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill again", now)
-	completedAITask, err := module.ReadTask(ctx, identity, aiTask.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
-		Reason:   work.CloseReasonDone,
-		Identity: identity, TaskID: completedAITask.ID, ExpectedVersion: completedAITask.Version,
-	}); err != nil {
-		t.Fatalf("complete AI Task: %v", err)
-	}
-	recovery := ensureRecovery(work.EnsureRecoveryTaskCommand{
-		CallID:     laterCallID,
-		PracticeID: authorization.Practice.ID, LocationID: locationID,
-		Phone: phone, Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now,
-	})
-	if recovery.Origin != work.TaskOriginMissedCall || recovery.ID == completedAITask.ID {
-		t.Fatalf("missed call after completed AI Task = %#v, want a new recovery Task", recovery)
+	if recoveryTasks != 1 {
+		t.Fatalf("recovery Tasks = %d, want 1 for the caller", recoveryTasks)
 	}
 }
 
