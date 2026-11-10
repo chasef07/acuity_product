@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.5.0](https://github.com/chasef07/acuity_product/compare/v3.4.0...v3.5.0) (2026-11-10)
+
+
+### Features
+
+* **deploy:** deploy every verified merge to staging before production ([#636](https://github.com/chasef07/acuity_product/issues/636)) ([378775a](https://github.com/chasef07/acuity_product/commit/378775a6470ac59924050a69cbcbea06733da5b4))
+* **deploy:** keep production URLs and people out of a staging release ([#632](https://github.com/chasef07/acuity_product/issues/632)) ([f13b3c7](https://github.com/chasef07/acuity_product/commit/f13b3c7f48286f766146b13cca7484b60b154c9d))
+
 ## [3.4.0](https://github.com/chasef07/acuity_product/compare/v3.3.2...v3.4.0) (2026-11-10)
 
 
