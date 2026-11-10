@@ -130,6 +130,7 @@ test("an AI call without appointment actions stays call-first", async ({
     .getByRole("article")
     .filter({ hasText: outboundText })
   await expect(outboundMessage.getByText("Sent", { exact: true })).toBeVisible()
+  await expect(outboundMessage.locator('[data-slot="message-sender"]')).toContainText(/^messaging@abita\.test · \d/)
 
   const inboundText = "Perfect, thank you!"
   await sendInbound(page, "messaging-no-appointment-inbound", inboundText, "+17275550187")
@@ -154,6 +155,8 @@ test("an AI call without appointment actions stays call-first", async ({
   await callRow.click()
   await expect(callRow).toHaveAttribute("aria-expanded", "true")
   await expect(linkedTask).toBeVisible()
+  await expect(callItem).toContainText('AI took a message: "Confirm office paperwork"')
+  await expect(callItem).not.toContainText("transferred")
   await expect(callItem).toContainText("Confirm office paperwork · Open")
   await activity.getByRole("button", { name: "View AI call", exact: true }).click()
   await expect(callRow).toHaveAttribute("aria-current", "true")
