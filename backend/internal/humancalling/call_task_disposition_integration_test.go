@@ -152,6 +152,14 @@ func TestTaskCallCompletionRecordsStaffActor(t *testing.T) {
 		task.CompletedBy.Kind != access.ActorHuman || task.CompletedBy.Email != current.fixture.identity.Email {
 		t.Fatalf("Call completion = %#v", task)
 	}
+	var closingCall string
+	if err := current.fixture.pool.QueryRow(ctx, `
+		SELECT COALESCE(closed_via_call_id::text, '') FROM work_tasks WHERE id = $1
+	`, task.ID).Scan(&closingCall); err != nil ||
+		task.CloseReason != work.CloseReasonDone || closingCall != current.call.ID {
+		t.Fatalf("Call completion stored reason %q and closing Call %q, %v; want DONE and %q",
+			task.CloseReason, closingCall, err, current.call.ID)
+	}
 }
 
 func TestDispositionReplayReturnsTheRecordedOutcome(t *testing.T) {

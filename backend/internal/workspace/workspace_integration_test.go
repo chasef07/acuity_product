@@ -193,6 +193,26 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 	if !reflect.DeepEqual(completedRead, workRead) {
 		t.Fatalf("Workspace Task projection drifted from Work:\n%#v\n%#v", completedRead, workRead)
 	}
+
+	if _, err := db.Owner.Exec(context.Background(), `UPDATE work_tasks SET close_reason=NULL WHERE id=$1`, completed.ID); err != nil {
+		t.Fatal(err)
+	}
+	withoutReason, err := reads.ReadTask(context.Background(), identity, completed.ID)
+	if err != nil || withoutReason.State != work.TaskCompleted || withoutReason.CloseReason != "" {
+		t.Fatalf("completed Workspace Task with no stored reason = %#v, %v", withoutReason, err)
+	}
+	if _, err := db.Owner.Exec(context.Background(), `
+		UPDATE work_tasks
+		SET state='OPEN', completed_by_kind=NULL, completed_by_subject=NULL, completed_by_email=NULL,
+			completed_at=NULL, close_reason='NOT_NEEDED', version=version+1
+		WHERE id=$1
+	`, completed.ID); err != nil {
+		t.Fatal(err)
+	}
+	keptReason, err := reads.ReadTask(context.Background(), identity, completed.ID)
+	if err != nil || keptReason.State != work.TaskOpen || keptReason.CloseReason != "" {
+		t.Fatalf("open Workspace Task that kept a reason = %#v, %v", keptReason, err)
+	}
 }
 
 type workspaceQueryTracer struct {

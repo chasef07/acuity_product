@@ -108,6 +108,10 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	insert(true)
 	apply(r, "FAILED")
 	assertOpen(1)
+	var keptReason int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM work_tasks WHERE state='OPEN' AND (close_reason IS NOT NULL OR closed_via_call_id IS NOT NULL)`).Scan(&keptReason); err != nil || keptReason != 0 {
+		t.Fatalf("Tasks reopened by a failed delivery that kept a close reason = %d, %v", keptReason, err)
+	}
 	tx, err := db.As(testdb.Worker).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

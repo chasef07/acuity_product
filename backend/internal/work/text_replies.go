@@ -73,7 +73,7 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 		if completedVersion != nil || task.State != TaskOpen || task.Version != version {
 			return nil
 		}
-		_, err = tx.Exec(ctx, `UPDATE work_tasks SET state='COMPLETED',completed_at=$4,completed_by_kind='HUMAN',completed_by_subject=$2,completed_by_email=$3,close_reason=$5,version=version+1,updated_at=$4 WHERE id=$1`, taskID, subject, email, now, CloseReasonDone)
+		_, err = tx.Exec(ctx, `UPDATE work_tasks SET state='COMPLETED',completed_at=$4,completed_by_kind='HUMAN',completed_by_subject=$2,completed_by_email=$3,close_reason=$5,closed_via_call_id=NULL,version=version+1,updated_at=$4 WHERE id=$1`, taskID, subject, email, now, CloseReasonDone)
 		details["closeReason"] = CloseReasonDone
 		if err == nil {
 			_, err = tx.Exec(ctx, `UPDATE work_text_replies SET completed_version=$2 WHERE message_id=$1`, messageID, version+1)

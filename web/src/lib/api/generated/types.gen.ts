@@ -1926,7 +1926,7 @@ export type ChangeTaskCategoryRequest = {
 };
 
 export type CompleteTaskGroupRequest = {
-    reason: StaffTaskCloseReason;
+    reason?: StaffTaskCloseReason;
     members: Array<{
         id: string;
         expectedVersion: number;
@@ -1944,7 +1944,7 @@ export type TaskTransitionRequest = {
 
 export type CompleteTaskRequest = {
     expectedVersion: number;
-    reason: StaffTaskCloseReason;
+    reason?: StaffTaskCloseReason;
 };
 
 export type MessageDirection = 'INBOUND' | 'OUTBOUND';

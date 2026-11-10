@@ -94,7 +94,7 @@ func (m *Module) CompleteTaskGroup(ctx context.Context, command CompleteTaskGrou
 		}
 	}
 	for _, task := range tasks {
-		completed, err := m.completeLockedTask(ctx, tx, auth, task, command.Reason)
+		completed, err := m.completeLockedTask(ctx, tx, auth, task, command.Reason, "")
 		if err != nil {
 			return Task{}, err
 		}

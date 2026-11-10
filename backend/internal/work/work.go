@@ -848,6 +848,7 @@ func (m *Module) absorbOpenRecoveryTasks(
 				completed_by_email = NULL,
 				completed_at = $5,
 				close_reason = $6::jsonb ->> 'TASK_AUTO_COMPLETED_DUPLICATE',
+				closed_via_call_id = NULL,
 				version = task.version + 1,
 				updated_at = GREATEST(task.updated_at, $5)
 			WHERE task.practice_id = $1
@@ -1196,9 +1197,11 @@ func (m *Module) ApplyCallTaskDisposition(
 	authorization access.Authorization,
 	taskID string,
 	complete bool,
+	callID string,
 	callPlacedAt time.Time,
 ) (Task, error) {
-	if tx == nil || m.access == nil || strings.TrimSpace(taskID) == "" || callPlacedAt.IsZero() {
+	if tx == nil || m.access == nil || strings.TrimSpace(taskID) == "" ||
+		strings.TrimSpace(callID) == "" || callPlacedAt.IsZero() {
 		return Task{}, ErrInvalidInput
 	}
 	task, err := loadTask(ctx, tx, taskID, true)
@@ -1223,7 +1226,7 @@ func (m *Module) ApplyCallTaskDisposition(
 	if newerEvidence {
 		return task, ErrConflict
 	}
-	task, err = m.completeLockedTask(ctx, tx, authorization, task, CloseReasonDone)
+	task, err = m.completeLockedTask(ctx, tx, authorization, task, CloseReasonDone, callID)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1512,7 +1515,7 @@ func (m *Module) CompleteTask(
 	if task.Version != command.ExpectedVersion {
 		return task, ErrConflict
 	}
-	task, err = m.completeLockedTask(ctx, tx, authorization, task, command.Reason)
+	task, err = m.completeLockedTask(ctx, tx, authorization, task, command.Reason, "")
 	if err != nil {
 		return Task{}, err
 	}
@@ -1988,7 +1991,7 @@ func ScanTask(row pgx.Row, prefix []any, suffix ...any) (Task, error) {
 		createdEmail,
 	)
 	setCompletionActor(&task, completedSubject, completedEmail)
-	if closeReason != nil {
+	if closeReason != nil && task.State == TaskCompleted {
 		task.CloseReason = CloseReason(*closeReason)
 	}
 	return task, nil
@@ -2163,7 +2166,7 @@ func nullIfEmpty(value string) any {
 	return value
 }
 
-func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorization access.Authorization, task Task, reason CloseReason) (Task, error) {
+func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorization access.Authorization, task Task, reason CloseReason, closingCallID string) (Task, error) {
 	actor := authorization.Actor
 	completedAt := m.now()
 	if err := tx.QueryRow(ctx, `
@@ -2175,11 +2178,12 @@ func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorizatio
 			completed_by_email = $3,
 			completed_at = $4,
 			close_reason = $5,
+			closed_via_call_id = $6,
 			version = version + 1,
 			updated_at = $4
 		WHERE id = $1
 		RETURNING version
-	`, task.ID, actor.Subject, actor.Email, completedAt, reason).Scan(&task.Version); err != nil {
+	`, task.ID, actor.Subject, actor.Email, completedAt, reason, nullIfEmpty(closingCallID)).Scan(&task.Version); err != nil {
 		return Task{}, fmt.Errorf("complete Task: %w", err)
 	}
 	task.State = TaskCompleted

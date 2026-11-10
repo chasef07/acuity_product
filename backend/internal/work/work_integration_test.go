@@ -1909,6 +1909,15 @@ func TestCompleteTaskRecordsWhyItClosedAndReopenClearsIt(t *testing.T) {
 		if storedReason, recorded := stored(task.ID); storedReason != string(reason) || recorded != string(reason) {
 			t.Fatalf("stored reason %q, Activity reason %q, want %s", storedReason, recorded, reason)
 		}
+		replayed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
+			Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version, Reason: work.CloseReasonDone,
+		})
+		if err != nil || replayed.CloseReason != reason || replayed.Version != completed.Version {
+			t.Fatalf("completing a Task already closed as %s = %#v, %v", reason, replayed, err)
+		}
+		if storedReason, recorded := stored(task.ID); storedReason != string(reason) || recorded != string(reason) {
+			t.Fatalf("a replayed completion stored reason %q and Activity reason %q, want %s", storedReason, recorded, reason)
+		}
 		reopened, err := module.ReopenTask(ctx, work.ReopenTaskCommand{
 			Identity: identity, TaskID: task.ID, ExpectedVersion: completed.Version,
 		})
@@ -1947,5 +1956,124 @@ func TestCompleteTaskRecordsWhyItClosedAndReopenClearsIt(t *testing.T) {
 	})
 	if err != nil || group.CloseReason != work.CloseReasonUnreachable {
 		t.Fatalf("group completion = %#v, %v", group, err)
+	}
+}
+
+func TestRecoveryResolutionRecordsWhyAndWhichCallClosedTheTask(t *testing.T) {
+	db := testdb.Open(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
+	location := authorization.Locations[0].ID
+	resolvedAt := now.Add(2 * time.Minute)
+
+	for index, kind := range []work.RecoveryResolutionKind{
+		work.RecoveryResolutionBooking,
+		work.RecoveryResolutionCallbackAttempt,
+		work.RecoveryResolutionInboundCall,
+	} {
+		phone := fmt.Sprintf("+1555555016%d", index)
+		tx, err := db.As(testdb.Worker).Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task, err := module.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
+			CallID:     insertCallAt(t, db.Owner, authorization, location, phone, "Synthetic caller", now),
+			PracticeID: authorization.Practice.ID, LocationID: location, Phone: phone,
+			CallerName: "Synthetic caller", Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now,
+		})
+		if err != nil {
+			t.Fatalf("ensure recovery Task: %v", err)
+		}
+		command := work.ResolveRecoveryTasksCommand{
+			PracticeID: authorization.Practice.ID, Phone: phone, OccurredAt: resolvedAt,
+			Kind: kind, SourceID: "synthetic-booking",
+		}
+		wantCall := ""
+		if kind != work.RecoveryResolutionBooking {
+			wantCall = insertCallAt(t, db.Owner, authorization, location, phone, "Synthetic caller", resolvedAt)
+			command.SourceID = wantCall
+		}
+		if kind == work.RecoveryResolutionCallbackAttempt {
+			command.ActorSubject = identity.Subject
+		}
+		if closed, err := module.ResolveRecoveryTasks(ctx, tx, command); err != nil || closed != 1 {
+			t.Fatalf("%s resolution closed %d Tasks, %v", kind, closed, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var reason, closingCall string
+		if err := db.Owner.QueryRow(ctx, `
+			SELECT COALESCE(close_reason, ''), COALESCE(closed_via_call_id::text, '')
+			FROM work_tasks WHERE id = $1 AND state = 'COMPLETED'
+		`, task.ID).Scan(&reason, &closingCall); err != nil {
+			t.Fatalf("read Task closed by %s: %v", kind, err)
+		}
+		if reason != string(work.CloseReasonDone) || closingCall != wantCall {
+			t.Fatalf("%s close stored reason %q and Call %q, want DONE and %q", kind, reason, closingCall, wantCall)
+		}
+	}
+}
+
+func TestTasksWrittenByThePreviousReleaseReadAndTransition(t *testing.T) {
+	db := testdb.Open(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC)
+	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
+	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
+	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
+	location := authorization.Locations[0].ID
+
+	completedWithoutReason := createTask(t, db, module, authorization, location, "+15555550170", "Confirm surgery instructions", now)
+	completed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
+		Identity: identity, TaskID: completedWithoutReason.ID,
+		ExpectedVersion: completedWithoutReason.Version, Reason: work.CloseReasonDone,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openWithReason := createTask(t, db, module, authorization, location, "+15555550171", "Confirm surgery instructions", now)
+	staleCall := insertCallAt(t, db.Owner, authorization, location, "+15555550171", "Synthetic caller", now)
+	if _, err := db.Owner.Exec(ctx, `
+		UPDATE work_tasks SET close_reason = NULL WHERE id = $1;
+	`, completed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Owner.Exec(ctx, `
+		UPDATE work_tasks SET close_reason = 'NOT_NEEDED', closed_via_call_id = $2 WHERE id = $1
+	`, openWithReason.ID, staleCall); err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := module.ReadTask(ctx, identity, completed.ID)
+	if err != nil || read.State != work.TaskCompleted || read.CloseReason != "" || read.CompletedBy == nil {
+		t.Fatalf("completed Task with no stored reason = %#v, %v", read, err)
+	}
+	if reopened, err := module.ReopenTask(ctx, work.ReopenTaskCommand{
+		Identity: identity, TaskID: completed.ID, ExpectedVersion: completed.Version,
+	}); err != nil || reopened.State != work.TaskOpen {
+		t.Fatalf("reopen a completed Task with no stored reason = %#v, %v", reopened, err)
+	}
+
+	read, err = module.ReadTask(ctx, identity, openWithReason.ID)
+	if err != nil || read.State != work.TaskOpen || read.CloseReason != "" {
+		t.Fatalf("open Task that kept a reason = %#v, %v", read, err)
+	}
+	closed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
+		Identity: identity, TaskID: openWithReason.ID,
+		ExpectedVersion: openWithReason.Version, Reason: work.CloseReasonUnreachable,
+	})
+	if err != nil || closed.CloseReason != work.CloseReasonUnreachable {
+		t.Fatalf("complete an open Task that kept a reason = %#v, %v", closed, err)
+	}
+	var reason, closingCall string
+	if err := db.Owner.QueryRow(ctx, `
+		SELECT close_reason, COALESCE(closed_via_call_id::text, '') FROM work_tasks WHERE id = $1
+	`, openWithReason.ID).Scan(&reason, &closingCall); err != nil ||
+		reason != string(work.CloseReasonUnreachable) || closingCall != "" {
+		t.Fatalf("stored reason %q and closing Call %q, %v; want UNREACHABLE and no Call", reason, closingCall, err)
 	}
 }

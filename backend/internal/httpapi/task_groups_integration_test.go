@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -208,8 +209,8 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 		return task
 	}
 	single := moved.Id.String() + "/complete"
-	complete(single, map[string]any{"expectedVersion": moved.Version}, http.StatusBadRequest)
 	complete(single, map[string]any{"expectedVersion": moved.Version, "reason": "EXPIRED"}, http.StatusBadRequest)
+	complete(single, map[string]any{"expectedVersion": moved.Version, "reason": "ABANDONED"}, http.StatusBadRequest)
 	var group api.Task
 	for _, task := range refreshed.Items {
 		if task.Category != nil && *task.Category == "optical" {
@@ -224,20 +225,65 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 		}
 	}
 	groupPath := group.Id.String() + "/complete-group"
-	complete(groupPath, map[string]any{"members": members}, http.StatusBadRequest)
 	complete(groupPath, map[string]any{"members": members, "reason": "EXPIRED"}, http.StatusBadRequest)
+	complete(groupPath, map[string]any{"members": members, "reason": "ABANDONED"}, http.StatusBadRequest)
 	if stillOpen := query(); stillOpen.Counts.Tasks != len(payloads) {
-		t.Fatalf("a completion without a staff reason closed work: %d open, want %d", stillOpen.Counts.Tasks, len(payloads))
+		t.Fatalf("a completion with a reason staff may not give closed work: %d open, want %d", stillOpen.Counts.Tasks, len(payloads))
 	}
-	closed := complete(single, map[string]any{"expectedVersion": moved.Version, "reason": "UNREACHABLE"}, http.StatusOK)
-	if closed.CloseReason == nil || *closed.CloseReason != api.TaskCloseReasonUNREACHABLE {
-		t.Fatalf("completed Task close reason = %v, want UNREACHABLE", closed.CloseReason)
+	wantReason := func(what string, task api.Task, want api.TaskCloseReason) {
+		t.Helper()
+		if task.CloseReason == nil || *task.CloseReason != want {
+			t.Fatalf("%s close reason = %v, want %s", what, task.CloseReason, want)
+		}
 	}
-	closedGroup := complete(groupPath, map[string]any{"members": members, "reason": "NOT_NEEDED"}, http.StatusOK)
-	if closedGroup.CloseReason == nil || *closedGroup.CloseReason != api.TaskCloseReasonNOTNEEDED {
-		t.Fatalf("completed group close reason = %v, want NOT_NEEDED", closedGroup.CloseReason)
+	closed := complete(single, map[string]any{"expectedVersion": moved.Version}, http.StatusOK)
+	wantReason("a completion that names no reason", closed, api.TaskCloseReasonDONE)
+	replayed := complete(single, map[string]any{"expectedVersion": moved.Version, "reason": "NOT_NEEDED"}, http.StatusOK)
+	wantReason("a replayed completion", replayed, api.TaskCloseReasonDONE)
+	if replayed.Version != closed.Version {
+		t.Fatalf("a replayed completion moved the Task from version %d to %d", closed.Version, replayed.Version)
 	}
+	reopened := complete(moved.Id.String()+"/reopen", map[string]any{"expectedVersion": closed.Version}, http.StatusOK)
+	if reopened.State != api.TaskStateOPEN || reopened.CloseReason != nil {
+		t.Fatalf("reopened Task = %s with close reason %v", reopened.State, reopened.CloseReason)
+	}
+	wantReason("a completion as unreachable", complete(single, map[string]any{"expectedVersion": reopened.Version, "reason": "UNREACHABLE"}, http.StatusOK), api.TaskCloseReasonUNREACHABLE)
+	wantReason("a group completion that names no reason", complete(groupPath, map[string]any{"members": members}, http.StatusOK), api.TaskCloseReasonDONE)
 	if remaining := query(); remaining.Counts.Tasks != len(payloads)-1-len(members) {
 		t.Fatalf("open Tasks after both completions = %d, want %d", remaining.Counts.Tasks, len(payloads)-1-len(members))
+	}
+
+	readRaw := func() (api.Task, string) {
+		t.Helper()
+		response := request(t, server.Client(), http.MethodGet, server.URL+"/v1/tasks/"+moved.Id.String(), "staff-token", nil)
+		defer response.Body.Close()
+		raw := readBody(t, response)
+		var task api.Task
+		if err := json.Unmarshal([]byte(raw), &task); err != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("read Task: %d %s, %v", response.StatusCode, raw, err)
+		}
+		return task, raw
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE work_tasks SET close_reason=NULL WHERE id=$1`, moved.Id); err != nil {
+		t.Fatal(err)
+	}
+	if task, raw := readRaw(); task.State != api.TaskStateCOMPLETED || task.CompletedBy == nil || strings.Contains(raw, "closeReason") {
+		t.Fatalf("a completed Task with no stored reason reads %s", raw)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE work_tasks
+		SET state='OPEN', completed_by_kind=NULL, completed_by_subject=NULL, completed_by_email=NULL,
+			completed_at=NULL, close_reason='UNREACHABLE', version=version+1
+		WHERE id=$1
+	`, moved.Id); err != nil {
+		t.Fatal(err)
+	}
+	if task, raw := readRaw(); task.State != api.TaskStateOPEN || strings.Contains(raw, "closeReason") {
+		t.Fatalf("an open Task that kept a reason reads %s", raw)
+	}
+	for _, task := range query().Items {
+		if task.CloseReason != nil {
+			t.Fatalf("open Task %s lists close reason %s", task.Id, *task.CloseReason)
+		}
 	}
 }

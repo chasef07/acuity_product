@@ -1507,7 +1507,7 @@ func (server *Server) CompleteTask(
 		Identity:        identity,
 		TaskID:          taskID.String(),
 		ExpectedVersion: body.ExpectedVersion,
-		Reason:          work.CloseReason(body.Reason),
+		Reason:          staffCloseReason(body.Reason),
 	})
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -1577,7 +1577,7 @@ func (server *Server) CompleteTaskGroup(
 		Identity: identity,
 		TaskID:   taskID.String(),
 		Members:  members,
-		Reason:   work.CloseReason(body.Reason),
+		Reason:   staffCloseReason(body.Reason),
 	})
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -2767,6 +2767,13 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		}
 	}
 	return response, nil
+}
+
+func staffCloseReason(reason *api.StaffTaskCloseReason) work.CloseReason {
+	if reason == nil {
+		return work.CloseReasonDone
+	}
+	return work.CloseReason(*reason)
 }
 
 func taskResponse(task work.Task) (api.Task, error) {

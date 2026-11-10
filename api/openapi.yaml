@@ -3811,7 +3811,7 @@ components:
           type: string
           format: date-time
         closeReason:
-          description: Present exactly when the Task is completed.
+          description: Why a completed Task closed. Never present on an open Task. Absent on a Task completed by a release that did not record it.
           $ref: "#/components/schemas/TaskCloseReason"
         callbackCompletion:
           $ref: "#/components/schemas/TaskCallbackCompletion"
@@ -5743,9 +5743,10 @@ components:
     CompleteTaskGroupRequest:
       type: object
       additionalProperties: false
-      required: [members, reason]
+      required: [members]
       properties:
         reason:
+          description: Why the Tasks closed. DONE when omitted.
           $ref: "#/components/schemas/StaffTaskCloseReason"
         members:
           type: array
@@ -5787,13 +5788,14 @@ components:
     CompleteTaskRequest:
       type: object
       additionalProperties: false
-      required: [expectedVersion, reason]
+      required: [expectedVersion]
       properties:
         expectedVersion:
           type: integer
           format: int64
           minimum: 1
         reason:
+          description: Why the Task closed. DONE when omitted.
           $ref: "#/components/schemas/StaffTaskCloseReason"
     MessageDirection:
       type: string
