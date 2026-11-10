@@ -334,6 +334,35 @@ func TestProductionReleaseRejectsMissingPlaybackSigningKeyBeforeCloudMutation(t 
 	}
 }
 
+func TestProductionReleaseRejectsWebBuiltForAnotherProjectBeforeCloudMutation(t *testing.T) {
+	for _, name := range []string{"PORTAL_API_URL", "REALTIME_URL"} {
+		t.Run(name, func(t *testing.T) {
+			gcloudCapture, output, err := runRelease(t,
+				name+"=https://other-project.example",
+				// Stale traffic makes the release repair it before migrating, so
+				// this proves the check runs before that first mutation.
+				"GCLOUD_STALE_TRAFFIC_SERVICE=acuity-portal-api",
+			)
+			if err == nil {
+				t.Fatalf("release accepted a web build whose %s points at another project", name)
+			}
+			if !strings.Contains(string(output), name+" must be this project's") {
+				t.Fatalf("mismatched-url error = %q", output)
+			}
+			commands := capturedGcloudCommands(t, gcloudCapture)
+			for _, mutation := range []string{
+				"run\tservices\tupdate-traffic",
+				"run\tjobs\tupdate\tacuity-migrate",
+				"run\tdeploy",
+			} {
+				if commandIndex(commands, mutation) >= 0 {
+					t.Fatalf("mismatched %s reached %q:\n%s", name, mutation, strings.Join(commands, "\n"))
+				}
+			}
+		})
+	}
+}
+
 func TestProductionReleaseRestoresStagedServiceTrafficWhenDeployFails(t *testing.T) {
 	directory := releaseDeployDirectory(t)
 	path, gcloudCapture, curlCapture := installReleaseFakes(t)
@@ -514,6 +543,8 @@ func TestProductionDeployRequiresExactReleaseVerification(t *testing.T) {
 		"_MIDDLEWARE_BASE_URL=${MIDDLEWARE_BASE_URL}",
 		"_MIDDLEWARE_API_SECRET_SECRET=${MIDDLEWARE_API_SECRET_SECRET}",
 		"url: https://acuity-web-cbuqwpsdsq-ue.a.run.app",
+		"_PORTAL_API_URL=https://acuity-portal-api-cbuqwpsdsq-ue.a.run.app",
+		"_REALTIME_URL=https://acuity-realtime-cbuqwpsdsq-ue.a.run.app",
 	} {
 		if !strings.Contains(releaseContent, required) {
 			t.Errorf("non-superseding release workflow omits %q", required)
@@ -677,6 +708,8 @@ func releaseEnvironment() []string {
 		"IMAGE_TAG=0123456789abcdef0123456789abcdef01234567",
 		"DEPLOYMENT_ID=release-1234",
 		"USABLE_DATABASE_CONNECTIONS=36",
+		"PORTAL_API_URL=https://portal.example",
+		"REALTIME_URL=https://realtime.example",
 	}
 }
 
