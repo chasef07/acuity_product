@@ -5683,6 +5683,7 @@ components:
           enum: [mine, all]
           description: >-
             Mine filters categorized follow-up by primary and backup responsibility.
+            A category nobody is responsible for at the Task's Location stays visible to everyone.
             Appointment, text, missed-call, and voicemail reviews remain shared within authorized
             Locations, regardless of category. All removes only responsibility filtering.
         kind:

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +14,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/app"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
 func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) {
@@ -562,6 +565,97 @@ func TestEveryReleaseReappliesProductionProvisioning(t *testing.T) {
 	if !strings.HasSuffix(greeting, "we will return the call promptly.") ||
 		!strings.HasSuffix(afterHours, "please call 305-741-0830.") {
 		t.Fatalf("Hollywood greetings = %q / %q", greeting, afterHours)
+	}
+}
+
+func TestEveryReleaseLoadsTheTaskResponsibilityRoster(t *testing.T) {
+	pool := testdb.Open(t).Owner
+	directory := t.TempDir()
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	release := func(output string) (work.ResponsibilityReport, string) {
+		t.Helper()
+		path := filepath.Join(directory, output)
+		if err := runMigrate(context.Background(), app.Config{
+			ProvisioningInput:     filepath.Join("..", "..", "..", "config", "production-provisioning.json"),
+			ProvisioningOutput:    path,
+			ResponsibilitiesInput: filepath.Join("..", "..", "..", "config", "task-responsibilities.json"),
+		}, pool); err != nil {
+			t.Fatalf("release %s: %v", output, err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", output, err)
+		}
+		var written struct {
+			AccessGrantCount *int                       `json:"accessGrantCount"`
+			Responsibilities *work.ResponsibilityReport `json:"responsibilities"`
+		}
+		if err := json.Unmarshal(raw, &written); err != nil {
+			t.Fatalf("decode %s: %v", output, err)
+		}
+		if written.AccessGrantCount == nil || written.Responsibilities == nil {
+			t.Fatalf("%s lost the grant count or the roster report: %s", output, raw)
+		}
+		var rows string
+		if err := pool.QueryRow(context.Background(), `
+			SELECT string_agg(concat_ws(':', location.provisioning_key, roster.account_email, roster.category, roster.role), ','
+				ORDER BY location.provisioning_key, roster.account_email, roster.category, roster.role)
+			FROM work_responsibilities roster
+			JOIN access_locations location ON location.id = roster.location_id
+		`).Scan(&rows); err != nil {
+			t.Fatalf("read roster rows: %v", err)
+		}
+		return *written.Responsibilities, rows
+	}
+
+	first, firstRows := release("first.json")
+	t.Logf("production roster report: applied=%d unmatched=%v coverageGaps=%v", first.Applied, first.Unmatched, first.CoverageGaps)
+	if first.Applied != 98 || len(first.Unmatched) != 8 || len(first.CoverageGaps) != 0 {
+		t.Fatalf("roster report = applied %d, unmatched %d, coverage gaps %d; want 98, 8, 0",
+			first.Applied, len(first.Unmatched), len(first.CoverageGaps))
+	}
+	if loaded := strings.Count(firstRows, ",") + 1; loaded != first.Applied {
+		t.Fatalf("roster rows = %d, report applied %d", loaded, first.Applied)
+	}
+	var configuredLocations int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM work_responsibility_locations`).Scan(&configuredLocations); err != nil || configuredLocations != 4 {
+		t.Fatalf("configured roster Locations = %d, %v; want 4", configuredLocations, err)
+	}
+	if !strings.Contains(logs.String(), `"msg":"migrations_applied","provisioning":true,"access_grant_count":33,"responsibilities_applied":98,"responsibilities_unmatched":8,"responsibilities_coverage_gaps":0`) {
+		t.Fatalf("release log lost the roster counts: %s", logs.String())
+	}
+
+	second, secondRows := release("second.json")
+	if !reflect.DeepEqual(second, first) || secondRows != firstRows {
+		t.Fatalf("second release changed the roster: report %#v -> %#v", first, second)
+	}
+}
+
+func TestMigrateRollsBackProvisioningWhenTheRosterNamesAnUnknownLocation(t *testing.T) {
+	pool := testdb.Open(t).Owner
+	directory := t.TempDir()
+	roster := filepath.Join(directory, "roster.json")
+	if err := os.WriteFile(roster, []byte(`{"PracticeKey":"abita-eye-group","Locations":[{"LocationKey":"closed-office","Members":[]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(directory, "provisioning-output.json")
+	err := runMigrate(context.Background(), app.Config{
+		ProvisioningInput:     filepath.Join("..", "..", "..", "config", "production-provisioning.json"),
+		ProvisioningOutput:    output,
+		ResponsibilitiesInput: roster,
+	}, pool)
+	if err == nil || !strings.Contains(err.Error(), "closed-office") {
+		t.Fatalf("release error = %v, want the unknown roster Location", err)
+	}
+	var grants int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM access_grants`).Scan(&grants); err != nil || grants != 0 {
+		t.Fatalf("Access Grants committed beside a failed roster: %d, %v", grants, err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("failed release kept its output: %v", err)
 	}
 }
 

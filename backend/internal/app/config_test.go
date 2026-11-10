@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -281,4 +282,38 @@ func clone(values map[string]string) map[string]string {
 		result[key] = value
 	}
 	return result
+}
+
+func TestLoadConfigAcceptsResponsibilitiesInputOnlyWithMigrateProvisioning(t *testing.T) {
+	migrate := map[string]string{
+		"ACUITY_RUNTIME_ROLE":         "migrate",
+		"DATABASE_URL":                "postgres://database.example/acuity",
+		"DATABASE_POOL_MAX":           "1",
+		"DATABASE_ACQUIRE_TIMEOUT_MS": "5000",
+		"PROVISIONING_INPUT":          "/etc/acuity/production-provisioning.json",
+		"PROVISIONING_OUTPUT":         "/tmp/production-provisioning-output.json",
+		"RESPONSIBILITIES_INPUT":      "/etc/acuity/task-responsibilities.json",
+	}
+	loaded, err := LoadConfig(func(name string) string { return migrate[name] })
+	if err != nil || loaded.ResponsibilitiesInput != "/etc/acuity/task-responsibilities.json" {
+		t.Fatalf("migrate roster config = %q, %v", loaded.ResponsibilitiesInput, err)
+	}
+	withoutProvisioning := map[string]string{}
+	worker := map[string]string{}
+	for name, value := range migrate {
+		withoutProvisioning[name] = value
+		worker[name] = value
+	}
+	delete(withoutProvisioning, "PROVISIONING_INPUT")
+	delete(withoutProvisioning, "PROVISIONING_OUTPUT")
+	worker["ACUITY_RUNTIME_ROLE"] = "worker"
+	for name, values := range map[string]map[string]string{
+		"without provisioning": withoutProvisioning,
+		"worker role":          worker,
+	} {
+		_, err := LoadConfig(func(name string) string { return values[name] })
+		if err == nil || !strings.Contains(err.Error(), "RESPONSIBILITIES_INPUT") {
+			t.Errorf("%s: error = %v, want RESPONSIBILITIES_INPUT rejection", name, err)
+		}
+	}
 }

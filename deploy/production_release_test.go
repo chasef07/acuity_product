@@ -38,7 +38,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		t.Fatalf("migration was not completed before service staging:\n%s", strings.Join(commands, "\n"))
 	}
 	assertCapturedCommand(t, commands, "run\tjobs\tupdate\tacuity-migrate",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,PROVISIONING_INPUT=/etc/acuity/production-provisioning.json,PROVISIONING_OUTPUT=/tmp/production-provisioning-output.json",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,PROVISIONING_INPUT=/etc/acuity/production-provisioning.json,PROVISIONING_OUTPUT=/tmp/production-provisioning-output.json,RESPONSIBILITIES_INPUT=/etc/acuity/task-responsibilities.json",
 	)
 	if strings.Contains(commands[migrationUpdate], "--remove-env-vars") {
 		t.Fatalf("release must apply production provisioning:\n%s", commands[migrationUpdate])
