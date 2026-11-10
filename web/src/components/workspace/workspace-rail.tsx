@@ -185,7 +185,7 @@ export function WorkspaceRail({
         completionError={
           completionError?.taskID === task.id ? completionError.message : ""
         }
-        onComplete={() => onIntent({ type: "complete-task", task })}
+        onComplete={() => onIntent({ type: "complete-task", task, reason: "DONE" })}
       />
     )
   }

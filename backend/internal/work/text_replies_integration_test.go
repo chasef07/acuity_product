@@ -101,9 +101,9 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	assertOpen(0)
 	apply(r, "DELIVERED")
 	assertOpen(0)
-	var actor string
-	if err := pool.QueryRow(ctx, `SELECT completed_by_email FROM work_tasks WHERE state='COMPLETED'`).Scan(&actor); err != nil || actor != identity.Email {
-		t.Fatalf("actor=%s err=%v", actor, err)
+	var actor, reason string
+	if err := pool.QueryRow(ctx, `SELECT completed_by_email,close_reason FROM work_tasks WHERE state='COMPLETED'`).Scan(&actor, &reason); err != nil || actor != identity.Email || reason != string(work.CloseReasonDone) {
+		t.Fatalf("actor=%s reason=%s err=%v", actor, reason, err)
 	}
 	insert(true)
 	apply(r, "FAILED")

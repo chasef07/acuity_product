@@ -172,12 +172,12 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		})
 	}
 
-	_, err = workModule.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: high.ID, ExpectedVersion: high.Version})
+	_, err = workModule.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: high.ID, ExpectedVersion: high.Version})
 	if err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
-	if _, err := workModule.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: normalOld.ID, ExpectedVersion: normalOld.Version}); err != nil {
+	if _, err := workModule.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: normalOld.ID, ExpectedVersion: normalOld.Version}); err != nil {
 		t.Fatal(err)
 	}
 	completedCommand := workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, State: work.TaskCompleted, Ordering: work.TaskOrderingRecent, Limit: 1}

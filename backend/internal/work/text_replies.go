@@ -43,6 +43,7 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 	actor := ActorSnapshot{Kind: "HUMAN", Subject: subject, Email: email}
 	now := m.now()
 	kind := "TASK_COMPLETED"
+	details := map[string]any{"messageId": messageID, "deliveryState": delivery}
 	if delivery == "FAILED" {
 		if completedVersion == nil || task.State != TaskCompleted || task.Version != *completedVersion {
 			return nil
@@ -61,7 +62,7 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 		if newer {
 			return nil
 		}
-		_, err = tx.Exec(ctx, `UPDATE work_tasks SET state='OPEN',completed_at=NULL,completed_by_kind=NULL,completed_by_subject=NULL,completed_by_email=NULL,version=version+1,updated_at=$2 WHERE id=$1`, taskID, now)
+		_, err = tx.Exec(ctx, `UPDATE work_tasks SET state='OPEN',completed_at=NULL,completed_by_kind=NULL,completed_by_subject=NULL,completed_by_email=NULL,close_reason=NULL,closed_via_call_id=NULL,version=version+1,updated_at=$2 WHERE id=$1`, taskID, now)
 		kind = "TASK_REOPENED"
 		actor = ActorSnapshot{Kind: "SERVICE", Subject: "text-delivery"}
 	} else {
@@ -72,7 +73,8 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 		if completedVersion != nil || task.State != TaskOpen || task.Version != version {
 			return nil
 		}
-		_, err = tx.Exec(ctx, `UPDATE work_tasks SET state='COMPLETED',completed_at=$4,completed_by_kind='HUMAN',completed_by_subject=$2,completed_by_email=$3,version=version+1,updated_at=$4 WHERE id=$1`, taskID, subject, email, now)
+		_, err = tx.Exec(ctx, `UPDATE work_tasks SET state='COMPLETED',completed_at=$4,completed_by_kind='HUMAN',completed_by_subject=$2,completed_by_email=$3,close_reason=$5,version=version+1,updated_at=$4 WHERE id=$1`, taskID, subject, email, now, CloseReasonDone)
+		details["closeReason"] = CloseReasonDone
 		if err == nil {
 			_, err = tx.Exec(ctx, `UPDATE work_text_replies SET completed_version=$2 WHERE message_id=$1`, messageID, version+1)
 		}
@@ -84,7 +86,7 @@ func (m *Module) ApplyTextReply(ctx context.Context, tx pgx.Tx, messageID string
 	if err != nil {
 		return err
 	}
-	if err = appendActivity(ctx, tx, task, kind, actor, task.UpdatedAt, map[string]any{"messageId": messageID, "deliveryState": delivery}); err != nil {
+	if err = appendActivity(ctx, tx, task, kind, actor, task.UpdatedAt, details); err != nil {
 		return err
 	}
 	_, err = m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID)

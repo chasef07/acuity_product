@@ -124,7 +124,7 @@ export function TaskWorkspace({
     if (action === "reopen" && !stateSettled) return
     setPending(true)
     setError("")
-    const outcome = await (action === "complete" ? completeTask : reopenTask)(task)
+    const outcome = await (action === "complete" ? completeTask(task, "DONE") : reopenTask(task))
     setPending(false)
     if (outcome.ok) {
       acceptUpdate(outcome.data, action === "complete")

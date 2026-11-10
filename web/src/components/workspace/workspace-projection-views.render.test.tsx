@@ -552,7 +552,7 @@ test("the focused Task shows each projected version and completes only the versi
   const previousAPIURL = process.env.NEXT_PUBLIC_PORTAL_API_URL
   process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
   clearAccessToken()
-  const completions: number[] = []
+  const completions: unknown[] = []
   const reviewed: Task = { ...projectedTask(), origin: "APPOINTMENT_REVIEW", title: "Synthetic booking v1" }
   const changed: Task = { ...reviewed, title: "Synthetic booking v2", version: 2 }
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
@@ -560,7 +560,7 @@ test("the focused Task shows each projected version and completes only the versi
     if (url === "/api/auth/token") return Response.json({ token: "synthetic-token" })
     assert.match(url, /\/v1\/tasks\/[^/]+\/complete$/)
     const body = await (input as Request).json()
-    completions.push(body.expectedVersion)
+    completions.push(body)
     return Response.json({ ...changed, state: "COMPLETED", version: 3 })
   })
   const render = (task: Task) => act(async () => root.render(
@@ -585,7 +585,7 @@ test("the focused Task shows each projected version and completes only the versi
     await act(async () => button("Review latest")!.click())
     assert.equal(button("Verify & next")?.disabled, false)
     await act(async () => button("Verify & next")!.click())
-    assert.deepEqual(completions, [changed.version], "completion submits the projected version")
+    assert.deepEqual(completions, [{ expectedVersion: changed.version, reason: "DONE" }], "completion submits the projected version as done")
   } finally {
     await act(async () => root.unmount())
     clearAccessToken()
@@ -873,7 +873,7 @@ function conversationHarness(t: TestContext) {
     tokenStatus: 200,
     textTask: undefined as Task | undefined,
     timelineGate: undefined as Promise<void> | undefined,
-    completions: [] as number[],
+    completions: [] as unknown[],
     sends: [] as { idempotencyKey: string; destination?: string; body: string }[],
     sendStatus: 201,
     items: [] as ConversationTimelineItem[],
@@ -907,7 +907,7 @@ function conversationHarness(t: TestContext) {
     }
     if (url.includes("/v1/tasks/") && url.endsWith("/complete")) {
       const body = await (input as Request).json()
-      conversation.completions.push(body.expectedVersion)
+      conversation.completions.push(body)
       return Response.json({ ...conversation.textTask, state: "COMPLETED" })
     }
     assert.match(url, /\/v1\/engagements\/%2B15551234567\/timeline\?/)
@@ -996,7 +996,7 @@ test("text completion requires a successful conversation reload for the current 
   await conversation.render(2)
   await waitFor(() => !done().disabled)
   await act(async () => done().click())
-  assert.deepEqual(conversation.completions, [3], "completion submits the version whose conversation loaded")
+  assert.deepEqual(conversation.completions, [{ expectedVersion: 3, reason: "DONE" }], "completion submits the version whose conversation loaded as done")
 })
 
 async function waitFor(ready: () => boolean) {

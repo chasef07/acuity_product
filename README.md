@@ -15,7 +15,9 @@ that connects them.
 ## What the workspace does
 
 - **Tasks:** capture a patient need, its next action, assignment, priority, and
-  completion. Keep the Activity timeline when work is completed or reopened.
+  completion. Every completed Task records why it closed: done, not needed,
+  couldn't reach, or expired. Keep the Activity timeline when work is completed
+  or reopened.
 - **Calling:** receive AI-to-human transfers, make outbound calls, transfer
   between Staff, and record post-call outcomes. Keep voicemail and authorized
   recording playback beside the work.

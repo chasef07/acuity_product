@@ -174,13 +174,15 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 	}
 
 	completed, err := workModule.CompleteTask(context.Background(), work.CompleteTaskCommand{
+		Reason:   work.CloseReasonNotNeeded,
 		Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version,
 	})
 	if err != nil {
 		t.Fatalf("complete Workspace Task: %v", err)
 	}
 	completedRead, err := reads.ReadTask(context.Background(), identity, completed.ID)
-	if err != nil || completedRead.ConversationThreadID != message.Thread.ID {
+	if err != nil || completedRead.ConversationThreadID != message.Thread.ID ||
+		completedRead.CloseReason != work.CloseReasonNotNeeded {
 		t.Fatalf("completed Workspace Task projection = %#v, %v", completedRead, err)
 	}
 	workRead, err := workModule.ReadTask(context.Background(), identity, completed.ID)

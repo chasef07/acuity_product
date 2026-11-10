@@ -190,4 +190,54 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 		}
 		response.Body.Close()
 	}
+
+	complete := func(path string, body map[string]any, wantStatus int) api.Task {
+		t.Helper()
+		encoded, _ := json.Marshal(body)
+		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/"+path, "staff-token", encoded)
+		defer response.Body.Close()
+		if response.StatusCode != wantStatus {
+			t.Fatalf("%s with %s: %d %s, want %d", path, encoded, response.StatusCode, readBody(t, response), wantStatus)
+		}
+		var task api.Task
+		if wantStatus == http.StatusOK {
+			if err := json.NewDecoder(response.Body).Decode(&task); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return task
+	}
+	single := moved.Id.String() + "/complete"
+	complete(single, map[string]any{"expectedVersion": moved.Version}, http.StatusBadRequest)
+	complete(single, map[string]any{"expectedVersion": moved.Version, "reason": "EXPIRED"}, http.StatusBadRequest)
+	var group api.Task
+	for _, task := range refreshed.Items {
+		if task.Category != nil && *task.Category == "optical" {
+			group = task
+		}
+	}
+	members := []map[string]any{{"id": group.Id, "expectedVersion": group.Version}}
+	if group.GroupMembers != nil {
+		members = members[:0]
+		for _, member := range *group.GroupMembers {
+			members = append(members, map[string]any{"id": member.Id, "expectedVersion": member.Version})
+		}
+	}
+	groupPath := group.Id.String() + "/complete-group"
+	complete(groupPath, map[string]any{"members": members}, http.StatusBadRequest)
+	complete(groupPath, map[string]any{"members": members, "reason": "EXPIRED"}, http.StatusBadRequest)
+	if stillOpen := query(); stillOpen.Counts.Tasks != len(payloads) {
+		t.Fatalf("a completion without a staff reason closed work: %d open, want %d", stillOpen.Counts.Tasks, len(payloads))
+	}
+	closed := complete(single, map[string]any{"expectedVersion": moved.Version, "reason": "UNREACHABLE"}, http.StatusOK)
+	if closed.CloseReason == nil || *closed.CloseReason != api.TaskCloseReasonUNREACHABLE {
+		t.Fatalf("completed Task close reason = %v, want UNREACHABLE", closed.CloseReason)
+	}
+	closedGroup := complete(groupPath, map[string]any{"members": members, "reason": "NOT_NEEDED"}, http.StatusOK)
+	if closedGroup.CloseReason == nil || *closedGroup.CloseReason != api.TaskCloseReasonNOTNEEDED {
+		t.Fatalf("completed group close reason = %v, want NOT_NEEDED", closedGroup.CloseReason)
+	}
+	if remaining := query(); remaining.Counts.Tasks != len(payloads)-1-len(members) {
+		t.Fatalf("open Tasks after both completions = %d, want %d", remaining.Counts.Tasks, len(payloads)-1-len(members))
+	}
 }

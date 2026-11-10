@@ -200,12 +200,12 @@ func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) 
 	}
 	reviewed := []work.ReviewedTask{{ID: first.ID, ExpectedVersion: first.Version}, {ID: second.ID, ExpectedVersion: second.Version}}
 	third := create("third", "Family Member Three")
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: first.ID, Members: reviewed})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: first.ID, Members: reviewed})
 	if !errors.Is(err, work.ErrConflict) {
 		t.Fatalf("unseen arrival: %v", err)
 	}
 	reviewed = append(reviewed, work.ReviewedTask{ID: third.ID, ExpectedVersion: third.Version})
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: first.ID, Members: reviewed})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: first.ID, Members: reviewed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,11 +296,11 @@ func TestRelatedTaskGroupsKeepCallersSeparate(t *testing.T) {
 			t.Fatalf("%s skipped a group: %+v", ordering, seen)
 		}
 	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}})
 	if !errors.Is(err, work.ErrConflict) {
 		t.Fatalf("resolving two callers as one group should fail: %v", err)
 	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}}})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +434,7 @@ func TestGroupMetadataCommandsDenyUnrelatedStaffWithoutSideEffects(t *testing.T)
 	if !errors.Is(err, work.ErrDenied) {
 		t.Fatalf("move denied: %v", err)
 	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: outsider, TaskID: task.ID, Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}}})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: outsider, TaskID: task.ID, Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}}})
 	if !errors.Is(err, work.ErrDenied) {
 		t.Fatalf("group denied: %v", err)
 	}

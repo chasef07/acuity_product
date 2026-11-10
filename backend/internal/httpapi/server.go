@@ -1497,7 +1497,7 @@ func (server *Server) CompleteTask(
 	if !ok {
 		return
 	}
-	var body api.TaskTransitionRequest
+	var body api.CompleteTaskRequest
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
@@ -1507,6 +1507,7 @@ func (server *Server) CompleteTask(
 		Identity:        identity,
 		TaskID:          taskID.String(),
 		ExpectedVersion: body.ExpectedVersion,
+		Reason:          work.CloseReason(body.Reason),
 	})
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -1576,6 +1577,7 @@ func (server *Server) CompleteTaskGroup(
 		Identity: identity,
 		TaskID:   taskID.String(),
 		Members:  members,
+		Reason:   work.CloseReason(body.Reason),
 	})
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -2903,6 +2905,10 @@ func taskResponse(task work.Task) (api.Task, error) {
 		}
 	}
 	response.CompletedAt = task.CompletedAt
+	if task.CloseReason != "" {
+		reason := api.TaskCloseReason(task.CloseReason)
+		response.CloseReason = &reason
+	}
 	if task.CallbackCompletion != nil {
 		response.CallbackCompletion = &api.TaskCallbackCompletion{}
 		if task.CallbackCompletion.CallerEmail != "" {

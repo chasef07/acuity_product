@@ -75,7 +75,7 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       tasks.push(id)
       const createdAt = new Date(+day + (index % 2) * 86400000)
       await db.query(
-        `INSERT INTO work_tasks(id,practice_id,location_id,phone,title,state,created_by_kind,created_by_subject,created_at,updated_at,origin,source_call_id,source_message,category,ai_idempotency_key,ai_input_fingerprint,completed_by_kind,completed_by_subject,completed_by_email,completed_at) VALUES($1::uuid,$2,$3,'+15555550199','Synthetic staff task',$4,'SERVICE','staff-e2e',$5,$5,'ABITA_AI',$1::uuid::text,'Synthetic staff evidence','other',$1::uuid::text,decode(repeat('00',32),'hex'),$6,$7,$8,$9)`,
+        `INSERT INTO work_tasks(id,practice_id,location_id,phone,title,state,created_by_kind,created_by_subject,created_at,updated_at,origin,source_call_id,source_message,category,ai_idempotency_key,ai_input_fingerprint,completed_by_kind,completed_by_subject,completed_by_email,completed_at,close_reason) VALUES($1::uuid,$2,$3,'+15555550199','Synthetic staff task',$4,'SERVICE','staff-e2e',$5,$5,'ABITA_AI',$1::uuid::text,'Synthetic staff evidence','other',$1::uuid::text,decode(repeat('00',32),'hex'),$6,$7,$8,$9,CASE WHEN $4='COMPLETED' THEN 'DONE' END)`,
         [
           id,
           location.practice_id,
