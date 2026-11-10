@@ -527,7 +527,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   >
                     <PanelRightCloseIcon />
                   </Button>
-                  <div className="flex min-h-0 w-full flex-1 lg:w-[calc(18rem-2px)]">
+                  <div className="flex min-h-0 w-full flex-1 pb-[var(--calling-dock-clearance,0px)] lg:w-[calc(18rem-2px)]">
                     {contextView === "patient-tasks" ? (
                       patientTasks(selectedEngagement.phone, {
                         className: "flex-1",
@@ -576,7 +576,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         onOpenTask={(task) => sendIntent({ type: "select-task", task })}
                         patientTasks={(phone, placement) =>
                           patientTasks(phone, placement.beside === "call"
-                            ? { className: "max-h-80 shrink-0 border-t", callTaskID: placement.callTaskID, titlesOpenTasks: false }
+                            ? { className: "shrink-0 border-t", callTaskID: placement.callTaskID, titlesOpenTasks: false }
                             : { className: "max-h-80 shrink-0 border-b", currentTaskID: placement.currentTaskID, titlesOpenTasks: true })
                         }
                         onReturnToCall={() => {

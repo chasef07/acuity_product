@@ -388,11 +388,26 @@ function context(overrides: Partial<ComponentProps<typeof TaskCallContext>>) {
   return { markup, asked }
 }
 
-test("a call shows the caller's Tasks under its details in place of the one recovery Task", () => {
-  const { markup, asked } = context({ activeCall: call, view: "call" })
+test("a call shows the caller's Tasks under its header, above the recording and details", () => {
+  const recorded = {
+    ...call,
+    transferReason: "Needs a staff response",
+    recording: { audioState: "PROCESSING", durationSeconds: 0 } as const,
+  }
+  const { markup, asked } = context({ activeCall: recorded, view: "call" })
   assert.deepEqual(asked, [[call.phone, { beside: "call", callTaskID: "task-fourth" }]], "the recovery Task is the call's own")
-  assert.ok(markup.indexOf("Dolores Reyes") < markup.indexOf("patient tasks for"))
-  assert.ok(markup.indexOf("Details") < markup.indexOf("patient tasks for"), "the list sits beneath every call detail")
+  const at = (text: string) => {
+    const index = markup.indexOf(text)
+    assert.notEqual(index, -1, `${text} is shown`)
+    return index
+  }
+  assert.ok(at("Dolores Reyes") < at("patient tasks for"))
+  assert.ok(at("Needs a staff response") < at("patient tasks for"))
+  assert.ok(at(">Open Task</button>") < at("patient tasks for"))
+  assert.ok(at("patient tasks for") < at("Call recording"), "the list sits above the recording")
+  assert.ok(at("patient tasks for") < at(">Details<"), "and above the call details")
+  assert.equal(markup.match(/overflow-y-auto/g)?.length, 1, "header, list and details scroll as one")
+  assert.match(markup, /^<section class="[^"]*\bmin-w-0\b/)
   assert.doesNotMatch(markup, /Synthetic fourth request/)
   assert.match(markup, />Open Task<\/button>/)
   const returning = context({ activeCall: { ...call, recoveryTask: undefined }, view: "call", task: fiveTasks[0] })

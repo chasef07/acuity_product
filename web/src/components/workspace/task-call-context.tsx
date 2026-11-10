@@ -55,20 +55,18 @@ export function TaskCallContext({
   )
   if (view === "call" && activeCall) {
     return (
-      <DetailsAbovePatientTasks
-        patientTasks={patientTasks(activeCall.phone, {
+      <CallWorkspace
+        key={activeCall.id}
+        call={activeCall}
+        returnTask={task}
+        onReturnToTask={task ? () => onOpenTask(task) : undefined}
+        onOpenRecoveryTask={(taskID) => void openRecoveryTask(taskID)}
+      >
+        {patientTasks(activeCall.phone, {
           beside: "call",
           callTaskID: activeCall.recoveryTask?.id ?? activeCall.taskId,
         })}
-      >
-        <CallWorkspace
-          key={activeCall.id}
-          call={activeCall}
-          returnTask={task}
-          onReturnToTask={task ? () => onOpenTask(task) : undefined}
-          onOpenRecoveryTask={(taskID) => void openRecoveryTask(taskID)}
-        />
-      </DetailsAbovePatientTasks>
+      </CallWorkspace>
     )
   }
   if (view === "task" && task) {
