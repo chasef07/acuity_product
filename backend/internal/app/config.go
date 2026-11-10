@@ -21,24 +21,25 @@ const (
 )
 
 type Config struct {
-	Role               Role
-	DatabaseURL        string
-	PoolMax            int32
-	AcquireTimeout     time.Duration
-	OperationTimeout   time.Duration
-	StatementTimeout   time.Duration
-	HTTPPort           int
-	BrowserOrigins     []string
-	JWKSURL            string
-	AuthIssuer         string
-	APIAudience        string
-	ProvisioningInput  string
-	ProvisioningOutput string
-	Realtime           RealtimeConfig
-	Service            ServiceConfig
-	HumanCalling       HumanCallingConfig
-	Messaging          MessagingConfig
-	Middleware         MiddlewareConfig
+	Role                  Role
+	DatabaseURL           string
+	PoolMax               int32
+	AcquireTimeout        time.Duration
+	OperationTimeout      time.Duration
+	StatementTimeout      time.Duration
+	HTTPPort              int
+	BrowserOrigins        []string
+	JWKSURL               string
+	AuthIssuer            string
+	APIAudience           string
+	ProvisioningInput     string
+	ProvisioningOutput    string
+	ResponsibilitiesInput string
+	Realtime              RealtimeConfig
+	Service               ServiceConfig
+	HumanCalling          HumanCallingConfig
+	Messaging             MessagingConfig
+	Middleware            MiddlewareConfig
 }
 
 type MiddlewareConfig struct {
@@ -136,14 +137,18 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("DATABASE_STATEMENT_TIMEOUT_MS must not exceed DATABASE_OPERATION_TIMEOUT_MS")
 	}
 	config := Config{
-		Role:               role,
-		DatabaseURL:        databaseURL,
-		PoolMax:            int32(poolMax),
-		AcquireTimeout:     time.Duration(acquireMilliseconds) * time.Millisecond,
-		OperationTimeout:   time.Duration(operationMilliseconds) * time.Millisecond,
-		StatementTimeout:   time.Duration(statementMilliseconds) * time.Millisecond,
-		ProvisioningInput:  strings.TrimSpace(getenv("PROVISIONING_INPUT")),
-		ProvisioningOutput: strings.TrimSpace(getenv("PROVISIONING_OUTPUT")),
+		Role:                  role,
+		DatabaseURL:           databaseURL,
+		PoolMax:               int32(poolMax),
+		AcquireTimeout:        time.Duration(acquireMilliseconds) * time.Millisecond,
+		OperationTimeout:      time.Duration(operationMilliseconds) * time.Millisecond,
+		StatementTimeout:      time.Duration(statementMilliseconds) * time.Millisecond,
+		ProvisioningInput:     strings.TrimSpace(getenv("PROVISIONING_INPUT")),
+		ProvisioningOutput:    strings.TrimSpace(getenv("PROVISIONING_OUTPUT")),
+		ResponsibilitiesInput: strings.TrimSpace(getenv("RESPONSIBILITIES_INPUT")),
+	}
+	if config.ResponsibilitiesInput != "" && (role != RoleMigrate || config.ProvisioningInput == "") {
+		return Config{}, fmt.Errorf("RESPONSIBILITIES_INPUT requires the migrate role and PROVISIONING_INPUT")
 	}
 
 	if role == RolePortalAPI || role == RoleProviderIngress || role == RoleRealtime {
