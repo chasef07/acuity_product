@@ -140,6 +140,12 @@ func queryTimelineMessages(
 	return items, nil
 }
 
+const placedTaskSQL = `
+			FROM work_tasks placed_task
+			WHERE placed_task.id = call.task_id
+				AND placed_task.practice_id = call.practice_id
+				AND placed_task.location_id = ANY($2::uuid[])`
+
 const callProjectionSQL = `
 	SELECT
 		call.id::text,
@@ -177,16 +183,14 @@ const callProjectionSQL = `
 			SELECT call_state.state FROM human_calling_call_states call_state
 			WHERE call_state.call_id = call.id
 		),
-		COALESCE(placed_task.id::text, ''),
-		COALESCE(placed_task.title, ''),
-		COALESCE(voicemail.duration_millis / 1000, 0)
+		COALESCE((SELECT placed_task.id::text ` + placedTaskSQL + `), ''),
+		COALESCE((SELECT placed_task.title ` + placedTaskSQL + `), ''),
+		COALESCE((
+			SELECT voicemail.duration_millis / 1000 FROM human_calling_voicemails voicemail
+			WHERE voicemail.call_id = call.id
+		), 0)
 	FROM human_calling_calls call
 	LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
-	LEFT JOIN work_tasks placed_task
-		ON placed_task.id = call.task_id
-		AND placed_task.practice_id = call.practice_id
-		AND placed_task.location_id = ANY($2::uuid[])
-	LEFT JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
 	JOIN access_locations location
 		ON location.practice_id = call.practice_id
 		AND location.id = call.location_id
