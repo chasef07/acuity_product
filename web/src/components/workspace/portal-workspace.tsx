@@ -527,7 +527,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   >
                     <PanelRightCloseIcon />
                   </Button>
-                  <div className="flex min-h-0 w-full flex-1 lg:w-72">
+                  <div className="flex min-h-0 w-full flex-1 lg:w-[calc(18rem-2px)]">
                     {contextView === "patient-tasks" ? (
                       patientTasks(selectedEngagement.phone, {
                         className: "flex-1",

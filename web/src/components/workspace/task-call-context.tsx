@@ -73,7 +73,7 @@ export function TaskCallContext({
   }
   if (view === "task" && task) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {patientTasks(task.phone, { beside: "task", currentTaskID: task.id })}
         {group && onSelectTask ? (
           <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
@@ -104,7 +104,7 @@ export function DetailsAbovePatientTasks({
   patientTasks: ReactNode
 }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex min-h-11 flex-col overflow-hidden">{children}</div>
       {patientTasks}
     </div>

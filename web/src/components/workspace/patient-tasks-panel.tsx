@@ -276,7 +276,7 @@ function PanelFrame({
       tabIndex={-1}
       aria-label="Open Tasks"
       aria-busy={busy || undefined}
-      className={cn("flex min-h-0 flex-col pt-3 pb-2 outline-none", className)}
+      className={cn("flex min-h-0 min-w-0 flex-col pt-3 pb-2 outline-none", className)}
     >
       <header className="flex h-7 shrink-0 items-center gap-2 pr-12 pl-5">
         <h2 className="text-sm font-medium">Open Tasks</h2>
@@ -284,7 +284,7 @@ function PanelFrame({
           <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
         )}
       </header>
-      <div data-testid="patient-tasks-body" className="min-h-0 overflow-y-auto px-5">
+      <div data-testid="patient-tasks-body" className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto px-5">
         {children}
       </div>
     </section>
@@ -331,7 +331,7 @@ function OpenTaskRow({
       tabIndex={-1}
       className="rounded-sm py-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
     >
-      <div className="flex items-start gap-2">
+      <div className="flex min-w-0 items-start gap-2">
         {closable ? (
           <Tooltip>
             <TooltipTrigger

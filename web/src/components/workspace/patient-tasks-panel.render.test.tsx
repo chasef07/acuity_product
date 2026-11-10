@@ -244,6 +244,27 @@ test("rows scroll beneath a heading as tall as the close button, so the close me
   )
 })
 
+test("a row is built to truncate inside its column and keep its age and menu, as far as classes can say", (t) => {
+  t.mock.method(Date, "now", () => now)
+  const long = openTask("long", { title: "Synthetic request with a title far longer than the panel is wide", category: "optical" })
+  const markup = renderToStaticMarkup(view({ summary: ready([long], [closedTask]) }))
+  const classOf = (pattern: RegExp) => (pattern.exec(markup)?.[1] ?? "").split(" ")
+  const has = (classes: string[], ...names: string[]) => names.every((name) => classes.includes(name))
+  assert.ok(has(classOf(/<section[^>]*class="([^"]*)"/), "min-w-0"), "the section cannot be widened by its rows")
+  assert.ok(has(classOf(/data-testid="patient-tasks-body" class="([^"]*)"/), "min-w-0", "overflow-x-hidden"))
+  const [row] = rows(markup)
+  const rowClass = (pattern: RegExp) => (pattern.exec(row)?.[1] ?? "").split(" ")
+  assert.ok(has(rowClass(/<div class="([^"]*)"/), "flex", "min-w-0"), "the row is a flex line that may shrink")
+  assert.match(row, /<div class="min-w-0 flex-1"><div class="flex min-w-0 items-baseline gap-2">/, "the text column takes the space left over")
+  assert.ok(has(rowClass(/aria-label="Open Task: [^"]*"[^>]*class="([^"]*)"/), "min-w-0", "flex-1"))
+  assert.match(row, /<span class="truncate">Synthetic request with a title far longer/)
+  assert.ok(has(rowClass(/<time[^>]*class="([^"]*)"/), "shrink-0"), "the age keeps its width")
+  assert.match(row, /<p class="truncate [^"]*">Optical, frames &amp; prescriptions · North Office<\/p>/)
+  assert.ok(has(rowClass(/aria-label="Close as: [^"]*"[^>]*class="([^"]*)"/), "shrink-0"), "the menu keeps its width")
+  const closed = markup.slice(markup.indexOf("Closed today"))
+  assert.match(closed, /<div class="min-w-0 flex-1"><p class="truncate /)
+})
+
 test("a failed or stale read is said, with a way to retry", () => {
   const failure = { kind: "unavailable", retryable: true } as const
   const failed = renderToStaticMarkup(view({ summary: { status: "failed", failure }, currentTaskID: "task-first" }))
