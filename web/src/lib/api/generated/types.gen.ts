@@ -2060,6 +2060,26 @@ export type ConversationTimelinePage = {
     nextCursor: string;
 };
 
+export type PhoneSummary = {
+    phone: string;
+    /**
+     * The most recently seen caller name, or empty when none is known.
+     */
+    displayName: string;
+    /**
+     * Distinct caller names seen on the phone, most recent first, at most five.
+     */
+    names: Array<string>;
+    /**
+     * Every open Task for the phone in the Locations the caller may read, newest activity first.
+     */
+    openTasks: Array<Task>;
+    /**
+     * Tasks for the phone completed in the last 24 hours, newest first, at most twenty.
+     */
+    closedToday: Array<Task>;
+};
+
 export type CallState = 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'VOICEMAIL_GREETING' | 'VOICEMAIL_RECORDING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
 
 export type CallHistoryItem = {
@@ -3211,6 +3231,47 @@ export type GetEngagementTimelineResponses = {
 };
 
 export type GetEngagementTimelineResponse = GetEngagementTimelineResponses[keyof GetEngagementTimelineResponses];
+
+export type GetEngagementSummaryData = {
+    body?: never;
+    path: {
+        phone: string;
+    };
+    query: {
+        practiceId: string;
+    };
+    url: '/v1/engagements/{phone}/summary';
+};
+
+export type GetEngagementSummaryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetEngagementSummaryError = GetEngagementSummaryErrors[keyof GetEngagementSummaryErrors];
+
+export type GetEngagementSummaryResponses = {
+    /**
+     * Names seen on the phone, its open Tasks, and the Tasks closed in the last 24 hours.
+     */
+    200: PhoneSummary;
+};
+
+export type GetEngagementSummaryResponse = GetEngagementSummaryResponses[keyof GetEngagementSummaryResponses];
 
 export type IngestAiInteractionData = {
     body: AiInteractionIngestRequest;

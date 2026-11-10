@@ -1017,6 +1017,43 @@ func (server *Server) GetEngagementTimeline(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) GetEngagementSummary(
+	w http.ResponseWriter,
+	r *http.Request,
+	phone string,
+	params api.GetEngagementSummaryParams,
+) {
+	identity, ok := server.portalIdentity(w, r)
+	if !ok {
+		return
+	}
+	normalized, err := contactcontext.NormalizePhone(phone)
+	if err != nil {
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	summary, err := server.workspace.QueryPhoneSummary(
+		ctx,
+		workspace.QueryPhoneSummaryCommand{
+			Identity:   identity,
+			PracticeID: params.PracticeId.String(),
+			Phone:      normalized,
+		},
+	)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	response, err := phoneSummaryResponse(summary)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) StartOutboundCall(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -3143,6 +3180,36 @@ func visibleDelivery(state messaging.DeliveryState) api.MessageDeliveryState {
 	default:
 		return api.MessageDeliveryStateSending
 	}
+}
+
+func phoneSummaryResponse(summary workspace.PhoneSummary) (api.PhoneSummary, error) {
+	openTasks, err := taskResponses(summary.OpenTasks)
+	if err != nil {
+		return api.PhoneSummary{}, err
+	}
+	closedToday, err := taskResponses(summary.ClosedToday)
+	if err != nil {
+		return api.PhoneSummary{}, err
+	}
+	return api.PhoneSummary{
+		Phone:       summary.Phone,
+		DisplayName: summary.DisplayName,
+		Names:       summary.Names,
+		OpenTasks:   openTasks,
+		ClosedToday: closedToday,
+	}, nil
+}
+
+func taskResponses(tasks []work.Task) ([]api.Task, error) {
+	responses := make([]api.Task, 0, len(tasks))
+	for _, task := range tasks {
+		response, err := taskResponse(task)
+		if err != nil {
+			return nil, err
+		}
+		responses = append(responses, response)
+	}
+	return responses, nil
 }
 
 func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {

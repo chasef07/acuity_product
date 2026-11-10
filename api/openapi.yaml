@@ -861,6 +861,39 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/engagements/{phone}/summary:
+    get:
+      operationId: getEngagementSummary
+      summary: Read the names and Tasks for one authorized exact phone.
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 32
+        - name: practiceId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Names seen on the phone, its open Tasks, and the Tasks closed in the last 24 hours.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhoneSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/ai/interactions:
     post:
       operationId: ingestAIInteraction
@@ -6099,6 +6132,33 @@ components:
             $ref: "#/components/schemas/ConversationTimelineItem"
         nextCursor:
           type: string
+    PhoneSummary:
+      type: object
+      additionalProperties: false
+      required: [phone, displayName, names, openTasks, closedToday]
+      properties:
+        phone:
+          type: string
+        displayName:
+          description: The most recently seen caller name, or empty when none is known.
+          type: string
+        names:
+          description: Distinct caller names seen on the phone, most recent first, at most five.
+          type: array
+          maxItems: 5
+          items:
+            type: string
+        openTasks:
+          description: Every open Task for the phone in the Locations the caller may read, newest activity first.
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
+        closedToday:
+          description: Tasks for the phone completed in the last 24 hours, newest first, at most twenty.
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/Task"
     CallState:
       type: string
       enum:
