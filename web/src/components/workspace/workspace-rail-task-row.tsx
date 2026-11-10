@@ -1,7 +1,7 @@
 "use client"
 
 import { useId } from "react"
-import { Building2Icon, CheckIcon, PhoneIcon } from "lucide-react"
+import { Building2Icon, CheckIcon, ChevronDownIcon, PhoneIcon } from "lucide-react"
 
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
@@ -10,13 +10,19 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import type { Task } from "@/lib/api/generated/types.gen"
+import type { StaffTaskCloseReason, Task } from "@/lib/api/generated/types.gen"
 import {
   formatPhone,
   formatRelativeTime,
+  taskCloseSummary,
   taskUrgencyLabels,
 } from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
+
+import { TaskCloseMenu } from "./task-close-menu"
+
+const rowActionClass =
+  "pointer-events-none absolute inset-y-0 flex w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-hidden transition-[color,background-color,opacity] duration-150 hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-within/task:pointer-events-auto group-focus-within/task:opacity-100 group-has-[[data-popup-open]]/task:pointer-events-auto group-has-[[data-popup-open]]/task:opacity-100 disabled:pointer-events-none motion-reduce:duration-0 motion-reduce:transition-none"
 
 export function TaskRow({
   task,
@@ -33,7 +39,7 @@ export function TaskRow({
   completionDisabled: boolean
   completionPending: boolean
   completionError: string
-  onComplete: () => void
+  onComplete: (reason: StaffTaskCloseReason) => void
 }) {
   const textReview = task.origin === "INBOUND_MESSAGE_REVIEW"
   const rowTitle = textReview
@@ -44,6 +50,14 @@ export function TaskRow({
   const urgent = task.urgency === "high_priority"
   const urgencyID = useId()
   const relative = taskRelativeTime(task)
+  const completable =
+    task.state === "OPEN" &&
+    task.origin !== "APPOINTMENT_REVIEW" &&
+    !textReview &&
+    !grouped
+  const detail =
+    (task.state === "COMPLETED" ? taskCloseSummary(task) : undefined) ??
+    (textReview ? task.preview : undefined)
   return (
     <SidebarMenuItem
       data-testid={grouped ? "task-group-row" : "task-row"}
@@ -65,7 +79,9 @@ export function TaskRow({
           isActive={active}
           className={cn(
             "rounded-md px-2 pr-9 text-sidebar-foreground",
-            textReview && task.preview ? "h-auto py-1.5" : "h-8",
+            detail ? "h-auto py-1.5" : "h-8",
+            completable &&
+              "group-hover/task:pr-16 group-focus-within/task:pr-16 group-has-[[data-popup-open]]/task:pr-16",
           )}
           onClick={onSelect}
         >
@@ -86,25 +102,36 @@ export function TaskRow({
                 </span>
               )}
             </span>
-            {textReview && task.preview && (
+            {detail && (
               <span className="truncate text-xs leading-4 text-muted-foreground">
-                {task.preview}
+                {detail}
               </span>
             )}
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>
-      <span className="pointer-events-none absolute top-0 right-1 h-8 w-7 [@media(pointer:coarse)]:h-11">
+      <span className="pointer-events-none absolute top-0 right-1 h-8 w-14 [@media(pointer:coarse)]:h-11">
         <time
-          className={`absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
+          className={`absolute inset-y-0 right-0 w-7 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
           dateTime={relative.at}
         >
           {formatRelativeTime(relative.at)}
         </time>
-        {task.state === "OPEN" &&
-          task.origin !== "APPOINTMENT_REVIEW" &&
-          task.origin !== "INBOUND_MESSAGE_REVIEW" &&
-          !grouped && (
+        {completable && (
+          <>
+            <TaskCloseMenu
+              trigger={
+                <button
+                  type="button"
+                  aria-label={`Close Task as: ${task.title}`}
+                  disabled={completionDisabled}
+                  className={cn(rowActionClass, "left-0 hover:text-foreground")}
+                />
+              }
+              onClose={onComplete}
+            >
+              <ChevronDownIcon aria-hidden="true" className="size-4" />
+            </TaskCloseMenu>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -113,10 +140,10 @@ export function TaskRow({
                     aria-label={`Complete Task: ${task.title}`}
                     aria-busy={completionPending || undefined}
                     disabled={completionDisabled}
-                    className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md text-muted-foreground opacity-0 outline-hidden transition-[color,background-color,opacity] duration-150 hover:bg-sidebar-accent hover:text-success focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-within/task:pointer-events-auto group-focus-within/task:opacity-100 disabled:pointer-events-none motion-reduce:duration-0 motion-reduce:transition-none"
+                    className={cn(rowActionClass, "right-0 hover:text-success")}
                     onClick={(event) => {
                       event.stopPropagation()
-                      onComplete()
+                      onComplete("DONE")
                     }}
                   />
                 }
@@ -129,7 +156,8 @@ export function TaskRow({
               </TooltipTrigger>
               <TooltipContent side="right">Complete Task</TooltipContent>
             </Tooltip>
-          )}
+          </>
+        )}
       </span>
       {completionError && (
         <p

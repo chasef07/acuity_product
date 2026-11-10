@@ -81,3 +81,33 @@ test("the Task panel names urgency with the rail's words", () => {
     assert.equal(markup.match(/>Urgency<\/span><span[^>]*>([^<]*)</)?.[1], label)
   }
 })
+
+test("a completed Task names why it closed and who closed it", () => {
+  const completed = {
+    ...task,
+    origin: "ABITA_AI",
+    state: "COMPLETED",
+    completedAt: "2026-08-30T13:00:00Z",
+  } as const
+  const staff = { kind: "HUMAN", subject: "user-1", email: "ines@abita.test" } as const
+  for (const [closeReason, summary] of [
+    ["DONE", "Done, by ines@abita.test"],
+    ["NOT_NEEDED", "Not needed, by ines@abita.test"],
+    ["UNREACHABLE", "Couldn&#x27;t reach, by ines@abita.test"],
+  ] as const) {
+    const markup = panel({ task: { ...completed, completedBy: staff, closeReason } })
+    assert.ok(markup.includes(summary), `${closeReason} reads "${summary}"`)
+    assert.doesNotMatch(markup, /Close as/)
+  }
+  const expired = panel({
+    task: { ...completed, completedBy: { kind: "SERVICE", subject: "task-expiry" }, closeReason: "EXPIRED" },
+  })
+  assert.ok(expired.includes("Expired, automatically"))
+})
+
+test("an open Task completes as done from the button and offers the other reasons beside it", () => {
+  const markup = panel({ task: { ...task, origin: "ABITA_AI" } })
+  assert.match(markup, /Complete &amp; next/)
+  const menu = /<button[^>]*aria-label="Close as"[^>]*>/.exec(markup)?.[0] ?? ""
+  assert.match(menu, /aria-haspopup="menu"/)
+})

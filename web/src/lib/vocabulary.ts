@@ -13,8 +13,10 @@ import type {
   OperatorAiAnalyticsRange,
   OperatorAiCallIssueOutcome,
   StaffTaskCategory,
+  StaffTaskCloseReason,
   StaffTaskUrgency,
   Task,
+  TaskCloseReason,
 } from "./api/generated/types.gen.ts"
 import type { BeforeBooking, Change, Coverage, DoctorAnswer, PlanField, RowField, TableField } from "./insurance-catalog.ts"
 
@@ -53,6 +55,22 @@ export const taskUrgencyLabels = {
   normal: "Normal priority",
   non_urgent: "Non-urgent",
 } satisfies Record<StaffTaskUrgency, string>
+
+export const taskCloseReasonLabels = {
+  DONE: "Done",
+  NOT_NEEDED: "Not needed",
+  UNREACHABLE: "Couldn't reach",
+  EXPIRED: "Expired",
+} satisfies Record<TaskCloseReason, string>
+
+export const taskCloseMenuReasons = ["NOT_NEEDED", "UNREACHABLE"] satisfies StaffTaskCloseReason[]
+
+export function taskCloseSummary(task: Pick<Task, "closeReason" | "completedBy">) {
+  if (!task.closeReason) return undefined
+  const label = taskCloseReasonLabels[task.closeReason]
+  if (task.completedBy?.kind === "HUMAN" && task.completedBy.email) return `${label}, by ${task.completedBy.email}`
+  return task.completedBy?.kind === "SERVICE" ? `${label}, automatically` : label
+}
 
 export const taskOriginLabels = {
   HUMAN_CALL_FOLLOW_UP: "Call follow-up",

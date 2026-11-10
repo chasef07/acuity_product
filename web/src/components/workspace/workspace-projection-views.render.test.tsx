@@ -471,8 +471,8 @@ test("the Task panel credits the callback caller from the Task and flags an open
   assert.doesNotMatch(panel(selected, history.filter((item) => item.type !== "CALL_HISTORY")), /still open/)
   const callbackReview = { ...review, callbackCompletion: { callerEmail: "caller@example.test" } }
   assert.match(panel(callbackReview), /Missed call review completed after caller@example\.test&#x27;s callback attempt/)
-  assert.doesNotMatch(panel(callbackReview), /Completed by the team/)
-  assert.match(panel(review), /Completed by the team/)
+  assert.doesNotMatch(panel(callbackReview), /Done, automatically/)
+  assert.match(panel(review), /Done, automatically/)
 })
 
 test("an AI Task shows the missed handoff call attached to it", () => {
@@ -525,7 +525,7 @@ test("completing a Task keeps Next task in place and holds Reopen until the chan
       />
     </DataProvider>,
   ))
-  const actions = () => [...host.querySelectorAll<HTMLButtonElement>("section[aria-label='Focused Task'] div.flex-col > button")]
+  const actions = () => [...host.querySelectorAll<HTMLButtonElement>("section[aria-label='Focused Task'] div.flex-col button")]
   const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === name)
   try {
     await render(open)
@@ -620,6 +620,7 @@ function callbackFixture() {
     ...projectedTask(), id: "task-review", origin: "MISSED_CALL_RECOVERY", recoveryOutcome: "MISSED_CALL",
     title: "Return missed call", state: "COMPLETED", createdAt: "2026-09-08T12:50:00Z",
     completedAt: "2026-09-08T13:56:00Z", completedBy: { kind: "SERVICE", subject: "work-recovery-resolution" },
+    closeReason: "DONE",
   }
   const history: ConversationTimelineItem[] = [
     { id: "created", type: "TASK", occurredAt: selected.createdAt, taskActivity: "TASK_CREATED", task: selected },

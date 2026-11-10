@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import {
   CheckIcon,
   CheckCircle2Icon,
+  ChevronDownIcon,
   PencilIcon,
   PhoneCallIcon,
   RotateCcwIcon,
@@ -19,11 +20,12 @@ import { useSettledState } from "@/hooks/use-settled-state"
 import type {
   CallingCall,
   ConversationTimelineItem,
+  StaffTaskCloseReason,
   Task,
 } from "@/lib/api/generated/types.gen"
 import { completeTask, readTask, renameTask, reopenTask } from "@/lib/clients/tasks"
 import { formatTimestamp } from "@/lib/format-time"
-import { taskUrgencyLabels } from "@/lib/vocabulary"
+import { taskCloseSummary, taskUrgencyLabels } from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 import {
@@ -31,6 +33,7 @@ import {
   openTaskCallbackNotice,
 } from "@/lib/workspace-history"
 
+import { TaskCloseMenu } from "./task-close-menu"
 import { TaskMetadata } from "./task-metadata"
 import { RecoveryTaskSource } from "./recording-source"
 import { actorLabel, Metadata, TaskSourceDetails } from "./task-details"
@@ -119,15 +122,15 @@ export function TaskWorkspace({
     setError("The title could not be saved.")
   }
 
-  async function transition(action: "complete" | "reopen") {
-    if (pending || (action === "complete" && needsReview)) return
-    if (action === "reopen" && !stateSettled) return
+  async function transition(closeReason?: StaffTaskCloseReason) {
+    if (pending || (closeReason && needsReview)) return
+    if (!closeReason && !stateSettled) return
     setPending(true)
     setError("")
-    const outcome = await (action === "complete" ? completeTask(task, "DONE") : reopenTask(task))
+    const outcome = await (closeReason ? completeTask(task, closeReason) : reopenTask(task))
     setPending(false)
     if (outcome.ok) {
-      acceptUpdate(outcome.data, action === "complete")
+      acceptUpdate(outcome.data, Boolean(closeReason))
       return
     }
     if (outcome.failure.kind === "signedOut") return
@@ -136,13 +139,12 @@ export function TaskWorkspace({
       setError("This Task changed elsewhere. The latest state is now loaded.")
       return
     }
-    setError(`The Task could not be ${action === "complete" ? "completed" : "reopened"}.`)
+    setError(`The Task could not be ${closeReason ? "completed" : "reopened"}.`)
   }
   const recovery =
     task.origin === "VOICEMAIL_RECOVERY" ||
     task.origin === "MISSED_CALL_RECOVERY"
-  const completion = callbackCompletionLabel(task) ??
-    `Completed by ${task.completedBy?.email ?? "the team"}`
+  const completion = callbackCompletionLabel(task) ?? taskCloseSummary(task)
   const callbackNotice = openTaskCallbackNotice(numberHistory, task, formatTimestamp)
 
   return (
@@ -222,14 +224,29 @@ export function TaskWorkspace({
                 {callbackNotice}
               </p>
             )}
-            <Button
-              variant={recovery ? "ghost" : "default"}
-              className={recovery ? "order-2" : undefined}
-              onClick={() => void transition("complete")}
-              disabled={pending || needsReview}
-            >
-              {pending ? <Spinner /> : <CheckCircle2Icon />} {task.origin === "APPOINTMENT_REVIEW" ? "Verify & next" : recovery ? "Mark done" : "Complete & next"}
-            </Button>
+            <div className={cn("flex gap-1", recovery && "order-2")}>
+              <Button
+                variant={recovery ? "ghost" : "default"}
+                className="min-w-0 flex-1"
+                onClick={() => void transition("DONE")}
+                disabled={pending || needsReview}
+              >
+                {pending ? <Spinner /> : <CheckCircle2Icon />} {task.origin === "APPOINTMENT_REVIEW" ? "Verify & next" : recovery ? "Mark done" : "Complete & next"}
+              </Button>
+              <TaskCloseMenu
+                trigger={
+                  <Button
+                    variant={recovery ? "ghost" : "outline"}
+                    size="icon"
+                    aria-label="Close as"
+                    disabled={pending || needsReview}
+                  />
+                }
+                onClose={(reason) => void transition(reason)}
+              >
+                <ChevronDownIcon />
+              </TaskCloseMenu>
+            </div>
             {activeCall ? (
               <Button variant="outline" onClick={onReturnToCall}>
                 <PhoneCallIcon /> Return to active call
@@ -243,7 +260,7 @@ export function TaskWorkspace({
             variant="ghost"
             size="sm"
             className="mt-2 self-start text-muted-foreground"
-            onClick={() => void transition("reopen")}
+            onClick={() => void transition()}
             disabled={pending || !stateSettled}
           >
             {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
