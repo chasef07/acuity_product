@@ -31,18 +31,14 @@ SET close_reason = CASE
     END
 WHERE task.state = 'COMPLETED';
 
+-- Only the value is constrained here. The release that deploys this migration
+-- can roll traffic back to a backend that does not write the reason, so a
+-- completed Task may have none and a reopened Task may keep one until a later
+-- migration ties the reason to the state.
 ALTER TABLE work_tasks
     ADD CONSTRAINT work_tasks_close_reason_check CHECK (
-        (
-            state = 'OPEN'
-            AND close_reason IS NULL
-            AND closed_via_call_id IS NULL
-        )
-        OR (
-            state = 'COMPLETED'
-            AND close_reason IS NOT NULL
-            AND close_reason IN ('DONE', 'NOT_NEEDED', 'UNREACHABLE', 'EXPIRED')
-        )
+        close_reason IS NULL
+        OR close_reason IN ('DONE', 'NOT_NEEDED', 'UNREACHABLE', 'EXPIRED')
     );
 
 -- Added last so the lock it takes on human_calling_calls is held only for the

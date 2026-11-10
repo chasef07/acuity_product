@@ -85,14 +85,19 @@ func TestCompletedTasksAreBackfilledWithACloseReason(t *testing.T) {
 	}
 
 	for name, statement := range map[string]string{
-		"an open Task with a reason":        `UPDATE work_tasks SET close_reason='DONE' WHERE id='` + open + `'`,
-		"a completed Task with no reason":   `UPDATE work_tasks SET close_reason=NULL WHERE id='` + staffCompleted + `'`,
 		"an unknown reason":                 `UPDATE work_tasks SET close_reason='ABANDONED' WHERE id='` + staffCompleted + `'`,
-		"an open Task with a closing call":  `UPDATE work_tasks SET closed_via_call_id=gen_random_uuid() WHERE id='` + open + `'`,
 		"a closing call that is not a call": `UPDATE work_tasks SET closed_via_call_id=gen_random_uuid() WHERE id='` + staffCompleted + `'`,
 	} {
 		if _, err := pool.Exec(ctx, statement); err == nil {
 			t.Errorf("the database accepted %s", name)
+		}
+	}
+	for name, statement := range map[string]string{
+		"completes a Task":              `UPDATE work_tasks SET state='COMPLETED',completed_by_kind='HUMAN',completed_by_subject='staff',completed_by_email='staff@example.test',completed_at='2026-09-05',version=version+1 WHERE id='` + open + `'`,
+		"reopens a Task closed as done": `UPDATE work_tasks SET state='OPEN',completed_by_kind=NULL,completed_by_subject=NULL,completed_by_email=NULL,completed_at=NULL,version=version+1 WHERE id='` + staffCompleted + `'`,
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Errorf("the database refused the previous backend when it %s: %v", name, err)
 		}
 	}
 }
