@@ -134,7 +134,7 @@ export function PatientTasksPanelView({
     closing.current = undefined
     if (document.activeElement && document.activeElement !== document.body) return
     const next = open[closed.index] ?? open.at(-1)
-    const row = next && section.current?.querySelector<HTMLElement>(`[data-task-id="${next.id}"]`)
+    const row = next && section.current?.querySelector<HTMLElement>(`[data-patient-task-id="${next.id}"]`)
     ;(row ?? section.current)?.focus()
   }, [open, completion.pendingTaskID])
 
@@ -224,7 +224,7 @@ export function PatientTasksPanelView({
           <h2 className="mt-4 text-sm font-medium">Closed today</h2>
           <ul className="mt-1 divide-y">
             {closedToday.map((task) => (
-              <li key={task.id} data-task-id={task.id} className="py-2">
+              <li key={task.id} data-patient-task-id={task.id} className="py-2">
                 <div className="flex items-center gap-2">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm text-muted-foreground">{task.title}</p>
@@ -327,7 +327,7 @@ function OpenTaskRow({
   return (
     <li
       data-testid="patient-task-row"
-      data-task-id={task.id}
+      data-patient-task-id={task.id}
       tabIndex={-1}
       className="rounded-sm py-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
     >

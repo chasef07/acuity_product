@@ -304,7 +304,7 @@ test("focus stays in the panel when a ticked Task leaves it", async (t) => {
     completion: { pendingTaskID, errorTaskID: "", error: "" },
   }))
   const tick = (task: Task) => page.host.querySelector<HTMLButtonElement>(`button[aria-label="Mark done: ${task.title}"]`)!
-  const focused = () => document.activeElement?.getAttribute("data-task-id") ?? document.activeElement?.getAttribute("aria-label")
+  const focused = () => document.activeElement?.getAttribute("data-patient-task-id") ?? document.activeElement?.getAttribute("aria-label")
   const complete = async (closed: Task, before: Task[], after: Task[]) => {
     await act(async () => {
       tick(closed).focus()
@@ -516,7 +516,7 @@ test("a completion that failed or conflicted re-reads the summary, so no stale r
       </LiveDetail>
     </DataProvider>,
   )
-  const listed = () => [...page.host.querySelectorAll('[data-testid="patient-task-row"]')].map((row) => row.getAttribute("data-task-id"))
+  const listed = () => [...page.host.querySelectorAll('[data-testid="patient-task-row"]')].map((row) => row.getAttribute("data-patient-task-id"))
   const settle = async (ready: () => boolean) => {
     for (let attempt = 0; attempt < 50 && !ready(); attempt++) {
       await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
