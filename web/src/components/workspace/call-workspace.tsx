@@ -1,6 +1,5 @@
 "use client"
 
-import type { ReactNode } from "react"
 import { ArrowLeftIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -21,21 +20,14 @@ export function CallWorkspace({
   returnTask,
   onReturnToTask,
   onOpenRecoveryTask,
-  patientTasks,
 }: {
   call: CallingCall
   returnTask: Task | undefined
   onReturnToTask: (() => void) | undefined
   onOpenRecoveryTask: (taskID: string) => void
-  patientTasks: ReactNode
 }) {
   const formattedPhone = formatPhone(call.phone)
-  const contactName =
-    call.displayName &&
-    call.displayName !== call.phone &&
-    call.displayName !== formattedPhone
-      ? call.displayName
-      : ""
+  const contactName = callContactName(call)
   const taskAction = call.recoveryTask
     ? {
         label: "Open Task",
@@ -66,7 +58,6 @@ export function CallWorkspace({
       </header>
       {call.voicemail && <VoicemailSource call={call} />}
       {call.recording && <CallRecordingSource call={call} />}
-      {patientTasks}
       <details className="group border-t px-5 py-4">
         <summary className="cursor-pointer text-sm font-medium">Details</summary>
         <div className="mt-3 flex flex-col gap-3">
@@ -79,4 +70,12 @@ export function CallWorkspace({
       </details>
     </section>
   )
+}
+
+export function callContactName(call: Pick<CallingCall, "displayName" | "phone">) {
+  return call.displayName &&
+    call.displayName !== call.phone &&
+    call.displayName !== formatPhone(call.phone)
+    ? call.displayName
+    : ""
 }

@@ -25,8 +25,12 @@ type TaskCallContextProps = {
   onTaskUpdated: (task: Task, advance?: boolean) => void
   onOpenTask: (task: Task) => void
   onReturnToCall: () => void
-  patientTasks: (phone: string, currentTaskID?: string) => ReactNode
+  patientTasks: (phone: string, placement: PatientTasksPlacement) => ReactNode
 }
+
+export type PatientTasksPlacement =
+  | { beside: "task"; currentTaskID: string }
+  | { beside: "call"; callTaskID?: string }
 
 export function TaskCallContext({
   task,
@@ -51,20 +55,26 @@ export function TaskCallContext({
   )
   if (view === "call" && activeCall) {
     return (
-      <CallWorkspace
-        key={activeCall.id}
-        call={activeCall}
-        returnTask={task}
-        onReturnToTask={task ? () => onTaskUpdated(task) : undefined}
-        onOpenRecoveryTask={(taskID) => void openRecoveryTask(taskID)}
-        patientTasks={patientTasks(activeCall.phone)}
-      />
+      <DetailsAbovePatientTasks
+        patientTasks={patientTasks(activeCall.phone, {
+          beside: "call",
+          callTaskID: activeCall.recoveryTask?.id ?? activeCall.taskId,
+        })}
+      >
+        <CallWorkspace
+          key={activeCall.id}
+          call={activeCall}
+          returnTask={task}
+          onReturnToTask={task ? () => onOpenTask(task) : undefined}
+          onOpenRecoveryTask={(taskID) => void openRecoveryTask(taskID)}
+        />
+      </DetailsAbovePatientTasks>
     )
   }
   if (view === "task" && task) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        {patientTasks(task.phone, task.id)}
+        {patientTasks(task.phone, { beside: "task", currentTaskID: task.id })}
         {group && onSelectTask ? (
           <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
         ) : (
@@ -84,4 +94,19 @@ export function TaskCallContext({
     )
   }
   return <section aria-label="No Task selected" className="min-h-0 flex-1" />
+}
+
+export function DetailsAbovePatientTasks({
+  children,
+  patientTasks,
+}: {
+  children: ReactNode
+  patientTasks: ReactNode
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-11 flex-col overflow-hidden">{children}</div>
+      {patientTasks}
+    </div>
+  )
 }

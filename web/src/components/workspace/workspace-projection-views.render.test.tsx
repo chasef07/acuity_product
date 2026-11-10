@@ -81,6 +81,8 @@ test("Task rail toggles the selected context while preserving the conversation",
       engagement={projection.selection.engagement!}
       practiceID={projection.scope.practiceID}
       selectedTaskID={projection.selection.task?.id}
+      patientTasksOpen={false}
+      onPatientTasks={() => {}}
       onTaskCreated={() => {}}
       onTaskOpen={() => {}}
       onCallOpen={() => {}}
@@ -947,6 +949,8 @@ function conversationHarness(t: TestContext) {
           engagement={projection.selection.engagement!}
           practiceID={projection.scope.practiceID}
           textTask={conversation.textTask}
+          patientTasksOpen={false}
+          onPatientTasks={() => {}}
           onTextTaskUpdated={() => {}}
           onTaskCreated={() => {}}
           onTaskOpen={(task) => conversation.opened.push(`task:${task.id}`)}

@@ -1,9 +1,11 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react"
 import { CheckIcon, EllipsisIcon } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Tooltip,
@@ -30,14 +32,17 @@ import {
 import { offersTaskCloseMenu, TaskCloseMenu } from "./task-close-menu"
 import { taskRelativeTime } from "./workspace-rail-task-row"
 
+const collapsedRowLimit = 8
+
 type TaskFailure = { taskID: string; message: string }
 
 type PatientTasksPanelProps = {
   currentTaskID?: string
+  callTaskID?: string
   completion: { pendingTaskID: string; errorTaskID: string; error: string }
   className?: string
   onComplete: (task: Task, reason: StaffTaskCloseReason) => void
-  onOpen: (task: Task) => void
+  onOpen?: (task: Task) => void
 }
 
 export function PatientTasksPanel({
@@ -90,6 +95,7 @@ export function PatientTasksPanel({
 export function PatientTasksPanelView({
   summary,
   currentTaskID,
+  callTaskID,
   completion,
   reopening,
   reopenFailure,
@@ -99,7 +105,7 @@ export function PatientTasksPanelView({
   onReopen,
   onRetry,
 }: PatientTasksPanelProps & {
-  summary: PortalQuery<Pick<PhoneSummary, "openTasks" | "closedToday">>
+  summary: PortalQuery<Pick<PhoneSummary, "names" | "openTasks" | "openTaskCount" | "closedToday">>
   reopening: string
   reopenFailure?: TaskFailure
   onReopen: (task: Task) => void
@@ -107,66 +113,70 @@ export function PatientTasksPanelView({
 }) {
   const section = useRef<HTMLElement>(null)
   const closing = useRef<{ taskID: string; index: number }>(undefined)
-  const openTasks = summary.status === "ready" ? summary.data.openTasks : undefined
+  const [showAll, setShowAll] = useState(false)
+  const loaded = summary.status === "ready" ? summary.data : undefined
+  const open = useMemo(
+    () =>
+      loaded && [
+        ...loaded.openTasks.filter((task) => task.id === callTaskID),
+        ...loaded.openTasks.filter((task) => task.id !== callTaskID),
+      ],
+    [loaded, callTaskID],
+  )
 
   useEffect(() => {
     const closed = closing.current
-    if (!closed || !openTasks) return
-    if (openTasks.some((task) => task.id === closed.taskID)) {
+    if (!closed || !open) return
+    if (open.some((task) => task.id === closed.taskID)) {
       if (!completion.pendingTaskID) closing.current = undefined
       return
     }
     closing.current = undefined
     if (document.activeElement && document.activeElement !== document.body) return
-    const next = openTasks[closed.index] ?? openTasks.at(-1)
-    const row = next && section.current?.querySelector<HTMLElement>(
-      `[data-task-id="${next.id}"] button[aria-current]`,
-    )
+    const next = open[closed.index] ?? open.at(-1)
+    const row = next && section.current?.querySelector<HTMLElement>(`[data-task-id="${next.id}"]`)
     ;(row ?? section.current)?.focus()
-  }, [openTasks, completion.pendingTaskID])
+  }, [open, completion.pendingTaskID])
 
-  if (summary.status === "loading") {
-    return currentTaskID ? null : (
-      <section aria-label="Open Tasks" aria-busy="true" className={cn("px-5 py-4", className)}>
-        <p role="status" className="text-xs text-muted-foreground">Loading open Tasks…</p>
-      </section>
-    )
-  }
-  if (summary.status === "failed") {
+  if (!loaded || !open) {
     return (
-      <section aria-label="Open Tasks" className={cn("px-5 py-4", className)}>
-        <p role="alert" className="text-xs text-destructive">
-          This patient&apos;s open Tasks could not be loaded.
-        </p>
-        <Button size="sm" variant="outline" className="mt-2" onClick={onRetry}>
-          Retry
-        </Button>
-      </section>
+      <PanelFrame className={className} busy={summary.status === "loading"}>
+        {summary.status === "loading" ? (
+          <div data-testid="patient-tasks-loading" className="flex items-start gap-2 py-2">
+            <span className="sr-only">Loading open Tasks</span>
+            <Skeleton className="mt-0.5 size-5 shrink-0 rounded-full" />
+            <div className="min-w-0 flex-1">
+              <div className="flex h-5 items-center"><Skeleton className="h-3.5 w-3/4" /></div>
+              <div className="flex h-4 items-center"><Skeleton className="h-3 w-1/2" /></div>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p role="alert" className="mt-1 text-xs text-destructive">
+              This patient&apos;s open Tasks could not be loaded.
+            </p>
+            <Button size="sm" variant="outline" className="mt-2" onClick={onRetry}>
+              Retry
+            </Button>
+          </>
+        )}
+      </PanelFrame>
     )
   }
-  const { closedToday } = summary.data
-  const open = summary.data.openTasks
-  const onlyCurrent = [...open, ...closedToday].every((task) => task.id === currentTaskID)
-  if (currentTaskID && onlyCurrent) return null
 
-  function complete(task: Task, reason: StaffTaskCloseReason) {
+  const { closedToday } = loaded
+  const shared = loaded.names.length > 1
+  const shown = showAll ? open : open.slice(0, collapsedRowLimit)
+
+  const complete = (task: Task, reason: StaffTaskCloseReason) => {
     closing.current = { taskID: task.id, index: open.indexOf(task) }
     onComplete(task, reason)
   }
 
   return (
-    <section
-      ref={section}
-      tabIndex={-1}
-      aria-label="Open Tasks"
-      className={cn("px-5 py-4 outline-none", className)}
-    >
-      <header className="flex items-baseline gap-2 pr-8">
-        <h2 className="text-sm font-medium">Open Tasks</h2>
-        <span className="text-xs tabular-nums text-muted-foreground">{open.length}</span>
-      </header>
-      {summary.refreshFailure && (
-        <p role="alert" className="mt-2 text-xs text-destructive">
+    <PanelFrame ref={section} className={className} count={loaded.openTaskCount}>
+      {summary.status === "ready" && summary.refreshFailure && (
+        <p role="alert" className="text-xs text-destructive">
           This list could not be refreshed.{" "}
           <button type="button" className="underline underline-offset-2" onClick={onRetry}>
             Retry
@@ -174,22 +184,40 @@ export function PatientTasksPanelView({
         </p>
       )}
       {open.length === 0 ? (
-        <p className="mt-2 text-xs text-muted-foreground">Nothing open for this patient.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Nothing open for this patient.</p>
       ) : (
-        <ul className="mt-1 divide-y">
-          {open.map((task) => (
+        <ul className="divide-y">
+          {shown.map((task) => (
             <OpenTaskRow
               key={task.id}
               task={task}
               current={task.id === currentTaskID}
+              thisCall={task.id === callTaskID}
+              callerName={shared ? task.callerName : undefined}
               pending={completion.pendingTaskID === task.id}
               disabled={Boolean(completion.pendingTaskID)}
               error={completion.errorTaskID === task.id ? completion.error : ""}
               onComplete={(reason) => complete(task, reason)}
-              onOpen={() => onOpen(task)}
+              onOpen={onOpen && task.origin !== "INBOUND_MESSAGE_REVIEW" ? () => onOpen(task) : undefined}
             />
           ))}
         </ul>
+      )}
+      {open.length > collapsedRowLimit && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="mt-1 text-muted-foreground"
+          aria-expanded={showAll}
+          onClick={() => setShowAll((value) => !value)}
+        >
+          {showAll ? "Show fewer" : `Show all ${open.length}`}
+        </Button>
+      )}
+      {showAll && loaded.openTaskCount > open.length && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Showing {open.length} of {loaded.openTaskCount}
+        </p>
       )}
       {closedToday.length > 0 && (
         <>
@@ -225,6 +253,40 @@ export function PatientTasksPanelView({
           </ul>
         </>
       )}
+    </PanelFrame>
+  )
+}
+
+function PanelFrame({
+  ref,
+  className,
+  busy,
+  count,
+  children,
+}: {
+  ref?: Ref<HTMLElement>
+  className?: string
+  busy?: boolean
+  count?: number
+  children: ReactNode
+}) {
+  return (
+    <section
+      ref={ref}
+      tabIndex={-1}
+      aria-label="Open Tasks"
+      aria-busy={busy || undefined}
+      className={cn("flex min-h-0 flex-col pt-3 pb-2 outline-none", className)}
+    >
+      <header className="flex h-7 shrink-0 items-center gap-2 pr-12 pl-5">
+        <h2 className="text-sm font-medium">Open Tasks</h2>
+        {count !== undefined && (
+          <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
+        )}
+      </header>
+      <div data-testid="patient-tasks-body" className="min-h-0 overflow-y-auto px-5">
+        {children}
+      </div>
     </section>
   )
 }
@@ -232,6 +294,8 @@ export function PatientTasksPanelView({
 function OpenTaskRow({
   task,
   current,
+  thisCall,
+  callerName,
   pending,
   disabled,
   error,
@@ -240,16 +304,33 @@ function OpenTaskRow({
 }: {
   task: Task
   current: boolean
+  thisCall: boolean
+  callerName?: string
   pending: boolean
   disabled: boolean
   error: string
   onComplete: (reason: StaffTaskCloseReason) => void
-  onOpen: () => void
+  onOpen?: () => void
 }) {
   const closable = offersTaskCloseMenu(task)
   const age = taskRelativeTime(task).at
+  const title = (
+    <>
+      {task.urgency === "high_priority" && (
+        <span className="size-1.5 shrink-0 rounded-full bg-destructive">
+          <span className="sr-only">Urgent</span>
+        </span>
+      )}
+      <span className="truncate">{task.title}</span>
+    </>
+  )
   return (
-    <li data-testid="patient-task-row" data-task-id={task.id} className="py-2">
+    <li
+      data-testid="patient-task-row"
+      data-task-id={task.id}
+      tabIndex={-1}
+      className="rounded-sm py-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+    >
       <div className="flex items-start gap-2">
         {closable ? (
           <Tooltip>
@@ -275,20 +356,24 @@ function OpenTaskRow({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-baseline gap-2">
-            <button
-              type="button"
-              aria-label={`Open Task: ${task.title}`}
-              aria-current={current}
-              className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left text-sm leading-5 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/30 aria-[current=true]:font-medium"
-              onClick={onOpen}
-            >
-              {task.urgency === "high_priority" && (
-                <span className="size-1.5 shrink-0 rounded-full bg-destructive">
-                  <span className="sr-only">Urgent</span>
-                </span>
-              )}
-              <span className="truncate">{task.title}</span>
-            </button>
+            {onOpen ? (
+              <button
+                type="button"
+                aria-label={`Open Task: ${task.title}`}
+                aria-current={current}
+                className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left text-sm leading-5 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/30 aria-[current=true]:font-medium"
+                onClick={onOpen}
+              >
+                {title}
+              </button>
+            ) : (
+              <p
+                data-testid="patient-task-title"
+                className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-sm leading-5", current && "font-medium")}
+              >
+                {title}
+              </p>
+            )}
             <time
               dateTime={age}
               className="shrink-0 text-[10px] tabular-nums text-muted-foreground"
@@ -297,8 +382,14 @@ function OpenTaskRow({
             </time>
           </div>
           <p className="truncate text-xs text-muted-foreground">
+            {callerName && `${callerName} · `}
             {task.category ? taskGroupLabel(task.category) : taskOriginLabels[task.origin]} · {task.locationName}
           </p>
+          {thisCall && (
+            <Badge variant="outline" className="mt-1 h-5 text-[10px]">
+              This call
+            </Badge>
+          )}
         </div>
         {closable && (
           <TaskCloseMenu

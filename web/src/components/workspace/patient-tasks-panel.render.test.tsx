@@ -5,10 +5,12 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
 
 import type { CallingCall, StaffTaskCloseReason, Task } from "../../lib/api/generated/types.gen.ts"
+import { clearAccessToken } from "../../lib/auth-client.ts"
 import { DataProvider } from "../../lib/data/provider.tsx"
+import { useLiveRefresh } from "../../lib/data/queries.ts"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
 import { PatientTasksPanelView } from "./patient-tasks-panel.tsx"
-import { TaskCallContext } from "./task-call-context.tsx"
+import { type PatientTasksPlacement, TaskCallContext } from "./task-call-context.tsx"
 
 const now = Date.parse("2026-08-30T15:00:00Z")
 
@@ -59,8 +61,16 @@ const closedTask: Task = {
 
 type ViewProps = ComponentProps<typeof PatientTasksPanelView>
 
-function ready(openTasks: Task[], closedToday: Task[] = []): ViewProps["summary"] {
-  return { status: "ready", data: { openTasks, closedToday }, refreshing: false }
+function ready(
+  openTasks: Task[],
+  closedToday: Task[] = [],
+  rest: { names?: string[]; openTaskCount?: number } = {},
+): ViewProps["summary"] {
+  return {
+    status: "ready",
+    data: { names: [], openTasks, openTaskCount: openTasks.length, closedToday, ...rest },
+    refreshing: false,
+  }
 }
 
 function view(overrides: Partial<ViewProps> = {}) {
@@ -109,7 +119,7 @@ test("five open Tasks at two offices are all listed in the order given", (t) => 
   const listed = rows(markup)
   assert.match(markup, /<h2[^>]*>Open Tasks<\/h2><span[^>]*>5<\/span>/)
   assert.deepEqual(
-    listed.map((row) => /aria-label="Open Task: ([^"]*)"/.exec(row)?.[1]),
+    listed.map((row) => /<span class="truncate">([^<]*)<\/span>/.exec(row)?.[1]),
     fiveTasks.map((task) => task.title),
   )
   assert.equal(listed.filter((row) => row.includes("North Office")).length, 3)
@@ -121,6 +131,8 @@ test("five open Tasks at two offices are all listed in the order given", (t) => 
   assert.match(listed[3], />2d<\/time>/)
   assert.match(listed[4], /Incoming text · North Office/)
   assert.doesNotMatch(listed[4], /Mark done|Close as/, "a text review offers no tick or close menu, as in the rail")
+  assert.doesNotMatch(listed[4], /<button/, "a text review title is text, because selecting it would close the panel")
+  assert.match(listed[4], /Synthetic fifth request/)
   assert.doesNotMatch(markup, /Nothing open/)
 })
 
@@ -137,14 +149,99 @@ test("a Task closed today names its reason and who closed it, and offers Reopen"
   assert.match(closed, /role="alert"[^>]*>The Task could not be reopened\./)
 })
 
-test("the panel stays out of the way when it would only repeat the Task already shown", () => {
+test("loading holds the heading and one row of space so the Task detail below does not jump", () => {
   const current = fiveTasks[0]
-  assert.equal(renderToStaticMarkup(view({ summary: ready([current]), currentTaskID: current.id })), "")
-  assert.equal(renderToStaticMarkup(view({ summary: ready([], [{ ...closedTask, id: current.id }]), currentTaskID: current.id })), "")
-  assert.equal(renderToStaticMarkup(view({ summary: { status: "loading" }, currentTaskID: current.id })), "")
-  assert.match(renderToStaticMarkup(view({ summary: ready([current, fiveTasks[1]]), currentTaskID: current.id })), /Open Tasks/)
-  assert.match(renderToStaticMarkup(view({ summary: ready([current]) })), /Open Tasks/)
-  assert.match(renderToStaticMarkup(view({ summary: { status: "loading" } })), /Loading open Tasks/)
+  for (const currentTaskID of [current.id, undefined]) {
+    const loading = renderToStaticMarkup(view({ summary: { status: "loading" }, currentTaskID }))
+    assert.match(loading, /aria-busy="true"/)
+    assert.match(loading, /<h2[^>]*>Open Tasks<\/h2>/)
+    assert.match(loading, /Loading open Tasks/)
+    assert.equal(loading.match(/data-slot="skeleton"/g)?.length, 3)
+  }
+  const one = renderToStaticMarkup(view({ summary: ready([current]), currentTaskID: current.id }))
+  assert.equal(rows(one).length, 1, "the one Task takes the row the skeleton held")
+  assert.match(rows(one)[0], /aria-current="true"/)
+})
+
+function manyTasks(count: number) {
+  return Array.from({ length: count }, (_, index) => openTask(`number ${index + 1}`))
+}
+
+test("a long list shows eight rows until asked for all, and says when the server held some back", async (t) => {
+  const page = await harness(t)
+  const toggle = () => [...page.host.querySelectorAll("button")].find((button) => /^Show /.test(button.textContent ?? ""))
+  const shown = () => page.host.querySelectorAll('[data-testid="patient-task-row"]').length
+
+  await page.render(view({ summary: ready(manyTasks(8)) }))
+  assert.equal(shown(), 8)
+  assert.equal(toggle(), undefined, "eight Tasks need no toggle")
+
+  await page.render(view({ summary: ready(manyTasks(12)) }))
+  assert.equal(shown(), 8)
+  assert.equal(toggle()?.textContent, "Show all 12")
+  assert.doesNotMatch(page.host.textContent ?? "", /Showing/)
+  await act(async () => toggle()!.click())
+  assert.equal(shown(), 12)
+  assert.equal(toggle()?.textContent, "Show fewer")
+  assert.doesNotMatch(page.host.textContent ?? "", /Showing/, "nothing is held back when every Task was returned")
+  await act(async () => toggle()!.click())
+  assert.equal(shown(), 8)
+
+  await page.render(view({ summary: ready(manyTasks(50), [], { openTaskCount: 63 }) }))
+  assert.match(page.host.innerHTML, /<h2[^>]*>Open Tasks<\/h2><span[^>]*>63<\/span>/)
+  await act(async () => toggle()!.click())
+  assert.equal(shown(), 50)
+  assert.match(page.host.textContent ?? "", /Showing 50 of 63/)
+})
+
+test("on a call the titles are text, and the call's own Task comes first with its marker", (t) => {
+  t.mock.method(Date, "now", () => now)
+  const markup = renderToStaticMarkup(view({ summary: ready(fiveTasks), callTaskID: "task-fourth", onOpen: undefined }))
+  const listed = rows(markup)
+  assert.deepEqual(
+    listed.map((row) => /<span class="truncate">([^<]*)<\/span>/.exec(row)?.[1]),
+    [fiveTasks[3], fiveTasks[0], fiveTasks[1], fiveTasks[2], fiveTasks[4]].map((task) => task.title),
+  )
+  assert.match(listed[0], />This call</)
+  assert.equal(listed.filter((row) => row.includes("This call")).length, 1)
+  assert.doesNotMatch(markup, /aria-label="Open Task:/, "nothing in the list navigates away from the call")
+  assert.match(listed[0], /aria-label="Mark done: Synthetic fourth request"/)
+  assert.match(listed[0], /aria-label="Close as: Synthetic fourth request"/)
+  const elsewhere = renderToStaticMarkup(view({ summary: ready(fiveTasks) }))
+  assert.doesNotMatch(elsewhere, /This call/)
+})
+
+test("a shared phone names the caller on each Task that has one", () => {
+  const dolores = openTask("first", { callerName: "Dolores Reyes" })
+  const marco = openTask("second", { callerName: "Marco Reyes" })
+  const unnamed = openTask("third")
+  const shared = rows(renderToStaticMarkup(view({
+    summary: ready([dolores, marco, unnamed], [], { names: ["Marco Reyes", "Dolores Reyes"] }),
+  })))
+  assert.match(shared[0], /Dolores Reyes · Insurance/)
+  assert.match(shared[1], /Marco Reyes · Insurance/)
+  assert.doesNotMatch(shared[2], /Reyes/)
+  const single = rows(renderToStaticMarkup(view({
+    summary: ready([dolores], [], { names: ["Dolores Reyes"] }),
+  })))
+  assert.doesNotMatch(single[0], /Dolores Reyes/, "one name is already in the conversation header")
+})
+
+test("rows scroll beneath a heading as tall as the close button, so the close menu is never covered", () => {
+  const markup = renderToStaticMarkup(view({ summary: ready(fiveTasks) }))
+  const [, sectionClass] = /<section[^>]*class="([^"]*)"/.exec(markup) ?? []
+  const [, headerClass] = /<header class="([^"]*)"/.exec(markup) ?? []
+  const [, bodyClass] = /data-testid="patient-tasks-body" class="([^"]*)"/.exec(markup) ?? []
+  assert.match(sectionClass ?? "", /\bpt-3\b/, "the heading starts where the close button starts")
+  assert.match(headerClass ?? "", /\bh-7\b/, "and is as tall as it")
+  assert.match(headerClass ?? "", /\bshrink-0\b/)
+  assert.match(headerClass ?? "", /\bpr-12\b/, "and ends before it")
+  assert.match(bodyClass ?? "", /\boverflow-y-auto\b/)
+  assert.ok(markup.indexOf("</header>") < markup.indexOf('data-testid="patient-task-row"'))
+  assert.ok(
+    markup.indexOf('data-testid="patient-tasks-body"') < markup.indexOf('data-testid="patient-task-row"'),
+    "every row is inside the scrolling body",
+  )
 })
 
 test("a failed or stale read is said, with a way to retry", () => {
@@ -153,7 +250,12 @@ test("a failed or stale read is said, with a way to retry", () => {
   assert.match(failed, /role="alert"[^>]*>This patient&#x27;s open Tasks could not be loaded\./)
   assert.match(failed, />Retry<\/button>/)
   const stale = renderToStaticMarkup(view({
-    summary: { status: "ready", data: { openTasks: fiveTasks, closedToday: [] }, refreshing: false, refreshFailure: failure },
+    summary: {
+      status: "ready",
+      data: { names: [], openTasks: fiveTasks, openTaskCount: 5, closedToday: [] },
+      refreshing: false,
+      refreshFailure: failure,
+    },
   }))
   assert.match(stale, /This list could not be refreshed\./)
   assert.equal(rows(stale).length, 5)
@@ -202,7 +304,7 @@ test("focus stays in the panel when a ticked Task leaves it", async (t) => {
     completion: { pendingTaskID, errorTaskID: "", error: "" },
   }))
   const tick = (task: Task) => page.host.querySelector<HTMLButtonElement>(`button[aria-label="Mark done: ${task.title}"]`)!
-  const focused = () => document.activeElement?.getAttribute("aria-label")
+  const focused = () => document.activeElement?.getAttribute("data-task-id") ?? document.activeElement?.getAttribute("aria-label")
   const complete = async (closed: Task, before: Task[], after: Task[]) => {
     await act(async () => {
       tick(closed).focus()
@@ -213,9 +315,9 @@ test("focus stays in the panel when a ticked Task leaves it", async (t) => {
   }
   await render([first, second, third])
   await complete(second, [first, second, third], [first, third])
-  assert.equal(focused(), `Open Task: ${third.title}`, "the next Task takes focus")
+  assert.equal(focused(), third.id, "the next Task takes focus")
   await complete(third, [first, third], [first])
-  assert.equal(focused(), `Open Task: ${first.title}`, "the previous Task takes focus after the last one")
+  assert.equal(focused(), first.id, "the previous Task takes focus after the last one")
   await complete(first, [first], [])
   assert.equal(focused(), "Open Tasks", "the panel takes focus when no Task is left")
 })
@@ -243,7 +345,7 @@ const call: CallingCall = {
 }
 
 function context(overrides: Partial<ComponentProps<typeof TaskCallContext>>) {
-  const asked: [string, string | undefined][] = []
+  const asked: [string, PatientTasksPlacement][] = []
   const markup = renderToStaticMarkup(
     <DataProvider>
       <TaskCallContext
@@ -254,8 +356,8 @@ function context(overrides: Partial<ComponentProps<typeof TaskCallContext>>) {
         onTaskUpdated={() => {}}
         onOpenTask={() => {}}
         onReturnToCall={() => {}}
-        patientTasks={(phone, currentTaskID) => {
-          asked.push([phone, currentTaskID])
+        patientTasks={(phone, placement) => {
+          asked.push([phone, placement])
           return <p>patient tasks for {phone}</p>
         }}
         {...overrides}
@@ -267,56 +369,170 @@ function context(overrides: Partial<ComponentProps<typeof TaskCallContext>>) {
 
 test("a call shows the caller's Tasks under its details in place of the one recovery Task", () => {
   const { markup, asked } = context({ activeCall: call, view: "call" })
-  assert.deepEqual(asked, [[call.phone, undefined]])
+  assert.deepEqual(asked, [[call.phone, { beside: "call", callTaskID: "task-fourth" }]], "the recovery Task is the call's own")
   assert.ok(markup.indexOf("Dolores Reyes") < markup.indexOf("patient tasks for"))
+  assert.ok(markup.indexOf("Details") < markup.indexOf("patient tasks for"), "the list sits beneath every call detail")
   assert.doesNotMatch(markup, /Synthetic fourth request/)
   assert.match(markup, />Open Task<\/button>/)
   const returning = context({ activeCall: { ...call, recoveryTask: undefined }, view: "call", task: fiveTasks[0] })
   assert.match(returning.markup, /Back to Task<\/button>/)
+  const placed = context({ activeCall: { ...call, recoveryTask: undefined, entryPoint: "TASK", taskId: "task-second" }, view: "call" })
+  assert.deepEqual(placed.asked, [[call.phone, { beside: "call", callTaskID: "task-second" }]], "an outbound call belongs to the Task it was placed from")
+  const standalone = context({ activeCall: { ...call, recoveryTask: undefined }, view: "call" })
+  assert.deepEqual(standalone.asked, [[call.phone, { beside: "call", callTaskID: undefined }]])
 })
 
 test("a selected Task shows the patient's Tasks above its detail, for one Task and for a group", () => {
   const task = fiveTasks[0]
   const single = context({ task, view: "task" })
-  assert.deepEqual(single.asked, [[task.phone, task.id]])
+  assert.deepEqual(single.asked, [[task.phone, { beside: "task", currentTaskID: task.id }]])
   assert.ok(single.markup.indexOf("patient tasks for") < single.markup.indexOf('aria-label="Focused Task"'))
   const group = { ...task, groupMembers: [task, fiveTasks[1]] }
   const grouped = context({ task, group, taskRows: [group], onSelectTask: () => {}, view: "task" })
-  assert.deepEqual(grouped.asked, [[task.phone, task.id]])
+  assert.deepEqual(grouped.asked, [[task.phone, { beside: "task", currentTaskID: task.id }]])
   assert.ok(grouped.markup.indexOf("patient tasks for") < grouped.markup.indexOf('aria-label="Related Tasks"'))
   assert.deepEqual(context({}).asked, [])
 })
 
-function header(caller?: { displayName: string; names: string[] }) {
-  return renderToStaticMarkup(
+type HeaderProps = Partial<ComponentProps<typeof EngagementWorkspaceView>>
+
+function headerView(props: HeaderProps = {}) {
+  return (
     <DataProvider>
       <EngagementWorkspaceView
         practiceName="Synthetic Practice"
         engagement={{ phone: "+15551234567", locations: [{ id: "location-north", name: "North Office" }] }}
         practiceID="practice-1"
+        patientTasksOpen={false}
+        onPatientTasks={() => {}}
         onTaskCreated={() => {}}
         onTaskOpen={() => {}}
         onCallOpen={() => {}}
         onAIInteractionOpen={() => {}}
         calling={{ callingOccupied: false, outboundPending: false, ownsSoftphone: false, startOutbound: async () => undefined }}
-        caller={caller}
+        {...props}
       />
-    </DataProvider>,
-  ).split("</header>")[0]
+    </DataProvider>
+  )
 }
 
-test("the conversation header names the caller before the number and notes other names on it", () => {
-  const unnamed = header({ displayName: "", names: [] })
+function header(props: HeaderProps = {}) {
+  return renderToStaticMarkup(headerView(props)).split("</header>")[0]
+}
+
+function caller(names: string[], openTaskCount = 0) {
+  return { names, openTaskCount }
+}
+
+test("the conversation header names the caller only when one name is known for the number", () => {
+  const unnamed = header({ caller: caller([]) })
   assert.match(unnamed, /<h1[^>]*>\(555\) 123-4567<\/h1>/)
-  assert.doesNotMatch(unnamed, /caller-name|also used by/)
+  assert.doesNotMatch(unnamed, /caller-name|used by/)
   assert.equal(header(), unnamed)
-  const named = header({ displayName: "Dolores Reyes", names: ["Dolores Reyes"] })
+  const named = header({ caller: caller(["Dolores Reyes"]) })
   assert.ok(named.indexOf("Dolores Reyes") < named.indexOf("(555) 123-4567"))
   assert.match(named, /<h1[^>]*>\(555\) 123-4567<\/h1>/, "the number stays the heading")
-  assert.doesNotMatch(named, /also used by/)
-  const shared = header({ displayName: "Dolores Reyes", names: ["Dolores Reyes", "Marco Reyes", "Ana Reyes"] })
-  assert.match(shared, />Dolores Reyes<\/span>/)
-  assert.match(shared, /also used by Marco Reyes, Ana Reyes</)
+  assert.doesNotMatch(named, /used by/)
+})
+
+test("a shared phone is titled by its number and lists every name without favouring one", () => {
+  const names = ["Dolores Reyes", "Marco Reyes", "Ana Reyes", "Luis Reyes", "Rosa Reyes"]
+  const shared = header({ caller: caller(names) })
+  assert.doesNotMatch(shared, /caller-name/, "no single name stands as the caller")
+  assert.match(shared, /<h1[^>]*>\(555\) 123-4567<\/h1>/)
+  const [, noteClass, note] = /data-testid="shared-phone-names" class="([^"]*)">([^<]*)</.exec(shared) ?? []
+  assert.equal(note, "used by Dolores Reyes, Marco Reyes, Ana Reyes, Luis Reyes, Rosa Reyes")
+  assert.doesNotMatch(noteClass ?? "", /truncate/, "no name is cut off")
+})
+
+test("a call under a different name is shown as a shared phone, never as two callers", () => {
+  const differs = header({ caller: caller(["Dolores Reyes"]), callName: "Marco Reyes" })
+  assert.doesNotMatch(differs, /caller-name/)
+  assert.match(differs, />used by Dolores Reyes, Marco Reyes</)
+  const same = header({ caller: caller(["Dolores Reyes"]), callName: "dolores reyes" })
+  assert.match(same, /data-testid="caller-name"[^>]*>Dolores Reyes</)
+  assert.doesNotMatch(same, /used by/)
+  const onlyCall = header({ caller: caller([]), callName: "Marco Reyes" })
+  assert.match(onlyCall, /data-testid="caller-name"[^>]*>Marco Reyes</)
+  const third = header({ caller: caller(["Dolores Reyes", "Ana Reyes"]), callName: "Marco Reyes" })
+  assert.match(third, />used by Dolores Reyes, Ana Reyes, Marco Reyes</)
+})
+
+test("the header offers the patient's open Tasks by count and stays quiet when there are none", async (t) => {
+  const button = (markup: string) => /<button[^>]*aria-pressed="(true|false)"[^>]*>([^<]*open Tasks?)<\/button>/.exec(markup)
+  assert.equal(button(header({ caller: caller([], 0) })), null)
+  assert.equal(button(header()), null, "nothing is offered before the summary loads")
+  assert.equal(button(header({ caller: caller([], 1) }))?.[2], "1 open Task")
+  assert.equal(button(header({ caller: caller([], 5) }))?.[2], "5 open Tasks")
+  assert.equal(button(header({ caller: caller([], 5) }))?.[1], "false")
+  assert.equal(button(header({ caller: caller([], 5), patientTasksOpen: true }))?.[1], "true")
+
+  const page = await harness(t)
+  let activated = 0
+  await page.render(headerView({ caller: caller([], 5), onPatientTasks: () => { activated += 1 } }))
+  const control = [...page.host.querySelectorAll("button")].find((item) => item.textContent === "5 open Tasks")!
+  await act(async () => control.click())
+  assert.equal(activated, 1)
+})
+
+function LiveDetail({ revision, children }: { revision: number; children: ReactNode }) {
+  useLiveRefresh({ workspaceVersion: 0, taskCounts: "", detailRevision: revision })
+  return children
+}
+
+test("a completion that failed or conflicted re-reads the summary, so no stale row remains", async (t) => {
+  const page = await harness(t)
+  const previousAPIURL = process.env.NEXT_PUBLIC_PORTAL_API_URL
+  process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
+  clearAccessToken()
+  t.after(() => {
+    clearAccessToken()
+    if (previousAPIURL === undefined) delete process.env.NEXT_PUBLIC_PORTAL_API_URL
+    else process.env.NEXT_PUBLIC_PORTAL_API_URL = previousAPIURL
+  })
+  const [stale, kept] = fiveTasks
+  let openTasks = [stale, kept]
+  let reads = 0
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+    if (url === "/api/auth/token") return Response.json({ token: "synthetic-token" })
+    assert.match(url, /\/v1\/engagements\/%2B15551234567\/summary\?/)
+    reads += 1
+    return Response.json({
+      phone: "+15551234567", displayName: "", names: [], openTasks, openTaskCount: openTasks.length, closedToday: [],
+    })
+  })
+  const { PatientTasksPanel } = await import("./patient-tasks-panel.tsx")
+  const render = (revision: number, completion: ViewProps["completion"]) => page.render(
+    <DataProvider>
+      <LiveDetail revision={revision}>
+        <PatientTasksPanel
+          practiceID="practice-1"
+          phone="+15551234567"
+          completion={completion}
+          onComplete={() => {}}
+          onTaskUpdated={() => {}}
+        />
+      </LiveDetail>
+    </DataProvider>,
+  )
+  const listed = () => [...page.host.querySelectorAll('[data-testid="patient-task-row"]')].map((row) => row.getAttribute("data-task-id"))
+  const settle = async (ready: () => boolean) => {
+    for (let attempt = 0; attempt < 50 && !ready(); attempt++) {
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    }
+    assert.ok(ready(), "condition was not reached")
+  }
+
+  await render(1, { pendingTaskID: "", errorTaskID: "", error: "" })
+  await settle(() => listed().length === 2)
+  assert.equal(reads, 1)
+
+  openTasks = [kept]
+  await render(2, { pendingTaskID: "", errorTaskID: stale.id, error: "This Task changed elsewhere." })
+  await settle(() => listed().length === 1)
+  assert.equal(reads, 2, "the failed completion's detail revision re-read the summary")
+  assert.deepEqual(listed(), [kept.id])
 })
 
 async function harness(t: TestContext) {
