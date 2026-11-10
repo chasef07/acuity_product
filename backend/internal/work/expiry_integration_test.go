@@ -36,13 +36,94 @@ func newExpiryScenario(t *testing.T) *expiryScenario {
 
 func (s *expiryScenario) thread() string {
 	s.t.Helper()
+	return s.threadAt(s.auth.Practice.ID, s.auth.Locations[0].ID)
+}
+
+func (s *expiryScenario) threadAt(practiceID, locationID string) string {
+	s.t.Helper()
 	s.nextThread++
 	var id string
 	if err := s.db.Owner.QueryRow(s.ctx, `INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone,created_at,updated_at) VALUES($1,$2,'+15555550100',$3,$4,$4) RETURNING id::text`,
-		s.auth.Practice.ID, s.auth.Locations[0].ID, s.phone(s.nextThread), s.now).Scan(&id); err != nil {
+		practiceID, locationID, s.phone(s.nextThread), s.now).Scan(&id); err != nil {
 		s.t.Fatalf("insert thread: %v", err)
 	}
 	return id
+}
+
+func (s *expiryScenario) secondPractice() (string, string) {
+	s.t.Helper()
+	var practiceID, locationID string
+	if err := s.db.Owner.QueryRow(s.ctx, `
+		WITH practice AS (
+			INSERT INTO access_practices(provisioning_key,name) VALUES('second-synthetic-practice','Second Synthetic Practice') RETURNING id
+		)
+		INSERT INTO access_locations(practice_id,provisioning_key,name)
+		SELECT id,'second-synthetic-location','Second Synthetic Location' FROM practice
+		RETURNING practice_id::text,id::text`).Scan(&practiceID, &locationID); err != nil {
+		s.t.Fatalf("insert second practice: %v", err)
+	}
+	return practiceID, locationID
+}
+
+func (s *expiryScenario) staffReply(thread string) string {
+	s.t.Helper()
+	tx, err := s.db.Owner.Begin(s.ctx)
+	if err != nil {
+		s.t.Fatalf("begin staff reply: %v", err)
+	}
+	defer func() { _ = tx.Rollback(s.ctx) }()
+	id := uuid.NewString()
+	if _, err := tx.Exec(s.ctx, `INSERT INTO messaging_messages(id,thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,created_by_kind,created_by_subject,created_at,updated_at)
+		SELECT $1,id,practice_id,location_id,'OUTBOUND','Synthetic answer',office_phone,external_phone,'SENDING','HUMAN',$2,$3,$3 FROM messaging_threads WHERE id=$4`,
+		id, s.identity.Subject, s.now, thread); err != nil {
+		s.t.Fatalf("insert staff reply: %v", err)
+	}
+	if err := s.staff.CaptureTextReply(s.ctx, tx, thread, id, access.Actor{Subject: s.identity.Subject, Email: s.identity.Email}); err != nil {
+		s.t.Fatalf("capture staff reply: %v", err)
+	}
+	if err := tx.Commit(s.ctx); err != nil {
+		s.t.Fatalf("commit staff reply: %v", err)
+	}
+	return id
+}
+
+func (s *expiryScenario) deliveryReceipt(messageID, state string) {
+	s.t.Helper()
+	tx, err := s.db.Owner.Begin(s.ctx)
+	if err != nil {
+		s.t.Fatalf("begin delivery receipt: %v", err)
+	}
+	defer func() { _ = tx.Rollback(s.ctx) }()
+	if _, err := tx.Exec(s.ctx, `UPDATE messaging_messages SET delivery_state=$2 WHERE id=$1`, messageID, state); err != nil {
+		s.t.Fatalf("project delivery state: %v", err)
+	}
+	if err := s.staff.ApplyTextReply(s.ctx, tx, messageID); err != nil {
+		s.t.Fatalf("apply delivery receipt: %v", err)
+	}
+	if err := tx.Commit(s.ctx); err != nil {
+		s.t.Fatalf("commit delivery receipt: %v", err)
+	}
+}
+
+func (s *expiryScenario) drain(want int) {
+	s.t.Helper()
+	closed := 0
+	for {
+		batch, err := s.sweep.ExpireTextReviews(s.ctx)
+		if err != nil {
+			s.t.Fatalf("ExpireTextReviews after %d closed: %v", closed, err)
+		}
+		if batch > 500 {
+			s.t.Fatalf("one sweep closed %d text reviews, want at most 500 per call", batch)
+		}
+		closed += batch
+		if batch == 0 {
+			break
+		}
+	}
+	if closed != want {
+		s.t.Fatalf("sweeps closed %d text reviews before running dry, want %d", closed, want)
+	}
 }
 
 func (s *expiryScenario) phone(thread int) string {
@@ -58,15 +139,15 @@ func (s *expiryScenario) inboundText(thread string, age time.Duration) {
 	}
 	defer func() { _ = tx.Rollback(s.ctx) }()
 	id := uuid.NewString()
-	var phone string
-	if err := tx.QueryRow(s.ctx, `SELECT external_phone FROM messaging_threads WHERE id=$1`, thread).Scan(&phone); err != nil {
-		s.t.Fatalf("read thread phone: %v", err)
+	var phone, practiceID, locationID string
+	if err := tx.QueryRow(s.ctx, `SELECT external_phone,practice_id::text,location_id::text FROM messaging_threads WHERE id=$1`, thread).Scan(&phone, &practiceID, &locationID); err != nil {
+		s.t.Fatalf("read thread: %v", err)
 	}
 	if _, err := tx.Exec(s.ctx, `INSERT INTO messaging_messages(id,thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,created_at,updated_at) VALUES($1,$2,$3,$4,'INBOUND','Synthetic question',$5,'+15555550100','DELIVERED',$6,$6)`,
-		id, thread, s.auth.Practice.ID, s.auth.Locations[0].ID, phone, at); err != nil {
+		id, thread, practiceID, locationID, phone, at); err != nil {
 		s.t.Fatalf("insert inbound text: %v", err)
 	}
-	if err := s.staff.EnsureInboundMessageReview(s.ctx, tx, s.auth.Practice.ID, s.auth.Locations[0].ID, phone, thread, id, at); err != nil {
+	if err := s.staff.EnsureInboundMessageReview(s.ctx, tx, practiceID, locationID, phone, thread, id, at); err != nil {
 		s.t.Fatalf("ensure inbound text review: %v", err)
 	}
 	if err := tx.Commit(s.ctx); err != nil {
@@ -305,7 +386,7 @@ func TestAReviewStaffReopenAfterExpiryStaysOpenForAnother120Hours(t *testing.T) 
 	}
 }
 
-func TestExpireTextReviewsClosesABacklogLargerThanOneBatch(t *testing.T) {
+func TestExpireTextReviewsClosesOneBatchPerCallUntilABacklogDrains(t *testing.T) {
 	s := newExpiryScenario(t)
 	const backlog = 5000
 	if _, err := s.db.Owner.Exec(s.ctx, `
@@ -330,9 +411,13 @@ func TestExpireTextReviewsClosesABacklogLargerThanOneBatch(t *testing.T) {
 	fresh := s.thread()
 	s.inboundText(fresh, time.Hour)
 
+	s.expire(500)
+	if open := s.count(`SELECT count(*) FROM work_tasks WHERE state='OPEN'`); open != backlog-500+1 {
+		t.Fatalf("open Tasks after one sweep = %d, want one batch of 500 closed and %d left", open, backlog-500+1)
+	}
 	started := time.Now()
-	s.expire(backlog)
-	t.Logf("one sweep closed %d text reviews in %s", backlog, time.Since(started))
+	s.drain(backlog - 500)
+	t.Logf("repeated sweeps closed %d text reviews in %s", backlog-500, time.Since(started))
 
 	if open := s.count(`SELECT count(*) FROM work_tasks WHERE state='OPEN'`); open != 1 {
 		t.Fatalf("open Tasks after the backlog sweep = %d, want only the fresh review", open)
@@ -341,4 +426,138 @@ func TestExpireTextReviewsClosesABacklogLargerThanOneBatch(t *testing.T) {
 		t.Fatalf("expiry activities = %d, want %d", expired, backlog)
 	}
 	s.expire(0)
+}
+
+func TestAStaffReplyInFlightKeepsAReviewOpenUntilItsReceipt(t *testing.T) {
+	s := newExpiryScenario(t)
+	delivered, failed := s.thread(), s.thread()
+	s.inboundText(delivered, 119*time.Hour)
+	s.inboundText(failed, 119*time.Hour)
+	deliveredReply, failedReply := s.staffReply(delivered), s.staffReply(failed)
+
+	s.now = s.now.Add(2 * time.Hour)
+	s.expire(0)
+
+	s.deliveryReceipt(deliveredReply, "DELIVERED")
+	if review := s.onlyReview(delivered); review.state != "COMPLETED" || review.reason != string(work.CloseReasonDone) || review.actorKind != "HUMAN" {
+		t.Fatalf("review whose reply was delivered = %#v, want it closed as DONE by the staff member", review)
+	}
+	s.deliveryReceipt(failedReply, "FAILED")
+	if review := s.onlyReview(failed); review.state != "OPEN" {
+		t.Fatalf("review whose reply failed = %#v, want it still open", review)
+	}
+	s.expire(0)
+}
+
+func TestAFailedDeliveryReopenRestartsThe120Hours(t *testing.T) {
+	s := newExpiryScenario(t)
+	thread := s.thread()
+	s.inboundText(thread, 100*time.Hour)
+	reply := s.staffReply(thread)
+	s.deliveryReceipt(reply, "SENT")
+	if review := s.onlyReview(thread); review.reason != string(work.CloseReasonDone) {
+		t.Fatalf("review after its reply was sent = %#v, want it closed as DONE", review)
+	}
+
+	s.now = s.now.Add(30 * time.Hour)
+	s.deliveryReceipt(reply, "FAILED")
+	if review := s.onlyReview(thread); review.state != "OPEN" {
+		t.Fatalf("review after its reply failed = %#v, want it reopened", review)
+	}
+	s.expire(0)
+	s.now = s.now.Add(119 * time.Hour)
+	s.expire(0)
+	s.now = s.now.Add(2 * time.Hour)
+	s.expire(1)
+}
+
+func TestExpireTextReviewsSweepsEveryPractice(t *testing.T) {
+	s := newExpiryScenario(t)
+	first := s.thread()
+	secondPractice, secondLocation := s.secondPractice()
+	second := s.threadAt(secondPractice, secondLocation)
+	s.inboundText(first, 121*time.Hour)
+	s.inboundText(second, 121*time.Hour)
+	secondVersion := s.count(`SELECT workspace_version FROM access_practices WHERE id=$1`, secondPractice)
+	firstVersion := s.workspaceVersion()
+
+	s.expire(2)
+
+	for _, thread := range []string{first, second} {
+		if review := s.onlyReview(thread); review.reason != string(work.CloseReasonExpired) {
+			t.Fatalf("review = %#v, want it expired in both practices", review)
+		}
+	}
+	if s.workspaceVersion() <= firstVersion || s.count(`SELECT workspace_version FROM access_practices WHERE id=$1`, secondPractice) <= secondVersion {
+		t.Fatalf("workspace versions did not advance in both practices")
+	}
+}
+
+func TestExpireTextReviewsDoesNotWaitForAReviewAnotherWriterHolds(t *testing.T) {
+	s := newExpiryScenario(t)
+	held, free := s.thread(), s.thread()
+	s.inboundText(held, 121*time.Hour)
+	s.inboundText(free, 121*time.Hour)
+	tx, err := s.db.Owner.Begin(s.ctx)
+	if err != nil {
+		t.Fatalf("begin writer: %v", err)
+	}
+	defer func() { _ = tx.Rollback(s.ctx) }()
+	if _, err := tx.Exec(s.ctx, `SELECT id FROM work_tasks WHERE id=$1 FOR UPDATE`, s.onlyReview(held).id); err != nil {
+		t.Fatalf("hold review: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	defer cancel()
+	closed, err := s.sweep.ExpireTextReviews(ctx)
+	if err != nil || closed != 1 {
+		t.Fatalf("ExpireTextReviews beside a held review = %d, %v; want the free review closed without waiting", closed, err)
+	}
+	if err := tx.Rollback(s.ctx); err != nil {
+		t.Fatalf("release review: %v", err)
+	}
+	s.expire(1)
+}
+
+func TestExpireTextReviewsHoldsNoReviewWhileItWaitsForThePractice(t *testing.T) {
+	s := newExpiryScenario(t)
+	thread := s.thread()
+	s.inboundText(thread, 121*time.Hour)
+	review := s.onlyReview(thread)
+	receipt, err := s.db.Owner.Begin(s.ctx)
+	if err != nil {
+		t.Fatalf("begin receipt: %v", err)
+	}
+	defer func() { _ = receipt.Rollback(s.ctx) }()
+	if _, err := receipt.Exec(s.ctx, `UPDATE access_practices SET workspace_version=workspace_version+1 WHERE id=$1`, s.auth.Practice.ID); err != nil {
+		t.Fatalf("receipt locks the practice: %v", err)
+	}
+	swept := make(chan error, 1)
+	go func() {
+		_, err := s.sweep.ExpireTextReviews(s.ctx)
+		swept <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for s.count(`SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%UPDATE access_practices%SET workspace_version%'`) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the sweep never waited for the practice the receipt holds")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if _, err := receipt.Exec(s.ctx, `SET LOCAL lock_timeout='2s'`); err != nil {
+		t.Fatalf("bound the receipt's wait: %v", err)
+	}
+	if _, err := receipt.Exec(s.ctx, `SELECT id FROM work_tasks WHERE id=$1 FOR UPDATE`, review.id); err != nil {
+		t.Fatalf("receipt holding the practice could not lock the review while the sweep waited: %v", err)
+	}
+	if err := receipt.Commit(s.ctx); err != nil {
+		t.Fatalf("commit receipt: %v", err)
+	}
+	if err := <-swept; err != nil {
+		t.Fatalf("sweep after the receipt committed: %v", err)
+	}
+	if after := s.onlyReview(thread); after.reason != string(work.CloseReasonExpired) {
+		t.Fatalf("review after the receipt released it = %#v, want the sweep to have expired it", after)
+	}
 }

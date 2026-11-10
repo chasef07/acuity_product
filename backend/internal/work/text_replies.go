@@ -9,9 +9,13 @@ import (
 )
 
 func (m *Module) CaptureTextReply(ctx context.Context, tx pgx.Tx, threadID, messageID string, actor access.Actor) error {
-	_, err := tx.Exec(ctx, `INSERT INTO work_text_replies(message_id,task_id,task_version,actor_subject,actor_email)
- SELECT $1,id,version,$3,$4 FROM work_tasks
- WHERE message_thread_id=$2 AND origin='INBOUND_MESSAGE_REVIEW' AND state='OPEN'`, messageID, threadID, actor.Subject, actor.Email)
+	_, err := tx.Exec(ctx, `WITH review AS (
+  UPDATE work_tasks SET updated_at=GREATEST(updated_at,$5)
+  WHERE message_thread_id=$2 AND origin='INBOUND_MESSAGE_REVIEW' AND state='OPEN'
+  RETURNING id,version
+ )
+ INSERT INTO work_text_replies(message_id,task_id,task_version,actor_subject,actor_email)
+ SELECT $1,id,version,$3,$4 FROM review`, messageID, threadID, actor.Subject, actor.Email, m.now())
 	return err
 }
 

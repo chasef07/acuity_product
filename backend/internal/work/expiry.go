@@ -3,6 +3,7 @@ package work
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,35 +15,55 @@ const (
 	textReviewExpiryActor = "text-review-expiry"
 )
 
+const textReviewIsDueSQL = TaskIsTextReviewSQL + `
+	AND task.state = 'OPEN'
+	AND task.updated_at < $1`
+
 func (m *Module) ExpireTextReviews(ctx context.Context) (int, error) {
 	if m.access == nil {
 		return 0, ErrInvalidInput
 	}
-	closed := 0
-	for {
-		batch, err := m.expireTextReviewBatch(ctx)
-		closed += batch
-		if err != nil || batch < textReviewExpiryBatch {
-			return closed, err
-		}
-	}
-}
-
-func (m *Module) expireTextReviewBatch(ctx context.Context) (int, error) {
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("begin text review expiry: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	now := m.now()
+	due := now.Add(-textReviewLifetime)
 	rows, err := tx.Query(ctx, `
+		SELECT task.id::text, task.practice_id::text
+		FROM work_tasks task
+		WHERE `+textReviewIsDueSQL+`
+		LIMIT $2
+	`, due, textReviewExpiryBatch)
+	if err != nil {
+		return 0, fmt.Errorf("find due text reviews: %w", err)
+	}
+	var taskIDs, practiceIDs []string
+	var taskID, practiceID string
+	if _, err := pgx.ForEachRow(rows, []any{&taskID, &practiceID}, func() error {
+		taskIDs = append(taskIDs, taskID)
+		practiceIDs = append(practiceIDs, practiceID)
+		return nil
+	}); err != nil {
+		return 0, fmt.Errorf("find due text reviews: %w", err)
+	}
+	if len(taskIDs) == 0 {
+		return 0, nil
+	}
+	slices.Sort(practiceIDs)
+	for _, practiceID := range slices.Compact(practiceIDs) {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+			return 0, err
+		}
+	}
+	var closed int
+	if err := tx.QueryRow(ctx, `
 		WITH due AS (
 			SELECT task.id
 			FROM work_tasks task
-			WHERE `+TaskIsTextReviewSQL+`
-				AND task.state = 'OPEN'
-				AND task.updated_at < $1
-			LIMIT $2
+			WHERE `+textReviewIsDueSQL+`
+				AND task.id = ANY($2::uuid[])
 			FOR UPDATE SKIP LOCKED
 		), expired AS (
 			UPDATE work_tasks task
@@ -58,7 +79,7 @@ func (m *Module) expireTextReviewBatch(ctx context.Context) (int, error) {
 				updated_at = $4
 			FROM due
 			WHERE task.id = due.id
-			RETURNING task.id, task.version, task.practice_id
+			RETURNING task.id, task.version
 		), recorded AS (
 			INSERT INTO work_task_activities (
 				task_id,
@@ -74,32 +95,9 @@ func (m *Module) expireTextReviewBatch(ctx context.Context) (int, error) {
 				jsonb_build_object('closeReason', $5::text)
 			FROM expired
 		)
-		SELECT practice_id::text, count(*)
-		FROM expired
-		GROUP BY practice_id
-	`, now.Add(-textReviewLifetime), textReviewExpiryBatch, textReviewExpiryActor,
-		now, CloseReasonExpired)
-	if err != nil {
+		SELECT count(*) FROM expired
+	`, due, taskIDs, textReviewExpiryActor, now, CloseReasonExpired).Scan(&closed); err != nil {
 		return 0, fmt.Errorf("expire text reviews: %w", err)
-	}
-	type practiceCount struct {
-		practiceID string
-		closed     int
-	}
-	counts, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (practiceCount, error) {
-		var count practiceCount
-		err := row.Scan(&count.practiceID, &count.closed)
-		return count, err
-	})
-	if err != nil {
-		return 0, fmt.Errorf("expire text reviews: %w", err)
-	}
-	closed := 0
-	for _, count := range counts {
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, count.practiceID); err != nil {
-			return 0, err
-		}
-		closed += count.closed
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit text review expiry: %w", err)
