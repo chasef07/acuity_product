@@ -36,7 +36,9 @@ for name in \
   WEB_IMAGE \
   IMAGE_TAG \
   DEPLOYMENT_ID \
-  USABLE_DATABASE_CONNECTIONS; do
+  USABLE_DATABASE_CONNECTIONS \
+  PORTAL_API_URL \
+  REALTIME_URL; do
   require_value "$name"
 done
 
@@ -229,6 +231,13 @@ service_runtime() {
       ;;
   esac
 }
+service_url() {
+  gcloud run services describe "$1" \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --format 'value(status.url)'
+}
+
 require_service_environment() {
   local service="$1"
   local name="$2"
@@ -322,6 +331,18 @@ require_service_environment \
   HUMAN_CALLING_PLAYBACK_SIGNING_KEY
 require_service_environment acuity-web GOOGLE_CLIENT_ID
 require_service_environment acuity-web GOOGLE_CLIENT_SECRET
+# The web image bakes in the API URLs it calls, so it must have been built for
+# this project's services. Otherwise a staging portal would call production.
+live_portal_api_url="$(service_url acuity-portal-api)"
+live_realtime_url="$(service_url acuity-realtime)"
+if [[ "$live_portal_api_url" != "$PORTAL_API_URL" ]]; then
+  echo "PORTAL_API_URL must be this project's acuity-portal-api URL." >&2
+  exit 1
+fi
+if [[ "$live_realtime_url" != "$REALTIME_URL" ]]; then
+  echo "REALTIME_URL must be this project's acuity-realtime URL." >&2
+  exit 1
+fi
 
 touched_services=()
 worker_promoted=false
@@ -389,13 +410,6 @@ verify_service_revision() {
     echo "$revision is not ready on the expected immutable image." >&2
     return 1
   fi
-}
-
-service_url() {
-  gcloud run services describe "$1" \
-    --project "$PROJECT_ID" \
-    --region "$REGION" \
-    --format 'value(status.url)'
 }
 
 smoke() {
@@ -479,7 +493,7 @@ run_migration() {
     --image "$backend_digest" \
     --tasks 1 \
     --max-retries 0 \
-    --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,PROVISIONING_INPUT=/etc/acuity/production-provisioning.json,PROVISIONING_OUTPUT=/tmp/production-provisioning-output.json,RESPONSIBILITIES_INPUT=/etc/acuity/task-responsibilities.json" \
+    --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,PROVISIONING_INPUT=/etc/acuity/provisioning.json,PROVISIONING_OUTPUT=/tmp/provisioning-output.json,RESPONSIBILITIES_INPUT=/etc/acuity/task-responsibilities.json" \
     --quiet
   gcloud run jobs execute acuity-migrate \
     --project "$PROJECT_ID" \

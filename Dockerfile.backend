@@ -9,11 +9,15 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/acuity ./backend/c
 
 FROM alpine:3.24
 
+# production or staging. Each image carries only its own environment's people
+# and numbers, so a staging image cannot provision production.
+ARG RELEASE_ENVIRONMENT
+
 RUN apk add --no-cache ca-certificates \
     && addgroup -S acuity \
     && adduser -S -G acuity -u 10001 acuity
 COPY --from=build /out/acuity /usr/local/bin/acuity
-COPY config/production-provisioning.json /etc/acuity/production-provisioning.json
-COPY config/task-responsibilities.json /etc/acuity/task-responsibilities.json
+COPY config/${RELEASE_ENVIRONMENT}-provisioning.json /etc/acuity/provisioning.json
+COPY config/${RELEASE_ENVIRONMENT}-task-responsibilities.json /etc/acuity/task-responsibilities.json
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/acuity"]

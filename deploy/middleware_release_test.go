@@ -1,30 +1,13 @@
 package deploy_test
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/oasdiff/yaml3"
 )
 
 func TestCloudBuildPassesEmptyMiddlewareInputsByDefault(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(releaseDeployDirectory(t)), "cloudbuild.release.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var build struct {
-		Steps []struct {
-			ID  string   `yaml:"id"`
-			Env []string `yaml:"env"`
-		} `yaml:"steps"`
-		Substitutions map[string]string `yaml:"substitutions"`
-	}
-	if err := yaml.Unmarshal(raw, &build); err != nil {
-		t.Fatal(err)
-	}
+	build := readReleaseCloudBuild(t)
 	var deployEnvironment []string
 	for _, step := range build.Steps {
 		if step.ID == "deploy" {

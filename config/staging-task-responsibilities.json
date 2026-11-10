@@ -1,0 +1,205 @@
+{
+  "PracticeKey": "abita-eye-group",
+  "Locations": [
+    {
+      "LocationKey": "hollywood",
+      "Members": [
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "medication",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "insurance",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "optical",
+          "Role": "primary"
+        }
+      ]
+    },
+    {
+      "LocationKey": "sweetwater",
+      "Members": [
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "medication",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "insurance",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "optical",
+          "Role": "primary"
+        }
+      ]
+    },
+    {
+      "LocationKey": "sweetwater-optical",
+      "Members": [
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "medication",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "insurance",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "optical@staging.acuity.test",
+          "Category": "optical",
+          "Role": "primary"
+        }
+      ]
+    },
+    {
+      "LocationKey": "north-miami-beach-optical",
+      "Members": [
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "appointments",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "documentation",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "medication",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "pre_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "post_op",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "referrals",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "insurance",
+          "Role": "primary"
+        },
+        {
+          "Email": "front-desk@staging.acuity.test",
+          "Category": "other",
+          "Role": "primary"
+        },
+        {
+          "Email": "optical@staging.acuity.test",
+          "Category": "optical",
+          "Role": "primary"
+        }
+      ]
+    }
+  ]
+}

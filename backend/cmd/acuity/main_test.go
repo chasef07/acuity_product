@@ -581,7 +581,7 @@ func TestEveryReleaseLoadsTheTaskResponsibilityRoster(t *testing.T) {
 		if err := runMigrate(context.Background(), app.Config{
 			ProvisioningInput:     filepath.Join("..", "..", "..", "config", "production-provisioning.json"),
 			ProvisioningOutput:    path,
-			ResponsibilitiesInput: filepath.Join("..", "..", "..", "config", "task-responsibilities.json"),
+			ResponsibilitiesInput: filepath.Join("..", "..", "..", "config", "production-task-responsibilities.json"),
 		}, pool); err != nil {
 			t.Fatalf("release %s: %v", output, err)
 		}
@@ -632,6 +632,87 @@ func TestEveryReleaseLoadsTheTaskResponsibilityRoster(t *testing.T) {
 	if !reflect.DeepEqual(second, first) || secondRows != firstRows {
 		t.Fatalf("second release changed the roster: report %#v -> %#v", first, second)
 	}
+}
+
+func TestStagingReleaseReusesNoProductionStaffOrNumbers(t *testing.T) {
+	pool := testdb.Open(t).Owner
+	config := filepath.Join("..", "..", "..", "config")
+	output := filepath.Join(t.TempDir(), "provisioning-output.json")
+	if err := runMigrate(context.Background(), app.Config{
+		ProvisioningInput:     filepath.Join(config, "staging-provisioning.json"),
+		ProvisioningOutput:    output,
+		ResponsibilitiesInput: filepath.Join(config, "staging-task-responsibilities.json"),
+	}, pool); err != nil {
+		t.Fatalf("run staging release: %v", err)
+	}
+	raw, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("read staging output: %v", err)
+	}
+	var written struct {
+		Responsibilities *work.ResponsibilityReport `json:"responsibilities"`
+	}
+	if err := json.Unmarshal(raw, &written); err != nil || written.Responsibilities == nil {
+		t.Fatalf("decode staging output: %v %s", err, raw)
+	}
+	report := *written.Responsibilities
+	if report.Applied == 0 || len(report.Unmatched) != 0 || len(report.CoverageGaps) != 0 {
+		t.Fatalf("staging roster = applied %d, unmatched %v, coverage gaps %v; want every member applied",
+			report.Applied, report.Unmatched, report.CoverageGaps)
+	}
+
+	production := clinicStaffAndTelnyxIdentities(t, config, "production")
+	for identity := range clinicStaffAndTelnyxIdentities(t, config, "staging") {
+		if _, reused := production[identity]; reused {
+			t.Errorf("staging reuses production %s", identity)
+		}
+	}
+}
+
+func clinicStaffAndTelnyxIdentities(t *testing.T, config, environment string) map[string]struct{} {
+	t.Helper()
+	var provisioning access.Provisioning
+	var roster work.ResponsibilityProvision
+	for path, target := range map[string]any{
+		environment + "-provisioning.json":          &provisioning,
+		environment + "-task-responsibilities.json": &roster,
+	} {
+		raw, err := os.ReadFile(filepath.Join(config, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, target); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+	}
+	if provisioning.Environment != environment {
+		t.Fatalf("%s provisioning declares environment %q", environment, provisioning.Environment)
+	}
+	identities := map[string]struct{}{}
+	add := func(kind, value string) {
+		if value = strings.ToLower(strings.TrimSpace(value)); value != "" {
+			identities[kind+" "+value] = struct{}{}
+		}
+	}
+	for _, practice := range provisioning.Practices {
+		for _, grant := range practice.AccessGrants {
+			add("staff", grant.Email)
+		}
+		for _, location := range practice.Locations {
+			add("number", location.VoiceNumber)
+			add("number", location.MessagingSender)
+			add("messaging profile", location.MessagingProfileID)
+			for _, email := range location.InboundRingEmails {
+				add("staff", email)
+			}
+		}
+	}
+	for _, location := range roster.Locations {
+		for _, member := range location.Members {
+			add("staff", member.Email)
+		}
+	}
+	return identities
 }
 
 func TestMigrateRollsBackProvisioningWhenTheRosterNamesAnUnknownLocation(t *testing.T) {

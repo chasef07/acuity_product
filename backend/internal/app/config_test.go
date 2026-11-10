@@ -290,8 +290,8 @@ func TestLoadConfigAcceptsResponsibilitiesInputOnlyWithMigrateProvisioning(t *te
 		"DATABASE_URL":                "postgres://database.example/acuity",
 		"DATABASE_POOL_MAX":           "1",
 		"DATABASE_ACQUIRE_TIMEOUT_MS": "5000",
-		"PROVISIONING_INPUT":          "/etc/acuity/production-provisioning.json",
-		"PROVISIONING_OUTPUT":         "/tmp/production-provisioning-output.json",
+		"PROVISIONING_INPUT":          "/etc/acuity/provisioning.json",
+		"PROVISIONING_OUTPUT":         "/tmp/provisioning-output.json",
 		"RESPONSIBILITIES_INPUT":      "/etc/acuity/task-responsibilities.json",
 	}
 	loaded, err := LoadConfig(func(name string) string { return migrate[name] })
