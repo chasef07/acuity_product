@@ -157,6 +157,13 @@ func callingWorkError(err error) error {
 	return fmt.Errorf("update Call Task: %w", err)
 }
 
+func callingClosureError(err error) error {
+	if errors.Is(err, work.ErrDenied) {
+		return ErrInvalidInput
+	}
+	return callingWorkError(err)
+}
+
 type providerRecordingFailure struct {
 	OccurredAt time.Time
 }
@@ -429,8 +436,9 @@ const (
 )
 
 type DispositionResult struct {
-	Call   Call
-	TaskID string
+	Call     Call
+	TaskID   string
+	Closures work.CallTaskClosures
 }
 
 type Module struct {

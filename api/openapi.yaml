@@ -633,7 +633,7 @@ paths:
   /v1/calling/calls/{callId}/disposition:
     post:
       operationId: recordCallingDisposition
-      summary: Resolve the provider-terminated Call and optionally ensure its one follow-up Task.
+      summary: Resolve the provider-terminated Call, optionally ensure its one follow-up Task and close listed Tasks for its phone.
       parameters:
         - name: callId
           in: path
@@ -3619,6 +3619,26 @@ components:
             - KEEP_OPEN
             - CREATE_TASK
             - NO_FOLLOW_UP
+        closures:
+          type: array
+          maxItems: 50
+          description: >
+            Open Tasks for the Call's phone that the staff member closes with
+            this outcome. Omitted or empty closes nothing beyond the outcome.
+          items:
+            $ref: "#/components/schemas/CallingDispositionClosure"
+    CallingDispositionClosure:
+      type: object
+      additionalProperties: false
+      required: [taskId, reason]
+      properties:
+        taskId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          enum: [DONE, NOT_NEEDED]
+          description: Why the Task closed after the staff member spoke with the patient.
     CallingDispositionResult:
       type: object
       additionalProperties: false
@@ -3629,6 +3649,18 @@ components:
         taskId:
           type: string
           format: uuid
+        closedTaskIds:
+          type: array
+          description: Listed Tasks this Call closed.
+          items:
+            type: string
+            format: uuid
+        alreadyClosedTaskIds:
+          type: array
+          description: Listed Tasks that were closed before this Call could close them.
+          items:
+            type: string
+            format: uuid
     StaffTaskCategory:
       type: string
       enum:

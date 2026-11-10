@@ -1392,6 +1392,15 @@ func (server *Server) RecordCallingDisposition(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
+	var closures []work.CallTaskClosure
+	if body.Closures != nil {
+		for _, closure := range *body.Closures {
+			closures = append(closures, work.CallTaskClosure{
+				TaskID: closure.TaskId.String(),
+				Reason: work.CloseReason(closure.Reason),
+			})
+		}
+	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	result, err := server.calling.RecordDisposition(
@@ -1400,6 +1409,7 @@ func (server *Server) RecordCallingDisposition(
 		body.SessionId,
 		callID.String(),
 		humancalling.Disposition(body.Outcome),
+		closures,
 	)
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -1410,7 +1420,19 @@ func (server *Server) RecordCallingDisposition(
 		server.writeDomainError(w, r, err)
 		return
 	}
-	response := api.CallingDispositionResult{Call: callResponse}
+	closed, err := parseUUIDs(result.Closures.Closed)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	alreadyClosed, err := parseUUIDs(result.Closures.AlreadyClosed)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	response := api.CallingDispositionResult{
+		Call: callResponse, ClosedTaskIds: &closed, AlreadyClosedTaskIds: &alreadyClosed,
+	}
 	if result.TaskID != "" {
 		taskID, err := uuid.Parse(result.TaskID)
 		if err != nil {
@@ -3672,6 +3694,18 @@ func uuidString(value *openapi_types.UUID) string {
 		return ""
 	}
 	return value.String()
+}
+
+func parseUUIDs(values []string) ([]openapi_types.UUID, error) {
+	parsed := make([]openapi_types.UUID, 0, len(values))
+	for _, value := range values {
+		id, err := uuid.Parse(value)
+		if err != nil {
+			return nil, err
+		}
+		parsed = append(parsed, id)
+	}
+	return parsed, nil
 }
 
 func intValue(value *int) int {

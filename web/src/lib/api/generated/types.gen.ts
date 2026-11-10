@@ -595,11 +595,32 @@ export type CallingRecoveryTask = {
 export type CallingDispositionRequest = {
     sessionId: string;
     outcome: 'RESOLVED' | 'FOLLOW_UP_REQUIRED' | 'COMPLETE_TASK' | 'KEEP_OPEN' | 'CREATE_TASK' | 'NO_FOLLOW_UP';
+    /**
+     * Open Tasks for the Call's phone that the staff member closes with this outcome. Omitted or empty closes nothing beyond the outcome.
+     *
+     */
+    closures?: Array<CallingDispositionClosure>;
+};
+
+export type CallingDispositionClosure = {
+    taskId: string;
+    /**
+     * Why the Task closed after the staff member spoke with the patient.
+     */
+    reason: 'DONE' | 'NOT_NEEDED';
 };
 
 export type CallingDispositionResult = {
     call: CallingCall;
     taskId?: string;
+    /**
+     * Listed Tasks this Call closed.
+     */
+    closedTaskIds?: Array<string>;
+    /**
+     * Listed Tasks that were closed before this Call could close them.
+     */
+    alreadyClosedTaskIds?: Array<string>;
 };
 
 export type StaffTaskCategory = 'insurance' | 'pre_op' | 'post_op' | 'billing' | 'appointments' | 'documentation' | 'optical' | 'medication' | 'referrals' | 'other';
