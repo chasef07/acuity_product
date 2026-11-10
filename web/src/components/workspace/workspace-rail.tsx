@@ -26,7 +26,7 @@ import {
 import { ReviewFolder } from "./review-folder"
 import { AnalyticsNavigation, commandCenterPages, manageAgentPages, practiceAnalyticsPages, type CommandCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
-import type { Task } from "@/lib/api/generated/types.gen"
+import type { StaffTaskCloseReason, Task } from "@/lib/api/generated/types.gen"
 import {
   isWorkView,
   type WorkspaceProjectionIntent,
@@ -99,6 +99,7 @@ export function WorkspaceRail({
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const scrollPersistTimer = useRef<number | undefined>(undefined)
+  const closingRow = useRef<{ taskID: string; index: number } | undefined>(undefined)
   const [search, setSearch] = useState(projectedSearch)
   const [syncedSearch, setSyncedSearch] = useState(projectedSearch)
   if (projectedSearch !== syncedSearch) {
@@ -160,6 +161,27 @@ export function WorkspaceRail({
     onIntent({ type: "set-task-category", category: value })
   }
 
+  useEffect(() => {
+    const closing = closingRow.current
+    if (!closing) return
+    if (tasks.some((task) => task.id === closing.taskID)) {
+      if (!pendingTaskID) closingRow.current = undefined
+      return
+    }
+    closingRow.current = undefined
+    if (document.activeElement && document.activeElement !== document.body) return
+    const next = tasks[closing.index] ?? tasks.at(-1)
+    const row = next && scrollContainer.current?.querySelector<HTMLElement>(
+      `[data-task-id="${next.id}"] button`,
+    )
+    ;(row ?? searchInput.current)?.focus()
+  }, [tasks, pendingTaskID])
+
+  function completeTask(task: Task, reason: StaffTaskCloseReason) {
+    closingRow.current = { taskID: task.id, index: tasks.indexOf(task) }
+    onIntent({ type: "complete-task", task, reason })
+  }
+
   function selectTask(task: Task) {
     const selection = projection.selection
     const close = selection.view === "engagement" &&
@@ -185,7 +207,7 @@ export function WorkspaceRail({
         completionError={
           completionError?.taskID === task.id ? completionError.message : ""
         }
-        onComplete={(reason) => onIntent({ type: "complete-task", task, reason })}
+        onComplete={(reason) => completeTask(task, reason)}
       />
     )
   }

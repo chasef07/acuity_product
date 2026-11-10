@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 import test, { type TestContext } from "node:test"
 import { act, type ReactNode } from "react"
-import { createRoot } from "react-dom/client"
 import { JSDOM } from "jsdom"
 
 import type { StaffTaskCloseReason, Task } from "../../lib/api/generated/types.gen.ts"
 import { clearAccessToken } from "../../lib/auth-client.ts"
+import { projectedWorkspace } from "./workspace-projection.fixture.ts"
 
 const task: Task = {
   id: "task-1",
@@ -130,6 +130,55 @@ test("a completed text row keeps the patient's preview and names why it closed i
   )
 })
 
+test("focus follows the rail when a completed Task's row leaves", async (t) => {
+  const page = await harness(t)
+  const { SidebarProvider } = await import("../ui/sidebar.tsx")
+  const { WorkspaceRail } = await import("./workspace-rail.tsx")
+  const [first, second, third]: Task[] = ["first", "second", "third"].map((name) => ({
+    ...task, id: `task-${name}`, title: `Synthetic ${name} Task`,
+  }))
+  const base = projectedWorkspace(first)
+  const render = (items: Task[], pendingTaskID = "") => page.render(
+    <SidebarProvider>
+      <WorkspaceRail
+        projection={{
+          ...base,
+          tasks: { ...base.tasks, items },
+          completion: { ...base.completion, pendingTaskID },
+        }}
+        onIntent={() => {}}
+      />
+    </SidebarProvider>,
+  )
+  const tick = (shown: Task) =>
+    page.host.querySelector<HTMLButtonElement>(`button[aria-label="Complete Task: ${shown.title}"]`)!
+  const search = () => page.host.querySelector<HTMLInputElement>("input")!
+  const focused = () => document.activeElement?.getAttribute("aria-label")
+  const complete = async (closed: Task, before: Task[], after: Task[]) => {
+    await act(async () => {
+      tick(closed).focus()
+      tick(closed).click()
+    })
+    await render(before, closed.id)
+    await render(after)
+  }
+
+  await render([first, second, third])
+  await complete(second, [first, second, third], [first, third])
+  assert.equal(focused(), third.title, "the next row takes focus")
+  await complete(third, [first, third], [first])
+  assert.equal(focused(), first.title, "the previous row takes focus after the last row")
+  await complete(first, [first], [])
+  assert.equal(document.activeElement, search(), "the search field takes focus when no Task is left")
+
+  await render([first, second])
+  await act(async () => tick(first).click())
+  await render([first, second], first.id)
+  await act(async () => search().focus())
+  await render([second])
+  assert.equal(document.activeElement, search(), "focus the user moved elsewhere is left alone")
+})
+
 async function harness(t: TestContext) {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace" })
   Object.defineProperties(globalThis, {
@@ -146,11 +195,16 @@ async function harness(t: TestContext) {
     cancelAnimationFrame: { configurable: true, value: () => {} },
   })
   Object.defineProperty(dom.window, "matchMedia", { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) })
+  Object.defineProperties(dom.window, {
+    requestAnimationFrame: { configurable: true, value: () => 0 },
+    cancelAnimationFrame: { configurable: true, value: () => {} },
+  })
   const previousAPIURL = process.env.NEXT_PUBLIC_PORTAL_API_URL
   process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
   clearAccessToken()
   const host = document.createElement("div")
   document.body.append(host)
+  const { createRoot } = await import("react-dom/client")
   const root = createRoot(host)
   t.after(async () => {
     await act(async () => root.unmount())

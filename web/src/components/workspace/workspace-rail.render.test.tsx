@@ -94,6 +94,11 @@ test("the row menu follows the tick and uses the more icon", () => {
   const tick = html.indexOf('aria-label="Complete Task: Call back about refill"')
   const menu = html.indexOf('aria-label="Close Task as: Call back about refill"')
   assert.ok(tick > 0 && menu > tick, "the tick comes before the menu in tab order")
+  const time = /<time[^>]*class="([^"]*)"/.exec(html)?.[1] ?? ""
+  for (const shown of ["group-hover/task:", "group-focus-within/task:", "group-has-[[data-popup-open]]/task:"]) {
+    assert.ok(time.includes(`${shown}opacity-0`), `the time hides under ${shown}`)
+    assert.ok(html.slice(tick).includes(`${shown}opacity-100`), `the tick shows under ${shown}`)
+  }
   assert.match(html.slice(menu), /^[^>]*>\s*<svg[^>]*lucide-ellipsis/)
   for (const origin of ["APPOINTMENT_REVIEW", "INBOUND_MESSAGE_REVIEW"] as const) {
     assert.doesNotMatch(row({ ...railTask, origin }), /Close Task as|Complete Task:/)

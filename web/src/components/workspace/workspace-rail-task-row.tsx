@@ -108,7 +108,7 @@ export function TaskRow({
       </RailHoverDetails>
       <span className="pointer-events-none absolute top-0 right-1 h-8 w-14 [@media(pointer:coarse)]:h-11">
         <time
-          className={`absolute inset-y-0 right-0 w-7 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
+          className={`absolute inset-y-0 right-0 w-7 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0 group-has-[[data-popup-open]]/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
           dateTime={relative.at}
         >
           {formatRelativeTime(relative.at)}
