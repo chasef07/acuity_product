@@ -10,12 +10,21 @@ import {
   formatDuration,
   taskCloseReasonLabels,
   taskCloseSummary,
+  type threadTabLabels,
 } from "./vocabulary.ts"
 import { newestFirst, oldestFirst } from "./workspace-ordering.ts"
 
-export function presentTimeline(items: ConversationTimelineItem[]) {
+export type ThreadTab = keyof typeof threadTabLabels
+
+const threadTabTypes: Record<Exclude<ThreadTab, "all">, ConversationTimelineItem["type"][]> = {
+  texts: ["MESSAGE"],
+  calls: ["CALL_HISTORY", "CALL", "AI_INTERACTION"],
+}
+
+export function presentTimeline(items: ConversationTimelineItem[], tab: ThreadTab = "all") {
   return oldestFirst(
     [...new Map(items.map((item) => [`${item.type}:${item.id}`, item])).values()]
+      .filter((item) => tab === "all" || threadTabTypes[tab].includes(item.type))
       .filter((item) => !(item.type === "TASK" && item.task?.origin === "INBOUND_MESSAGE_REVIEW")),
     (item) => item.occurredAt,
   )

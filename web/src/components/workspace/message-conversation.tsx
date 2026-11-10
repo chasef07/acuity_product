@@ -22,17 +22,28 @@ import {
 } from "@/components/ui/message-scroller"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type { Task } from "@/lib/api/generated/types.gen"
 import { useEngagementTimeline } from "@/lib/clients/engagement"
 import { formatDate } from "@/lib/format-time"
+import { labelOptions, threadTabLabels } from "@/lib/vocabulary"
 import {
   type NumberHistory,
+  type ThreadTab,
   presentTimeline,
   sameConversationDate,
 } from "@/lib/workspace-history"
 
 import { MessageComposer } from "./message-composer"
 import { TimelineEntry } from "./timeline-entry"
+
+const tabOptions = labelOptions(threadTabLabels)
+
+const emptyTitles = {
+  all: "No activity yet",
+  texts: "No texts yet",
+  calls: "No calls yet",
+} satisfies Record<ThreadTab, string>
 
 export function MessageConversation({
   reviewKey,
@@ -64,6 +75,7 @@ export function MessageConversation({
   onHistoryChange?: (history: NumberHistory) => void
 }) {
   const [awayFromLatest, setAwayFromLatest] = useState(false)
+  const [tabChoice, setTabChoice] = useState<{ phone: string; tab: ThreadTab }>({ phone, tab: "all" })
   const {
     items,
     nextCursor: cursor,
@@ -126,9 +138,54 @@ export function MessageConversation({
     (item) => item.message?.thread.locationId === locationID,
   )?.message?.thread
   const composerThreadID = conversationThread?.id ?? ""
-  const presentedItems = presentTimeline(items)
+  const tab = tabChoice.phone === phone ? tabChoice.tab : "all"
+  const presentedItems = presentTimeline(items, tab)
+  const tabIsEmpty = tab !== "all" && presentedItems.length === 0
+
+  function showTab(next: ThreadTab) {
+    setTabChoice({ phone, tab: next })
+    setAwayFromLatest(false)
+    window.requestAnimationFrame(() =>
+      scroller.current?.scrollTo({ top: scroller.current.scrollHeight }),
+    )
+  }
+
+  const searchedCursor = useRef("")
+  const searchOlder = useEffectEvent(() => {
+    if (searchedCursor.current === cursor) return
+    searchedCursor.current = cursor
+    showOlder()
+  })
+  useEffect(() => {
+    if (tabIsEmpty && cursor && !loading && !loadingOlder) searchOlder()
+  }, [tabIsEmpty, cursor, loading, loadingOlder])
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex justify-center border-b px-4 py-2">
+        <ToggleGroup
+          aria-label="Conversation view"
+          variant="segmented"
+          size="sm"
+          spacing={0}
+          value={[tab]}
+          onValueChange={(values) => {
+            const next = tabOptions.find((option) => option.value === values[0])
+            if (next) showTab(next.value)
+          }}
+        >
+          {tabOptions.map((option) => (
+            <ToggleGroupItem
+              key={option.value}
+              value={option.value}
+              aria-label={`Show ${option.label.toLowerCase()}`}
+              className="h-7 px-3 text-xs data-pressed:bg-background data-pressed:shadow-xs"
+            >
+              {option.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
       <MessageScrollerProvider
         autoScroll
         defaultScrollPosition="end"
@@ -213,13 +270,15 @@ export function MessageConversation({
                   </Fragment>
                 </MessageScrollerItem>
               ))}
-              {!loading && !error && presentedItems.length === 0 && (
+              {!loading && !loadingOlder && !error && presentedItems.length === 0 && (
                 <MessageScrollerItem messageId="empty-conversation">
                   <Empty className="my-10 border-0">
                     <EmptyHeader>
-                      <EmptyTitle>No activity yet</EmptyTitle>
+                      <EmptyTitle>{emptyTitles[tab]}</EmptyTitle>
                       <EmptyDescription>
-                        Calls, texts, and Tasks for this number will appear here.
+                        {cursor
+                          ? "Earlier activity is not loaded. Load it to keep looking."
+                          : "Calls, texts, and Tasks for this number will appear here."}
                       </EmptyDescription>
                     </EmptyHeader>
                   </Empty>
@@ -276,6 +335,7 @@ export function MessageConversation({
               : ""
         }
         onSent={(message) => {
+          if (tab === "calls") setTabChoice({ phone, tab: "all" })
           setAwayFromLatest(false)
           showSent(message)
         }}

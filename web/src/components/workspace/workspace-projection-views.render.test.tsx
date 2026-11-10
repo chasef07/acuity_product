@@ -533,6 +533,110 @@ test("a missed transfer reads Missed, a voicemail offers its recording, and a ca
   assert.equal([...conversation.host.querySelectorAll('button[aria-label="View voicemail"]')].length, 1)
 })
 
+function threadTabs(host: HTMLElement) {
+  const tab = (name: string) => [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Conversation view"] button')]
+    .find((element) => element.textContent === name)!
+  return {
+    pressed: () => [...host.querySelectorAll('[aria-label="Conversation view"] button[aria-pressed="true"]')].map((element) => element.textContent),
+    show: (name: string) => act(async () => tab(name).click()),
+    activity: () => host.querySelector('[aria-label="Conversation activity"]')!,
+    texts: () => [...host.querySelectorAll('[aria-label="Conversation activity"] [role=article]')].map((element) => element.textContent),
+    lines: () => host.querySelectorAll('[aria-label="Conversation activity"] button[aria-expanded]').length,
+    composer: () => host.querySelector<HTMLFormElement>('form[aria-label="Message composer"]'),
+  }
+}
+
+function textFixture(id: string, occurredAt: string, overrides: Partial<Message> = {}): ConversationTimelineItem {
+  return { id, type: "MESSAGE", occurredAt, message: { ...message, id, body: `Synthetic text ${id}`, attachment: undefined, createdAt: occurredAt, ...overrides } }
+}
+
+test("the thread tabs show everything, only texts or only calls and keep the composer on each", async (t) => {
+  const conversation = conversationHarness(t)
+  const task = projectedTask()
+  conversation.items = [
+    textFixture("first", "2026-09-05T11:00:00Z"),
+    callLineFixture({ id: "missed", outcome: "MISSED" }),
+    { id: "created", type: "TASK", occurredAt: "2026-09-05T13:00:00Z", taskActivity: "TASK_CREATED", task },
+  ]
+  await conversation.render(0)
+  const tabs = threadTabs(conversation.host)
+  assert.deepEqual(tabs.pressed(), ["Everything"])
+  assert.deepEqual([tabs.texts().length, tabs.lines()], [1, 1])
+  assert.match(tabs.activity().textContent!, /Projected follow-up/)
+
+  await tabs.show("Texts")
+  assert.deepEqual(tabs.pressed(), ["Texts"])
+  assert.deepEqual([tabs.texts().length, tabs.lines()], [1, 0])
+  assert.doesNotMatch(tabs.activity().textContent!, /Projected follow-up|Called in/)
+  assert.ok(tabs.composer())
+
+  await tabs.show("Calls")
+  assert.deepEqual(tabs.pressed(), ["Calls"])
+  assert.deepEqual([tabs.texts().length, tabs.lines()], [0, 1])
+  assert.doesNotMatch(tabs.activity().textContent!, /Projected follow-up|Synthetic text/)
+  assert.ok(tabs.composer())
+  assert.equal(conversation.timelineRequests, 1, "tabs filter the loaded history without another request")
+
+  await typeInto(tabs.composer()!.querySelector("textarea")!, "Synthetic reply from Calls")
+  await act(async () => {
+    tabs.composer()!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  assert.deepEqual(tabs.pressed(), ["Everything"], "sending from Calls shows the sent text")
+  assert.match(tabs.activity().textContent!, /Synthetic reply from Calls/)
+
+  await tabs.show("Texts")
+  const other = projectedWorkspace(projectedTask()).selection.engagement!
+  await conversation.render(0, { engagement: { ...other, phone: "+15551230000" } })
+  assert.deepEqual(threadTabs(conversation.host).pressed(), ["Everything"], "another conversation starts on Everything")
+})
+
+test("a tab with nothing loaded keeps loading earlier activity until something matches or the history ends", async (t) => {
+  const conversation = conversationHarness(t)
+  const pages: ConversationTimelinePage[] = [
+    { items: [callLineFixture({ id: "newest", outcome: "MISSED" })], nextCursor: "one" },
+    { items: [callLineFixture({ id: "older", outcome: "MISSED" })], nextCursor: "two" },
+    { items: [textFixture("oldest", "2026-09-01T11:00:00Z")], nextCursor: "" },
+  ]
+  conversation.timelinePage = (cursor) => pages[["", "one", "two"].indexOf(cursor)]!
+  await conversation.render(0)
+  const tabs = threadTabs(conversation.host)
+  assert.equal(conversation.timelineRequests, 1)
+  await tabs.show("Texts")
+  await waitFor(() => tabs.texts().length === 1)
+  assert.equal(conversation.timelineRequests, 3)
+  assert.match(tabs.texts()[0]!, /Synthetic text oldest/)
+  assert.doesNotMatch(tabs.activity().textContent!, /No texts yet/)
+
+  await tabs.show("Calls")
+  assert.equal(tabs.lines(), 2)
+  assert.equal(conversation.timelineRequests, 3)
+})
+
+test("a tab says so when the whole history holds nothing for it, and a failed earlier page stops the search", async (t) => {
+  const conversation = conversationHarness(t)
+  conversation.timelinePage = (cursor) => cursor
+    ? { items: [textFixture("older", "2026-09-01T11:00:00Z")], nextCursor: "" }
+    : { items: [textFixture("newest", "2026-09-05T11:00:00Z")], nextCursor: "one" }
+  await conversation.render(0)
+  const tabs = threadTabs(conversation.host)
+  const earlier = () => [...conversation.host.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Earlier activity")
+  conversation.timelineStatus = 503
+  await tabs.show("Calls")
+  await waitFor(() => conversation.timelineRequests === 2 && earlier()?.disabled === false)
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
+  assert.equal(conversation.timelineRequests, 2, "a failed earlier page is not requested again without the user asking")
+  assert.match(tabs.activity().textContent!, /No calls yet/)
+  assert.match(tabs.activity().textContent!, /Earlier activity is not loaded/)
+
+  conversation.timelineStatus = 200
+  await act(async () => earlier()!.click())
+  await waitFor(() => conversation.timelineRequests === 3 && !earlier())
+  assert.match(tabs.activity().textContent!, /No calls yet/)
+  assert.doesNotMatch(tabs.activity().textContent!, /Earlier activity is not loaded/)
+  assert.ok(tabs.composer())
+})
+
 test("the thread names the callback caller and marks which Task each entry describes", async (t) => {
   const conversation = conversationHarness(t)
   const { selected, review, history } = callbackFixture()
@@ -1025,7 +1129,7 @@ function conversationHarness(t: TestContext) {
       conversation.completions.push(body)
       return Response.json({ ...conversation.textTask, state: "COMPLETED" })
     }
-    assert.match(url, /\/v1\/engagements\/%2B15551234567\/timeline\?/)
+    assert.match(url, /\/v1\/engagements\/%2B1555123\d{4}\/timeline\?/)
     conversation.timelineRequests += 1
     await conversation.timelineGate
     return conversation.timelineStatus === 200

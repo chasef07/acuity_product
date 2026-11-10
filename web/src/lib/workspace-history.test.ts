@@ -275,6 +275,17 @@ test("thread Task Activity names who acted and keeps automation automatic", () =
   assert.equal(taskActivityDetail(automatic), "Missed call review completed after caller@example.test's callback attempt")
 })
 
+test("the Texts tab keeps only messages and the Calls tab keeps only calls", () => {
+  const item = (type: string, minute: number) =>
+    ({ id: type.toLowerCase(), type, occurredAt: `2026-08-13T12:0${minute}:00Z` }) as ConversationTimelineItem
+  const items = [item("TASK", 5), item("AI_INTERACTION", 4), item("CALL", 3), item("MESSAGE", 2), item("CALL_HISTORY", 1)]
+  const shown = (tab?: "all" | "texts" | "calls") => presentTimeline(items, tab).map((value) => value.id)
+  assert.deepEqual(shown(), ["call_history", "message", "call", "ai_interaction", "task"])
+  assert.deepEqual(shown("all"), shown())
+  assert.deepEqual(shown("texts"), ["message"])
+  assert.deepEqual(shown("calls"), ["call_history", "call", "ai_interaction"])
+})
+
 test("the text review Task stays out of the thread", () => {
   const text = (id: string, occurredAt: string) =>
     ({ id, type: "MESSAGE", occurredAt, message: { id, direction: "INBOUND", createdAt: occurredAt } }) as ConversationTimelineItem

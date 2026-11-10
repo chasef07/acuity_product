@@ -61,6 +61,12 @@ export const callLineLabels = {
   unknown: "Outcome unknown",
 } as const
 
+export const threadTabLabels = {
+  all: "Everything",
+  texts: "Texts",
+  calls: "Calls",
+} as const
+
 export const callEntryPointLabels = {
   AI_HANDOFF: "AI handoff",
   TASK: "Task",
