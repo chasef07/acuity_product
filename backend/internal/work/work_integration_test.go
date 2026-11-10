@@ -172,7 +172,7 @@ func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
 	ctx := context.Background()
 	locationID := authorization.Locations[0].ID
 	phone := "+15555550100"
-	ensureRecovery := func(callID string, outcome work.RecoveryOutcome) work.Task {
+	ensureRecovery := func(callID, sourceCallID string, outcome work.RecoveryOutcome) work.Task {
 		t.Helper()
 		tx, err := db.As(testdb.Worker).Begin(ctx)
 		if err != nil {
@@ -180,7 +180,7 @@ func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 		task, err := module.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
-			CallID:     callID,
+			CallID: callID, SourceCallID: sourceCallID,
 			PracticeID: authorization.Practice.ID, LocationID: locationID,
 			Phone: phone, Outcome: outcome, OccurredAt: now,
 		})
@@ -224,7 +224,7 @@ func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
 
 	now = now.Add(time.Hour)
 	missedCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill", now)
-	recovery := ensureRecovery(missedCallID, work.RecoveryOutcomeMissedCall)
+	recovery := ensureRecovery(missedCallID, "", work.RecoveryOutcomeMissedCall)
 	if recovery.ID == aiTask.ID || recovery.Origin != work.TaskOriginMissedCall ||
 		recovery.State != work.TaskOpen {
 		t.Fatalf("missed call after an open AI Task = %#v, want its own recovery Task", recovery)
@@ -235,14 +235,14 @@ func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
 		t.Fatalf("recovery Task interactions = %#v, %v; want the missed call", read.Interactions, err)
 	}
 
-	replayed := ensureRecovery(missedCallID, work.RecoveryOutcomeMissedCall)
+	replayed := ensureRecovery(missedCallID, "", work.RecoveryOutcomeMissedCall)
 	if replayed.ID != recovery.ID || replayed.Version != recovery.Version {
 		t.Fatalf("replayed missed call = %#v, want unchanged %#v", replayed, recovery)
 	}
 
 	now = now.Add(time.Hour)
 	voicemailCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill again", now)
-	joined := ensureRecovery(voicemailCallID, work.RecoveryOutcomeVoicemail)
+	joined := ensureRecovery(voicemailCallID, "another-ai-call", work.RecoveryOutcomeVoicemail)
 	if joined.ID != recovery.ID || joined.Origin != work.TaskOriginVoicemail {
 		t.Fatalf("second missed call = %#v, want it joined to recovery Task %s", joined, recovery.ID)
 	}
@@ -256,6 +256,18 @@ func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
 	}
 	if recoveryTasks != 1 {
 		t.Fatalf("recovery Tasks = %d, want 1 for the caller", recoveryTasks)
+	}
+
+	now = now.Add(time.Hour)
+	handoffCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill handoff", now)
+	attached := ensureRecovery(handoffCallID, aiTask.SourceCallID, work.RecoveryOutcomeVoicemail)
+	if attached.ID != aiTask.ID || attached.Origin != work.TaskOriginAbitaAI ||
+		attached.Title != aiTask.Title || attached.State != work.TaskOpen {
+		t.Fatalf("missed handoff from the AI Task's call = %#v, want AI Task %s", attached, aiTask.ID)
+	}
+	read, err = module.ReadTask(ctx, identity, aiTask.ID)
+	if err != nil || len(read.Interactions) != 1 || read.Interactions[0].CallID != handoffCallID {
+		t.Fatalf("AI Task interactions = %#v, %v; want the handoff call", read.Interactions, err)
 	}
 }
 
