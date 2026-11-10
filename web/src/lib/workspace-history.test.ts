@@ -158,6 +158,7 @@ test("thread Task Activity names who acted and keeps automation automatic", () =
   assert.equal(closedAs("NOT_NEEDED"), "Task closed as Not needed by staff@example.test")
   assert.equal(closedAs("UNREACHABLE"), "Task closed as Couldn't reach by staff@example.test")
   assert.equal(taskActivityDetail({ ...activity("TASK_COMPLETED", service), taskActivityDetails: { closeReason: "EXPIRED" } }), "Task closed as Expired automatically")
+  assert.equal(taskActivityDetail({ ...activity("TASK_EXPIRED", service), taskActivityDetails: { closeReason: "EXPIRED" } }), "Task closed as Expired automatically")
   const automatic = { ...callbackCompletion, taskActivityActor: { kind: "SERVICE", subject: "work-recovery-resolution" } } as ConversationTimelineItem
   assert.equal(taskActivityDetail(automatic), "Missed call review completed after caller@example.test's callback attempt")
 })

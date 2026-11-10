@@ -123,6 +123,7 @@ function taskActivityPhrase(item: ConversationTimelineItem, task: Task) {
     case "TITLE_CHANGED":
       return attributed("title changed", actor)
     case "TASK_COMPLETED":
+    case "TASK_EXPIRED":
       return actor?.kind === "HUMAN" && !actor.email
         ? `${completedPhrase(item)} by the team`
         : attributed(completedPhrase(item), actor)
