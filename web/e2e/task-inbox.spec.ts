@@ -57,7 +57,7 @@ test("visible workload filters show message previews and completion opens the ne
   await expect(page.getByRole("group", { name: "Texts", exact: true }).getByRole("button", { name: "(202) 555-0203", exact: true })).toBeVisible()
 })
 
-test("Texts ages out after five days without completing work and new inbound restores it", async ({ page }) => {
+test("a text review expires after five days and a new inbound text opens another", async ({ page }) => {
   test.skip(!process.env.E2E_PROVISIONING_OUTPUT, "E2E fixture required")
   await page.clock.install()
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
@@ -82,10 +82,10 @@ test("Texts ages out after five days without completing work and new inbound res
   const { token } = await (await page.request.get("/api/auth/token")).json()
   const discovery = await (await page.request.get(`${portalURL}/v1/access`, { headers: { authorization: `Bearer ${token}` } })).json()
   await expect.poll(async () => {
-    const history = await page.request.post(`${portalURL}/v1/tasks/query`, { headers: { authorization: `Bearer ${token}` }, data: { practiceId: discovery.practices[0].id, search: "5550209", state: "OPEN" } })
+    const history = await page.request.post(`${portalURL}/v1/tasks/query`, { headers: { authorization: `Bearer ${token}` }, data: { practiceId: discovery.practices[0].id, search: "5550209", state: "COMPLETED" } })
     expect(history.ok()).toBeTruthy()
-    return (await history.json()).items.length
-  }).toBe(1)
+    return (await history.json()).items.map((task: { closeReason?: string }) => task.closeReason)
+  }).toEqual(["EXPIRED"])
 
   const expiresAt = Date.now() + 15_000
   await inbound("near-boundary", new Date(expiresAt - 120 * 60 * 60 * 1000).toISOString())
