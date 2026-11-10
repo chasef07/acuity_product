@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.4.0](https://github.com/chasef07/acuity_product/compare/v3.3.2...v3.4.0) (2026-11-10)
+
+
+### Features
+
+* **tasks:** load the task responsibility roster on every release ([#630](https://github.com/chasef07/acuity_product/issues/630)) ([611b666](https://github.com/chasef07/acuity_product/commit/611b666fe4efa6f7633f5dfb68a709d4db8a204d))
+
+
+### Bug Fixes
+
+* **migrations:** index the command dependency key so 0120's delete finishes ([#628](https://github.com/chasef07/acuity_product/issues/628)) ([0b205bb](https://github.com/chasef07/acuity_product/commit/0b205bb2e2d6275eecd5c8e20663e5b3cb1a42b8))
+* **work:** retire open review Tasks that no staff folder shows ([#629](https://github.com/chasef07/acuity_product/issues/629)) ([d898a58](https://github.com/chasef07/acuity_product/commit/d898a588fabb6f4555ace1a430d1746889186cf3))
+
 ## [3.3.2](https://github.com/chasef07/acuity_product/compare/v3.3.1...v3.3.2) (2026-11-07)
 
 
