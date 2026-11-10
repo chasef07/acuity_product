@@ -1,6 +1,6 @@
 "use client"
 
-import { type ReactNode, useCallback } from "react"
+import { type ReactNode, useCallback, useMemo } from "react"
 
 import type {
   CallingCall,
@@ -29,7 +29,7 @@ type TaskCallContextProps = {
 }
 
 export type PatientTasksPlacement =
-  | { beside: "task"; currentTaskID: string }
+  | { beside: "task"; otherThan: readonly string[] }
   | { beside: "call"; callTaskID?: string }
 
 export function TaskCallContext({
@@ -53,6 +53,10 @@ export function TaskCallContext({
     },
     [onOpenTask],
   )
+  const shownTaskIDs = useMemo(
+    () => (group?.groupMembers ?? (task ? [task] : [])).map((shown) => shown.id),
+    [group, task],
+  )
   if (view === "call" && activeCall) {
     return (
       <CallWorkspace
@@ -70,11 +74,14 @@ export function TaskCallContext({
     )
   }
   if (view === "task" && task) {
+    const otherTasks = patientTasks(task.phone, { beside: "task", otherThan: shownTaskIDs })
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {patientTasks(task.phone, { beside: "task", currentTaskID: task.id })}
         {group && onSelectTask ? (
-          <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
+          <>
+            <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
+            {otherTasks}
+          </>
         ) : (
           <TaskWorkspace
             key={task.id}
@@ -86,7 +93,9 @@ export function TaskCallContext({
             taskCallError={taskCallError}
             onTaskUpdated={onTaskUpdated}
             onReturnToCall={onReturnToCall}
-          />
+          >
+            {otherTasks}
+          </TaskWorkspace>
         )}
       </div>
     )

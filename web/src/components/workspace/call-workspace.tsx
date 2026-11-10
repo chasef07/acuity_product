@@ -40,7 +40,7 @@ export function CallWorkspace({
       ? { label: "Back to Task", onClick: onReturnToTask }
       : undefined
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+    <section className="flex min-h-0 min-w-0 flex-1 scroll-pt-12 flex-col overflow-y-auto">
       <header className="px-5 py-5 pr-12">
         <h2 className="text-base font-medium leading-snug">
           {callStateLabels[call.state]}

@@ -38,6 +38,7 @@ type TaskFailure = { taskID: string; message: string }
 
 type PatientTasksPanelProps = {
   currentTaskID?: string
+  otherThan?: readonly string[]
   callTaskID?: string
   completion: { pendingTaskID: string; errorTaskID: string; error: string }
   className?: string
@@ -95,6 +96,7 @@ export function PatientTasksPanel({
 export function PatientTasksPanelView({
   summary,
   currentTaskID,
+  otherThan,
   callTaskID,
   completion,
   reopening,
@@ -115,14 +117,17 @@ export function PatientTasksPanelView({
   const closing = useRef<{ taskID: string; index: number }>(undefined)
   const [showAll, setShowAll] = useState(false)
   const loaded = summary.status === "ready" ? summary.data : undefined
-  const open = useMemo(
-    () =>
-      loaded && [
-        ...loaded.openTasks.filter((task) => task.id === callTaskID),
-        ...loaded.openTasks.filter((task) => task.id !== callTaskID),
-      ],
-    [loaded, callTaskID],
-  )
+  const title = otherThan ? "Other open Tasks" : "Open Tasks"
+  const open = useMemo(() => {
+    if (!loaded) return undefined
+    const listed = otherThan
+      ? loaded.openTasks.filter((task) => !otherThan.includes(task.id))
+      : loaded.openTasks
+    return [
+      ...listed.filter((task) => task.id === callTaskID),
+      ...listed.filter((task) => task.id !== callTaskID),
+    ]
+  }, [loaded, otherThan, callTaskID])
 
   useEffect(() => {
     const closed = closing.current
@@ -140,7 +145,7 @@ export function PatientTasksPanelView({
 
   if (!loaded || !open) {
     return (
-      <PanelFrame className={className} busy={summary.status === "loading"}>
+      <PanelFrame title={title} className={className} busy={summary.status === "loading"}>
         {summary.status === "loading" ? (
           <div data-testid="patient-tasks-loading" className="flex items-start gap-2 py-2">
             <span className="sr-only">Loading open Tasks</span>
@@ -165,8 +170,11 @@ export function PatientTasksPanelView({
   }
 
   const { closedToday } = loaded
+  if (otherThan && open.length === 0 && closedToday.length === 0) return null
   const shared = loaded.names.length > 1
   const shown = showAll ? open : open.slice(0, collapsedRowLimit)
+  const count = loaded.openTaskCount - (loaded.openTasks.length - open.length)
+  const capped = count > open.length
 
   const complete = (task: Task, reason: StaffTaskCloseReason) => {
     closing.current = { taskID: task.id, index: open.indexOf(task) }
@@ -174,7 +182,13 @@ export function PatientTasksPanelView({
   }
 
   return (
-    <PanelFrame ref={section} className={className} count={loaded.openTaskCount}>
+    <PanelFrame
+      ref={section}
+      title={otherThan && open.length === 0 ? undefined : title}
+      label={otherThan && open.length === 0 ? "Closed today" : title}
+      className={className}
+      count={count}
+    >
       {summary.status === "ready" && summary.refreshFailure && (
         <p role="alert" className="text-xs text-destructive">
           This list could not be refreshed.{" "}
@@ -184,7 +198,7 @@ export function PatientTasksPanelView({
         </p>
       )}
       {open.length === 0 ? (
-        <p className="mt-1 text-xs text-muted-foreground">Nothing open for this patient.</p>
+        !otherThan && <p className="mt-1 text-xs text-muted-foreground">Nothing open for this patient.</p>
       ) : (
         <ul className="divide-y">
           {shown.map((task) => (
@@ -214,14 +228,16 @@ export function PatientTasksPanelView({
           {showAll ? "Show fewer" : `Show all ${open.length}`}
         </Button>
       )}
-      {showAll && loaded.openTaskCount > open.length && (
+      {showAll && capped && (
         <p className="mt-1 text-xs text-muted-foreground">
-          Showing {open.length} of {loaded.openTaskCount}
+          Showing {open.length} of {count}
         </p>
       )}
       {closedToday.length > 0 && (
         <>
-          <h2 className="mt-4 text-sm font-medium">Closed today</h2>
+          <h2 className={cn("text-sm font-medium", (open.length > 0 || !otherThan) && "mt-4")}>
+            Closed today
+          </h2>
           <ul className="mt-1 divide-y">
             {closedToday.map((task) => (
               <li key={task.id} data-patient-task-id={task.id} className="py-2">
@@ -259,12 +275,16 @@ export function PatientTasksPanelView({
 
 function PanelFrame({
   ref,
+  title,
+  label = title,
   className,
   busy,
   count,
   children,
 }: {
   ref?: Ref<HTMLElement>
+  title?: string
+  label?: string
   className?: string
   busy?: boolean
   count?: number
@@ -274,16 +294,18 @@ function PanelFrame({
     <section
       ref={ref}
       tabIndex={-1}
-      aria-label="Open Tasks"
+      aria-label={label}
       aria-busy={busy || undefined}
       className={cn("flex min-h-0 min-w-0 flex-col pt-3 pb-2 outline-none", className)}
     >
-      <header className="flex h-7 shrink-0 items-center gap-2 pr-12 pl-5">
-        <h2 className="text-sm font-medium">Open Tasks</h2>
-        {count !== undefined && (
-          <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
-        )}
-      </header>
+      {title && (
+        <header className="flex h-7 shrink-0 items-center gap-2 pr-12 pl-5">
+          <h2 className="truncate text-sm font-medium">{title}</h2>
+          {count !== undefined && (
+            <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
+          )}
+        </header>
+      )}
       <div data-testid="patient-tasks-body" className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto px-5">
         {children}
       </div>

@@ -337,13 +337,20 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       (contextView === "patient-tasks" || (onLiveCall && contextView === "call"))
     const patientTasks = (
       phone: string,
-      placement: { className: string; currentTaskID?: string; callTaskID?: string; titlesOpenTasks: boolean },
+      placement: {
+        className: string
+        currentTaskID?: string
+        otherThan?: readonly string[]
+        callTaskID?: string
+        titlesOpenTasks: boolean
+      },
     ) => (
       <PatientTasksPanel
         key={phone}
         practiceID={state.scope.practiceID}
         phone={phone}
         currentTaskID={placement.currentTaskID}
+        otherThan={placement.otherThan}
         callTaskID={placement.callTaskID}
         completion={state.completion}
         className={placement.className}
@@ -577,7 +584,11 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         patientTasks={(phone, placement) =>
                           patientTasks(phone, placement.beside === "call"
                             ? { className: "shrink-0 border-t", callTaskID: placement.callTaskID, titlesOpenTasks: false }
-                            : { className: "max-h-80 shrink-0 border-b", currentTaskID: placement.currentTaskID, titlesOpenTasks: true })
+                            : {
+                                className: state.selection.taskGroup ? "max-h-64 shrink-0 border-t" : "-mx-5 mt-4 border-t",
+                                otherThan: placement.otherThan,
+                                titlesOpenTasks: true,
+                              })
                         }
                         onReturnToCall={() => {
                           if (activeCall) {
