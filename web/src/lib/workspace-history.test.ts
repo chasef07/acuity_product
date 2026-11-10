@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { ConversationTimelineItem, Task } from "./api/generated/types.gen.ts"
+import { formatClockTime } from "./format-time.ts"
 import {
   callbackCompletionLabel,
   callHistoryPresentation,
@@ -45,12 +46,24 @@ const outcomeOf = (...entries: ConversationTimelineItem[]) => lineOf(...entries)
 
 test("each call history root reads as one outcome", () => {
   const cases: [string, ConversationTimelineItem[], ReturnType<typeof outcomeOf>][] = [
-    ["AI finished the call alone", [aiEntry({})],
+    ["AI finished the call alone and nothing says the caller was helped", [aiEntry({})],
+      { kind: "handled-by-ai", label: "Handled by AI", tone: "muted" }],
+    ["AI finished the call alone and the stored call label says resolved", [aiEntry({ resolved: true })],
       { kind: "resolved-by-ai", label: "Resolved by AI", tone: "success" }],
     ["AI finished and left a Task", [aiEntry({}), taskEntry({})],
       { kind: "message-taken", label: "Message taken", tone: "muted" }],
+    ["AI left a Task on a call labelled resolved", [aiEntry({ resolved: true }), taskEntry({})],
+      { kind: "message-taken", label: "Message taken", tone: "muted" }],
+    ["lines busy, AI took a message", [aiEntry({ status: "ESCALATED" }), taskEntry({})],
+      { kind: "message-taken", label: "Message taken", tone: "muted" }],
     ["AI booked and staff verify the visit", [aiEntry({ appointmentOutcome: "BOOKING" }), taskEntry({ origin: "APPOINTMENT_REVIEW" })],
-      { kind: "resolved-by-ai", label: "Resolved by AI", tone: "success" }],
+      { kind: "appointment-by-ai", label: "Booked by AI", tone: "success" }],
+    ["AI rescheduled", [aiEntry({ appointmentOutcome: "RESCHEDULE" })],
+      { kind: "appointment-by-ai", label: "Rescheduled by AI", tone: "success" }],
+    ["AI cancelled", [aiEntry({ appointmentOutcome: "CANCELLATION" })],
+      { kind: "appointment-by-ai", label: "Cancelled by AI", tone: "success" }],
+    ["AI booked on a call that then failed", [aiEntry({ status: "FAILED", appointmentOutcome: "BOOKING" })],
+      { kind: "failed", label: "AI call failed", tone: "destructive" }],
     ["transferred and answered", [aiEntry({ status: "ESCALATED" }), callEntry({ outcome: "RESOLVED", answeredByEmail: "dana@example.test", durationSeconds: 362 })],
       { kind: "answered", label: "dana@example.test answered", tone: "success" }],
     ["answered by a staff member the reader cannot resolve", [aiEntry({ status: "ESCALATED" }), callEntry({ outcome: "CONNECTED" })],
@@ -72,13 +85,31 @@ test("each call history root reads as one outcome", () => {
     ["outbound still dialing", [callEntry({ direction: "OUTBOUND", outcome: "PREPARING" })],
       { kind: "in-progress", label: "Preparing call", tone: "muted" }],
     ["transfer requested with no staff call on record", [aiEntry({ status: "ESCALATED" })],
-      { kind: "unknown", label: "Transfer requested", tone: "muted" }],
+      { kind: "unknown", label: "Transfer requested, staff outcome not recorded", tone: "muted" }],
     ["an appointment change the AI could not finish", [aiEntry({ appointmentOutcome: "PARTIAL" })],
-      { kind: "unknown", label: "Appointment change needs review", tone: "muted" }],
+      { kind: "needs-review", label: "Appointment change needs review", tone: "warning" }],
+    ["an unfinished appointment change on a call labelled resolved", [aiEntry({ appointmentOutcome: "PARTIAL", resolved: true })],
+      { kind: "needs-review", label: "Appointment change needs review", tone: "warning" }],
+    ["an unfinished appointment change that staff then answered", [aiEntry({ status: "ESCALATED", appointmentOutcome: "PARTIAL" }), callEntry({ outcome: "RESOLVED", answeredByEmail: "dana@example.test" })],
+      { kind: "needs-review", label: "Appointment change needs review", tone: "warning" }],
+    ["an unfinished appointment change that staff missed", [aiEntry({ status: "ESCALATED", appointmentOutcome: "PARTIAL" }), callEntry({ outcome: "MISSED" })],
+      { kind: "missed", label: "Missed", tone: "destructive" }],
     ["a state an outbound call should never report", [callEntry({ direction: "OUTBOUND", outcome: "VOICEMAIL" })],
       { kind: "unknown", label: "Voicemail", tone: "muted" }],
   ]
   for (const [name, entries, expected] of cases) assert.deepEqual(outcomeOf(...entries), expected, name)
+})
+
+test("an AI call with no transfer and no appointment action does not read as success", () => {
+  for (const status of ["COMPLETED", "ESCALATED", "IN_PROGRESS", "FAILED"]) {
+    for (const summary of [undefined, "Caller hung up before asking anything."]) {
+      const result = outcomeOf(aiEntry({ status, summary }))
+      assert.notEqual(result.tone, "success", `${status} ${summary ?? "no summary"}`)
+      assert.notEqual(result.label, "Resolved by AI", `${status} ${summary ?? "no summary"}`)
+    }
+  }
+  assert.equal(outcomeOf(aiEntry({ status: "ESCALATED", resolved: true })).tone, "muted")
+  assert.equal(outcomeOf(aiEntry({ status: "FAILED", resolved: true })).tone, "destructive")
 })
 
 test("every call state has a line for both directions and never a blank label", () => {
@@ -106,6 +137,40 @@ test("when several staff legs share a call, an answer outranks a voicemail and a
   assert.equal(outcomeOf(answered, missed, voicemail).label, "dana@example.test answered")
 })
 
+test("several staff legs keep the answer as the outcome and list every leg in time order, each named by who and when", () => {
+  const answeredAt = "2026-08-13T12:01:00Z"
+  const missedAt = "2026-08-13T12:09:00Z"
+  const voicemailAt = "2026-08-13T12:12:00Z"
+  const line = lineOf(
+    aiEntry({ status: "ESCALATED" }),
+    callEntry({ id: "voicemail", outcome: "VOICEMAIL", startedAt: voicemailAt, voicemailDurationSeconds: 38 }),
+    callEntry({ id: "missed", outcome: "MISSED", startedAt: missedAt }),
+    callEntry({ id: "answered", outcome: "RESOLVED", startedAt: answeredAt, answeredByEmail: "maria@example.test", durationSeconds: 60 }),
+  )
+  assert.deepEqual(line.outcome, { kind: "answered", label: "maria@example.test answered", tone: "success" })
+  assert.deepEqual(line.steps, [
+    { tone: "muted", text: "AI answered and transferred" },
+    { tone: "success", text: `${formatClockTime(answeredAt)} · maria@example.test answered, 1m 0s` },
+    { tone: "muted", text: "Resolved on call" },
+    { tone: "destructive", text: `${formatClockTime(missedAt)} · Nobody answered, no voicemail` },
+    { tone: "warning", text: `${formatClockTime(voicemailAt)} · Nobody answered, caller left a voicemail, 0:38` },
+  ])
+  assert.deepEqual(line.sources, [
+    { kind: "ai", id: "ai", label: "View AI call" },
+    { kind: "call", id: "answered", label: `View call · maria@example.test · ${formatClockTime(answeredAt)}` },
+    { kind: "call", id: "missed", label: `View call · ${formatClockTime(missedAt)}` },
+    { kind: "voicemail", id: "voicemail", label: `View voicemail · ${formatClockTime(voicemailAt)}` },
+  ])
+  const callbacks = lineOf(
+    callEntry({ id: "second", direction: "OUTBOUND", outcome: "UNANSWERED", startedAt: missedAt, placedByEmail: "omar@example.test" }),
+    callEntry({ id: "first", direction: "OUTBOUND", outcome: "UNANSWERED", startedAt: answeredAt, placedByEmail: "maria@example.test" }),
+  )
+  assert.deepEqual(callbacks.sources.map((source) => source.label), [
+    `View call · maria@example.test · ${formatClockTime(answeredAt)}`,
+    `View call · omar@example.test · ${formatClockTime(missedAt)}`,
+  ])
+})
+
 test("a lone call and a lone AI call read the same as their call history", () => {
   const call = callEntry({ outcome: "VOICEMAIL", voicemailDurationSeconds: 38 })
   assert.deepEqual(callHistoryPresentation(call), lineOf(call))
@@ -131,6 +196,15 @@ test("a line says who called and what it was about", () => {
   const long = lineOf(aiEntry({ summary: `Caller ${"asked again and ".repeat(10)}hung up.` })).about
   assert.ok(long.length <= 81 && long.endsWith("…") && !long.endsWith(" …"), long)
   assert.equal(lineOf(aiEntry({ summary: "Caller asked for Dr. Shah's hours. The AI gave them." })).about, "Caller asked for Dr. Shah's hours")
+  const about = (summary: string) => lineOf(aiEntry({ summary })).about
+  assert.equal(about("Caller wants 3 p.m. Thursday. The AI booked it."), "Caller wants 3 p.m. Thursday")
+  assert.equal(about("Caller can come at 9 a.m. or 3 p.m."), "Caller can come at 9 a.m. or 3 p.m.")
+  assert.equal(about("Is Dr. Shah in at 9 a.m.? The AI said yes."), "Is Dr. Shah in at 9 a.m.")
+  assert.equal(about("Caller owes $4.50 for lens wipes. Paid by card."), "Caller owes $4.50 for lens wipes")
+  assert.equal(about("Caller asked about the U.S. Open week closure! Told closed."), "Caller asked about the U.S. Open week closure")
+  assert.equal(about("Caller asked about hours. then hung up"), "Caller asked about hours. then hung up")
+  const abbreviated = about(`Caller wants 3 p.m. ${"on some weekday ".repeat(8)}soon. Booked.`)
+  assert.ok(abbreviated.length <= 81 && abbreviated.endsWith("…") && abbreviated.startsWith("Caller wants 3 p.m. on some"), abbreviated)
 
   const callback = { direction: "OUTBOUND", outcome: "UNANSWERED", placedByEmail: "caller@example.test" }
   assert.deepEqual(
@@ -156,7 +230,7 @@ test("an expanded line lists what the AI did, who answered and for how long, and
     { tone: "muted", text: "Follow-up needed" },
   ])
   assert.deepEqual(line.tasks.map((value) => value.id), ["follow-up"])
-  assert.deepEqual(line.sources, [{ kind: "ai", id: "ai" }, { kind: "call", id: "call" }])
+  assert.deepEqual(line.sources, [{ kind: "ai", id: "ai", label: "View AI call" }, { kind: "call", id: "call", label: "View call" }])
   assert.deepEqual(line.locations, [{ id: "office", name: "Office" }])
   assert.equal(line.voicemail, undefined)
 
@@ -166,7 +240,7 @@ test("an expanded line lists what the AI did, who answered and for how long, and
     { tone: "warning", text: "Nobody answered, caller left a voicemail, 0:22" },
   ])
   assert.deepEqual(voicemail.voicemail, { callID: "call", seconds: 22 })
-  assert.deepEqual(voicemail.sources, [{ kind: "ai", id: "ai" }, { kind: "voicemail", id: "call" }])
+  assert.deepEqual(voicemail.sources, [{ kind: "ai", id: "ai", label: "View AI call" }, { kind: "voicemail", id: "call", label: "View voicemail" }])
   assert.deepEqual(lineOf(callEntry({ outcome: "VOICEMAIL" })).voicemail, { callID: "call", seconds: 0 })
 
   assert.deepEqual(lineOf(aiEntry({ status: "ESCALATED" }), callEntry({ outcome: "MISSED" })).steps.at(-1),
@@ -174,6 +248,23 @@ test("an expanded line lists what the AI did, who answered and for how long, and
   assert.deepEqual(lineOf(aiEntry({ appointmentOutcome: "PARTIAL" })).steps, [
     { tone: "muted", text: "AI answered" },
     { tone: "warning", text: "Appointment change needs review" },
+  ])
+  assert.deepEqual(lineOf(aiEntry({ status: "ESCALATED", summary: "Caller asked for a refill." }), taskEntry({ title: "Refill request" })).steps, [
+    { tone: "muted", text: 'AI took a message: "Refill request"' },
+    { tone: "muted", text: "Caller asked for a refill." },
+  ])
+  assert.deepEqual(lineOf(aiEntry({}), taskEntry({ title: "Refill request" })).steps, [
+    { tone: "muted", text: 'AI took a message: "Refill request"' },
+  ])
+  assert.deepEqual(lineOf(aiEntry({ status: "ESCALATED" })).steps, [
+    { tone: "muted", text: "Transfer requested, staff outcome not recorded" },
+  ])
+  assert.deepEqual(lineOf(aiEntry({ status: "ESCALATED" }), taskEntry({ origin: "MISSED_CALL_RECOVERY" }), callEntry({ outcome: "MISSED" })).steps, [
+    { tone: "muted", text: "AI answered and transferred" },
+    { tone: "destructive", text: "Nobody answered, no voicemail" },
+  ])
+  assert.deepEqual(lineOf(aiEntry({ status: "ESCALATED" }), taskEntry({ origin: "MISSED_CALL_RECOVERY" })).steps, [
+    { tone: "muted", text: "Transfer requested, staff outcome not recorded" },
   ])
   assert.deepEqual(lineOf(callEntry({ direction: "OUTBOUND", outcome: "RESOLVED", durationSeconds: 192 })).steps, [
     { tone: "success", text: "Answered, 3m 12s" },

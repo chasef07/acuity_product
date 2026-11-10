@@ -1,7 +1,8 @@
 import type { CallState, ConversationTimelineItem, Task, TaskCloseReason } from "@/lib/api/generated/types.gen"
 import { isSettledCallState } from "./calling/call-state.ts"
-import { sameLocalDay } from "./format-time.ts"
+import { formatClockTime, sameLocalDay } from "./format-time.ts"
 import {
+  aiAppointmentLabels,
   appointmentOutcomeTitles,
   callDirectionLabels,
   callLineLabels,
@@ -37,6 +38,9 @@ export type CallLineTone = "success" | "warning" | "destructive" | "muted"
 
 type CallLineOutcomeKind =
   | "resolved-by-ai"
+  | "appointment-by-ai"
+  | "handled-by-ai"
+  | "needs-review"
   | "message-taken"
   | "answered"
   | "missed"
@@ -57,12 +61,15 @@ export type CallLine = {
   voicemail?: { callID: string; seconds: number }
   steps: { tone: CallLineTone; text: string }[]
   tasks: Task[]
-  sources: { kind: "ai" | "call" | "voicemail"; id: string }[]
+  sources: { kind: "ai" | "call" | "voicemail"; id: string; label: string }[]
   locations: { id: string; name: string }[]
 }
 
 const outcomeTones = {
   "resolved-by-ai": "success",
+  "appointment-by-ai": "success",
+  "handled-by-ai": "muted",
+  "needs-review": "warning",
   "message-taken": "muted",
   answered: "success",
   missed: "destructive",
@@ -73,13 +80,6 @@ const outcomeTones = {
   "no-answer": "warning",
   unknown: "muted",
 } satisfies Record<CallLineOutcomeKind, CallLineTone>
-
-const aiOutcomeKinds = {
-  IN_PROGRESS: "in-progress",
-  COMPLETED: "resolved-by-ai",
-  ESCALATED: "unknown",
-  FAILED: "failed",
-} satisfies Record<HistoryAI["status"], CallLineOutcomeKind>
 
 const callOutcomeKinds = {
   INBOUND: {
@@ -157,21 +157,44 @@ function callOutcome(call: HistoryCall) {
   }
 }
 
+function needsReview() {
+  return outcome("needs-review", appointmentOutcomeTitles.PARTIAL)
+}
+
+function aiTasks(tasks: Task[]) {
+  return tasks.filter((task) => task.origin === "ABITA_AI")
+}
+
 function aiOutcome(interaction: HistoryAI, tasks: Task[]) {
-  const kind: CallLineOutcomeKind = aiOutcomeKinds[interaction.status] ?? "unknown"
-  switch (kind) {
-    case "resolved-by-ai":
-      if (interaction.appointmentOutcome === "PARTIAL") return outcome("unknown", appointmentOutcomeTitles.PARTIAL)
-      return tasks.some((task) => task.origin === "ABITA_AI")
+  const messageTaken = aiTasks(tasks).length > 0
+  switch (interaction.status) {
+    case "FAILED":
+      return outcome("failed", callLineLabels.aiFailed)
+    case "IN_PROGRESS":
+      return outcome("in-progress", callLineLabels.aiInProgress)
+    case "ESCALATED":
+      if (interaction.appointmentOutcome === "PARTIAL") return needsReview()
+      return messageTaken
         ? outcome("message-taken", callLineLabels.messageTaken)
-        : outcome(kind, callLineLabels.resolvedByAI)
-    case "failed":
-      return outcome(kind, callLineLabels.aiFailed)
-    case "in-progress":
-      return outcome(kind, callLineLabels.aiInProgress)
+        : outcome("unknown", callLineLabels.transferNotRecorded)
+    case "COMPLETED": {
+      if (interaction.appointmentOutcome === "PARTIAL") return needsReview()
+      const appointment = aiAppointmentLabels[interaction.appointmentOutcome as keyof typeof aiAppointmentLabels]
+      if (appointment) return outcome("appointment-by-ai", appointment)
+      if (messageTaken) return outcome("message-taken", callLineLabels.messageTaken)
+      return interaction.resolved
+        ? outcome("resolved-by-ai", callLineLabels.resolvedByAI)
+        : outcome("handled-by-ai", callLineLabels.handledByAI)
+    }
     default:
-      return outcome("unknown", interaction.status === "ESCALATED" ? callLineLabels.transferRequested : callLineLabels.unknown)
+      return outcome("unknown", callLineLabels.unknown)
   }
+}
+
+function lineOutcome(call: HistoryCall | undefined, interaction: HistoryAI | undefined, tasks: Task[]) {
+  if (!call) return aiOutcome(interaction!, tasks)
+  const staff = callOutcome(call)
+  return interaction?.appointmentOutcome === "PARTIAL" && staff.tone === "success" ? needsReview() : staff
 }
 
 const aiStepLabels = {
@@ -181,13 +204,25 @@ const aiStepLabels = {
   FAILED: callLineLabels.aiFailed,
 } satisfies Record<HistoryAI["status"], string>
 
-function aiSteps(interaction: HistoryAI, transferReason: string): CallLine["steps"] {
-  const label = aiStepLabels[interaction.status] ?? callLineLabels.unknown
+function aiLeadStep(interaction: HistoryAI, transferReason: string, staffLeg: boolean, tasks: Task[]) {
+  if (interaction.status !== "ESCALATED" && interaction.status !== "COMPLETED") {
+    return aiStepLabels[interaction.status] ?? callLineLabels.unknown
+  }
+  const messages = staffLeg ? [] : aiTasks(tasks)
+  if (messages.length > 0) {
+    return `${callLineLabels.aiTookMessage}: ${messages.map((task) => `"${task.title}"`).join(", ")}`
+  }
+  if (interaction.status === "COMPLETED") return aiStepLabels.COMPLETED
+  if (!staffLeg) return callLineLabels.transferNotRecorded
+  return transferReason ? `${aiStepLabels.ESCALATED}: ${transferReason}` : aiStepLabels.ESCALATED
+}
+
+function aiSteps(interaction: HistoryAI, transferReason: string, staffLeg: boolean, tasks: Task[]): CallLine["steps"] {
   const summary = interaction.summary?.trim()
   return [
     {
       tone: interaction.status === "FAILED" ? "destructive" : "muted",
-      text: interaction.status === "ESCALATED" && transferReason ? `${label}: ${transferReason}` : label,
+      text: aiLeadStep(interaction, transferReason, staffLeg, tasks),
     },
     ...(interaction.appointmentOutcome === "INDETERMINATE" ? [] : [{
       tone: interaction.appointmentOutcome === "PARTIAL" ? "warning" as const : "success" as const,
@@ -224,18 +259,31 @@ function callSteps(call: HistoryCall): CallLine["steps"] {
 }
 
 const aboutLimit = 80
+const sentenceEnd = /(?<!\b(?:Dr|Mr|Mrs|Ms|St))(?<![.\s]\p{L})[.!?](?=\s+\p{Lu}|\s*$)/u
 
 function firstSentence(text: string) {
-  const sentence = text.trim().split(/(?<!\b(?:Dr|Mr|Mrs|Ms|St))[.!?]\s+/)[0]!.replace(/[.!?]+$/, "")
+  const trimmed = text.trim()
+  const end = trimmed.search(sentenceEnd)
+  const sentence = end < 0 ? trimmed : trimmed.slice(0, end)
   return sentence.length <= aboutLimit
     ? sentence
     : `${sentence.slice(0, aboutLimit).replace(/\s+\S*$/, "")}…`
 }
 
+const sourceLabels = {
+  ai: "View AI call",
+  call: "View call",
+  voicemail: "View voicemail",
+} satisfies Record<CallLine["sources"][number]["kind"], string>
+
+function legName(call: HistoryCall) {
+  return [call.answeredByEmail || call.placedByEmail, formatClockTime(call.startedAt)].filter(Boolean).join(" · ")
+}
+
 export function callHistoryPresentation(item: ConversationTimelineItem): CallLine | undefined {
   const entries = item.type === "CALL_HISTORY" ? item.entries ?? [] : [item]
   const ai = entries.flatMap((entry) => (entry.aiInteraction ? [entry.aiInteraction] : []))
-  const calls = entries.flatMap((entry) => (entry.call ? [entry.call] : []))
+  const calls = oldestFirst(entries.flatMap((entry) => (entry.call ? [entry.call] : [])), (value) => value.startedAt)
   const tasks = [...new Map(entries.flatMap((entry) => (entry.task ? [[entry.task.id, entry.task] as const] : []))).values()]
   const interaction = ai.at(-1)
   const call = decidingOutcomes
@@ -248,6 +296,7 @@ export function callHistoryPresentation(item: ConversationTimelineItem): CallLin
   const appointment = interaction && interaction.appointmentOutcome !== "INDETERMINATE"
     ? appointmentOutcomeTitles[interaction.appointmentOutcome]
     : ""
+  const severalLegs = calls.length > 1
   return {
     direction: outbound ? "OUTBOUND" : "INBOUND",
     lead: !outbound
@@ -256,16 +305,23 @@ export function callHistoryPresentation(item: ConversationTimelineItem): CallLin
     about: outbound
       ? call.taskTitle ? `about "${call.taskTitle}"` : ""
       : transferReason || firstSentence(interaction?.summary ?? "") || appointment,
-    outcome: call ? callOutcome(call) : aiOutcome(interaction!, tasks),
+    outcome: lineOutcome(call, interaction, tasks),
     ...(voicemail ? { voicemail: { callID: voicemail.id, seconds: voicemail.voicemailDurationSeconds ?? 0 } } : {}),
     steps: [
-      ...ai.flatMap((value) => aiSteps(value, transferReason)),
-      ...calls.flatMap(callSteps),
+      ...ai.flatMap((value) => aiSteps(value, transferReason, calls.length > 0, tasks)),
+      ...calls.flatMap((value) =>
+        callSteps(value).map((step, index) =>
+          severalLegs && index === 0 ? { ...step, text: `${formatClockTime(value.startedAt)} · ${step.text}` } : step,
+        ),
+      ),
     ],
     tasks,
     sources: [
-      ...ai.map((value) => ({ kind: "ai" as const, id: value.id })),
-      ...calls.map((value) => ({ kind: value.outcome === "VOICEMAIL" ? "voicemail" as const : "call" as const, id: value.id })),
+      ...ai.map((value) => ({ kind: "ai" as const, id: value.id, label: sourceLabels.ai })),
+      ...calls.map((value) => {
+        const kind = value.outcome === "VOICEMAIL" ? "voicemail" as const : "call" as const
+        return { kind, id: value.id, label: severalLegs ? `${sourceLabels[kind]} · ${legName(value)}` : sourceLabels[kind] }
+      }),
     ],
     locations: [...new Map([...ai, ...calls].map((value) => [value.locationId, { id: value.locationId, name: value.locationName }])).values()],
   }

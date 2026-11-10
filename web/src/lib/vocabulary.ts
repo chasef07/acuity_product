@@ -47,7 +47,10 @@ export const callDirectionLabels = {
 export const callLineLabels = {
   calledIn: "Called in",
   resolvedByAI: "Resolved by AI",
+  handledByAI: "Handled by AI",
   messageTaken: "Message taken",
+  aiTookMessage: "AI took a message",
+  transferNotRecorded: "Transfer requested, staff outcome not recorded",
   staffAnswered: "Staff answered",
   answered: "Answered",
   missed: "Missed",
@@ -60,6 +63,12 @@ export const callLineLabels = {
   aiInProgress: "AI call in progress",
   unknown: "Outcome unknown",
 } as const
+
+export const aiAppointmentLabels = {
+  BOOKING: "Booked by AI",
+  RESCHEDULE: "Rescheduled by AI",
+  CANCELLATION: "Cancelled by AI",
+} satisfies Partial<Record<AiAppointmentOutcome, string>>
 
 export const threadTabLabels = {
   all: "Everything",
