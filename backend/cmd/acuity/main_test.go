@@ -661,17 +661,15 @@ func TestStagingReleaseReusesNoProductionStaffOrNumbers(t *testing.T) {
 			report.Applied, report.Unmatched, report.CoverageGaps)
 	}
 
-	production := releaseIdentities(t, config, "production")
-	for identity := range releaseIdentities(t, config, "staging") {
+	production := clinicStaffAndTelnyxIdentities(t, config, "production")
+	for identity := range clinicStaffAndTelnyxIdentities(t, config, "staging") {
 		if _, reused := production[identity]; reused {
 			t.Errorf("staging reuses production %s", identity)
 		}
 	}
 }
 
-// releaseIdentities returns the staff and Telnyx identities a release
-// provisions. Platform Operators are the Acuity team and run every environment.
-func releaseIdentities(t *testing.T, config, environment string) map[string]struct{} {
+func clinicStaffAndTelnyxIdentities(t *testing.T, config, environment string) map[string]struct{} {
 	t.Helper()
 	var provisioning access.Provisioning
 	var roster work.ResponsibilityProvision

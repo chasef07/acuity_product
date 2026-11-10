@@ -339,8 +339,6 @@ func TestProductionReleaseRejectsWebBuiltForAnotherProjectBeforeCloudMutation(t 
 		t.Run(name, func(t *testing.T) {
 			gcloudCapture, output, err := runRelease(t,
 				name+"=https://other-project.example",
-				// Stale traffic makes the release repair it before migrating, so
-				// this proves the check runs before that first mutation.
 				"GCLOUD_STALE_TRAFFIC_SERVICE=acuity-portal-api",
 			)
 			if err == nil {
