@@ -38,6 +38,10 @@ type InteractionWork interface {
 	ProjectNextAnalyticsFacts(context.Context) (bool, error)
 }
 
+type TaskWork interface {
+	ExpireTextReviews(context.Context) (int, error)
+}
+
 type Dependency interface {
 	Ping(context.Context) error
 }
@@ -66,6 +70,7 @@ type Runner struct {
 	work         CallingWork
 	messages     MessagingWork
 	interactions InteractionWork
+	tasks        TaskWork
 	dependency   Dependency
 	jitter       func(time.Duration) time.Duration
 	wait         func(context.Context, time.Duration) bool
@@ -77,9 +82,10 @@ func New(
 	work CallingWork,
 	messages MessagingWork,
 	interactions InteractionWork,
+	tasks TaskWork,
 	dependency Dependency,
 ) (*Runner, error) {
-	if work == nil || messages == nil || interactions == nil || dependency == nil {
+	if work == nil || messages == nil || interactions == nil || tasks == nil || dependency == nil {
 		return nil, fmt.Errorf("worker dependencies are required")
 	}
 	if config.WorkInterval <= 0 ||
@@ -132,6 +138,7 @@ func New(
 		work:         work,
 		messages:     messages,
 		interactions: interactions,
+		tasks:        tasks,
 		dependency:   dependency,
 		jitter:       equalJitter,
 		wait:         wait,
@@ -543,6 +550,14 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	}
 	if ctx.Err() != nil {
 		return failed
+	}
+	expired, err := runCountWork(ctx, runner.config.WorkTimeout, runner.tasks.ExpireTextReviews)
+	if err != nil {
+		warn(ctx, "text_review_expiry_failed", err)
+		failed = true
+	}
+	if expired > 0 {
+		slog.Info("text_reviews_expired", "count", expired)
 	}
 	return failed
 }

@@ -35,7 +35,7 @@ func (w *observedCallingMaintenance) MaintainOutgoingCallLegs(context.Context) (
 func TestCallingMaintenanceContinuesWhileAttachmentStorageIsBlocked(t *testing.T) {
 	calls := &observedCallingMaintenance{controlledWork: newControlledWork()}
 	storage := &slowStorageMaintenance{started: make(chan struct{}, 1)}
-	runner, err := New(Config{WorkInterval: 10 * time.Millisecond, WorkTimeout: 5 * time.Second, CredentialInterval: time.Hour, CredentialTimeout: time.Second, HealthInterval: time.Hour, HealthTimeout: time.Second, ReceiptBatchSize: 1, RecoveryAndMessagingBatchSize: 1, ProviderCommandBatchSize: 1, CommandWorkers: 1}, calls, storage, &controlledInteractionWork{}, healthyDependency{})
+	runner, err := New(Config{WorkInterval: 10 * time.Millisecond, WorkTimeout: 5 * time.Second, CredentialInterval: time.Hour, CredentialTimeout: time.Second, HealthInterval: time.Hour, HealthTimeout: time.Second, ReceiptBatchSize: 1, RecoveryAndMessagingBatchSize: 1, ProviderCommandBatchSize: 1, CommandWorkers: 1}, calls, storage, &controlledInteractionWork{}, &countingTaskWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatal(err)
 	}

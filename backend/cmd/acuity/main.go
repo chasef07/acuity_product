@@ -368,10 +368,11 @@ func runWorker(
 	if err != nil {
 		return err
 	}
+	tasks := work.New(database, accessModule, nil)
 	messages := messaging.New(
 		database,
 		accessModule,
-		work.New(database, accessModule, nil),
+		tasks,
 		messagingProvider,
 		messaging.Config{
 			AttachmentStore:    attachmentStore,
@@ -384,7 +385,7 @@ func runWorker(
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
 	interactions := interaction.New(database, accessModule, nil)
-	runner, err := worker.New(productionWorkerConfig(config.AcquireTimeout, config.HumanCalling.CredentialReconcile), calling, messages, interactions, pool)
+	runner, err := worker.New(productionWorkerConfig(config.AcquireTimeout, config.HumanCalling.CredentialReconcile), calling, messages, interactions, tasks, pool)
 	if err != nil {
 		return err
 	}
