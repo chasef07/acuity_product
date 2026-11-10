@@ -58,7 +58,7 @@ export type CallLine = {
   steps: { tone: CallLineTone; text: string }[]
   tasks: Task[]
   sources: { kind: "ai" | "call" | "voicemail"; id: string }[]
-  locations: string[]
+  locations: { id: string; name: string }[]
 }
 
 const outcomeTones = {
@@ -245,6 +245,9 @@ export function callHistoryPresentation(item: ConversationTimelineItem): CallLin
   const outbound = !interaction && call?.direction === "OUTBOUND"
   const transferReason = calls.find((candidate) => candidate.transferReason)?.transferReason ?? ""
   const voicemail = calls.find((candidate) => candidate.outcome === "VOICEMAIL")
+  const appointment = interaction && interaction.appointmentOutcome !== "INDETERMINATE"
+    ? appointmentOutcomeTitles[interaction.appointmentOutcome]
+    : ""
   return {
     direction: outbound ? "OUTBOUND" : "INBOUND",
     lead: !outbound
@@ -252,7 +255,7 @@ export function callHistoryPresentation(item: ConversationTimelineItem): CallLin
       : call.placedByEmail ? `${call.placedByEmail} called` : callDirectionLabels.OUTBOUND,
     about: outbound
       ? call.taskTitle ? `about "${call.taskTitle}"` : ""
-      : transferReason || firstSentence(interaction?.summary ?? ""),
+      : transferReason || firstSentence(interaction?.summary ?? "") || appointment,
     outcome: call ? callOutcome(call) : aiOutcome(interaction!, tasks),
     ...(voicemail ? { voicemail: { callID: voicemail.id, seconds: voicemail.voicemailDurationSeconds ?? 0 } } : {}),
     steps: [
@@ -264,7 +267,7 @@ export function callHistoryPresentation(item: ConversationTimelineItem): CallLin
       ...ai.map((value) => ({ kind: "ai" as const, id: value.id })),
       ...calls.map((value) => ({ kind: value.outcome === "VOICEMAIL" ? "voicemail" as const : "call" as const, id: value.id })),
     ],
-    locations: [...new Set([...ai, ...calls].map((value) => value.locationName))].filter(Boolean),
+    locations: [...new Map([...ai, ...calls].map((value) => [value.locationId, { id: value.locationId, name: value.locationName }])).values()],
   }
 }
 

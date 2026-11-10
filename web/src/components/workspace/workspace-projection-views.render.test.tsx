@@ -501,6 +501,7 @@ test("a missed transfer reads Missed, a voicemail offers its recording, and a ca
       taskId: "task-callback", taskTitle: "Reschedule post-op visit",
     }, { ai: false }),
     callLineFixture({ id: "reached", direction: "OUTBOUND", outcome: "NEEDS_DISPOSITION", durationSeconds: 192 }, { ai: false }),
+    callLineFixture({ id: "elsewhere", outcome: "MISSED", locationId: "location-other", locationName: "Other office" }, { ai: false }),
   ]
   await conversation.render(0, { selectedCallID: "voicemail" })
   const { lines, outcome, button } = callLines(conversation.host)
@@ -509,10 +510,12 @@ test("a missed transfer reads Missed, a voicemail offers its recording, and a ca
     assert.ok(line, text)
     return { tone: outcome(line).className.match(/text-(success|warning|destructive|muted-foreground)/)?.[1], label: outcome(line).textContent, line }
   }
-  assert.equal(lines().length, 4)
+  assert.equal(lines().length, 5)
   const outcomes = lines().map((line) => outcome(line).textContent).sort()
-  assert.deepEqual(outcomes, ["Answered · 3m 12s", "Missed", "No answer", "Voicemail"])
+  assert.deepEqual(outcomes, ["Answered · 3m 12s", "Missed", "Missed", "No answer", "Voicemail"])
   const missed = lines().find((line) => outcome(line).textContent === "Missed")!
+  assert.doesNotMatch(missed.textContent!, /Office/)
+  assert.equal(read("· Other office").label, "Missed")
   assert.match(outcome(missed).className, /text-destructive/)
   const voicemail = lines().find((line) => outcome(line).textContent === "Voicemail")!
   assert.match(outcome(voicemail).className, /text-warning/)

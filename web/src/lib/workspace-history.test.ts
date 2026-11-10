@@ -125,6 +125,8 @@ test("a line says who called and what it was about", () => {
   assert.equal(lineOf(aiEntry({ summary })).about, "Caller asked which drops to stop before surgery")
   assert.equal(lineOf(aiEntry({ summary: "Caller asked about hours" })).about, "Caller asked about hours")
   assert.equal(lineOf(aiEntry({})).about, "")
+  assert.equal(lineOf(aiEntry({ appointmentOutcome: "RESCHEDULE" })).about, "Appointment rescheduled")
+  assert.equal(lineOf(aiEntry({ appointmentOutcome: "RESCHEDULE", summary })).about, "Caller asked which drops to stop before surgery")
   assert.equal(lineOf(aiEntry({ summary: "   " })).about, "")
   const long = lineOf(aiEntry({ summary: `Caller ${"asked again and ".repeat(10)}hung up.` })).about
   assert.ok(long.length <= 81 && long.endsWith("…") && !long.endsWith(" …"), long)
@@ -155,7 +157,7 @@ test("an expanded line lists what the AI did, who answered and for how long, and
   ])
   assert.deepEqual(line.tasks.map((value) => value.id), ["follow-up"])
   assert.deepEqual(line.sources, [{ kind: "ai", id: "ai" }, { kind: "call", id: "call" }])
-  assert.deepEqual(line.locations, ["Office"])
+  assert.deepEqual(line.locations, [{ id: "office", name: "Office" }])
   assert.equal(line.voicemail, undefined)
 
   const voicemail = lineOf(aiEntry({ status: "ESCALATED" }), callEntry({ outcome: "VOICEMAIL", voicemailDurationSeconds: 22 }))

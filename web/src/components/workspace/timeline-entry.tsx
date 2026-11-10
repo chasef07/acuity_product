@@ -83,6 +83,7 @@ export function TimelineEntry({
     <CallLineEntry
       line={line}
       occurredAt={item.occurredAt}
+      otherLocations={line.locations.filter((location) => location.id !== contextLocationID)}
       selected={
         line.tasks.some((task) => task.id === selectedTaskID) ||
         line.sources.some((source) =>
@@ -115,6 +116,7 @@ const detailAction = "text-left underline-offset-4 hover:text-foreground hover:u
 function CallLineEntry({
   line,
   occurredAt,
+  otherLocations,
   selected,
   selectedTaskID,
   onTaskOpen,
@@ -123,6 +125,7 @@ function CallLineEntry({
 }: {
   line: CallLine
   occurredAt: string
+  otherLocations: CallLine["locations"]
   selected: boolean
   selectedTaskID?: string
   onTaskOpen?: (task: Task) => void
@@ -163,6 +166,7 @@ function CallLineEntry({
           <time dateTime={occurredAt} className="tabular-nums">
             {formatClockTime(occurredAt)}
           </time>
+          {otherLocations.map((location) => ` · ${location.name}`)}
         </span>
         <span className={cn("max-w-[50%] shrink-0 text-right font-medium wrap-anywhere", toneClasses[line.outcome.tone])}>
           {line.outcome.label}
@@ -212,7 +216,7 @@ function CallLineEntry({
           </ul>
         )}
         <p className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
-          <span>{line.locations.join(" · ")}</span>
+          <span>{line.locations.map((location) => location.name).join(" · ")}</span>
           {details.map((detail) => (
             <button
               key={`${detail.kind}:${detail.id}`}
