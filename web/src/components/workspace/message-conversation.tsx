@@ -39,6 +39,8 @@ import { TimelineEntry } from "./timeline-entry"
 
 const tabOptions = labelOptions(threadTabLabels)
 
+const tabSearchPages = 3
+
 const emptyTitles = {
   all: "No activity yet",
   texts: "No texts yet",
@@ -83,6 +85,7 @@ export function MessageConversation({
     refreshing,
     loadingOlder,
     failure,
+    olderFailure,
     sent,
     requestedAt,
     behind,
@@ -90,7 +93,9 @@ export function MessageConversation({
     showOlder,
     showSent,
   } = useEngagementTimeline({ practiceID, phone, hold: awayFromLatest })
-  const error = failure ? "The conversation could not be loaded." : ""
+  const error = failure
+    ? "The conversation could not be loaded."
+    : olderFailure ? "Earlier activity could not be loaded." : ""
   const scroller = useRef<HTMLDivElement | null>(null)
   const reviewSeenAt = useRef(0)
   useEffect(() => {
@@ -142,23 +147,40 @@ export function MessageConversation({
   const presentedItems = presentTimeline(items, tab)
   const tabIsEmpty = tab !== "all" && presentedItems.length === 0
 
+  const everythingPlace = useRef({ phone, fromLatest: 0 })
   function showTab(next: ThreadTab) {
+    if (next === tab) return
+    const viewport = scroller.current
+    if (tab === "all" && viewport) {
+      everythingPlace.current = {
+        phone,
+        fromLatest: viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight,
+      }
+    }
+    const fromLatest =
+      next === "all" && everythingPlace.current.phone === phone
+        ? everythingPlace.current.fromLatest
+        : 0
     setTabChoice({ phone, tab: next })
-    setAwayFromLatest(false)
-    window.requestAnimationFrame(() =>
-      scroller.current?.scrollTo({ top: scroller.current.scrollHeight }),
-    )
+    setAwayFromLatest(fromLatest >= 72)
+    window.requestAnimationFrame(() => {
+      const shown = scroller.current
+      shown?.scrollTo({ top: shown.scrollHeight - shown.clientHeight - fromLatest })
+    })
   }
 
-  const searchedCursor = useRef("")
+  const search = useRef({ scope: "", cursors: new Set<string>() })
   const searchOlder = useEffectEvent(() => {
-    if (searchedCursor.current === cursor) return
-    searchedCursor.current = cursor
+    const scope = `${phone}:${tab}`
+    if (search.current.scope !== scope) search.current = { scope, cursors: new Set() }
+    const { cursors } = search.current
+    if (cursors.has(cursor) || cursors.size >= tabSearchPages) return
+    cursors.add(cursor)
     showOlder()
   })
   useEffect(() => {
-    if (tabIsEmpty && cursor && !loading && !loadingOlder) searchOlder()
-  }, [tabIsEmpty, cursor, loading, loadingOlder])
+    if (tabIsEmpty && cursor && !loading && !loadingOlder && !olderFailure) searchOlder()
+  }, [tabIsEmpty, cursor, loading, loadingOlder, olderFailure])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -309,10 +331,10 @@ export function MessageConversation({
             <Button
               size="sm"
               variant="outline"
-              disabled={loading || refreshing}
-              onClick={loadLatest}
+              disabled={loading || refreshing || loadingOlder}
+              onClick={failure ? loadLatest : showOlder}
             >
-              {(loading || refreshing) && <Spinner />}
+              {(loading || refreshing || loadingOlder) && <Spinner />}
               Try again
             </Button>
           </AlertDescription>

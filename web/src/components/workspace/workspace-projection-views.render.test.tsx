@@ -470,6 +470,7 @@ test("a call reads as one line with its outcome and expands in place to its step
   const line = lines()[0]!
   assert.equal(line.getAttribute("aria-expanded"), "false")
   assert.match(line.textContent!, /^Called in · Insurance question · \d/)
+  assert.match(line.getAttribute("aria-label")!, /^Called in, Insurance question, \d+:\d+\s[AP]M, dana@example\.test answered$/)
   assert.equal(outcome(line).textContent, "dana@example.test answered")
   assert.match(outcome(line).className, /text-success/)
   assert.doesNotMatch(timeline.textContent!, /AI answered|Projected follow-up|View AI call/)
@@ -526,14 +527,83 @@ test("a missed transfer reads Missed, a voicemail offers its recording, and a ca
   const reached = read("Outbound call")
   assert.deepEqual([reached.label, reached.tone], ["Answered · 3m 12s", "success"])
 
-  const play = button("View voicemail")
-  assert.ok(play)
-  assert.equal(play.textContent, "Voicemail0:22")
-  await act(async () => play.click())
-  assert.deepEqual(conversation.opened, ["call:voicemail"])
+  assert.match(read("· Other office").line.getAttribute("aria-label")!, /^Called in, \d+:\d+\s[AP]M, Other office, Missed$/)
+
+  const play = () => button("Play voicemail 0:22")
+  const recording = () => conversation.host.querySelector<HTMLAudioElement>('audio[aria-label="Voicemail recording"]')
+  assert.ok(play())
+  assert.equal(play()!.textContent, "Voicemail 0:22")
+  conversation.callStatus = 503
+  await act(async () => play()!.click())
+  await waitFor(() => /The voicemail could not be loaded/.test(conversation.host.textContent!))
+  assert.equal(recording(), null)
+  conversation.callStatus = 200
+  await act(async () => play()!.click())
+  await waitFor(() => recording() !== null)
+  assert.equal(recording()!.src, "http://portal.test/v1/calling/voicemail-playback/synthetic-playback")
+  assert.doesNotMatch(conversation.host.textContent!, /The voicemail could not be loaded/)
+  assert.equal(play(), undefined, "the player replaces the control once it is open")
+  assert.deepEqual(conversation.callRequests, [
+    "/v1/calling/calls/voicemail", "/v1/calling/calls/voicemail", "/v1/calling/calls/voicemail/voicemail-playback",
+  ])
+  assert.deepEqual(conversation.opened, [], "playing a voicemail does not leave the conversation")
+
   await act(async () => voicemail.click())
   assert.match(conversation.host.textContent!, /Nobody answered, caller left a voicemail, 0:22/)
-  assert.equal([...conversation.host.querySelectorAll('button[aria-label="View voicemail"]')].length, 1)
+  await act(async () => button("View voicemail")!.click())
+  assert.deepEqual(conversation.opened, ["call:voicemail"])
+})
+
+test("a call with several staff legs names who and when on each View call", async (t) => {
+  const conversation = conversationHarness(t)
+  const history = callLineFixture({ id: "answered", outcome: "RESOLVED", answeredByEmail: "maria@example.test", startedAt: "2026-09-05T12:01:00Z" })
+  history.entries!.push({ id: "later", type: "CALL", occurredAt: "2026-09-05T12:09:00Z", call: {
+    ...history.entries!.at(-1)!.call!, id: "later", outcome: "MISSED", answeredByEmail: "", startedAt: "2026-09-05T12:09:00Z",
+  } })
+  conversation.items = [history]
+  await conversation.render(0)
+  const { lines, outcome, timeline } = callLines(conversation.host)
+  assert.equal(outcome(lines()[0]!).textContent, "maria@example.test answered")
+  await act(async () => lines()[0]!.click())
+  const actions = [...timeline.querySelectorAll("button")].map((element) => element.textContent!).filter((text) => text.startsWith("View call"))
+  assert.equal(actions.length, 2)
+  assert.match(actions[0]!, /^View call · maria@example\.test · \d+:01\s[AP]M$/)
+  assert.match(actions[1]!, /^View call · \d+:09\s[AP]M$/)
+  assert.match(timeline.textContent!, /:01\s[AP]M · maria@example\.test answered.*:09\s[AP]M · Nobody answered, no voicemail/)
+})
+
+test("an AI call that only ended reads Handled by AI, a stored resolved label reads Resolved by AI, and a message taken names its Task", async (t) => {
+  const conversation = conversationHarness(t)
+  const ai = (id: string, minute: number, aiInteraction: Partial<NonNullable<ConversationTimelineItem["aiInteraction"]>>): ConversationTimelineItem => {
+    const occurredAt = `2026-09-05T12:0${minute}:00Z`
+    return { id, type: "AI_INTERACTION", occurredAt, aiInteraction: {
+      id, locationId: projectedTask().locationId, locationName: "Office", sourceCallId: id, phone: projectedTask().phone,
+      startedAt: occurredAt, status: "COMPLETED", appointmentOutcome: "INDETERMINATE", resolved: false, summary: `Synthetic ${id}.`, ...aiInteraction,
+    } }
+  }
+  const message = ai("message", 4, { status: "ESCALATED" })
+  conversation.items = [
+    ai("ended", 1, {}),
+    ai("resolved", 2, { resolved: true }),
+    ai("booked", 3, { appointmentOutcome: "BOOKING" }),
+    { id: "history-message", type: "CALL_HISTORY", occurredAt: message.occurredAt, entries: [
+      message,
+      { id: "created", type: "TASK", occurredAt: message.occurredAt, taskActivity: "TASK_CREATED", task: { ...projectedTask(), origin: "ABITA_AI", title: "Synthetic refill request" } },
+    ] },
+  ]
+  await conversation.render(0)
+  const { lines, outcome, timeline } = callLines(conversation.host)
+  const read = (text: string) => {
+    const line = lines().find((element) => element.textContent!.includes(text))!
+    return [outcome(line).textContent, outcome(line).className.match(/text-(success|warning|destructive|muted-foreground)/)?.[1]]
+  }
+  assert.deepEqual(read("Synthetic ended"), ["Handled by AI", "muted-foreground"])
+  assert.deepEqual(read("Synthetic resolved"), ["Resolved by AI", "success"])
+  assert.deepEqual(read("Synthetic booked"), ["Booked by AI", "success"])
+  assert.deepEqual(read("Synthetic message"), ["Message taken", "muted-foreground"])
+  await act(async () => lines().find((element) => element.textContent!.includes("Synthetic message"))!.click())
+  assert.match(timeline.textContent!, /AI took a message: "Synthetic refill request"/)
+  assert.doesNotMatch(timeline.textContent!, /transferred/)
 })
 
 function threadTabs(host: HTMLElement) {
@@ -587,6 +657,11 @@ test("the thread tabs show everything, only texts or only calls and keep the com
   })
   assert.deepEqual(tabs.pressed(), ["Everything"], "sending from Calls shows the sent text")
   assert.match(tabs.activity().textContent!, /Synthetic reply from Calls/)
+  assert.match(
+    tabs.activity().querySelector('[data-slot="message-sender"]')!.textContent!,
+    /^sender@example\.test · \d+:\d+\s[AP]M$/,
+    "a text names its sender as soon as it is sent",
+  )
 
   await tabs.show("Texts")
   const other = projectedWorkspace(projectedTask()).selection.engagement!
@@ -604,15 +679,24 @@ test("an outbound text names the staff member who sent it and an automated text 
     textFixture("unresolved", "2026-09-05T11:03:00Z", { ...outbound, createdBy: { kind: "HUMAN", subject: "former-staff" } }),
   ]
   await conversation.render(0)
-  const footer = (id: string) => {
-    const text = threadTabs(conversation.host).texts().find((value) => value!.includes(`Synthetic text ${id}`))
-    assert.ok(text, id)
-    return text.slice(text.indexOf(id) + id.length).replace(/^\d+:\d+\s[AP]M·?/, "")
+  const text = (id: string) => {
+    const article = [...conversation.host.querySelectorAll('[aria-label="Conversation activity"] [role=article]')]
+      .find((element) => element.textContent!.includes(`Synthetic text ${id}`))
+    assert.ok(article, id)
+    const sender = article.querySelector('[data-slot="message-sender"]')
+    const footer = article.querySelector('[data-slot="message-footer"]')!
+    assert.equal(sender?.closest('[data-slot="message-footer"]') ?? null, null, "the sender is outside the footer that hides until hover")
+    assert.doesNotMatch(sender?.className ?? "", /opacity-0/)
+    return { sender: sender?.textContent ?? "", footer: footer.textContent!, hidden: /opacity-0/.test(footer.className) }
   }
-  assert.equal(footer("inbound"), "")
-  assert.equal(footer("staff"), "Delivered·staff@example.test")
-  assert.equal(footer("automated"), "Delivered·Automated")
-  assert.equal(footer("unresolved"), "Delivered")
+  assert.match(text("staff").sender, /^staff@example\.test · \d+:01\s[AP]M$/)
+  assert.deepEqual([text("staff").footer, text("staff").hidden], ["Delivered", true])
+  assert.match(text("automated").sender, /^Automated · \d+:02\s[AP]M$/)
+  assert.equal(text("automated").footer, "Delivered")
+  assert.equal(text("unresolved").sender, "")
+  assert.match(text("unresolved").footer, /^\d+:03\s[AP]M·Delivered$/)
+  assert.equal(text("inbound").sender, "")
+  assert.match(text("inbound").footer, /^\d+:00\s[AP]M$/)
 })
 
 test("a tab with nothing loaded keeps loading earlier activity until something matches or the history ends", async (t) => {
@@ -637,7 +721,66 @@ test("a tab with nothing loaded keeps loading earlier activity until something m
   assert.equal(conversation.timelineRequests, 3)
 })
 
-test("a tab says so when the whole history holds nothing for it, and a failed earlier page stops the search", async (t) => {
+test("a tab searches at most three earlier pages by itself, then one page per request", async (t) => {
+  const conversation = conversationHarness(t)
+  const cursors = ["", "one", "two", "three", "four", "five"]
+  conversation.timelinePage = (cursor) => {
+    const index = cursors.indexOf(cursor)
+    return index === cursors.length - 1
+      ? { items: [textFixture("oldest", "2026-09-01T11:00:00Z")], nextCursor: "" }
+      : { items: [callLineFixture({ id: `call-${index}`, outcome: "MISSED" })], nextCursor: cursors[index + 1]! }
+  }
+  await conversation.render(0)
+  const tabs = threadTabs(conversation.host)
+  const earlier = () => [...conversation.host.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Earlier activity")
+  const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
+  await tabs.show("Texts")
+  await waitFor(() => conversation.timelineRequests === 4 && earlier()?.disabled === false)
+  await settle()
+  assert.equal(conversation.timelineRequests, 4, "the search stops after three earlier pages")
+  assert.match(tabs.activity().textContent!, /No texts yet/)
+  assert.match(tabs.activity().textContent!, /Earlier activity is not loaded/)
+
+  await act(async () => earlier()!.click())
+  await waitFor(() => conversation.timelineRequests === 5 && earlier()?.disabled === false)
+  await settle()
+  assert.equal(conversation.timelineRequests, 5, "one request loads one earlier page")
+  await act(async () => earlier()!.click())
+  await waitFor(() => tabs.texts().length === 1)
+  assert.equal(conversation.timelineRequests, 6)
+})
+
+test("leaving Everything and coming back returns the reader to where they were", async (t) => {
+  const conversation = conversationHarness(t)
+  conversation.items = [textFixture("first", "2026-09-05T11:00:00Z"), callLineFixture({ id: "missed", outcome: "MISSED" })]
+  await conversation.render(0)
+  const tabs = threadTabs(conversation.host)
+  const viewport = conversation.host.querySelector<HTMLElement>('[data-testid="message-timeline"]')!
+  const scrolls: number[] = []
+  Object.defineProperties(viewport, {
+    scrollHeight: { configurable: true, value: 1000 },
+    clientHeight: { configurable: true, value: 200 },
+    scrollTop: { configurable: true, value: 300 },
+    scrollTo: { configurable: true, value: ({ top }: ScrollToOptions) => scrolls.push(top!) },
+  })
+  const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
+  await tabs.show("Calls")
+  await settle()
+  assert.equal(scrolls.at(-1), 800, "Calls opens on its latest call")
+  Object.defineProperty(viewport, "scrollTop", { configurable: true, value: 800 })
+  await tabs.show("Texts")
+  await settle()
+  assert.equal(scrolls.at(-1), 800)
+  await tabs.show("Everything")
+  await settle()
+  assert.equal(scrolls.at(-1), 300, "Everything returns to the place the reader left")
+  const before = scrolls.length
+  await tabs.show("Everything")
+  await settle()
+  assert.equal(scrolls.length, before, "choosing the tab already shown does not move the reader")
+})
+
+test("a failed earlier page shows the error with a retry instead of an empty tab, and a tab says so when the whole history holds nothing for it", async (t) => {
   const conversation = conversationHarness(t)
   conversation.timelinePage = (cursor) => cursor
     ? { items: [textFixture("older", "2026-09-01T11:00:00Z")], nextCursor: "" }
@@ -650,12 +793,14 @@ test("a tab says so when the whole history holds nothing for it, and a failed ea
   await waitFor(() => conversation.timelineRequests === 2 && earlier()?.disabled === false)
   await act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
   assert.equal(conversation.timelineRequests, 2, "a failed earlier page is not requested again without the user asking")
-  assert.match(tabs.activity().textContent!, /No calls yet/)
-  assert.match(tabs.activity().textContent!, /Earlier activity is not loaded/)
+  const alert = () => conversation.host.querySelector('[role="alert"]')
+  assert.match(alert()!.textContent!, /Earlier activity could not be loaded\./)
+  assert.doesNotMatch(tabs.activity().textContent!, /No calls yet/)
 
   conversation.timelineStatus = 200
-  await act(async () => earlier()!.click())
+  await act(async () => [...alert()!.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Try again")!.click())
   await waitFor(() => conversation.timelineRequests === 3 && !earlier())
+  assert.equal(alert(), null)
   assert.match(tabs.activity().textContent!, /No calls yet/)
   assert.doesNotMatch(tabs.activity().textContent!, /Earlier activity is not loaded/)
   assert.ok(tabs.composer())
@@ -1099,6 +1244,7 @@ function LiveDetail({ revision, children }: { revision: number; children: ReactN
 
 function conversationHarness(t: TestContext) {
   const dom = installDOM()
+  dom.window.HTMLMediaElement.prototype.play = async () => {}
   const host = document.createElement("div")
   document.body.append(host)
   const root = createRoot(host)
@@ -1113,6 +1259,8 @@ function conversationHarness(t: TestContext) {
     attachmentGate: undefined as Promise<void> | undefined,
     timelineStatus: 200,
     timelineRequests: 0,
+    callStatus: 200,
+    callRequests: [] as string[],
     tokenStatus: 200,
     textTask: undefined as Task | undefined,
     timelineGate: undefined as Promise<void> | undefined,
@@ -1141,11 +1289,19 @@ function conversationHarness(t: TestContext) {
       await conversation.attachmentGate
       return new Response(new Blob(["synthetic image"], { type: "image/png" }), { headers: { "Content-Type": "image/png" } })
     }
+    if (url.includes("/v1/calling/calls/")) {
+      const path = new URL(url).pathname
+      conversation.callRequests.push(path)
+      if (path.endsWith("/voicemail-playback")) return Response.json({ token: "synthetic-playback", expiresAt: "2026-09-05T13:00:00Z" })
+      return conversation.callStatus === 200
+        ? Response.json({ id: path.split("/").at(-1), voicemail: { audioState: "READY", durationSeconds: 22, outcome: "VOICEMAIL" } })
+        : Response.json({ code: "UNAVAILABLE" }, { status: conversation.callStatus })
+    }
     if (url.endsWith("/v1/messages")) {
       const body = await (input as Request).json()
       conversation.sends.push(body)
       return conversation.sendStatus === 201
-        ? Response.json({ status: "created", message: { ...message, id: `sent-${conversation.sends.length}`, direction: "OUTBOUND", body: body.body, delivery: "Sending", attachment: undefined } }, { status: 201 })
+        ? Response.json({ status: "created", message: { ...message, id: `sent-${conversation.sends.length}`, direction: "OUTBOUND", body: body.body, delivery: "Sending", attachment: undefined, createdBy: { kind: "HUMAN", subject: "sender", email: "sender@example.test" } } }, { status: 201 })
         : Response.json({ error: { code: "DESTINATION_UNAVAILABLE", message: "Synthetic conflict", correlationId: "correlation-1", retryable: false } }, { status: conversation.sendStatus })
     }
     if (url.includes("/v1/tasks/") && url.endsWith("/complete")) {

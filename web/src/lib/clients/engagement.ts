@@ -86,6 +86,7 @@ export function useEngagementTimeline({
     loadingOlder: timeline.loadingMore,
     requestedAt,
     failure: readFailure(timeline),
+    olderFailure: timeline.moreFailure,
     ...(sending ? { sent: { id: sending.item.id, visibleUntil: sending.visibleUntil } } : {}),
     refresh: timeline.retry,
     showOlder: () => void timeline.loadMore(),

@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { PhoneIncomingIcon, PhoneOutgoingIcon, PlayIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -9,10 +10,13 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { Item } from "@/components/ui/item"
+import { Spinner } from "@/components/ui/spinner"
 import type {
   ConversationTimelineItem,
   Task,
 } from "@/lib/api/generated/types.gen"
+import { useCallingCall } from "@/lib/clients/calls"
+import { readFailure } from "@/lib/data/queries"
 import { formatClockTime } from "@/lib/format-time"
 import { cn } from "@/lib/utils"
 import { callStateLabels, formatClock } from "@/lib/vocabulary"
@@ -26,6 +30,7 @@ import {
 } from "@/lib/workspace-history"
 
 import { MessageEntry } from "./message-entry"
+import { VoicemailSource } from "./recording-source"
 
 export function TimelineEntry({
   item,
@@ -105,12 +110,6 @@ const toneClasses = {
   muted: "text-muted-foreground",
 } satisfies Record<CallLineTone, string>
 
-const sourceLabels = {
-  ai: "View AI call",
-  call: "View call",
-  voicemail: "View voicemail",
-} satisfies Record<CallLine["sources"][number]["kind"], string>
-
 const detailAction = "text-left underline-offset-4 hover:text-foreground hover:underline focus-visible:underline"
 
 function CallLineEntry({
@@ -133,13 +132,11 @@ function CallLineEntry({
   onAIInteractionOpen?: (interactionID: string) => void
 }) {
   const DirectionIcon = line.direction === "OUTBOUND" ? PhoneOutgoingIcon : PhoneIncomingIcon
-  const voicemail = onCallOpen ? line.voicemail : undefined
   const details = line.sources.flatMap((source) => {
     const open = source.kind === "ai" ? onAIInteractionOpen : onCallOpen
-    return open && source.id !== voicemail?.callID
-      ? [{ ...source, open: () => open(source.id) }]
-      : []
+    return open ? [{ ...source, open: () => open(source.id) }] : []
   })
+  const time = formatClockTime(occurredAt)
   return (
     <Collapsible
       render={
@@ -154,6 +151,13 @@ function CallLineEntry({
           <button
             type="button"
             aria-current={selected ? "true" : undefined}
+            aria-label={[
+              line.lead,
+              line.about,
+              time,
+              ...otherLocations.map((location) => location.name),
+              line.outcome.label,
+            ].filter(Boolean).join(", ")}
             className="flex w-full items-start gap-2.5 rounded-md px-3 py-2.5 text-left outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
           />
         }
@@ -164,7 +168,7 @@ function CallLineEntry({
           {line.about && ` · ${line.about}`}
           {" · "}
           <time dateTime={occurredAt} className="tabular-nums">
-            {formatClockTime(occurredAt)}
+            {time}
           </time>
           {otherLocations.map((location) => ` · ${location.name}`)}
         </span>
@@ -172,20 +176,7 @@ function CallLineEntry({
           {line.outcome.label}
         </span>
       </CollapsibleTrigger>
-      {voicemail && (
-        <div className="px-3 pb-2.5 pl-9">
-          <Button
-            size="xs"
-            variant="outline"
-            aria-label="View voicemail"
-            onClick={() => onCallOpen?.(voicemail.callID)}
-          >
-            <PlayIcon data-icon="inline-start" />
-            {callStateLabels.VOICEMAIL}
-            {voicemail.seconds > 0 && <span className="tabular-nums">{formatClock(voicemail.seconds)}</span>}
-          </Button>
-        </div>
-      )}
+      {line.voicemail && <VoicemailPlayback key={line.voicemail.callID} voicemail={line.voicemail} />}
       <CollapsibleContent className="flex flex-col gap-2 px-3 pb-2.5 pl-9">
         <ul className="flex flex-col gap-1">
           {line.steps.map((step, index) => (
@@ -224,12 +215,48 @@ function CallLineEntry({
               className={detailAction}
               onClick={detail.open}
             >
-              {sourceLabels[detail.kind]}
+              {detail.label}
             </button>
           ))}
         </p>
       </CollapsibleContent>
     </Collapsible>
+  )
+}
+
+function VoicemailPlayback({ voicemail }: { voicemail: NonNullable<CallLine["voicemail"]> }) {
+  const [opened, setOpened] = useState(false)
+  const call = useCallingCall(voicemail.callID, opened)
+  const failed = opened && Boolean(readFailure(call)) && call.status !== "ready"
+  const loading = opened && call.status === "loading"
+  const length = voicemail.seconds > 0 ? ` ${formatClock(voicemail.seconds)}` : ""
+  return (
+    <div className="flex flex-col gap-1 px-3 pb-2.5 pl-9">
+      {!(opened && call.status === "ready") && (
+        <Button
+          size="xs"
+          variant="outline"
+          className="self-start"
+          aria-label={`Play voicemail${length}`}
+          disabled={loading}
+          onClick={() => (failed ? void call.retry() : setOpened(true))}
+        >
+          {loading ? <Spinner data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
+          <span className="tabular-nums">{callStateLabels.VOICEMAIL}{length}</span>
+        </Button>
+      )}
+      {loading && <span role="status" className="sr-only">Loading voicemail</span>}
+      {failed && (
+        <p role="alert" className="text-destructive">
+          The voicemail could not be loaded. Select Voicemail to try again.
+        </p>
+      )}
+      {opened && call.status === "ready" && (
+        call.data.voicemail
+          ? <VoicemailSource call={call.data} compact autoPlay />
+          : <p role="alert" className="text-destructive">This call has no voicemail recording.</p>
+      )}
+    </div>
   )
 }
 
