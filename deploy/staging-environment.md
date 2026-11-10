@@ -1,6 +1,7 @@
 # Staging environment
 
-Staging is a separate GCP project that will receive every merge to `main`.
+Staging is the `acuity-health-staging` GCP project, which receives every merge
+to `main`.
 Production still deploys only when release-please creates a release. Both use
 `cloudbuild.release.yaml` and `deploy-production-release.sh`.
 
@@ -75,10 +76,10 @@ staff, add an Access Grant for their Google account.
    `USABLE_DATABASE_CONNECTIONS`. Add `MIDDLEWARE_BASE_URL` and
    `MIDDLEWARE_API_SECRET_SECRET` only for a staging middleware.
 
-## Then
+## Deploys
 
-Add a staging job to `.github/workflows/release.yml` that deploys each verified
-push to `main` with `_RELEASE_ENVIRONMENT=staging` and its own
-`_PORTAL_API_URL` and `_REALTIME_URL` (from step 6) as literals, as the
-production job does. Production then deploys a release only when its commit has
-already passed staging.
+The `staging` job in `.github/workflows/release.yml` deploys every verified push
+to `main` to `acuity-health-staging` with `_RELEASE_ENVIRONMENT=staging`.
+Production deploys a release only after that job passes. The staging job uses
+literal project, identity, and URL values rather than `vars`, because a missing
+staging variable would fall back to the repository's production value.

@@ -527,7 +527,7 @@ func TestProductionDeployRequiresExactReleaseVerification(t *testing.T) {
 		"release_sha: ${{ needs.release-please.outputs.release_sha }}",
 		"if: needs.release-please.outputs.release_created == 'true' && needs.release-please.outputs.release_sha != github.event.workflow_run.head_sha",
 		"deploy:",
-		"needs: [release-please, verify-release]",
+		"needs: [staging, release-please, verify-release]",
 		"needs.verify-release.result == 'success' || (needs.verify-release.result == 'skipped' && needs.release-please.outputs.release_sha == github.event.workflow_run.head_sha)",
 		"ref: ${{ needs.release-please.outputs.release_sha }}",
 		"id-token: write",
