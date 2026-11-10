@@ -87,6 +87,8 @@ test("the Task panel menu sends the chosen reason and is offered only where the 
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
       />
     </DataProvider>,
   )
@@ -101,6 +103,29 @@ test("the Task panel menu sends the chosen reason and is offered only where the 
     await render({ ...task, origin })
     assert.equal(menu(), null, `${origin} offers no close menu`)
   }
+})
+
+test("the patient panel menu sends the chosen reason for its own Task", async (t) => {
+  const page = await harness(t)
+  const { PatientTasksPanelView } = await import("./patient-tasks-panel.tsx")
+  const other: Task = { ...task, id: "task-2", title: "Send records" }
+  const closed: [string, StaffTaskCloseReason][] = []
+  await page.render(
+    <PatientTasksPanelView
+      summary={{ status: "ready", data: { openTasks: [task, other], closedToday: [] }, refreshing: false }}
+      completion={{ pendingTaskID: "", errorTaskID: "", error: "" }}
+      reopening=""
+      onComplete={(closing, reason) => closed.push([closing.id, reason])}
+      onOpen={() => {}}
+      onReopen={() => {}}
+      onRetry={() => {}}
+    />,
+  )
+  const menu = (shown: Task) =>
+    page.host.querySelector<HTMLButtonElement>(`button[aria-label="Close as: ${shown.title}"]`)!
+  await page.choose(menu(other), "Not needed")
+  await page.choose(menu(task), "Couldn't reach")
+  assert.deepEqual(closed, [["task-2", "NOT_NEEDED"], ["task-1", "UNREACHABLE"]])
 })
 
 test("a completed text row keeps the patient's preview and names why it closed in the hover details", async (t) => {

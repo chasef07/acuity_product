@@ -1,5 +1,6 @@
 "use client"
 
+import type { ReactNode } from "react"
 import { ArrowLeftIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -20,11 +21,13 @@ export function CallWorkspace({
   returnTask,
   onReturnToTask,
   onOpenRecoveryTask,
+  patientTasks,
 }: {
   call: CallingCall
   returnTask: Task | undefined
   onReturnToTask: (() => void) | undefined
   onOpenRecoveryTask: (taskID: string) => void
+  patientTasks: ReactNode
 }) {
   const formattedPhone = formatPhone(call.phone)
   const contactName =
@@ -42,7 +45,7 @@ export function CallWorkspace({
       ? { label: "Back to Task", onClick: onReturnToTask }
       : undefined
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
+    <section className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <header className="px-5 py-5 pr-12">
         <h2 className="text-base font-medium leading-snug">
           {callStateLabels[call.state]}
@@ -54,11 +57,6 @@ export function CallWorkspace({
         {call.transferReason && (
           <p className="mt-3 text-sm leading-6">{call.transferReason}</p>
         )}
-        {call.recoveryTask && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            {call.recoveryTask.title}
-          </p>
-        )}
         {taskAction && (
           <Button className="mt-4 w-full" variant="outline" onClick={taskAction.onClick}>
             {taskAction.label === "Back to Task" && <ArrowLeftIcon />}
@@ -68,6 +66,7 @@ export function CallWorkspace({
       </header>
       {call.voicemail && <VoicemailSource call={call} />}
       {call.recording && <CallRecordingSource call={call} />}
+      {patientTasks}
       <details className="group border-t px-5 py-4">
         <summary className="cursor-pointer text-sm font-medium">Details</summary>
         <div className="mt-3 flex flex-col gap-3">

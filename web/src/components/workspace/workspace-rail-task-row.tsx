@@ -256,7 +256,7 @@ function HoverDetail({
   )
 }
 
-function taskRelativeTime(task: Task) {
+export function taskRelativeTime(task: Task) {
   if (task.state === "COMPLETED") {
     return { at: task.completedAt ?? task.updatedAt, label: "Completed" }
   }

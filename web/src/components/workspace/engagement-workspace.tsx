@@ -12,7 +12,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useCallingNavigation } from "@/components/workspace/calling-dock"
-import type { Task } from "@/lib/api/generated/types.gen"
+import type { PhoneSummary, Task } from "@/lib/api/generated/types.gen"
+import { useEngagementSummary } from "@/lib/clients/engagement"
 import { formatPhone } from "@/lib/vocabulary"
 import type { EngagementSummary } from "@/lib/workspace-projection"
 import { type NumberHistory } from "@/lib/workspace-history"
@@ -49,7 +50,17 @@ type EngagementWorkspaceCalling = Pick<
 
 export function EngagementWorkspace(props: EngagementWorkspaceProps) {
   const calling = useCallingNavigation()
-  return <EngagementWorkspaceView {...props} calling={calling} />
+  const summary = useEngagementSummary({
+    practiceID: props.practiceID,
+    phone: props.engagement.phone,
+  })
+  return (
+    <EngagementWorkspaceView
+      {...props}
+      calling={calling}
+      caller={summary.status === "ready" ? summary.data : undefined}
+    />
+  )
 }
 
 export function EngagementWorkspaceView({
@@ -69,7 +80,11 @@ export function EngagementWorkspaceView({
   onAIInteractionOpen,
   onHistoryChange,
   calling,
-}: EngagementWorkspaceProps & { calling: EngagementWorkspaceCalling }) {
+  caller,
+}: EngagementWorkspaceProps & {
+  calling: EngagementWorkspaceCalling
+  caller?: Pick<PhoneSummary, "displayName" | "names">
+}) {
   const [reviewedTextTaskKey, setReviewedTextTaskKey] = useState("")
   const textTaskKey = textTask ? `${textTask.id}:${textTask.version}` : ""
   const [chosenRoute, setRoute] = useState("")
@@ -96,9 +111,21 @@ export function EngagementWorkspaceView({
               {practiceName}
             </span>
             <span aria-hidden="true" className="hidden text-muted-foreground sm:inline">/</span>
-            <h1 className="shrink-0 whitespace-nowrap text-base font-medium tracking-tight tabular-nums md:text-sm">
-              {formatPhone(engagement.phone)}
-            </h1>
+            <div className="flex min-w-0 items-baseline gap-2">
+              {caller?.displayName && (
+                <span data-testid="caller-name" className="truncate text-base font-medium tracking-tight md:text-sm">
+                  {caller.displayName}
+                </span>
+              )}
+              <h1 className="shrink-0 whitespace-nowrap text-base font-medium tracking-tight tabular-nums md:text-sm">
+                {formatPhone(engagement.phone)}
+              </h1>
+              {caller && caller.names.length > 1 && (
+                <span className="truncate text-xs text-muted-foreground">
+                  also used by {caller.names.slice(1).join(", ")}
+                </span>
+              )}
+            </div>
           </div>
           <Tooltip>
             <TooltipTrigger

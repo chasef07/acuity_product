@@ -39,6 +39,7 @@ import {
 } from "@/components/workspace/calling-dock"
 import { AIInteractionContext } from "@/components/workspace/ai-interaction-context"
 import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
+import { PatientTasksPanel } from "@/components/workspace/patient-tasks-panel"
 import { TaskCallContext } from "@/components/workspace/task-call-context"
 import { TaskCallAction } from "@/components/workspace/task-call-action"
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
@@ -519,6 +520,20 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         onTaskUpdated={(task, advance) =>
                           void projection.dispatch({ type: "task-committed", task, advance: advance && !activeCall })
                         }
+                        onOpenTask={(task) => sendIntent({ type: "select-task", task })}
+                        patientTasks={(phone, currentTaskID) => (
+                          <PatientTasksPanel
+                            key={phone}
+                            practiceID={state.scope.practiceID}
+                            phone={phone}
+                            currentTaskID={currentTaskID}
+                            completion={state.completion}
+                            className={currentTaskID ? "max-h-80 shrink-0 overflow-y-auto border-b" : "border-t"}
+                            onComplete={(task, reason) => sendIntent({ type: "complete-task", task, reason })}
+                            onOpen={(task) => sendIntent({ type: "select-task", task })}
+                            onTaskUpdated={(task) => void projection.dispatch({ type: "task-committed", task })}
+                          />
+                        )}
                         onReturnToCall={() => {
                           if (activeCall) {
                             void projection.dispatch({ type: "return-to-call" })

@@ -465,6 +465,8 @@ test("the Task panel credits the callback caller from the Task and flags an open
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
       />
     </DataProvider>,
   )
@@ -495,6 +497,8 @@ test("an AI Task shows the missed handoff call attached to it", () => {
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
       />
     </DataProvider>,
   )
@@ -526,6 +530,8 @@ test("completing a Task keeps Next task in place and holds Reopen until the chan
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
       />
     </DataProvider>,
   ))
@@ -576,6 +582,8 @@ test("the focused Task shows each projected version and completes only the versi
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
       />
     </DataProvider>,
   ))

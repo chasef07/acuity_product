@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback } from "react"
+import { type ReactNode, useCallback } from "react"
 
 import type {
   CallingCall,
@@ -23,7 +23,9 @@ type TaskCallContextProps = {
   numberHistory?: ConversationTimelineItem[]
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
+  onOpenTask: (task: Task) => void
   onReturnToCall: () => void
+  patientTasks: (phone: string, currentTaskID?: string) => ReactNode
 }
 
 export function TaskCallContext({
@@ -36,14 +38,16 @@ export function TaskCallContext({
   numberHistory,
   taskCallError,
   onTaskUpdated,
+  onOpenTask,
   onReturnToCall,
+  patientTasks,
 }: TaskCallContextProps) {
   const openRecoveryTask = useCallback(
     async (taskID: string) => {
       const outcome = await readTask(taskID)
-      if (outcome.ok) onTaskUpdated(outcome.data)
+      if (outcome.ok) onOpenTask(outcome.data)
     },
-    [onTaskUpdated],
+    [onOpenTask],
   )
   if (view === "call" && activeCall) {
     return (
@@ -53,25 +57,30 @@ export function TaskCallContext({
         returnTask={task}
         onReturnToTask={task ? () => onTaskUpdated(task) : undefined}
         onOpenRecoveryTask={(taskID) => void openRecoveryTask(taskID)}
+        patientTasks={patientTasks(activeCall.phone)}
       />
     )
   }
-  if (view === "task" && task && group && onSelectTask) {
-    return <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
-  }
   if (view === "task" && task) {
     return (
-      <TaskWorkspace
-        key={task.id}
-        task={task}
-        onNextTask={onSelectTask && taskRows?.some((row) => row.id !== task.id)
-          ? () => onSelectTask(taskRows.find((row) => row.id !== task.id)!) : undefined}
-        activeCall={activeCall}
-        numberHistory={numberHistory}
-        taskCallError={taskCallError}
-        onTaskUpdated={onTaskUpdated}
-        onReturnToCall={onReturnToCall}
-      />
+      <div className="flex min-h-0 flex-1 flex-col">
+        {patientTasks(task.phone, task.id)}
+        {group && onSelectTask ? (
+          <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
+        ) : (
+          <TaskWorkspace
+            key={task.id}
+            task={task}
+            onNextTask={onSelectTask && taskRows?.some((row) => row.id !== task.id)
+              ? () => onSelectTask(taskRows.find((row) => row.id !== task.id)!) : undefined}
+            activeCall={activeCall}
+            numberHistory={numberHistory}
+            taskCallError={taskCallError}
+            onTaskUpdated={onTaskUpdated}
+            onReturnToCall={onReturnToCall}
+          />
+        )}
+      </div>
     )
   }
   return <section aria-label="No Task selected" className="min-h-0 flex-1" />

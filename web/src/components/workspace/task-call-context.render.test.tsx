@@ -36,6 +36,8 @@ function panel(props: Partial<Parameters<typeof TaskCallContext>[0]>) {
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
         {...props}
       />
     </DataProvider>,
