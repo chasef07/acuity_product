@@ -904,12 +904,21 @@ func TestEngagementSummaryRouteReturnsTasksAndNamesForAnAuthorizedPhone(t *testi
 				Locations: []access.LocationProvision{{
 					Key: "summary-office", Name: "Summary Office", AbitaOfficeKeys: []string{"summary-office"},
 				}},
-				AccessGrants: []access.AccessGrantProvision{{
-					Key:           "summary-staff",
-					Email:         "summary-staff@synthetic.test",
-					Role:          access.RoleStaff,
-					LocationScope: access.LocationScopeAll,
-				}},
+				AccessGrants: []access.AccessGrantProvision{
+					{
+						Key:           "summary-staff",
+						Email:         "summary-staff@synthetic.test",
+						Role:          access.RoleStaff,
+						LocationScope: access.LocationScopeAll,
+					},
+					{
+						Key:                  "summary-unplaced",
+						Email:                "summary-unplaced@synthetic.test",
+						Role:                 access.RoleStaff,
+						LocationScope:        access.LocationScopeSelected,
+						SelectedLocationKeys: []string{"summary-office"},
+					},
+				},
 			},
 			{
 				Key:       "summary-other-practice",
@@ -931,6 +940,19 @@ func TestEngagementSummaryRouteReturnsTasksAndNamesForAnAuthorizedPhone(t *testi
 		`SELECT id::text FROM access_practices WHERE provisioning_key = 'summary-other-practice'`,
 	).Scan(&otherPracticeID); err != nil {
 		t.Fatalf("read the other Practice: %v", err)
+	}
+	unplaced := access.Identity{
+		Subject:       "summary-unplaced-subject",
+		Email:         "summary-unplaced@synthetic.test",
+		EmailVerified: true,
+	}
+	testaccess.Activate(t, accessModule, unplaced)
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM access_membership_locations allowed
+		USING access_memberships membership
+		WHERE membership.id = allowed.membership_id AND membership.user_subject = $1
+	`, unplaced.Subject); err != nil {
+		t.Fatalf("remove every readable Location from a membership: %v", err)
 	}
 	workModule := work.New(db.As(testdb.Portal), accessModule, nil)
 	const phone = "+17275550199"
@@ -965,7 +987,9 @@ func TestEngagementSummaryRouteReturnsTasksAndNamesForAnAuthorizedPhone(t *testi
 	handler, err := newPortalHandler(t, httpapi.Config{
 		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 500 * time.Millisecond,
-	}, db.As(testdb.Portal), accessModule, staticAuthenticator{"summary-token": identity})
+	}, db.As(testdb.Portal), accessModule, staticAuthenticator{
+		"summary-token": identity, "unplaced-token": unplaced,
+	})
 	if err != nil {
 		t.Fatalf("new HTTP adapter: %v", err)
 	}
@@ -987,8 +1011,8 @@ func TestEngagementSummaryRouteReturnsTasksAndNamesForAnAuthorizedPhone(t *testi
 	}
 
 	before := read()
-	if before.Phone != phone || len(before.OpenTasks) != 2 || len(before.ClosedToday) != 0 ||
-		before.DisplayName != "Marco Reyes" ||
+	if before.Phone != phone || len(before.OpenTasks) != 2 || before.OpenTaskCount != 2 ||
+		len(before.ClosedToday) != 0 || before.DisplayName != "" ||
 		len(before.Names) != 2 || before.Names[0] != "Marco Reyes" || before.Names[1] != "Dolores Reyes" {
 		t.Fatalf("summary before a close = %#v", before)
 	}
@@ -1008,7 +1032,7 @@ func TestEngagementSummaryRouteReturnsTasksAndNamesForAnAuthorizedPhone(t *testi
 	_ = completed.Body.Close()
 
 	after := read()
-	if len(after.OpenTasks) != 1 || after.OpenTasks[0].Id.String() != open.ID ||
+	if len(after.OpenTasks) != 1 || after.OpenTaskCount != 1 || after.OpenTasks[0].Id.String() != open.ID ||
 		len(after.ClosedToday) != 1 || after.ClosedToday[0].Id.String() != closing.ID ||
 		after.ClosedToday[0].CloseReason == nil ||
 		*after.ClosedToday[0].CloseReason != api.TaskCloseReasonNOTNEEDED ||
@@ -1022,7 +1046,7 @@ func TestEngagementSummaryRouteReturnsTasksAndNamesForAnAuthorizedPhone(t *testi
 		t.Fatalf("summary status for a phone with no history = %d", unknownPhone.StatusCode)
 	}
 	if body := strings.TrimSpace(readBody(t, unknownPhone)); body !=
-		`{"closedToday":[],"displayName":"","names":[],"openTasks":[],"phone":"+17275550177"}` {
+		`{"closedToday":[],"displayName":"","names":[],"openTaskCount":0,"openTasks":[],"phone":"+17275550177"}` {
 		t.Fatalf("summary for a phone with no history = %s", body)
 	}
 	_ = unknownPhone.Body.Close()
@@ -1033,8 +1057,11 @@ func TestEngagementSummaryRouteReturnsTasksAndNamesForAnAuthorizedPhone(t *testi
 		status int
 	}{
 		"denied Practice": {summaryURL(phone, otherPracticeID), "summary-token", http.StatusForbidden},
-		"invalid phone":   {summaryURL("not-a-phone", authorization.Practice.ID), "summary-token", http.StatusBadRequest},
-		"no credential":   {summaryURL(phone, authorization.Practice.ID), "", http.StatusUnauthorized},
+		"no readable Location": {
+			summaryURL(phone, authorization.Practice.ID), "unplaced-token", http.StatusForbidden,
+		},
+		"invalid phone": {summaryURL("not-a-phone", authorization.Practice.ID), "summary-token", http.StatusBadRequest},
+		"no credential": {summaryURL(phone, authorization.Practice.ID), "", http.StatusUnauthorized},
 	} {
 		response := request(t, server.Client(), http.MethodGet, check.target, check.token, nil)
 		body := readBody(t, response)
@@ -1045,6 +1072,19 @@ func TestEngagementSummaryRouteReturnsTasksAndNamesForAnAuthorizedPhone(t *testi
 		if strings.Contains(body, "Reyes") || strings.Contains(body, "Synthetic request") {
 			t.Fatalf("%s leaked protected data: %s", name, body)
 		}
+	}
+
+	denials := map[string]string{}
+	for _, route := range []string{"summary", "timeline"} {
+		response := request(t, server.Client(), http.MethodGet,
+			server.URL+"/v1/engagements/"+url.PathEscape(phone)+"/"+route+"?practiceId="+authorization.Practice.ID,
+			"unplaced-token", nil)
+		var denial api.ErrorEnvelope
+		decode(t, response, &denial)
+		denials[route] = fmt.Sprintf("%d %s %s", response.StatusCode, denial.Error.Code, denial.Error.Message)
+	}
+	if denials["summary"] != denials["timeline"] || !strings.HasPrefix(denials["summary"], "403 ") {
+		t.Fatalf("denials without a readable Location = %v, want the summary to match the timeline's 403", denials)
 	}
 }
 

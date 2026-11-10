@@ -3192,11 +3192,12 @@ func phoneSummaryResponse(summary workspace.PhoneSummary) (api.PhoneSummary, err
 		return api.PhoneSummary{}, err
 	}
 	return api.PhoneSummary{
-		Phone:       summary.Phone,
-		DisplayName: summary.DisplayName,
-		Names:       summary.Names,
-		OpenTasks:   openTasks,
-		ClosedToday: closedToday,
+		Phone:         summary.Phone,
+		DisplayName:   summary.DisplayName,
+		Names:         summary.Names,
+		OpenTasks:     openTasks,
+		OpenTaskCount: summary.OpenTaskCount,
+		ClosedToday:   closedToday,
 	}, nil
 }
 

@@ -18,11 +18,12 @@ type QueryPhoneSummaryCommand struct {
 }
 
 type PhoneSummary struct {
-	Phone       string
-	DisplayName string
-	Names       []string
-	OpenTasks   []work.Task
-	ClosedToday []work.Task
+	Phone         string
+	DisplayName   string
+	Names         []string
+	OpenTasks     []work.Task
+	OpenTaskCount int
+	ClosedToday   []work.Task
 }
 
 func (m *Module) QueryPhoneSummary(
@@ -48,9 +49,18 @@ func (m *Module) QueryPhoneSummary(
 	}
 	summary := PhoneSummary{Phone: command.Phone}
 	if summary.OpenTasks, err = queryPhoneTasks(
-		ctx, tx, phoneOpenTasksQuery, command.PracticeID, locationIDs, command.Phone,
+		ctx, tx, phoneOpenTasksQuery,
+		command.PracticeID, locationIDs, command.Phone, phoneOpenTaskLimit,
 	); err != nil {
 		return PhoneSummary{}, fmt.Errorf("query open Tasks for phone: %w", err)
+	}
+	summary.OpenTaskCount = len(summary.OpenTasks)
+	if summary.OpenTaskCount == phoneOpenTaskLimit {
+		if err := tx.QueryRow(
+			ctx, phoneOpenTaskCountQuery, command.PracticeID, locationIDs, command.Phone,
+		).Scan(&summary.OpenTaskCount); err != nil {
+			return PhoneSummary{}, fmt.Errorf("count open Tasks for phone: %w", err)
+		}
 	}
 	if summary.ClosedToday, err = queryPhoneTasks(
 		ctx, tx, phoneClosedTodayQuery, command.PracticeID, locationIDs, command.Phone,
@@ -62,7 +72,7 @@ func (m *Module) QueryPhoneSummary(
 	); err != nil {
 		return PhoneSummary{}, fmt.Errorf("query names for phone: %w", err)
 	}
-	if len(summary.Names) > 0 {
+	if len(summary.Names) == 1 {
 		summary.DisplayName = summary.Names[0]
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -71,19 +81,30 @@ func (m *Module) QueryPhoneSummary(
 	return summary, nil
 }
 
-const phoneTasksSource = taskQueryColumns + `
-	FROM work_tasks task` + taskProjectionJoins + `
+const phoneOpenTaskLimit = 50
+
+const phoneTasksFilter = `
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])
 		AND task.phone = $3`
 
+const phoneTasksSource = taskQueryColumns + `
+	FROM work_tasks task` + taskProjectionJoins + phoneTasksFilter
+
 const phoneOpenTasksQuery = phoneTasksSource + `
 		AND task.state = 'OPEN'
-	ORDER BY task.updated_at DESC, task.id DESC`
+	ORDER BY task.updated_at DESC, task.id DESC
+	LIMIT $4`
+
+const phoneOpenTaskCountQuery = `
+	SELECT count(*)
+	FROM work_tasks task` + phoneTasksFilter + `
+		AND task.state = 'OPEN'`
 
 const phoneClosedTodayQuery = phoneTasksSource + `
 		AND task.state = 'COMPLETED'
 		AND task.completed_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+		AND task.close_reason IS DISTINCT FROM 'EXPIRED'
 	ORDER BY task.completed_at DESC, task.id DESC
 	LIMIT 20`
 
@@ -98,7 +119,7 @@ const phoneNamesQuery = `
 				AND task.location_id = ANY($2::uuid[])
 				AND task.phone = $3
 			UNION ALL
-			SELECT btrim(thread.display_name), thread.updated_at
+			SELECT btrim(thread.display_name), thread.created_at
 			FROM messaging_threads thread
 			WHERE thread.practice_id = $1
 				AND thread.location_id = ANY($2::uuid[])
@@ -114,11 +135,9 @@ func queryPhoneTasks(
 	ctx context.Context,
 	tx pgx.Tx,
 	query string,
-	practiceID string,
-	locationIDs []string,
-	phone string,
+	arguments ...any,
 ) ([]work.Task, error) {
-	rows, err := tx.Query(ctx, query, practiceID, locationIDs, phone)
+	rows, err := tx.Query(ctx, query, arguments...)
 	if err != nil {
 		return nil, err
 	}
