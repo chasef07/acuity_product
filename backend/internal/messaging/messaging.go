@@ -119,6 +119,7 @@ type Message struct {
 type ActorSnapshot struct {
 	Kind    access.ActorKind
 	Subject string
+	Email   string
 }
 
 type CreateFollowUpTaskCommand struct {

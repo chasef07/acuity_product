@@ -66,7 +66,21 @@ func (m *Module) QueryPhoneTimeline(
 }
 
 const messageProjectionSQL = `
-	SELECT ` + messaging.MessageColumns + `
+	SELECT ` + messaging.MessageColumns + `,
+		CASE WHEN message.direction = 'OUTBOUND' AND message.created_by_kind = 'HUMAN' THEN COALESCE(
+			(
+				SELECT sender_membership.email
+				FROM access_memberships sender_membership
+				WHERE sender_membership.practice_id = thread.practice_id
+					AND sender_membership.user_subject = message.created_by_subject
+			),
+			(
+				SELECT sender_operator.email
+				FROM access_platform_operators sender_operator
+				WHERE sender_operator.user_subject = message.created_by_subject
+			),
+			''
+		) ELSE '' END
 	FROM messaging_messages message
 	JOIN messaging_threads thread ON thread.id = message.thread_id
 	JOIN access_locations location
@@ -108,9 +122,13 @@ func queryTimelineMessages(
 	defer rows.Close()
 	items := make([]TimelineItem, 0, limit+1)
 	for rows.Next() {
-		message, err := messaging.ScanMessage(rows)
+		var senderEmail string
+		message, err := messaging.ScanMessage(rows, &senderEmail)
 		if err != nil {
 			return nil, fmt.Errorf("scan Message: %w", err)
+		}
+		if message.CreatedBy != nil {
+			message.CreatedBy.Email = senderEmail
 		}
 		items = append(items, TimelineItem{
 			Type: "MESSAGE", ID: message.ID, OccurredAt: message.CreatedAt, Message: message,
@@ -158,9 +176,17 @@ const callProjectionSQL = `
 		(
 			SELECT call_state.state FROM human_calling_call_states call_state
 			WHERE call_state.call_id = call.id
-		)
+		),
+		COALESCE(placed_task.id::text, ''),
+		COALESCE(placed_task.title, ''),
+		COALESCE(voicemail.duration_millis / 1000, 0)
 	FROM human_calling_calls call
 	LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
+	LEFT JOIN work_tasks placed_task
+		ON placed_task.id = call.task_id
+		AND placed_task.practice_id = call.practice_id
+		AND placed_task.location_id = ANY($2::uuid[])
+	LEFT JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
 	JOIN access_locations location
 		ON location.practice_id = call.practice_id
 		AND location.id = call.location_id
@@ -226,6 +252,9 @@ func queryTimelineCalls(
 			&call.TransferReason,
 			&call.SourceCallID,
 			&call.Outcome,
+			&call.TaskID,
+			&call.TaskTitle,
+			&call.VoicemailDurationSeconds,
 		); err != nil {
 			return nil, fmt.Errorf("scan Call: %w", err)
 		}

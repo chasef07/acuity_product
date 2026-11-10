@@ -2106,6 +2106,18 @@ export type CallHistoryItem = {
     transferReason: string;
     sourceCallId?: string;
     outcome: CallState;
+    /**
+     * The Task this outbound call was placed from. Absent when the call was not placed from a Task or the Task is in a Location the reader cannot access.
+     */
+    taskId?: string;
+    /**
+     * Title of the Task named by taskId. Absent whenever taskId is absent.
+     */
+    taskTitle?: string;
+    /**
+     * Length of the voicemail the caller left on this call. Absent when no voicemail was recorded.
+     */
+    voicemailDurationSeconds?: number;
 };
 
 export type OperatorCallingTimelineEntry = {

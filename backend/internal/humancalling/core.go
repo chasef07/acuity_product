@@ -376,19 +376,22 @@ type RecoveryTask struct {
 }
 
 type CallHistoryItem struct {
-	ID              string
-	Type            string
-	Direction       string
-	StartedAt       time.Time
-	EndedAt         *time.Time
-	DurationSeconds int64
-	LocationID      string
-	LocationName    string
-	AnsweredByEmail string
-	PlacedByEmail   string
-	TransferReason  string
-	SourceCallID    string
-	Outcome         CallState
+	ID                       string
+	Type                     string
+	Direction                string
+	StartedAt                time.Time
+	EndedAt                  *time.Time
+	DurationSeconds          int64
+	LocationID               string
+	LocationName             string
+	AnsweredByEmail          string
+	PlacedByEmail            string
+	TransferReason           string
+	SourceCallID             string
+	Outcome                  CallState
+	TaskID                   string
+	TaskTitle                string
+	VoicemailDurationSeconds int64
 }
 
 type OperatorTimeline struct {

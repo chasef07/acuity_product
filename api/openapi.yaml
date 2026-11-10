@@ -5922,6 +5922,7 @@ components:
           type: string
           format: uuid
         createdBy:
+          description: Who created this Message. The Engagement timeline adds the email of a staff member who sent an outbound Message. Every other Message response omits the email.
           $ref: "#/components/schemas/TaskActor"
         attachment:
           $ref: "#/components/schemas/MessageAttachment"
@@ -6230,6 +6231,18 @@ components:
           type: string
         outcome:
           $ref: "#/components/schemas/CallState"
+        taskId:
+          description: The Task this outbound call was placed from. Absent when the call was not placed from a Task or the Task is in a Location the reader cannot access.
+          type: string
+          format: uuid
+        taskTitle:
+          description: Title of the Task named by taskId. Absent whenever taskId is absent.
+          type: string
+        voicemailDurationSeconds:
+          description: Length of the voicemail the caller left on this call. Absent when no voicemail was recorded.
+          type: integer
+          format: int64
+          minimum: 1
     OperatorCallingTimelineEntry:
       type: object
       additionalProperties: false
