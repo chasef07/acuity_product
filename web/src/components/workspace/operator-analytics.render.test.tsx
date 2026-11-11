@@ -143,7 +143,7 @@ async function settle() {
 }
 
 function LiveWorkspace({ version, children }: { version: number; children: ReactNode }) {
-  useLiveRefresh({ workspaceVersion: version, taskCounts: "", detailRevision: 0 })
+  useLiveRefresh({ workspaceVersion: version, detailRevision: 0 })
   return children
 }
 

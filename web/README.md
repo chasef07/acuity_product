@@ -48,7 +48,7 @@ that imports TanStack Query. A read's `identity` names what it shows (scope,
 filters, ids, search); TypeScript rejects identity fields named like
 `revision`, `version`, `*Hint`, or `*Generation`. Live updates never reach
 components as props: `useLiveRefresh` in the workspace invalidates the reads
-that a workspace version, task counts, or detail refresh affects, and the cache
+that a workspace version or detail refresh affects, and the cache
 refetches them while keeping loaded pages on screen. A failed refresh keeps the
 data and reports `refreshFailure`; lost access hides the data. While `usePages`
 gets `hold`, live updates and retries only mark the loaded pages `behind`, and

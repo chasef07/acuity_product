@@ -1,4 +1,4 @@
-import type { Task } from "../../lib/api/generated/types.gen.ts"
+import type { PatientWorkRow, Task } from "../../lib/api/generated/types.gen.ts"
 import type { WorkspaceProjectionState } from "../../lib/workspace-projection.ts"
 
 export function projectedWorkspace(task: Task): WorkspaceProjectionState {
@@ -46,23 +46,13 @@ export function projectedWorkspace(task: Task): WorkspaceProjectionState {
       locationScopeID: "",
     },
     search: { input: "", applied: "", error: "" },
-    tasks: {
-      items: [task],
+    patients: {
+      items: [projectedPatient(task)],
       nextCursor: "",
       loading: false,
       error: "",
-      counts: {
-        tasks: 1,
-        categories: {
-          billing: 0,
-          appointments: 0,
-          documentation: 0,
-          optical: 0,
-          medication: 0,
-          referrals: 0,
-          other: 1,
-        },
-      },
+      counts: { all: 1, followUp: 0, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
+      totals: { openTasks: 1, patients: 1, patientsOutsideScope: 0 },
     },
     completedTasks: { items: [], nextCursor: "", loading: false, error: "" },
     selection: {
@@ -81,12 +71,29 @@ export function projectedWorkspace(task: Task): WorkspaceProjectionState {
       contextPanelOpen: true,
     },
     detailRevision: 0,
-    completion: { pendingTaskID: "", errorTaskID: "", error: "" },
+    completion: { pending: [], errors: {} },
     rail: {
-      expanded: ["tasks"],
-      taskCategory: "all",
+      scope: "mine",
+      filter: "all",
+      completedExpanded: false,
       scrollTop: 0,
     },
+  }
+}
+
+export function projectedPatient(
+  top: Task,
+  overrides: Partial<PatientWorkRow> = {},
+): PatientWorkRow {
+  return {
+    phone: top.phone,
+    displayName: "",
+    openCount: 1,
+    highPriority: top.urgency === "high_priority",
+    hasUnowned: false,
+    activityAt: top.createdAt,
+    top,
+    ...overrides,
   }
 }
 

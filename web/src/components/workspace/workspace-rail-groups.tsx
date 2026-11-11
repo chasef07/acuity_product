@@ -1,6 +1,6 @@
 "use client"
 
-import { ChevronDownIcon, FolderIcon, FolderOpenIcon } from "lucide-react"
+import { ChevronDownIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -16,61 +16,6 @@ import {
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
-
-export function AttentionGroup({
-  title,
-  count,
-  expanded,
-  onToggle,
-  children,
-}: {
-  title: string
-  count?: number
-  expanded: boolean
-  onToggle: () => void
-  children: React.ReactNode
-}) {
-  const FolderStateIcon = expanded ? FolderOpenIcon : FolderIcon
-
-  return (
-    <Collapsible
-      open={expanded}
-      onOpenChange={(open) => {
-        if (open !== expanded) onToggle()
-      }}
-      render={<SidebarGroup className="p-0" role="group" aria-label={title} />}
-    >
-      <div className="flex min-w-0 items-center gap-0.5">
-        <CollapsibleTrigger
-          render={
-            <button
-              type="button"
-              className="group/disclosure flex h-8 min-w-0 flex-1 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm/5 font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-            />
-          }
-        >
-          <FolderStateIcon
-            aria-hidden="true"
-            className="size-4 shrink-0 text-[var(--sidebar-icon-color)] group-hover/disclosure:text-sidebar-foreground"
-          />
-          <span className="truncate">{title}</span>
-          {count !== undefined && (
-            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-              {count}
-            </span>
-          )}
-        </CollapsibleTrigger>
-      </div>
-      <CollapsibleContent>
-        <SidebarGroupContent>
-          <SidebarMenu className="mx-1 w-auto gap-0.5 px-1.5 py-0">
-            {children}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
 
 export function CompletedGroup({
   title,

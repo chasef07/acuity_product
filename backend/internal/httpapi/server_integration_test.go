@@ -813,6 +813,29 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 		t.Fatalf("count-free Task query page = %#v", countFreePage)
 	}
 
+	patientBody, _ := json.Marshal(map[string]any{
+		"practiceId": authorization.Practice.ID,
+		"scope":      "everyone",
+		"filter":     "all",
+	})
+	patientResponse := request(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/tasks/patients/query", "task-token", patientBody)
+	if patientResponse.StatusCode != http.StatusOK {
+		t.Fatalf("patient work status = %d, body = %s", patientResponse.StatusCode, readBody(t, patientResponse))
+	}
+	var patients api.PatientWorkPage
+	decode(t, patientResponse, &patients)
+	if len(patients.Rows) != 1 || patients.Rows[0].Top.Id.String() != task.ID ||
+		patients.Rows[0].Phone != task.Phone || patients.Rows[0].OpenCount != 1 ||
+		patients.Counts.All != 1 || patients.Totals.OpenTasks != 1 || patients.Totals.Patients != 1 {
+		t.Fatalf("patient work page = %#v", patients)
+	}
+	unknownFilter, _ := json.Marshal(map[string]any{"practiceId": authorization.Practice.ID, "filter": "calls"})
+	if response := request(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/tasks/patients/query", "task-token", unknownFilter); response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("patient work with an unknown filter status = %d, want 400", response.StatusCode)
+	}
+
 	renameBody, _ := json.Marshal(map[string]any{
 		"expectedVersion": 1,
 		"title":           "Confirm referral receipt",

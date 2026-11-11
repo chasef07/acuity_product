@@ -10,7 +10,6 @@ import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
 import { DetailsAbovePatientTasks, TaskCallContext } from "./task-call-context.tsx"
 import { TaskCallAction } from "./task-call-action.tsx"
-import { TaskGroupContext } from "./task-group-context.tsx"
 import { VoicemailSource } from "./recording-source.tsx"
 import { CallingDock } from "./calling-dock.tsx"
 import { WorkEmptyState } from "./work-empty-state.tsx"
@@ -127,7 +126,7 @@ test("Task rail toggles the selected context while preserving the conversation",
     throw error
   }
   const taskButton = Array.from(
-    host.querySelectorAll<HTMLButtonElement>("[data-testid='task-row'] button"),
+    host.querySelectorAll<HTMLButtonElement>("[data-testid='patient-row'] button"),
   ).find((button) => button.textContent?.includes(task.title))
   assert.ok(taskButton)
   await act(async () => taskButton.click())
@@ -174,7 +173,7 @@ test("the sidebar shows Manage agent pages in place of Tasks only while Manage a
   assert.match(host.textContent ?? "", /Workspace selector/)
   assert.doesNotMatch(host.textContent ?? "", /Calling status/)
   assert.equal(host.querySelector("input[aria-label='Search tasks, names, or phone']"), null)
-  assert.equal(host.querySelector("[aria-label='Workspace folders']"), null)
+  assert.equal(host.querySelector("[aria-label='Patients with open work']"), null)
   assert.doesNotMatch(host.textContent ?? "", /Recently completed|Projected follow-up/)
   const knowledge = Array.from(nav.querySelectorAll("button")).find((button) => button.textContent === "Knowledge base")!
   await act(async () => knowledge.click())
@@ -183,14 +182,14 @@ test("the sidebar shows Manage agent pages in place of Tasks only while Manage a
   await render(projection)
   assert.equal(host.querySelector("nav"), null)
   assert.ok(host.querySelector("input[aria-label='Search tasks, names, or phone']"))
-  assert.ok(host.querySelector("[aria-label='Workspace folders']"))
+  assert.ok(host.querySelector("[aria-label='Patients with open work']"))
   assert.match(host.textContent ?? "", /Recently completed/)
   assert.match(host.textContent ?? "", /Calling status/)
   await act(async () => root.unmount())
   dom.window.close()
 })
 
-test("analytics sidebars keep the brand and office picker and drop Work folders, search, and calling status", () => {
+test("analytics sidebars keep the brand and office picker and drop the patient list, search, and calling status", () => {
   const projection = projectedWorkspace(projectedTask())
   for (const view of ["analytics", "operator-analytics"] as const) {
     const html = renderToStaticMarkup(
@@ -205,33 +204,20 @@ test("analytics sidebars keep the brand and office picker and drop Work folders,
     )
     assert.match(html, /Acuity Health/)
     assert.match(html, /Workspace selector/)
-    assert.doesNotMatch(html, /Search tasks, names, or phone|Workspace folders|Recently completed|Projected follow-up|Calling status/)
+    assert.doesNotMatch(html, /Search tasks, names, or phone|Patients with open work|Recently completed|Projected follow-up|Calling status/)
   }
-})
-
-test("the Tasks folder keeps its header to the title and count and gives Mine and All a full-width row", () => {
-  const html = renderToStaticMarkup(
-    <SidebarProvider>
-      <WorkspaceRail projection={projectedWorkspace(projectedTask())} onIntent={() => {}} />
-    </SidebarProvider>,
-  )
-  const trigger = html.match(/<button[^>]*aria-expanded="true"[^>]*>(.*?)<\/button>/)?.[1] ?? ""
-  assert.doesNotMatch(trigger, /Mine|Filter/)
-  const mine = html.match(/<button[^>]*aria-label="Show My Tasks"[^>]*>/)?.[0] ?? ""
-  assert.match(mine, /\bh-7\b/)
-  assert.match(mine, /\bflex-1\b/)
 })
 
 test("Work without a selected task names whether the inbox is clear or waiting for a choice", () => {
   const projection = projectedWorkspace(projectedTask())
   const none = { ...projection.selection, view: "none" as const, task: undefined, engagement: undefined }
-  const emptyCounts = { ...projection.tasks.counts, tasks: 0, categories: { ...projection.tasks.counts.categories, other: 0 } }
+  const emptyCounts = { ...projection.patients.counts, all: 0 }
   const waiting = renderToStaticMarkup(<WorkEmptyState projection={{ ...projection, selection: none }} />)
-  assert.match(waiting, /Select a task/)
+  assert.match(waiting, /Select a patient/)
   assert.doesNotMatch(waiting, /Inbox clear/)
-  const clear = renderToStaticMarkup(<WorkEmptyState projection={{ ...projection, selection: none, tasks: { ...projection.tasks, items: [], counts: emptyCounts } }} />)
+  const clear = renderToStaticMarkup(<WorkEmptyState projection={{ ...projection, selection: none, patients: { ...projection.patients, items: [], counts: emptyCounts } }} />)
   assert.match(clear, /Inbox clear/)
-  const loading = renderToStaticMarkup(<WorkEmptyState projection={{ ...projection, selection: none, tasks: { ...projection.tasks, items: [], loading: true, counts: emptyCounts } }} />)
+  const loading = renderToStaticMarkup(<WorkEmptyState projection={{ ...projection, selection: none, patients: { ...projection.patients, items: [], loading: true, counts: emptyCounts } }} />)
   assert.doesNotMatch(loading, /Inbox clear/)
 })
 
@@ -1036,7 +1022,7 @@ test("completing a Task keeps Next task in place and holds Reopen until the chan
     <DataProvider>
       <TaskCallContext
         task={task}
-        taskRows={[task, next]}
+        nextTask={next}
         onSelectTask={(row) => selected.push(row.id)}
         activeCall={undefined}
         callControlsShowing={false}
@@ -1109,6 +1095,10 @@ test("the focused Task shows each projected version and completes only the versi
     await render(changed)
     assert.equal(host.querySelector("h2")?.textContent, changed.title, "the panel shows the projected Task, not a held copy")
     assert.equal(button("Verify & next")?.disabled, true, "a version the operator has not reviewed cannot be completed")
+    const pinned = host.querySelector('[data-testid="task-actions"]')!
+    assert.ok(pinned.classList.contains("sticky"), "the action row stays in view over a long source message")
+    assert.ok(pinned.contains(button("Review latest")!), "the pinned row holds the action that is enabled while completing is not")
+    assert.equal(button("Review latest")?.disabled, false)
     await act(async () => button("Review latest")!.click())
     assert.equal(button("Verify & next")?.disabled, false)
     await act(async () => button("Verify & next")!.click())
@@ -1378,7 +1368,7 @@ const message: Message = {
 }
 
 function LiveDetail({ revision, children }: { revision: number; children: ReactNode }) {
-  useLiveRefresh({ workspaceVersion: 0, taskCounts: "", detailRevision: revision })
+  useLiveRefresh({ workspaceVersion: 0, detailRevision: revision })
   return children
 }
 
@@ -1566,28 +1556,7 @@ function completionRequests(t: TestContext, respond: (url: string) => unknown) {
   return sent
 }
 
-test("the rail tick asks to complete the Task as done", async () => {
-  const dom = installDOM()
-  const host = document.createElement("div")
-  document.body.append(host)
-  const root = createRoot(host)
-  const task: Task = { ...projectedTask(), origin: "ABITA_AI" }
-  const intents: WorkspaceProjectionIntent[] = []
-  try {
-    await act(async () => root.render(
-      <SidebarProvider>
-        <WorkspaceRail projection={projectedWorkspace(task)} onIntent={(intent) => intents.push(intent)} />
-      </SidebarProvider>,
-    ))
-    await act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="Complete Task: ${task.title}"]`)!.click())
-    assert.deepEqual(intents, [{ type: "complete-task", task, reason: "DONE" }])
-  } finally {
-    await act(async () => root.unmount())
-    dom.window.close()
-  }
-})
-
-test("the rail completion request carries the reason it was given", async (t) => {
+test("a completion request carries the reason it was given", async (t) => {
   const task = projectedTask()
   const sent = completionRequests(t, () => ({ ...task, state: "COMPLETED", version: 2 }))
   const authority = createWorkspaceAuthorityAdapter()
@@ -1599,45 +1568,6 @@ test("the rail completion request carries the reason it was given", async (t) =>
     { expectedVersion: task.version, reason: "NOT_NEEDED" },
     { expectedVersion: task.version, reason: "UNREACHABLE" },
   ])
-})
-
-test("a group completes one request or all of them as done", async (t) => {
-  const dom = installDOM()
-  const host = document.createElement("div")
-  document.body.append(host)
-  const root = createRoot(host)
-  const members: Task[] = ["first", "second", "third"].map((name) => ({
-    ...projectedTask(), id: `task-${name}`, title: `Synthetic ${name} request`, origin: "ABITA_AI", category: "optical",
-  }))
-  const group: Task = { ...members[0], groupMembers: members }
-  const sent = completionRequests(t, (path) => ({ ...members[0], id: path.split("/")[3], state: "COMPLETED", version: 2 }))
-  const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === name)
-  try {
-    await act(async () => root.render(
-      <DataProvider>
-        <TaskGroupContext group={group} taskRows={[group]} onSelect={() => {}} onUpdated={() => {}} />
-      </DataProvider>,
-    ))
-    await act(async () => button("Complete")!.click())
-    await waitFor(() => sent.length === 1)
-    await act(async () => root.render(
-      <DataProvider>
-        <TaskGroupContext group={group} taskRows={[{ ...members[1], groupMembers: members.slice(1) }]} onSelect={() => {}} onUpdated={() => {}} />
-      </DataProvider>,
-    ))
-    await act(async () => button("Complete all 2 requests")!.click())
-    await waitFor(() => sent.length === 2)
-    assert.deepEqual(sent, [
-      { path: "/v1/tasks/task-first/complete", body: { expectedVersion: 1, reason: "DONE" } },
-      {
-        path: "/v1/tasks/task-second/complete-group",
-        body: { reason: "DONE", members: [{ id: "task-second", expectedVersion: 1 }, { id: "task-third", expectedVersion: 1 }] },
-      },
-    ])
-  } finally {
-    await act(async () => root.unmount())
-    dom.window.close()
-  }
 })
 
 test("a voicemail played to the end completes its Task as done", async (t) => {

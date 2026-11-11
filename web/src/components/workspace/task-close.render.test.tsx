@@ -5,7 +5,6 @@ import { JSDOM } from "jsdom"
 
 import type { StaffTaskCloseReason, Task } from "../../lib/api/generated/types.gen.ts"
 import { clearAccessToken } from "../../lib/auth-client.ts"
-import { projectedWorkspace } from "./workspace-projection.fixture.ts"
 
 const task: Task = {
   id: "task-1",
@@ -25,47 +24,7 @@ const task: Task = {
   interactions: [],
 }
 
-test("the rail tick completes as done after the row, and the menu after it sends the chosen reason", async (t) => {
-  const page = await harness(t)
-  const { SidebarProvider } = await import("../ui/sidebar.tsx")
-  const { TaskRow } = await import("./workspace-rail-task-row.tsx")
-  const reasons: StaffTaskCloseReason[] = []
-  await page.render(
-    <SidebarProvider>
-      <TaskRow
-        task={task}
-        active={false}
-        onSelect={() => {}}
-        completionDisabled={false}
-        completionPending={false}
-        completionError=""
-        onComplete={(reason) => reasons.push(reason)}
-      />
-    </SidebarProvider>,
-  )
-  const controls = [...page.host.querySelectorAll<HTMLButtonElement>("[data-testid='task-row'] button")]
-  assert.deepEqual(
-    controls.map((control) => control.getAttribute("aria-label")),
-    [task.title, `Complete Task: ${task.title}`, `Close Task as: ${task.title}`],
-    "Tab moves from the row to the tick, then to the menu",
-  )
-  await act(async () => controls[1].focus())
-  const tickTooltip = () =>
-    [...document.querySelectorAll<HTMLElement>("[data-slot='tooltip-content']")]
-      .find((popup) => popup.textContent === "Complete Task")
-  await page.waitFor(() => tickTooltip() !== undefined)
-  assert.equal(
-    tickTooltip()!.getAttribute("data-side"),
-    "top",
-    "the tick's tooltip opens above it, clear of the menu trigger on its right",
-  )
-  await act(async () => controls[1].click())
-  await page.choose(controls[2], "Not needed")
-  await page.choose(controls[2], "Couldn't reach")
-  assert.deepEqual(reasons, ["DONE", "NOT_NEEDED", "UNREACHABLE"])
-})
-
-test("the Task panel menu sends the chosen reason and is offered only where the rail offers the tick", async (t) => {
+test("the Task panel menu sends the chosen reason and is offered only for Tasks staff close by hand", async (t) => {
   const page = await harness(t)
   const { DataProvider } = await import("../../lib/data/provider.tsx")
   const { TaskCallContext } = await import("./task-call-context.tsx")
@@ -114,7 +73,7 @@ test("the patient panel menu sends the chosen reason for its own Task", async (t
   await page.render(
     <PatientTasksPanelView
       summary={{ status: "ready", data: { names: [], openTasks: [task, other], openTaskCount: 2, closedToday: [] }, refreshing: false }}
-      completion={{ pendingTaskID: "", errorTaskID: "", error: "" }}
+      completion={{ pending: [], errors: {} }}
       reopening=""
       onComplete={(closing, reason) => closed.push([closing.id, reason])}
       onOpen={() => {}}
@@ -132,10 +91,10 @@ test("the patient panel menu sends the chosen reason for its own Task", async (t
 test("a completed text row keeps the patient's preview and names why it closed in the hover details", async (t) => {
   const page = await harness(t)
   const { SidebarProvider } = await import("../ui/sidebar.tsx")
-  const { TaskRow } = await import("./workspace-rail-task-row.tsx")
+  const { CompletedTaskRow } = await import("./workspace-rail-patient-row.tsx")
   await page.render(
     <SidebarProvider>
-      <TaskRow
+      <CompletedTaskRow
         task={{
           ...task,
           origin: "INBOUND_MESSAGE_REVIEW",
@@ -147,15 +106,12 @@ test("a completed text row keeps the patient's preview and names why it closed i
           version: 2,
         }}
         active={false}
+        refused={false}
         onSelect={() => {}}
-        completionDisabled
-        completionPending={false}
-        completionError=""
-        onComplete={() => {}}
       />
     </SidebarProvider>,
   )
-  const row = page.host.querySelector<HTMLButtonElement>("[data-testid='task-row'] button")!
+  const row = page.host.querySelector<HTMLButtonElement>("[data-testid='completed-task-row'] button")!
   assert.match(row.textContent ?? "", /Can I move my appointment\?/)
   assert.doesNotMatch(row.textContent ?? "", /Not needed/)
   await act(async () => row.focus())
@@ -164,55 +120,6 @@ test("a completed text row keeps the patient's preview and names why it closed i
     document.querySelector("[data-testid='rail-hover-details']")!.textContent ?? "",
     /Not needed, by ines@abita\.test/,
   )
-})
-
-test("focus follows the rail when a completed Task's row leaves", async (t) => {
-  const page = await harness(t)
-  const { SidebarProvider } = await import("../ui/sidebar.tsx")
-  const { WorkspaceRail } = await import("./workspace-rail.tsx")
-  const [first, second, third]: Task[] = ["first", "second", "third"].map((name) => ({
-    ...task, id: `task-${name}`, title: `Synthetic ${name} Task`,
-  }))
-  const base = projectedWorkspace(first)
-  const render = (items: Task[], pendingTaskID = "") => page.render(
-    <SidebarProvider>
-      <WorkspaceRail
-        projection={{
-          ...base,
-          tasks: { ...base.tasks, items },
-          completion: { ...base.completion, pendingTaskID },
-        }}
-        onIntent={() => {}}
-      />
-    </SidebarProvider>,
-  )
-  const tick = (shown: Task) =>
-    page.host.querySelector<HTMLButtonElement>(`button[aria-label="Complete Task: ${shown.title}"]`)!
-  const search = () => page.host.querySelector<HTMLInputElement>("input")!
-  const focused = () => document.activeElement?.getAttribute("aria-label")
-  const complete = async (closed: Task, before: Task[], after: Task[]) => {
-    await act(async () => {
-      tick(closed).focus()
-      tick(closed).click()
-    })
-    await render(before, closed.id)
-    await render(after)
-  }
-
-  await render([first, second, third])
-  await complete(second, [first, second, third], [first, third])
-  assert.equal(focused(), third.title, "the next row takes focus")
-  await complete(third, [first, third], [first])
-  assert.equal(focused(), first.title, "the previous row takes focus after the last row")
-  await complete(first, [first], [])
-  assert.equal(document.activeElement, search(), "the search field takes focus when no Task is left")
-
-  await render([first, second])
-  await act(async () => tick(first).click())
-  await render([first, second], first.id)
-  await act(async () => search().focus())
-  await render([second])
-  assert.equal(document.activeElement, search(), "focus the user moved elsewhere is left alone")
 })
 
 async function harness(t: TestContext) {

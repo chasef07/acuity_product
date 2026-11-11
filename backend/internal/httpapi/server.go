@@ -1498,6 +1498,39 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) QueryPatientWork(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.portalIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.PatientWorkQueryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	page, err := server.workspace.QueryPatientWork(ctx, workspace.QueryPatientWorkCommand{
+		Identity:   identity,
+		PracticeID: body.PracticeId.String(),
+		LocationID: uuidString(body.LocationId),
+		Search:     stringValue(body.Search),
+		Scope:      workspace.PatientWorkScope(stringValue((*string)(body.Scope))),
+		Filter:     workspace.PatientWorkFilter(stringValue((*string)(body.Filter))),
+		Cursor:     stringValue(body.Cursor),
+		Limit:      intValue(body.Limit),
+	})
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	response, err := patientWorkPageResponse(page)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) ReadTask(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -2917,6 +2950,9 @@ func taskResponse(task work.Task) (api.Task, error) {
 	if task.Preview != "" {
 		response.Preview = &task.Preview
 	}
+	if task.VoicemailDurationSeconds > 0 {
+		response.VoicemailDurationSeconds = &task.VoicemailDurationSeconds
+	}
 	if task.SourceMessage != "" {
 		response.SourceMessage = &task.SourceMessage
 	}
@@ -3245,6 +3281,42 @@ func taskResponses(tasks []work.Task) ([]api.Task, error) {
 		responses = append(responses, response)
 	}
 	return responses, nil
+}
+
+func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPage, error) {
+	response := api.PatientWorkPage{
+		Rows: make([]api.PatientWorkRow, 0, len(page.Rows)),
+		Counts: api.PatientWorkCounts{
+			All:          page.Counts.All,
+			FollowUp:     page.Counts.FollowUp,
+			CallBack:     page.Counts.CallBack,
+			Texts:        page.Counts.Texts,
+			Appointments: page.Counts.Appointments,
+			Unowned:      page.Counts.Unowned,
+		},
+		Totals: api.PatientWorkTotals{
+			OpenTasks:            page.Totals.OpenTasks,
+			Patients:             page.Totals.Patients,
+			PatientsOutsideScope: page.Totals.PatientsOutsideScope,
+		},
+		NextCursor: page.NextCursor,
+	}
+	for _, row := range page.Rows {
+		top, err := taskResponse(row.Top)
+		if err != nil {
+			return api.PatientWorkPage{}, err
+		}
+		response.Rows = append(response.Rows, api.PatientWorkRow{
+			Phone:        row.Phone,
+			DisplayName:  row.DisplayName,
+			OpenCount:    row.OpenCount,
+			HighPriority: row.HighPriority,
+			HasUnowned:   row.HasUnowned,
+			ActivityAt:   row.ActivityAt,
+			Top:          top,
+		})
+	}
+	return response, nil
 }
 
 func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {

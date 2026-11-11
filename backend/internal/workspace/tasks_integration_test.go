@@ -37,6 +37,11 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 				Email:         "staff@workspace-queue.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
+			}, {
+				Key:           "workspace-queue-colleague",
+				Email:         "colleague@workspace-queue.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
 			}},
 		}},
 	})
@@ -49,6 +54,11 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		EmailVerified: true,
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
+	testaccess.Activate(t, accessModule, access.Identity{
+		Subject:       "workspace-queue-colleague-subject",
+		Email:         "colleague@workspace-queue.test",
+		EmailVerified: true,
+	})
 	workModule := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
 	service := access.ServiceIdentity{
 		Subject:       "workspace-queue-service",
