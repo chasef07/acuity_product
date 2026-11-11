@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test"
 
-import { patientRow, railFilter, railScope, signInAs } from "./support"
+import { patientRow, railFilter, railScope, showPatientTask, signInAs } from "./support"
 
 const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
@@ -67,7 +67,8 @@ test("appointment verification stays open until shared completion and can be reo
   await page.reload()
   const row = page.locator(`[data-task-id="${task.id}"]`)
   await expect(row).toBeVisible()
-  await row.getByRole("button").first().click()
+  await showPatientTask(page, "+17275550188")
+  await expect(page.getByRole("button", { name: "Verify & next", exact: true })).toBeVisible()
   await railFilter(page, "appointments").click()
   await expect(railFilter(page, "appointments")).toHaveAttribute("aria-pressed", "true")
   await expect(row).toBeVisible()
@@ -77,7 +78,7 @@ test("appointment verification stays open until shared completion and can be reo
     await signInAs(second, "selected@abita.test", "Second Synthetic Staff")
     const secondRow = second.locator(`[data-task-id="${task.id}"]`)
     await expect(secondRow).toBeVisible()
-    await secondRow.getByRole("button").first().click()
+    await showPatientTask(second, "+17275550188")
     await railFilter(second, "appointments").click()
     await expect(secondRow).toBeVisible()
     await page.getByRole("button", { name: "Verify & next", exact: true }).click()

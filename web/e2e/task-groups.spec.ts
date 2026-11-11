@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { patientRow, signInAs } from "./support"
+import { patientRow, showPatientTask, signInAs } from "./support"
 
 const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
 
@@ -26,7 +26,7 @@ test("one patient row gathers a caller's requests and empties as staff close the
   await expect(row.getByTestId("patient-row-name")).toHaveText("(202) 555-0148")
   await expect(count).toHaveText("3 open")
   await expect(row.getByTestId("patient-row-reason")).toHaveText("Group request medication")
-  await row.getByRole("button").click()
+  await showPatientTask(page, "+12025550148")
   const panel = page.getByRole("complementary", { name: "Task context" })
   await expect(panel.getByRole("heading", { name: "Group request medication", exact: true })).toBeVisible()
   await expect(panel.getByTestId("patient-task-row")).toHaveCount(2)

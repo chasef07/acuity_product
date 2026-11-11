@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { patientRow, railFilter, railScope, signInAs } from "./support"
+import { patientRow, railFilter, railScope, showPatientTask, signInAs } from "./support"
 
 const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
 const fixtureURL = process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
@@ -165,7 +165,7 @@ test("the Appointments filter lists Spring Hill reviews only and they do not cou
   await expect(railFilter(page, "unowned")).toHaveCount(0)
   await expect(page.getByTestId("patient-row")).toHaveCount(1)
   await expect(caller.getByTestId("patient-row-count")).toHaveCount(0)
-  await caller.getByRole("button").click()
+  await showPatientTask(page, "+12025550280")
   await expect(page.getByRole("heading", { name: "(202) 555-0280", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "Verify & next", exact: true })).toBeVisible()
   await appointments.click()
