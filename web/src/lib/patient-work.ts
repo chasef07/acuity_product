@@ -4,6 +4,7 @@ import type {
   PatientWorkRow,
   PatientWorkScope,
   PatientWorkTotals,
+  Task,
 } from "./api/generated/types.gen.ts"
 import {
   formatClock,
@@ -23,13 +24,21 @@ const filterShown: Record<
   unowned: (counts) => counts.unowned > 0,
 }
 
+export function patientWorkFilterShown(
+  filter: PatientWorkFilter,
+  counts: PatientWorkCounts,
+  appointmentsOffered: boolean,
+) {
+  return filterShown[filter](counts, appointmentsOffered)
+}
+
 export function shownPatientWorkFilters(
   counts: PatientWorkCounts,
   active: PatientWorkFilter,
   appointmentsOffered: boolean,
 ) {
   return labelOptions(patientWorkFilterLabels)
-    .filter(({ value }) => value === active || filterShown[value](counts, appointmentsOffered))
+    .filter(({ value }) => value === active || patientWorkFilterShown(value, counts, appointmentsOffered))
     .map((option) => ({ ...option, count: counts[option.value] }))
 }
 
@@ -73,4 +82,29 @@ export function patientWorkFooter(totals: PatientWorkTotals, scope: PatientWorkS
   return scope === "mine" && totals.patientsOutsideScope > 0
     ? `${open} · ${totals.patientsOutsideScope} more under Everyone`
     : open
+}
+
+export function nextAfterClose({
+  before,
+  after,
+  phone,
+  closedTaskIDs,
+}: {
+  before: readonly PatientWorkRow[]
+  after: readonly PatientWorkRow[]
+  phone: string
+  closedTaskIDs: readonly string[]
+}): Task | undefined {
+  const open = after.filter((row) => !closedTaskIDs.includes(row.top.id))
+  const samePatient = open.find((row) => row.phone === phone)
+  if (samePatient) return samePatient.top
+  const index = before.findIndex((row) => row.phone === phone)
+  const neighbours = index < 0
+    ? []
+    : [...before.slice(index + 1), ...before.slice(0, index).reverse()]
+  for (const neighbour of neighbours) {
+    const listed = open.find((row) => row.phone === neighbour.phone)
+    if (listed) return listed.top
+  }
+  return open[0]?.top
 }

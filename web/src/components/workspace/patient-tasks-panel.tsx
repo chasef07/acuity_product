@@ -41,10 +41,11 @@ type PatientTasksPanelProps = {
   currentTaskID?: string
   otherThan?: readonly Pick<Task, "id" | "state">[]
   callTaskID?: string
-  completion: { pendingTaskID: string; errorTaskID: string; error: string }
+  completion: { pending: readonly string[]; errors: Readonly<Record<string, string>> }
   className?: string
   onComplete: (task: Task, reason: StaffTaskCloseReason) => void
   onOpen?: (task: Task) => void
+  opensReviews?: boolean
 }
 
 export function PatientTasksPanel({
@@ -105,6 +106,7 @@ export function PatientTasksPanelView({
   className,
   onComplete,
   onOpen,
+  opensReviews = false,
   onReopen,
   onRetry,
 }: PatientTasksPanelProps & {
@@ -138,7 +140,7 @@ export function PatientTasksPanelView({
     const closed = closing.current
     if (!closed || !open) return
     if (open.some((task) => task.id === closed.taskID)) {
-      if (!completion.pendingTaskID) closing.current = undefined
+      if (!completion.pending.includes(closed.taskID)) closing.current = undefined
       return
     }
     closing.current = undefined
@@ -146,7 +148,7 @@ export function PatientTasksPanelView({
     const next = open[closed.index] ?? open.at(-1)
     const row = next && section.current?.querySelector<HTMLElement>(`[data-patient-task-id="${next.id}"]`)
     ;(row ?? section.current)?.focus()
-  }, [open, completion.pendingTaskID])
+  }, [open, completion.pending])
 
   if (!loaded || !listed || !open) {
     return (
@@ -213,11 +215,10 @@ export function PatientTasksPanelView({
               current={task.id === currentTaskID}
               thisCall={task.id === callTaskID}
               callerName={shared ? task.callerName : undefined}
-              pending={completion.pendingTaskID === task.id}
-              disabled={Boolean(completion.pendingTaskID)}
-              error={completion.errorTaskID === task.id ? completion.error : ""}
+              pending={completion.pending.includes(task.id)}
+              error={completion.errors[task.id] ?? ""}
               onComplete={(reason) => complete(task, reason)}
-              onOpen={onOpen && task.origin !== "INBOUND_MESSAGE_REVIEW" ? () => onOpen(task) : undefined}
+              onOpen={onOpen && (offersTaskCloseMenu(task) || opensReviews) ? () => onOpen(task) : undefined}
             />
           ))}
         </ul>
@@ -324,7 +325,6 @@ function OpenTaskRow({
   thisCall,
   callerName,
   pending,
-  disabled,
   error,
   onComplete,
   onOpen,
@@ -334,7 +334,6 @@ function OpenTaskRow({
   thisCall: boolean
   callerName?: string
   pending: boolean
-  disabled: boolean
   error: string
   onComplete: (reason: StaffTaskCloseReason) => void
   onOpen?: () => void
@@ -369,7 +368,7 @@ function OpenTaskRow({
                   className="mt-0.5 rounded-full hover:text-success"
                   aria-label={`Mark done: ${task.title}`}
                   aria-busy={pending || undefined}
-                  disabled={disabled}
+                  disabled={pending}
                   onClick={() => onComplete("DONE")}
                 />
               }
@@ -383,7 +382,7 @@ function OpenTaskRow({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-baseline gap-2">
-            {onOpen ? (
+            {onOpen && closable ? (
               <button
                 type="button"
                 aria-label={`Open Task: ${task.title}`}
@@ -425,13 +424,23 @@ function OpenTaskRow({
                 size="icon-xs"
                 variant="ghost"
                 aria-label={`Close as: ${task.title}`}
-                disabled={disabled}
+                disabled={pending}
               />
             }
             onClose={onComplete}
           >
             <EllipsisIcon aria-hidden="true" />
           </TaskCloseMenu>
+        )}
+        {!closable && onOpen && !current && (
+          <Button
+            size="xs"
+            variant="outline"
+            aria-label={`Open Task: ${task.title}`}
+            onClick={onOpen}
+          >
+            Open
+          </Button>
         )}
       </div>
       {error && (

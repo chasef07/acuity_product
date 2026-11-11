@@ -71,7 +71,7 @@ export function projectedWorkspace(task: Task): WorkspaceProjectionState {
       contextPanelOpen: true,
     },
     detailRevision: 0,
-    completion: { pendingTaskID: "", errorTaskID: "", error: "" },
+    completion: { pending: [], errors: {} },
     rail: {
       scope: "mine",
       filter: "all",

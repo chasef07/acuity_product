@@ -3,6 +3,7 @@ import test from "node:test"
 
 import type { PatientWorkRow, Task } from "./api/generated/types.gen.ts"
 import {
+  nextAfterClose,
   offersAppointmentChecks,
   patientRowName,
   patientRowReason,
@@ -94,4 +95,28 @@ test("the footer reconciles My Tasks with Everyone", () => {
   assert.equal(patientWorkFooter(totals, "mine"), "14 open for 9 patients · 2 more under Everyone")
   assert.equal(patientWorkFooter(totals, "everyone"), "14 open for 9 patients")
   assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }, "mine"), "1 open for 1 patient")
+})
+
+test("after a Task is closed the next selection stays with the patient, then the neighbouring row", () => {
+  const phones = { a: "+13055550101", b: "+13055550102", c: "+13055550103", d: "+13055550104" }
+  const patient = (name: keyof typeof phones, taskID = `${name}-1`) =>
+    row({ phone: phones[name], top: top({ id: taskID, phone: phones[name] }) })
+  const [a, b, c, d] = [patient("a"), patient("b"), patient("c"), patient("d")]
+  for (const [label, before, after, closed, want] of [
+    ["the patient still has an open item", [a, b, c], [a, patient("b", "b-2"), c], ["b-1"], "b-2"],
+    ["the patient is done, a row followed", [a, b, c], [a, c], ["b-1"], "c-1"],
+    ["the following row is gone too", [a, b, c, d], [a, d], ["b-1"], "d-1"],
+    ["the patient was last in the list", [a, b], [a], ["b-1"], "a-1"],
+    ["nothing follows or precedes that is still listed", [a, b, c], [d], ["b-1"], "d-1"],
+    ["the list is now empty", [b], [], ["b-1"], undefined],
+    ["the refreshed list still shows the closed Task", [a, b, c], [a, b, c], ["b-1"], "c-1"],
+    ["two of the patient's Tasks closed at once", [a, b, c], [a, patient("b", "b-2"), c], ["b-1", "b-2"], "c-1"],
+    ["the patient was not in the list", [a, c], [a, c], ["b-1"], "a-1"],
+  ] as const) {
+    assert.equal(
+      nextAfterClose({ before, after, phone: phones.b, closedTaskIDs: closed })?.id,
+      want,
+      label,
+    )
+  }
 })

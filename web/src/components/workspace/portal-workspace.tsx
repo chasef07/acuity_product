@@ -59,6 +59,7 @@ import { authClient } from "@/lib/auth-client"
 import { workspaceScopeForCall } from "@/lib/calling/workspace-scope"
 import { cn } from "@/lib/utils"
 import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
+import { nextAfterClose } from "@/lib/patient-work"
 import { useLiveRefresh } from "@/lib/data/queries"
 import {
   parseWorkspaceLocation,
@@ -323,7 +324,12 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
   const contextPanelOpen = state.selection.contextPanelOpen && !(textTask && contextView === "task")
   const view = state.selection.view
   const nextTask = (after: Task) =>
-    state.patients.items.find((row) => row.top.id !== after.id)?.top
+    nextAfterClose({
+      before: state.patients.items,
+      after: state.patients.items,
+      phone: after.phone,
+      closedTaskIDs: [after.id],
+    })
 
   return callingShell((activeCall, callingOccupied) => {
     const sendIntent = (intent: WorkspaceProjectionIntent) => {
@@ -356,8 +362,9 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
         callTaskID={placement.callTaskID}
         completion={state.completion}
         className={placement.className}
-        onComplete={(task, reason) => sendIntent({ type: "complete-task", task, reason })}
+        onComplete={(task, reason) => sendIntent({ type: "complete-task", task, reason, advance: !activeCall })}
         onOpen={placement.titlesOpenTasks ? (task) => sendIntent({ type: "select-task", task }) : undefined}
+        opensReviews={!activeCall}
         onTaskUpdated={(task) => void projection.dispatch({ type: "task-committed", task })}
       />
     )

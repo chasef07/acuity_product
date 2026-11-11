@@ -18,6 +18,11 @@ import type {
 } from "./api/generated/types.gen.ts"
 import type { PortalFailure } from "./clients/portal-request.ts"
 import { appendUniqueByID } from "./workspace-ordering.ts"
+import {
+  nextAfterClose,
+  offersAppointmentChecks,
+  patientWorkFilterShown,
+} from "./patient-work.ts"
 import { canViewPracticeAnalytics } from "./booking-analytics.ts"
 import {
   selectedWorkspaceLocation,
@@ -109,9 +114,8 @@ export type WorkspaceProjectionState = {
   }
   detailRevision: number
   completion: {
-    pendingTaskID: string
-    errorTaskID: string
-    error: string
+    pending: readonly string[]
+    errors: Readonly<Record<string, string>>
   }
   rail: WorkspaceRailState
 }
@@ -237,7 +241,7 @@ export type WorkspaceProjectionIntent =
     }
   | { type: "set-search"; value: string }
   | { type: "submit-search" }
-  | { type: "complete-task"; task: Task; reason: StaffTaskCloseReason }
+  | { type: "complete-task"; task: Task; reason: StaffTaskCloseReason; advance?: boolean }
   | { type: "select-task"; task: Task; rememberForCall?: boolean }
   | { type: "select-analytics" }
   | { type: "select-operator-analytics" }
@@ -294,6 +298,7 @@ export function createWorkspaceProjection({
   let detailGeneration = 0
   let returnTaskID = ""
   let focusedCallID = ""
+  let firstLoad = true
   let railScrollTop = 0
   let navigationSearch = ""
   let navigationGeneration = 0
@@ -347,6 +352,7 @@ export function createWorkspaceProjection({
 
   function obsoleteScope() {
     scopeGeneration += 1
+    firstLoad = true
     scopeRequests.abort()
     scopeRequests = new AbortController()
     delete windowLoads.patients
@@ -422,16 +428,17 @@ export function createWorkspaceProjection({
     const current = state
     const selectedTaskID = current.selection.task?.id
     const selectedAIInteractionID = current.selection.aiInteractionID
+    const patientDepth = windowDepth("patients", current.patients.items.length)
     const [
       snapshotResult,
-      patientResult,
+      requestedPatients,
       completedResult,
       selectedTaskResult,
       selectedAIResult,
     ] =
       await Promise.all([
         authority.workspace(token, scope, signal),
-        loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, current.rail), windowDepth("patients", current.patients.items.length), signal),
+        loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, current.rail), patientDepth, signal),
         loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), windowDepth("completedTasks", current.completedTasks.items.length), signal),
         selectedTaskID
           ? authority.task(token, selectedTaskID, signal)
@@ -441,6 +448,18 @@ export function createWorkspaceProjection({
           : Promise.resolve(undefined),
       ])
 
+    const storedFilterHidden = firstLoad && !current.search.applied && requestedPatients.kind === "success" &&
+      !patientWorkFilterShown(
+        current.rail.filter,
+        requestedPatients.data.counts,
+        offersAppointmentChecks(
+          current.discovery?.practices.find((practice) => practice.id === scope.practiceID)?.locations ?? [],
+          current.scope.locationScopeID,
+        ),
+      )
+    const patientResult = storedFilterHidden
+      ? await loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, { ...current.rail, filter: "all" }), patientDepth, signal)
+      : requestedPatients
     if (
       stopped || signal.aborted || generation !== scopeGeneration ||
       state.scope.practiceID !== scope.practiceID ||
@@ -488,6 +507,13 @@ export function createWorkspaceProjection({
         ) {
           return
         }
+        const selectsFirstPatient = firstLoad
+        if (patientGeneration === queryGenerations.patients && patientResult.kind === "success") {
+          firstLoad = false
+          if (storedFilterHidden && state.rail.filter === current.rail.filter) {
+            updateRail((rail) => ({ ...rail, filter: "all" }))
+          }
+        }
         patch((currentState) => {
           const patientWindowCurrent =
             patientGeneration === queryGenerations.patients
@@ -534,7 +560,7 @@ export function createWorkspaceProjection({
                 taskError: selectedTaskDetailError,
               }
             }
-          } else if (patientWindowCurrent &&
+          } else if (patientWindowCurrent && selectsFirstPatient &&
             !currentState.selection.task &&
             currentState.selection.view === "none" &&
             patients[0]
@@ -808,7 +834,7 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "complete-task") {
-      await completeTaskIntent(intent.task, intent.reason)
+      await completeTaskIntent(intent.task, intent.reason, intent.advance === true)
       return
     }
     if (intent.type === "select-task") {
@@ -892,12 +918,12 @@ export function createWorkspaceProjection({
       const selectedID = state.selection.task?.id
       const generation = scopeGeneration
       const ownsSelection = selectedID === intent.task.id
+      const before = state.patients.items
       queryGenerations.patients += 1
       projectTaskIntent(intent.task, false)
       await realtimeController.refresh()
       if (intent.advance && intent.task.state === "COMPLETED" && ownsSelection && generation === scopeGeneration && state.selection.task?.id === selectedID && !state.patients.error) {
-        const next = openTasks().find((task) => task.id !== intent.task.id)
-        if (next) selectEngagement(taskEngagement(next), next)
+        advanceAfterClose(before, intent.task.phone, [intent.task.id])
       }
       return
     }
@@ -953,7 +979,6 @@ export function createWorkspaceProjection({
         filter: intent.filter ?? rail.filter,
       }))
       await refreshTaskWindows(state.search.applied)
-      selectFirstVisibleTask()
       return
     }
     if (intent.type === "remember-rail-scroll") {
@@ -1168,12 +1193,16 @@ export function createWorkspaceProjection({
     await refreshTaskWindows(resolved.value)
   }
 
-  async function completeTaskIntent(task: Task, reason: StaffTaskCloseReason) {
-    if (state.completion.pendingTaskID || task.state !== "OPEN") return
+  async function completeTaskIntent(task: Task, reason: StaffTaskCloseReason, advance: boolean) {
+    if (state.completion.pending.includes(task.id) || task.state !== "OPEN") return
     const generation = scopeGeneration
+    const before = state.patients.items
     patch((current) => ({
       ...current,
-      completion: { pendingTaskID: task.id, errorTaskID: "", error: "" },
+      completion: {
+        pending: [...current.completion.pending, task.id],
+        errors: withoutKey(current.completion.errors, task.id),
+      },
     }))
     const result = await authenticatedRequest((token, signal) =>
       authority.completeTask(token, task, reason, signal),
@@ -1197,21 +1226,50 @@ export function createWorkspaceProjection({
     if (generation !== scopeGeneration || stopped || state.loadState !== "ready") return
     patch((current) => ({
       ...current,
-      completion: { pendingTaskID: "", errorTaskID: "", error: "" },
+      completion: {
+        ...current.completion,
+        pending: current.completion.pending.filter((id) => id !== task.id),
+      },
     }))
+    if (advance && state.selection.task?.id === task.id && !state.patients.error) {
+      advanceAfterClose(before, task.phone, [task.id])
+    }
   }
 
   function openTasks() {
     return state.patients.items.map((row) => row.top)
   }
 
-  function selectFirstVisibleTask() {
-    if (state.loadState !== "ready" || state.patients.error || state.selection.contextView === "call") return
-    const selectedPhone = state.selection.task?.phone
-    if (state.patients.items.some((row) => row.phone === selectedPhone)) return
-    const first = state.patients.items[0]?.top
-    if (first) selectEngagement(taskEngagement(first), first)
-    else patch((current) => ({ ...current, selection: { ...current.selection, task: undefined, contextPanelOpen: false } }))
+  function advanceAfterClose(
+    before: readonly PatientWorkRow[],
+    phone: string,
+    closedTaskIDs: readonly string[],
+  ) {
+    const next = nextAfterClose({ before, after: state.patients.items, phone, closedTaskIDs })
+    if (next && next.phone === phone && state.selection.contextView === "patient-tasks") {
+      patch((current) => ({
+        ...current,
+        selection: { ...current.selection, task: next, taskError: "", engagement: taskEngagement(next) },
+      }))
+      return
+    }
+    if (next) {
+      selectEngagement(taskEngagement(next), next)
+      return
+    }
+    patch((current) => ({
+      ...current,
+      selection: {
+        ...current.selection,
+        task: undefined,
+        taskError: "",
+        engagement: undefined,
+        historicalCall: undefined,
+        view: "none",
+        contextView: "task",
+        contextPanelOpen: false,
+      },
+    }))
   }
 
   function selectEngagement(engagement: EngagementSummary, task: Task) {
@@ -1367,7 +1425,10 @@ export function createWorkspaceProjection({
 
   async function handleDisposition(result: CallingDispositionResult) {
     focusedCallID = ""
-    void realtimeController.refresh()
+    const before = state.patients.items
+    const phone = state.selection.engagement?.phone
+    const closedTaskIDs = [...(result.closedTaskIds ?? []), ...(result.alreadyClosedTaskIds ?? [])]
+    const refreshed = realtimeController.refresh()
     const generation = scopeGeneration
     if (result.taskId) {
       const taskResult = await authenticatedRequest((token, signal) =>
@@ -1380,9 +1441,18 @@ export function createWorkspaceProjection({
         return
       }
     }
+    const closedByWrapUp = closedTaskIDs.length > 0
+    if (closedByWrapUp) {
+      await refreshed
+      if (generation !== scopeGeneration || stopped) return
+    }
     const previous = [...openTasks(), ...state.completedTasks.items].find(
-      (task) => task.id === returnTaskID,
+      (task) => task.id === returnTaskID && !closedTaskIDs.includes(task.id),
     )
+    if (!previous && phone && closedByWrapUp && !state.patients.error) {
+      advanceAfterClose(before, phone, closedTaskIDs)
+      return
+    }
     const nextTask = previous ?? openTasks()[0]
     if (nextTask) {
       selectEngagement(taskEngagement(nextTask), nextTask)
@@ -1397,7 +1467,10 @@ export function createWorkspaceProjection({
   function setCompletionFailure(taskID: string, error: string) {
     patch((current) => ({
       ...current,
-      completion: { pendingTaskID: "", errorTaskID: taskID, error },
+      completion: {
+        pending: current.completion.pending.filter((id) => id !== taskID),
+        errors: { ...current.completion.errors, [taskID]: error },
+      },
       detailRevision: current.detailRevision + 1,
     }))
   }
@@ -1622,6 +1695,10 @@ function restoreRailPreferences(
   }
 }
 
+function withoutKey(record: Readonly<Record<string, string>>, key: string) {
+  return Object.fromEntries(Object.entries(record).filter(([name]) => name !== key))
+}
+
 function settledTaskRead(result: WorkspaceAuthorityResult<Task>) {
   return result.kind === "success" || result.kind === "missing" || result.kind === "unauthorized"
 }
@@ -1751,7 +1828,7 @@ function initialState(): WorkspaceProjectionState {
       contextPanelOpen: false,
     },
     detailRevision: 0,
-    completion: { pendingTaskID: "", errorTaskID: "", error: "" },
+    completion: { pending: [], errors: {} },
     rail: emptyRailState(),
   }
 }

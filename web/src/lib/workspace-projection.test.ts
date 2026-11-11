@@ -406,7 +406,7 @@ test("confirmed completion moves a Task to shared completed history and preserve
   assert.deepEqual(state.completedTasks.items, [completedTask])
   assert.deepEqual(state.selection.task, completedTask)
   assert.equal(state.selection.contextPanelOpen, true)
-  assert.equal(state.completion.pendingTaskID, "")
+  assert.deepEqual(state.completion.pending, [])
   assert.equal(realtime.refreshes, 1)
   projection.stop()
 })
@@ -438,16 +438,14 @@ test("temporary token failure keeps Task completion retryable without expiring t
 
   const state = projection.getSnapshot()
   assert.equal(state.loadState, "ready")
-  assert.equal(
-    state.completion.error,
-    "Task completion is temporarily unavailable. Retry in a moment.",
-  )
-  assert.equal(state.completion.errorTaskID, openTask.id)
+  assert.deepEqual(state.completion.errors, {
+    [openTask.id]: "Task completion is temporarily unavailable. Retry in a moment.",
+  })
 
   tokenAvailable = true
   await projection.dispatch({ type: "complete-task", task: openTask, reason: "DONE" })
   assert.equal(
-    projection.getSnapshot().completion.error,
+    projection.getSnapshot().completion.errors[openTask.id],
     "This Task could not be completed. Retry from the row or open its details.",
   )
   projection.stop()
@@ -580,7 +578,7 @@ test("changing the scope or the filter reloads the list and the completed shelf 
     assert.deepEqual(completedRequests.map((request) => [request.state, request.responsibility]), [["COMPLETED", responsibility]])
     assert.deepEqual(openTasks(state).map((item) => item.id), [`${scope}-${filter}`])
     assert.deepEqual(state.completedTasks.items.map((item) => item.id), [`${responsibility}-done`])
-    assert.equal(state.selection.task?.id, `${scope}-${filter}`, "the first patient's top Task is selected when the selected patient left the list")
+    assert.equal(state.selection.task?.id, "mine-all", "the patient opened on first load stays selected after it left the list")
   }
   const requestCount = patientRequests.length + completedRequests.length
   await projection.dispatch({ type: "toggle-completed" })
@@ -589,7 +587,7 @@ test("changing the scope or the filter reloads the list and the completed shelf 
   projection.stop()
 })
 
-test("a filter change keeps the selected Task while its patient is still listed", async () => {
+test("a filter or scope change never moves the selection or the panel", async () => {
   const realtime = deterministicRealtime()
   const followUp = task("follow-up", { phone: "+13055550142" })
   const text = task("text", { phone: "+13055550142", origin: "INBOUND_MESSAGE_REVIEW" })
@@ -598,9 +596,10 @@ test("a filter change keeps the selected Task while its patient is still listed"
     authority: {
       ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(14), tasks: taskPage([followUp, text, other]) }),
       patients: async (_token, request) => success(patientPage(
-        request.filter === "texts"
-          ? [patientRow(other), patientRow(text, { openCount: 2 })]
-          : request.filter === "callBack" ? [] : [patientRow(followUp, { openCount: 2 }), patientRow(other)],
+        request.scope === "everyone" ? [patientRow(other)]
+          : request.filter === "texts"
+            ? [patientRow(other), patientRow(text, { openCount: 2 })]
+            : request.filter === "callBack" ? [] : [patientRow(followUp, { openCount: 2 }), patientRow(other)],
       )),
     },
     realtime: realtime.adapter,
@@ -609,11 +608,71 @@ test("a filter change keeps the selected Task while its patient is still listed"
   await projection.start()
   await realtime.reconcile(0)
   await projection.dispatch({ type: "select-task", task: followUp })
-  await projection.dispatch({ type: "set-rail-view", filter: "texts" })
-  assert.equal(projection.getSnapshot().selection.task?.id, followUp.id)
+  await projection.dispatch({ type: "open-patient-tasks" })
+  const reading = projection.getSnapshot().selection
+  for (const intent of [
+    { type: "set-rail-view", filter: "texts" },
+    { type: "set-rail-view", filter: "callBack" },
+    { type: "set-rail-view", scope: "everyone" },
+    { type: "set-rail-view", filter: "all" },
+  ] as const) {
+    await projection.dispatch(intent)
+    await realtime.reconcile(0)
+    assert.deepEqual(projection.getSnapshot().selection, reading, JSON.stringify(intent))
+  }
+  assert.deepEqual(openTasks(projection.getSnapshot()).map((item) => item.id), [other.id], "the list changed while the selection did not")
+  await projection.dispatch({ type: "set-search", value: "other" })
+  await projection.dispatch({ type: "submit-search" })
+  await realtime.reconcile(0)
+  assert.deepEqual(projection.getSnapshot().selection, reading, "a text search")
+  projection.stop()
+})
+
+test("a chip keeps a searched number that has no Task", async () => {
+  const realtime = deterministicRealtime()
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(14), tasks: taskPage([task("open")]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "set-search", value: "(305) 555-0199" })
+  await projection.dispatch({ type: "submit-search" })
+  const searched = projection.getSnapshot().selection
+  assert.equal(searched.engagement?.phone, "+13055550199")
+  assert.equal(searched.task, undefined)
   await projection.dispatch({ type: "set-rail-view", filter: "callBack" })
-  assert.equal(projection.getSnapshot().selection.task, undefined)
-  assert.equal(projection.getSnapshot().selection.contextPanelOpen, false)
+  await projection.dispatch({ type: "set-rail-view", scope: "everyone" })
+  await realtime.reconcile(0)
+  assert.deepEqual(projection.getSnapshot().selection, searched)
+  projection.stop()
+})
+
+test("search and live refreshes never open a patient once the first load has settled", async () => {
+  const realtime = deterministicRealtime()
+  let rows: Task[] = []
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(14), tasks: taskPage([]) }),
+      tasks: async (_token, request) => success(taskPage(request.state === "OPEN" ? rows : [])),
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().selection.view, "none")
+  rows = [task("arrived-later")]
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "set-search", value: "arrived" })
+  await projection.dispatch({ type: "submit-search" })
+  await projection.dispatch({ type: "set-rail-view", scope: "everyone" })
+  await realtime.reconcile(0)
+  const state = projection.getSnapshot()
+  assert.deepEqual(openTasks(state).map((item) => item.id), ["arrived-later"])
+  assert.equal(state.selection.task, undefined)
+  assert.equal(state.selection.view, "none")
   projection.stop()
 })
 
@@ -1142,7 +1201,7 @@ test("completion waits for commitment and failed refresh retains rows with a vis
   await projection.start()
   await realtime.reconcile(0)
   const pending = projection.dispatch({ type: "complete-task", task: open, reason: "DONE" })
-  assert.equal(projection.getSnapshot().completion.pendingTaskID, open.id)
+  assert.deepEqual(projection.getSnapshot().completion.pending, [open.id])
   assert.deepEqual(openTasks(projection.getSnapshot()), [open])
   assert.deepEqual(projection.getSnapshot().completedTasks.items, [])
   failLists = true
@@ -1923,7 +1982,7 @@ test("ticking the call's own Task during a call keeps the call view and updates 
   assert.equal(state.patients.counts.all, 1)
   assert.deepEqual(state.completedTasks.items.map((row) => row.id), [recovery.id])
   assert.equal(state.selection.task?.state, "COMPLETED")
-  assert.equal(state.completion.pendingTaskID, "")
+  assert.deepEqual(state.completion.pending, [])
   projection.stop()
 })
 
@@ -2027,8 +2086,281 @@ test("a completion that fails or conflicts refreshes every open Task detail read
     const before = projection.getSnapshot().detailRevision
     await projection.dispatch({ type: "complete-task", task: open, reason: "DONE" })
     const state = projection.getSnapshot()
-    assert.equal(state.completion.errorTaskID, open.id)
+    assert.deepEqual(Object.keys(state.completion.errors), [open.id])
     assert.equal(state.detailRevision, before + 1, `${failure.kind} refetches the reads that showed the stale Task`)
     projection.stop()
   }
+})
+
+test("a text review below the patient's top item opens from the patient's Tasks and stays selected", async () => {
+  const realtime = deterministicRealtime()
+  const phone = "+13055550142"
+  const followUp = task("follow-up", { phone })
+  const text = task("text", { phone, origin: "INBOUND_MESSAGE_REVIEW" })
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(40), tasks: taskPage([followUp, text]) }),
+      patients: async () => success(patientPage([patientRow(followUp, { openCount: 2 })])),
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "open-patient-tasks" })
+  await projection.dispatch({ type: "select-task", task: text })
+  for (const settle of [
+    async () => {},
+    () => realtime.reconcile(0),
+    () => projection.dispatch({ type: "set-rail-view", filter: "callBack" }),
+  ]) {
+    await settle()
+    const { selection } = projection.getSnapshot()
+    assert.equal(selection.task?.id, text.id)
+    assert.equal(selection.engagement?.phone, phone)
+    assert.deepEqual([selection.view, selection.contextView], ["engagement", "task"])
+  }
+  projection.stop()
+})
+
+function advancingProjection(before: PatientWorkRow[], after: PatientWorkRow[], known: Task[]) {
+  const realtime = deterministicRealtime()
+  const flow = { closed: false }
+  const rows = new Map(known.map((item) => [item.id, item]))
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(41), tasks: taskPage([]) }),
+      patients: async () => success(patientPage(flow.closed ? after : before)),
+      task: async (_token, taskID) => {
+        const row = rows.get(taskID)
+        return row ? success(row) : missing()
+      },
+      completeTask: async (_token, target) => {
+        const completed: Task = { ...rows.get(target.id)!, state: "COMPLETED", version: target.version + 1 }
+        rows.set(completed.id, completed)
+        flow.closed = true
+        return success(completed)
+      },
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  return { projection, realtime, flow, rows }
+}
+
+const advancePhones = { a: "+13055550101", x: "+13055550102", y: "+13055550103" }
+const advanceTask = (id: string, phone: keyof typeof advancePhones, overrides: Partial<Task> = {}) =>
+  task(id, { phone: advancePhones[phone], ...overrides })
+
+for (const [label, before, after, want] of [
+  ["stays with the patient while they have open work", ["x-1", "a-1", "y-1"], ["x-1", "a-2", "y-1"], "a-2"],
+  ["moves to the row that followed the patient", ["x-1", "a-1", "y-1"], ["x-1", "y-1"], "y-1"],
+  ["moves to the previous row when none followed", ["x-1", "a-1"], ["x-1"], "x-1"],
+  ["clears the selection when the list is empty", ["a-1"], [], undefined],
+] as const) {
+  const tasks = new Map(["a-1", "a-2", "x-1", "y-1"].map((id) => [id, advanceTask(id, id[0] as keyof typeof advancePhones)]))
+  const rowsFor = (ids: readonly string[]) => ids.map((id) => patientRow(tasks.get(id)!))
+  const closed = tasks.get("a-1")!
+
+  test(`Complete and next ${label}`, async () => {
+    const { projection, realtime, flow, rows } = advancingProjection(rowsFor(before), rowsFor(after), [...tasks.values()])
+    await projection.start()
+    await realtime.reconcile(0)
+    await projection.dispatch({ type: "select-task", task: closed })
+    const completed: Task = { ...closed, state: "COMPLETED", version: 2 }
+    rows.set(completed.id, completed)
+    flow.closed = true
+    await projection.dispatch({ type: "task-committed", task: completed, advance: true })
+    assertAdvanced(projection.getSnapshot(), want)
+    projection.stop()
+  })
+
+  test(`a tick on the selected Task in the patient's Tasks ${label}`, async () => {
+    const { projection, realtime } = advancingProjection(rowsFor(before), rowsFor(after), [...tasks.values()])
+    await projection.start()
+    await realtime.reconcile(0)
+    await projection.dispatch({ type: "select-task", task: closed })
+    await projection.dispatch({ type: "open-patient-tasks" })
+    await projection.dispatch({ type: "complete-task", task: closed, reason: "DONE", advance: true })
+    const state = projection.getSnapshot()
+    assertAdvanced(state, want)
+    assert.equal(
+      state.selection.contextView,
+      want === "a-2" ? "patient-tasks" : "task",
+      "the patient's Task list stays open while the patient has more to tick",
+    )
+    projection.stop()
+  })
+
+  test(`a call wrap-up that closed the selected Task ${label}`, async () => {
+    const { projection, realtime, flow, rows } = advancingProjection(rowsFor(before), rowsFor(after), [...tasks.values()])
+    await projection.start()
+    await realtime.reconcile(0)
+    await projection.dispatch({ type: "select-task", task: closed })
+    await projection.dispatch({ type: "remember-return-task", taskID: closed.id })
+    const call = liveCall({ phone: closed.phone, taskId: closed.id })
+    await projection.dispatch({ type: "call-connected", call })
+    rows.set(closed.id, { ...closed, state: "COMPLETED", version: 2 })
+    flow.closed = true
+    await projection.dispatch({ type: "call-disposition", result: { call, closedTaskIds: [closed.id] } })
+    assertAdvanced(projection.getSnapshot(), want)
+    projection.stop()
+  })
+}
+
+function assertAdvanced(state: WorkspaceProjectionState, want: string | undefined) {
+  assert.equal(state.selection.task?.id, want)
+  if (want) {
+    assert.equal(state.selection.engagement?.phone, state.selection.task?.phone)
+    assert.equal(state.selection.view, "engagement")
+    return
+  }
+  assert.equal(state.selection.engagement, undefined)
+  assert.equal(state.selection.view, "none")
+  assert.equal(state.selection.contextPanelOpen, false)
+}
+
+test("a tick on another Task, or one that is not asked to advance, leaves the selection alone", async () => {
+  const tasks = [advanceTask("x-1", "x"), advanceTask("a-1", "a"), advanceTask("y-1", "y")]
+  const [x, a] = tasks
+  const { projection, realtime } = advancingProjection(tasks.map((item) => patientRow(item)), [patientRow(tasks[2])], tasks)
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: a })
+  await projection.dispatch({ type: "complete-task", task: x, reason: "DONE", advance: true })
+  assert.equal(projection.getSnapshot().selection.task?.id, a.id)
+  await projection.dispatch({ type: "complete-task", task: a, reason: "DONE" })
+  assert.equal(projection.getSnapshot().selection.task?.id, a.id)
+  assert.equal(projection.getSnapshot().selection.task?.state, "COMPLETED")
+  projection.stop()
+})
+
+test("a call wrap-up that closed another patient's Task returns to the Task the staff member left", async () => {
+  const tasks = [advanceTask("x-1", "x"), advanceTask("y-1", "y"), advanceTask("a-1", "a")]
+  const [x, y, a] = tasks
+  const { projection, realtime, flow } = advancingProjection(tasks.map((item) => patientRow(item)), [patientRow(y), patientRow(a)], tasks)
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: a })
+  await projection.dispatch({ type: "remember-return-task", taskID: a.id })
+  const call = liveCall({ phone: x.phone })
+  await projection.dispatch({ type: "call-connected", call })
+  flow.closed = true
+  await projection.dispatch({ type: "call-disposition", result: { call, closedTaskIds: [x.id] } })
+  assert.equal(projection.getSnapshot().selection.task?.id, a.id)
+  projection.stop()
+})
+
+test("ticks save independently and each failure stays on its own Task", async () => {
+  const realtime = deterministicRealtime()
+  const first = task("first")
+  const second = task("second")
+  const third = task("third")
+  const saves = new Map([[first.id, deferred<WorkspaceAuthorityResult<Task>>()], [second.id, deferred<WorkspaceAuthorityResult<Task>>()], [third.id, deferred<WorkspaceAuthorityResult<Task>>()]])
+  const requested: string[] = []
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(42), tasks: taskPage([first, second, third]) }),
+      completeTask: async (_token, target) => {
+        requested.push(target.id)
+        return saves.get(target.id)!.promise
+      },
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  const pending = [first, second, third, first].map((item) =>
+    projection.dispatch({ type: "complete-task", task: item, reason: "DONE" }))
+  await waitUntil(() => requested.length === 3)
+  assert.deepEqual(requested, [first.id, second.id, third.id], "each Task is sent once while the others are still saving")
+  assert.deepEqual(projection.getSnapshot().completion.pending, [first.id, second.id, third.id])
+
+  saves.get(second.id)!.resolve({ kind: "conflict", retryable: false, status: 409 })
+  await pending[1]
+  assert.deepEqual(projection.getSnapshot().completion.pending, [first.id, third.id])
+  saves.get(third.id)!.resolve(unavailable())
+  saves.get(first.id)!.resolve(success({ ...first, state: "COMPLETED", version: 2 }))
+  await Promise.all(pending)
+  const settled = projection.getSnapshot().completion
+  assert.deepEqual(settled.pending, [])
+  assert.deepEqual(Object.keys(settled.errors).sort(), [second.id, third.id].sort())
+  assert.match(settled.errors[second.id], /changed elsewhere/)
+
+  saves.set(second.id, deferred<WorkspaceAuthorityResult<Task>>())
+  const retry = projection.dispatch({ type: "complete-task", task: second, reason: "DONE" })
+  await waitUntil(() => requested.length === 4)
+  assert.deepEqual(Object.keys(projection.getSnapshot().completion.errors), [third.id], "a retry clears only its own failure")
+  saves.get(second.id)!.resolve(success({ ...second, state: "COMPLETED", version: 2 }))
+  await retry
+  projection.stop()
+})
+
+for (const [label, stored, counts, restored] of [
+  ["No owner with nothing unowned falls back to All", "unowned", { unowned: 0 }, "all"],
+  ["No owner with unowned work is kept", "unowned", { unowned: 2 }, "unowned"],
+  ["Appt checks where none are offered or waiting falls back to All", "appointments", { appointments: 0 }, "all"],
+  ["Appt checks with a check waiting is kept", "appointments", { appointments: 1 }, "appointments"],
+  ["Call back with nothing to call back is kept", "callBack", { callBack: 0 }, "callBack"],
+] as const) {
+  test(`on reload a stored ${label}`, async () => {
+    const key = "acuity.attentionRail.user-1.practice-1"
+    const values = new Map([[key, JSON.stringify({ version: 2, scope: "mine", filter: stored, completedExpanded: false, scrollTop: 0 })]])
+    const realtime = deterministicRealtime()
+    const requests: string[] = []
+    const projection = createWorkspaceProjection({
+      authority: {
+        ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(43), tasks: taskPage([]) }),
+        patients: async (_token, request) => {
+          requests.push(request.filter ?? "")
+          const page = patientPage(request.filter === restored ? [patientRow(task(`shown-under-${restored}`))] : [])
+          return success({ ...page, counts: { ...page.counts, all: 1, ...counts } })
+        },
+      },
+      realtime: realtime.adapter,
+      preferences: { read: (name: string) => values.get(name) ?? null, write: (name: string, value: string) => values.set(name, value) },
+    })
+    await projection.start()
+    await realtime.reconcile(0)
+    const state = projection.getSnapshot()
+    assert.equal(state.rail.filter, restored)
+    assert.equal(JSON.parse(values.get(key) ?? "").filter, restored)
+    assert.deepEqual(openTasks(state).map((item) => item.id), [`shown-under-${restored}`])
+    assert.equal(state.selection.task?.id, `shown-under-${restored}`, "the first load still opens the first patient")
+    assert.deepEqual(requests, restored === stored ? [stored] : [stored, "all"])
+
+    await projection.dispatch({ type: "set-rail-view", filter: "unowned" })
+    await realtime.reconcile(0)
+    assert.equal(projection.getSnapshot().rail.filter, "unowned", "a chip the staff member picks is never replaced")
+    projection.stop()
+  })
+}
+
+test("a search that hides every unowned patient does not replace the stored No owner filter", async () => {
+  const realtime = deterministicRealtime()
+  const requests: string[] = []
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(44), tasks: taskPage([]) }),
+      patients: async (_token, request) => {
+        requests.push(`${request.filter}:${request.search ?? ""}`)
+        const page = patientPage([])
+        return success({ ...page, counts: { ...page.counts, unowned: request.search ? 0 : 3 } })
+      },
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "set-rail-view", filter: "unowned" })
+  await projection.dispatch({ type: "set-search", value: "nobody" })
+  await projection.dispatch({ type: "submit-search" })
+  requests.length = 0
+  await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().rail.filter, "unowned")
+  assert.deepEqual([...new Set(requests)], ["unowned:nobody"])
+  projection.stop()
 })

@@ -73,7 +73,7 @@ test("the patient panel menu sends the chosen reason for its own Task", async (t
   await page.render(
     <PatientTasksPanelView
       summary={{ status: "ready", data: { names: [], openTasks: [task, other], openTaskCount: 2, closedToday: [] }, refreshing: false }}
-      completion={{ pendingTaskID: "", errorTaskID: "", error: "" }}
+      completion={{ pending: [], errors: {} }}
       reopening=""
       onComplete={(closing, reason) => closed.push([closing.id, reason])}
       onOpen={() => {}}
