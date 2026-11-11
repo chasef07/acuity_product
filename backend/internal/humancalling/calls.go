@@ -409,7 +409,7 @@ func (m *Module) RecordDisposition(
 	if disposition == DispositionCompleteTask || disposition == DispositionKeepOpen ||
 		(disposition == DispositionResolved && taskID != "") {
 		updated, err := m.work.ApplyCallTaskDisposition(ctx, tx, authorization, taskID,
-			disposition != DispositionKeepOpen, placedAt)
+			disposition != DispositionKeepOpen, callID, placedAt)
 		if err != nil {
 			return DispositionResult{}, callingWorkError(err)
 		}

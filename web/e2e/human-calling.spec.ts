@@ -345,7 +345,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
         `${portalURL}/v1/tasks/${task.id}/complete`,
         {
           headers: { authorization: `Bearer ${token}` },
-          data: { expectedVersion: Number(task.version) },
+          data: { expectedVersion: Number(task.version), reason: "DONE" },
         },
       )
       expect(completed.status()).toBe(200)

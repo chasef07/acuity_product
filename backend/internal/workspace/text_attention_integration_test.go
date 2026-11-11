@@ -81,7 +81,7 @@ func TestTextAttentionExpiresWithoutCompletingWorkAndReturnsOnInbound(t *testing
 		t.Fatal(err)
 	}
 	task := page.Items[0]
-	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version}); err != nil {
+	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version}); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Kind: "texts", State: work.TaskCompleted})

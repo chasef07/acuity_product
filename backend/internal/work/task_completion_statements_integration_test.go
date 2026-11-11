@@ -49,6 +49,7 @@ func TestTaskCompletionsPublishOneWorkspaceHintPerTransaction(t *testing.T) {
 	drainWorkspaceHints(t, listener)
 	statements.count.Store(0)
 	if _, err := traced.CompleteTask(ctx, work.CompleteTaskCommand{
+		Reason:   work.CloseReasonDone,
 		Identity: identity, TaskID: single.ID, ExpectedVersion: single.Version,
 	}); err != nil {
 		t.Fatal(err)
@@ -64,6 +65,7 @@ func TestTaskCompletionsPublishOneWorkspaceHintPerTransaction(t *testing.T) {
 	drainWorkspaceHints(t, listener)
 	statements.count.Store(0)
 	anchor, err := traced.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
+		Reason:   work.CloseReasonDone,
 		Identity: identity, TaskID: members[2].ID, Members: members,
 	})
 	if err != nil {
@@ -91,6 +93,7 @@ func TestTaskCompletionsPublishOneWorkspaceHintPerTransaction(t *testing.T) {
 
 	stale := create("stale")
 	_, err = traced.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
+		Reason:   work.CloseReasonDone,
 		Identity: identity, TaskID: stale.ID,
 		Members: []work.ReviewedTask{{ID: stale.ID, ExpectedVersion: stale.Version + 1}},
 	})
@@ -98,6 +101,7 @@ func TestTaskCompletionsPublishOneWorkspaceHintPerTransaction(t *testing.T) {
 		t.Fatalf("stale group completion error = %v, want ErrConflict", err)
 	}
 	_, err = traced.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
+		Reason:   work.CloseReasonDone,
 		Identity: identity, TaskID: stale.ID,
 		Members: []work.ReviewedTask{
 			{ID: stale.ID, ExpectedVersion: stale.Version},

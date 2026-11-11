@@ -846,7 +846,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	}
 	_ = staleResponse.Body.Close()
 
-	completeBody, _ := json.Marshal(map[string]any{"expectedVersion": 2})
+	completeBody, _ := json.Marshal(map[string]any{"expectedVersion": 2, "reason": "DONE"})
 	completedResponse := request(
 		t,
 		server.Client(),
@@ -863,7 +863,8 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	if completed.State != api.TaskStateCOMPLETED || completed.CompletedBy == nil ||
 		completed.CompletedBy.Kind != api.TaskActorKindHUMAN ||
 		completed.CompletedBy.Email == nil ||
-		string(*completed.CompletedBy.Email) != identity.Email {
+		string(*completed.CompletedBy.Email) != identity.Email ||
+		completed.CloseReason == nil || *completed.CloseReason != api.TaskCloseReasonDONE {
 		t.Fatalf("completed HTTP Task = %#v", completed)
 	}
 
@@ -882,6 +883,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	var reopened api.Task
 	decode(t, reopenedResponse, &reopened)
 	if reopened.State != api.TaskStateOPEN || reopened.CompletedBy != nil ||
+		reopened.CloseReason != nil ||
 		reopened.Title != renamed.Title {
 		t.Fatalf("reopened HTTP Task = %#v", reopened)
 	}

@@ -92,7 +92,7 @@ func TestPhoneHistoryKeepsCallAndFollowUpTogetherBeforePagination(t *testing.T) 
 		t.Fatalf("late closeout changed identity or lost evidence: %v, %v", older, err)
 	}
 
-	completed, err := writes.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version})
+	completed, err := writes.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version})
 	if err != nil {
 		t.Fatal(err)
 	}

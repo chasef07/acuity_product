@@ -20,7 +20,7 @@ export function TextConversationAction({ task, reviewed, onUpdated, onNext }: { 
     if (task.state === "COMPLETED" && !stateSettled) return
     setPending(true)
     setError("")
-    const outcome = await (task.state === "OPEN" ? completeTask : reopenTask)(task)
+    const outcome = await (task.state === "OPEN" ? completeTask(task, "DONE") : reopenTask(task))
     setPending(false)
     if (!outcome.ok) {
       setError(signInRequired(outcome.failure)

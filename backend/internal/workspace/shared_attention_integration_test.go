@@ -154,7 +154,7 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 		t.Fatalf("appointment review query: rows=%d err=%v", len(appointments.Items), err)
 	}
 	appointment := appointments.Items[0]
-	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Identity: checkingStaff, TaskID: appointment.ID, ExpectedVersion: appointment.Version}); err != nil {
+	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: checkingStaff, TaskID: appointment.ID, ExpectedVersion: appointment.Version}); err != nil {
 		t.Fatal(err)
 	}
 	for _, member := range staff {

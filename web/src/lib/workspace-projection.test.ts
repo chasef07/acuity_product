@@ -343,6 +343,7 @@ test("confirmed completion moves a Task to shared completed history and preserve
   const openTask = task("task-1", { category: "insurance" })
   const completedTask = task("task-1", { category: "insurance", state: "COMPLETED", version: 2, completedAt: "2026-08-30T12:10:00Z", completedBy: { kind: "HUMAN", subject: "other-staff" } })
   let completed = false
+  let sentReason = ""
   let taskReads = 0
   const authority: WorkspaceAuthorityAdapter = {
     ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(11), tasks: taskPage([openTask]) }),
@@ -350,7 +351,7 @@ test("confirmed completion moves a Task to shared completed history and preserve
       taskReads += 1
       return success(taskPage(request.state === "OPEN" ? (completed ? [] : [openTask]) : (completed ? [completedTask] : [])))
     },
-    completeTask: async () => { completed = true; return success(completedTask) },
+    completeTask: async (_token, _task, reason) => { completed = true; sentReason = reason; return success(completedTask) },
     task: async () => success(completed ? completedTask : openTask),
   }
   const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
@@ -359,7 +360,8 @@ test("confirmed completion moves a Task to shared completed history and preserve
   await projection.dispatch({ type: "select-task", task: openTask })
   const staleSnapshot = await realtime.prepareReconciliation(0)
   taskReads = 0
-  await projection.dispatch({ type: "complete-task", task: openTask })
+  await projection.dispatch({ type: "complete-task", task: openTask, reason: "NOT_NEEDED" })
+  assert.equal(sentReason, "NOT_NEEDED")
   assert.equal(taskReads, 2, "one authoritative read per Task window")
   staleSnapshot.apply()
   const state = projection.getSnapshot()
@@ -396,7 +398,7 @@ test("temporary token failure keeps Task completion retryable without expiring t
   await projection.start()
   await realtime.reconcile(0)
   tokenAvailable = false
-  await projection.dispatch({ type: "complete-task", task: openTask })
+  await projection.dispatch({ type: "complete-task", task: openTask, reason: "DONE" })
 
   const state = projection.getSnapshot()
   assert.equal(state.loadState, "ready")
@@ -407,7 +409,7 @@ test("temporary token failure keeps Task completion retryable without expiring t
   assert.equal(state.completion.errorTaskID, openTask.id)
 
   tokenAvailable = true
-  await projection.dispatch({ type: "complete-task", task: openTask })
+  await projection.dispatch({ type: "complete-task", task: openTask, reason: "DONE" })
   assert.equal(
     projection.getSnapshot().completion.error,
     "This Task could not be completed. Retry from the row or open its details.",
@@ -1065,7 +1067,7 @@ test("completion waits for commitment and failed refresh retains rows with a vis
   })
   await projection.start()
   await realtime.reconcile(0)
-  const pending = projection.dispatch({ type: "complete-task", task: open })
+  const pending = projection.dispatch({ type: "complete-task", task: open, reason: "DONE" })
   assert.equal(projection.getSnapshot().completion.pendingTaskID, open.id)
   assert.deepEqual(projection.getSnapshot().tasks.items, [open])
   assert.deepEqual(projection.getSnapshot().completedTasks.items, [])
@@ -1832,7 +1834,7 @@ test("completing a Task refreshes once and skips the server hint for the same ve
   await live.projection.dispatch({ type: "select-task", task: first })
   manual.fireAll()
   live.requests.length = 0
-  await live.projection.dispatch({ type: "complete-task", task: first })
+  await live.projection.dispatch({ type: "complete-task", task: first, reason: "DONE" })
   const revision = live.projection.getSnapshot().detailRevision
   manual.fireAll()
   assert.equal(live.projection.getSnapshot().detailRevision, revision + 1)

@@ -7,7 +7,7 @@ import {
   renameTask as renameTaskRequest,
   reopenTask as reopenTaskRequest,
 } from "../api/generated/sdk.gen"
-import type { StaffTaskCategory, Task, TaskQueryRequest } from "../api/generated/types.gen"
+import type { StaffTaskCategory, StaffTaskCloseReason, Task, TaskQueryRequest } from "../api/generated/types.gen"
 import { appendUniqueByID } from "../workspace-ordering"
 import { usePages } from "../data/queries"
 import { portalRequest } from "./portal-request"
@@ -31,12 +31,12 @@ export function renameTask(task: TaskVersion, title: string) {
   )
 }
 
-export function completeTask(task: TaskVersion) {
+export function completeTask(task: TaskVersion, reason: StaffTaskCloseReason) {
   return portalRequest((transport) =>
     completeTaskRequest({
       ...transport,
       path: { taskId: task.id },
-      body: { expectedVersion: task.version },
+      body: { expectedVersion: task.version, reason },
     }),
   )
 }
@@ -51,12 +51,13 @@ export function reopenTask(task: TaskVersion) {
   )
 }
 
-export function completeTaskGroup(members: TaskVersion[]) {
+export function completeTaskGroup(members: TaskVersion[], reason: StaffTaskCloseReason) {
   return portalRequest((transport) =>
     completeTaskGroupRequest({
       ...transport,
       path: { taskId: members[0].id },
       body: {
+        reason,
         members: members.map((member) => ({
           id: member.id,
           expectedVersion: member.version,

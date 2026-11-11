@@ -191,7 +191,7 @@ func TestQueueTaskAcknowledgementPreservesPreSendNonDeliveryEvidence(t *testing.
 					UPDATE work_tasks
 					SET state = 'COMPLETED', completed_by_kind = 'SERVICE',
 						completed_by_subject = 'test-resolution', completed_at = $2,
-						version = version + 1, updated_at = $2
+						close_reason = 'DONE', version = version + 1, updated_at = $2
 					WHERE id = $1
 				`, fixture.task.ID, fixture.now)
 				if err != nil {
@@ -1660,6 +1660,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	completed, err := workModule.CompleteTask(
 		context.Background(),
 		work.CompleteTaskCommand{
+			Reason:          work.CloseReasonDone,
 			Identity:        identity,
 			TaskID:          followUp.ID,
 			ExpectedVersion: followUp.Version,
@@ -1840,6 +1841,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	completedAITask, err := workModule.CompleteTask(
 		context.Background(),
 		work.CompleteTaskCommand{
+			Reason:          work.CloseReasonDone,
 			Identity:        identity,
 			TaskID:          aiTask.ID,
 			ExpectedVersion: aiTask.Version,

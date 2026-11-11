@@ -1222,6 +1222,7 @@ func TestVoicemailRecordingSavedAfterRoutingFailureWithCompletedTaskAppliesImmed
 		func() time.Time { return currentTime },
 	)
 	completedTask, err := workModule.CompleteTask(context.Background(), work.CompleteTaskCommand{
+		Reason:          work.CloseReasonDone,
 		Identity:        staff[0],
 		TaskID:          recoveryTaskID,
 		ExpectedVersion: recoveryTaskVersion,

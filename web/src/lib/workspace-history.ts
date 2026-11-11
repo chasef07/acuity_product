@@ -1,7 +1,7 @@
-import type { CallState, ConversationTimelineItem, Task } from "@/lib/api/generated/types.gen"
+import type { CallState, ConversationTimelineItem, Task, TaskCloseReason } from "@/lib/api/generated/types.gen"
 import { isSettledCallState } from "./calling/call-state.ts"
 import { sameLocalDay } from "./format-time.ts"
-import { appointmentOutcomeTitles, callDirectionLabels, callStateLabels } from "./vocabulary.ts"
+import { appointmentOutcomeTitles, callDirectionLabels, callStateLabels, taskCloseReasonLabels } from "./vocabulary.ts"
 import { newestFirst, oldestFirst } from "./workspace-ordering.ts"
 
 export function presentTimeline(items: ConversationTimelineItem[]) {
@@ -123,7 +123,9 @@ function taskActivityPhrase(item: ConversationTimelineItem, task: Task) {
     case "TITLE_CHANGED":
       return attributed("title changed", actor)
     case "TASK_COMPLETED":
-      return attributed("completed", actor)
+      return actor?.kind === "HUMAN" && !actor.email
+        ? `${completedPhrase(item)} by the team`
+        : attributed(completedPhrase(item), actor)
     case "TASK_REOPENED":
       return attributed("reopened", actor)
     case "INTERACTION_ATTACHED":
@@ -139,6 +141,13 @@ function taskActivityPhrase(item: ConversationTimelineItem, task: Task) {
     default:
       return task.state === "OPEN" ? "open" : "completed"
   }
+}
+
+function completedPhrase(item: ConversationTimelineItem) {
+  const reason = item.taskActivityDetails?.closeReason
+  return typeof reason === "string" && reason !== "DONE" && Object.hasOwn(taskCloseReasonLabels, reason)
+    ? `closed as ${taskCloseReasonLabels[reason as TaskCloseReason]}`
+    : "completed"
 }
 
 function callbackCompletionPhrase(callerEmail: string | undefined) {
