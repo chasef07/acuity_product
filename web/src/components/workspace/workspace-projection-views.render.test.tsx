@@ -27,6 +27,7 @@ import type {
   ConversationTimelineItem,
   ConversationTimelinePage,
   Message,
+  PhoneSummary,
   Task,
 } from "../../lib/api/generated/types.gen.ts"
 import type { NumberHistory } from "../../lib/workspace-history.ts"
@@ -793,27 +794,43 @@ test("leaving Everything and coming back returns the reader to where they were",
   const tabs = threadTabs(conversation.host)
   const viewport = conversation.host.querySelector<HTMLElement>('[data-testid="message-timeline"]')!
   const scrolls: number[] = []
+  const place = { scrollHeight: 1000, scrollTop: 300 }
   Object.defineProperties(viewport, {
-    scrollHeight: { configurable: true, value: 1000 },
+    scrollHeight: { configurable: true, get: () => place.scrollHeight },
     clientHeight: { configurable: true, value: 200 },
-    scrollTop: { configurable: true, value: 300 },
-    scrollTo: { configurable: true, value: ({ top }: ScrollToOptions) => scrolls.push(top!) },
+    scrollTop: { configurable: true, get: () => place.scrollTop },
+    scrollTo: { configurable: true, value: ({ top }: ScrollToOptions) => { place.scrollTop = top!; scrolls.push(top!) } },
   })
+  const layout: Record<string, number> = { "MESSAGE:first": 250, "CALL_HISTORY:history-missed": 420 }
+  window.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+    if (this === viewport) return { top: 100, bottom: 300 } as DOMRect
+    const top = 100 + (layout[this.dataset.messageId ?? ""] ?? 0) - place.scrollTop
+    return { top, bottom: top + 170 } as DOMRect
+  }
   const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
   await tabs.show("Calls")
   await settle()
   assert.equal(scrolls.at(-1), 800, "Calls opens on its latest call")
-  Object.defineProperty(viewport, "scrollTop", { configurable: true, value: 800 })
   await tabs.show("Texts")
   await settle()
   assert.equal(scrolls.at(-1), 800)
+  layout["MESSAGE:first"] = 600
+  place.scrollHeight = 1400
   await tabs.show("Everything")
   await settle()
-  assert.equal(scrolls.at(-1), 300, "Everything returns to the place the reader left")
+  assert.equal(scrolls.at(-1), 650, "Everything puts the item the reader was on back where it sat, 50 above the top edge, whatever the heights around it became")
   const before = scrolls.length
   await tabs.show("Everything")
   await settle()
   assert.equal(scrolls.length, before, "choosing the tab already shown does not move the reader")
+
+  place.scrollTop = 1190
+  await tabs.show("Calls")
+  await settle()
+  place.scrollHeight = 2000
+  await tabs.show("Everything")
+  await settle()
+  assert.equal(scrolls.at(-1), 1800, "a reader who left Everything at the latest activity returns to the latest activity")
 })
 
 test("a failed earlier page shows the error with a retry instead of an empty tab, and a tab says so when the whole history holds nothing for it", async (t) => {
@@ -830,7 +847,8 @@ test("a failed earlier page shows the error with a retry instead of an empty tab
   await act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
   assert.equal(conversation.timelineRequests, 2, "a failed earlier page is not requested again without the user asking")
   const alert = () => conversation.host.querySelector('[role="alert"]')
-  assert.match(alert()!.textContent!, /Earlier activity could not be loaded\./)
+  assert.equal(alert()!.textContent, "Earlier activity could not be loadedTry again")
+  assert.doesNotMatch(alert()!.textContent!, /Conversation unavailable/, "the conversation itself is on screen")
   assert.doesNotMatch(tabs.activity().textContent!, /No calls yet/)
 
   conversation.timelineStatus = 200
@@ -840,6 +858,92 @@ test("a failed earlier page shows the error with a retry instead of an empty tab
   assert.match(tabs.activity().textContent!, /No calls yet/)
   assert.doesNotMatch(tabs.activity().textContent!, /Earlier activity is not loaded/)
   assert.ok(tabs.composer())
+})
+
+test("a manual earlier load that adds nothing for the tab says so in place", async (t) => {
+  const conversation = conversationHarness(t)
+  const cursors = ["", "one", "two", "three", "four"]
+  conversation.timelinePage = (cursor) => {
+    const index = cursors.indexOf(cursor)
+    const items = index === 0
+      ? [callLineFixture({ id: "newest", outcome: "MISSED" }), textFixture("newest", "2026-09-05T11:00:00Z")]
+      : index === 4
+        ? [callLineFixture({ id: "oldest", outcome: "MISSED" })]
+        : [textFixture(`older-${index}-a`, `2026-09-0${4 - index}T11:00:00Z`), textFixture(`older-${index}-b`, `2026-09-0${4 - index}T10:00:00Z`)]
+    return { items, nextCursor: cursors[index + 1] ?? "" }
+  }
+  await conversation.render(0)
+  const tabs = threadTabs(conversation.host)
+  const earlier = () => [...conversation.host.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Earlier activity")
+  const note = () => tabs.activity().querySelector('[role="status"]')?.textContent ?? ""
+  const press = async (requests: number) => {
+    await act(async () => earlier()!.click())
+    await waitFor(() => conversation.timelineRequests === requests && earlier()?.disabled !== true)
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
+  }
+  await press(2)
+  assert.equal(note(), "", "Everything shows what was loaded and needs no note")
+
+  await tabs.show("Calls")
+  assert.equal(tabs.lines(), 1)
+  assert.equal(note(), "")
+  await press(3)
+  assert.equal(tabs.lines(), 1)
+  assert.equal(note(), "No calls in the next 2 items. Load more to keep looking.")
+  await press(4)
+  assert.equal(note(), "No calls in the next 4 items. Load more to keep looking.", "each press that finds nothing changes what the reader sees")
+
+  await tabs.show("Texts")
+  assert.equal(note(), "", "the note belongs to the tab that was searched")
+  await tabs.show("Calls")
+  await press(5)
+  assert.equal(tabs.lines(), 2)
+  assert.equal(note(), "", "a load that found a call clears the note")
+  assert.equal(earlier(), undefined)
+})
+
+test("an expanded line's Task follows the patient's Tasks while new activity stays held", async (t) => {
+  const conversation = conversationHarness(t)
+  const task: Task = { ...projectedTask(), id: "line-task", title: "Send the parking map", version: 1 }
+  conversation.items = [callLineFixture({ id: "parking", outcome: "RESOLVED", answeredByEmail: "dana@example.test" }, { task })]
+  await conversation.render(0)
+  const { timeline, lines } = callLines(conversation.host)
+  const viewport = conversation.host.querySelector<HTMLElement>('[data-testid="message-timeline"]')!
+  await act(async () => lines()[0]!.click())
+  assert.match(timeline.textContent!, /Send the parking map · Open/)
+  assert.equal(conversation.summaryRequests, 0, "at the latest activity the thread itself is live")
+
+  await act(async () => {
+    Object.defineProperties(viewport, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, value: 0 },
+    })
+    viewport.dispatchEvent(new window.Event("scroll"))
+  })
+  await waitFor(() => conversation.summaryRequests === 1)
+  assert.match(timeline.textContent!, /Send the parking map · Open/)
+
+  const closed: Task = {
+    ...task, state: "COMPLETED", closeReason: "DONE", version: 2, completedAt: "2026-09-06T12:00:00Z",
+    completedBy: { kind: "HUMAN", subject: "staff", email: "staff@example.test" },
+  }
+  conversation.summary = { ...conversation.summary, openTasks: [], openTaskCount: 0, closedToday: [closed] }
+  conversation.items = [
+    textFixture("arrived-while-reading", "2026-09-06T12:01:00Z"),
+    callLineFixture({ id: "parking", outcome: "RESOLVED", answeredByEmail: "dana@example.test" }, { task: closed }),
+  ]
+  const requests = conversation.timelineRequests
+  await conversation.render(1)
+  await waitFor(() => /Send the parking map · Done, by staff@example\.test/.test(timeline.textContent!))
+  assert.doesNotMatch(timeline.textContent!, /Send the parking map · Open/)
+  assert.doesNotMatch(timeline.textContent!, /Synthetic text arrived-while-reading/, "new activity stays behind the control")
+  assert.equal(conversation.timelineRequests, requests, "the held thread is not reloaded")
+  assert.ok([...conversation.host.querySelectorAll("button")].some((element) => element.textContent?.trim() === "New activity"))
+
+  conversation.summary = { ...conversation.summary, openTasks: [{ ...task, version: 3 }], openTaskCount: 1, closedToday: [] }
+  await conversation.render(2)
+  await waitFor(() => /Send the parking map · Open/.test(timeline.textContent!))
 })
 
 test("the thread names the callback caller and marks which Task each entry describes", async (t) => {
@@ -1295,6 +1399,8 @@ function conversationHarness(t: TestContext) {
     attachmentGate: undefined as Promise<void> | undefined,
     timelineStatus: 200,
     timelineRequests: 0,
+    summaryRequests: 0,
+    summary: { phone: "", displayName: "", names: [], openTasks: [], openTaskCount: 0, closedToday: [] } as PhoneSummary,
     callStatus: 200,
     callRequests: [] as string[],
     tokenStatus: 200,
@@ -1344,6 +1450,10 @@ function conversationHarness(t: TestContext) {
       const body = await (input as Request).json()
       conversation.completions.push(body)
       return Response.json({ ...conversation.textTask, state: "COMPLETED" })
+    }
+    if (/\/v1\/engagements\/%2B1555123\d{4}\/summary\?/.test(url)) {
+      conversation.summaryRequests += 1
+      return Response.json(conversation.summary)
     }
     assert.match(url, /\/v1\/engagements\/%2B1555123\d{4}\/timeline\?/)
     conversation.timelineRequests += 1
