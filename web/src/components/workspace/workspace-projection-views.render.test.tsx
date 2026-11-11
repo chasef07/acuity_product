@@ -1095,6 +1095,10 @@ test("the focused Task shows each projected version and completes only the versi
     await render(changed)
     assert.equal(host.querySelector("h2")?.textContent, changed.title, "the panel shows the projected Task, not a held copy")
     assert.equal(button("Verify & next")?.disabled, true, "a version the operator has not reviewed cannot be completed")
+    const pinned = host.querySelector('[data-testid="task-actions"]')!
+    assert.ok(pinned.classList.contains("sticky"), "the action row stays in view over a long source message")
+    assert.ok(pinned.contains(button("Review latest")!), "the pinned row holds the action that is enabled while completing is not")
+    assert.equal(button("Review latest")?.disabled, false)
     await act(async () => button("Review latest")!.click())
     assert.equal(button("Verify & next")?.disabled, false)
     await act(async () => button("Verify & next")!.click())
