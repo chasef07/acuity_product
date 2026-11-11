@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test"
 
-import { patientRow, railFilter, railScope, showPatientTask, signInAs } from "./support"
+import { patientListSettled, patientRow, railFilter, railScope, showPatientTask, signInAs } from "./support"
 
 const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
@@ -557,6 +557,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   const firstThread = texter.getByRole("button")
   await expect(page.getByText("Correspondence ledger", { exact: true })).toHaveCount(0)
   await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
+  await patientListSettled(page)
   await firstThread.click()
   const inbound = page
     .getByRole("article")
@@ -936,6 +937,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(billingRow).toHaveCount(0)
   await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
 
+  await patientListSettled(page)
   await medicationRow.getByRole("button").click()
   await page.getByRole("button", { name: "1 open Task", exact: true }).click()
   const medicationItem = patientTasks
@@ -1129,6 +1131,7 @@ test("staff replies complete text conversations and new texts return to the inbo
   await expect(row).toBeVisible({ timeout: 30_000 })
   await expect(row.getByTestId("patient-row-name")).toHaveText("(555) 050-9999")
   await expect(row.getByTestId("patient-row-reason")).toHaveText("Initial synthetic question")
+  await patientListSettled(page)
   await row.getByRole("button").first().click()
   await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "closed")
   await expect(page.getByRole("button", { name: "Mark done", exact: true })).toBeVisible()
@@ -1139,6 +1142,7 @@ test("staff replies complete text conversations and new texts return to the inbo
   await expect(page.getByRole("button", { name: "Reopen", exact: true })).toBeVisible()
   await sendInbound(page, "review-version-second", "Another synthetic question", phone)
   await expect(row).toBeVisible()
+  await patientListSettled(page)
   await row.getByRole("button").first().click()
   const reviewID = await row.getAttribute("data-task-id")
   await page.getByRole("button", { name: "Mark done", exact: true }).click()
@@ -1162,6 +1166,7 @@ test("refresh and back keep the selected Task", async ({ page }) => {
   await expect(second).toBeVisible()
   const firstID = await first.getAttribute("data-task-id")
   const secondID = await second.getAttribute("data-task-id")
+  await patientListSettled(page)
   await first.getByRole("button").first().click()
   await expect(page).toHaveURL(new RegExp(`/workspace\\?task=${firstID}$`))
   await second.getByRole("button").first().click()

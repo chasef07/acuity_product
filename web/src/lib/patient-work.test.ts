@@ -8,6 +8,9 @@ import {
   patientRowName,
   openTaskReason,
   patientWorkFooter,
+  rowClickAllowed,
+  rowClickGuardMilliseconds,
+  rowsMovedAtAfter,
   shownPatientWorkFilters,
 } from "./patient-work.ts"
 
@@ -120,5 +123,40 @@ test("after a Task is closed the next selection stays with the patient, then the
       want,
       label,
     )
+  }
+})
+
+test("the click guard starts when a listed row changes place and ends with a list that was or became empty", () => {
+  const earlier = 4_000
+  const now = 9_000
+  for (const [label, before, after, want] of [
+    ["their own click, then a refetch of the same rows", ["a", "b", "c"], ["a", "b", "c"], earlier],
+    ["a live update to a row's second line or age", ["a", "b"], ["a", "b"], earlier],
+    ["a patient arrives above", ["a", "b"], ["n", "a", "b"], now],
+    ["a patient arrives between two rows", ["a", "b"], ["a", "n", "b"], now],
+    ["a patient is closed elsewhere and rows move up", ["a", "b", "c"], ["a", "c"], now],
+    ["the patient they just closed leaves and rows move up", ["a", "b", "c"], ["b", "c"], now],
+    ["new work re-sorts a listed patient to the top", ["a", "b", "c"], ["c", "a", "b"], now],
+    ["Show more appends rows", ["a", "b"], ["a", "b", "c", "d"], earlier],
+    ["a patient arrives below every row", ["a", "b"], ["a", "b", "n"], earlier],
+    ["the last row leaves", ["a", "b"], ["a"], earlier],
+    ["a chip, scope or search empties the list", ["a", "b"], [], undefined],
+    ["the list they asked for loads", [], ["b", "a"], undefined],
+  ] as const) {
+    assert.equal(rowsMovedAtAfter(earlier, before, after, now), want, label)
+  }
+  assert.equal(rowsMovedAtAfter(undefined, ["a", "b"], ["a", "b", "c"], now), undefined, "no guard was running and none starts")
+})
+
+test("a pointer click on a row is refused until the guard time has passed since rows last moved", () => {
+  const movedAt = 10_000
+  for (const [label, at, now, want] of [
+    ["rows never moved", undefined, movedAt, true],
+    ["the click lands as rows move", movedAt, movedAt, false],
+    ["the click was queued before the move rendered", movedAt, movedAt - 5, false],
+    ["just inside the guard", movedAt, movedAt + rowClickGuardMilliseconds - 1, false],
+    ["the guard has passed", movedAt, movedAt + rowClickGuardMilliseconds, true],
+  ] as const) {
+    assert.equal(rowClickAllowed(at, now), want, label)
   }
 })

@@ -14,9 +14,14 @@ export function patientRow(page: Page, phone: string) {
   return page.locator(`[data-testid="patient-row"][data-phone="${phone}"]`)
 }
 
+export async function patientListSettled(page: Page) {
+  await expect(page.getByTestId("patient-list-updated")).toHaveText("")
+}
+
 export async function showPatientTask(page: Page, phone: string) {
   const row = patientRow(page, phone).getByRole("button")
   await expect(row).toBeVisible()
+  await patientListSettled(page)
   const shown =
     (await row.getAttribute("data-active")) !== null &&
     (await page.getByTestId("context-panel").getAttribute("data-state")) === "open"

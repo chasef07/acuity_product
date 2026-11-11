@@ -3,6 +3,7 @@
 import {
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -29,7 +30,13 @@ import {
 import { AnalyticsNavigation, commandCenterPages, manageAgentPages, practiceAnalyticsPages, type CommandCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { PatientWorkRow, Task } from "@/lib/api/generated/types.gen"
-import { offersAppointmentChecks, patientWorkFooter } from "@/lib/patient-work"
+import {
+  offersAppointmentChecks,
+  patientWorkFooter,
+  rowClickAllowed,
+  rowClickGuardMilliseconds,
+  rowsMovedAtAfter,
+} from "@/lib/patient-work"
 import {
   currentPractice,
   isWorkView,
@@ -92,6 +99,8 @@ export function WorkspaceRail({
   const publishSearch = useEffectEvent((value: string) => {
     if (value !== projectedSearch) onIntent({ type: "set-search", value })
   })
+  const listedPhones = useRef<readonly string[]>([])
+  const [rowsMovedAt, setRowsMovedAt] = useState<number | undefined>(undefined)
   const completed = projection.completedTasks
   const view = projection.selection.view
   const manageAgent = view === "manage-agent"
@@ -118,6 +127,20 @@ export function WorkspaceRail({
   }, [search])
 
   useEffect(() => () => window.clearTimeout(scrollPersistTimer.current), [])
+
+  useLayoutEffect(() => {
+    const before = listedPhones.current
+    const after = patients.items.map((row) => row.phone)
+    const now = performance.now()
+    listedPhones.current = after
+    setRowsMovedAt((movedAt) => rowsMovedAtAfter(movedAt, before, after, now))
+  }, [patients.items])
+
+  useEffect(() => {
+    if (rowsMovedAt === undefined) return
+    const timer = window.setTimeout(() => setRowsMovedAt(undefined), rowClickGuardMilliseconds)
+    return () => window.clearTimeout(timer)
+  }, [rowsMovedAt])
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -149,7 +172,12 @@ export function WorkspaceRail({
         row={row}
         practiceID={practice.id}
         active={row.phone === selectedPhone}
-        onSelect={() => selectTask(row.top)}
+        guarded={rowsMovedAt !== undefined}
+        onSelect={(event) => {
+          const byPointer = event.detail > 0
+          if (byPointer && !rowClickAllowed(rowsMovedAt, performance.now())) return
+          selectTask(row.top)
+        }}
       />
     )
   }
@@ -229,10 +257,10 @@ export function WorkspaceRail({
         ) : workView && (
         <SidebarContent
           ref={scrollContainer}
-          className="gap-2 overflow-y-auto px-2 py-2"
+          className="gap-2 overflow-y-auto px-2 pt-0 pb-2"
           onScroll={rememberScroll}
         >
-          <div className="space-y-2 px-1">
+          <div className="space-y-2 px-1 pt-2">
             <PatientScopeToggle
               scope={projection.rail.scope}
               onChange={(scope) => onIntent({ type: "set-rail-view", scope })}
@@ -248,6 +276,13 @@ export function WorkspaceRail({
             />
           </div>
           <SidebarGroup className="p-0" role="group" aria-label="Patients with open work">
+            <p
+              role="status"
+              data-testid="patient-list-updated"
+              className="sticky top-0 z-10 -mt-2 flex h-5 items-center bg-sidebar px-3.5 text-xs leading-4 text-muted-foreground md:bg-canvas"
+            >
+              {rowsMovedAt !== undefined && "List just updated"}
+            </p>
             <SidebarGroupContent>
               <SidebarMenu className="mx-1 w-auto gap-0.5 px-1.5 py-0">
                 {patients.items.map(renderPatient)}

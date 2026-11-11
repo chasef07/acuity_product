@@ -1,6 +1,6 @@
 "use client"
 
-import { useId } from "react"
+import { useId, type MouseEvent } from "react"
 import { Building2Icon, PhoneIcon, PlayIcon } from "lucide-react"
 
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar"
@@ -27,12 +27,14 @@ export function PatientRow({
   row,
   practiceID,
   active,
+  guarded,
   onSelect,
 }: {
   row: PatientWorkRow
   practiceID: string
   active: boolean
-  onSelect: () => void
+  guarded: boolean
+  onSelect: (event: MouseEvent) => void
 }) {
   const priorityID = useId()
   const name = patientRowName(row)
@@ -55,7 +57,10 @@ export function PatientRow({
         <SidebarMenuButton
           aria-describedby={row.highPriority ? priorityID : undefined}
           isActive={active}
-          className="h-auto rounded-md px-2 py-1.5 pr-9 text-sidebar-foreground"
+          className={cn(
+            "h-auto rounded-md px-2 py-1.5 pr-9 text-sidebar-foreground",
+            guarded && !active && "hover:bg-transparent active:bg-transparent data-open:hover:bg-transparent",
+          )}
           onClick={onSelect}
         >
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">

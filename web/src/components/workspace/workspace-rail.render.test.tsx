@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import test, { type TestContext } from "node:test"
+import { setTimeout as sleep } from "node:timers/promises"
+import { act } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
 
@@ -9,6 +11,7 @@ import type {
   PatientWorkRow,
   Task,
 } from "../../lib/api/generated/types.gen.ts"
+import { rowClickGuardMilliseconds } from "../../lib/patient-work.ts"
 import type { WorkspaceProjectionState } from "../../lib/workspace-projection.ts"
 import { projectedPatient, projectedWorkspace } from "./workspace-projection.fixture.ts"
 import { CompletedTaskRow } from "./workspace-rail-patient-row.tsx"
@@ -283,4 +286,90 @@ test("a completed Task row credits the team when no email is known and stays qui
 test("patient rows carry no tick and no close menu", () => {
   const html = rail(projection(Object.values(patients))).body.innerHTML
   assert.doesNotMatch(html, /Complete Task:|Close Task as:/)
+})
+
+async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace" })
+  Object.defineProperties(dom.window, {
+    requestAnimationFrame: { configurable: true, value: () => 0 },
+    cancelAnimationFrame: { configurable: true, value: () => {} },
+    matchMedia: { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
+  })
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window },
+    document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator },
+    HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    Element: { configurable: true, value: dom.window.Element },
+    Node: { configurable: true, value: dom.window.Node },
+    getComputedStyle: { configurable: true, value: dom.window.getComputedStyle.bind(dom.window) },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  })
+  const host = dom.window.document.createElement("div")
+  dom.window.document.body.append(host)
+  const { createRoot } = await import("react-dom/client")
+  const root = createRoot(host)
+  t.after(async () => {
+    await act(async () => root.unmount())
+    dom.window.close()
+  })
+  const opened: string[] = []
+  const show = (state: WorkspaceProjectionState) => act(async () => root.render(
+    <SidebarProvider>
+      <WorkspaceRail
+        projection={state}
+        onIntent={(intent) => {
+          if (intent.type === "select-task") opened.push(intent.task.phone)
+        }}
+      />
+    </SidebarProvider>,
+  ))
+  await show(initial)
+  const activate = (phone: string, detail: number) => act(async () => {
+    host.querySelector(`[data-testid='patient-row'][data-phone='${phone}'] button`)!
+      .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, detail }))
+  })
+  return {
+    show,
+    opened,
+    pointerClick: (phone: string) => activate(phone, 1),
+    keyboardActivate: (phone: string) => activate(phone, 0),
+    phones: () => [...host.querySelectorAll("[data-testid='patient-row']")].map((item) => item.getAttribute("data-phone")),
+    notice: () => host.querySelector("[data-testid='patient-list-updated']")!.textContent,
+    wait: (milliseconds: number) => act(() => sleep(milliseconds)),
+  }
+}
+
+test("the list follows live work at once and refuses a pointer click on a row that just moved", async (t) => {
+  const { followUp, callBack, texts, unowned } = patients
+  const base = projection([callBack, texts, followUp])
+  const withRows = (rows: PatientWorkRow[]) => ({ ...base, patients: { ...base.patients, items: rows } })
+  const page = await mountedRail(t, base)
+  assert.equal(page.notice(), "")
+
+  await page.show(withRows([callBack, { ...texts, top: { ...texts.top, preview: "Thanks!" } }, followUp]))
+  assert.equal(page.notice(), "", "a row that only refreshed in place moved nothing")
+  await page.pointerClick(texts.phone)
+  assert.deepEqual(page.opened, [texts.phone])
+
+  await page.show(withRows([unowned, callBack, texts, followUp]))
+  assert.deepEqual(page.phones(), [unowned.phone, callBack.phone, texts.phone, followUp.phone], "the new patient is listed at once")
+  assert.equal(page.notice(), "List just updated")
+  await page.pointerClick(texts.phone)
+  assert.deepEqual(page.opened, [texts.phone], "the click that may have been aimed at the row above opens nothing")
+  await page.keyboardActivate(followUp.phone)
+  assert.deepEqual(page.opened, [texts.phone, followUp.phone], "Enter on the focused row opens it without waiting")
+
+  await page.wait(rowClickGuardMilliseconds + 50)
+  assert.equal(page.notice(), "")
+  await page.pointerClick(texts.phone)
+  assert.deepEqual(page.opened, [texts.phone, followUp.phone, texts.phone])
+
+  await page.show(withRows([callBack, unowned, texts, followUp]))
+  assert.equal(page.notice(), "List just updated")
+  await page.show(withRows([]))
+  await page.show(withRows([followUp, texts]))
+  assert.equal(page.notice(), "", "a list the staff member asked for starts clean")
+  await page.pointerClick(followUp.phone)
+  assert.deepEqual(page.opened, [texts.phone, followUp.phone, texts.phone, followUp.phone])
 })

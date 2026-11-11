@@ -109,3 +109,20 @@ export function nextAfterClose({
   }
   return open[0]?.top
 }
+
+export const rowClickGuardMilliseconds = 1200
+
+export function rowsMovedAtAfter(
+  movedAt: number | undefined,
+  before: readonly string[],
+  after: readonly string[],
+  now: number,
+) {
+  if (before.length === 0 || after.length === 0) return undefined
+  const moved = after.some((phone, index) => before[index] !== phone && before.includes(phone))
+  return moved ? now : movedAt
+}
+
+export function rowClickAllowed(movedAt: number | undefined, now: number) {
+  return movedAt === undefined || now - movedAt >= rowClickGuardMilliseconds
+}
