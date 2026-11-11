@@ -937,7 +937,6 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(billingRow).toHaveCount(0)
   await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
 
-  await patientListSettled(page)
   await medicationRow.getByRole("button").click()
   await page.getByRole("button", { name: "1 open Task", exact: true }).click()
   const medicationItem = patientTasks

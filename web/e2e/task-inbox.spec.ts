@@ -163,7 +163,7 @@ test("the Appointments filter lists Spring Hill reviews only and they do not cou
   const caller = patientRow(page, "+12025550280")
   await expect(appointments).toHaveText("Appointments1")
   await expect(railFilter(page, "all")).toHaveText("All1")
-  await expect(railFilter(page, "unowned")).toHaveCount(0)
+  await expect(railFilter(page, "unowned")).toHaveText("No owner0")
   await expect(page.getByTestId("patient-row")).toHaveCount(1)
   await expect(caller.getByTestId("patient-row-count")).toHaveCount(0)
   await showPatientTask(page, "+12025550280")
@@ -244,14 +244,17 @@ test("My Tasks leaves out a colleague's category, Everyone lists it, and work wi
        ON CONFLICT DO NOTHING`,
       [location.practice_id, location.id, ...roster],
     )
-    for (const [suffix, category, phone] of [["colleague", "referrals", colleagues], ["unowned", "medication", unowned]] as const) {
+    const file = async (suffix: string, category: string, phone: string) => {
       const created = await page.request.post(`${portalURL}/v1/tasks`, { headers: { authorization: "Bearer synthetic-service-token" }, data: {
         callId: `${key}-${suffix}`, callerPhone: phone, category, idempotencyKey: `${key}-${suffix}`,
         officeKey: "spring-hill", officePhone: "+17275550101", source: "agent", urgency: "normal",
         summary: `${key} ${suffix}`, message: "Synthetic ownership work.",
       } })
       expect(created.ok(), await created.text()).toBeTruthy()
+      return (await created.json()).taskId as string
     }
+    await file("colleague", "referrals", colleagues)
+    const unownedTask = await file("unowned", "medication", unowned)
 
     await signInAs(page, "selected@abita.test", "Synthetic Staff")
     const search = page.getByLabel("Search tasks, names, or phone")
@@ -282,6 +285,30 @@ test("My Tasks leaves out a colleague's category, Everyone lists it, and work wi
     await noOwner.click()
     await expect(patientRow(page, unowned)).toBeVisible()
     await expect(patientRow(page, colleagues)).toHaveCount(0)
+
+    await railFilter(page, "all").click()
+    await expect(page.getByTestId("patient-row")).toHaveCount(2)
+    const { token } = await (await page.request.get("/api/auth/token")).json()
+    const complete = async (taskID: string) => {
+      const completed = await page.request.post(`${portalURL}/v1/tasks/${taskID}/complete`, {
+        headers: { authorization: `Bearer ${token}` },
+        data: { expectedVersion: 1, reason: "DONE" },
+      })
+      expect(completed.ok(), await completed.text()).toBeTruthy()
+    }
+    const firstRowTop = async () => (await page.getByTestId("patient-row").first().boundingBox())?.y
+    await complete(unownedTask)
+    await expect(noOwner).toHaveText("No owner0")
+    await expect(noOwner).not.toHaveClass(/(^|\s)text-destructive(\s|$)/)
+    await expect(page.getByTestId("patient-row")).toHaveCount(1)
+    const top = await firstRowTop()
+    const again = await file("unowned-again", "medication", unowned)
+    await expect(noOwner).toHaveText("No owner1")
+    await expect(noOwner).toHaveClass(/(^|\s)text-destructive(\s|$)/)
+    expect(await firstRowTop()).toBe(top)
+    await complete(again)
+    await expect(noOwner).toHaveText("No owner0")
+    expect(await firstRowTop()).toBe(top)
   } finally {
     await db.query("DELETE FROM work_responsibilities WHERE account_email = ANY($1::text[])", [roster])
     await db.end()
