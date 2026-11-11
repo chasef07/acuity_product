@@ -9,7 +9,7 @@ import {
 } from "../api/generated/sdk.gen"
 import type { StaffTaskCategory, StaffTaskCloseReason, Task, TaskQueryRequest } from "../api/generated/types.gen"
 import { appendUniqueByID } from "../workspace-ordering"
-import { usePages } from "../data/queries"
+import { usePages, useRead } from "../data/queries"
 import { portalRequest } from "./portal-request"
 
 type TaskVersion = Pick<Task, "id" | "version">
@@ -19,6 +19,17 @@ export function readTask(taskID: string, signal?: AbortSignal) {
     (transport) => readTaskRequest({ ...transport, path: { taskId: taskID } }),
     signal,
   )
+}
+
+export function useOpenTask(taskID: string | undefined) {
+  return useRead({
+    live: "task-detail",
+    name: "task",
+    identity: { taskID: taskID ?? "" },
+    enabled: taskID !== undefined,
+    read: (identity, transport) =>
+      readTaskRequest({ ...transport, path: { taskId: identity.taskID } }),
+  })
 }
 
 export function renameTask(task: TaskVersion, title: string) {

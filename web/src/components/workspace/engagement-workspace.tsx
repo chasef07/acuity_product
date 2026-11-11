@@ -263,7 +263,7 @@ export function EngagementWorkspaceView({
   )
 }
 
-function phoneNames(names: string[], callName = "") {
+export function phoneNames(names: string[], callName = "") {
   const known = callName.trim().toLowerCase()
   return !known || names.some((name) => name.toLowerCase() === known)
     ? names

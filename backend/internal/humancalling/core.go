@@ -157,6 +157,13 @@ func callingWorkError(err error) error {
 	return fmt.Errorf("update Call Task: %w", err)
 }
 
+func callingClosureError(err error) error {
+	if errors.Is(err, work.ErrDenied) {
+		return ErrInvalidInput
+	}
+	return callingWorkError(err)
+}
+
 type providerRecordingFailure struct {
 	OccurredAt time.Time
 }
@@ -428,9 +435,16 @@ const (
 	DispositionNoFollowUp       Disposition = "NO_FOLLOW_UP"
 )
 
+const (
+	defaultDispositionDuration = 60 * time.Second
+	lateClosureWindow          = 30 * time.Minute
+)
+
 type DispositionResult struct {
-	Call   Call
-	TaskID string
+	Call     Call
+	TaskID   string
+	Closures work.CallTaskClosures
+	Outcome  Disposition
 }
 
 type Module struct {
@@ -468,7 +482,7 @@ func New(
 		config.ReadinessGrace = 15 * time.Second
 	}
 	if config.DispositionDuration <= 0 {
-		config.DispositionDuration = 20 * time.Second
+		config.DispositionDuration = defaultDispositionDuration
 	}
 	if config.StaffTransferDuration <= 0 {
 		config.StaffTransferDuration = 20 * time.Second

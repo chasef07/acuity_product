@@ -903,13 +903,13 @@ func TestOutboundStaffTransferTargetsDestinationLeg(t *testing.T) {
 	}
 	if _, err := fixture.calling.RecordDisposition(
 		context.Background(), fixture.staff[0], "staff-transfer-outbound-browser-1",
-		fixture.callID, humancalling.DispositionResolved,
+		fixture.callID, humancalling.DispositionResolved, nil,
 	); !errors.Is(err, humancalling.ErrConflict) {
 		t.Fatalf("transferred outbound source disposition = %v, want conflict", err)
 	}
 	if _, err := fixture.calling.RecordDisposition(
 		context.Background(), fixture.staff[1], "staff-transfer-outbound-browser-2",
-		fixture.callID, humancalling.DispositionResolved,
+		fixture.callID, humancalling.DispositionResolved, nil,
 	); err != nil {
 		t.Fatalf("transferred outbound target disposition: %v", err)
 	}
