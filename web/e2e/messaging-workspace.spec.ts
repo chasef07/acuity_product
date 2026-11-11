@@ -775,7 +775,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeEnabled()
-  await completedTaskContext.getByRole("button", { name: "Reopen" }).click()
+  await completedTaskContext.getByRole("button", { name: "Reopen", exact: true }).click()
   await expect(
     completedTaskContext.getByRole("button", { name: "Complete & next" }),
   ).toBeVisible()

@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
-import { TaskCallContext } from "./task-call-context.tsx"
+import { DetailsAbovePatientTasks, TaskCallContext } from "./task-call-context.tsx"
 import { TaskCallAction } from "./task-call-action.tsx"
 import { TaskGroupContext } from "./task-group-context.tsx"
 import { VoicemailSource } from "./recording-source.tsx"
@@ -81,6 +81,8 @@ test("Task rail toggles the selected context while preserving the conversation",
       engagement={projection.selection.engagement!}
       practiceID={projection.scope.practiceID}
       selectedTaskID={projection.selection.task?.id}
+      patientTasksOpen={false}
+      onPatientTasks={() => {}}
       onTaskCreated={() => {}}
       onTaskOpen={() => {}}
       onCallOpen={() => {}}
@@ -291,6 +293,26 @@ test("opening AI appointment evidence never clears shared work", async () => {
   dom.window.close()
 })
 
+test("an AI call keeps its title above the scrolling evidence, and the patient's Tasks below both", () => {
+  const page = new JSDOM(renderToStaticMarkup(
+    <DetailsAbovePatientTasks patientTasks={<p>patient tasks</p>}>
+      <AIInteractionContext detail={projectedAIInteraction()} loading={false} error="" />
+    </DetailsAbovePatientTasks>,
+  )).window.document
+  const title = page.querySelector("h2")
+  const header = title?.closest("header")
+  const scroller = page.querySelector('[class~="overflow-y-auto"]')
+  const tasks = [...page.querySelectorAll("p")].find((element) => element.textContent === "patient tasks")
+  assert.equal(title?.textContent, "Appointment booked")
+  assert.ok(header && scroller && tasks)
+  assert.ok(header.classList.contains("shrink-0") && header.classList.contains("min-h-11") && header.classList.contains("pr-12"))
+  assert.ok(!scroller.contains(title), "the title stays put")
+  assert.ok(scroller.querySelector("details"), "the evidence scrolls")
+  assert.ok(header.compareDocumentPosition(scroller) & page.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING)
+  assert.ok(!scroller.contains(tasks), "the list is its own region")
+  assert.ok(scroller.compareDocumentPosition(tasks) & page.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING)
+})
+
 test("conversation clears its unavailable alert after a successful refresh", async (t) => {
   const conversation = conversationHarness(t)
   const task = projectedTask()
@@ -460,11 +482,14 @@ test("the Task panel credits the callback caller from the Task and flags an open
       <TaskCallContext
         task={task}
         activeCall={undefined}
+        callControlsShowing={false}
         view="task"
         numberHistory={numberHistory}
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
       />
     </DataProvider>,
   )
@@ -491,10 +516,13 @@ test("an AI Task shows the missed handoff call attached to it", () => {
       <TaskCallContext
         task={value}
         activeCall={undefined}
+        callControlsShowing={false}
         view="task"
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
       />
     </DataProvider>,
   )
@@ -522,10 +550,13 @@ test("completing a Task keeps Next task in place and holds Reopen until the chan
         taskRows={[task, next]}
         onSelectTask={(row) => selected.push(row.id)}
         activeCall={undefined}
+        callControlsShowing={false}
         view="task"
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
       />
     </DataProvider>,
   ))
@@ -572,10 +603,13 @@ test("the focused Task shows each projected version and completes only the versi
       <TaskCallContext
         task={task}
         activeCall={undefined}
+        callControlsShowing={false}
         view="task"
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
+        onOpenTask={() => {}}
+        patientTasks={() => null}
       />
     </DataProvider>,
   ))
@@ -939,6 +973,8 @@ function conversationHarness(t: TestContext) {
           engagement={projection.selection.engagement!}
           practiceID={projection.scope.practiceID}
           textTask={conversation.textTask}
+          patientTasksOpen={false}
+          onPatientTasks={() => {}}
           onTextTaskUpdated={() => {}}
           onTaskCreated={() => {}}
           onTaskOpen={(task) => conversation.opened.push(`task:${task.id}`)}

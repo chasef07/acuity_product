@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react"
 
 import {
   createMessageFollowUpTask,
+  getEngagementSummary,
   getEngagementTimeline,
   getMessageAttachment,
   retryInboundMessageAttachment,
@@ -15,7 +16,7 @@ import type {
   Message,
   UploadMessageAttachmentRequest,
 } from "../api/generated/types.gen"
-import { readFailure, usePages } from "../data/queries"
+import { readFailure, usePages, useRead } from "../data/queries"
 import { portalRequest } from "./portal-request"
 
 const sentMessageHoldMilliseconds = 750
@@ -90,6 +91,26 @@ export function useEngagementTimeline({
     showOlder: () => void timeline.loadMore(),
     showSent,
   }
+}
+
+export function useEngagementSummary({
+  practiceID,
+  phone,
+}: {
+  practiceID: string
+  phone: string
+}) {
+  return useRead({
+    live: "task-detail",
+    name: "engagement-summary",
+    identity: { practiceID, phone },
+    read: (identity, transport) =>
+      getEngagementSummary({
+        ...transport,
+        path: { phone: identity.phone },
+        query: { practiceId: identity.practiceID },
+      }),
+  })
 }
 
 function combineTimelinePages(pages: (ConversationTimelinePage & { requestedAt: number })[]) {

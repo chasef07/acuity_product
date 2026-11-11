@@ -8,6 +8,7 @@ import type { WorkspaceLocation } from "./workspace-location.ts"
 import type {
   AccessDiscovery,
   AiInteractionDetail,
+  CallingCall,
   Location,
   Practice,
   Task,
@@ -1806,4 +1807,192 @@ test("completing a Task refreshes once and skips the server hint for the same ve
   assert.equal(live.reconciles(), 1)
   assert.equal(live.requests.length, 5)
   live.projection.stop()
+})
+
+function liveCall(overrides: Partial<CallingCall> = {}): CallingCall {
+  return {
+    id: "call-1",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    locationName: "Downtown",
+    direction: "INBOUND",
+    entryPoint: "STANDALONE",
+    state: "CONNECTED",
+    phone: "+15551234567",
+    phoneSource: "provider",
+    displayName: "",
+    nameSource: "",
+    transferReason: "",
+    reasonSource: "",
+    providerTermination: "",
+    endRequested: false,
+    callerId: "+15550000000",
+    retryAllowed: false,
+    version: 1,
+    ...overrides,
+  }
+}
+
+async function projectionOnCall() {
+  const realtime = deterministicRealtime()
+  const recovery = task("recovery", { origin: "MISSED_CALL_RECOVERY" })
+  const other = task("other")
+  const rows = new Map([[recovery.id, recovery], [other.id, other]])
+  const authority: WorkspaceAuthorityAdapter = {
+    ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(30), tasks: taskPage([recovery, other]) }),
+    tasks: async (_token, request) =>
+      success(taskPage([...rows.values()].filter((row) => row.state === request.state))),
+    task: async (_token, taskID) => {
+      const row = rows.get(taskID)
+      return row ? success(row) : missing()
+    },
+    completeTask: async (_token, target) => {
+      const completed: Task = { ...rows.get(target.id)!, state: "COMPLETED", version: target.version + 1, completedAt: "2026-08-30T12:10:00Z" }
+      rows.set(completed.id, completed)
+      return success(completed)
+    },
+  }
+  const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: recovery })
+  await projection.dispatch({
+    type: "call-connected",
+    call: liveCall({ recoveryTask: { id: recovery.id, title: recovery.title, state: "OPEN", relatedInteractionCount: 0 } }),
+  })
+  const onCall = projection.getSnapshot().selection
+  assert.equal(onCall.contextView, "call")
+  assert.equal(onCall.task?.id, recovery.id)
+  return { projection, rows, recovery, other, onCall }
+}
+
+function assertStillOnCall(
+  projection: ReturnType<typeof createWorkspaceProjection>,
+  onCall: ReturnType<ReturnType<typeof createWorkspaceProjection>["getSnapshot"]>["selection"],
+) {
+  const { selection } = projection.getSnapshot()
+  assert.equal(selection.contextView, "call")
+  assert.equal(selection.contextPanelOpen, true)
+  assert.equal(selection.view, "engagement")
+  assert.deepEqual(selection.engagement, onCall.engagement)
+  assert.equal(selection.task?.id, onCall.task?.id)
+}
+
+test("ticking the call's own Task during a call keeps the call view and updates the rail", async () => {
+  const { projection, recovery, other, onCall } = await projectionOnCall()
+  await projection.dispatch({ type: "complete-task", task: recovery, reason: "DONE" })
+  assertStillOnCall(projection, onCall)
+  const state = projection.getSnapshot()
+  assert.deepEqual(state.tasks.items, [other])
+  assert.equal(state.tasks.counts.tasks, 1)
+  assert.deepEqual(state.completedTasks.items.map((row) => row.id), [recovery.id])
+  assert.equal(state.selection.task?.state, "COMPLETED")
+  assert.equal(state.completion.pendingTaskID, "")
+  projection.stop()
+})
+
+test("closing another Task as Not needed during a call keeps the call view and updates the rail", async () => {
+  const { projection, recovery, other, onCall } = await projectionOnCall()
+  await projection.dispatch({ type: "complete-task", task: other, reason: "NOT_NEEDED" })
+  assertStillOnCall(projection, onCall)
+  const state = projection.getSnapshot()
+  assert.deepEqual(state.tasks.items, [recovery])
+  assert.equal(state.tasks.counts.tasks, 1)
+  assert.deepEqual(state.completedTasks.items.map((row) => row.id), [other.id])
+  projection.stop()
+})
+
+test("reopening a Task during a call keeps the call view and updates the rail", async () => {
+  const { projection, rows, recovery, other, onCall } = await projectionOnCall()
+  await projection.dispatch({ type: "complete-task", task: recovery, reason: "DONE" })
+  const reopened: Task = { ...recovery, version: 3 }
+  rows.set(reopened.id, reopened)
+  await projection.dispatch({ type: "task-committed", task: reopened })
+  assertStillOnCall(projection, onCall)
+  const state = projection.getSnapshot()
+  assert.deepEqual(state.tasks.items, [reopened, other])
+  assert.equal(state.tasks.counts.tasks, 2)
+  assert.deepEqual(state.completedTasks.items, [])
+  assert.deepEqual(state.selection.task, reopened)
+  projection.stop()
+})
+
+test("a phone search opens and closes the patient's Tasks without selecting one", async () => {
+  const realtime = deterministicRealtime()
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(31), tasks: taskPage([task("open")]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "set-search", value: "(555) 987-6543" })
+  await projection.dispatch({ type: "submit-search" })
+  assert.equal(projection.getSnapshot().selection.contextPanelOpen, false)
+
+  await projection.dispatch({ type: "open-patient-tasks" })
+  let { selection } = projection.getSnapshot()
+  assert.equal(selection.contextView, "patient-tasks")
+  assert.equal(selection.contextPanelOpen, true)
+  assert.equal(selection.engagement?.phone, "+15559876543")
+  assert.equal(selection.task, undefined)
+
+  await projection.dispatch({ type: "close-context" })
+  selection = projection.getSnapshot().selection
+  assert.equal(selection.contextPanelOpen, false)
+  assert.equal(selection.engagement?.phone, "+15559876543")
+  assert.equal(selection.task, undefined)
+  projection.stop()
+})
+
+test("a text review opens and closes the patient's Tasks and stays the selected review", async () => {
+  const realtime = deterministicRealtime()
+  const review = task("review", { origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text" })
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(32), tasks: taskPage([review]) }),
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: review })
+
+  await projection.dispatch({ type: "open-patient-tasks" })
+  let { selection } = projection.getSnapshot()
+  assert.equal(selection.contextView, "patient-tasks")
+  assert.equal(selection.contextPanelOpen, true)
+  assert.deepEqual(selection.task, review)
+
+  await projection.dispatch({ type: "close-context" })
+  selection = projection.getSnapshot().selection
+  assert.equal(selection.contextView, "patient-tasks")
+  assert.equal(selection.contextPanelOpen, false)
+  assert.deepEqual(selection.task, review)
+  projection.stop()
+})
+
+test("a completion that fails or conflicts refreshes every open Task detail read", async () => {
+  for (const failure of [
+    { kind: "conflict", retryable: false, status: 409 },
+    { kind: "unavailable", retryable: true, status: 503 },
+  ] satisfies PortalFailure[]) {
+    const realtime = deterministicRealtime()
+    const open = task("open")
+    const projection = createWorkspaceProjection({
+      authority: {
+        ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(33), tasks: taskPage([open]) }),
+        completeTask: async () => failure,
+      },
+      realtime: realtime.adapter,
+      preferences: memoryPreferences(),
+    })
+    await projection.start()
+    await realtime.reconcile(0)
+    const before = projection.getSnapshot().detailRevision
+    await projection.dispatch({ type: "complete-task", task: open, reason: "DONE" })
+    const state = projection.getSnapshot()
+    assert.equal(state.completion.errorTaskID, open.id)
+    assert.equal(state.detailRevision, before + 1, `${failure.kind} refetches the reads that showed the stale Task`)
+    projection.stop()
+  }
 })

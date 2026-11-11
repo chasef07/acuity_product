@@ -40,7 +40,7 @@ type WorkspaceConnectionState =
   | "degraded"
 
 export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics" | "manage-agent"
-type WorkspaceContextView = "task" | "call" | "ai-call"
+type WorkspaceContextView = "task" | "call" | "ai-call" | "patient-tasks"
 export type ManageAgentPage = "home" | "transcripts" | "knowledge" | "insurance"
 
 export function isWorkView(view: WorkspaceView) {
@@ -235,6 +235,7 @@ export type WorkspaceProjectionIntent =
   | { type: "open-ai-context"; interactionID: string }
   | { type: "open-task-context"; task: Task }
   | { type: "open-call-context"; callID: string }
+  | { type: "open-patient-tasks" }
   | { type: "close-context" }
   | { type: "context-transition-ended" }
   | { type: "task-committed"; task: Task; advance?: boolean }
@@ -871,6 +872,18 @@ export function createWorkspaceProjection({
       await openCallContext(intent.callID)
       return
     }
+    if (intent.type === "open-patient-tasks") {
+      detailGeneration += 1
+      patch((current) => ({
+        ...current,
+        selection: {
+          ...current.selection,
+          contextView: "patient-tasks",
+          contextPanelOpen: true,
+        },
+      }))
+      return
+    }
     if (intent.type === "close-context") {
       detailGeneration += 1
       patch((current) => ({
@@ -1231,36 +1244,35 @@ export function createWorkspaceProjection({
 
   function projectTaskIntent(task: Task, select: boolean) {
     detailGeneration += 1
-    patch((current) => {
-      const selected = current.selection.task?.id === task.id
-      return {
-        ...current,
-        search: select ? { ...current.search, input: "" } : current.search,
-        selection:
-          select || selected
-            ? {
-                ...current.selection,
-                task,
-                taskGroup: select
-                  ? (task.groupMembers && task.groupMembers.length > 1 ? task : undefined)
-                  : task.state === "COMPLETED" ? undefined : current.selection.taskGroup,
-                taskError: "",
-                engagement: taskEngagement(task),
-                aiInteractionID: "",
-                aiInteraction: undefined,
-                aiInteractionLoading: false,
-                aiInteractionError: "",
-                historicalCall: undefined,
-                view: "engagement",
-                contextView: "task",
-                contextPanelOpen: select
-                  ? true
-                  : current.selection.contextPanelOpen,
-              }
-            : current.selection,
-        detailRevision: current.detailRevision + 1,
-      }
-    })
+    patch((current) => ({
+      ...current,
+      search: select ? { ...current.search, input: "" } : current.search,
+      selection: select
+        ? {
+            ...current.selection,
+            task,
+            taskGroup: task.groupMembers && task.groupMembers.length > 1 ? task : undefined,
+            taskError: "",
+            engagement: taskEngagement(task),
+            aiInteractionID: "",
+            aiInteraction: undefined,
+            aiInteractionLoading: false,
+            aiInteractionError: "",
+            historicalCall: undefined,
+            view: "engagement",
+            contextView: "task",
+            contextPanelOpen: true,
+          }
+        : current.selection.task?.id === task.id
+          ? {
+              ...current.selection,
+              task,
+              taskGroup: task.state === "COMPLETED" ? undefined : current.selection.taskGroup,
+              taskError: "",
+            }
+          : current.selection,
+      detailRevision: current.detailRevision + 1,
+    }))
   }
 
   async function openCallContext(callID: string) {
@@ -1396,6 +1408,7 @@ export function createWorkspaceProjection({
     patch((current) => ({
       ...current,
       completion: { pendingTaskID: "", errorTaskID: taskID, error },
+      detailRevision: current.detailRevision + 1,
     }))
   }
 
