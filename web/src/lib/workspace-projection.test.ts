@@ -10,19 +10,56 @@ import type {
   AiInteractionDetail,
   CallingCall,
   Location,
+  PatientWorkPage,
+  PatientWorkQueryRequest,
+  PatientWorkRow,
   Practice,
   Task,
   TaskPage,
   WorkspaceSnapshot,
 } from "./api/generated/types.gen.ts"
 import {
-  createWorkspaceProjection,
+  createWorkspaceProjection as createProjection,
   type WorkspaceAuthorityAdapter,
   type WorkspaceAuthorityResult,
   type WorkspaceRealtimeAdapter,
   type WorkspaceRealtimeCallbacks,
   WorkspaceProjectionAccessError,
+  type WorkspaceProjectionState,
 } from "./workspace-projection.ts"
+
+type TestAuthority = Omit<WorkspaceAuthorityAdapter, "patients"> &
+  Partial<Pick<WorkspaceAuthorityAdapter, "patients">>
+
+function createWorkspaceProjection(
+  options: Omit<Parameters<typeof createProjection>[0], "authority"> & { authority: TestAuthority },
+) {
+  const { authority } = options
+  return createProjection({
+    ...options,
+    authority: {
+      ...authority,
+      patients: authority.patients ?? (async (token, request, signal) => {
+        const result = await authority.tasks(token, {
+          practiceId: request.practiceId,
+          ...(request.locationId ? { locationId: request.locationId } : {}),
+          ...(request.search ? { search: request.search } : {}),
+          ...(request.cursor ? { cursor: request.cursor } : {}),
+          state: "OPEN",
+          responsibility: request.scope === "everyone" ? "all" : "mine",
+          limit: request.limit,
+        }, signal)
+        return result.kind === "success"
+          ? success(patientPage(result.data.items.map((item) => patientRow(item)), result.data.nextCursor))
+          : result
+      }),
+    },
+  })
+}
+
+function openTasks(state: WorkspaceProjectionState) {
+  return state.patients.items.map((row) => row.top)
+}
 
 test("initial workspace shows a conversation without opening Task details and returning to work restores it", async () => {
   const realtime = deterministicRealtime()
@@ -89,7 +126,7 @@ test("scope changes clear every window and obsolete delayed responses from the o
     locationScopeID: "location-2",
   })
   assert.equal(state.workspace, undefined)
-  assert.deepEqual(state.tasks.items, [])
+  assert.deepEqual(openTasks(state), [])
   assert.deepEqual(state.completedTasks.items, [])
   assert.equal(state.selection.task, undefined)
   assert.equal(
@@ -101,7 +138,7 @@ test("scope changes clear every window and obsolete delayed responses from the o
 
 test("pagination appends uniquely and refresh retains active and completed window depth", async () => {
   const realtime = deterministicRealtime()
-  const authority: WorkspaceAuthorityAdapter = {
+  const authority: TestAuthority = {
     ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([]) }),
     tasks: async (_token, request) => {
       const completed = request.state === "COMPLETED"
@@ -116,10 +153,10 @@ test("pagination appends uniquely and refresh retains active and completed windo
   const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
   await projection.start()
   await realtime.reconcile(0)
-  await projection.dispatch({ type: "load-more", window: "tasks" })
+  await projection.dispatch({ type: "load-more", window: "patients" })
   await projection.dispatch({ type: "load-more", window: "completedTasks" })
   for (let refresh = 0; refresh < 2; refresh += 1) {
-    assert.deepEqual(projection.getSnapshot().tasks.items.map((item) => item.id), ["open-1", "open-2"])
+    assert.deepEqual(openTasks(projection.getSnapshot()).map((item) => item.id), ["open-1", "open-2"])
     assert.deepEqual(projection.getSnapshot().completedTasks.items.map((item) => item.id), ["done-1", "done-2"])
     await realtime.reconcile(0)
   }
@@ -129,7 +166,7 @@ test("pagination appends uniquely and refresh retains active and completed windo
 test("a reconcile during load-more keeps the page the operator asked for", async () => {
   const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
   control.delayNext = true
-  const load = projection.dispatch({ type: "load-more", window: "tasks" })
+  const load = projection.dispatch({ type: "load-more", window: "patients" })
   await waitUntil(() => !control.delayNext)
   await realtime.reconcile(0)
   assert.deepEqual(openIDs(), ["open-1", "open-2"])
@@ -137,7 +174,7 @@ test("a reconcile during load-more keeps the page the operator asked for", async
   await load
 
   assert.deepEqual(openIDs(), ["open-1", "open-2"])
-  assert.equal(projection.getSnapshot().tasks.loading, false)
+  assert.equal(projection.getSnapshot().patients.loading, false)
   await realtime.reconcile(0)
   assert.deepEqual(openIDs(), ["open-1", "open-2"])
   projection.stop()
@@ -146,18 +183,18 @@ test("a reconcile during load-more keeps the page the operator asked for", async
 test("a superseded load-more releases loading when the reconcile that replaced it fails", async () => {
   const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
   control.delayNext = true
-  const pending = projection.dispatch({ type: "load-more", window: "tasks" })
-  assert.equal(projection.getSnapshot().tasks.loading, true)
+  const pending = projection.dispatch({ type: "load-more", window: "patients" })
+  assert.equal(projection.getSnapshot().patients.loading, true)
   await waitUntil(() => !control.delayNext)
   control.workspaceAvailable = false
   await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
   delayed.resolve(success(taskPage([task("superseded")])))
   await pending
 
-  assert.equal(projection.getSnapshot().tasks.loading, false)
+  assert.equal(projection.getSnapshot().patients.loading, false)
   assert.equal(projection.getSnapshot().completedTasks.loading, false)
   assert.deepEqual(openIDs(), ["open-1"])
-  await projection.dispatch({ type: "load-more", window: "tasks" })
+  await projection.dispatch({ type: "load-more", window: "patients" })
   assert.deepEqual(openIDs(), ["open-1", "open-2"])
   projection.stop()
 })
@@ -166,7 +203,7 @@ async function startWithDelayableTasks() {
   const realtime = deterministicRealtime()
   const delayed = deferred<WorkspaceAuthorityResult<TaskPage>>()
   const control = { delayNext: false, workspaceAvailable: true }
-  const authority: WorkspaceAuthorityAdapter = {
+  const authority: TestAuthority = {
     ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([]) }),
     workspace: async () => control.workspaceAvailable ? success(workspaceSnapshot(7)) : unavailable(),
     tasks: async (_token, request) => {
@@ -181,7 +218,7 @@ async function startWithDelayableTasks() {
   const projection = createWorkspaceProjection({ authority, realtime: realtime.adapter, preferences: memoryPreferences() })
   await projection.start()
   await realtime.reconcile(0)
-  const openIDs = () => projection.getSnapshot().tasks.items.map((item) => item.id)
+  const openIDs = () => openTasks(projection.getSnapshot()).map((item) => item.id)
   return { projection, realtime, control, delayed, openIDs }
 }
 
@@ -189,7 +226,7 @@ test("changing scope, failing closed, and stopping abort in-flight authority req
   const realtime = deterministicRealtime()
   const signals: AbortSignal[] = []
   let workspaceResult: WorkspaceAuthorityResult<WorkspaceSnapshot> = success(workspaceSnapshot(7))
-  const authority: WorkspaceAuthorityAdapter = {
+  const authority: TestAuthority = {
     ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(7), tasks: taskPage([task("open-1")]) }),
     workspace: async () => workspaceResult,
     call: (_token, _callID, signal) => {
@@ -238,7 +275,7 @@ test("authoritative detail refresh updates rail and selection together then clea
     snapshot: workspaceSnapshot(9),
     tasks: taskPage(taskItems),
   })
-  const authority: WorkspaceAuthorityAdapter = {
+  const authority: TestAuthority = {
     ...baseAuthority,
     tasks: async (_token, request) => success(
         request.state === "OPEN"
@@ -263,8 +300,8 @@ test("authoritative detail refresh updates rail and selection together then clea
   await realtime.reconcile(0)
 
   let state = projection.getSnapshot()
-  assert.equal(state.tasks.items[0]?.version, 3)
-  assert.equal(state.tasks.items[0]?.title, "Authoritative detail")
+  assert.equal(state.patients.items[0]?.top.version, 3)
+  assert.equal(state.patients.items[0]?.top.title, "Authoritative detail")
   assert.equal(state.selection.task?.version, 3)
 
   selectedResult = unavailable()
@@ -285,7 +322,7 @@ test("authoritative detail refresh updates rail and selection together then clea
   state = projection.getSnapshot()
   assert.equal(state.selection.task, undefined)
   assert.equal(state.selection.contextPanelOpen, false)
-  assert.deepEqual(state.tasks.items, [])
+  assert.deepEqual(openTasks(state), [])
   projection.stop()
 })
 
@@ -298,7 +335,7 @@ test("search resets only Task windows and delayed prior search cannot overwrite 
     snapshot: workspaceSnapshot(10),
     tasks: taskPage([task("initial-task")]),
   })
-  const authority: WorkspaceAuthorityAdapter = {
+  const authority: TestAuthority = {
     ...baseAuthority,
     tasks: async (_token, request) => {
       if (request.state === "COMPLETED") {
@@ -331,7 +368,7 @@ test("search resets only Task windows and delayed prior search cannot overwrite 
 
   const state = projection.getSnapshot()
   assert.equal(state.search.applied, "second")
-  assert.deepEqual(state.tasks.items.map((item) => item.id), ["second-task"])
+  assert.deepEqual(openTasks(state).map((item) => item.id), ["second-task"])
   assert.deepEqual(state.completedTasks.items, [])
   assert.equal(state.selection.task?.id, "initial-task")
   projection.stop()
@@ -344,7 +381,7 @@ test("confirmed completion moves a Task to shared completed history and preserve
   let completed = false
   let sentReason = ""
   let taskReads = 0
-  const authority: WorkspaceAuthorityAdapter = {
+  const authority: TestAuthority = {
     ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(11), tasks: taskPage([openTask]) }),
     tasks: async (_token, request) => {
       taskReads += 1
@@ -364,8 +401,8 @@ test("confirmed completion moves a Task to shared completed history and preserve
   assert.equal(taskReads, 2, "one authoritative read per Task window")
   staleSnapshot.apply()
   const state = projection.getSnapshot()
-  assert.deepEqual(state.tasks.items, [])
-  assert.equal(state.tasks.counts.tasks, 0)
+  assert.deepEqual(openTasks(state), [])
+  assert.equal(state.patients.counts.all, 0)
   assert.deepEqual(state.completedTasks.items, [completedTask])
   assert.deepEqual(state.selection.task, completedTask)
   assert.equal(state.selection.contextPanelOpen, true)
@@ -377,7 +414,7 @@ test("temporary token failure keeps Task completion retryable without expiring t
   const realtime = deterministicRealtime()
   let tokenAvailable = true
   const openTask = task("task-1")
-  const authority: WorkspaceAuthorityAdapter = {
+  const authority: TestAuthority = {
     ...deterministicAuthority({
       discovery: accessDiscovery(),
       snapshot: workspaceSnapshot(20),
@@ -416,19 +453,21 @@ test("temporary token failure keeps Task completion retryable without expiring t
   projection.stop()
 })
 
-test("one Task count query serves active Tasks and pagination preserves those counts", async () => {
+test("each page of patients brings the counts and totals the list shows", async () => {
   const realtime = deterministicRealtime()
-  const requests: Array<{ state?: string; cursor?: string; includeCounts?: boolean }> = []
-  const counts = taskPage(Array.from({ length: 6 }, (_, i) => task(`task-${i}`))).counts
+  const requests: PatientWorkQueryRequest[] = []
+  const counts = { all: 6, callBack: 2, texts: 1, appointments: 0, unowned: 3 }
+  const totals = { openTasks: 9, patients: 7, patientsOutsideScope: 1 }
   const projection = createWorkspaceProjection({
     authority: {
       ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: taskPage([]) }),
-      tasks: async (_token, request) => {
+      patients: async (_token, request) => {
         requests.push(request)
-        const page = request.cursor
-          ? { items: [task("task-2")], nextCursor: "" }
-          : { items: [task("task-1")], nextCursor: "more" }
-        return success({ ...page, ...(request.includeCounts !== false ? { counts } : {}) })
+        return success({
+          ...patientPage(request.cursor ? [patientRow(task("task-1")), patientRow(task("task-2"))] : [patientRow(task("task-1"))], request.cursor ? "" : "more"),
+          counts,
+          totals,
+        })
       },
     },
     realtime: realtime.adapter,
@@ -436,75 +475,87 @@ test("one Task count query serves active Tasks and pagination preserves those co
   })
   await projection.start()
   await realtime.reconcile(0)
-  assert.deepEqual(requests.map((request) => request.includeCounts), [true, false])
-  await projection.dispatch({ type: "load-more", window: "tasks" })
-  assert.equal(requests.at(-1)?.includeCounts, false)
-  assert.deepEqual(projection.getSnapshot().tasks.counts, counts)
+  assert.deepEqual(requests.map((request) => [request.scope, request.filter, request.cursor]), [["mine", "all", undefined]])
+  assert.deepEqual(projection.getSnapshot().patients.counts, counts)
+  assert.deepEqual(projection.getSnapshot().patients.totals, totals)
+  await projection.dispatch({ type: "load-more", window: "patients" })
+  assert.equal(requests.at(-1)?.cursor, "more")
+  assert.deepEqual(openTasks(projection.getSnapshot()).map((item) => item.id), ["task-1", "task-2"], "a patient already listed is not listed twice")
+  assert.deepEqual(projection.getSnapshot().patients.counts, counts)
   requests.length = 0
   await realtime.reconcile(0)
-  assert.equal(requests.filter((request) => request.includeCounts !== false).length, 1)
-  assert.deepEqual(projection.getSnapshot().tasks.counts, counts)
+  assert.deepEqual(requests.map((request) => request.cursor), [undefined, "more"], "a refresh reloads the pages already shown")
+  assert.deepEqual(projection.getSnapshot().patients.totals, totals)
   projection.stop()
 })
 
-test("rail preferences restore through the projection and corrupted values fail safe", async () => {
-  const values = new Map<string, string>([
+test("rail preferences restore through the projection and corrupted or older values fail safe", async () => {
+  const key = "acuity.attentionRail.user-1.practice-1"
+  const fresh = { scope: "mine", filter: "all", completedExpanded: false, scrollTop: 0 }
+  for (const [stored, restored] of [
+    [{ scrollTop: "not-a-number", taskCategory: "obsolete", expanded: ["unknown"] }, fresh],
+    [{ version: 1, expanded: ["tasks", "texts"], taskResponsibility: "all", taskCategory: "optical", scrollTop: 120 }, fresh],
+    [{ version: 2, scope: "team", filter: "all", completedExpanded: false, scrollTop: 0 }, fresh],
+    [{ version: 2, scope: "everyone", filter: "calls", completedExpanded: false, scrollTop: 0 }, fresh],
     [
-      "acuity.attentionRail.user-1.practice-1",
-      JSON.stringify({
-        scrollTop: "not-a-number",
-        taskCategory: "obsolete",
-        expanded: ["unknown"],
-      }),
+      { version: 2, scope: "everyone", filter: "unowned", completedExpanded: true, scrollTop: 64 },
+      { scope: "everyone", filter: "unowned", completedExpanded: true, scrollTop: 64 },
     ],
-  ])
-  const preferences = {
-    read: (key: string) => values.get(key) ?? null,
-    write: (key: string, value: string) => values.set(key, value),
+  ] as const) {
+    const values = new Map<string, string>([[key, JSON.stringify(stored)]])
+    const projection = createWorkspaceProjection({
+      authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(14), tasks: taskPage([]) }),
+      realtime: deterministicRealtime().adapter,
+      preferences: {
+        read: (name: string) => values.get(name) ?? null,
+        write: (name: string, value: string) => values.set(name, value),
+      },
+    })
+    await projection.start()
+    assert.deepEqual(projection.getSnapshot().rail, restored, JSON.stringify(stored))
+    projection.stop()
   }
+
+  const values = new Map<string, string>()
+  const realtime = deterministicRealtime()
   const projection = createWorkspaceProjection({
-    authority: deterministicAuthority({
-      discovery: accessDiscovery(),
-      snapshot: workspaceSnapshot(14),
-      tasks: taskPage([]),
-    }),
-    realtime: deterministicRealtime().adapter,
-    preferences,
-  })
-
-  await projection.start()
-  assert.deepEqual(projection.getSnapshot().rail, {
-    expanded: ["tasks"],
-    taskCategory: "all",
-    scrollTop: 0,
-  })
-
-  await projection.dispatch({ type: "toggle-rail-section", section: "completed" })
-  await projection.dispatch({ type: "set-task-category", category: "billing" })
-  await projection.dispatch({ type: "remember-rail-scroll", scrollTop: 42 })
-
-  assert.deepEqual(
-    JSON.parse(values.get("acuity.attentionRail.user-1.practice-1") ?? ""),
-    {
-      version: 1,
-      expanded: ["tasks", "completed"],
-      taskCategory: "billing",
-      scrollTop: 42,
+    authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(14), tasks: taskPage([]) }),
+    realtime: realtime.adapter,
+    preferences: {
+      read: (name: string) => values.get(name) ?? null,
+      write: (name: string, value: string) => values.set(name, value),
     },
-  )
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "toggle-completed" })
+  await projection.dispatch({ type: "set-rail-view", scope: "everyone" })
+  await projection.dispatch({ type: "set-rail-view", filter: "callBack" })
+  await projection.dispatch({ type: "remember-rail-scroll", scrollTop: 42 })
+  assert.deepEqual(JSON.parse(values.get(key) ?? ""), {
+    version: 2,
+    scope: "everyone",
+    filter: "callBack",
+    completedExpanded: true,
+    scrollTop: 42,
+  })
   projection.stop()
 })
 
-test("switching responsibility views refreshes both Task windows and preserves the selected type", async () => {
+test("changing the scope or the filter reloads the list and the completed shelf for that view", async () => {
   const realtime = deterministicRealtime()
-  const requests: Parameters<WorkspaceAuthorityAdapter["tasks"]>[1][] = []
+  const patientRequests: PatientWorkQueryRequest[] = []
+  const completedRequests: Parameters<WorkspaceAuthorityAdapter["tasks"]>[1][] = []
   const projection = createWorkspaceProjection({
     authority: {
       ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(14), tasks: taskPage([]) }),
+      patients: async (_token, request) => {
+        patientRequests.push(request)
+        return success(patientPage([patientRow(task(`${request.scope}-${request.filter}`))]))
+      },
       tasks: async (_token, request) => {
-        requests.push(request)
-        const id = `${request.responsibility}-${request.state}`
-        return success(taskPage([task(id, { state: request.state, category: request.category })]))
+        completedRequests.push(request)
+        return success(taskPage([task(`${request.responsibility}-done`, { state: "COMPLETED" })]))
       },
     },
     realtime: realtime.adapter,
@@ -512,28 +563,60 @@ test("switching responsibility views refreshes both Task windows and preserves t
   })
   await projection.start()
   await realtime.reconcile(0)
-  await projection.dispatch({ type: "set-task-category", category: "optical" })
-  for (const responsibility of ["all", "mine"] as const) {
+  for (const [intent, scope, filter, responsibility] of [
+    [{ type: "set-rail-view", scope: "everyone" }, "everyone", "all", "all"],
+    [{ type: "set-rail-view", filter: "texts" }, "everyone", "texts", "all"],
+    [{ type: "set-rail-view", scope: "mine" }, "mine", "texts", "mine"],
+    [{ type: "set-rail-view", filter: "unowned" }, "mine", "unowned", "mine"],
+  ] as const) {
     const stale = await realtime.prepareReconciliation(0)
-    requests.length = 0
-    await projection.dispatch({ type: "set-task-filters", responsibility })
+    patientRequests.length = 0
+    completedRequests.length = 0
+    await projection.dispatch(intent)
     stale.apply()
     const state = projection.getSnapshot()
-    assert.equal(state.rail.taskResponsibility, responsibility)
-    assert.equal(state.rail.taskCategory, "optical")
-    assert.deepEqual(requests.map((request) => [request.state, request.responsibility, request.category]), [
-      ["OPEN", responsibility, "optical"],
-      ["COMPLETED", responsibility, "optical"],
-    ])
-    assert.deepEqual(state.tasks.items.map((item) => item.id), [`${responsibility}-OPEN`])
-    assert.deepEqual(state.completedTasks.items.map((item) => item.id), [`${responsibility}-COMPLETED`])
+    assert.deepEqual([state.rail.scope, state.rail.filter], [scope, filter])
+    assert.deepEqual(patientRequests.map((request) => [request.scope, request.filter]), [[scope, filter]])
+    assert.deepEqual(completedRequests.map((request) => [request.state, request.responsibility]), [["COMPLETED", responsibility]])
+    assert.deepEqual(openTasks(state).map((item) => item.id), [`${scope}-${filter}`])
+    assert.deepEqual(state.completedTasks.items.map((item) => item.id), [`${responsibility}-done`])
+    assert.equal(state.selection.task?.id, `${scope}-${filter}`, "the first patient's top Task is selected when the selected patient left the list")
   }
-  const requestCount = requests.length
-  await projection.dispatch({ type: "toggle-rail-section", section: "completed" })
-  assert.equal(requests.length, requestCount, "expanding the shelf uses the current authoritative window")
-  assert.ok(projection.getSnapshot().rail.expanded.includes("completed"))
+  const requestCount = patientRequests.length + completedRequests.length
+  await projection.dispatch({ type: "toggle-completed" })
+  assert.equal(patientRequests.length + completedRequests.length, requestCount, "expanding the shelf uses the current authoritative window")
+  assert.equal(projection.getSnapshot().rail.completedExpanded, true)
   projection.stop()
 })
+
+test("a filter change keeps the selected Task while its patient is still listed", async () => {
+  const realtime = deterministicRealtime()
+  const followUp = task("follow-up", { phone: "+13055550142" })
+  const text = task("text", { phone: "+13055550142", origin: "INBOUND_MESSAGE_REVIEW" })
+  const other = task("other", { phone: "+13055550171", origin: "INBOUND_MESSAGE_REVIEW" })
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(14), tasks: taskPage([followUp, text, other]) }),
+      patients: async (_token, request) => success(patientPage(
+        request.filter === "texts"
+          ? [patientRow(other), patientRow(text, { openCount: 2 })]
+          : request.filter === "callBack" ? [] : [patientRow(followUp, { openCount: 2 }), patientRow(other)],
+      )),
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({ type: "select-task", task: followUp })
+  await projection.dispatch({ type: "set-rail-view", filter: "texts" })
+  assert.equal(projection.getSnapshot().selection.task?.id, followUp.id)
+  await projection.dispatch({ type: "set-rail-view", filter: "callBack" })
+  assert.equal(projection.getSnapshot().selection.task, undefined)
+  assert.equal(projection.getSnapshot().selection.contextPanelOpen, false)
+  projection.stop()
+})
+
 test("authorization loss in one query fails closed across all protected windows", async () => {
   const realtime = deterministicRealtime()
   let unauthorized = false
@@ -563,7 +646,7 @@ test("authorization loss in one query fails closed across all protected windows"
   assert.equal(state.loadState, "unauthorized")
   assert.equal(state.discovery, undefined)
   assert.equal(state.workspace, undefined)
-  assert.deepEqual(state.tasks.items, [])
+  assert.deepEqual(openTasks(state), [])
   assert.deepEqual(state.completedTasks.items, [])
   assert.equal(state.selection.engagement, undefined)
   projection.stop()
@@ -678,7 +761,7 @@ function deterministicAuthority({
   discovery: AccessDiscovery
   snapshot: WorkspaceSnapshot
   tasks: TaskPage
-}): WorkspaceAuthorityAdapter {
+}): TestAuthority {
   return {
     authenticate: async () => ({ status: "authenticated", token: "token" }),
     discover: async () => success(discovery),
@@ -854,13 +937,41 @@ function workspaceSnapshot(version: number): WorkspaceSnapshot {
   }
 }
 
+function patientRow(top: Task, overrides: Partial<PatientWorkRow> = {}): PatientWorkRow {
+  return {
+    phone: top.phone,
+    displayName: "",
+    openCount: 1,
+    highPriority: top.urgency === "high_priority",
+    hasUnowned: false,
+    activityAt: top.updatedAt,
+    top,
+    ...overrides,
+  }
+}
+
+function patientPage(rows: PatientWorkRow[], nextCursor = ""): PatientWorkPage {
+  return {
+    rows,
+    counts: { all: rows.length, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
+    totals: { openTasks: rows.length, patients: rows.length, patientsOutsideScope: 0 },
+    nextCursor,
+  }
+}
+
+function phoneFor(id: string) {
+  let hash = 0
+  for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) % 10_000_000
+  return `+1555${String(hash).padStart(7, "0")}`
+}
+
 function task(id: string, overrides: Partial<Task> = {}): Task {
   return {
     id,
     practiceId: "practice-1",
     locationId: "location-1",
     locationName: "Downtown",
-    phone: "+15551234567",
+    phone: phoneFor(id),
     title: "Return patient call",
     state: "OPEN",
     origin: "ABITA_AI",
@@ -932,22 +1043,6 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-test("requested Task counts cannot silently become zero when omitted", async () => {
-  const realtime = deterministicRealtime()
-  const projection = createWorkspaceProjection({
-    authority: {
-      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: taskPage([]) }),
-      tasks: async () => success({ items: [], nextCursor: "" }),
-    },
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-  })
-  await projection.start()
-  await realtime.reconcile(0)
-  assert.ok(projection.getSnapshot().tasks.error, "missing authoritative counts must be visible")
-  projection.stop()
-})
-
 test("opening Task context preserves pending authoritative count reconciliation", async () => {
   const realtime = deterministicRealtime()
   const openTask = task("task-1")
@@ -966,7 +1061,7 @@ test("opening Task context preserves pending authoritative count reconciliation"
   const pending = await realtime.prepareReconciliation(0)
   await projection.dispatch({ type: "open-task-context", task: openTask })
   pending.apply()
-  assert.deepEqual(projection.getSnapshot().tasks.counts, currentPage.counts)
+  assert.equal(projection.getSnapshot().patients.counts.all, 2)
   assert.equal(projection.getSnapshot().selection.contextPanelOpen, true)
   projection.stop()
 })
@@ -990,34 +1085,14 @@ for (const type of ["task-committed", "task-created"] as const) {
     const pending = await realtime.prepareReconciliation(0)
     currentPage = taskPage(type === "task-created" ? [openTask, task("new-task")] : [openTask])
     await projection.dispatch({ type, task: type === "task-created" ? task("new-task") : task("task-1", { version: 2 }) })
-    const committedCounts = projection.getSnapshot().tasks.counts
-    assert.equal(committedCounts.tasks, type === "task-created" ? 2 : 1)
+    const committedCounts = projection.getSnapshot().patients.counts
+    assert.equal(committedCounts.all, type === "task-created" ? 2 : 1)
     pending.apply()
-    assert.deepEqual(projection.getSnapshot().tasks.counts, committedCounts)
+    assert.deepEqual(projection.getSnapshot().patients.counts, committedCounts)
     assert.equal(realtime.refreshes, 1)
     projection.stop()
   })
 }
-
-test("selected Task detail refresh cannot discard the authoritative grouped membership", async () => {
-  const realtime = deterministicRealtime()
-  const first=task("group-first")
-  const second=task("group-second")
-  const grouped={...first,groupMembers:[first,second]}
-  const projection=createWorkspaceProjection({
-    authority:{...deterministicAuthority({discovery:accessDiscovery(),snapshot:workspaceSnapshot(20),tasks:taskPage([grouped])}),task:async()=>success(first)},
-    realtime:realtime.adapter,preferences:memoryPreferences(),
-  })
-  await projection.start()
-  await realtime.reconcile(0)
-  await projection.dispatch({type:"select-task",task:grouped})
-  await realtime.reconcile(0)
-  assert.deepEqual(projection.getSnapshot().tasks.items[0]?.groupMembers?.map((member)=>member.id),["group-first","group-second"])
-  assert.equal(projection.getSnapshot().selection.taskGroup, grouped)
-  await projection.dispatch({type:"select-task",task:second})
-  assert.equal(projection.getSnapshot().selection.taskGroup, undefined)
-  projection.stop()
-})
 
 for (const legacyFilters of [false, true]) {
   test(`opening Activity Task preserves an empty queue${legacyFilters ? " with retired saved filters" : ""}`, async () => {
@@ -1040,10 +1115,10 @@ for (const legacyFilters of [false, true]) {
     })
     await projection.start()
     await realtime.reconcile(0)
-    const before = projection.getSnapshot().tasks
+    const before = projection.getSnapshot().patients
     await projection.dispatch({ type: "open-task-context", task: task("activity-open-unflagged") })
-    assert.deepEqual(projection.getSnapshot().tasks.items, before.items)
-    assert.deepEqual(projection.getSnapshot().tasks.counts, before.counts)
+    assert.deepEqual(projection.getSnapshot().patients.items, before.items)
+    assert.deepEqual(projection.getSnapshot().patients.counts, before.counts)
     assert.equal(projection.getSnapshot().selection.task?.id, "activity-open-unflagged")
     projection.stop()
   })
@@ -1068,14 +1143,14 @@ test("completion waits for commitment and failed refresh retains rows with a vis
   await realtime.reconcile(0)
   const pending = projection.dispatch({ type: "complete-task", task: open, reason: "DONE" })
   assert.equal(projection.getSnapshot().completion.pendingTaskID, open.id)
-  assert.deepEqual(projection.getSnapshot().tasks.items, [open])
+  assert.deepEqual(openTasks(projection.getSnapshot()), [open])
   assert.deepEqual(projection.getSnapshot().completedTasks.items, [])
   failLists = true
   committed.resolve(success(completed))
   await pending
   assert.deepEqual(projection.getSnapshot().selection.task, completed)
-  assert.deepEqual(projection.getSnapshot().tasks.items, [open], "failed list read cannot establish updated membership")
-  assert.ok(projection.getSnapshot().tasks.error)
+  assert.deepEqual(openTasks(projection.getSnapshot()), [open], "failed list read cannot establish updated membership")
+  assert.ok(projection.getSnapshot().patients.error)
   assert.ok(projection.getSnapshot().completedTasks.error)
   projection.stop()
 })
@@ -1101,7 +1176,7 @@ test("phone search opens Engagement history without inventing or hiding a Task",
   await projection.dispatch({ type: "submit-search" })
   assert.equal(projection.getSnapshot().selection.engagement?.phone, "+15551234567")
   assert.equal(projection.getSnapshot().selection.task, undefined)
-  assert.deepEqual(projection.getSnapshot().tasks.items, [open])
+  assert.deepEqual(openTasks(projection.getSnapshot()), [open])
   assert.equal(projection.getSnapshot().search.applied, "")
   assert.equal(requests.at(-1)?.search, undefined)
   projection.stop()
@@ -1113,14 +1188,11 @@ test("Complete and next uses refreshed recent order without moving on remote com
   const next = task("next")
   const completed = task("first", { state: "COMPLETED", version: 2 })
   let done = false
-  const requests: Parameters<WorkspaceAuthorityAdapter["tasks"]>[1][] = []
   const projection = createWorkspaceProjection({
     authority: {
       ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(22), tasks: taskPage([first, next]) }),
-      tasks: async (_token, request) => {
-        requests.push(request)
-        return success(taskPage(request.state === "COMPLETED" ? (done ? [completed] : []) : done ? [next] : [first, next]))
-      },
+      tasks: async (_token, request) =>
+        success(taskPage(request.state === "COMPLETED" ? (done ? [completed] : []) : done ? [next] : [first, next])),
     }, realtime: realtime.adapter, preferences: memoryPreferences(),
   })
   await projection.start()
@@ -1131,24 +1203,7 @@ test("Complete and next uses refreshed recent order without moving on remote com
   assert.equal(projection.getSnapshot().selection.task?.id, first.id)
   await projection.dispatch({ type: "task-committed", task: completed, advance: true })
   assert.equal(projection.getSnapshot().selection.task?.id, next.id)
-  assert.ok(requests.filter((request) => request.state === "OPEN").every((request) => request.ordering === "recent"))
   projection.stop()
-})
-
-test("a former Texts selection becomes a persistent independent folder", async () => {
-  const values = new Map([["acuity.attentionRail.user-1.practice-1", JSON.stringify({ version: 1, expanded: [], taskCategory: "texts", scrollTop: 0 })]])
-  const preferences = { read: (key: string) => values.get(key) ?? null, write: (key: string, value: string) => values.set(key, value) }
-  const options = { authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(4), tasks: taskPage([]) }), realtime: deterministicRealtime().adapter, preferences }
-  const projection = createWorkspaceProjection(options)
-  await projection.start()
-  assert.deepEqual(projection.getSnapshot().rail.expanded, ["texts"])
-  assert.equal(projection.getSnapshot().rail.taskCategory, "all")
-  await projection.dispatch({ type: "toggle-rail-section", section: "texts" })
-  projection.stop()
-  const restored = createWorkspaceProjection({ ...options, realtime: deterministicRealtime().adapter })
-  await restored.start()
-  assert.deepEqual(restored.getSnapshot().rail.expanded, [])
-  restored.stop()
 })
 
 for (const obsolete of ["scope", "abort", "stop"] as const) {
@@ -1160,7 +1215,7 @@ for (const obsolete of ["scope", "abort", "stop"] as const) {
     const base = deterministicAuthority({
       discovery: accessDiscovery(), snapshot: workspaceSnapshot(20), tasks: taskPage([task("first")]),
     })
-    const authority: WorkspaceAuthorityAdapter = {
+    const authority: TestAuthority = {
       ...base,
       workspace: async (token, scope, signal) => {
         if (delay && scope.locationID === "location-1") {
@@ -1336,25 +1391,6 @@ test("refresh restores authorized page views and drops unauthorized ones", async
     assert.deepEqual(navigation.writes.map((write) => write.mode), expected === "engagement" ? ["replace"] : [])
     projection.stop()
   }
-})
-
-test("restored Task keeps its group once the Task window arrives", async () => {
-  const realtime = deterministicRealtime()
-  const member = task("member-task")
-  const anchor = task("anchor-task", { groupMembers: [task("anchor-task"), member] })
-  const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(1), tasks: taskPage([anchor]) })
-  const projection = createWorkspaceProjection({
-    authority: { ...base, task: async (_token, taskID) => taskID === anchor.id ? success(task(anchor.id)) : missing() },
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-    navigation: memoryNavigation({ view: "task", taskID: anchor.id }),
-  })
-  await projection.start()
-  assert.equal(projection.getSnapshot().selection.taskGroup, undefined)
-  await realtime.reconcile(0)
-  assert.equal(projection.getSnapshot().selection.task?.id, anchor.id)
-  assert.deepEqual(projection.getSnapshot().selection.taskGroup?.groupMembers?.map((item) => item.id), [anchor.id, member.id])
-  projection.stop()
 })
 
 test("back and forward restore the Task or page view in the URL", async () => {
@@ -1668,7 +1704,7 @@ function liveWorkspace({ openRows, hidden = () => false, environment }: {
       ...(request.includeCounts !== false ? { counts: taskPage(rows).counts } : {}),
     })
   }
-  const authority: WorkspaceAuthorityAdapter = {
+  const authority: TestAuthority = {
     authenticate: async () => ({ status: "authenticated", token: "token" }),
     discover: async () => success(accessDiscovery()),
     workspace: async () => {
@@ -1734,8 +1770,8 @@ function liveWorkspace({ openRows, hidden = () => false, environment }: {
       await settle()
     },
     async loadOpenRows(count: number) {
-      while (projection.getSnapshot().tasks.items.length < count) {
-        await projection.dispatch({ type: "load-more", window: "tasks" })
+      while (projection.getSnapshot().patients.items.length < count) {
+        await projection.dispatch({ type: "load-more", window: "patients" })
       }
     },
     reconciles: () => requests.filter((request) => request === "workspace").length,
@@ -1791,7 +1827,7 @@ test("completing a Task refreshes once and skips the server hint for the same ve
   const manual = manualClock()
   const live = liveWorkspace({ openRows: 3, environment: manual.environment })
   await live.connect()
-  const first = live.projection.getSnapshot().tasks.items[0]
+  const first = live.projection.getSnapshot().patients.items[0].top
   await live.projection.dispatch({ type: "select-task", task: first })
   manual.fireAll()
   live.requests.length = 0
@@ -1838,7 +1874,7 @@ async function projectionOnCall() {
   const recovery = task("recovery", { origin: "MISSED_CALL_RECOVERY" })
   const other = task("other")
   const rows = new Map([[recovery.id, recovery], [other.id, other]])
-  const authority: WorkspaceAuthorityAdapter = {
+  const authority: TestAuthority = {
     ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(30), tasks: taskPage([recovery, other]) }),
     tasks: async (_token, request) =>
       success(taskPage([...rows.values()].filter((row) => row.state === request.state))),
@@ -1858,7 +1894,7 @@ async function projectionOnCall() {
   await projection.dispatch({ type: "select-task", task: recovery })
   await projection.dispatch({
     type: "call-connected",
-    call: liveCall({ recoveryTask: { id: recovery.id, title: recovery.title, state: "OPEN", relatedInteractionCount: 0 } }),
+    call: liveCall({ phone: recovery.phone, recoveryTask: { id: recovery.id, title: recovery.title, state: "OPEN", relatedInteractionCount: 0 } }),
   })
   const onCall = projection.getSnapshot().selection
   assert.equal(onCall.contextView, "call")
@@ -1883,8 +1919,8 @@ test("ticking the call's own Task during a call keeps the call view and updates 
   await projection.dispatch({ type: "complete-task", task: recovery, reason: "DONE" })
   assertStillOnCall(projection, onCall)
   const state = projection.getSnapshot()
-  assert.deepEqual(state.tasks.items, [other])
-  assert.equal(state.tasks.counts.tasks, 1)
+  assert.deepEqual(openTasks(state), [other])
+  assert.equal(state.patients.counts.all, 1)
   assert.deepEqual(state.completedTasks.items.map((row) => row.id), [recovery.id])
   assert.equal(state.selection.task?.state, "COMPLETED")
   assert.equal(state.completion.pendingTaskID, "")
@@ -1896,8 +1932,8 @@ test("closing another Task as Not needed during a call keeps the call view and u
   await projection.dispatch({ type: "complete-task", task: other, reason: "NOT_NEEDED" })
   assertStillOnCall(projection, onCall)
   const state = projection.getSnapshot()
-  assert.deepEqual(state.tasks.items, [recovery])
-  assert.equal(state.tasks.counts.tasks, 1)
+  assert.deepEqual(openTasks(state), [recovery])
+  assert.equal(state.patients.counts.all, 1)
   assert.deepEqual(state.completedTasks.items.map((row) => row.id), [other.id])
   projection.stop()
 })
@@ -1910,8 +1946,8 @@ test("reopening a Task during a call keeps the call view and updates the rail", 
   await projection.dispatch({ type: "task-committed", task: reopened })
   assertStillOnCall(projection, onCall)
   const state = projection.getSnapshot()
-  assert.deepEqual(state.tasks.items, [reopened, other])
-  assert.equal(state.tasks.counts.tasks, 2)
+  assert.deepEqual(openTasks(state), [reopened, other])
+  assert.equal(state.patients.counts.all, 2)
   assert.deepEqual(state.completedTasks.items, [])
   assert.deepEqual(state.selection.task, reopened)
   projection.stop()

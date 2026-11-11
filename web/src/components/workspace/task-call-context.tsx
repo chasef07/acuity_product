@@ -9,14 +9,12 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { readTask } from "@/lib/clients/tasks"
 
-import { TaskGroupContext } from "./task-group-context"
 import { CallWorkspace } from "./call-workspace"
 import { TaskWorkspace } from "./task-workspace"
 
 type TaskCallContextProps = {
   task: Task | undefined
-  group?: Task
-  taskRows?: Task[]
+  nextTask?: Task
   onSelectTask?: (task: Task) => void
   activeCall: CallingCall | undefined
   callControlsShowing: boolean
@@ -35,8 +33,7 @@ export type PatientTasksPlacement =
 
 export function TaskCallContext({
   task,
-  group,
-  taskRows,
+  nextTask,
   onSelectTask,
   activeCall,
   callControlsShowing,
@@ -55,10 +52,7 @@ export function TaskCallContext({
     },
     [onOpenTask],
   )
-  const shownTasks = useMemo(
-    () => group?.groupMembers ?? (task ? [task] : []),
-    [group, task],
-  )
+  const shownTasks = useMemo(() => (task ? [task] : []), [task])
   if (view === "call" && activeCall) {
     return (
       <CallWorkspace
@@ -80,26 +74,18 @@ export function TaskCallContext({
     const otherTasks = patientTasks(task.phone, { beside: "task", otherThan: shownTasks })
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {group && onSelectTask ? (
-          <>
-            <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
-            {otherTasks}
-          </>
-        ) : (
-          <TaskWorkspace
-            key={task.id}
-            task={task}
-            onNextTask={onSelectTask && taskRows?.some((row) => row.id !== task.id)
-              ? () => onSelectTask(taskRows.find((row) => row.id !== task.id)!) : undefined}
-            activeCall={activeCall}
-            numberHistory={numberHistory}
-            taskCallError={taskCallError}
-            onTaskUpdated={onTaskUpdated}
-            onReturnToCall={onReturnToCall}
-          >
-            {otherTasks}
-          </TaskWorkspace>
-        )}
+        <TaskWorkspace
+          key={task.id}
+          task={task}
+          onNextTask={onSelectTask && nextTask ? () => onSelectTask(nextTask) : undefined}
+          activeCall={activeCall}
+          numberHistory={numberHistory}
+          taskCallError={taskCallError}
+          onTaskUpdated={onTaskUpdated}
+          onReturnToCall={onReturnToCall}
+        >
+          {otherTasks}
+        </TaskWorkspace>
       </div>
     )
   }

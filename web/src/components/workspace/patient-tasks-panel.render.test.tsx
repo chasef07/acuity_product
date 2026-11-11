@@ -528,11 +528,6 @@ test("a selected Task keeps its detail first and lists the patient's other Tasks
   assert.ok(title.classList.contains("min-h-11"), "the title row ends below the close button")
   titleAboveScroller(single.markup, task.title, "Complete & next")
   assert.match(single.markup, /^<div class="[^"]*\bmin-w-0\b/, "the column cannot be widened by its content")
-  const group = { ...task, groupMembers: [task, fiveTasks[1]] }
-  const grouped = context({ task, group, taskRows: [group], onSelectTask: () => {}, view: "task" })
-  assert.deepEqual(grouped.asked, [[task.phone, { beside: "task", otherThan: [task, fiveTasks[1]] }]])
-  assert.ok(grouped.markup.indexOf("Complete all 2 requests") < grouped.markup.indexOf("patient tasks for"))
-  titleAboveScroller(grouped.markup, "Insurance", fiveTasks[1].title)
   assert.deepEqual(context({}).asked, [])
 })
 
@@ -618,7 +613,7 @@ test("the header offers the patient's open Tasks by count and stays quiet when t
 })
 
 function LiveDetail({ revision, children }: { revision: number; children: ReactNode }) {
-  useLiveRefresh({ workspaceVersion: 0, taskCounts: "", detailRevision: revision })
+  useLiveRefresh({ workspaceVersion: 0, detailRevision: revision })
   return children
 }
 

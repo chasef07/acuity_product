@@ -59,21 +59,6 @@ test("the Task panel heading fits the narrow column and leaves the number to the
   assert.match(markup, /Alex Example/)
 })
 
-test("the group panel keeps its office and caller names without repeating the number", () => {
-  const second: Task = { ...task, id: "task-2", title: "Send prescription copy", callerName: "Blair Example" }
-  const group: Task = { ...task, groupMembers: [task, second] }
-  const markup = panel({ group, taskRows: [group], onSelectTask: () => {} })
-  const [, classes, text] = heading(markup) ?? []
-  assert.ok(text)
-  assert.match(classes ?? "", /\btext-base\b/)
-  assert.doesNotMatch(classes ?? "", /\btext-lg\b/)
-  assert.doesNotMatch(markup, /\(555\) 123-4567/)
-  assert.match(markup, /2 related Tasks · Downtown/)
-  assert.match(markup, /Alex Example/)
-  assert.match(markup, /Blair Example/)
-  assert.match(markup, /Complete all 2 requests/)
-})
-
 test("the Task panel names urgency with the rail's words", () => {
   for (const [urgency, label] of [
     ["high_priority", "High priority"],

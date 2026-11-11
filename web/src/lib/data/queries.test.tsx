@@ -195,7 +195,7 @@ function mountTask(t: TestContext, refreshClass: "workspace" | "analytics" = "wo
   const root = createRoot(dom.window.document.createElement("div"))
   const seen: ReturnType<typeof useTask>[] = []
   function Probe({ taskID, enabled, live }: { taskID: string; enabled: boolean; live: number }) {
-    useLiveRefresh({ workspaceVersion: live, taskCounts: "", detailRevision: live })
+    useLiveRefresh({ workspaceVersion: live, detailRevision: live })
     seen.push(useTask(taskID, enabled, refreshClass))
     return null
   }

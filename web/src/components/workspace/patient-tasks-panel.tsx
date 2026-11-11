@@ -28,10 +28,10 @@ import {
   taskCloseSummary,
   taskGroupLabel,
   taskOriginLabels,
+  taskRelativeTime,
 } from "@/lib/vocabulary"
 
 import { offersTaskCloseMenu, TaskCloseMenu } from "./task-close-menu"
-import { taskRelativeTime } from "./workspace-rail-task-row"
 
 const collapsedRowLimit = 8
 

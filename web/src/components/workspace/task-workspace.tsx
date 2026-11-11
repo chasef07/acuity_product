@@ -223,7 +223,7 @@ export function TaskWorkspace({
         This Task changed. Review the latest activity before completing it.
         <Button size="sm" variant="outline" className="mt-2" onClick={() => setReviewedVersion(task.version)}>Review latest</Button>
       </div>}
-      <div className="mt-4 flex flex-col gap-2">
+      <div className="sticky bottom-0 z-10 mt-4 flex flex-col gap-2 bg-popover pb-1 lg:bg-background">
         {task.state === "OPEN" ? (
           <>
             {callbackNotice && (
