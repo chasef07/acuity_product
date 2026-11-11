@@ -235,7 +235,6 @@ export function WorkspaceRail({
               )}
             </form>
           </div>}
-          {connection === "degraded" && <ProlongedOutageNotice />}
         </SidebarHeader>
         {manageAgent ? (
           <SidebarContent className="overflow-y-auto px-2 py-2">
@@ -352,6 +351,7 @@ export function WorkspaceRail({
         )}
         {workView && (
           <SidebarFooter className="border-t border-sidebar-border p-2">
+            {connection === "degraded" && <ProlongedOutageNotice />}
             <p data-testid="patient-work-footer" className="px-2 text-xs leading-5 text-muted-foreground">
               {patientWorkFooter(patients.totals, projection.rail.scope)}
             </p>

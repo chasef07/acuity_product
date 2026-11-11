@@ -2303,8 +2303,7 @@ test("ticks save independently and each failure stays on its own Task", async ()
 })
 
 for (const [label, stored, counts, restored] of [
-  ["No owner with nothing unowned falls back to All", "unowned", { unowned: 0 }, "all"],
-  ["No owner with unowned work is kept", "unowned", { unowned: 2 }, "unowned"],
+  ["No owner with nothing unowned is kept", "unowned", { unowned: 0 }, "unowned"],
   ["Appt checks where none are offered or waiting falls back to All", "appointments", { appointments: 0 }, "all"],
   ["Appt checks with a check waiting is kept", "appointments", { appointments: 1 }, "appointments"],
   ["Call back with nothing to call back is kept", "callBack", { callBack: 0 }, "callBack"],
@@ -2342,7 +2341,7 @@ for (const [label, stored, counts, restored] of [
   })
 }
 
-test("a search that hides every unowned patient does not replace the stored No owner filter", async () => {
+test("a search that hides every appointment check does not replace the stored Appointments filter", async () => {
   const realtime = deterministicRealtime()
   const requests: string[] = []
   const projection = createWorkspaceProjection({
@@ -2351,7 +2350,7 @@ test("a search that hides every unowned patient does not replace the stored No o
       patients: async (_token, request) => {
         requests.push(`${request.filter}:${request.search ?? ""}`)
         const page = patientPage([])
-        return success({ ...page, counts: { ...page.counts, unowned: request.search ? 0 : 3 } })
+        return success({ ...page, counts: { ...page.counts, appointments: request.search ? 0 : 3 } })
       },
     },
     realtime: realtime.adapter,
@@ -2359,13 +2358,13 @@ test("a search that hides every unowned patient does not replace the stored No o
   })
   await projection.start()
   await realtime.reconcile(0)
-  await projection.dispatch({ type: "set-rail-view", filter: "unowned" })
+  await projection.dispatch({ type: "set-rail-view", filter: "appointments" })
   await projection.dispatch({ type: "set-search", value: "nobody" })
   await projection.dispatch({ type: "submit-search" })
   requests.length = 0
   await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
   await realtime.reconcile(0)
-  assert.equal(projection.getSnapshot().rail.filter, "unowned")
-  assert.deepEqual([...new Set(requests)], ["unowned:nobody"])
+  assert.equal(projection.getSnapshot().rail.filter, "appointments")
+  assert.deepEqual([...new Set(requests)], ["appointments:nobody"])
   projection.stop()
 })

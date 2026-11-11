@@ -175,14 +175,17 @@ test("the scope toggle offers My Tasks and Everyone and presses the current one"
   )
 })
 
-test("filter chips count patients, and No owner appears in the destructive tone only when something has no owner", () => {
+test("filter chips count patients, and No owner is always listed, in the destructive tone only when something has no owner", () => {
   const chips = (state: WorkspaceProjectionState) =>
     [...rail(state).querySelectorAll("[aria-label='Filter patients'] button")]
   const base = projection([patients.callBack])
   assert.deepEqual(
     chips(base).map((chip) => chip.textContent),
-    ["All9", "Tasks4", "Call back3", "Texts2", "Appointments1"],
+    ["All9", "Tasks4", "Call back3", "Texts2", "Appointments1", "No owner0"],
   )
+  const [texts, , none] = chips(base).slice(-3)
+  assert.equal(none.getAttribute("class"), texts.getAttribute("class"), "at zero it looks like any other inactive chip")
+  assert.equal(none.querySelector("span")!.getAttribute("class"), texts.querySelector("span")!.getAttribute("class"))
   const unowned = chips({
     ...base,
     patients: { ...base.patients, counts: { ...base.patients.counts, unowned: 4 } },
@@ -196,7 +199,7 @@ test("filter chips count patients, and No owner appears in the destructive tone 
   })
   assert.deepEqual(
     withoutAppointments.map((chip) => chip.getAttribute("data-filter")),
-    ["all", "followUp", "callBack", "texts"],
+    ["all", "followUp", "callBack", "texts", "unowned"],
     "Appointments is offered only where appointment checks exist",
   )
 })

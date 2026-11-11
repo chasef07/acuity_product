@@ -22,7 +22,7 @@ const filterShown: Record<
   callBack: () => true,
   texts: () => true,
   appointments: (counts, appointmentsOffered) => appointmentsOffered || counts.appointments > 0,
-  unowned: (counts) => counts.unowned > 0,
+  unowned: () => true,
 }
 
 export function patientWorkFilterShown(

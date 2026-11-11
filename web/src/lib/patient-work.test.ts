@@ -68,7 +68,7 @@ test("the second line says why the patient is waiting", () => {
   }
 })
 
-test("filter chips count patients and hide the ones with nothing to offer", () => {
+test("filter chips count patients, No owner is always offered and Appointments only where it has something to offer", () => {
   const counts = { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 0, unowned: 0 }
   const values = (shown: ReturnType<typeof shownPatientWorkFilters>) => shown.map((filter) => filter.value)
 
@@ -77,12 +77,13 @@ test("filter chips count patients and hide the ones with nothing to offer", () =
     { value: "followUp", label: "Tasks", count: 4 },
     { value: "callBack", label: "Call back", count: 3 },
     { value: "texts", label: "Texts", count: 2 },
+    { value: "unowned", label: "No owner", count: 0 },
   ])
-  assert.deepEqual(values(shownPatientWorkFilters(counts, "all", true)), ["all", "followUp", "callBack", "texts", "appointments"])
-  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, appointments: 1 }, "all", false)), ["all", "followUp", "callBack", "texts", "appointments"])
+  assert.deepEqual(values(shownPatientWorkFilters(counts, "all", true)), ["all", "followUp", "callBack", "texts", "appointments", "unowned"])
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, appointments: 1 }, "all", false)), ["all", "followUp", "callBack", "texts", "appointments", "unowned"])
   assert.deepEqual(values(shownPatientWorkFilters({ ...counts, unowned: 4 }, "all", false)), ["all", "followUp", "callBack", "texts", "unowned"])
-  assert.deepEqual(values(shownPatientWorkFilters(counts, "unowned", false)), ["all", "followUp", "callBack", "texts", "unowned"], "the active filter stays reachable at zero")
-  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, followUp: 0 }, "all", false)), ["all", "followUp", "callBack", "texts"], "Tasks is offered at zero")
+  assert.deepEqual(values(shownPatientWorkFilters(counts, "appointments", false)), ["all", "followUp", "callBack", "texts", "appointments", "unowned"], "the active filter stays reachable at zero")
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, followUp: 0 }, "all", false)), ["all", "followUp", "callBack", "texts", "unowned"], "Tasks is offered at zero")
 })
 
 test("appointment checks are offered where Spring Hill is the office in view", () => {

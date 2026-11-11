@@ -58,10 +58,10 @@ export function PatientFilterChips({
   onChange: (filter: PatientWorkFilter) => void
 }) {
   return (
-    <div role="group" aria-label="Filter patients" className="flex flex-wrap gap-1">
+    <div role="group" aria-label="Filter patients" className="flex h-20 flex-wrap content-start gap-1 [@media(pointer:coarse)]:h-35">
       {shownPatientWorkFilters(counts, filter, appointmentsOffered).map((option) => {
         const pressed = option.value === filter
-        const unowned = option.value === "unowned"
+        const unowned = option.value === "unowned" && option.count > 0
         return (
           <Badge
             key={option.value}
