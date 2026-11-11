@@ -158,8 +158,17 @@ func TestPatientWorkRowReportsTheVoicemailLengthAndTheNewestTextTime(t *testing.
 	if row := patientRow(t, page, texted); !row.ActivityAt.Equal(newestText) {
 		t.Fatalf("text row activity = %s, want the newest text at %s", row.ActivityAt, newestText)
 	}
-	if row := patientRow(t, page, voicemail); row.VoicemailDurationSeconds != 9 {
-		t.Fatalf("voicemail row = %d seconds, want the 9 second voicemail, not the later missed call", row.VoicemailDurationSeconds)
+	if row := patientRow(t, page, voicemail); row.Top.VoicemailDurationSeconds != 9 {
+		t.Fatalf("voicemail row = %d seconds, want the 9 second voicemail, not the later missed call", row.Top.VoicemailDurationSeconds)
+	}
+	summary, err := f.reads.QueryPhoneSummary(f.ctx, workspace.QueryPhoneSummaryCommand{
+		Identity: reader, PracticeID: f.practiceID, Phone: voicemail,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.OpenTasks) != 1 || summary.OpenTasks[0].VoicemailDurationSeconds != 9 {
+		t.Fatalf("patient summary open Tasks = %+v, want the voicemail review with its 9 second length", summary.OpenTasks)
 	}
 }
 

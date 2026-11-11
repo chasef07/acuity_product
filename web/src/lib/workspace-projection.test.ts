@@ -454,7 +454,7 @@ test("temporary token failure keeps Task completion retryable without expiring t
 test("each page of patients brings the counts and totals the list shows", async () => {
   const realtime = deterministicRealtime()
   const requests: PatientWorkQueryRequest[] = []
-  const counts = { all: 6, callBack: 2, texts: 1, appointments: 0, unowned: 3 }
+  const counts = { all: 6, followUp: 2, callBack: 2, texts: 1, appointments: 0, unowned: 3 }
   const totals = { openTasks: 9, patients: 7, patientsOutsideScope: 1 }
   const projection = createWorkspaceProjection({
     authority: {
@@ -498,6 +498,10 @@ test("rail preferences restore through the projection and corrupted or older val
     [
       { version: 2, scope: "everyone", filter: "unowned", completedExpanded: true, scrollTop: 64 },
       { scope: "everyone", filter: "unowned", completedExpanded: true, scrollTop: 64 },
+    ],
+    [
+      { version: 2, scope: "mine", filter: "followUp", completedExpanded: false, scrollTop: 0 },
+      { scope: "mine", filter: "followUp", completedExpanded: false, scrollTop: 0 },
     ],
   ] as const) {
     const values = new Map<string, string>([[key, JSON.stringify(stored)]])
@@ -566,6 +570,7 @@ test("changing the scope or the filter reloads the list and the completed shelf 
     [{ type: "set-rail-view", filter: "texts" }, "everyone", "texts", "all"],
     [{ type: "set-rail-view", scope: "mine" }, "mine", "texts", "mine"],
     [{ type: "set-rail-view", filter: "unowned" }, "mine", "unowned", "mine"],
+    [{ type: "set-rail-view", filter: "followUp" }, "mine", "followUp", "mine"],
   ] as const) {
     const stale = await realtime.prepareReconciliation(0)
     patientRequests.length = 0
@@ -1012,7 +1017,7 @@ function patientRow(top: Task, overrides: Partial<PatientWorkRow> = {}): Patient
 function patientPage(rows: PatientWorkRow[], nextCursor = ""): PatientWorkPage {
   return {
     rows,
-    counts: { all: rows.length, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
+    counts: { all: rows.length, followUp: 0, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
     totals: { openTasks: rows.length, patients: rows.length, patientsOutsideScope: 0 },
     nextCursor,
   }

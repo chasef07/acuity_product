@@ -717,6 +717,10 @@ export type Task = {
      * Latest incoming text preview for the workspace list.
      */
     preview?: string;
+    /**
+     * Length of the voicemail a voicemail review holds, rounded to the nearest second and never below 1. Absent when the Task has no recording.
+     */
+    voicemailDurationSeconds?: number;
     sourceMessage?: string;
     messageId?: string;
     messageThreadId?: string;
@@ -753,9 +757,9 @@ export type TaskInteraction = {
 export type PatientWorkScope = 'mine' | 'everyone';
 
 /**
- * callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
+ * followUp matches follow-up Tasks created by the AI, after a staff call, or after a staff text. callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
  */
-export type PatientWorkFilter = 'all' | 'callBack' | 'texts' | 'appointments' | 'unowned';
+export type PatientWorkFilter = 'all' | 'followUp' | 'callBack' | 'texts' | 'appointments' | 'unowned';
 
 export type PatientWorkQueryRequest = {
     practiceId: string;
@@ -799,10 +803,6 @@ export type PatientWorkRow = {
      * When the newest Task matching the scope and filter last changed for the patient.
      */
     activityAt: string;
-    /**
-     * Length of the voicemail when the top Task is a voicemail review with a recording.
-     */
-    voicemailDurationSeconds?: number;
     top: Task;
 };
 
@@ -811,6 +811,7 @@ export type PatientWorkRow = {
  */
 export type PatientWorkCounts = {
     all: number;
+    followUp: number;
     callBack: number;
     texts: number;
     appointments: number;
@@ -818,10 +819,16 @@ export type PatientWorkCounts = {
 };
 
 /**
- * Totals across the requested Locations, whatever the scope, filter, and search.
+ * Totals for the requested scope across the requested Locations, whatever the filter and search.
  */
 export type PatientWorkTotals = {
+    /**
+     * Open Tasks the requested scope includes.
+     */
     openTasks: number;
+    /**
+     * Patients with at least one open Task the requested scope includes.
+     */
     patients: number;
     /**
      * Patients with open Tasks that the requested scope leaves out.

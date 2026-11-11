@@ -2950,6 +2950,9 @@ func taskResponse(task work.Task) (api.Task, error) {
 	if task.Preview != "" {
 		response.Preview = &task.Preview
 	}
+	if task.VoicemailDurationSeconds > 0 {
+		response.VoicemailDurationSeconds = &task.VoicemailDurationSeconds
+	}
 	if task.SourceMessage != "" {
 		response.SourceMessage = &task.SourceMessage
 	}
@@ -3285,6 +3288,7 @@ func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPag
 		Rows: make([]api.PatientWorkRow, 0, len(page.Rows)),
 		Counts: api.PatientWorkCounts{
 			All:          page.Counts.All,
+			FollowUp:     page.Counts.FollowUp,
 			CallBack:     page.Counts.CallBack,
 			Texts:        page.Counts.Texts,
 			Appointments: page.Counts.Appointments,
@@ -3302,7 +3306,7 @@ func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPag
 		if err != nil {
 			return api.PatientWorkPage{}, err
 		}
-		item := api.PatientWorkRow{
+		response.Rows = append(response.Rows, api.PatientWorkRow{
 			Phone:        row.Phone,
 			DisplayName:  row.DisplayName,
 			OpenCount:    row.OpenCount,
@@ -3310,11 +3314,7 @@ func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPag
 			HasUnowned:   row.HasUnowned,
 			ActivityAt:   row.ActivityAt,
 			Top:          top,
-		}
-		if row.VoicemailDurationSeconds > 0 {
-			item.VoicemailDurationSeconds = &row.VoicemailDurationSeconds
-		}
-		response.Rows = append(response.Rows, item)
+		})
 	}
 	return response, nil
 }

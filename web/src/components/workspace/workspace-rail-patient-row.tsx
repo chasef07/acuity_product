@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/tooltip"
 import type { PatientWorkRow, Task } from "@/lib/api/generated/types.gen"
 import { useEngagementSummary } from "@/lib/clients/engagement"
-import { patientRowName, patientRowReason } from "@/lib/patient-work"
+import { openTaskReason, patientRowName } from "@/lib/patient-work"
 import {
   formatPhone,
   formatRelativeTime,
@@ -36,7 +36,7 @@ export function PatientRow({
 }) {
   const priorityID = useId()
   const name = patientRowName(row)
-  const reason = patientRowReason(row)
+  const reason = openTaskReason(row.top)
   return (
     <SidebarMenuItem
       data-testid="patient-row"
@@ -195,7 +195,7 @@ function PatientOpenItems({
           className="flex min-w-0 items-baseline gap-2 text-xs leading-4 text-popover-foreground"
         >
           <span className="min-w-0 flex-1 truncate">
-            {patientRowReason({ top: task }).text}
+            {openTaskReason(task).text}
           </span>
           <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
             {formatRelativeTime(taskRelativeTime(task).at)}

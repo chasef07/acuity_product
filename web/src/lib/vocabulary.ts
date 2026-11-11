@@ -311,6 +311,7 @@ export const patientWorkScopeLabels = {
 
 export const patientWorkFilterLabels = {
   all: "All",
+  followUp: "Tasks",
   callBack: "Call back",
   texts: "Texts",
   appointments: "Appointments",

@@ -6,7 +6,7 @@ import {
   nextAfterClose,
   offersAppointmentChecks,
   patientRowName,
-  patientRowReason,
+  openTaskReason,
   patientWorkFooter,
   shownPatientWorkFilters,
 } from "./patient-work.ts"
@@ -51,33 +51,35 @@ test("a patient row is named by its one known name, else by the phone", () => {
 })
 
 test("the second line says why the patient is waiting", () => {
-  const cases: Array<[Partial<PatientWorkRow>, { voicemail: boolean; text: string }]> = [
-    [{ top: top({ origin: "VOICEMAIL_RECOVERY", title: "Review voicemail" }), voicemailDurationSeconds: 38 }, { voicemail: true, text: "Voicemail · 0:38" }],
-    [{ top: top({ origin: "VOICEMAIL_RECOVERY", title: "Review voicemail" }) }, { voicemail: true, text: "Voicemail" }],
-    [{ top: top({ origin: "MISSED_CALL_RECOVERY", title: "Return missed call" }) }, { voicemail: false, text: "Missed call, no voicemail" }],
-    [{ top: top({ origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text", preview: "Is Dr. Shah in on Friday?" }) }, { voicemail: false, text: "Is Dr. Shah in on Friday?" }],
-    [{ top: top({ origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text" }) }, { voicemail: false, text: "Review inbound text" }],
-    [{ top: top({ origin: "APPOINTMENT_REVIEW", title: "Verify Nov 14 appointment" }) }, { voicemail: false, text: "Verify Nov 14 appointment" }],
+  const cases: Array<[Partial<Task>, { voicemail: boolean; text: string }]> = [
+    [{ origin: "VOICEMAIL_RECOVERY", title: "Review voicemail", voicemailDurationSeconds: 38 }, { voicemail: true, text: "Voicemail · 0:38" }],
+    [{ origin: "VOICEMAIL_RECOVERY", title: "Review voicemail" }, { voicemail: true, text: "Voicemail" }],
+    [{ origin: "MISSED_CALL_RECOVERY", title: "Return missed call" }, { voicemail: false, text: "Missed call, no voicemail" }],
+    [{ origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text", preview: "Is Dr. Shah in on Friday?" }, { voicemail: false, text: "Is Dr. Shah in on Friday?" }],
+    [{ origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text" }, { voicemail: false, text: "Review inbound text" }],
+    [{ origin: "APPOINTMENT_REVIEW", title: "Verify Nov 14 appointment" }, { voicemail: false, text: "Verify Nov 14 appointment" }],
     [{}, { voicemail: false, text: "Send prior authorization form" }],
   ]
   for (const [overrides, reason] of cases) {
-    assert.deepEqual(patientRowReason(row(overrides)), reason)
+    assert.deepEqual(openTaskReason(top(overrides)), reason)
   }
 })
 
 test("filter chips count patients and hide the ones with nothing to offer", () => {
-  const counts = { all: 9, callBack: 3, texts: 2, appointments: 0, unowned: 0 }
+  const counts = { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 0, unowned: 0 }
   const values = (shown: ReturnType<typeof shownPatientWorkFilters>) => shown.map((filter) => filter.value)
 
   assert.deepEqual(shownPatientWorkFilters(counts, "all", false), [
     { value: "all", label: "All", count: 9 },
+    { value: "followUp", label: "Tasks", count: 4 },
     { value: "callBack", label: "Call back", count: 3 },
     { value: "texts", label: "Texts", count: 2 },
   ])
-  assert.deepEqual(values(shownPatientWorkFilters(counts, "all", true)), ["all", "callBack", "texts", "appointments"])
-  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, appointments: 1 }, "all", false)), ["all", "callBack", "texts", "appointments"])
-  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, unowned: 4 }, "all", false)), ["all", "callBack", "texts", "unowned"])
-  assert.deepEqual(values(shownPatientWorkFilters(counts, "unowned", false)), ["all", "callBack", "texts", "unowned"], "the active filter stays reachable at zero")
+  assert.deepEqual(values(shownPatientWorkFilters(counts, "all", true)), ["all", "followUp", "callBack", "texts", "appointments"])
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, appointments: 1 }, "all", false)), ["all", "followUp", "callBack", "texts", "appointments"])
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, unowned: 4 }, "all", false)), ["all", "followUp", "callBack", "texts", "unowned"])
+  assert.deepEqual(values(shownPatientWorkFilters(counts, "unowned", false)), ["all", "followUp", "callBack", "texts", "unowned"], "the active filter stays reachable at zero")
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, followUp: 0 }, "all", false)), ["all", "followUp", "callBack", "texts"], "Tasks is offered at zero")
 })
 
 test("appointment checks are offered where Spring Hill is the office in view", () => {
@@ -90,7 +92,7 @@ test("appointment checks are offered where Spring Hill is the office in view", (
   assert.equal(offersAppointmentChecks([hollywood], ""), false)
 })
 
-test("the footer reconciles My Tasks with Everyone", () => {
+test("the footer describes the scope in view and says what Everyone adds", () => {
   const totals = { openTasks: 14, patients: 9, patientsOutsideScope: 2 }
   assert.equal(patientWorkFooter(totals, "mine"), "14 open for 9 patients · 2 more under Everyone")
   assert.equal(patientWorkFooter(totals, "everyone"), "14 open for 9 patients")

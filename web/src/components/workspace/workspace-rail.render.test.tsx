@@ -48,9 +48,13 @@ const railTask: Task = {
 }
 
 const patients: Record<Exclude<PatientWorkFilter, "all">, PatientWorkRow> = {
+  followUp: projectedPatient(
+    { ...railTask, id: "follow-up", phone: "+13055550177", origin: "HUMAN_CALL_FOLLOW_UP", title: "Mail the surgery packet" },
+    { displayName: "Marta Ruiz" },
+  ),
   callBack: projectedPatient(
-    { ...railTask, id: "voicemail", phone: "+13055550142", origin: "VOICEMAIL_RECOVERY", title: "Review voicemail" },
-    { displayName: "Dolores Vega", openCount: 5, voicemailDurationSeconds: 38 },
+    { ...railTask, id: "voicemail", phone: "+13055550142", origin: "VOICEMAIL_RECOVERY", title: "Review voicemail", voicemailDurationSeconds: 38 },
+    { displayName: "Dolores Vega", openCount: 5 },
   ),
   texts: projectedPatient(
     { ...railTask, id: "text", phone: "+13525550109", origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text", preview: "Is Dr. Shah in on Friday?" },
@@ -75,7 +79,7 @@ function projection(
     patients: {
       ...base.patients,
       items: rows,
-      counts: { all: 9, callBack: 3, texts: 2, appointments: 1, unowned: 0 },
+      counts: { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 1, unowned: 0 },
       totals: { openTasks: 14, patients: 9, patientsOutsideScope: 2 },
     },
     ...overrides,
@@ -99,6 +103,7 @@ function rowText(document: Document, phone: string, part: "name" | "count" | "re
 
 test("each filter lists one row per patient with why that patient is waiting", () => {
   for (const [filter, row, name, reason] of [
+    ["followUp", patients.followUp, "Marta Ruiz", "Mail the surgery packet"],
     ["callBack", patients.callBack, "Dolores Vega", "Voicemail · 0:38"],
     ["texts", patients.texts, "Priya Raman", "Is Dr. Shah in on Friday?"],
     ["appointments", patients.appointments, "(352) 555-0110", "Verify Nov 14 appointment"],
@@ -173,7 +178,7 @@ test("filter chips count patients, and No owner appears in the destructive tone 
   const base = projection([patients.callBack])
   assert.deepEqual(
     chips(base).map((chip) => chip.textContent),
-    ["All9", "Call back3", "Texts2", "Appointments1"],
+    ["All9", "Tasks4", "Call back3", "Texts2", "Appointments1"],
   )
   const unowned = chips({
     ...base,
@@ -188,7 +193,7 @@ test("filter chips count patients, and No owner appears in the destructive tone 
   })
   assert.deepEqual(
     withoutAppointments.map((chip) => chip.getAttribute("data-filter")),
-    ["all", "callBack", "texts"],
+    ["all", "followUp", "callBack", "texts"],
     "Appointments is offered only where appointment checks exist",
   )
 })

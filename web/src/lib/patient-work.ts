@@ -18,6 +18,7 @@ const filterShown: Record<
   (counts: PatientWorkCounts, appointmentsOffered: boolean) => boolean
 > = {
   all: () => true,
+  followUp: () => true,
   callBack: () => true,
   texts: () => true,
   appointments: (counts, appointmentsOffered) => appointmentsOffered || counts.appointments > 0,
@@ -57,23 +58,23 @@ export function patientRowName(row: Pick<PatientWorkRow, "displayName" | "phone"
   return row.displayName || formatPhone(row.phone)
 }
 
-export function patientRowReason(
-  row: Pick<PatientWorkRow, "top" | "voicemailDurationSeconds">,
+export function openTaskReason(
+  task: Pick<Task, "origin" | "title" | "preview" | "voicemailDurationSeconds">,
 ): { voicemail: boolean; text: string } {
-  switch (row.top.origin) {
+  switch (task.origin) {
     case "VOICEMAIL_RECOVERY":
       return {
         voicemail: true,
-        text: row.voicemailDurationSeconds
-          ? `Voicemail · ${formatClock(row.voicemailDurationSeconds)}`
+        text: task.voicemailDurationSeconds
+          ? `Voicemail · ${formatClock(task.voicemailDurationSeconds)}`
           : "Voicemail",
       }
     case "MISSED_CALL_RECOVERY":
       return { voicemail: false, text: "Missed call, no voicemail" }
     case "INBOUND_MESSAGE_REVIEW":
-      return { voicemail: false, text: row.top.preview || row.top.title }
+      return { voicemail: false, text: task.preview || task.title }
     default:
-      return { voicemail: false, text: row.top.title }
+      return { voicemail: false, text: task.title }
   }
 }
 

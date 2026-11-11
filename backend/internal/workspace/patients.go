@@ -11,7 +11,6 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
-	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
 )
@@ -27,6 +26,7 @@ type PatientWorkFilter string
 
 const (
 	PatientWorkAll          PatientWorkFilter = "all"
+	PatientWorkFollowUp     PatientWorkFilter = "followUp"
 	PatientWorkCallBack     PatientWorkFilter = "callBack"
 	PatientWorkTexts        PatientWorkFilter = "texts"
 	PatientWorkAppointments PatientWorkFilter = "appointments"
@@ -35,6 +35,7 @@ const (
 
 var patientWorkFilterSQL = map[PatientWorkFilter]string{
 	PatientWorkAll:          `true`,
+	PatientWorkFollowUp:     `item.kind_rank = 3`,
 	PatientWorkCallBack:     `item.kind_rank = 0`,
 	PatientWorkTexts:        `item.kind_rank = 1`,
 	PatientWorkAppointments: `item.kind_rank = 2`,
@@ -58,18 +59,18 @@ type QueryPatientWorkCommand struct {
 }
 
 type PatientWorkRow struct {
-	Phone                    string
-	DisplayName              string
-	OpenCount                int
-	HighPriority             bool
-	HasUnowned               bool
-	ActivityAt               time.Time
-	VoicemailDurationSeconds int
-	Top                      work.Task
+	Phone        string
+	DisplayName  string
+	OpenCount    int
+	HighPriority bool
+	HasUnowned   bool
+	ActivityAt   time.Time
+	Top          work.Task
 }
 
 type PatientWorkCounts struct {
 	All          int
+	FollowUp     int
 	CallBack     int
 	Texts        int
 	Appointments int
@@ -146,10 +147,9 @@ func (m *Module) QueryPatientWork(
 	for rows.Next() {
 		var row PatientWorkRow
 		var displayName *string
-		var voicemailSeconds *int
 		row.Top, err = scanTaskProjection(rows,
 			&row.Phone, &row.OpenCount, &row.HighPriority, &row.HasUnowned,
-			&row.ActivityAt, &displayName, &voicemailSeconds,
+			&row.ActivityAt, &displayName,
 		)
 		if err != nil {
 			rows.Close()
@@ -157,9 +157,6 @@ func (m *Module) QueryPatientWork(
 		}
 		if displayName != nil {
 			row.DisplayName = *displayName
-		}
-		if voicemailSeconds != nil {
-			row.VoicemailDurationSeconds = *voicemailSeconds
 		}
 		page.Rows = append(page.Rows, row)
 	}
@@ -172,7 +169,7 @@ func (m *Module) QueryPatientWork(
 	if err := tx.QueryRow(ctx, patientWorkSummarySQL(command.Scope, search), search.arguments(
 		command.PracticeID, locationIDs, search.pattern, search.digits, email,
 	)...).Scan(
-		&page.Counts.All, &page.Counts.CallBack, &page.Counts.Texts,
+		&page.Counts.All, &page.Counts.FollowUp, &page.Counts.CallBack, &page.Counts.Texts,
 		&page.Counts.Appointments, &page.Counts.Unowned,
 		&page.Totals.OpenTasks, &page.Totals.Patients, &page.Totals.PatientsOutsideScope,
 	); err != nil {
@@ -273,9 +270,11 @@ func patientWorkSource(
 	SELECT
 		item.phone,
 		count(*) AS open_count,
+		count(*) FILTER (WHERE ` + patientWorkScopeSQL[scope] + `) AS scope_open_count,
 		bool_or(item.unowned) AS has_unowned,
 		` + patientWorkSearched(scope, search) + ` AS searched,
 		bool_or(` + patientWorkScopeSQL[scope] + `) AS in_scope,
+		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 3) AS in_follow_up,
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 0) AS in_call_back,
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 1) AS in_texts,
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 2) AS in_appointments,
@@ -314,15 +313,7 @@ SELECT
 	page.high_priority,
 	page.has_unowned,
 	page.activity_at,
-	` + patientDisplayNameSQL("page.phone") + `,
-	(
-		SELECT ` + humancalling.VoicemailSecondsSQL + `
-		FROM human_calling_voicemails voicemail
-		WHERE voicemail.task_id = task.id
-			AND voicemail.outcome = 'VOICEMAIL'
-		ORDER BY voicemail.created_at DESC
-		LIMIT 1
-	),` + taskReadColumns + `
+	` + patientDisplayNameSQL("page.phone") + `,` + taskReadColumns + `
 FROM page
 JOIN LATERAL (
 	SELECT item.id
@@ -340,12 +331,13 @@ func patientWorkSummarySQL(scope PatientWorkScope, search taskSearch) string {
 	return patientWorkSource(scope, PatientWorkAll, search, "$6") + `
 SELECT
 	count(*) FILTER (WHERE patient.searched AND patient.in_scope),
+	count(*) FILTER (WHERE patient.searched AND patient.in_follow_up),
 	count(*) FILTER (WHERE patient.searched AND patient.in_call_back),
 	count(*) FILTER (WHERE patient.searched AND patient.in_texts),
 	count(*) FILTER (WHERE patient.searched AND patient.in_appointments),
 	count(*) FILTER (WHERE patient.searched AND patient.in_unowned),
-	COALESCE(sum(patient.open_count), 0),
-	count(*),
+	COALESCE(sum(patient.scope_open_count), 0),
+	count(*) FILTER (WHERE patient.in_scope),
 	count(*) FILTER (WHERE NOT patient.in_scope)
 FROM patient`
 }

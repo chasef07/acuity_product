@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -200,6 +201,14 @@ const taskColumns = work.TaskColumns + `,
 			WHERE activity.task_id = task.id
 				AND activity.kind = 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'
 				AND activity.occurred_at = task.completed_at
+			LIMIT 1
+		) END,
+		CASE WHEN task.origin = 'VOICEMAIL_RECOVERY' THEN (
+			SELECT ` + humancalling.VoicemailSecondsSQL + `
+			FROM human_calling_voicemails voicemail
+			WHERE voicemail.task_id = task.id
+				AND voicemail.outcome = 'VOICEMAIL'
+			ORDER BY voicemail.created_at DESC
 			LIMIT 1
 		) END`
 
@@ -434,6 +443,7 @@ func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
 	var acknowledgementState, acknowledgementFailure, acknowledgementMessageID *string
 	var acknowledgementUpdatedAt *time.Time
 	var callbackCallerEmail *string
+	var voicemailSeconds *int
 	task, err := work.ScanTask(row, prefix,
 		&preview,
 		&acknowledgementState,
@@ -441,6 +451,7 @@ func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
 		&acknowledgementMessageID,
 		&acknowledgementUpdatedAt,
 		&callbackCallerEmail,
+		&voicemailSeconds,
 		&conversationThreadID,
 		&relatedInteractionCount,
 	)
@@ -450,6 +461,9 @@ func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
 	task.Preview = preview
 	task.ConversationThreadID = conversationThreadID
 	task.RelatedInteractionCount = relatedInteractionCount
+	if voicemailSeconds != nil {
+		task.VoicemailDurationSeconds = *voicemailSeconds
+	}
 	if callbackCallerEmail != nil {
 		task.CallbackCompletion = &work.TaskCallbackCompletion{CallerEmail: *callbackCallerEmail}
 	}
