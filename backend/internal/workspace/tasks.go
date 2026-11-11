@@ -599,7 +599,7 @@ func normalizedDigits(value string) string {
 func taskResponsibilityFilter(responsibility string, email string) string {
 	owner := `EXISTS (SELECT 1 FROM work_responsibilities responsibility
  WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
- AND responsibility.category=task.category AND ` + responsibilityHasLiveAccess
+ AND responsibility.category=task.category AND ` + responsibilityOwnerIsLive
 	return `
  AND (` + responsibility + `::text <> 'mine' OR task.category IS NULL
  OR ` + work.TaskIsCommunicationReviewSQL + `

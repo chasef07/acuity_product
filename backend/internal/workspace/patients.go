@@ -199,7 +199,7 @@ func (m *Module) QueryPatientWork(
 	return page, nil
 }
 
-const responsibilityHasLiveAccess = `(EXISTS (
+const responsibilityOwnerIsLive = `EXISTS (
 		SELECT 1
 		FROM access_memberships membership
 		WHERE membership.practice_id = responsibility.practice_id
@@ -211,20 +211,25 @@ const responsibilityHasLiveAccess = `(EXISTS (
 				WHERE allowed.membership_id = membership.id
 					AND allowed.location_id = responsibility.location_id
 			))
-	) OR EXISTS (
-		SELECT 1
-		FROM access_grants pending
-		WHERE pending.practice_id = responsibility.practice_id
-			AND pending.email = responsibility.account_email
-			AND pending.revoked_at IS NULL
-			AND pending.claimed_at IS NULL
-			AND (pending.location_scope = 'ALL' OR EXISTS (
-				SELECT 1
-				FROM access_grant_locations allowed
-				WHERE allowed.access_grant_id = pending.id
-					AND allowed.location_id = responsibility.location_id
-			))
-	))`
+	)`
+
+func patientDisplayNameSQL(phone string) string {
+	return `(
+		SELECT CASE WHEN count(DISTINCT lower(seen.name)) = 1
+			THEN (array_agg(seen.name ORDER BY seen.seen_at DESC))[1]
+		END
+		FROM (` + phoneNamesSeen(phone) + `) seen
+		WHERE seen.name <> ''
+	)`
+}
+
+func patientWorkSearched(scope PatientWorkScope, search taskSearch) string {
+	matched := `bool_or(` + patientWorkScopeSQL[scope] + ` AND item.searched)`
+	if search.pattern == "" {
+		return matched
+	}
+	return `(` + matched + ` OR lower(` + patientDisplayNameSQL("item.phone") + `) LIKE lower($3))`
+}
 
 func patientWorkSource(
 	scope PatientWorkScope,
@@ -240,7 +245,7 @@ func patientWorkSource(
 	FROM work_responsibilities responsibility
 	WHERE responsibility.practice_id = $1
 		AND responsibility.location_id = ANY($2::uuid[])
-		AND ` + responsibilityHasLiveAccess + `
+		AND ` + responsibilityOwnerIsLive + `
 	GROUP BY responsibility.location_id, responsibility.category
 ), item AS (
 	SELECT
@@ -269,7 +274,7 @@ func patientWorkSource(
 		item.phone,
 		count(*) AS open_count,
 		bool_or(item.unowned) AS has_unowned,
-		bool_or(item.searched) AS searched,
+		` + patientWorkSearched(scope, search) + ` AS searched,
 		bool_or(` + patientWorkScopeSQL[scope] + `) AS in_scope,
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 0) AS in_call_back,
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 1) AS in_texts,
@@ -309,13 +314,12 @@ SELECT
 	page.high_priority,
 	page.has_unowned,
 	page.activity_at,
-	name.display_name,
+	` + patientDisplayNameSQL("page.phone") + `,
 	(
 		SELECT ` + humancalling.VoicemailSecondsSQL + `
 		FROM human_calling_voicemails voicemail
 		WHERE voicemail.task_id = task.id
 			AND voicemail.outcome = 'VOICEMAIL'
-			AND voicemail.duration_millis IS NOT NULL
 		ORDER BY voicemail.created_at DESC
 		LIMIT 1
 	),` + taskReadColumns + `
@@ -329,13 +333,6 @@ JOIN LATERAL (
 	LIMIT 1
 ) top ON true
 JOIN work_tasks task ON task.id = top.id` + taskProjectionJoins + `
-LEFT JOIN LATERAL (
-	SELECT CASE WHEN count(DISTINCT lower(seen.name)) = 1
-		THEN (array_agg(seen.name ORDER BY seen.seen_at DESC))[1]
-	END AS display_name
-	FROM (` + phoneNamesSeen("page.phone") + `) seen
-	WHERE seen.name <> ''
-) name ON true
 ORDER BY page.high_priority DESC, page.activity_at DESC, page.phone DESC`
 }
 

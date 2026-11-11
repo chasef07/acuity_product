@@ -37,7 +37,9 @@ type patientTask struct {
 	category   string
 	urgency    string
 	text       string
+	threadName string
 	voicemail  int
+	tied       bool
 }
 
 func newPatientWorkFixture(t *testing.T) *patientWorkFixture {
@@ -57,8 +59,9 @@ func newPatientWorkFixture(t *testing.T) *patientWorkFixture {
 		}
 	}
 	if _, err := access.New(f.db.Owner, clock).Provision(f.ctx, access.Provisioning{
-		Environment: "test",
-		RequestedBy: "patient-work-test",
+		Environment:       "test",
+		RequestedBy:       "patient-work-test",
+		PlatformOperators: []string{"operator@patient-work.test"},
 		Practices: []access.PracticeProvision{{
 			Key:  "patient-work",
 			Name: "Synthetic Patient Work",
@@ -72,6 +75,7 @@ func newPatientWorkFixture(t *testing.T) *patientWorkFixture {
 				grant("owner", access.LocationScopeAll),
 				grant("former", access.LocationScopeAll),
 				grant("pending", access.LocationScopeAll),
+				grant("local", access.LocationScopeSelected, "north"),
 				grant("elsewhere", access.LocationScopeSelected, "hidden"),
 			},
 		}},
@@ -122,7 +126,9 @@ func (f *patientWorkFixture) own(office, key, category string) {
 
 func (f *patientWorkFixture) open(task patientTask) string {
 	f.t.Helper()
-	f.at = f.at.Add(time.Minute)
+	if !task.tied {
+		f.at = f.at.Add(time.Minute)
+	}
 	id := uuid.NewString()
 	locationID := f.locations[task.office]
 	if task.title == "" {
@@ -130,6 +136,9 @@ func (f *patientWorkFixture) open(task patientTask) string {
 	}
 	if task.urgency == "" {
 		task.urgency = "normal"
+	}
+	if task.origin == work.TaskOriginAppointmentReview {
+		task.category = "appointments"
 	}
 	var callID, messageID, threadID *string
 	newCall := func() *string {
@@ -145,11 +154,11 @@ func (f *patientWorkFixture) open(task patientTask) string {
 	newMessage := func() (*string, *string) {
 		var thread string
 		if err := f.db.Owner.QueryRow(f.ctx, `
-			INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone)
-			VALUES($1,$2,'+17275550100',$3)
+			INSERT INTO messaging_threads(practice_id,location_id,office_phone,external_phone,display_name,name_source)
+			VALUES($1,$2,'+17275550100',$3,NULLIF($4,''),NULLIF($5,''))
 			ON CONFLICT (practice_id,location_id,office_phone,external_phone) DO UPDATE SET updated_at=EXCLUDED.updated_at
 			RETURNING id::text
-		`, f.practiceID, locationID, task.phone).Scan(&thread); err != nil {
+		`, f.practiceID, locationID, task.phone, task.threadName, map[bool]string{true: "synthetic"}[task.threadName != ""]).Scan(&thread); err != nil {
 			f.t.Fatalf("insert thread: %v", err)
 		}
 		message := uuid.NewString()
@@ -410,6 +419,7 @@ func TestPatientWorkMineShowsOwnedSharedAndUnownedWork(t *testing.T) {
 	owner := f.activate("owner")
 	former := f.activate("former")
 	f.activate("elsewhere")
+	f.activate("local")
 	formerAuthorization, err := f.accessPort.ResolveActor(f.ctx, former, f.practiceID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -417,8 +427,9 @@ func TestPatientWorkMineShowsOwnedSharedAndUnownedWork(t *testing.T) {
 	testaccess.SeedRevokedMembership(t, f.db.Owner, formerAuthorization, f.at)
 	f.own("north", "owner", "insurance")
 	f.own("north", "former", "medication")
-	f.own("north", "pending", "optical")
+	f.own("north", "local", "optical")
 	f.own("north", "elsewhere", "referrals")
+	f.own("north", "owner", "appointments")
 	const (
 		owned       = "+17275550201"
 		lapsed      = "+17275550202"
@@ -526,7 +537,7 @@ func TestPatientWorkSearchesAndPagesWithoutGapsOrDuplicates(t *testing.T) {
 		if page.Counts.All != 7 || page.Totals.OpenTasks != 8 {
 			t.Fatalf("page %d counts and totals = %+v %+v", pages, page.Counts, page.Totals)
 		}
-		if page.NextCursor == "" {
+		if page.NextCursor == "" || len(got) > len(want) {
 			break
 		}
 		command.Cursor = page.NextCursor

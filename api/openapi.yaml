@@ -3989,8 +3989,9 @@ components:
       enum: [all, callBack, texts, appointments, unowned]
       description: >-
         callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches
-        appointment reviews, and unowned matches follow-up Tasks whose category has no owner with live access
-        to the Task's Location.
+        appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person
+        listed for the category is its owner at a Location only while they hold an unrevoked membership
+        that includes the Task's Location.
     PatientWorkQueryRequest:
       type: object
       additionalProperties: false
@@ -4005,6 +4006,9 @@ components:
         search:
           type: string
           maxLength: 500
+          description: >-
+            Matches the patient name the row shows, and the phone, title, caller name, category and
+            Location of the open Tasks in scope.
         scope:
           $ref: "#/components/schemas/PatientWorkScope"
         filter:

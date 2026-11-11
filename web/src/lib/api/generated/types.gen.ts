@@ -753,13 +753,16 @@ export type TaskInteraction = {
 export type PatientWorkScope = 'mine' | 'everyone';
 
 /**
- * callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner with live access to the Task's Location.
+ * callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
  */
 export type PatientWorkFilter = 'all' | 'callBack' | 'texts' | 'appointments' | 'unowned';
 
 export type PatientWorkQueryRequest = {
     practiceId: string;
     locationId?: string;
+    /**
+     * Matches the patient name the row shows, and the phone, title, caller name, category and Location of the open Tasks in scope.
+     */
     search?: string;
     scope?: PatientWorkScope;
     filter?: PatientWorkFilter;

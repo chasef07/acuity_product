@@ -44,6 +44,7 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	}
 	admin := access.Identity{Subject: "shared-review-admin", Email: "admin@shared-review.test", EmailVerified: true}
 	auth := testaccess.Activate(t, a, admin)
+	testaccess.Activate(t, a, access.Identity{Subject: "shared-review-records", Email: "records@shared-review.test", EmailVerified: true})
 	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	reads := workspace.New(db.As(testdb.Portal), a)
 	locations := map[string]string{}
