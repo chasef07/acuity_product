@@ -92,6 +92,27 @@ function rows(markup: string) {
   return markup.split('data-testid="patient-task-row"').slice(1)
 }
 
+function titleAboveScroller(markup: string, title: string, scrolled: string) {
+  const page = new JSDOM(markup).window.document
+  const withText = (text: string) => [...page.querySelectorAll("h2, h3, p, button, summary, li")].find((element) => element.textContent?.includes(text))
+  const heading = withText(title)
+  const content = withText(scrolled)
+  assert.ok(heading, `${title} is shown`)
+  assert.equal(heading.tagName, "H2")
+  assert.ok(content, `${scrolled} is shown`)
+  const scroller = content.closest('[class~="overflow-y-auto"]')
+  assert.ok(scroller, `${scrolled} is in a scrolling region`)
+  assert.ok(!scroller.contains(heading), `${title} stays put while ${scrolled} scrolls`)
+  const header = heading.closest("header")
+  assert.ok(header, `${title} has a title row`)
+  assert.ok(header.classList.contains("shrink-0"), "the title row keeps its height")
+  assert.ok(
+    header.compareDocumentPosition(scroller) & page.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING,
+    "the scrolling region starts beneath the title row",
+  )
+  return header
+}
+
 test("a patient with nothing open reads so", () => {
   const markup = renderToStaticMarkup(view())
   assert.match(markup, /<h2[^>]*>Open Tasks<\/h2><span[^>]*>0<\/span>/)
@@ -272,13 +293,14 @@ test("a shared phone names the caller on each Task that has one", () => {
   assert.doesNotMatch(single[0], /Dolores Reyes/, "one name is already in the conversation header")
 })
 
-test("rows scroll beneath a heading as tall as the close button, so the close menu is never covered", () => {
+test("rows scroll beneath a heading that clears the close button, so the close menu is never covered", () => {
   const markup = renderToStaticMarkup(view({ summary: ready(fiveTasks) }))
+  titleAboveScroller(markup, "Open Tasks", "Synthetic first request")
   const [, sectionClass] = /<section[^>]*class="([^"]*)"/.exec(markup) ?? []
   const [, headerClass] = /<header class="([^"]*)"/.exec(markup) ?? []
   const [, bodyClass] = /data-testid="patient-tasks-body" class="([^"]*)"/.exec(markup) ?? []
   assert.match(sectionClass ?? "", /\bpt-3\b/, "the heading starts where the close button starts")
-  assert.match(headerClass ?? "", /\bh-7\b/, "and is as tall as it")
+  assert.match(headerClass ?? "", /\bh-8\b/, "and ends below it")
   assert.match(headerClass ?? "", /\bshrink-0\b/)
   assert.match(headerClass ?? "", /\bpr-12\b/, "and ends before it")
   assert.match(bodyClass ?? "", /\boverflow-y-auto\b/)
@@ -451,7 +473,10 @@ test("a call shows the caller's Tasks under its header, above the recording and 
   assert.ok(at(">Open Task</button>") < at("patient tasks for"))
   assert.ok(at("patient tasks for") < at("Call recording"), "the list sits above the recording")
   assert.ok(at("patient tasks for") < at(">Details<"), "and above the call details")
-  assert.equal(markup.match(/overflow-y-auto/g)?.length, 1, "header, list and details scroll as one")
+  assert.equal(markup.match(/overflow-y-auto/g)?.length, 1, "the caller, list and details scroll as one")
+  const header = titleAboveScroller(markup, "Connected", "patient tasks for")
+  assert.ok(header.classList.contains("min-h-11"), "the title row ends below the close button")
+  assert.ok(header.classList.contains("pr-12"), "and beside it")
   assert.match(markup, /^<section class="[^"]*\bmin-w-0\b/)
   assert.doesNotMatch(markup, /Synthetic fourth request/)
   assert.match(markup, />Open Task<\/button>/)
@@ -472,12 +497,15 @@ test("a selected Task keeps its detail first and lists the patient's other Tasks
   assert.ok(detail !== -1 && detail < single.markup.indexOf("Complete &amp; next"))
   assert.ok(single.markup.indexOf("Complete &amp; next") < list, "nothing that loads later sits above the detail")
   assert.ok(single.markup.indexOf(">Details<") < list)
-  assert.ok(list < single.markup.indexOf("</section>"), "the list scrolls with the detail")
+  const title = titleAboveScroller(single.markup, task.title, "patient tasks for")
+  assert.ok(title.classList.contains("min-h-11"), "the title row ends below the close button")
+  titleAboveScroller(single.markup, task.title, "Complete & next")
   assert.match(single.markup, /^<div class="[^"]*\bmin-w-0\b/, "the column cannot be widened by its content")
   const group = { ...task, groupMembers: [task, fiveTasks[1]] }
   const grouped = context({ task, group, taskRows: [group], onSelectTask: () => {}, view: "task" })
   assert.deepEqual(grouped.asked, [[task.phone, { beside: "task", otherThan: [task, fiveTasks[1]] }]])
   assert.ok(grouped.markup.indexOf("Complete all 2 requests") < grouped.markup.indexOf("patient tasks for"))
+  titleAboveScroller(grouped.markup, "Insurance", fiveTasks[1].title)
   assert.deepEqual(context({}).asked, [])
 })
 

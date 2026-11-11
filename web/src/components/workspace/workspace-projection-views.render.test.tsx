@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
-import { TaskCallContext } from "./task-call-context.tsx"
+import { DetailsAbovePatientTasks, TaskCallContext } from "./task-call-context.tsx"
 import { TaskCallAction } from "./task-call-action.tsx"
 import { TaskGroupContext } from "./task-group-context.tsx"
 import { VoicemailSource } from "./recording-source.tsx"
@@ -291,6 +291,26 @@ test("opening AI appointment evidence never clears shared work", async () => {
   assert.doesNotMatch(host.textContent ?? "", /Review status|Mark.*reviewed/)
   await act(async () => root.unmount())
   dom.window.close()
+})
+
+test("an AI call keeps its title above the scrolling evidence, and the patient's Tasks below both", () => {
+  const page = new JSDOM(renderToStaticMarkup(
+    <DetailsAbovePatientTasks patientTasks={<p>patient tasks</p>}>
+      <AIInteractionContext detail={projectedAIInteraction()} loading={false} error="" />
+    </DetailsAbovePatientTasks>,
+  )).window.document
+  const title = page.querySelector("h2")
+  const header = title?.closest("header")
+  const scroller = page.querySelector('[class~="overflow-y-auto"]')
+  const tasks = [...page.querySelectorAll("p")].find((element) => element.textContent === "patient tasks")
+  assert.equal(title?.textContent, "Appointment booked")
+  assert.ok(header && scroller && tasks)
+  assert.ok(header.classList.contains("shrink-0") && header.classList.contains("min-h-11") && header.classList.contains("pr-12"))
+  assert.ok(!scroller.contains(title), "the title stays put")
+  assert.ok(scroller.querySelector("details"), "the evidence scrolls")
+  assert.ok(header.compareDocumentPosition(scroller) & page.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING)
+  assert.ok(!scroller.contains(tasks), "the list is its own region")
+  assert.ok(scroller.compareDocumentPosition(tasks) & page.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING)
 })
 
 test("conversation clears its unavailable alert after a successful refresh", async (t) => {

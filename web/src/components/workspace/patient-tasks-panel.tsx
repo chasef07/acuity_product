@@ -304,7 +304,7 @@ function PanelFrame({
       className={cn("flex min-h-0 min-w-0 flex-col pt-3 pb-2 outline-none", className)}
     >
       {title && (
-        <header className="flex h-7 shrink-0 items-center gap-2 pr-12 pl-5">
+        <header className="flex h-8 shrink-0 items-center gap-2 pr-12 pl-5">
           <h2 className="truncate text-sm font-medium">{title}</h2>
           {count !== undefined && (
             <span className="text-xs tabular-nums text-muted-foreground">{count}</span>

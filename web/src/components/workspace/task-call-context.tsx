@@ -112,7 +112,7 @@ export function DetailsAbovePatientTasks({
 }) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex min-h-11 flex-col overflow-hidden">{children}</div>
+      <div className="flex min-h-12 flex-col overflow-hidden">{children}</div>
       {patientTasks}
     </div>
   )
