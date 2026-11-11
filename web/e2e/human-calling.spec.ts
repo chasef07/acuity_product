@@ -7,7 +7,7 @@ import {
 } from "@playwright/test"
 import { Pool } from "pg"
 
-import { patientRow, railFilter, signInAs } from "./support"
+import { patientRow, railFilter, showPatientTask, signInAs } from "./support"
 
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
@@ -455,7 +455,8 @@ async function finishCallsFromTheWrapUp(page: Page, database: Pool) {
   ).toBeChecked()
   await search.fill(callTitle)
   await search.press("Enter")
-  await page.getByRole("button", { name: callTitle, exact: true }).click()
+  await expect(patientRow(page, taskPhone).getByTestId("patient-row-reason")).toHaveText(callTitle)
+  await showPatientTask(page, taskPhone)
   const fromTask = await placeConnectedCall(page, database, `${key}-from-task`)
   await endConnectedCall(page, fromTask, `${key}-from-task`)
   const ownRow = wrapUp.getByTestId("call-wrap-up-task").filter({ hasText: callTitle })
