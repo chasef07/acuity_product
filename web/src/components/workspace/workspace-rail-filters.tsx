@@ -73,14 +73,15 @@ export function PatientFilterChips({
                 onClick={() => onChange(option.value)}
               />
             }
-            variant={unowned ? "destructive" : pressed ? "secondary" : "outline"}
+            variant={pressed ? "default" : unowned ? "destructive" : "outline"}
             className={cn(
               "cursor-pointer rounded-full px-2 font-normal outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-              unowned && pressed && "border-destructive/40",
+              pressed && "font-medium",
+              pressed && unowned && "bg-destructive",
             )}
           >
             {option.label}
-            <span className="tabular-nums opacity-70">{option.count}</span>
+            <span className={cn("tabular-nums", !pressed && "opacity-70")}>{option.count}</span>
           </Badge>
         )
       })}

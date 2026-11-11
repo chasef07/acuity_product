@@ -198,6 +198,28 @@ test("filter chips count patients, and No owner appears in the destructive tone 
   )
 })
 
+test("the active chip is filled with the primary colour, and No owner fills with its own", () => {
+  const base = projection([patients.callBack])
+  const counted = { ...base, patients: { ...base.patients, counts: { ...base.patients.counts, unowned: 4 } } }
+  const classes = (filter: PatientWorkFilter) => {
+    const document = rail({ ...counted, rail: { ...counted.rail, filter } })
+    return new Map(
+      [...document.querySelectorAll("[aria-label='Filter patients'] button")]
+        .map((chip) => [chip.getAttribute("data-filter"), (chip.getAttribute("class") ?? "").split(/\s+/)] as const),
+    )
+  }
+  for (const filter of ["all", "followUp", "callBack", "texts", "appointments"] as const) {
+    const chips = classes(filter)
+    for (const [name, chip] of chips) {
+      assert.equal(chip.includes("bg-primary") && chip.includes("text-primary-foreground"), name === filter, `${name} while ${filter} is active`)
+    }
+    assert.ok(chips.get("unowned")!.includes("text-destructive"), "No owner keeps its tone while inactive")
+  }
+  const unowned = classes("unowned").get("unowned")!
+  assert.ok(unowned.includes("bg-destructive") && unowned.includes("text-primary-foreground"))
+  assert.equal(unowned.includes("text-destructive"), false)
+})
+
 test("the footer states the totals and what My Tasks leaves under Everyone", () => {
   const footer = (state: WorkspaceProjectionState) =>
     rail(state).querySelector("[data-testid='patient-work-footer']")?.textContent
