@@ -453,6 +453,7 @@ async function finishCallsFromTheWrapUp(page: Page, database: Pool) {
   await expect(
     page.getByRole("switch", { name: "Receive calls" }),
   ).toBeChecked()
+  await railFilter(page, "all").click()
   await search.fill(callTitle)
   await search.press("Enter")
   await expect(patientRow(page, taskPhone).getByTestId("patient-row-reason")).toHaveText(callTitle)
