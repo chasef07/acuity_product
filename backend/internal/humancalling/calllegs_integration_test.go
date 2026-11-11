@@ -805,7 +805,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		t.Fatalf("completed connected Call = %#v, %v", connectedCall, err)
 	}
 	processAllCommands(t, callingWorker)
-	currentTime = now.Add(30 * time.Second)
+	currentTime = now.Add(70 * time.Second)
 	if expired, err := callingWorker.ExpireDispositions(context.Background()); err != nil || expired != 1 {
 		t.Fatalf("expire connected disposition = %d, %v", expired, err)
 	}
