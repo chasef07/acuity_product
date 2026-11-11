@@ -140,10 +140,11 @@ export function WorkspaceRail({
   useEffect(() => {
     const guarded = rowChangedAt.filter((at) => at !== undefined)
     if (guarded.length === 0) return
-    const timer = window.setTimeout(() => {
-      const now = performance.now()
-      setRowChangedAt((changedAt) => changedAt.map((at) => (rowClickAllowed(at, now) ? undefined : at)))
-    }, Math.min(...guarded) + rowClickGuardMilliseconds - performance.now())
+    const earliest = Math.min(...guarded)
+    const timer = window.setTimeout(
+      () => setRowChangedAt((changedAt) => changedAt.map((at) => (at === earliest ? undefined : at))),
+      earliest + rowClickGuardMilliseconds - performance.now(),
+    )
     return () => window.clearTimeout(timer)
   }, [rowChangedAt])
 
