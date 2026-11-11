@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import type { CallingCall, PhoneSummary, Task } from "@/lib/api/generated/types.gen"
 import {
+  wrapUpCounts,
   wrapUpDuration,
   wrapUpOffersFollowUp,
   wrapUpRequest,
@@ -154,6 +155,13 @@ export function CallWrapUpView({
       return tick ? [[task.id, tick] as const] : []
     }),
   )
+  const counts = wrapUpCounts({
+    openTaskCount: loaded?.openTaskCount,
+    closedInSummary:
+      !ownTask && loaded?.openTasks.some((task) => task.id === callTaskID) ? 1 : 0,
+    listed: tasks.length,
+    ticked: ticked.size,
+  })
   const followUpOffered = wrapUpOffersFollowUp(call)
   const followUp = followUpOffered && state.followUp && !settled?.automatic
   const followUpLost =
@@ -263,9 +271,9 @@ export function CallWrapUpView({
                 />
               ))}
             </ul>
-            {loaded && loaded.openTaskCount > loaded.openTasks.length && (
+            {counts.open > tasks.length && (
               <p className="text-xs text-muted-foreground">
-                Showing {tasks.length} of {loaded.openTaskCount} open Tasks
+                Showing {tasks.length} of {counts.open} open Tasks
               </p>
             )}
           </>
@@ -304,7 +312,7 @@ export function CallWrapUpView({
         <Button ref={primaryRef} disabled={saving} onClick={ticked.size > 0 ? closeTicked : finish}>
           {saving && <Spinner data-icon="inline-start" />}
           {ticked.size > 0
-            ? `Close ${ticked.size} · keep ${tasks.length - ticked.size} open`
+            ? counts.closeLabel
             : settled
               ? "Close"
               : loaded && tasks.length === 0

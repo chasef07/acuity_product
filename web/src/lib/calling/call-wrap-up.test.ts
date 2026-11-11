@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  wrapUpCounts,
   wrapUpDuration,
   wrapUpOffersFollowUp,
   wrapUpRequest,
@@ -127,4 +128,39 @@ test("a Call's length reads in minutes and seconds", () => {
   assert.equal(wrapUpDuration(42), "42s")
   assert.equal(wrapUpDuration(3_725), "1h 02m")
   assert.equal(wrapUpDuration(-4), "0s")
+})
+
+test("the close button and the count line say how many of the patient's Tasks stay open", () => {
+  const cases: Array<{
+    name: string
+    openTaskCount: number | undefined
+    closedInSummary?: number
+    listed: number
+    ticked: number
+    open: number
+    closeLabel: string
+  }> = [
+    { name: "three open, two ticked", openTaskCount: 3, listed: 3, ticked: 2, open: 3, closeLabel: "Close 2 · keep 1 open" },
+    { name: "a capped list counts the Tasks it does not show", openTaskCount: 55, listed: 50, ticked: 2, open: 55, closeLabel: "Close 2 · keep 53 open" },
+    { name: "every open Task ticked", openTaskCount: 2, listed: 2, ticked: 2, open: 2, closeLabel: "Close 2" },
+    { name: "one ticked, one kept", openTaskCount: 2, listed: 2, ticked: 1, open: 2, closeLabel: "Close 1 · keep 1 open" },
+    { name: "only the call's own Task, ticked", openTaskCount: 1, listed: 1, ticked: 1, open: 1, closeLabel: "Close 1" },
+    { name: "the call's own Task listed while the summary failed to load", openTaskCount: undefined, listed: 1, ticked: 1, open: 1, closeLabel: "Close 1" },
+    { name: "the call's own Task listed before the summary counted it", openTaskCount: 0, listed: 1, ticked: 1, open: 1, closeLabel: "Close 1" },
+    { name: "the call's own Task already closed but still in the summary", openTaskCount: 3, closedInSummary: 1, listed: 2, ticked: 1, open: 2, closeLabel: "Close 1 · keep 1 open" },
+    { name: "review Tasks the dialog does not list stay open", openTaskCount: 5, listed: 3, ticked: 3, open: 5, closeLabel: "Close 3 · keep 2 open" },
+    { name: "the call's own Task beside an unlisted review Task", openTaskCount: 2, listed: 1, ticked: 1, open: 2, closeLabel: "Close 1 · keep 1 open" },
+  ]
+  for (const item of cases) {
+    assert.deepEqual(
+      wrapUpCounts({
+        openTaskCount: item.openTaskCount,
+        closedInSummary: item.closedInSummary ?? 0,
+        listed: item.listed,
+        ticked: item.ticked,
+      }),
+      { open: item.open, closeLabel: item.closeLabel },
+      item.name,
+    )
+  }
 })

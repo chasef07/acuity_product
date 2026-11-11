@@ -69,6 +69,20 @@ export function wrapUpShortfall(
   return open.length > 0 || shortfall.followUpNotCreated ? shortfall : undefined
 }
 
+export function wrapUpCounts(counts: {
+  openTaskCount: number | undefined
+  closedInSummary: number
+  listed: number
+  ticked: number
+}) {
+  const open = Math.max(counts.listed, (counts.openTaskCount ?? 0) - counts.closedInSummary)
+  const kept = open - counts.ticked
+  return {
+    open,
+    closeLabel: kept > 0 ? `Close ${counts.ticked} · keep ${kept} open` : `Close ${counts.ticked}`,
+  }
+}
+
 export function wrapUpDuration(seconds: number) {
   const total = Math.max(0, Math.floor(seconds))
   const hours = Math.floor(total / 3_600)

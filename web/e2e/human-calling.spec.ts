@@ -475,7 +475,7 @@ async function finishCallsFromTheWrapUp(page: Page, database: Pool) {
   await expect(ownRow.getByRole("checkbox")).toBeChecked()
   await page.keyboard.press("Shift+Tab")
   await expect(
-    wrapUp.getByRole("button", { name: "Close 1 · keep 0 open", exact: true }),
+    wrapUp.getByRole("button", { name: "Close 1", exact: true }),
   ).toBeFocused()
   await page.keyboard.press("Enter")
   await expect(wrapUp).toHaveCount(0)

@@ -173,7 +173,12 @@ test("a capped summary says how many Tasks it shows", () => {
   )
   assert.equal(rows(withReviews).length, 48)
   assert.match(withReviews, /Showing 48 of 73 open Tasks/, "the count is the rows on screen")
-  assert.doesNotMatch(renderToStaticMarkup(view({ summary: ready(fiveTasks) })), /Showing/)
+  assert.match(
+    renderToStaticMarkup(view({ summary: ready(fiveTasks) })),
+    /Showing 4 of 5 open Tasks/,
+    "a review Task the dialog cannot close is still counted",
+  )
+  assert.doesNotMatch(renderToStaticMarkup(view({ summary: ready(fiveTasks.slice(0, 4)) })), /Showing/)
 })
 
 test("while the summary loads the outcome can already be recorded with nothing closed", () => {
@@ -240,7 +245,7 @@ test("ticking a Task offers its reason, and each button sends the outcome with e
     reason.dispatchEvent(new window.Event("change", { bubbles: true }))
   })
   await tick(row(first))
-  assert.match(button(/^Close/).textContent!, /^Close 2 · keep 0 open$/)
+  assert.match(button(/^Close/).textContent!, /^Close 2$/)
   const followUp = [...page.host.querySelectorAll("label")].find((label) =>
     /Create a follow-up Task/.test(label.textContent ?? ""),
   )!
@@ -275,7 +280,7 @@ test("a Task that left the open list while ticked is neither counted nor sent", 
   }
   await page.render(view({ summary: ready([second]), onSave }))
   const close = [...page.host.querySelectorAll("button")].find((item) => /^Close/.test(item.textContent ?? ""))!
-  assert.equal(close.textContent, "Close 1 · keep 0 open")
+  assert.equal(close.textContent, "Close 1")
   await act(async () => close.click())
   assert.deepEqual(sent, [
     { outcome: "RESOLVED", closures: [{ taskId: second.id, reason: "DONE", expectedVersion: 1 }] },
