@@ -11,6 +11,7 @@ import {
   useSyncExternalStore,
 } from "react"
 
+import { CallWrapUp } from "@/components/workspace/call-wrap-up"
 import {
   CallingCard,
   CallingFailureNotice,
@@ -121,6 +122,14 @@ export function CallingDock({
   const scopedLocationID = scopedCall?.locationId
   const connectedCallID =
     snapshot.activeCall?.state === "CONNECTED" ? snapshot.activeCall.id : ""
+  const [sawConnectedCallID, setSawConnectedCallID] = useState("")
+  if (connectedCallID && connectedCallID !== sawConnectedCallID) {
+    setSawConnectedCallID(connectedCallID)
+  }
+  const wrapUpCall =
+    snapshot.pendingDisposition?.state === "NEEDS_DISPOSITION"
+      ? snapshot.pendingDisposition
+      : undefined
   const reportCallScope = useEffectEvent(onCallScope)
   const reportCallConnected = useEffectEvent(() => {
     if (snapshot.activeCall?.state === "CONNECTED") {
@@ -177,9 +186,9 @@ export function CallingDock({
   }
 
   async function dispose(
-    outcome: Parameters<SoftphoneRuntime["dispose"]>[0],
+    request: Parameters<SoftphoneRuntime["dispose"]>[0],
   ) {
-    const result = await runtime.dispose(outcome)
+    const result = await runtime.dispose(request)
     if (result) onDisposition(result)
   }
 
@@ -221,12 +230,23 @@ export function CallingDock({
             onEnd={() => void runtime.hangup()}
             onMute={runtime.toggleMute}
             onDTMF={(digit) => void runtime.sendDTMF(digit)}
-            onDisposition={(outcome) => void dispose(outcome)}
+            onDisposition={(outcome) => void dispose({ outcome, closures: [] })}
             onRetry={() => void runtime.retry(window.crypto.randomUUID())}
             onRecover={() => void runtime.recover()}
             onClose={runtime.dismissOutcome}
           />
         </div>
+      )}
+      {wrapUpCall && (
+        <CallWrapUp
+          key={wrapUpCall.id}
+          call={wrapUpCall}
+          sawConnected={sawConnectedCallID === wrapUpCall.id}
+          saving={snapshot.pending.disposition}
+          failure={snapshot.failure}
+          onRecover={() => void runtime.recover()}
+          onSave={(request) => void dispose(request)}
+        />
       )}
     </CallingNavigationContext.Provider>
   )

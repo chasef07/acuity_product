@@ -368,7 +368,7 @@ test("terminal media purge failure or timeout fails calling closed", async (cont
     }
 
     await fixture.runtime.signalRefresh()
-    await fixture.runtime.dispose("RESOLVED")
+    await fixture.runtime.dispose({ outcome: "RESOLVED", closures: [] })
 
     assert.equal(fixture.exact.rejections, 1)
     assert.equal(fixture.media.disconnects, 0)
@@ -526,7 +526,7 @@ test("a terminal watermark outranks a delayed nonterminal Hangup response before
       backend.calls.set(terminal.id, resolved)
       return { call: resolved }
     }
-    await runtime.dispose("RESOLVED")
+    await runtime.dispose({ outcome: "RESOLVED", closures: [] })
     delayedHangup.resolve(delayedResponse)
     await ending
 
@@ -583,7 +583,7 @@ test("a delayed disposition read cannot restore Outcome after its commit", async
     dispositionCommitted = true
     return { call: resolved }
   }
-  const disposing = runtime.dispose("RESOLVED")
+  const disposing = runtime.dispose({ outcome: "RESOLVED", closures: [] })
   await drainMicrotasks()
   assert.equal(runtime.getSnapshot().pendingDisposition, undefined)
   assert.equal(runtime.getSnapshot().terminalVersions[pending.id], 4)
@@ -1958,7 +1958,7 @@ test("Hangup preserves Ending until committed disposition and disposition clears
     backend.calls.set("call-end", resolved)
     return { call: resolved }
   }
-  const result = await runtime.dispose("RESOLVED")
+  const result = await runtime.dispose({ outcome: "RESOLVED", closures: [] })
   assert.equal(result?.call.state, "RESOLVED")
   assert.equal(runtime.getSnapshot().pendingDisposition, undefined)
 })
@@ -2184,13 +2184,66 @@ test("lost retry and disposition responses reconcile committed state", async (t)
     })
     await runtime.start()
 
-    const result = await runtime.dispose("RESOLVED")
+    const result = await runtime.dispose({ outcome: "RESOLVED", closures: [] })
 
     assert.equal(result, undefined)
     assert.equal(runtime.getSnapshot().pendingDisposition, undefined)
     assert.equal(runtime.getSnapshot().pending.disposition, false)
     assert.equal(runtime.getSnapshot().failure, undefined)
   })
+})
+
+test("the disposition stage sends the wrap-up's outcome and closures, and a rejected wrap-up keeps the stage", async () => {
+  const backend = new DeterministicBackend()
+  const pending = call({ id: "call-wrap-up", state: "NEEDS_DISPOSITION", version: 3 })
+  const resolved = call({ id: pending.id, state: "RESOLVED", version: 4 })
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: stateCall(pending.id, "wrap-up-leg", pending.version),
+  })
+  backend.calls.set(pending.id, pending)
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  assert.equal(runtime.getSnapshot().pendingDisposition?.id, pending.id)
+
+  const sent: Parameters<SoftphoneBackend["dispose"]>[0][] = []
+  const request = {
+    outcome: "RESOLVED" as const,
+    closures: [{ taskId: "task-refill", reason: "NOT_NEEDED" as const }],
+  }
+  backend.disposeHandler = async (input) => {
+    sent.push(input)
+    throw new SoftphoneAdapterError("conflict", "The Call outcome could not be saved. Try again.")
+  }
+  assert.equal(await runtime.dispose(request), undefined)
+  assert.equal(runtime.getSnapshot().pendingDisposition?.id, pending.id)
+  assert.equal(runtime.getSnapshot().controls.canDispose, true)
+  assert.equal(
+    runtime.getSnapshot().failure?.message,
+    "The Call outcome could not be saved. Try again.",
+  )
+
+  backend.disposeHandler = async (input) => {
+    sent.push(input)
+    backend.lease = lease({ owner: true })
+    backend.state = callingState({ softphone: backend.lease })
+    backend.calls.set(resolved.id, resolved)
+    return { call: resolved, closedTaskIds: ["task-refill"], alreadyClosedTaskIds: [] }
+  }
+  const result = await runtime.dispose(request)
+  const expected = { callID: pending.id, sessionID: "session-1", ...request }
+  assert.deepEqual(sent, [expected, expected])
+  assert.deepEqual(result?.closedTaskIds, ["task-refill"])
+  assert.equal(runtime.getSnapshot().pendingDisposition, undefined)
+  assert.equal(runtime.getSnapshot().failure, undefined)
 })
 
 test("offers use transient cadence and stop cleans timers, visibility, media, and microphone without severing subscribers", async () => {
@@ -5004,7 +5057,7 @@ test("a disposition whose commit a refresh observed first still returns its resu
   await runtime.start()
   const response = deferred<CallingDispositionResult>()
   backend.disposeHandler = async () => response.promise
-  const disposing = runtime.dispose("RESOLVED")
+  const disposing = runtime.dispose({ outcome: "RESOLVED", closures: [] })
   await drainMicrotasks()
 
   const resolved = call({ id: pending.id, state: "RESOLVED", version: 4 })
@@ -5410,7 +5463,7 @@ test("a disposition committed while the lease was lost and regained still return
   await runtime.start()
   const response = deferred<CallingDispositionResult>()
   backend.disposeHandler = async () => response.promise
-  const disposing = runtime.dispose("RESOLVED")
+  const disposing = runtime.dispose({ outcome: "RESOLVED", closures: [] })
   await drainMicrotasks()
 
   const awaitingDisposition = backend.state
@@ -5460,7 +5513,7 @@ test("a disposition failure for a Call whose Outcome another Call replaced does 
   await runtime.start()
   const response = deferred<CallingDispositionResult>()
   backend.disposeHandler = async () => response.promise
-  const disposing = runtime.dispose("RESOLVED")
+  const disposing = runtime.dispose({ outcome: "RESOLVED", closures: [] })
   await drainMicrotasks()
   assert.equal(runtime.getSnapshot().pending.disposition, true)
 
@@ -5788,11 +5841,10 @@ class DeterministicBackend implements SoftphoneBackend {
     throw new Error("not implemented")
   }
 
-  async dispose(input: {
-    callID: string
-    sessionID: string
-    outcome: "RESOLVED" | "FOLLOW_UP_REQUIRED" | "COMPLETE_TASK" | "KEEP_OPEN" | "CREATE_TASK" | "NO_FOLLOW_UP"
-  }, signal?: AbortSignal): Promise<CallingDispositionResult> {
+  async dispose(
+    input: Parameters<SoftphoneBackend["dispose"]>[0],
+    signal?: AbortSignal,
+  ): Promise<CallingDispositionResult> {
     if (this.disposeHandler) return this.disposeHandler(input, signal)
     throw new Error("not implemented")
   }

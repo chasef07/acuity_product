@@ -1,7 +1,6 @@
 import { isSettledCallState } from "./call-state.ts"
 import type {
   CallingCall,
-  CallingDispositionRequest,
   CallingDispositionResult,
   CallingReadinessRequest,
   CallingState,
@@ -17,6 +16,7 @@ import {
   type CallingHintSource,
 } from "./calling-hints.ts"
 import { createCallingChangeMetric } from "./calling-change-metric.ts"
+import type { WrapUpRequest } from "./call-wrap-up.ts"
 import {
   mediaKey,
   type CallingMediaAdapter,
@@ -268,8 +268,7 @@ export interface SoftphoneBackend {
   dispose(input: {
     callID: string
     sessionID: string
-    outcome: CallingDispositionRequest["outcome"]
-  }, signal?: AbortSignal): Promise<CallingDispositionResult>
+  } & WrapUpRequest, signal?: AbortSignal): Promise<CallingDispositionResult>
   listTransferCandidates(input: {
     callID: string
     sessionID: string
@@ -338,7 +337,7 @@ export type SoftphoneRuntime = {
   retry(idempotencyKey: string): Promise<void>
   recover(): Promise<void>
   dismissOutcome(): void
-  dispose(outcome: CallingDispositionRequest["outcome"]): Promise<CallingDispositionResult | undefined>
+  dispose(request: WrapUpRequest): Promise<CallingDispositionResult | undefined>
   toggleMute(): void
   sendDTMF(digit: string): boolean
 }
@@ -2850,7 +2849,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       })
       void commitReadiness()
     },
-    async dispose(outcome) {
+    async dispose(request) {
       const call = snapshot.pendingDisposition
       if (!call || snapshot.pending.disposition) return
       const disposition = open("disposition", { pending: true })
@@ -2861,7 +2860,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             {
               callID: call.id,
               sessionID: options.sessionID,
-              outcome,
+              ...request,
             },
             signal,
           ),

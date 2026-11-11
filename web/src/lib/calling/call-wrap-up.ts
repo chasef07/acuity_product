@@ -38,3 +38,13 @@ function wrapUpOutcome(call: WrapUpCall, state: WrapUpState): WrapUpRequest["out
   }
   return state.followUp ? "CREATE_TASK" : "RESOLVED"
 }
+
+export function wrapUpDuration(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds))
+  const hours = Math.floor(total / 3_600)
+  const minutes = Math.floor((total % 3_600) / 60)
+  const rest = total % 60
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`
+  if (minutes > 0) return `${minutes}m ${String(rest).padStart(2, "0")}s`
+  return `${rest}s`
+}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  wrapUpDuration,
   wrapUpOffersFollowUp,
   wrapUpRequest,
   type WrapUpCall,
@@ -67,4 +68,12 @@ test("a follow-up is offered unless the Call was placed from a Task, which stays
   assert.equal(wrapUpOffersFollowUp(handoff), true)
   assert.equal(wrapUpOffersFollowUp(direct), true)
   assert.equal(wrapUpOffersFollowUp(fromTask), false)
+})
+
+test("a Call's length reads in minutes and seconds", () => {
+  assert.equal(wrapUpDuration(222), "3m 42s")
+  assert.equal(wrapUpDuration(185.9), "3m 05s")
+  assert.equal(wrapUpDuration(42), "42s")
+  assert.equal(wrapUpDuration(3_725), "1h 02m")
+  assert.equal(wrapUpDuration(-4), "0s")
 })
