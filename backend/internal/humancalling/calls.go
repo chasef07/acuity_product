@@ -346,17 +346,18 @@ func (m *Module) RecordDisposition(
 	var direction CallDirection
 	var entryPoint CallEntryPoint
 	var placedAt time.Time
+	var endedAt *time.Time
 	if err := tx.QueryRow(ctx, `
 		SELECT call.practice_id::text, call.location_id::text, call.direction,
 			call.entry_point, COALESCE(call.task_id::text, call.surfaced_task_id::text, ''),
 			COALESCE(call.caller_phone, call.destination_phone, ''),
 			COALESCE(handoff.transfer_reason, ''), COALESCE(call.terminal_outcome, ''),
-			COALESCE(call.disposition_outcome, ''), call.created_at
+			COALESCE(call.disposition_outcome, ''), call.created_at, call.ended_at
 		FROM human_calling_calls call
 		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 		WHERE call.id = $1 FOR UPDATE OF call
 	`, callID).Scan(&practiceID, &locationID, &direction, &entryPoint, &taskID,
-		&phone, &reason, &terminal, &existing, &placedAt); errors.Is(err, pgx.ErrNoRows) {
+		&phone, &reason, &terminal, &existing, &placedAt, &endedAt); errors.Is(err, pgx.ErrNoRows) {
 		return DispositionResult{}, ErrDenied
 	} else if err != nil {
 		return DispositionResult{}, fmt.Errorf("lock disposition Call: %w", err)
@@ -391,11 +392,14 @@ func (m *Module) RecordDisposition(
 		return DispositionResult{}, ErrConflict
 	}
 	if existing != "" {
-		if existing != string(disposition) {
+		if len(closures) == 0 && existing != string(disposition) {
+			return DispositionResult{}, ErrConflict
+		}
+		if len(closures) > 0 && (endedAt == nil || m.now().Sub(*endedAt) > lateClosureWindow) {
 			return DispositionResult{}, ErrConflict
 		}
 		closed, err := m.work.CloseTasksForCall(ctx, tx, authorization, work.CloseTasksForCallCommand{
-			CallID: callID, Phone: phone, Closures: closures, ReportOnly: true,
+			CallID: callID, Phone: phone, Closures: closures,
 		})
 		if err != nil {
 			return DispositionResult{}, callingClosureError(err)
@@ -404,7 +408,9 @@ func (m *Module) RecordDisposition(
 			return DispositionResult{}, err
 		}
 		call, err := m.ReadCall(ctx, identity, callID)
-		return DispositionResult{Call: call, TaskID: taskID, Closures: closed}, err
+		return DispositionResult{
+			Call: call, TaskID: taskID, Closures: closed, Outcome: Disposition(existing),
+		}, err
 	}
 	connected, err := m.callHasBridge(ctx, tx, callID)
 	if err != nil {
@@ -416,7 +422,13 @@ func (m *Module) RecordDisposition(
 	completesCallTask := disposition == DispositionCompleteTask ||
 		(disposition == DispositionResolved && taskID != "")
 	callTaskReason := work.CloseReasonDone
+	var callTaskVersion int64
+	lockedTaskIDs := make([]string, 0, len(closures)+1)
+	if taskID != "" {
+		lockedTaskIDs = append(lockedTaskIDs, taskID)
+	}
 	for _, closure := range closures {
+		lockedTaskIDs = append(lockedTaskIDs, closure.TaskID)
 		if closure.TaskID != taskID {
 			continue
 		}
@@ -424,14 +436,21 @@ func (m *Module) RecordDisposition(
 			return DispositionResult{}, ErrInvalidInput
 		}
 		callTaskReason = closure.Reason
+		callTaskVersion = closure.ExpectedVersion
+	}
+	if err := m.work.LockTasks(ctx, tx, lockedTaskIDs); err != nil {
+		return DispositionResult{}, callingClosureError(err)
 	}
 	if completesCallTask || disposition == DispositionKeepOpen {
 		updated, err := m.work.ApplyCallTaskDisposition(ctx, tx, authorization, taskID,
-			completesCallTask, callTaskReason, callID, placedAt)
+			completesCallTask, callTaskReason, callTaskVersion, callID, placedAt)
 		if err != nil {
 			return DispositionResult{}, callingWorkError(err)
 		}
 		taskID = updated.ID
+		if disposition == DispositionCompleteTask && updated.State != work.TaskCompleted {
+			disposition = DispositionKeepOpen
+		}
 	}
 	closed, err := m.work.CloseTasksForCall(ctx, tx, authorization, work.CloseTasksForCallCommand{
 		CallID: callID, Phone: phone, Closures: closures,
@@ -474,7 +493,7 @@ func (m *Module) RecordDisposition(
 		return DispositionResult{}, fmt.Errorf("commit Call disposition: %w", err)
 	}
 	call, err := m.ReadCall(ctx, identity, callID)
-	return DispositionResult{Call: call, TaskID: taskID, Closures: closed}, err
+	return DispositionResult{Call: call, TaskID: taskID, Closures: closed, Outcome: disposition}, err
 }
 
 func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {

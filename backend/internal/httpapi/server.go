@@ -1396,8 +1396,9 @@ func (server *Server) RecordCallingDisposition(
 	if body.Closures != nil {
 		for _, closure := range *body.Closures {
 			closures = append(closures, work.CallTaskClosure{
-				TaskID: closure.TaskId.String(),
-				Reason: work.CloseReason(closure.Reason),
+				TaskID:          closure.TaskId.String(),
+				Reason:          work.CloseReason(closure.Reason),
+				ExpectedVersion: closure.ExpectedVersion,
 			})
 		}
 	}
@@ -1430,8 +1431,15 @@ func (server *Server) RecordCallingDisposition(
 		server.writeDomainError(w, r, err)
 		return
 	}
+	changed, err := parseUUIDs(result.Closures.Changed)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	recorded := api.CallingDispositionOutcome(result.Outcome)
 	response := api.CallingDispositionResult{
 		Call: callResponse, ClosedTaskIds: &closed, AlreadyClosedTaskIds: &alreadyClosed,
+		ChangedTaskIds: &changed, RecordedOutcome: &recorded,
 	}
 	if result.TaskID != "" {
 		taskID, err := uuid.Parse(result.TaskID)

@@ -3611,26 +3611,31 @@ components:
           type: string
           minLength: 1
         outcome:
-          type: string
-          enum:
-            - RESOLVED
-            - FOLLOW_UP_REQUIRED
-            - COMPLETE_TASK
-            - KEEP_OPEN
-            - CREATE_TASK
-            - NO_FOLLOW_UP
+          $ref: "#/components/schemas/CallingDispositionOutcome"
         closures:
           type: array
           maxItems: 50
           description: >
             Open Tasks for the Call's phone that the staff member closes with
             this outcome. Omitted or empty closes nothing beyond the outcome.
+            Once an outcome is recorded, the staff member who took the Call may
+            still close listed Tasks for 30 minutes after it ended; the recorded
+            outcome never changes.
           items:
             $ref: "#/components/schemas/CallingDispositionClosure"
+    CallingDispositionOutcome:
+      type: string
+      enum:
+        - RESOLVED
+        - FOLLOW_UP_REQUIRED
+        - COMPLETE_TASK
+        - KEEP_OPEN
+        - CREATE_TASK
+        - NO_FOLLOW_UP
     CallingDispositionClosure:
       type: object
       additionalProperties: false
-      required: [taskId, reason]
+      required: [taskId, reason, expectedVersion]
       properties:
         taskId:
           type: string
@@ -3639,6 +3644,13 @@ components:
           type: string
           enum: [DONE, NOT_NEEDED]
           description: Why the Task closed after the staff member spoke with the patient.
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >
+            The Task version the staff member saw. An open Task at another
+            version stays open and is reported in changedTaskIds.
     CallingDispositionResult:
       type: object
       additionalProperties: false
@@ -3661,6 +3673,19 @@ components:
           items:
             type: string
             format: uuid
+        changedTaskIds:
+          type: array
+          description: Listed Tasks left open because they changed after the staff member saw them.
+          items:
+            type: string
+            format: uuid
+        recordedOutcome:
+          allOf:
+            - $ref: "#/components/schemas/CallingDispositionOutcome"
+          description: >
+            The outcome stored for the Call. It differs from the requested one
+            when an outcome was already recorded, or when the Call's own Task
+            changed and was kept open.
     StaffTaskCategory:
       type: string
       enum:

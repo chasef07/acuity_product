@@ -308,15 +308,15 @@ type CompleteTaskCommand struct {
 }
 
 type CallTaskClosure struct {
-	TaskID string
-	Reason CloseReason
+	TaskID          string
+	Reason          CloseReason
+	ExpectedVersion int64
 }
 
 type CloseTasksForCallCommand struct {
-	CallID     string
-	Phone      string
-	Closures   []CallTaskClosure
-	ReportOnly bool
+	CallID   string
+	Phone    string
+	Closures []CallTaskClosure
 }
 
 const maxCallTaskClosures = 50
@@ -324,6 +324,7 @@ const maxCallTaskClosures = 50
 type CallTaskClosures struct {
 	Closed        []string
 	AlreadyClosed []string
+	Changed       []string
 }
 
 type ReopenTaskCommand struct {
@@ -1216,6 +1217,25 @@ func (m *Module) LockOutboundTask(
 	return loadTask(ctx, tx, taskID, true)
 }
 
+func (m *Module) LockTasks(ctx context.Context, tx pgx.Tx, taskIDs []string) error {
+	if tx == nil {
+		return ErrInvalidInput
+	}
+	ordered := slices.Clone(taskIDs)
+	slices.Sort(ordered)
+	for _, taskID := range slices.Compact(ordered) {
+		if strings.TrimSpace(taskID) == "" {
+			return ErrInvalidInput
+		}
+		if _, err := tx.Exec(ctx, `
+			SELECT 1 FROM work_tasks WHERE id = $1::uuid FOR UPDATE
+		`, taskID); err != nil {
+			return fmt.Errorf("lock Task: %w", err)
+		}
+	}
+	return nil
+}
+
 func (m *Module) ApplyCallTaskDisposition(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1223,6 +1243,7 @@ func (m *Module) ApplyCallTaskDisposition(
 	taskID string,
 	complete bool,
 	reason CloseReason,
+	expectedVersion int64,
 	callID string,
 	callPlacedAt time.Time,
 ) (Task, error) {
@@ -1235,7 +1256,8 @@ func (m *Module) ApplyCallTaskDisposition(
 	if err != nil {
 		return Task{}, err
 	}
-	if !complete || task.State == TaskCompleted {
+	if !complete || task.State == TaskCompleted ||
+		(expectedVersion != 0 && task.Version != expectedVersion) {
 		return task, nil
 	}
 	var newerEvidence bool
@@ -1269,7 +1291,7 @@ func (m *Module) CloseTasksForCall(
 	authorization access.Authorization,
 	command CloseTasksForCallCommand,
 ) (CallTaskClosures, error) {
-	result := CallTaskClosures{Closed: []string{}, AlreadyClosed: []string{}}
+	result := CallTaskClosures{Closed: []string{}, AlreadyClosed: []string{}, Changed: []string{}}
 	if len(command.Closures) == 0 {
 		return result, nil
 	}
@@ -1285,6 +1307,7 @@ func (m *Module) CloseTasksForCall(
 	taskIDs := make([]string, len(closures))
 	for index, closure := range closures {
 		if strings.TrimSpace(closure.TaskID) == "" || !closure.Reason.closesAfterConversation() ||
+			closure.ExpectedVersion <= 0 ||
 			(index > 0 && closures[index-1].TaskID == closure.TaskID) {
 			return CallTaskClosures{}, ErrInvalidInput
 		}
@@ -1296,7 +1319,7 @@ func (m *Module) CloseTasksForCall(
 	}
 	tasks := make([]Task, len(closures))
 	for index, closure := range closures {
-		task, err := loadTask(ctx, tx, closure.TaskID, !command.ReportOnly)
+		task, err := loadTask(ctx, tx, closure.TaskID, true)
 		if err != nil {
 			return CallTaskClosures{}, err
 		}
@@ -1317,19 +1340,28 @@ func (m *Module) CloseTasksForCall(
 	if err != nil {
 		return CallTaskClosures{}, fmt.Errorf("read Tasks closed by Call: %w", err)
 	}
+	completed := false
 	for index, task := range tasks {
 		switch {
 		case slices.Contains(closedByCall, task.ID):
 			result.Closed = append(result.Closed, task.ID)
 		case task.State == TaskCompleted:
 			result.AlreadyClosed = append(result.AlreadyClosed, task.ID)
-		case !command.ReportOnly:
+		case task.Version != closures[index].ExpectedVersion:
+			result.Changed = append(result.Changed, task.ID)
+		default:
 			if _, err := m.completeLockedTask(
 				ctx, tx, authorization, task, closures[index].Reason, command.CallID,
 			); err != nil {
 				return CallTaskClosures{}, err
 			}
 			result.Closed = append(result.Closed, task.ID)
+			completed = true
+		}
+	}
+	if completed {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, authorization.Practice.ID); err != nil {
+			return CallTaskClosures{}, err
 		}
 	}
 	return result, nil

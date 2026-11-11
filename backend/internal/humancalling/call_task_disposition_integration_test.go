@@ -387,14 +387,15 @@ func TestDispositionClosesExactlyTheListedTasks(t *testing.T) {
 	untouched := fixture.phoneTask(t, "Billing question")
 	call := fixture.endedCall(t, "wrap-up-two-call")
 	closures := []work.CallTaskClosure{
-		{TaskID: done, Reason: work.CloseReasonDone},
-		{TaskID: notNeeded, Reason: work.CloseReasonNotNeeded},
+		{TaskID: done, Reason: work.CloseReasonDone, ExpectedVersion: 1},
+		{TaskID: notNeeded, Reason: work.CloseReasonNotNeeded, ExpectedVersion: 1},
 	}
 	check := func(step string, result humancalling.DispositionResult, err error) {
 		t.Helper()
 		if err != nil || result.Call.State != humancalling.CallResolved ||
 			!sameTasks(result.Closures.Closed, done, notNeeded) ||
-			!sameTasks(result.Closures.AlreadyClosed) {
+			!sameTasks(result.Closures.AlreadyClosed) || !sameTasks(result.Closures.Changed) ||
+			result.Outcome != humancalling.DispositionResolved {
 			t.Fatalf("%s = %#v, %v", step, result, err)
 		}
 		for taskID, reason := range map[string]string{done: "DONE", notNeeded: "NOT_NEEDED"} {
@@ -416,14 +417,6 @@ func TestDispositionClosesExactlyTheListedTasks(t *testing.T) {
 	check("replay", replay, err)
 	if replay.Call.Version != result.Call.Version {
 		t.Fatalf("replay moved the Call from version %d to %d", result.Call.Version, replay.Call.Version)
-	}
-	late, err := fixture.dispose(call.ID, humancalling.DispositionResolved,
-		[]work.CallTaskClosure{{TaskID: untouched, Reason: work.CloseReasonDone}})
-	if err != nil || !sameTasks(late.Closures.Closed) || !sameTasks(late.Closures.AlreadyClosed) {
-		t.Fatalf("replay with a new Task = %#v, %v", late, err)
-	}
-	if stored := fixture.stored(t, untouched); stored.state != "OPEN" {
-		t.Fatalf("replay closed a Task after the outcome was recorded: %#v", stored)
 	}
 }
 
@@ -465,17 +458,17 @@ func TestDispositionRejectsClosuresOutsideTheCall(t *testing.T) {
 	hidden := fixture.openTask(t, practiceID, otherLocationID, wrapUpPhone, "Hidden office")
 	foreign := fixture.openTask(t, otherPracticeID, otherPracticeLocationID, wrapUpPhone, "Other practice")
 	call := fixture.endedCall(t, "wrap-up-reject-call")
-	valid := work.CallTaskClosure{TaskID: listed, Reason: work.CloseReasonDone}
+	valid := work.CallTaskClosure{TaskID: listed, Reason: work.CloseReasonDone, ExpectedVersion: 1}
 	for name, test := range map[string]struct {
 		closure work.CallTaskClosure
 		want    error
 	}{
-		"another phone":       {work.CallTaskClosure{TaskID: otherPhone, Reason: work.CloseReasonDone}, humancalling.ErrInvalidInput},
-		"unreadable Location": {work.CallTaskClosure{TaskID: hidden, Reason: work.CloseReasonDone}, humancalling.ErrInvalidInput},
-		"another Practice":    {work.CallTaskClosure{TaskID: foreign, Reason: work.CloseReasonDone}, humancalling.ErrInvalidInput},
-		"unknown Task":        {work.CallTaskClosure{TaskID: call.ID, Reason: work.CloseReasonDone}, humancalling.ErrInvalidInput},
-		"unreachable reason":  {work.CallTaskClosure{TaskID: otherPhone, Reason: work.CloseReasonUnreachable}, humancalling.ErrInvalidInput},
-		"expired reason":      {work.CallTaskClosure{TaskID: otherPhone, Reason: work.CloseReasonExpired}, humancalling.ErrInvalidInput},
+		"another phone":       {work.CallTaskClosure{TaskID: otherPhone, Reason: work.CloseReasonDone, ExpectedVersion: 1}, humancalling.ErrInvalidInput},
+		"unreadable Location": {work.CallTaskClosure{TaskID: hidden, Reason: work.CloseReasonDone, ExpectedVersion: 1}, humancalling.ErrInvalidInput},
+		"another Practice":    {work.CallTaskClosure{TaskID: foreign, Reason: work.CloseReasonDone, ExpectedVersion: 1}, humancalling.ErrInvalidInput},
+		"unknown Task":        {work.CallTaskClosure{TaskID: call.ID, Reason: work.CloseReasonDone, ExpectedVersion: 1}, humancalling.ErrInvalidInput},
+		"unreachable reason":  {work.CallTaskClosure{TaskID: otherPhone, Reason: work.CloseReasonUnreachable, ExpectedVersion: 1}, humancalling.ErrInvalidInput},
+		"expired reason":      {work.CallTaskClosure{TaskID: otherPhone, Reason: work.CloseReasonExpired, ExpectedVersion: 1}, humancalling.ErrInvalidInput},
 		"listed twice":        {valid, humancalling.ErrInvalidInput},
 	} {
 		if _, err := fixture.dispose(call.ID, humancalling.DispositionResolved,
@@ -509,8 +502,8 @@ func TestDispositionReportsATaskSomeoneElseClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := fixture.dispose(call.ID, humancalling.DispositionResolved, []work.CallTaskClosure{
-		{TaskID: raced, Reason: work.CloseReasonDone},
-		{TaskID: open, Reason: work.CloseReasonDone},
+		{TaskID: raced, Reason: work.CloseReasonDone, ExpectedVersion: 1},
+		{TaskID: open, Reason: work.CloseReasonDone, ExpectedVersion: 1},
 	})
 	if err != nil || !sameTasks(result.Closures.Closed, open) ||
 		!sameTasks(result.Closures.AlreadyClosed, raced) {
@@ -529,7 +522,7 @@ func TestTaskCallClosureClosesTheCallTaskOnceWithItsReason(t *testing.T) {
 	current := startConnectedTaskCall(t, "wrap-up-own-task")
 	fixture := wrapUpFixture{outboundEndFixture: current.fixture, work: current.work, now: current.now}
 	other := fixture.phoneTask(t, "Insurance question")
-	own := work.CallTaskClosure{TaskID: current.task.ID, Reason: work.CloseReasonNotNeeded}
+	own := work.CallTaskClosure{TaskID: current.task.ID, Reason: work.CloseReasonNotNeeded, ExpectedVersion: current.task.Version}
 	if _, err := fixture.dispose(current.call.ID, humancalling.DispositionKeepOpen,
 		[]work.CallTaskClosure{own}); !errors.Is(err, humancalling.ErrInvalidInput) {
 		t.Fatalf("kept-open Call Task listed for closure error = %v, want invalid input", err)
@@ -538,7 +531,7 @@ func TestTaskCallClosureClosesTheCallTaskOnceWithItsReason(t *testing.T) {
 		t.Fatalf("rejected disposition closed the Call Task: %#v", stored)
 	}
 	result, err := fixture.dispose(current.call.ID, humancalling.DispositionCompleteTask,
-		[]work.CallTaskClosure{own, {TaskID: other, Reason: work.CloseReasonDone}})
+		[]work.CallTaskClosure{own, {TaskID: other, Reason: work.CloseReasonDone, ExpectedVersion: 1}})
 	if err != nil || result.TaskID != current.task.ID ||
 		!sameTasks(result.Closures.Closed, current.task.ID, other) ||
 		!sameTasks(result.Closures.AlreadyClosed) {
@@ -556,9 +549,9 @@ func TestTaskCallClosureClosesTheCallTaskOnceWithItsReason(t *testing.T) {
 func TestListedCallTaskStillCannotClearNewerEvidence(t *testing.T) {
 	current := startConnectedTaskCall(t, "wrap-up-own-evidence")
 	fixture := wrapUpFixture{outboundEndFixture: current.fixture, work: current.work, now: current.now}
-	attachMissedCall(t, current.fixture, current.work, current.now.Add(5*time.Second))
+	seen := attachMissedCall(t, current.fixture, current.work, current.now.Add(5*time.Second))
 	if _, err := fixture.dispose(current.call.ID, humancalling.DispositionCompleteTask,
-		[]work.CallTaskClosure{{TaskID: current.task.ID, Reason: work.CloseReasonDone}},
+		[]work.CallTaskClosure{{TaskID: current.task.ID, Reason: work.CloseReasonDone, ExpectedVersion: seen.Version}},
 	); !errors.Is(err, humancalling.ErrConflict) {
 		t.Fatalf("listed stale Call Task error = %v, want conflict", err)
 	}
@@ -576,7 +569,7 @@ func TestClosingTheOldFollowUpStillCreatesTheNewOne(t *testing.T) {
 	}
 	second := fixture.endedCall(t, "wrap-up-follow-up-second")
 	result, err := fixture.dispose(second.ID, humancalling.DispositionCreateTask,
-		[]work.CallTaskClosure{{TaskID: created.TaskID, Reason: work.CloseReasonDone}})
+		[]work.CallTaskClosure{{TaskID: created.TaskID, Reason: work.CloseReasonDone, ExpectedVersion: 1}})
 	if err != nil || result.TaskID == "" || result.TaskID == created.TaskID ||
 		!sameTasks(result.Closures.Closed, created.TaskID) {
 		t.Fatalf("follow-up after closing the old one = %#v, %v", result, err)

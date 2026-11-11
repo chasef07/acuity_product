@@ -80,16 +80,21 @@ func TestDispositionClosuresOverHTTP(t *testing.T) {
 	refill := fixture.seedOpenTask(dispositionClosurePhone, "Refill request")
 	insurance := fixture.seedOpenTask(dispositionClosurePhone, "Insurance question")
 	otherPhone := fixture.seedOpenTask("+15555550177", "Other phone")
-	dispose := func(callID string, closures any) (int, string) {
-		body := map[string]any{"sessionId": "browser-a", "outcome": "RESOLVED"}
+	disposeAs := func(callID, outcome string, closures any) (int, string) {
+		body := map[string]any{"sessionId": "browser-a", "outcome": outcome}
 		if closures != nil {
 			body["closures"] = closures
 		}
 		return fixture.call(http.MethodPost, "/v1/calling/calls/"+callID+"/disposition", "staff-token", body)
 	}
+	dispose := func(callID string, closures any) (int, string) {
+		return disposeAs(callID, "RESOLVED", closures)
+	}
 	type closedTasks struct {
 		ClosedTaskIDs        []string `json:"closedTaskIds"`
 		AlreadyClosedTaskIDs []string `json:"alreadyClosedTaskIds"`
+		ChangedTaskIDs       []string `json:"changedTaskIds"`
+		RecordedOutcome      string   `json:"recordedOutcome"`
 	}
 	decode := func(label string, status int, body string) closedTasks {
 		t.Helper()
@@ -98,7 +103,8 @@ func TestDispositionClosuresOverHTTP(t *testing.T) {
 			t.Fatalf("%s = %d %s", label, status, body)
 		}
 		if err := json.Unmarshal([]byte(body), &result); err != nil ||
-			result.ClosedTaskIDs == nil || result.AlreadyClosedTaskIDs == nil {
+			result.ClosedTaskIDs == nil || result.AlreadyClosedTaskIDs == nil ||
+			result.ChangedTaskIDs == nil || result.RecordedOutcome != "RESOLVED" {
 			t.Fatalf("%s body = %s, %v", label, body, err)
 		}
 		return result
@@ -120,12 +126,13 @@ func TestDispositionClosuresOverHTTP(t *testing.T) {
 		status  int
 		code    string
 	}{
-		"UNREACHABLE": {map[string]any{"taskId": refill, "reason": "UNREACHABLE"}, http.StatusBadRequest, "INVALID_REQUEST"},
-		"EXPIRED":     {map[string]any{"taskId": refill, "reason": "EXPIRED"}, http.StatusBadRequest, "INVALID_REQUEST"},
-		"other phone": {map[string]any{"taskId": otherPhone, "reason": "DONE"}, http.StatusBadRequest, "INVALID_REQUEST"},
+		"UNREACHABLE": {map[string]any{"taskId": refill, "reason": "UNREACHABLE", "expectedVersion": 1}, http.StatusBadRequest, "INVALID_REQUEST"},
+		"EXPIRED":     {map[string]any{"taskId": refill, "reason": "EXPIRED", "expectedVersion": 1}, http.StatusBadRequest, "INVALID_REQUEST"},
+		"other phone": {map[string]any{"taskId": otherPhone, "reason": "DONE", "expectedVersion": 1}, http.StatusBadRequest, "INVALID_REQUEST"},
+		"no version":  {map[string]any{"taskId": refill, "reason": "DONE"}, http.StatusBadRequest, "INVALID_REQUEST"},
 	} {
 		status, body := dispose(callID, []map[string]any{
-			{"taskId": insurance, "reason": "DONE"}, test.closure,
+			{"taskId": insurance, "reason": "DONE", "expectedVersion": 1}, test.closure,
 		})
 		fixture.expect(label+" closure", test.status, test.code, status, body)
 		if state := fixture.taskState(insurance); state != "OPEN::" {
@@ -134,8 +141,8 @@ func TestDispositionClosuresOverHTTP(t *testing.T) {
 	}
 
 	closures := []map[string]any{
-		{"taskId": refill, "reason": "DONE"},
-		{"taskId": insurance, "reason": "NOT_NEEDED"},
+		{"taskId": refill, "reason": "DONE", "expectedVersion": 1},
+		{"taskId": insurance, "reason": "NOT_NEEDED", "expectedVersion": 1},
 	}
 	for _, label := range []string{"disposition with closures", "replayed disposition"} {
 		status, body = dispose(callID, closures)
@@ -154,4 +161,31 @@ func TestDispositionClosuresOverHTTP(t *testing.T) {
 	if state := fixture.taskState(otherPhone); state != "OPEN::" {
 		t.Fatalf("closures reached another phone: %s", state)
 	}
+
+	late := fixture.seedOpenTask(dispositionClosurePhone, "Billing question")
+	moved := fixture.seedOpenTask(dispositionClosurePhone, "Records request")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE work_tasks SET version = version + 1 WHERE id = $1
+	`, moved); err != nil {
+		t.Fatal(err)
+	}
+	status, body = disposeAs(callID, "FOLLOW_UP_REQUIRED", []map[string]any{
+		{"taskId": late, "reason": "DONE", "expectedVersion": 1},
+		{"taskId": moved, "reason": "DONE", "expectedVersion": 1},
+		{"taskId": refill, "reason": "DONE", "expectedVersion": 1},
+	})
+	result := decode("closures after the outcome was recorded", status, body)
+	if len(result.ClosedTaskIDs) != 2 || !slices.Contains(result.ClosedTaskIDs, late) ||
+		!slices.Contains(result.ClosedTaskIDs, refill) || len(result.AlreadyClosedTaskIDs) != 0 ||
+		!slices.Equal(result.ChangedTaskIDs, []string{moved}) {
+		t.Fatalf("closures after the outcome was recorded body = %s", body)
+	}
+	if state := fixture.taskState(late); state != "COMPLETED:DONE:"+callID {
+		t.Fatalf("late closure left the Task %s", state)
+	}
+	if state := fixture.taskState(moved); state != "OPEN::" {
+		t.Fatalf("changed Task is %s", state)
+	}
+	status, body = disposeAs(callID, "FOLLOW_UP_REQUIRED", nil)
+	fixture.expect("different outcome without closures", http.StatusConflict, "CALL_CONFLICT", status, body)
 }

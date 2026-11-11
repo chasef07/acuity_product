@@ -594,13 +594,15 @@ export type CallingRecoveryTask = {
 
 export type CallingDispositionRequest = {
     sessionId: string;
-    outcome: 'RESOLVED' | 'FOLLOW_UP_REQUIRED' | 'COMPLETE_TASK' | 'KEEP_OPEN' | 'CREATE_TASK' | 'NO_FOLLOW_UP';
+    outcome: CallingDispositionOutcome;
     /**
-     * Open Tasks for the Call's phone that the staff member closes with this outcome. Omitted or empty closes nothing beyond the outcome.
+     * Open Tasks for the Call's phone that the staff member closes with this outcome. Omitted or empty closes nothing beyond the outcome. Once an outcome is recorded, the staff member who took the Call may still close listed Tasks for 30 minutes after it ended; the recorded outcome never changes.
      *
      */
     closures?: Array<CallingDispositionClosure>;
 };
+
+export type CallingDispositionOutcome = 'RESOLVED' | 'FOLLOW_UP_REQUIRED' | 'COMPLETE_TASK' | 'KEEP_OPEN' | 'CREATE_TASK' | 'NO_FOLLOW_UP';
 
 export type CallingDispositionClosure = {
     taskId: string;
@@ -608,6 +610,11 @@ export type CallingDispositionClosure = {
      * Why the Task closed after the staff member spoke with the patient.
      */
     reason: 'DONE' | 'NOT_NEEDED';
+    /**
+     * The Task version the staff member saw. An open Task at another version stays open and is reported in changedTaskIds.
+     *
+     */
+    expectedVersion: number;
 };
 
 export type CallingDispositionResult = {
@@ -621,6 +628,15 @@ export type CallingDispositionResult = {
      * Listed Tasks that were closed before this Call could close them.
      */
     alreadyClosedTaskIds?: Array<string>;
+    /**
+     * Listed Tasks left open because they changed after the staff member saw them.
+     */
+    changedTaskIds?: Array<string>;
+    /**
+     * The outcome stored for the Call. It differs from the requested one when an outcome was already recorded, or when the Call's own Task changed and was kept open.
+     *
+     */
+    recordedOutcome?: CallingDispositionOutcome;
 };
 
 export type StaffTaskCategory = 'insurance' | 'pre_op' | 'post_op' | 'billing' | 'appointments' | 'documentation' | 'optical' | 'medication' | 'referrals' | 'other';
