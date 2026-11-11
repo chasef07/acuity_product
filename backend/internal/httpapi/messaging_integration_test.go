@@ -188,6 +188,21 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		receipt.Message.Destination != "+17275550199" {
 		t.Fatalf("durable HTTP Message = %#v", receipt)
 	}
+	senderOf := func(message api.Message) string {
+		if message.CreatedBy == nil || message.CreatedBy.Email == nil {
+			return ""
+		}
+		return string(*message.CreatedBy.Email)
+	}
+	if senderOf(receipt.Message) != identity.Email {
+		t.Fatalf("sent Message sender = %q, want %q", senderOf(receipt.Message), identity.Email)
+	}
+	replayed := request(t, portal.Client(), http.MethodPost, portal.URL+"/v1/messages", "message-token", sendBody)
+	var replay api.MessageReceipt
+	decode(t, replayed, &replay)
+	if replay.Message.Id != receipt.Message.Id || senderOf(replay.Message) != identity.Email {
+		t.Fatalf("replayed Message = %s sender %q, want %s sender %q", replay.Message.Id, senderOf(replay.Message), receipt.Message.Id, identity.Email)
+	}
 	if len(messageProvider.commands) != 0 {
 		t.Fatalf("browser request contacted provider: %#v", messageProvider.commands)
 	}
@@ -275,6 +290,9 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		timelineMessages[1].Direction != api.MessageDirectionINBOUND ||
 		timelineMessages[1].Body != "Thank you." {
 		t.Fatalf("HTTP conversation timeline = %#v", timeline)
+	}
+	if senderOf(timelineMessages[0]) != identity.Email || senderOf(timelineMessages[1]) != "" {
+		t.Fatalf("timeline senders = %q/%q, want %q for the staff text and none for the inbound text", senderOf(timelineMessages[0]), senderOf(timelineMessages[1]), identity.Email)
 	}
 	threadID := timelineMessages[1].Thread.Id
 	taskResponse := request(

@@ -375,20 +375,25 @@ type RecoveryTask struct {
 	RelatedInteractionCount int
 }
 
+const VoicemailSecondsSQL = `GREATEST(1, ROUND(voicemail.duration_millis / 1000.0))::bigint`
+
 type CallHistoryItem struct {
-	ID              string
-	Type            string
-	Direction       string
-	StartedAt       time.Time
-	EndedAt         *time.Time
-	DurationSeconds int64
-	LocationID      string
-	LocationName    string
-	AnsweredByEmail string
-	PlacedByEmail   string
-	TransferReason  string
-	SourceCallID    string
-	Outcome         CallState
+	ID                       string
+	Type                     string
+	Direction                string
+	StartedAt                time.Time
+	EndedAt                  *time.Time
+	DurationSeconds          int64
+	LocationID               string
+	LocationName             string
+	AnsweredByEmail          string
+	PlacedByEmail            string
+	TransferReason           string
+	SourceCallID             string
+	Outcome                  CallState
+	TaskID                   string
+	TaskTitle                string
+	VoicemailDurationSeconds int64
 }
 
 type OperatorTimeline struct {

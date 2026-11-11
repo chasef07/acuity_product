@@ -1,26 +1,36 @@
 "use client"
 
-import { type ReactNode } from "react"
+import { useState } from "react"
+import { PhoneIncomingIcon, PhoneOutgoingIcon, PlayIcon } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import { Item } from "@/components/ui/item"
+import { Spinner } from "@/components/ui/spinner"
 import type {
   ConversationTimelineItem,
   Task,
 } from "@/lib/api/generated/types.gen"
-import { aiCallTimelinePresentation } from "@/lib/ai-interactions"
+import { useCallingCall } from "@/lib/clients/calls"
+import { readFailure } from "@/lib/data/queries"
 import { formatClockTime } from "@/lib/format-time"
+import { cn } from "@/lib/utils"
+import { callStateLabels, formatClock } from "@/lib/vocabulary"
 import {
-  callDirectionLabels,
-  callStateLabels,
-  formatDuration,
-} from "@/lib/vocabulary"
-import {
+  type CallLine,
+  type CallLineTone,
   callHistoryPresentation,
   linkedTaskLabel,
+  linkedTaskStatus,
   taskActivityDetail,
 } from "@/lib/workspace-history"
 
 import { MessageEntry } from "./message-entry"
+import { VoicemailSource } from "./recording-source"
 
 export function TimelineEntry({
   item,
@@ -45,57 +55,6 @@ export function TimelineEntry({
   selectedCallID?: string
   selectedAIInteractionID?: string
 }) {
-  if (item.type === "CALL_HISTORY") {
-    const entries = item.entries ?? []
-    const primary = entries.find((entry) => entry.aiInteraction) ??
-      entries.find((entry) => entry.call)
-    const presentation = callHistoryPresentation(item)
-    const selected = entries.some((entry) =>
-      (entry.call && entry.call.id === selectedCallID) ||
-      (entry.aiInteraction && entry.aiInteraction.id === selectedAIInteractionID) ||
-      (entry.task && entry.task.id === selectedTaskID),
-    )
-    const title = primary?.aiInteraction
-      ? aiCallTimelinePresentation(primary.aiInteraction.appointmentOutcome, primary.aiInteraction.status).title
-      : primary?.call ? callTouchpoint(primary.call).label : presentation.title
-    const related = entries.filter((entry) => entry !== primary)
-    return (
-      <ActivityItem
-        title={title}
-        selected={selected}
-        metadata={[
-          ...presentation.details.filter((detail) =>
-            detail !== title && detail !== "No appointment action recorded",
-          ),
-          ...presentation.tasks.map((task) => linkedTaskLabel(task, selectedTaskID)),
-          formatClockTime(item.occurredAt),
-        ]}
-        actionLabel={primary?.aiInteraction ? "View AI call" : primary?.call?.outcome === "VOICEMAIL" ? "View voicemail" : "View call"}
-        onOpen={primary?.aiInteraction && onAIInteractionOpen
-          ? () => onAIInteractionOpen(primary.aiInteraction!.id)
-          : primary?.call && onCallOpen ? () => onCallOpen(primary.call!.id) : undefined}
-        relatedActions={related.length > 0 ? related.map((entry) => {
-          const task = entry.task
-          const call = entry.call
-          const label = task ? `View task: ${task.title}` : call?.outcome === "VOICEMAIL" ? "View voicemail" : "View staff call"
-          const onOpen = task && onTaskOpen ? () => onTaskOpen(task)
-            : call && onCallOpen ? () => onCallOpen(call.id) : undefined
-          if (!onOpen) return null
-          return (
-            <button
-              key={`${entry.type}:${entry.id}`}
-              type="button"
-              aria-label={label}
-              className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:underline"
-              onClick={onOpen}
-            >
-              {task ? "Task" : call?.outcome === "VOICEMAIL" ? "Voicemail" : "Staff call"}
-            </button>
-          )
-        }) : undefined}
-      />
-    )
-  }
   if (item.type === "MESSAGE" && item.message) {
     return (
       <MessageEntry
@@ -103,53 +62,6 @@ export function TimelineEntry({
         showLocation={item.message.thread.locationId !== contextLocationID}
         onChanged={onChanged}
         onTaskCreated={onTaskCreated}
-      />
-    )
-  }
-  if (item.type === "CALL" && item.call) {
-    const touchpoint = callTouchpoint(item.call)
-    return (
-      <ActivityItem
-        selected={item.call.id === selectedCallID}
-        title={item.call.transferReason || touchpoint.label}
-        metadata={[
-          item.call.transferReason ? touchpoint.label : "",
-          touchpoint.detail,
-          item.call.locationId !== contextLocationID
-            ? item.call.locationName
-            : "",
-          formatClockTime(item.occurredAt),
-        ]}
-        actionLabel={
-          item.call.outcome === "VOICEMAIL" ? "View voicemail" : "View call"
-        }
-        onOpen={onCallOpen ? () => onCallOpen(item.call!.id) : undefined}
-      />
-    )
-  }
-  if (item.type === "AI_INTERACTION" && item.aiInteraction) {
-    const interaction = item.aiInteraction
-    const presentation = aiCallTimelinePresentation(
-      interaction.appointmentOutcome,
-      interaction.status,
-    )
-    return (
-      <ActivityItem
-        selected={interaction.id === selectedAIInteractionID}
-        title={presentation.title}
-        metadata={[
-          presentation.detail,
-          interaction.locationId !== contextLocationID
-            ? interaction.locationName
-            : "",
-          formatClockTime(item.occurredAt),
-        ]}
-        actionLabel="View AI call"
-        onOpen={
-          onAIInteractionOpen
-            ? () => onAIInteractionOpen(interaction.id)
-            : undefined
-        }
       />
     )
   }
@@ -170,7 +82,187 @@ export function TimelineEntry({
       />
     )
   }
-  return null
+  const line = callHistoryPresentation(item)
+  if (!line) return null
+  return (
+    <CallLineEntry
+      line={line}
+      occurredAt={item.occurredAt}
+      otherLocations={line.locations.filter((location) => location.id !== contextLocationID)}
+      selected={
+        line.tasks.some((task) => task.id === selectedTaskID) ||
+        line.sources.some((source) =>
+          source.id === (source.kind === "ai" ? selectedAIInteractionID : selectedCallID),
+        )
+      }
+      selectedTaskID={selectedTaskID}
+      onTaskOpen={onTaskOpen}
+      onCallOpen={onCallOpen}
+      onAIInteractionOpen={onAIInteractionOpen}
+    />
+  )
+}
+
+const toneClasses = {
+  success: "text-success",
+  warning: "text-warning",
+  destructive: "text-destructive",
+  muted: "text-muted-foreground",
+} satisfies Record<CallLineTone, string>
+
+const detailAction = "text-left underline-offset-4 hover:text-foreground hover:underline focus-visible:underline"
+
+function CallLineEntry({
+  line,
+  occurredAt,
+  otherLocations,
+  selected,
+  selectedTaskID,
+  onTaskOpen,
+  onCallOpen,
+  onAIInteractionOpen,
+}: {
+  line: CallLine
+  occurredAt: string
+  otherLocations: CallLine["locations"]
+  selected: boolean
+  selectedTaskID?: string
+  onTaskOpen?: (task: Task) => void
+  onCallOpen?: (callID: string) => void
+  onAIInteractionOpen?: (interactionID: string) => void
+}) {
+  const DirectionIcon = line.direction === "OUTBOUND" ? PhoneOutgoingIcon : PhoneIncomingIcon
+  const details = line.sources.flatMap((source) => {
+    const open = source.kind === "ai" ? onAIInteractionOpen : onCallOpen
+    return open ? [{ ...source, open: () => open(source.id) }] : []
+  })
+  const time = formatClockTime(occurredAt)
+  return (
+    <Collapsible
+      render={
+        <Item
+          data-selected={selected || undefined}
+          className="relative mx-auto max-w-xl flex-col items-stretch gap-0 p-0 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent data-[selected=true]:before:bg-foreground"
+        />
+      }
+    >
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            aria-current={selected ? "true" : undefined}
+            aria-label={[
+              line.lead,
+              line.about,
+              time,
+              ...otherLocations.map((location) => location.name),
+              line.outcome.label,
+            ].filter(Boolean).join(", ")}
+            className="flex w-full items-start gap-2.5 rounded-md px-3 py-2.5 text-left outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+        }
+      >
+        <DirectionIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span data-slot="call-line-summary" className="line-clamp-2 text-muted-foreground wrap-anywhere">
+            <span className="font-medium text-foreground">{line.lead}</span>
+            {line.about && ` · ${line.about}`}
+            {otherLocations.map((location) => ` · ${location.name}`)}
+          </span>
+          <time
+            data-slot="call-line-time"
+            dateTime={occurredAt}
+            className="text-xs tabular-nums whitespace-nowrap text-muted-foreground"
+          >
+            {time}
+          </time>
+        </span>
+        <span className={cn("max-w-[50%] shrink-0 text-right font-medium wrap-anywhere", toneClasses[line.outcome.tone])}>
+          {line.outcome.label}
+        </span>
+      </CollapsibleTrigger>
+      {line.voicemail && <VoicemailPlayback key={line.voicemail.callID} voicemail={line.voicemail} />}
+      <CollapsibleContent className="flex flex-col gap-2 px-3 pb-2.5 pl-9">
+        <ul className="flex flex-col gap-1">
+          {line.steps.map((step, index) => (
+            <li key={index} className={toneClasses[step.tone]}>
+              {step.text}
+            </li>
+          ))}
+        </ul>
+        {line.tasks.length > 0 && (
+          <ul className="flex flex-col gap-1">
+            {line.tasks.map((task) => (
+              <li key={task.id}>
+                {onTaskOpen ? (
+                  <button
+                    type="button"
+                    aria-label={`View task: ${task.title}`}
+                    className={cn(detailAction, "font-medium")}
+                    onClick={() => onTaskOpen(task)}
+                  >
+                    {linkedTaskLabel(task, selectedTaskID)}
+                  </button>
+                ) : (
+                  <span className="font-medium">{linkedTaskLabel(task, selectedTaskID)}</span>
+                )}
+                <span className="text-muted-foreground"> · {linkedTaskStatus(task)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+          <span>{line.locations.map((location) => location.name).join(" · ")}</span>
+          {details.map((detail) => (
+            <button
+              key={`${detail.kind}:${detail.id}`}
+              type="button"
+              className={detailAction}
+              onClick={detail.open}
+            >
+              {detail.label}
+            </button>
+          ))}
+        </p>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function VoicemailPlayback({ voicemail }: { voicemail: NonNullable<CallLine["voicemail"]> }) {
+  const [opened, setOpened] = useState(false)
+  const call = useCallingCall(voicemail.callID, opened)
+  const failed = opened && Boolean(readFailure(call)) && call.status !== "ready"
+  const loading = opened && call.status === "loading"
+  const length = voicemail.seconds > 0 ? ` ${formatClock(voicemail.seconds)}` : ""
+  return (
+    <div className="flex flex-col gap-1 px-3 pb-2.5 pl-9">
+      {!(opened && call.status === "ready") && (
+        <Button
+          size="xs"
+          variant="outline"
+          className="self-start"
+          aria-label={`Play voicemail${length}`}
+          disabled={loading}
+          onClick={() => (failed ? void call.retry() : setOpened(true))}
+        >
+          {loading ? <Spinner data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
+          <span className="tabular-nums">{callStateLabels.VOICEMAIL}{length}</span>
+        </Button>
+      )}
+      {loading && <span role="status" className="sr-only">Loading voicemail</span>}
+      {failed && (
+        <p role="alert" className="text-destructive">
+          The voicemail could not be loaded. Select Voicemail to try again.
+        </p>
+      )}
+      {opened && call.status === "ready" && (
+        call.data.voicemail
+          ? <VoicemailSource call={call.data} compact autoPlay />
+          : <p role="alert" className="text-destructive">This call has no voicemail recording.</p>
+      )}
+    </div>
+  )
 }
 
 function ActivityItem({
@@ -179,14 +271,12 @@ function ActivityItem({
   actionLabel,
   selected,
   onOpen,
-  relatedActions,
 }: {
   title: string
   metadata: string[]
   actionLabel: string
   selected: boolean
   onOpen?: () => void
-  relatedActions?: ReactNode
 }) {
   const content = (
     <span className="flex flex-1 flex-col gap-1">
@@ -211,57 +301,16 @@ function ActivityItem({
     <Item
       data-selected={selected || undefined}
       className="relative mx-auto max-w-xl cursor-pointer text-left before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent hover:bg-muted data-[selected=true]:bg-transparent data-[selected=true]:before:bg-foreground data-[selected=true]:hover:bg-transparent"
-      render={relatedActions ? <div /> : (
+      render={
         <button
           type="button"
           aria-current={selected ? "true" : undefined}
           aria-label={`${actionLabel}: ${title}`}
           onClick={onOpen}
         />
-      )}
+      }
     >
-      {relatedActions ? (
-        <>
-          <button
-            type="button"
-            aria-current={selected ? "true" : undefined}
-            data-selected={selected || undefined}
-            aria-label={`${actionLabel}: ${title}`}
-            className="flex min-w-0 flex-1 text-left"
-            onClick={onOpen}
-          >
-            {content}
-          </button>
-          <span className="flex shrink-0 items-center gap-2">{relatedActions}</span>
-        </>
-      ) : content}
+      {content}
     </Item>
   )
-}
-
-function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
-  const duration = call.durationSeconds > 0 ? formatDuration(call.durationSeconds) : ""
-  if (call.direction === "OUTBOUND") {
-    const unanswered = call.outcome === "MISSED" || call.outcome === "UNANSWERED"
-    return {
-      label: call.placedByEmail ? `${callDirectionLabels.OUTBOUND} by ${call.placedByEmail}` : callDirectionLabels.OUTBOUND,
-      detail: [callStateLabels[unanswered ? "UNANSWERED" : call.outcome], duration].filter(Boolean).join(" · "),
-    }
-  }
-  if (call.outcome === "VOICEMAIL") {
-    return {
-      label: callStateLabels.VOICEMAIL,
-      detail: duration,
-    }
-  }
-  if (call.outcome === "MISSED" || call.outcome === "UNANSWERED") {
-    return {
-      label: callStateLabels.MISSED,
-      detail: duration,
-    }
-  }
-  return {
-    label: callDirectionLabels.INBOUND,
-    detail: [callStateLabels[call.outcome], duration].filter(Boolean).join(" · "),
-  }
 }

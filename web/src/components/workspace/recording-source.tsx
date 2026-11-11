@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { AudioLinesIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -64,9 +64,10 @@ export function RecoveryTaskSource({
   )
 }
 
-export function VoicemailSource({ call, compact = false, taskID, onUpdated }: {
+export function VoicemailSource({ call, compact = false, autoPlay = false, taskID, onUpdated }: {
   call: CallingCall
   compact?: boolean
+  autoPlay?: boolean
   taskID?: string
   onUpdated?: (task: Task, advance?: boolean) => void
 }) {
@@ -96,7 +97,7 @@ export function VoicemailSource({ call, compact = false, taskID, onUpdated }: {
     else setCompletionError("Could not mark voicemail done. Review any new activity and use Mark done.")
   }
   return <>
-    <RecordingSource call={call} audioState={voicemail.audioState} durationSeconds={voicemail.durationSeconds} kind="voicemail" compact={compact} unavailable={voicemail.outcome === "MISSED_CALL"} onBeforePlay={captureReview} onEnded={() => void finishReview()} />
+    <RecordingSource call={call} audioState={voicemail.audioState} durationSeconds={voicemail.durationSeconds} kind="voicemail" compact={compact} autoPlay={autoPlay} unavailable={voicemail.outcome === "MISSED_CALL"} onBeforePlay={captureReview} onEnded={() => void finishReview()} />
     {completionError && <p role="alert" className="px-5 py-2 text-xs text-destructive">{completionError}</p>}
   </>
 }
@@ -132,6 +133,7 @@ function RecordingSource({
   durationSeconds,
   kind,
   compact = false,
+  autoPlay = false,
   unavailable = false,
   onBeforePlay,
   onEnded,
@@ -141,12 +143,14 @@ function RecordingSource({
   durationSeconds: number
   kind: RecordingKind
   compact?: boolean
+  autoPlay?: boolean
   unavailable?: boolean
   onBeforePlay?: () => Promise<void>
   onEnded?: () => void
 }) {
+  const playable = audioState === "READY" && !unavailable
   const [audioURL, setAudioURL] = useState("")
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(autoPlay && playable)
   const [error, setError] = useState("")
   const audioRef = useRef<HTMLAudioElement>(null)
   const presentation = recordingPresentation[kind]
@@ -166,9 +170,13 @@ function RecordingSource({
           ? "Recording unavailable"
           : "Processing"
 
-  async function loadAudio() {
+  function loadAudio() {
     setLoading(true)
     setError("")
+    return authorizePlayback()
+  }
+
+  async function authorizePlayback() {
     await onBeforePlay?.()
     const playback = await issueRecordingPlayback(kind, call.id)
     setLoading(false)
@@ -177,6 +185,11 @@ function RecordingSource({
       setError("Playback authorization is unavailable.")
     }
   }
+
+  const playOnOpen = useEffectEvent(() => {
+    if (autoPlay && playable) void authorizePlayback()
+  })
+  useEffect(() => playOnOpen(), [])
 
   return (
     <section className={compact ? "mt-4" : "border-t px-5 py-4"}>

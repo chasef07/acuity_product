@@ -1430,6 +1430,14 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			err,
 		)
 	}
+	for name, attempt := range map[string]messaging.Message{
+		"new attempt": newAttempt, "second attempt": secondAttempt,
+		"locked attempt": lockedAttempt, "replayed attempt": replayedAttempt,
+	} {
+		if attempt.CreatedBy == nil || attempt.CreatedBy.Email != identity.Email {
+			t.Fatalf("%s sender = %#v, want %q", name, attempt.CreatedBy, identity.Email)
+		}
+	}
 	var attemptsOfFailedMessage int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM messaging_messages WHERE retry_of_message_id = $1

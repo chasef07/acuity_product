@@ -130,6 +130,7 @@ test("an AI call without appointment actions stays call-first", async ({
     .getByRole("article")
     .filter({ hasText: outboundText })
   await expect(outboundMessage.getByText("Sent", { exact: true })).toBeVisible()
+  await expect(outboundMessage.locator('[data-slot="message-sender"]')).toContainText(/^messaging@abita\.test · \d/)
 
   const inboundText = "Perfect, thank you!"
   await sendInbound(page, "messaging-no-appointment-inbound", inboundText, "+17275550187")
@@ -142,32 +143,37 @@ test("an AI call without appointment actions stays call-first", async ({
     "ghost",
   )
 
-  const callRow = page.getByRole("button", { name: "View AI call: AI call" })
+  const activity = page.getByRole("region", { name: "Conversation activity" })
+  const callRow = activity.locator("button[aria-expanded]")
+  const callItem = callRow.locator("xpath=..")
+  const linkedTask = page.getByRole("button", { name: "View task: Confirm office paperwork" })
   await expect(callRow).toHaveCount(1)
-  await expect(callRow).toContainText("Confirm office paperwork")
-  await expect(page.getByRole("region", { name: "Conversation activity" }).locator("button[aria-expanded]")).toHaveCount(0)
-  await expect(page.getByRole("button", { name: "View task: Confirm office paperwork" })).toBeVisible()
-  await expect(callRow).toContainText("AI call")
+  await expect(callRow).toContainText("Called in · Caller asked about office hours")
+  await expect(callRow).toContainText("Message taken")
   await expect(callRow).not.toContainText("No appointment actions")
+  await expect(linkedTask).toHaveCount(0)
   await callRow.click()
+  await expect(callRow).toHaveAttribute("aria-expanded", "true")
+  await expect(linkedTask).toBeVisible()
+  await expect(callItem).toContainText('AI took a message: "Confirm office paperwork"')
+  await expect(callItem).not.toContainText("transferred")
+  await expect(callItem).toContainText("Confirm office paperwork · Open")
+  await activity.getByRole("button", { name: "View AI call", exact: true }).click()
   await expect(callRow).toHaveAttribute("aria-current", "true")
-  await expect(callRow).toHaveAttribute("data-selected", "true")
+  await expect(callItem).toHaveAttribute("data-selected", "true")
   await expect
     .poll(() =>
-      callRow.evaluate((element) => {
-        element = element.closest("[data-slot=item]") ?? element
-        return {
-          background: getComputedStyle(element).backgroundColor,
-          marker: getComputedStyle(element, "::before").backgroundColor,
-        }
-      }),
+      callItem.evaluate((element) => ({
+        background: getComputedStyle(element).backgroundColor,
+        marker: getComputedStyle(element, "::before").backgroundColor,
+      })),
     )
     .toMatchObject({
       background: "rgba(0, 0, 0, 0)",
     })
   expect(
-    await callRow.evaluate(
-      (element) => getComputedStyle(element.closest("[data-slot=item]") ?? element, "::before").backgroundColor,
+    await callItem.evaluate(
+      (element) => getComputedStyle(element, "::before").backgroundColor,
     ),
   ).not.toBe("rgba(0, 0, 0, 0)")
 
@@ -189,10 +195,10 @@ test("an AI call without appointment actions stays call-first", async ({
     fullPage: true,
   })
 
-  await page.getByRole("button", { name: "View task: Confirm office paperwork" }).click()
+  await linkedTask.click()
   const taskContext = page.getByRole("complementary", { name: "Task context" })
   await taskContext.getByRole("button", { name: "Complete & next", exact: true }).click()
-  await expect(callRow).toContainText("Confirm office paperwork — Completed")
+  await expect(callItem).toContainText(/Confirm office paperwork · Done, by \S+@\S+/)
   await expect(page.getByText(/Task completed by \S+@\S+ ·/)).toBeVisible()
 })
 

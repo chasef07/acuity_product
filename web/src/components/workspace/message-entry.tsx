@@ -53,6 +53,9 @@ export function MessageEntry({
   const [confirmingSendAgain, setConfirmingSendAgain] = useState(false)
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
+  const sentBy = !outbound
+    ? undefined
+    : message.createdBy?.kind === "SERVICE" ? "Automated" : message.createdBy?.email
 
   async function createTask() {
     setPending(true)
@@ -124,6 +127,18 @@ export function MessageEntry({
             )}
           </BubbleContent>
         </Bubble>
+        {sentBy && (
+          <p
+            data-slot="message-sender"
+            className="max-w-full px-2.5 text-xs font-normal tabular-nums text-muted-foreground wrap-anywhere"
+          >
+            {sentBy}
+            {" · "}
+            <time dateTime={message.createdAt}>
+              {formatClockTime(message.createdAt)}
+            </time>
+          </p>
+        )}
         <MessageFooter
           className={cn(
             "min-h-5 flex-wrap gap-x-1.5 gap-y-1 font-normal tabular-nums transition-opacity duration-150 motion-reduce:transition-none",
@@ -132,35 +147,22 @@ export function MessageEntry({
             selected && "pointer-events-auto opacity-100",
           )}
         >
-          <time dateTime={message.createdAt}>
-            {formatClockTime(message.createdAt)}
-          </time>
-          {showLocation && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span>{message.thread.locationName}</span>
-            </>
-          )}
-          {outbound && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span className={cn(deliveryProblem && "text-destructive")}>
+          {[
+            !sentBy && (
+              <time key="time" dateTime={message.createdAt}>
+                {formatClockTime(message.createdAt)}
+              </time>
+            ),
+            showLocation && <span key="location">{message.thread.locationName}</span>,
+            outbound && (
+              <span key="delivery" className={cn(deliveryProblem && "text-destructive")}>
                 {message.delivery}
               </span>
-            </>
-          )}
-          {message.createdBy?.kind === "SERVICE" && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span>Automated</span>
-            </>
-          )}
-          {message.safeFailureCode && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span>{message.safeFailureCode}</span>
-            </>
-          )}
+            ),
+            message.safeFailureCode && <span key="failure">{message.safeFailureCode}</span>,
+          ].filter(Boolean).flatMap((part, index) => index === 0
+            ? [part]
+            : [<span key={`separator-${index}`} aria-hidden="true">·</span>, part])}
           {message.body && (
             <Tooltip>
               <TooltipTrigger
