@@ -3,6 +3,7 @@
 import {
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -20,39 +21,39 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
   SidebarHeader,
+  SidebarMenu,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { ReviewFolder } from "./review-folder"
 import { AnalyticsNavigation, commandCenterPages, manageAgentPages, practiceAnalyticsPages, type CommandCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
-import type { StaffTaskCloseReason, Task } from "@/lib/api/generated/types.gen"
+import type { PatientWorkRow, Task } from "@/lib/api/generated/types.gen"
 import {
+  belowListChangedAtAfter,
+  offersAppointmentChecks,
+  patientWorkFooter,
+  rowChangedAtAfter,
+  rowClickAllowed,
+  rowClickGuardMilliseconds,
+} from "@/lib/patient-work"
+import {
+  currentPractice,
   isWorkView,
   type WorkspaceProjectionIntent,
   type WorkspaceProjectionState,
-  type WorkspaceRailSection,
 } from "@/lib/workspace-projection"
-import {
-  taskCountForCategory,
-  type TaskCategoryFilter,
-} from "@/lib/workspace-triage"
 
 import {
-  AttentionGroup,
   CompletedGroup,
   RailEmpty,
   RailLoading,
   RailShowMore,
 } from "./workspace-rail-groups"
-import {
-  TaskCategoryChip,
-  TaskCategoryMenu,
-  TaskResponsibilityToggle,
-} from "./workspace-rail-filters"
+import { PatientFilterChips, PatientScopeToggle } from "./workspace-rail-filters"
 import { ProlongedOutageNotice } from "./workspace-rail-outage-notice"
-import { TaskRow } from "./workspace-rail-task-row"
-import { currentPractice, workspaceFolders } from "./workspace-rail-folders"
+import { CompletedTaskRow, PatientRow } from "./workspace-rail-patient-row"
 
 type WorkspaceRailProps = {
   projection: WorkspaceProjectionState
@@ -77,29 +78,19 @@ export function WorkspaceRail({
 }: WorkspaceRailProps) {
   const discovery = projection.discovery!
   const practice = currentPractice(projection)
-  const tasks = projection.tasks.items
-  const taskCounts = projection.tasks.counts
+  const patients = projection.patients
   const selectedTaskID = projection.selection.task?.id ?? ""
+  const selectedPhone =
+    projection.selection.view === "engagement"
+      ? (projection.selection.engagement?.phone ?? "")
+      : ""
   const projectedSearch = projection.search.input
   const engagementError = projection.search.error
-  const loading = projection.tasks.loading
-  const taskError = projection.tasks.error
-  const nextCursor = projection.tasks.nextCursor
   const connection = projection.connection
   const railStateKey = `${discovery.actor.subject}:${practice.id}`
-  const expanded = projection.rail.expanded
-  const taskCategory = projection.rail.taskCategory
-  const pendingTaskID = projection.completion.pendingTaskID
-  const completionError = projection.completion.error
-    ? {
-        taskID: projection.completion.errorTaskID,
-        message: projection.completion.error,
-      }
-    : undefined
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const scrollPersistTimer = useRef<number | undefined>(undefined)
-  const closingRow = useRef<{ taskID: string; index: number } | undefined>(undefined)
   const [search, setSearch] = useState(projectedSearch)
   const [syncedSearch, setSyncedSearch] = useState(projectedSearch)
   if (projectedSearch !== syncedSearch) {
@@ -109,8 +100,10 @@ export function WorkspaceRail({
   const publishSearch = useEffectEvent((value: string) => {
     if (value !== projectedSearch) onIntent({ type: "set-search", value })
   })
-  const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
-  const folders = workspaceFolders(projection)
+  const listedPhones = useRef<readonly string[]>([])
+  const [rowChangedAt, setRowChangedAt] = useState<readonly (number | undefined)[]>([])
+  const [belowListChangedAt, setBelowListChangedAt] = useState<number | undefined>(undefined)
+  const [refused, setRefused] = useState<{ row: number | string; changedAt: number } | undefined>(undefined)
   const completed = projection.completedTasks
   const view = projection.selection.view
   const manageAgent = view === "manage-agent"
@@ -138,16 +131,35 @@ export function WorkspaceRail({
 
   useEffect(() => () => window.clearTimeout(scrollPersistTimer.current), [])
 
+  useLayoutEffect(() => {
+    const before = listedPhones.current
+    const after = patients.items.map((row) => row.phone)
+    const now = performance.now()
+    listedPhones.current = after
+    setRowChangedAt((changedAt) => rowChangedAtAfter(changedAt, before, after, now))
+    setBelowListChangedAt((changedAt) => belowListChangedAtAfter(changedAt, before, after, now))
+  }, [patients.items])
+
+  useEffect(() => {
+    const guarded = [...rowChangedAt, belowListChangedAt].filter((at) => at !== undefined)
+    if (guarded.length === 0) return
+    const earliest = Math.min(...guarded)
+    const timer = window.setTimeout(
+      () => {
+        setRowChangedAt((changedAt) => changedAt.map((at) => (at === earliest ? undefined : at)))
+        setBelowListChangedAt((at) => (at === earliest ? undefined : at))
+      },
+      earliest + rowClickGuardMilliseconds - performance.now(),
+    )
+    return () => window.clearTimeout(timer)
+  }, [rowChangedAt, belowListChangedAt])
+
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       scrollContainer.current?.scrollTo({ top: projection.rail.scrollTop })
     })
     return () => window.cancelAnimationFrame(frame)
   }, [projection.rail.scrollTop, railStateKey, workView])
-
-  function toggle(section: WorkspaceRailSection) {
-    onIntent({ type: "toggle-rail-section", section })
-  }
 
   function rememberScroll() {
     const scrollTop = scrollContainer.current?.scrollTop ?? 0
@@ -157,57 +169,32 @@ export function WorkspaceRail({
     }, scrollPersistDelayMilliseconds)
   }
 
-  function selectTaskCategory(value: TaskCategoryFilter) {
-    onIntent({ type: "set-task-category", category: value })
-  }
-
-  useEffect(() => {
-    const closing = closingRow.current
-    if (!closing) return
-    if (tasks.some((task) => task.id === closing.taskID)) {
-      if (!pendingTaskID) closingRow.current = undefined
-      return
-    }
-    closingRow.current = undefined
-    if (document.activeElement && document.activeElement !== document.body) return
-    const next = tasks[closing.index] ?? tasks.at(-1)
-    const row = next && scrollContainer.current?.querySelector<HTMLElement>(
-      `[data-task-id="${next.id}"] button`,
-    )
-    ;(row ?? searchInput.current)?.focus()
-  }, [tasks, pendingTaskID])
-
-  function completeTask(task: Task, reason: StaffTaskCloseReason) {
-    closingRow.current = { taskID: task.id, index: tasks.indexOf(task) }
-    onIntent({ type: "complete-task", task, reason })
-  }
-
   function selectTask(task: Task) {
     const selection = projection.selection
     const close = selection.view === "engagement" &&
       selection.contextView === "task" && selection.contextPanelOpen &&
-      (selection.taskGroup?.id ?? selection.task?.id) === task.id
+      selection.task?.id === task.id
     onIntent(close ? { type: "close-context" } : { type: "select-task", task })
   }
 
-  function renderTask(task: Task) {
+  function renderPatient(row: PatientWorkRow, index: number) {
+    const changedAt = rowChangedAt[index]
     return (
-      <TaskRow
-        key={task.id}
-        task={task}
-        active={
-          projection.selection.view === "engagement" && (
-            task.id === selectedTaskID ||
-            Boolean(task.groupMembers?.some((member) => member.id === selectedTaskID))
-          )
-        }
-        onSelect={() => selectTask(task)}
-        completionDisabled={Boolean(pendingTaskID)}
-        completionPending={pendingTaskID === task.id}
-        completionError={
-          completionError?.taskID === task.id ? completionError.message : ""
-        }
-        onComplete={(reason) => completeTask(task, reason)}
+      <PatientRow
+        key={row.phone}
+        row={row}
+        practiceID={practice.id}
+        active={row.phone === selectedPhone}
+        guarded={changedAt !== undefined}
+        refused={changedAt !== undefined && refused?.row === index && refused.changedAt === changedAt}
+        onSelect={(event) => {
+          const byPointer = event.detail > 0
+          if (byPointer && changedAt !== undefined && !rowClickAllowed(changedAt, performance.now())) {
+            setRefused({ row: index, changedAt })
+            return
+          }
+          selectTask(row.top)
+        }}
       />
     )
   }
@@ -265,7 +252,6 @@ export function WorkspaceRail({
               )}
             </form>
           </div>}
-          {connection === "degraded" && <ProlongedOutageNotice />}
         </SidebarHeader>
         {manageAgent ? (
           <SidebarContent className="overflow-y-auto px-2 py-2">
@@ -287,93 +273,83 @@ export function WorkspaceRail({
         ) : workView && (
         <SidebarContent
           ref={scrollContainer}
-          className="gap-2 overflow-y-auto px-2 py-2"
+          className="gap-2 overflow-y-auto px-2 pt-0 pb-2"
           onScroll={rememberScroll}
         >
-          <div role="group" aria-label="Workspace folders" className="space-y-2">
-            {folders.map((folder) => (
-              <AttentionGroup
-                key={folder.section}
-                title={folder.title}
-                count={folder.count}
-                expanded={expanded.includes(folder.section)}
-                onToggle={() => toggle(folder.section)}
-              >
-                {folder.section === "tasks" ? (
-                  <>
-                    <SidebarMenuItem className="flex items-center gap-1 pb-1">
-                      <TaskResponsibilityToggle
-                        responsibility={projection.rail.taskResponsibility ?? "mine"}
-                        onChange={(responsibility) =>
-                          onIntent({ type: "set-task-filters", responsibility })
-                        }
-                      />
-                      <TaskCategoryMenu
-                        category={taskCategory}
-                        responsibility={
-                          projection.rail.taskResponsibility ?? "mine"
-                        }
-                        counts={taskCounts}
-                        onCategoryChange={selectTaskCategory}
-                      />
-                    </SidebarMenuItem>
-                    <TaskCategoryChip
-                      category={taskCategory}
-                      onClear={() => selectTaskCategory("all")}
-                    />
-                    {tasks.map(renderTask)}
-                    {loading && tasks.length === 0 && (
-                      <RailLoading label="Loading tasks" />
-                    )}
-                    {!loading && !taskError && selectedTaskCount === 0 && (
-                      <RailEmpty>No open Tasks in this view.</RailEmpty>
-                    )}
-                    {taskError && (
-                      <SidebarMenuItem>
-                        <WorkspaceWindowFailure
-                          message={taskError}
-                          onRetry={() => onIntent({ type: "retry" })}
-                        />
-                      </SidebarMenuItem>
-                    )}
-                    <RailShowMore
-                      cursor={nextCursor}
-                      loading={loading}
-                      onLoadMore={() =>
-                        onIntent({ type: "load-more", window: "tasks" })
-                      }
-                    />
-                  </>
-                ) : (
-                  <ReviewFolder
-                    key={`${railStateKey}:${projection.scope.locationScopeID}:${projection.search.applied}:${folder.section}`}
-                    practiceID={practice.id}
-                    locationID={projection.scope.locationScopeID}
-                    search={projection.search.applied}
-                    kind={folder.section}
-                    renderTask={renderTask}
-                  />
-                )}
-              </AttentionGroup>
-            ))}
+          <div className="space-y-2 px-1 pt-2">
+            <PatientScopeToggle
+              scope={projection.rail.scope}
+              onChange={(scope) => onIntent({ type: "set-rail-view", scope })}
+            />
+            <PatientFilterChips
+              filter={projection.rail.filter}
+              counts={patients.counts}
+              appointmentsOffered={offersAppointmentChecks(
+                practice.locations,
+                projection.scope.locationScopeID,
+              )}
+              onChange={(filter) => onIntent({ type: "set-rail-view", filter })}
+            />
           </div>
+          <SidebarGroup className="p-0" role="group" aria-label="Patients with open work">
+            <p
+              role="status"
+              data-testid="patient-list-updated"
+              className="sticky top-0 z-10 -mt-2 flex h-5 items-center bg-sidebar px-3.5 text-xs leading-4 font-medium text-sidebar-foreground md:bg-canvas"
+            >
+              {rowChangedAt.some((at) => at !== undefined) && "List just updated"}
+            </p>
+            <SidebarGroupContent>
+              <SidebarMenu className="mx-1 w-auto gap-0.5 px-1.5 py-0">
+                {patients.items.map(renderPatient)}
+                {patients.loading && patients.items.length === 0 && (
+                  <RailLoading label="Loading patients" />
+                )}
+                {!patients.loading && !patients.error && patients.items.length === 0 && (
+                  <RailEmpty>Nothing waiting here.</RailEmpty>
+                )}
+                {patients.error && (
+                  <SidebarMenuItem>
+                    <WorkspaceWindowFailure
+                      message={patients.error}
+                      onRetry={() => onIntent({ type: "retry" })}
+                    />
+                  </SidebarMenuItem>
+                )}
+                <RailShowMore
+                  cursor={patients.nextCursor}
+                  loading={patients.loading}
+                  onLoadMore={() =>
+                    onIntent({ type: "load-more", window: "patients" })
+                  }
+                />
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
 
           <div className="mt-3">
             <CompletedGroup
               title="Recently completed"
-              expanded={expanded.includes("completed")}
-              onToggle={() => toggle("completed")}
+              expanded={projection.rail.completedExpanded}
+              onToggle={() => {
+                setBelowListChangedAt(undefined)
+                onIntent({ type: "toggle-completed" })
+              }}
             >
               {completed.items.map((task) => (
-                <TaskRow
+                <CompletedTaskRow
                   key={task.id}
                   task={task}
                   active={task.id === selectedTaskID}
-                  onSelect={() => selectTask(task)}
-                  completionDisabled
-                  completionPending={false}
-                  completionError=""
-                  onComplete={() => {}}
+                  refused={belowListChangedAt !== undefined && refused?.row === task.id && refused.changedAt === belowListChangedAt}
+                  onSelect={(event) => {
+                    const byPointer = event.detail > 0
+                    if (byPointer && belowListChangedAt !== undefined && !rowClickAllowed(belowListChangedAt, performance.now())) {
+                      setRefused({ row: task.id, changedAt: belowListChangedAt })
+                      return
+                    }
+                    selectTask(task)
+                  }}
                 />
               ))}
               {completed.loading && completed.items.length === 0 && (
@@ -402,7 +378,13 @@ export function WorkspaceRail({
         </SidebarContent>
         )}
         {workView && (
-          <SidebarFooter className="border-t border-sidebar-border p-2 empty:hidden">{callingStatus}</SidebarFooter>
+          <SidebarFooter className="border-t border-sidebar-border p-2">
+            {connection === "degraded" && <ProlongedOutageNotice />}
+            <p data-testid="patient-work-footer" className="px-2 text-xs leading-5 text-muted-foreground">
+              {patientWorkFooter(patients.totals, projection.rail.scope)}
+            </p>
+            {callingStatus}
+          </SidebarFooter>
         )}
       </Sidebar>
     </>

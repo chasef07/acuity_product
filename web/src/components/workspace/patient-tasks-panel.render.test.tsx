@@ -77,7 +77,7 @@ function view(overrides: Partial<ViewProps> = {}) {
   return (
     <PatientTasksPanelView
       summary={ready([])}
-      completion={{ pendingTaskID: "", errorTaskID: "", error: "" }}
+      completion={{ pending: [], errors: {} }}
       reopening=""
       onComplete={() => {}}
       onOpen={() => {}}
@@ -349,19 +349,69 @@ test("a failed or stale read is said, with a way to retry", () => {
   assert.equal(rows(stale).length, 5)
 })
 
-test("a completion in flight disables every row and a failed one is reported on its row", () => {
-  const pending = rows(renderToStaticMarkup(view({
-    summary: ready(fiveTasks.slice(0, 2)),
-    completion: { pendingTaskID: "task-first", errorTaskID: "", error: "" },
-  })))
+test("each tick saves on its own: only a saving row is disabled and each failure is reported on its row", () => {
+  const three = fiveTasks.slice(0, 3)
+  const disabled = (markup: string) =>
+    [...new JSDOM(markup).window.document.querySelectorAll('[data-testid="patient-task-row"]')].map((row) =>
+      [...row.querySelectorAll("button:disabled")].map((button) => button.getAttribute("aria-label")?.split(":")[0]))
+  const saving = renderToStaticMarkup(view({
+    summary: ready(three),
+    completion: { pending: ["task-first", "task-third"], errors: {} },
+  }))
+  const pending = rows(saving)
   assert.match(pending[0], /aria-label="Mark done: Synthetic first request"[^>]*aria-busy="true"/)
-  assert.equal(pending.join("").match(/ disabled=""/g)?.length, 4)
-  const failed = rows(renderToStaticMarkup(view({
-    summary: ready(fiveTasks.slice(0, 2)),
-    completion: { pendingTaskID: "", errorTaskID: "task-second", error: "This Task changed elsewhere." },
-  })))
+  assert.match(pending[2], /aria-label="Mark done: Synthetic third request"[^>]*aria-busy="true"/)
+  assert.deepEqual(disabled(saving), [["Mark done", "Close as"], [], ["Mark done", "Close as"]])
+  assert.doesNotMatch(pending[1], /aria-busy/)
+  const reported = renderToStaticMarkup(view({
+    summary: ready(three),
+    completion: {
+      pending: ["task-first"],
+      errors: { "task-second": "This Task changed elsewhere.", "task-third": "Task completion is temporarily unavailable." },
+    },
+  }))
+  const failed = rows(reported)
   assert.doesNotMatch(failed[0], /role="alert"/)
   assert.match(failed[1], /role="alert"[^>]*>This Task changed elsewhere\./)
+  assert.match(failed[2], /role="alert"[^>]*>Task completion is temporarily unavailable\./)
+  assert.deepEqual(disabled(reported), [["Mark done", "Close as"], [], []])
+})
+
+test("a text review and an appointment check each offer Open for their own Task when no call is live", async (t) => {
+  const page = await harness(t)
+  const text = fiveTasks[4]
+  const check = openTask("check", { category: "appointments", origin: "APPOINTMENT_REVIEW" })
+  const opened: string[] = []
+  const render = (overrides: Partial<ViewProps>) => page.render(view({
+    summary: ready([fiveTasks[0], text, check]),
+    onOpen: (task) => opened.push(task.id),
+    ...overrides,
+  }))
+  const controls = () => [...page.host.querySelectorAll('[data-testid="patient-task-row"]')].map((row) =>
+    [...row.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")))
+  const reviewControls = (task: Task) => controls()[[fiveTasks[0], text, check].indexOf(task)]
+
+  await render({ opensReviews: true })
+  assert.deepEqual(reviewControls(text), ["Open Task: Synthetic fifth request"], "a text review has no tick or close menu, only Open")
+  assert.deepEqual(reviewControls(check), ["Open Task: Synthetic check request"])
+  for (const review of [text, check]) {
+    const open = page.host.querySelector<HTMLButtonElement>(`button[aria-label="Open Task: ${review.title}"]`)!
+    assert.equal(open.textContent, "Open")
+    assert.equal(open.closest("li")?.querySelector('[data-testid="patient-task-title"]')?.textContent, review.title, "the title stays text")
+    await act(async () => open.click())
+  }
+  assert.deepEqual(opened, [text.id, check.id])
+
+  await render({ opensReviews: true, currentTaskID: text.id })
+  assert.deepEqual(reviewControls(text), [], "the review that is already open offers nothing to open")
+  assert.deepEqual(reviewControls(check), ["Open Task: Synthetic check request"])
+
+  await render({ opensReviews: false })
+  assert.deepEqual([reviewControls(text), reviewControls(check)], [[], []], "during a live call a review is text")
+  assert.equal(controls()[0].includes("Open Task: Synthetic first request"), true, "other titles follow their own rule")
+
+  await render({ opensReviews: true, onOpen: undefined })
+  assert.deepEqual(controls().flat().filter((label) => label?.startsWith("Open Task")), [], "beside a call nothing opens")
 })
 
 test("the tick, the title and Reopen each report the Task they belong to", async (t) => {
@@ -389,7 +439,7 @@ test("focus stays in the panel when a ticked Task leaves it", async (t) => {
   const [first, second, third] = fiveTasks
   const render = (openTasks: Task[], pendingTaskID = "") => page.render(view({
     summary: ready(openTasks),
-    completion: { pendingTaskID, errorTaskID: "", error: "" },
+    completion: { pending: pendingTaskID ? [pendingTaskID] : [], errors: {} },
   }))
   const tick = (task: Task) => page.host.querySelector<HTMLButtonElement>(`button[aria-label="Mark done: ${task.title}"]`)!
   const focused = () => document.activeElement?.getAttribute("data-patient-task-id") ?? document.activeElement?.getAttribute("aria-label")
@@ -528,11 +578,6 @@ test("a selected Task keeps its detail first and lists the patient's other Tasks
   assert.ok(title.classList.contains("min-h-11"), "the title row ends below the close button")
   titleAboveScroller(single.markup, task.title, "Complete & next")
   assert.match(single.markup, /^<div class="[^"]*\bmin-w-0\b/, "the column cannot be widened by its content")
-  const group = { ...task, groupMembers: [task, fiveTasks[1]] }
-  const grouped = context({ task, group, taskRows: [group], onSelectTask: () => {}, view: "task" })
-  assert.deepEqual(grouped.asked, [[task.phone, { beside: "task", otherThan: [task, fiveTasks[1]] }]])
-  assert.ok(grouped.markup.indexOf("Complete all 2 requests") < grouped.markup.indexOf("patient tasks for"))
-  titleAboveScroller(grouped.markup, "Insurance", fiveTasks[1].title)
   assert.deepEqual(context({}).asked, [])
 })
 
@@ -618,7 +663,7 @@ test("the header offers the patient's open Tasks by count and stays quiet when t
 })
 
 function LiveDetail({ revision, children }: { revision: number; children: ReactNode }) {
-  useLiveRefresh({ workspaceVersion: 0, taskCounts: "", detailRevision: revision })
+  useLiveRefresh({ workspaceVersion: 0, detailRevision: revision })
   return children
 }
 
@@ -666,12 +711,12 @@ test("a completion that failed or conflicted re-reads the summary, so no stale r
     assert.ok(ready(), "condition was not reached")
   }
 
-  await render(1, { pendingTaskID: "", errorTaskID: "", error: "" })
+  await render(1, { pending: [], errors: {} })
   await settle(() => listed().length === 2)
   assert.equal(reads, 1)
 
   openTasks = [kept]
-  await render(2, { pendingTaskID: "", errorTaskID: stale.id, error: "This Task changed elsewhere." })
+  await render(2, { pending: [], errors: { [stale.id]: "This Task changed elsewhere." } })
   await settle(() => listed().length === 1)
   assert.equal(reads, 2, "the failed completion's detail revision re-read the summary")
   assert.deepEqual(listed(), [kept.id])

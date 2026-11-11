@@ -44,6 +44,11 @@ func provisionColleagues(t *testing.T, owner *pgxpool.Pool, now time.Time) {
 	}
 }
 
+func signInColleague(t *testing.T, a *access.Module) {
+	t.Helper()
+	testaccess.Activate(t, a, access.Identity{Subject: "synthetic-colleague-subject", Email: colleagueCoveringEveryLocation, EmailVerified: true})
+}
+
 func createRosterTask(t *testing.T, m *work.Module, practiceID string, category work.TaskCategory) {
 	t.Helper()
 	_, _, err := m.CreateAITask(context.Background(), work.CreateAITaskCommand{Service: access.ServiceIdentity{Subject: "synthetic-agent", PracticeID: practiceID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}}, OfficeKey: "spring-hill", OfficePhone: "+12025550100", SourceCallID: "roster-call", IdempotencyKey: string(category), Phone: "+12025550123", Summary: string(category), Message: "Synthetic staff follow-up", Category: category, Urgency: work.TaskUrgencyNormal})
@@ -97,6 +102,11 @@ func TestResponsibilitiesFilterWithoutGrantingAccess(t *testing.T) {
 	}
 	reads := workspace.New(db.As(testdb.Portal), a)
 	mine, count := myTaskCategories(t, reads, identity, auth.Practice.ID)
+	if !reflect.DeepEqual(mine, []string{"medication", "optical", "pre_op", "referrals"}) || count != 4 {
+		t.Fatalf("mine = %v count=%d, want every category while the colleague listed for optical has not signed in", mine, count)
+	}
+	signInColleague(t, a)
+	mine, count = myTaskCategories(t, reads, identity, auth.Practice.ID)
 	if !reflect.DeepEqual(mine, []string{"medication", "pre_op", "referrals"}) || count != 3 {
 		t.Fatalf("mine = %v count=%d, want my medication plus pre_op and referrals, which nobody owns; a colleague owns optical", mine, count)
 	}
@@ -152,6 +162,7 @@ func TestResponsibilityProvisioningConvergesOnTheInput(t *testing.T) {
 
 	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	createRosterTask(t, m, auth.Practice.ID, "optical")
+	signInColleague(t, a)
 	reads := workspace.New(db.As(testdb.Portal), a)
 	if mine, _ := myTaskCategories(t, reads, identity, auth.Practice.ID); len(mine) != 0 {
 		t.Fatalf("a colleague's optical Task showed in mine: %v", mine)

@@ -717,6 +717,10 @@ export type Task = {
      * Latest incoming text preview for the workspace list.
      */
     preview?: string;
+    /**
+     * Length of the voicemail a voicemail review holds, rounded to the nearest second and never below 1. Absent when the Task has no recording.
+     */
+    voicemailDurationSeconds?: number;
     sourceMessage?: string;
     messageId?: string;
     messageThreadId?: string;
@@ -745,6 +749,91 @@ export type TaskInteraction = {
     callId: string;
     occurredAt: string;
     type: 'CALL' | 'VOICEMAIL';
+};
+
+/**
+ * Mine lists a patient when at least one open Task is in a category the reader is responsible for, is a missed-call, voicemail, text, or appointment review, or has no owner. Everyone lists every patient with an open Task.
+ */
+export type PatientWorkScope = 'mine' | 'everyone';
+
+/**
+ * followUp matches follow-up Tasks created by the AI, after a staff call, or after a staff text. callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
+ */
+export type PatientWorkFilter = 'all' | 'followUp' | 'callBack' | 'texts' | 'appointments' | 'unowned';
+
+export type PatientWorkQueryRequest = {
+    practiceId: string;
+    locationId?: string;
+    /**
+     * Matches the patient name the row shows, and the phone, title, caller name, category and Location of the open Tasks in scope.
+     */
+    search?: string;
+    scope?: PatientWorkScope;
+    filter?: PatientWorkFilter;
+    cursor?: string;
+    limit?: number;
+};
+
+export type PatientWorkPage = {
+    /**
+     * Patients with a high-priority matching Task first, then by newest matching Task.
+     */
+    rows: Array<PatientWorkRow>;
+    counts: PatientWorkCounts;
+    totals: PatientWorkTotals;
+    nextCursor: string;
+};
+
+export type PatientWorkRow = {
+    phone: string;
+    /**
+     * The caller name when exactly one name was seen on the phone. Empty when none or several were seen.
+     */
+    displayName: string;
+    /**
+     * Every open Task for the phone in the Locations the reader may read, whatever the scope and filter.
+     */
+    openCount: number;
+    /**
+     * Whether any Task matching the scope and filter is high priority.
+     */
+    highPriority: boolean;
+    hasUnowned: boolean;
+    /**
+     * When the newest Task matching the scope and filter last changed for the patient.
+     */
+    activityAt: string;
+    top: Task;
+};
+
+/**
+ * How many patients each filter matches in the requested scope, Locations, and search.
+ */
+export type PatientWorkCounts = {
+    all: number;
+    followUp: number;
+    callBack: number;
+    texts: number;
+    appointments: number;
+    unowned: number;
+};
+
+/**
+ * Totals for the requested scope across the requested Locations, whatever the filter and search.
+ */
+export type PatientWorkTotals = {
+    /**
+     * Open Tasks the requested scope includes.
+     */
+    openTasks: number;
+    /**
+     * Patients with at least one open Task the requested scope includes.
+     */
+    patients: number;
+    /**
+     * Patients with open Tasks that the requested scope leaves out.
+     */
+    patientsOutsideScope: number;
 };
 
 export type TaskPage = {
@@ -3940,6 +4029,43 @@ export type QueryTasksResponses = {
 };
 
 export type QueryTasksResponse = QueryTasksResponses[keyof QueryTasksResponses];
+
+export type QueryPatientWorkData = {
+    body: PatientWorkQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/tasks/patients/query';
+};
+
+export type QueryPatientWorkErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryPatientWorkError = QueryPatientWorkErrors[keyof QueryPatientWorkErrors];
+
+export type QueryPatientWorkResponses = {
+    /**
+     * One page of patients with open Tasks.
+     */
+    200: PatientWorkPage;
+};
+
+export type QueryPatientWorkResponse = QueryPatientWorkResponses[keyof QueryPatientWorkResponses];
 
 export type ReadTaskData = {
     body?: never;

@@ -13,6 +13,8 @@ import type {
   MessageAttachment,
   OperatorAiAnalyticsRange,
   OperatorAiCallIssueOutcome,
+  PatientWorkFilter,
+  PatientWorkScope,
   StaffTaskCategory,
   StaffTaskCloseReason,
   StaffTaskUrgency,
@@ -135,15 +137,6 @@ export const taskGroups = labelOptions(taskCategoryLabels).filter(({ value }) =>
 export function taskGroupLabel(category: StaffTaskCategory | undefined) {
   return category ? taskCategoryLabels[category] : "Uncategorized"
 }
-
-export const taskFilterLabels = {
-  ...taskCategoryLabels,
-  appointments: "Scheduling follow-up",
-  documentation: "Medical records",
-  medication: "Clinical & pharmacy",
-  insurance: "Insurance",
-  optical: "Optical",
-} satisfies Record<StaffTaskCategory, string>
 
 export const analyticsRangeLabels = {
   "24h": "Last 24 hours",
@@ -309,6 +302,30 @@ export function formatPhone(value: string) {
   const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits
   if (local.length !== 10) return value
   return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`
+}
+
+export const patientWorkScopeLabels = {
+  mine: "My Tasks",
+  everyone: "Everyone",
+} satisfies Record<PatientWorkScope, string>
+
+export const patientWorkFilterLabels = {
+  all: "All",
+  followUp: "Tasks",
+  callBack: "Call back",
+  texts: "Texts",
+  appointments: "Appointments",
+  unowned: "No owner",
+} satisfies Record<PatientWorkFilter, string>
+
+export function taskRelativeTime(task: Pick<Task, "state" | "origin" | "completedAt" | "updatedAt" | "createdAt">) {
+  if (task.state === "COMPLETED") {
+    return { at: task.completedAt ?? task.updatedAt, label: "Completed" }
+  }
+  if (task.origin === "INBOUND_MESSAGE_REVIEW") {
+    return { at: task.updatedAt, label: "Updated" }
+  }
+  return { at: task.createdAt, label: "Created" }
 }
 
 export function formatRelativeTime(value: string, now = Date.now()) {

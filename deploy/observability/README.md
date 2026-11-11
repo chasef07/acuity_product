@@ -60,6 +60,7 @@ artifacts.
 critical-read SLO:
 
 - `POST /v1/tasks/query`
+- `POST /v1/tasks/patients/query`
 - `PUT /v1/calling/readiness`
 - `GET /v1/events` on the realtime runtime
 
