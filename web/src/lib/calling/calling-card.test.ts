@@ -42,7 +42,6 @@ function snapshot(
       canMute: false,
       canKeypad: false,
       canRetry: false,
-      canDispose: false,
     },
     ...overrides,
   }
@@ -372,7 +371,7 @@ test("active Call ownership stays visible without offering an unsafe takeover", 
   })
 })
 
-test("Outcome exposes only the Staff actions supported by the committed Call", () => {
+test("Outcome leaves a connected Call to the wrap-up and offers retry and dismiss on the rest", () => {
   const settledStates = [
     "UNANSWERED",
     "VOICEMAIL",
@@ -414,7 +413,6 @@ test("Outcome exposes only the Staff actions supported by the committed Call", (
           canMute: false,
           canKeypad: false,
           canRetry: index === 2,
-          canDispose: index < 2,
         },
       },
       now,
@@ -423,87 +421,15 @@ test("Outcome exposes only the Staff actions supported by the committed Call", (
   })
 
   assert.deepEqual(actions, [
+    {},
+    {},
     {
-      dispositions: [
-        {
-          outcome: "RESOLVED",
-          label: "Resolved on call",
-          primary: true,
-          disabled: false,
-        },
-        {
-          outcome: "FOLLOW_UP_REQUIRED",
-          label: "Create follow-up task",
-          primary: false,
-          disabled: false,
-        },
-      ],
-    },
-    {
-      dispositions: [
-        {
-          outcome: "COMPLETE_TASK",
-          label: "Complete task",
-          primary: true,
-          disabled: false,
-        },
-        {
-          outcome: "KEEP_OPEN",
-          label: "Keep task open",
-          primary: false,
-          disabled: false,
-        },
-      ],
-    },
-    {
-      dispositions: [],
       retry: { label: "Call again", disabled: false },
       close: { label: "Dismiss" },
     },
     ...settledStates.map(() => ({
-      dispositions: [],
       close: { label: "Dismiss" },
     })),
-  ])
-})
-
-test("Outcome actions stay visible and disabled while disposition commits", () => {
-  const pendingDisposition: CallingCardCall = {
-    ...outboundCall,
-    direction: "INBOUND",
-    entryPoint: "AI_HANDOFF",
-    state: "NEEDS_DISPOSITION",
-  }
-  const view = projectCallingCard(
-    {
-      ...snapshot(pendingDisposition),
-      activeCall: undefined,
-      pendingDisposition,
-      pending: { disposition: true },
-      controls: {
-        canEnd: false,
-        canMute: false,
-        canKeypad: false,
-        canRetry: false,
-        canDispose: false,
-      },
-    },
-    now,
-  )
-
-  assert.deepEqual(view?.kind === "call" ? view.actions.dispositions : [], [
-    {
-      outcome: "RESOLVED",
-      label: "Resolved on call",
-      primary: true,
-      disabled: true,
-    },
-    {
-      outcome: "FOLLOW_UP_REQUIRED",
-      label: "Create follow-up task",
-      primary: false,
-      disabled: true,
-    },
   ])
 })
 
@@ -521,14 +447,12 @@ test("Close waits while a retry or terminal media purge is pending", () => {
         canMute: false,
         canKeypad: false,
         canRetry: true,
-        canDispose: false,
       },
     },
     now,
   )
 
   assert.deepEqual(view?.kind === "call" ? view.actions : undefined, {
-    dispositions: [],
     retry: { label: "Calling…", disabled: true },
   })
 
@@ -541,14 +465,11 @@ test("Close waits while a retry or terminal media purge is pending", () => {
         canMute: false,
         canKeypad: false,
         canRetry: false,
-        canDispose: false,
       },
     },
     now,
   )
-  assert.deepEqual(purging?.kind === "call" ? purging.actions : undefined, {
-    dispositions: [],
-  })
+  assert.deepEqual(purging?.kind === "call" ? purging.actions : undefined, {})
 })
 
 test("a connected card shows its elapsed time on the shared clock", () => {

@@ -73,7 +73,7 @@ test("collapsing Task details preserves the Task in the outbound Call request", 
 test("voicemail and meaningful missed calls refresh into their recovery folders", async ({
   page,
 }, testInfo) => {
-  test.setTimeout(180_000)
+  test.setTimeout(300_000)
   test.skip(
     !provisioningOutput || !databaseURL,
     "E2E_PROVISIONING_OUTPUT and E2E_DATABASE_URL are required",
@@ -365,10 +365,304 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
         return Number(result.rows[0]?.count ?? 0)
       })
       .toBe(0)
+    await finishCallsFromTheWrapUp(page, database)
   } finally {
     await database.end()
   }
 })
+
+async function finishCallsFromTheWrapUp(page: Page, database: Pool) {
+  const destination = "+15555550114"
+  const followUpPhone = "+15555550116"
+  const taskPhone = "+15555550115"
+  await expect(
+    page.getByRole("switch", { name: "Receive calls" }),
+  ).toBeChecked()
+  const key = `wrap-up-paths-${Date.now()}`
+  const openTitle = `Synthetic records request ${key}`
+  const callTitle = `Synthetic callback request ${key}`
+  const callTask = await seedOpenTask(database, taskPhone, callTitle)
+  const wrapUp = page.getByRole("dialog")
+  const search = page.getByLabel("Search tasks, names, or phone")
+  const storedTask = async (taskID: string) =>
+    (
+      await database.query<{
+        state: string
+        version: string
+        close_reason: string | null
+        closed_via_call_id: string | null
+      }>(
+        `SELECT state, version::text, close_reason, closed_via_call_id::text
+           FROM work_tasks WHERE id = $1`,
+        [taskID],
+      )
+    ).rows[0]!
+  const storedOutcome = async (callID: string) =>
+    (
+      await database.query<{ disposition_outcome: string | null }>(
+        `SELECT disposition_outcome FROM human_calling_calls WHERE id = $1`,
+        [callID],
+      )
+    ).rows[0]?.disposition_outcome
+
+  await search.fill(destination)
+  await search.press("Enter")
+  const untouched = await placeConnectedCall(page, database, `${key}-untouched`)
+  const openTask = await seedOpenTask(database, destination, openTitle)
+  await endConnectedCall(page, untouched, `${key}-untouched`)
+  await expect(wrapUp.getByTestId("call-wrap-up-task")).toHaveCount(1)
+  await expect(wrapUp.getByRole("checkbox", { checked: true })).toHaveCount(0)
+  await expect(
+    wrapUp.getByRole("button", { name: "Keep all open", exact: true }),
+  ).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(wrapUp).toHaveCount(0)
+  expect(await storedOutcome(untouched.callID)).toBe("RESOLVED")
+  expect(await storedTask(openTask)).toEqual({
+    state: "OPEN",
+    version: "1",
+    close_reason: null,
+    closed_via_call_id: null,
+  })
+
+  await expect(
+    page.getByRole("switch", { name: "Receive calls" }),
+  ).toBeChecked()
+  await search.fill(followUpPhone)
+  await search.press("Enter")
+  const followedUp = await placeConnectedCall(page, database, `${key}-follow-up`)
+  await endConnectedCall(page, followedUp, `${key}-follow-up`)
+  await expect(wrapUp.getByText("No open Tasks for this patient.")).toBeVisible()
+  await expect(
+    wrapUp.getByRole("button", { name: "Finish", exact: true }),
+  ).toBeFocused()
+  await page.keyboard.press("Shift+Tab")
+  const followUp = wrapUp.getByRole("checkbox", { name: "Create a follow-up Task" })
+  await expect(followUp).toBeFocused()
+  await page.keyboard.press("Space")
+  await expect(followUp).toBeChecked()
+  await page.keyboard.press("Tab")
+  await page.keyboard.press("Enter")
+  await expect(wrapUp).toHaveCount(0)
+  expect(await storedOutcome(followedUp.callID)).toBe("CREATE_TASK")
+  const created = await database.query<{ id: string; version: string }>(
+    `SELECT task.id::text, task.version::text
+       FROM human_calling_calls call
+       JOIN work_tasks task ON task.id = call.surfaced_task_id
+      WHERE call.id = $1 AND task.state = 'OPEN' AND task.phone = $2`,
+    [followedUp.callID, followUpPhone],
+  )
+  expect(created.rows).toHaveLength(1)
+
+  await expect(
+    page.getByRole("switch", { name: "Receive calls" }),
+  ).toBeChecked()
+  await search.fill(callTitle)
+  await search.press("Enter")
+  await page.getByRole("button", { name: callTitle, exact: true }).click()
+  const fromTask = await placeConnectedCall(page, database, `${key}-from-task`)
+  await endConnectedCall(page, fromTask, `${key}-from-task`)
+  const ownRow = wrapUp.getByTestId("call-wrap-up-task").filter({ hasText: callTitle })
+  await expect(ownRow).toHaveCount(1)
+  await expect(ownRow.getByText("This call", { exact: true })).toBeVisible()
+  await expect(wrapUp.getByText("Create a follow-up Task")).toHaveCount(0)
+  await expect(
+    wrapUp.getByRole("button", { name: "Keep all open", exact: true }),
+  ).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(ownRow.getByRole("checkbox")).toBeFocused()
+  await page.keyboard.press("Space")
+  await expect(ownRow.getByRole("checkbox")).toBeChecked()
+  await page.keyboard.press("Shift+Tab")
+  await expect(
+    wrapUp.getByRole("button", { name: "Close 1", exact: true }),
+  ).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(wrapUp).toHaveCount(0)
+  expect(await storedOutcome(fromTask.callID)).toBe("COMPLETE_TASK")
+  expect(await storedTask(callTask)).toMatchObject({
+    state: "COMPLETED",
+    close_reason: "DONE",
+    closed_via_call_id: fromTask.callID,
+  })
+
+  const tokenResponse = await page.request.get(`${webURL}/api/auth/token`)
+  expect(tokenResponse.ok()).toBeTruthy()
+  const { token } = (await tokenResponse.json()) as { token: string }
+  for (const task of [
+    { id: openTask, version: (await storedTask(openTask)).version },
+    created.rows[0]!,
+  ]) {
+    const released = await page.request.post(
+      `${portalURL}/v1/tasks/${task.id}/complete`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+        data: { expectedVersion: Number(task.version), reason: "DONE" },
+      },
+    )
+    expect(released.status()).toBe(200)
+  }
+  await expect
+    .poll(async () => {
+      const result = await database.query<{ count: string }>(
+        `SELECT count(*)::text FROM work_tasks
+          WHERE phone = ANY($1::text[]) AND state = 'OPEN'`,
+        [[destination, followUpPhone, taskPhone]],
+      )
+      return Number(result.rows[0]?.count ?? 0)
+    })
+    .toBe(0)
+}
+
+async function seedOpenTask(database: Pool, phone: string, title: string) {
+  const task = await database.query<{ id: string }>(
+    `INSERT INTO work_tasks (
+       practice_id, location_id, phone, title, state, origin, urgency, category,
+       created_by_kind, created_by_subject, created_at, updated_at,
+       source_call_id, source_message, ai_idempotency_key, ai_input_fingerprint
+     )
+     SELECT practice.id, location.id, $1, $2::text, 'OPEN', 'ABITA_AI', 'normal', 'medication',
+            'SERVICE', 'wrap-up-e2e', now(), now(),
+            $2::text, 'Synthetic wrap-up evidence', $2::text, sha256(convert_to($2::text, 'UTF8'))
+       FROM access_practices practice
+       JOIN access_locations location ON location.practice_id = practice.id
+      WHERE practice.provisioning_key = 'abita-eye-group'
+        AND location.provisioning_key = 'fixture-location-1'
+     RETURNING id::text`,
+    [phone, title],
+  )
+  expect(task.rows).toHaveLength(1)
+  return task.rows[0]!.id
+}
+
+type ConnectedCall = {
+  callID: string
+  staffLeg: Awaited<ReturnType<typeof readOutboundLeg>>
+  staffSessionID: string
+}
+
+async function placeConnectedCall(page: Page, database: Pool, key: string): Promise<ConnectedCall> {
+  const callButton = page.getByRole("button", { name: "Call", exact: true })
+  await expect(callButton).toBeEnabled()
+  const [commitResponse] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url() === `${portalURL}/v1/calling/outbound-calls` &&
+      response.request().method() === "POST",
+    ),
+    callButton.click(),
+  ])
+  expect(commitResponse.status()).toBe(201)
+  const { id: callID } = (await commitResponse.json()) as { id: string }
+  const staffLeg = await readOutboundLeg(database, callID, "STAFF", "DIAL_OUTBOUND_STAFF")
+  const staffSessionID = staffLeg.session_id || `${key}-staff-session`
+  const staffPayload = {
+    connection_id: "fixture-call-control",
+    call_control_id: staffLeg.control_id,
+    call_leg_id: staffLeg.leg_id,
+    call_session_id: staffSessionID,
+    client_state: staffLeg.client_state,
+  }
+  await deliverProviderEvent(page, {
+    eventType: "call.initiated",
+    eventId: `${key}-staff-initiated`,
+    occurredAt: new Date().toISOString(),
+    payload: staffPayload,
+  })
+  await deliverProviderEvent(page, {
+    eventType: "call.answered",
+    eventId: `${key}-staff-answered`,
+    occurredAt: new Date().toISOString(),
+    payload: staffPayload,
+  })
+  await expect
+    .poll(async () => {
+      const result = await database.query<{ state: string }>(
+        `SELECT state FROM human_calling_call_legs WHERE call_id = $1 AND role = 'STAFF'`,
+        [callID],
+      )
+      return result.rows[0]?.state ?? ""
+    })
+    .toBe("BRIDGE_PENDING")
+  const answersBefore = await mediaAnswers(page)
+  await sendIncomingLeg(page, staffLeg.leg_id, staffLeg.media_token)
+  await expect.poll(() => mediaAnswers(page)).toBe(answersBefore + 1)
+
+  const destinationLeg = await readOutboundLeg(
+    database,
+    callID,
+    "DESTINATION",
+    "DIAL_OUTBOUND_DESTINATION",
+  )
+  const destinationPayload = {
+    connection_id: "fixture-call-control",
+    call_control_id: destinationLeg.control_id,
+    call_leg_id: destinationLeg.leg_id,
+    call_session_id: destinationLeg.session_id || `${key}-destination-session`,
+    client_state: destinationLeg.client_state,
+  }
+  await deliverProviderEvent(page, {
+    eventType: "call.initiated",
+    eventId: `${key}-destination-initiated`,
+    occurredAt: new Date().toISOString(),
+    payload: destinationPayload,
+  })
+  const bridge = await readBridgeCommand(database, callID)
+  await deliverProviderEvent(page, {
+    eventType: "call.answered",
+    eventId: `${key}-destination-answered`,
+    occurredAt: new Date().toISOString(),
+    payload: destinationPayload,
+  })
+  await deliverProviderEvent(page, {
+    eventType: "call.bridged",
+    eventId: `${key}-destination-bridged`,
+    occurredAt: new Date().toISOString(),
+    payload: {
+      call_control_id: destinationLeg.control_id,
+      call_leg_id: destinationLeg.leg_id,
+      call_session_id: destinationPayload.call_session_id,
+      client_state: bridge.client_state,
+    },
+  })
+  await deliverProviderEvent(page, {
+    eventType: "call.bridged",
+    eventId: `${key}-staff-bridged`,
+    occurredAt: new Date().toISOString(),
+    payload: {
+      call_control_id: staffLeg.control_id,
+      call_leg_id: staffLeg.leg_id,
+      call_session_id: staffSessionID,
+    },
+  })
+  await expect(callCenter(page).getByRole("status")).toHaveText("Connected")
+  return { callID, staffLeg, staffSessionID }
+}
+
+async function endConnectedCall(page: Page, call: ConnectedCall, key: string) {
+  const [hangup] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url() === `${portalURL}/v1/calling/calls/${call.callID}/hangup` &&
+      response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "End call", exact: true }).click(),
+  ])
+  expect(hangup.status()).toBe(202)
+  await deliverProviderEvent(page, {
+    eventType: "call.hangup",
+    eventId: `${key}-staff-hangup`,
+    occurredAt: new Date().toISOString(),
+    payload: {
+      call_control_id: call.staffLeg.control_id,
+      call_leg_id: call.staffLeg.leg_id,
+      call_session_id: call.staffSessionID,
+      client_state: call.staffLeg.client_state,
+      hangup_cause: "NORMAL_CLEARING",
+      hangup_source: "STAFF",
+    },
+  })
+  await endMediaLeg(page, call.staffLeg.leg_id, call.staffLeg.media_token)
+  await expect(page.getByRole("dialog").getByText(/^Call ended/)).toBeVisible()
+}
 
 async function startAndEndOutboundWhileVoicemail(
   page: Page,
@@ -614,6 +908,7 @@ async function startAndEndOutboundWhileVoicemail(
   await page.unroute(hangupURL)
   page.off("request", observeHangupRefresh)
 
+  const [closingTask, keptTask] = await seedWrapUpTasks(database, outboundCallID, destination)
   await deliverProviderEvent(page, {
     eventType: "call.hangup",
     eventId: "voicemail-concurrent-outbound-hangup",
@@ -641,21 +936,119 @@ async function startAndEndOutboundWhileVoicemail(
     `SELECT updated_at FROM human_calling_calls WHERE id = $1`,
     [outboundCallID],
   )
-  await expect(callCenter(page).getByRole("status")).toHaveText(
-    "Call ended",
-    { timeout: 5_000 },
-  )
+  const wrapUp = page.getByRole("dialog")
+  await expect(wrapUp.getByText(/^Call ended/)).toBeVisible({ timeout: 5_000 })
   const remoteRenderedAt = await page.evaluate(() => Date.now())
   expect(
     remoteRenderedAt - remoteCommit.rows[0]!.updated_at.getTime(),
   ).toBeLessThanOrEqual(1_000)
-  await callCenter(page)
-    .getByRole("button", { name: "Resolved on call", exact: true })
+  await expect(wrapUp.getByTestId("call-wrap-up-task")).toHaveCount(2)
+  await expect(wrapUp.getByRole("checkbox", { checked: true })).toHaveCount(0)
+  await expect(
+    wrapUp.getByRole("button", { name: "Keep all open", exact: true }),
+  ).toBeFocused()
+  await expect(wrapUp.getByRole("button", { name: /^Close \d/ })).toHaveCount(0)
+  await page.keyboard.press("Escape")
+  await page.mouse.click(4, 4)
+  await expect(wrapUp.getByTestId("call-wrap-up-task")).toHaveCount(2)
+  await wrapUp.getByRole("checkbox", { name: /Synthetic refill request/ }).check()
+  await wrapUp
+    .getByLabel("Reason for closing: Synthetic refill request", { exact: true })
+    .selectOption("NOT_NEEDED")
+  await wrapUp
+    .getByRole("button", { name: "Close 1 · keep 1 open", exact: true })
     .click()
+  await expect(wrapUp).toHaveCount(0)
   await expect(callCenter(page)).toHaveCount(0)
   await expect(
     page.getByRole("switch", { name: "Receive calls" }),
   ).toBeChecked()
+  const wrappedUp = await database.query<{
+    id: string
+    state: string
+    close_reason: string | null
+    closed_via_call_id: string | null
+    completed_by_email: string | null
+  }>(
+    `SELECT id::text, state, close_reason, closed_via_call_id::text, completed_by_email
+       FROM work_tasks
+      WHERE id = ANY($1::uuid[])`,
+    [[closingTask, keptTask]],
+  )
+  expect(wrappedUp.rows.find((task) => task.id === closingTask)).toEqual({
+    id: closingTask,
+    state: "COMPLETED",
+    close_reason: "NOT_NEEDED",
+    closed_via_call_id: outboundCallID,
+    completed_by_email: "messaging@abita.test",
+  })
+  expect(wrappedUp.rows.find((task) => task.id === keptTask)).toMatchObject({
+    state: "OPEN",
+    close_reason: null,
+    closed_via_call_id: null,
+  })
+  const outcome = await database.query<{ disposition_outcome: string | null }>(
+    `SELECT disposition_outcome FROM human_calling_calls WHERE id = $1`,
+    [outboundCallID],
+  )
+  expect(outcome.rows[0]?.disposition_outcome).toBe("RESOLVED")
+
+  await page.getByLabel("Search tasks, names, or phone").fill(destination)
+  await page.getByLabel("Search tasks, names, or phone").press("Enter")
+  const openTasksToggle = page.getByRole("button", { name: "1 open Task", exact: true })
+  await expect(openTasksToggle).toBeVisible()
+  if ((await openTasksToggle.getAttribute("aria-pressed")) !== "true") {
+    await openTasksToggle.click()
+  }
+  const patientTasks = page.getByRole("region", { name: "Open Tasks", exact: true })
+  await expect(patientTasks.getByText("Synthetic insurance question")).toBeVisible()
+  await expect(patientTasks.getByText("Closed today")).toBeVisible()
+  await expect(patientTasks.getByText("Synthetic refill request")).toBeVisible()
+  await expect(
+    patientTasks.getByText("Not needed, by messaging@abita.test"),
+  ).toBeVisible()
+
+  const tokenResponse = await page.request.get(`${webURL}/api/auth/token`)
+  expect(tokenResponse.ok()).toBeTruthy()
+  const { token } = (await tokenResponse.json()) as { token: string }
+  const released = await page.request.post(
+    `${portalURL}/v1/tasks/${keptTask}/complete`,
+    {
+      headers: { authorization: `Bearer ${token}` },
+      data: { expectedVersion: 1, reason: "DONE" },
+    },
+  )
+  expect(released.status()).toBe(200)
+}
+
+async function seedWrapUpTasks(database: Pool, callID: string, phone: string) {
+  const tasks = await database.query<{ id: string }>(
+    `INSERT INTO work_tasks (
+       practice_id, location_id, phone, title, state, origin, urgency, category,
+       created_by_kind, created_by_subject, created_at, updated_at,
+       source_call_id, source_message, ai_idempotency_key, ai_input_fingerprint
+     )
+     SELECT call.practice_id, call.location_id, $2, seeded.title, 'OPEN', 'ABITA_AI',
+            'normal', seeded.category, 'SERVICE', 'wrap-up-e2e', now(), now(),
+            seeded.title, 'Synthetic wrap-up evidence', seeded.title,
+            sha256(convert_to(seeded.title, 'UTF8'))
+       FROM human_calling_calls call
+      CROSS JOIN (VALUES
+        (1, 'Synthetic refill request', 'medication'),
+        (2, 'Synthetic insurance question', 'insurance')
+      ) AS seeded(position, title, category)
+      WHERE call.id = $1
+      ORDER BY seeded.position
+     RETURNING id::text`,
+    [callID, phone],
+  )
+  expect(tasks.rows).toHaveLength(2)
+  const closing = await database.query<{ id: string }>(
+    `SELECT id::text FROM work_tasks WHERE id = ANY($1::uuid[]) AND title = 'Synthetic refill request'`,
+    [tasks.rows.map((task) => task.id)],
+  )
+  const closingID = closing.rows[0]!.id
+  return [closingID, tasks.rows.find((task) => task.id !== closingID)!.id] as const
 }
 
 async function readOutboundLeg(

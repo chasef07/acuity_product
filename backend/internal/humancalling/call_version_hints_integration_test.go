@@ -133,7 +133,7 @@ func (fixture callVersionFixture) recordDisposition(t *testing.T) {
 	t.Helper()
 	if _, err := fixture.portal.RecordDisposition(
 		context.Background(), fixture.staff[0], fixture.session(0), fixture.callID(t),
-		humancalling.DispositionResolved,
+		humancalling.DispositionResolved, nil,
 	); err != nil {
 		t.Fatalf("record disposition: %v", err)
 	}

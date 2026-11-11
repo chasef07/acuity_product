@@ -342,7 +342,7 @@ export const requestCallingHangup = <ThrowOnError extends boolean = false>(optio
 });
 
 /**
- * Resolve the provider-terminated Call and optionally ensure its one follow-up Task.
+ * Resolve the provider-terminated Call, optionally ensure its one follow-up Task and close listed Tasks for its phone.
  */
 export const recordCallingDisposition = <ThrowOnError extends boolean = false>(options: Options<RecordCallingDispositionData, ThrowOnError>): RequestResult<RecordCallingDispositionResponses, RecordCallingDispositionErrors, ThrowOnError> => (options.client ?? client).post<RecordCallingDispositionResponses, RecordCallingDispositionErrors, ThrowOnError>({
     security: [{
