@@ -107,7 +107,7 @@ func newCommandWakeTestRunner(t *testing.T, work *commandWakeTestWork) *Runner {
 		CredentialInterval: time.Hour, CredentialTimeout: time.Second, HealthInterval: time.Hour, HealthTimeout: time.Second,
 		MetricInterval: time.Hour, MetricTimeout: time.Second, ReceiptBatchSize: 8, RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize: 8, CommandWorkers: 10, ErrorBackoffMin: time.Second, ErrorBackoffMax: 4 * time.Second,
-	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, &countingTaskWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatal(err)
 	}

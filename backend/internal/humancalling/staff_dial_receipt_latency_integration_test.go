@@ -100,7 +100,7 @@ func TestStaffDialLatencyFromSignedAnswerReceipt(t *testing.T) {
 				CredentialInterval: time.Hour, CredentialTimeout: time.Second, HealthInterval: time.Hour, HealthTimeout: time.Second,
 				MetricInterval: time.Hour, MetricTimeout: time.Second, ReceiptBatchSize: 8, RecoveryAndMessagingBatchSize: 1,
 				ProviderCommandBatchSize: 8, CommandWorkers: 10,
-			}, work, idleMessagingWork{}, idleInteractionWork{}, workerPool)
+			}, work, idleMessagingWork{}, idleInteractionWork{}, idleTaskWork{}, workerPool)
 			if err != nil {
 				t.Fatal(err)
 			}

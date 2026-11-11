@@ -258,8 +258,8 @@ func (m *Module) QueryStaffAnalytics(ctx context.Context, command QueryStaffAnal
   FROM work_tasks WHERE practice_id=$1::uuid AND location_id=ANY($2::uuid[])
    AND ((created_at >= $3 AND created_at < $4)
         OR (state='COMPLETED' AND completed_at >= $3 AND completed_at < $4))
-   AND completed_by_subject IS DISTINCT FROM $5
-  LIMIT 50001`, command.PracticeID, locations, from, to, work.HiddenReviewRetirementSubject)
+   AND (state <> 'COMPLETED' OR close_reason IS DISTINCT FROM $5)
+  LIMIT 50001`, command.PracticeID, locations, from, to, work.CloseReasonExpired)
 	if err != nil {
 		return StaffAnalytics{}, fmt.Errorf("staff task activity: %w", err)
 	}

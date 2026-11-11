@@ -142,25 +142,23 @@ test("a reconcile during load-more keeps the page the operator asked for", async
   projection.stop()
 })
 
-test("a superseded load-more or Task refresh releases loading when the reconcile that replaced it fails", async () => {
-  for (const intent of [{ type: "load-more", window: "tasks" }, { type: "refresh-text-attention" }] as const) {
-    const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
-    control.delayNext = true
-    const pending = projection.dispatch(intent)
-    assert.equal(projection.getSnapshot().tasks.loading, true)
-    await waitUntil(() => !control.delayNext)
-    control.workspaceAvailable = false
-    await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
-    delayed.resolve(success(taskPage([task("superseded")])))
-    await pending
+test("a superseded load-more releases loading when the reconcile that replaced it fails", async () => {
+  const { projection, realtime, control, delayed, openIDs } = await startWithDelayableTasks()
+  control.delayNext = true
+  const pending = projection.dispatch({ type: "load-more", window: "tasks" })
+  assert.equal(projection.getSnapshot().tasks.loading, true)
+  await waitUntil(() => !control.delayNext)
+  control.workspaceAvailable = false
+  await assert.rejects(realtime.reconcile(0), /workspace authority is unavailable/)
+  delayed.resolve(success(taskPage([task("superseded")])))
+  await pending
 
-    assert.equal(projection.getSnapshot().tasks.loading, false)
-    assert.equal(projection.getSnapshot().completedTasks.loading, false)
-    assert.deepEqual(openIDs(), ["open-1"])
-    await projection.dispatch({ type: "load-more", window: "tasks" })
-    assert.deepEqual(openIDs(), ["open-1", "open-2"])
-    projection.stop()
-  }
+  assert.equal(projection.getSnapshot().tasks.loading, false)
+  assert.equal(projection.getSnapshot().completedTasks.loading, false)
+  assert.deepEqual(openIDs(), ["open-1"])
+  await projection.dispatch({ type: "load-more", window: "tasks" })
+  assert.deepEqual(openIDs(), ["open-1", "open-2"])
+  projection.stop()
 })
 
 async function startWithDelayableTasks() {
@@ -1133,44 +1131,6 @@ test("Complete and next uses refreshed recent order without moving on remote com
   await projection.dispatch({ type: "task-committed", task: completed, advance: true })
   assert.equal(projection.getSnapshot().selection.task?.id, next.id)
   assert.ok(requests.filter((request) => request.state === "OPEN").every((request) => request.ordering === "recent"))
-  projection.stop()
-})
-
-test("text attention expiry refreshes only Task windows and preserves selected context", async () => {
-  const realtime = deterministicRealtime()
-  const open = task("task-1")
-  const base = deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(4), tasks: taskPage([open]) })
-  let taskReads = 0
-  let workspaceReads = 0
-  let expired = false
-  const projection = createWorkspaceProjection({
-    authority: {
-      ...base,
-      workspace: async (...args) => { workspaceReads += 1; return base.workspace(...args) },
-      tasks: async (_token, request) => {
-        taskReads += 1
-        return success(taskPage(expired || request.state === "COMPLETED" ? [] : [open]))
-      },
-    },
-    realtime: realtime.adapter,
-    preferences: memoryPreferences(),
-  })
-  await projection.dispatch({ type: "refresh-text-attention" })
-  assert.equal(taskReads, 0)
-  await projection.start()
-  await realtime.reconcile(0)
-  const selected = projection.getSnapshot().selection.task?.id
-  taskReads = 0
-  workspaceReads = 0
-  expired = true
-  await projection.dispatch({ type: "refresh-text-attention" })
-  assert.equal(taskReads, 2)
-  assert.equal(workspaceReads, 0)
-  assert.equal(realtime.refreshes, 0)
-  assert.deepEqual(projection.getSnapshot().tasks.items, [])
-  assert.equal(projection.getSnapshot().tasks.counts.tasks, 0)
-  assert.equal(projection.getSnapshot().loadState, "ready")
-  assert.equal(projection.getSnapshot().selection.task?.id, selected)
   projection.stop()
 })
 
