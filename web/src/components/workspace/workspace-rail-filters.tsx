@@ -81,7 +81,7 @@ export function PatientFilterChips({
             )}
           >
             {option.label}
-            <span className={cn("tabular-nums", !pressed && "opacity-70")}>{option.count}</span>
+            <span className={cn("tabular-nums", !pressed && !unowned && "opacity-70")}>{option.count}</span>
           </Badge>
         )
       })}
