@@ -482,6 +482,7 @@ test("the Task panel credits the callback caller from the Task and flags an open
       <TaskCallContext
         task={task}
         activeCall={undefined}
+        callControlsShowing={false}
         view="task"
         numberHistory={numberHistory}
         taskCallError=""
@@ -515,6 +516,7 @@ test("an AI Task shows the missed handoff call attached to it", () => {
       <TaskCallContext
         task={value}
         activeCall={undefined}
+        callControlsShowing={false}
         view="task"
         taskCallError=""
         onTaskUpdated={() => {}}
@@ -548,6 +550,7 @@ test("completing a Task keeps Next task in place and holds Reopen until the chan
         taskRows={[task, next]}
         onSelectTask={(row) => selected.push(row.id)}
         activeCall={undefined}
+        callControlsShowing={false}
         view="task"
         taskCallError=""
         onTaskUpdated={() => {}}
@@ -600,6 +603,7 @@ test("the focused Task shows each projected version and completes only the versi
       <TaskCallContext
         task={task}
         activeCall={undefined}
+        callControlsShowing={false}
         view="task"
         taskCallError=""
         onTaskUpdated={() => {}}

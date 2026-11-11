@@ -439,6 +439,7 @@ function context(overrides: Partial<ComponentProps<typeof TaskCallContext>>) {
       <TaskCallContext
         task={undefined}
         activeCall={undefined}
+        callControlsShowing={false}
         view="none"
         taskCallError=""
         onTaskUpdated={() => {}}
@@ -486,6 +487,32 @@ test("a call shows the caller's Tasks under its header, above the recording and 
   assert.deepEqual(placed.asked, [[call.phone, { beside: "call", callTaskID: "task-second" }]], "an outbound call belongs to the Task it was placed from")
   const standalone = context({ activeCall: { ...call, recoveryTask: undefined }, view: "call" })
   assert.deepEqual(standalone.asked, [[call.phone, { beside: "call", callTaskID: undefined }]])
+})
+
+test("a live call, whose floating controls name the caller, keeps only its state and Task action above the list", () => {
+  const transferred = { ...call, transferReason: "Needs a staff response" }
+  const live = context({ activeCall: transferred, callControlsShowing: true, view: "call" })
+  const header = titleAboveScroller(live.markup, "Connected", "patient tasks for")
+  assert.ok(header.classList.contains("h-11"), "one row, ending below the close button")
+  assert.ok(header.classList.contains("pr-12"), "and beside it")
+  assert.deepEqual([...header.children].map((child) => [child.tagName, child.textContent]), [["H2", "Connected"], ["BUTTON", "Open Task"]])
+  assert.doesNotMatch(live.markup, /Dolores Reyes|\(555\) 123-4567|North Office|Needs a staff response/)
+  assert.equal(live.markup.match(/<button/g)?.length, 1, "the Task action is offered once")
+  assert.ok(live.markup.indexOf("patient tasks for") < live.markup.indexOf(">Details<"), "the call details stay below the list")
+  assert.deepEqual(live.asked, [[call.phone, { beside: "call", callTaskID: "task-fourth" }]])
+
+  const returning = context({ activeCall: { ...transferred, recoveryTask: undefined }, callControlsShowing: true, view: "call", task: fiveTasks[0] })
+  assert.match(returning.markup, /<header[^>]*>.*>Back to Task<\/button><\/header>/)
+  const alone = context({ activeCall: { ...transferred, recoveryTask: undefined }, callControlsShowing: true, view: "call" })
+  assert.doesNotMatch(alone.markup, /<button/)
+  assert.match(alone.markup, /<h2[^>]*>Connected<\/h2><\/header>/)
+
+  const past = context({ activeCall: transferred, callControlsShowing: false, view: "call" })
+  for (const shown of ["Connected", "Dolores Reyes", "(555) 123-4567 · North Office", "Needs a staff response", ">Open Task</button>"]) {
+    assert.ok(past.markup.includes(shown), `a call without floating controls still shows ${shown}`)
+  }
+  assert.match(past.markup, /<h2 class="text-base font-medium leading-snug">Connected<\/h2>/)
+  assert.match(past.markup, /<button[^>]*class="[^"]*\bw-full\b[^"]*"[^>]*>Open Task<\/button>/)
 })
 
 test("a selected Task keeps its detail first and lists the patient's other Tasks beneath it, for one Task and for a group", () => {

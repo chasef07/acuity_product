@@ -83,6 +83,7 @@ test("the Task panel menu sends the chosen reason and is offered only where the 
         key={sent.length}
         task={shown}
         activeCall={undefined}
+        callControlsShowing={false}
         view="task"
         taskCallError=""
         onTaskUpdated={() => {}}

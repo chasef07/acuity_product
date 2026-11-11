@@ -19,6 +19,7 @@ type TaskCallContextProps = {
   taskRows?: Task[]
   onSelectTask?: (task: Task) => void
   activeCall: CallingCall | undefined
+  callControlsShowing: boolean
   view: "none" | "task" | "call"
   numberHistory?: ConversationTimelineItem[]
   taskCallError: string
@@ -38,6 +39,7 @@ export function TaskCallContext({
   taskRows,
   onSelectTask,
   activeCall,
+  callControlsShowing,
   view,
   numberHistory,
   taskCallError,
@@ -62,6 +64,7 @@ export function TaskCallContext({
       <CallWorkspace
         key={activeCall.id}
         call={activeCall}
+        live={callControlsShowing}
         returnTask={task}
         onReturnToTask={task ? () => onOpenTask(task) : undefined}
         onOpenRecoveryTask={(taskID) => void openRecoveryTask(taskID)}

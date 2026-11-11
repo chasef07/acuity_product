@@ -571,6 +571,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         taskRows={state.tasks.items}
                         onSelectTask={(task) => sendIntent({ type: "select-task", task })}
                         activeCall={shownCall}
+                        callControlsShowing={onLiveCall}
                         view={contextView}
                         numberHistory={
                           numberHistory && numberHistory.phone === selectedTask?.phone
@@ -584,7 +585,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         onOpenTask={(task) => sendIntent({ type: "select-task", task })}
                         patientTasks={(phone, placement) =>
                           patientTasks(phone, placement.beside === "call"
-                            ? { className: "shrink-0 border-t", callTaskID: placement.callTaskID, titlesOpenTasks: false }
+                            ? { className: onLiveCall ? "shrink-0 pt-0" : "shrink-0 border-t", callTaskID: placement.callTaskID, titlesOpenTasks: false }
                             : {
                                 className: state.selection.taskGroup ? "max-h-64 shrink-0 border-t" : "-mx-5 mt-4 border-t",
                                 otherThan: placement.otherThan,
