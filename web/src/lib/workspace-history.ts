@@ -181,9 +181,12 @@ function aiOutcome(interaction: HistoryAI, tasks: Task[]) {
       if (interaction.appointmentOutcome === "PARTIAL") return needsReview()
       const appointment = aiAppointmentLabels[interaction.appointmentOutcome as keyof typeof aiAppointmentLabels]
       if (appointment) return outcome("appointment-by-ai", appointment)
-      if (messageTaken) return outcome("message-taken", callLineLabels.messageTaken)
-      return interaction.resolved
-        ? outcome("resolved-by-ai", callLineLabels.resolvedByAI)
+      const open = tasks.filter((task) => task.state === "OPEN")
+      if (open.some((task) => task.origin === "APPOINTMENT_REVIEW")) return needsReview()
+      if (aiTasks(open).length > 0) return outcome("message-taken", callLineLabels.messageTaken)
+      if (interaction.resolved && open.length === 0) return outcome("resolved-by-ai", callLineLabels.resolvedByAI)
+      return messageTaken && !interaction.resolved
+        ? outcome("message-taken", callLineLabels.messageTaken)
         : outcome("handled-by-ai", callLineLabels.handledByAI)
     }
     default:

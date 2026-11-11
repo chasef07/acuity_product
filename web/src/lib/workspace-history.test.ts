@@ -54,6 +54,24 @@ test("each call history root reads as one outcome", () => {
       { kind: "message-taken", label: "Message taken", tone: "muted" }],
     ["AI left a Task on a call labelled resolved", [aiEntry({ resolved: true }), taskEntry({})],
       { kind: "message-taken", label: "Message taken", tone: "muted" }],
+    ["a call labelled resolved whose booking check is still open", [aiEntry({ resolved: true }), taskEntry({ origin: "APPOINTMENT_REVIEW", title: "Check appointment booking" })],
+      { kind: "needs-review", label: "Appointment change needs review", tone: "warning" }],
+    ["an unlabelled call whose booking check is still open", [aiEntry({}), taskEntry({ origin: "APPOINTMENT_REVIEW" })],
+      { kind: "needs-review", label: "Appointment change needs review", tone: "warning" }],
+    ["a call labelled resolved whose booking check staff closed", [aiEntry({ resolved: true }), taskEntry({ origin: "APPOINTMENT_REVIEW", state: "COMPLETED" })],
+      { kind: "resolved-by-ai", label: "Resolved by AI", tone: "success" }],
+    ["a call labelled resolved with an open staff follow-up", [aiEntry({ resolved: true }), taskEntry({ origin: "HUMAN_CALL_FOLLOW_UP" })],
+      { kind: "handled-by-ai", label: "Handled by AI", tone: "muted" }],
+    ["a call labelled resolved with an open text follow-up", [aiEntry({ resolved: true }), taskEntry({ origin: "STAFF_MESSAGE_FOLLOW_UP" })],
+      { kind: "handled-by-ai", label: "Handled by AI", tone: "muted" }],
+    ["a call labelled resolved whose staff follow-up is closed", [aiEntry({ resolved: true }), taskEntry({ origin: "HUMAN_CALL_FOLLOW_UP", state: "COMPLETED" })],
+      { kind: "resolved-by-ai", label: "Resolved by AI", tone: "success" }],
+    ["a call labelled resolved whose AI Task staff closed", [aiEntry({ resolved: true }), taskEntry({ state: "COMPLETED" })],
+      { kind: "resolved-by-ai", label: "Resolved by AI", tone: "success" }],
+    ["a call labelled resolved with one closed and one open Task", [aiEntry({ resolved: true }), taskEntry({ state: "COMPLETED" }), taskEntry({ id: "second", origin: "HUMAN_CALL_FOLLOW_UP" })],
+      { kind: "handled-by-ai", label: "Handled by AI", tone: "muted" }],
+    ["an unlabelled call whose AI Task staff closed", [aiEntry({}), taskEntry({ state: "COMPLETED" })],
+      { kind: "message-taken", label: "Message taken", tone: "muted" }],
     ["lines busy, AI took a message", [aiEntry({ status: "ESCALATED" }), taskEntry({})],
       { kind: "message-taken", label: "Message taken", tone: "muted" }],
     ["AI booked and staff verify the visit", [aiEntry({ appointmentOutcome: "BOOKING" }), taskEntry({ origin: "APPOINTMENT_REVIEW" })],
@@ -107,6 +125,11 @@ test("an AI call with no transfer and no appointment action does not read as suc
       assert.notEqual(result.tone, "success", `${status} ${summary ?? "no summary"}`)
       assert.notEqual(result.label, "Resolved by AI", `${status} ${summary ?? "no summary"}`)
     }
+  }
+  for (const origin of ["HUMAN_CALL_FOLLOW_UP", "ABITA_AI", "STAFF_MESSAGE_FOLLOW_UP", "VOICEMAIL_RECOVERY", "MISSED_CALL_RECOVERY", "APPOINTMENT_REVIEW", "INBOUND_MESSAGE_REVIEW"]) {
+    const result = outcomeOf(aiEntry({ resolved: true }), taskEntry({ origin }))
+    assert.notEqual(result.tone, "success", `open ${origin} Task`)
+    assert.notEqual(result.label, "Resolved by AI", `open ${origin} Task`)
   }
   assert.equal(outcomeOf(aiEntry({ status: "ESCALATED", resolved: true })).tone, "muted")
   assert.equal(outcomeOf(aiEntry({ status: "FAILED", resolved: true })).tone, "destructive")
