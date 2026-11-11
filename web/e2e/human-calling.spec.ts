@@ -712,6 +712,18 @@ async function startAndEndOutboundWhileVoicemail(
   await expect(
     patientTasks.getByText("Not needed, by messaging@abita.test"),
   ).toBeVisible()
+
+  const tokenResponse = await page.request.get(`${webURL}/api/auth/token`)
+  expect(tokenResponse.ok()).toBeTruthy()
+  const { token } = (await tokenResponse.json()) as { token: string }
+  const released = await page.request.post(
+    `${portalURL}/v1/tasks/${keptTask}/complete`,
+    {
+      headers: { authorization: `Bearer ${token}` },
+      data: { expectedVersion: 1, reason: "DONE" },
+    },
+  )
+  expect(released.status()).toBe(200)
 }
 
 async function seedWrapUpTasks(database: Pool, callID: string, phone: string) {
