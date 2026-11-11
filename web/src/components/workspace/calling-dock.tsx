@@ -202,7 +202,7 @@ export function CallingDock({
       {children(snapshot.activeCall, snapshot.occupied)}
       <audio id={remoteAudioElementID} autoPlay className="hidden" />
       {callingCardVisible && (
-        <div className="fixed inset-x-3 bottom-28 z-40 md:left-auto md:right-5 md:w-[23rem]">
+        <div ref={publishDockClearance} className="fixed inset-x-3 bottom-28 z-40 md:left-auto md:right-5 md:w-[23rem]">
           <CallingCard
             snapshot={snapshot}
             onAnswer={(callLegID) => void runtime.answer(callLegID)}
@@ -230,6 +230,22 @@ export function CallingDock({
       )}
     </CallingNavigationContext.Provider>
   )
+}
+
+function publishDockClearance(dock: HTMLDivElement) {
+  const root = document.documentElement
+  const publish = () =>
+    root.style.setProperty(
+      "--calling-dock-clearance",
+      `${dock.offsetHeight + parseFloat(getComputedStyle(dock).bottom)}px`,
+    )
+  const observer = new ResizeObserver(publish)
+  observer.observe(dock)
+  publish()
+  return () => {
+    observer.disconnect()
+    root.style.removeProperty("--calling-dock-clearance")
+  }
 }
 
 function createBrowserSoftphoneRuntime(actorSubject: string) {

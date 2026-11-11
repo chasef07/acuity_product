@@ -2060,6 +2060,30 @@ export type ConversationTimelinePage = {
     nextCursor: string;
 };
 
+export type PhoneSummary = {
+    phone: string;
+    /**
+     * The caller name when exactly one name was seen on the phone. Empty when none or several were seen.
+     */
+    displayName: string;
+    /**
+     * Distinct caller names seen on the phone, at most five, ordered by when each was last recorded. A Task records its name when it is created and a Message Thread when it starts.
+     */
+    names: Array<string>;
+    /**
+     * Open Tasks for the phone in the Locations the caller may read, newest activity first, at most fifty.
+     */
+    openTasks: Array<Task>;
+    /**
+     * How many open Tasks the phone has in the Locations the caller may read, including any beyond the fifty returned.
+     */
+    openTaskCount: number;
+    /**
+     * Tasks for the phone that staff or a call closed in the last 24 hours, newest first, at most twenty. Tasks the system expired are left out.
+     */
+    closedToday: Array<Task>;
+};
+
 export type CallState = 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'VOICEMAIL_GREETING' | 'VOICEMAIL_RECORDING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
 
 export type CallHistoryItem = {
@@ -3211,6 +3235,47 @@ export type GetEngagementTimelineResponses = {
 };
 
 export type GetEngagementTimelineResponse = GetEngagementTimelineResponses[keyof GetEngagementTimelineResponses];
+
+export type GetEngagementSummaryData = {
+    body?: never;
+    path: {
+        phone: string;
+    };
+    query: {
+        practiceId: string;
+    };
+    url: '/v1/engagements/{phone}/summary';
+};
+
+export type GetEngagementSummaryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetEngagementSummaryError = GetEngagementSummaryErrors[keyof GetEngagementSummaryErrors];
+
+export type GetEngagementSummaryResponses = {
+    /**
+     * Names seen on the phone, its open Tasks, and the Tasks closed in the last 24 hours.
+     */
+    200: PhoneSummary;
+};
+
+export type GetEngagementSummaryResponse = GetEngagementSummaryResponses[keyof GetEngagementSummaryResponses];
 
 export type IngestAiInteractionData = {
     body: AiInteractionIngestRequest;

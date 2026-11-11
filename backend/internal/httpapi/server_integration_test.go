@@ -889,6 +889,205 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	}
 }
 
+func TestEngagementSummaryRouteReturnsTasksAndNamesForAnAuthorizedPhone(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.Open(t)
+	pool := db.Owner
+	accessModule := access.New(db.As(testdb.Portal), nil)
+	if _, err := access.New(pool, nil).Provision(ctx, access.Provisioning{
+		Environment: "test",
+		RequestedBy: "summary-http-test",
+		Practices: []access.PracticeProvision{
+			{
+				Key:  "summary-practice",
+				Name: "Summary Practice",
+				Locations: []access.LocationProvision{{
+					Key: "summary-office", Name: "Summary Office", AbitaOfficeKeys: []string{"summary-office"},
+				}},
+				AccessGrants: []access.AccessGrantProvision{
+					{
+						Key:           "summary-staff",
+						Email:         "summary-staff@synthetic.test",
+						Role:          access.RoleStaff,
+						LocationScope: access.LocationScopeAll,
+					},
+					{
+						Key:                  "summary-unplaced",
+						Email:                "summary-unplaced@synthetic.test",
+						Role:                 access.RoleStaff,
+						LocationScope:        access.LocationScopeSelected,
+						SelectedLocationKeys: []string{"summary-office"},
+					},
+				},
+			},
+			{
+				Key:       "summary-other-practice",
+				Name:      "Summary Other Practice",
+				Locations: []access.LocationProvision{{Key: "summary-other-office", Name: "Summary Other Office"}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("provision summary HTTP fixture: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "summary-staff-subject",
+		Email:         "summary-staff@synthetic.test",
+		EmailVerified: true,
+	}
+	authorization := testaccess.Activate(t, accessModule, identity)
+	var otherPracticeID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM access_practices WHERE provisioning_key = 'summary-other-practice'`,
+	).Scan(&otherPracticeID); err != nil {
+		t.Fatalf("read the other Practice: %v", err)
+	}
+	unplaced := access.Identity{
+		Subject:       "summary-unplaced-subject",
+		Email:         "summary-unplaced@synthetic.test",
+		EmailVerified: true,
+	}
+	testaccess.Activate(t, accessModule, unplaced)
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM access_membership_locations allowed
+		USING access_memberships membership
+		WHERE membership.id = allowed.membership_id AND membership.user_subject = $1
+	`, unplaced.Subject); err != nil {
+		t.Fatalf("remove every readable Location from a membership: %v", err)
+	}
+	workModule := work.New(db.As(testdb.Portal), accessModule, nil)
+	const phone = "+17275550199"
+	create := func(key, callerName string) work.Task {
+		t.Helper()
+		task, status, err := workModule.CreateAITask(ctx, work.CreateAITaskCommand{
+			Service: access.ServiceIdentity{
+				Subject:       "summary-http-service",
+				PracticeID:    authorization.Practice.ID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+			},
+			OfficeKey:      "summary-office",
+			OfficePhone:    "+17275550100",
+			SourceCallID:   "summary-http-" + key,
+			IdempotencyKey: "summary-http-" + key,
+			Phone:          phone,
+			CallerName:     callerName,
+			Summary:        "Synthetic request " + key,
+			Message:        "Synthetic follow-up",
+			Category:       work.TaskCategoryOther,
+			Urgency:        work.TaskUrgencyNormal,
+		})
+		if err != nil || status != work.TaskCreated {
+			t.Fatalf("create Task %q = %#v, %q, %v", key, task, status, err)
+		}
+		return task
+	}
+	open := create("open", "Dolores Reyes")
+	closing := create("closing", "Marco Reyes")
+
+	handler, err := newPortalHandler(t, httpapi.Config{
+		AllowedOrigins: []string{"http://localhost:3000"},
+		AcquireTimeout: 500 * time.Millisecond,
+	}, db.As(testdb.Portal), accessModule, staticAuthenticator{
+		"summary-token": identity, "unplaced-token": unplaced,
+	})
+	if err != nil {
+		t.Fatalf("new HTTP adapter: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	summaryURL := func(target, practiceID string) string {
+		return server.URL + "/v1/engagements/" + url.PathEscape(target) + "/summary?practiceId=" + practiceID
+	}
+	read := func() api.PhoneSummary {
+		t.Helper()
+		response := request(t, server.Client(), http.MethodGet,
+			summaryURL(phone, authorization.Practice.ID), "summary-token", nil)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("summary status = %d, body = %s", response.StatusCode, readBody(t, response))
+		}
+		var summary api.PhoneSummary
+		decode(t, response, &summary)
+		return summary
+	}
+
+	before := read()
+	if before.Phone != phone || len(before.OpenTasks) != 2 || before.OpenTaskCount != 2 ||
+		len(before.ClosedToday) != 0 || before.DisplayName != "" ||
+		len(before.Names) != 2 || before.Names[0] != "Marco Reyes" || before.Names[1] != "Dolores Reyes" {
+		t.Fatalf("summary before a close = %#v", before)
+	}
+	for _, task := range before.OpenTasks {
+		if task.LocationName != "Summary Office" || task.State != api.TaskStateOPEN {
+			t.Fatalf("open Task in the summary = %#v", task)
+		}
+	}
+
+	reason := api.StaffTaskCloseReasonNOTNEEDED
+	completeBody, _ := json.Marshal(api.CompleteTaskRequest{ExpectedVersion: closing.Version, Reason: &reason})
+	completed := request(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/tasks/"+closing.ID+"/complete", "summary-token", completeBody)
+	if completed.StatusCode != http.StatusOK {
+		t.Fatalf("complete status = %d, body = %s", completed.StatusCode, readBody(t, completed))
+	}
+	_ = completed.Body.Close()
+
+	after := read()
+	if len(after.OpenTasks) != 1 || after.OpenTaskCount != 1 || after.OpenTasks[0].Id.String() != open.ID ||
+		len(after.ClosedToday) != 1 || after.ClosedToday[0].Id.String() != closing.ID ||
+		after.ClosedToday[0].CloseReason == nil ||
+		*after.ClosedToday[0].CloseReason != api.TaskCloseReasonNOTNEEDED ||
+		after.ClosedToday[0].CompletedBy == nil {
+		t.Fatalf("summary after a close = %#v", after)
+	}
+
+	unknownPhone := request(t, server.Client(), http.MethodGet,
+		summaryURL("+17275550177", authorization.Practice.ID), "summary-token", nil)
+	if unknownPhone.StatusCode != http.StatusOK {
+		t.Fatalf("summary status for a phone with no history = %d", unknownPhone.StatusCode)
+	}
+	if body := strings.TrimSpace(readBody(t, unknownPhone)); body !=
+		`{"closedToday":[],"displayName":"","names":[],"openTaskCount":0,"openTasks":[],"phone":"+17275550177"}` {
+		t.Fatalf("summary for a phone with no history = %s", body)
+	}
+	_ = unknownPhone.Body.Close()
+
+	for name, check := range map[string]struct {
+		target string
+		token  string
+		status int
+	}{
+		"denied Practice": {summaryURL(phone, otherPracticeID), "summary-token", http.StatusForbidden},
+		"no readable Location": {
+			summaryURL(phone, authorization.Practice.ID), "unplaced-token", http.StatusForbidden,
+		},
+		"invalid phone": {summaryURL("not-a-phone", authorization.Practice.ID), "summary-token", http.StatusBadRequest},
+		"no credential": {summaryURL(phone, authorization.Practice.ID), "", http.StatusUnauthorized},
+	} {
+		response := request(t, server.Client(), http.MethodGet, check.target, check.token, nil)
+		body := readBody(t, response)
+		_ = response.Body.Close()
+		if response.StatusCode != check.status {
+			t.Fatalf("%s status = %d, want %d, body = %s", name, response.StatusCode, check.status, body)
+		}
+		if strings.Contains(body, "Reyes") || strings.Contains(body, "Synthetic request") {
+			t.Fatalf("%s leaked protected data: %s", name, body)
+		}
+	}
+
+	denials := map[string]string{}
+	for _, route := range []string{"summary", "timeline"} {
+		response := request(t, server.Client(), http.MethodGet,
+			server.URL+"/v1/engagements/"+url.PathEscape(phone)+"/"+route+"?practiceId="+authorization.Practice.ID,
+			"unplaced-token", nil)
+		var denial api.ErrorEnvelope
+		decode(t, response, &denial)
+		denials[route] = fmt.Sprintf("%d %s %s", response.StatusCode, denial.Error.Code, denial.Error.Message)
+	}
+	if denials["summary"] != denials["timeline"] || !strings.HasPrefix(denials["summary"], "403 ") {
+		t.Fatalf("denials without a readable Location = %v, want the summary to match the timeline's 403", denials)
+	}
+}
+
 func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner

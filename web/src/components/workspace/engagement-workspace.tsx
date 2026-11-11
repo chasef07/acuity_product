@@ -12,7 +12,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useCallingNavigation } from "@/components/workspace/calling-dock"
-import type { Task } from "@/lib/api/generated/types.gen"
+import type { PhoneSummary, Task } from "@/lib/api/generated/types.gen"
+import { useEngagementSummary } from "@/lib/clients/engagement"
+import { cn } from "@/lib/utils"
 import { formatPhone } from "@/lib/vocabulary"
 import type { EngagementSummary } from "@/lib/workspace-projection"
 import { type NumberHistory } from "@/lib/workspace-history"
@@ -28,6 +30,9 @@ type EngagementWorkspaceProps = {
   selectedTaskID?: string
   selectedCallID?: string
   selectedAIInteractionID?: string
+  callName?: string
+  patientTasksOpen: boolean
+  onPatientTasks: () => void
   callAction?: ReactNode
   textTask?: Task
   onTextTaskUpdated?: (task: Task) => void
@@ -49,7 +54,17 @@ type EngagementWorkspaceCalling = Pick<
 
 export function EngagementWorkspace(props: EngagementWorkspaceProps) {
   const calling = useCallingNavigation()
-  return <EngagementWorkspaceView {...props} calling={calling} />
+  const summary = useEngagementSummary({
+    practiceID: props.practiceID,
+    phone: props.engagement.phone,
+  })
+  return (
+    <EngagementWorkspaceView
+      {...props}
+      calling={calling}
+      caller={summary.status === "ready" ? summary.data : undefined}
+    />
+  )
 }
 
 export function EngagementWorkspaceView({
@@ -59,6 +74,9 @@ export function EngagementWorkspaceView({
   selectedTaskID,
   selectedCallID,
   selectedAIInteractionID,
+  callName,
+  patientTasksOpen,
+  onPatientTasks,
   callAction,
   textTask,
   onTextTaskUpdated,
@@ -69,7 +87,13 @@ export function EngagementWorkspaceView({
   onAIInteractionOpen,
   onHistoryChange,
   calling,
-}: EngagementWorkspaceProps & { calling: EngagementWorkspaceCalling }) {
+  caller,
+}: EngagementWorkspaceProps & {
+  calling: EngagementWorkspaceCalling
+  caller?: Pick<PhoneSummary, "names" | "openTaskCount">
+}) {
+  const names = phoneNames(caller?.names ?? [], callName)
+  const openTaskCount = caller?.openTaskCount ?? 0
   const [reviewedTextTaskKey, setReviewedTextTaskKey] = useState("")
   const textTaskKey = textTask ? `${textTask.id}:${textTask.version}` : ""
   const [chosenRoute, setRoute] = useState("")
@@ -96,9 +120,21 @@ export function EngagementWorkspaceView({
               {practiceName}
             </span>
             <span aria-hidden="true" className="hidden text-muted-foreground sm:inline">/</span>
-            <h1 className="shrink-0 whitespace-nowrap text-base font-medium tracking-tight tabular-nums md:text-sm">
-              {formatPhone(engagement.phone)}
-            </h1>
+            <div className={cn("flex min-w-0 items-baseline gap-x-2", names.length > 1 && "flex-wrap")}>
+              {names.length === 1 && (
+                <span data-testid="caller-name" className="truncate text-base font-medium tracking-tight md:text-sm">
+                  {names[0]}
+                </span>
+              )}
+              <h1 className="shrink-0 whitespace-nowrap text-base font-medium tracking-tight tabular-nums md:text-sm">
+                {formatPhone(engagement.phone)}
+              </h1>
+              {names.length > 1 && (
+                <span data-testid="shared-phone-names" className="min-w-0 text-xs text-muted-foreground">
+                  used by {names.join(", ")}
+                </span>
+              )}
+            </div>
           </div>
           <Tooltip>
             <TooltipTrigger
@@ -170,6 +206,18 @@ export function EngagementWorkspaceView({
           </Button>
         )}
         <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
+          {openTaskCount > 0 && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="text-muted-foreground"
+              aria-pressed={patientTasksOpen}
+              onClick={onPatientTasks}
+            >
+              {openTaskCount === 1 ? "1 open Task" : `${openTaskCount} open Tasks`}
+            </Button>
+          )}
           {textTask && onTextTaskUpdated && <TextConversationAction key={textTask.id} task={textTask} reviewed={reviewedTextTaskKey === textTaskKey} onUpdated={onTextTaskUpdated} onNext={onNextTask} />}
           {engagement.locations.length > 1 && (
             <NativeSelect
@@ -213,4 +261,11 @@ export function EngagementWorkspaceView({
       />
     </section>
   )
+}
+
+function phoneNames(names: string[], callName = "") {
+  const known = callName.trim().toLowerCase()
+  return !known || names.some((name) => name.toLowerCase() === known)
+    ? names
+    : [...names, callName.trim()]
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { type ReactNode, useEffect, useRef, useState } from "react"
 import {
   CheckIcon,
   CheckCircle2Icon,
@@ -46,6 +46,7 @@ export function TaskWorkspace({
   taskCallError,
   onTaskUpdated,
   onReturnToCall,
+  children,
 }: {
   task: Task
   onNextTask?: () => void
@@ -54,6 +55,7 @@ export function TaskWorkspace({
   taskCallError: string
   onTaskUpdated: (task: Task, advance?: boolean) => void
   onReturnToCall: () => void
+  children?: ReactNode
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(task.title)
@@ -152,8 +154,9 @@ export function TaskWorkspace({
   return (
     <section
       aria-label="Focused Task"
-      className="h-full min-h-0 flex-1 overflow-y-auto bg-transparent px-5 py-5"
+      className="flex h-full min-h-0 flex-1 flex-col bg-transparent"
     >
+      <header className="max-h-32 min-h-11 shrink-0 overflow-y-auto px-5 pt-5">
       {editing && task.state === "OPEN" ? (
         <div className="flex items-center gap-1">
           <Input
@@ -202,6 +205,8 @@ export function TaskWorkspace({
           )}
         </div>
       )}
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
       {task.urgency === "high_priority" && (
         <div className="mt-3 flex flex-wrap gap-2">
           <Badge variant="destructive">{taskUrgencyLabels.high_priority}</Badge>
@@ -314,6 +319,8 @@ export function TaskWorkspace({
           />
         </div>
       </details>
+      {children}
+      </div>
     </section>
   )
 }
