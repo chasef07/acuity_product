@@ -31,6 +31,20 @@ export function presentTimeline(items: ConversationTimelineItem[], tab: ThreadTa
   )
 }
 
+function withCurrentTask(item: ConversationTimelineItem, current: ReadonlyMap<string, Task>): ConversationTimelineItem {
+  const latest = item.task && current.get(item.task.id)
+  const task = latest && latest.version > item.task!.version ? latest : item.task
+  const entries = item.entries?.map((entry) => withCurrentTask(entry, current))
+  const changed = task !== item.task || entries?.some((entry, index) => entry !== item.entries![index])
+  return changed ? { ...item, ...(task ? { task } : {}), ...(entries ? { entries } : {}) } : item
+}
+
+export function withCurrentTasks(items: ConversationTimelineItem[], tasks: readonly Task[]) {
+  if (tasks.length === 0) return items
+  const current = new Map(tasks.map((task) => [task.id, task]))
+  return items.map((item) => withCurrentTask(item, current))
+}
+
 type HistoryCall = NonNullable<ConversationTimelineItem["call"]>
 type HistoryAI = NonNullable<ConversationTimelineItem["aiInteraction"]>
 

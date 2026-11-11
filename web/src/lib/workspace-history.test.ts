@@ -10,6 +10,7 @@ import {
   openTaskCallbackNotice,
   presentTimeline,
   taskActivityDetail,
+  withCurrentTasks,
 } from "./workspace-history.ts"
 
 const base = { id: "item", occurredAt: "2026-08-13T12:00:00Z" } as const
@@ -389,6 +390,25 @@ test("thread Task Activity names who acted and keeps automation automatic", () =
   assert.equal(taskActivityDetail({ ...activity("TASK_COMPLETED", service), taskActivityDetails: { closeReason: "EXPIRED" } }), "Task closed as Expired automatically")
   const automatic = { ...callbackCompletion, taskActivityActor: { kind: "SERVICE", subject: "work-recovery-resolution" } } as ConversationTimelineItem
   assert.equal(taskActivityDetail(automatic), "Missed call review completed after caller@example.test's callback attempt")
+})
+
+test("a newer copy of a Task replaces the one a held thread still shows, on the root and inside a call", () => {
+  const stale = taskEntry({ id: "task", version: 1 })
+  const untouched = taskEntry({ id: "other", version: 4 })
+  const call = { ...base, id: "root", type: "CALL_HISTORY", entries: [aiEntry({ resolved: true }), stale] } as ConversationTimelineItem
+  const items = [call, stale, untouched]
+  const closed = { ...stale.task!, state: "COMPLETED", closeReason: "DONE", version: 2, completedBy: { kind: "HUMAN", subject: "staff", email: "staff@example.test" } } as Task
+  const current = withCurrentTasks(items, [closed, { ...untouched.task!, title: "An older copy", version: 3 } as Task])
+
+  assert.equal(current[0]!.entries![1]!.task, closed)
+  assert.equal(current[1]!.task, closed)
+  assert.equal(current[2], untouched, "an older copy never replaces what the thread shows")
+  assert.equal(current[0]!.entries![0], call.entries![0])
+  assert.equal(call.entries![1]!.task!.state, "OPEN", "the loaded page is not mutated")
+  assert.equal(callHistoryPresentation(call)!.outcome.label, "Message taken")
+  assert.equal(callHistoryPresentation(current[0]!)!.outcome.label, "Resolved by AI")
+  assert.equal(linkedTaskStatus(callHistoryPresentation(current[0]!)!.tasks[0]!), "Done, by staff@example.test")
+  assert.equal(withCurrentTasks(items, []), items)
 })
 
 test("the Texts tab keeps only messages and the Calls tab keeps only calls", () => {
