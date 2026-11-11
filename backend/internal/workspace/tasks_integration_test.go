@@ -37,6 +37,11 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 				Email:         "staff@workspace-queue.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
+			}, {
+				Key:           "workspace-queue-colleague",
+				Email:         "colleague@workspace-queue.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
 			}},
 		}},
 	})

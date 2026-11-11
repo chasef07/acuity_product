@@ -747,6 +747,85 @@ export type TaskInteraction = {
     type: 'CALL' | 'VOICEMAIL';
 };
 
+/**
+ * Mine lists a patient when at least one open Task is in a category the reader is responsible for, is a missed-call, voicemail, text, or appointment review, or has no owner. Everyone lists every patient with an open Task.
+ */
+export type PatientWorkScope = 'mine' | 'everyone';
+
+/**
+ * callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner with live access to the Task's Location.
+ */
+export type PatientWorkFilter = 'all' | 'callBack' | 'texts' | 'appointments' | 'unowned';
+
+export type PatientWorkQueryRequest = {
+    practiceId: string;
+    locationId?: string;
+    search?: string;
+    scope?: PatientWorkScope;
+    filter?: PatientWorkFilter;
+    cursor?: string;
+    limit?: number;
+};
+
+export type PatientWorkPage = {
+    /**
+     * Patients with a high-priority matching Task first, then by newest matching Task.
+     */
+    rows: Array<PatientWorkRow>;
+    counts: PatientWorkCounts;
+    totals: PatientWorkTotals;
+    nextCursor: string;
+};
+
+export type PatientWorkRow = {
+    phone: string;
+    /**
+     * The caller name when exactly one name was seen on the phone. Empty when none or several were seen.
+     */
+    displayName: string;
+    /**
+     * Every open Task for the phone in the Locations the reader may read, whatever the scope and filter.
+     */
+    openCount: number;
+    /**
+     * Whether any Task matching the scope and filter is high priority.
+     */
+    highPriority: boolean;
+    hasUnowned: boolean;
+    /**
+     * When the newest Task matching the scope and filter last changed for the patient.
+     */
+    activityAt: string;
+    /**
+     * Length of the voicemail when the top Task is a voicemail review with a recording.
+     */
+    voicemailDurationSeconds?: number;
+    top: Task;
+};
+
+/**
+ * How many patients each filter matches in the requested scope, Locations, and search.
+ */
+export type PatientWorkCounts = {
+    all: number;
+    callBack: number;
+    texts: number;
+    appointments: number;
+    unowned: number;
+};
+
+/**
+ * Totals across the requested Locations, whatever the scope, filter, and search.
+ */
+export type PatientWorkTotals = {
+    openTasks: number;
+    patients: number;
+    /**
+     * Patients with open Tasks that the requested scope leaves out.
+     */
+    patientsOutsideScope: number;
+};
+
 export type TaskPage = {
     items: Array<Task>;
     nextCursor: string;
@@ -3940,6 +4019,43 @@ export type QueryTasksResponses = {
 };
 
 export type QueryTasksResponse = QueryTasksResponses[keyof QueryTasksResponses];
+
+export type QueryPatientWorkData = {
+    body: PatientWorkQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/tasks/patients/query';
+};
+
+export type QueryPatientWorkErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryPatientWorkError = QueryPatientWorkErrors[keyof QueryPatientWorkErrors];
+
+export type QueryPatientWorkResponses = {
+    /**
+     * One page of patients with open Tasks.
+     */
+    200: PatientWorkPage;
+};
+
+export type QueryPatientWorkResponse = QueryPatientWorkResponses[keyof QueryPatientWorkResponses];
 
 export type ReadTaskData = {
     body?: never;

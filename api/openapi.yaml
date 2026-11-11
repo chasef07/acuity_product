@@ -1337,6 +1337,31 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/tasks/patients/query:
+    post:
+      operationId: queryPatientWork
+      summary: List the patients with open Tasks, one row per phone, with filter counts and totals.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientWorkQueryRequest"
+      responses:
+        "200":
+          description: One page of patients with open Tasks.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatientWorkPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks/{taskId}:
     get:
       operationId: readTask
@@ -3952,6 +3977,129 @@ components:
         type:
           type: string
           enum: [CALL, VOICEMAIL]
+    PatientWorkScope:
+      type: string
+      enum: [mine, everyone]
+      description: >-
+        Mine lists a patient when at least one open Task is in a category the reader is responsible for,
+        is a missed-call, voicemail, text, or appointment review, or has no owner. Everyone lists every
+        patient with an open Task.
+    PatientWorkFilter:
+      type: string
+      enum: [all, callBack, texts, appointments, unowned]
+      description: >-
+        callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches
+        appointment reviews, and unowned matches follow-up Tasks whose category has no owner with live access
+        to the Task's Location.
+    PatientWorkQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        search:
+          type: string
+          maxLength: 500
+        scope:
+          $ref: "#/components/schemas/PatientWorkScope"
+        filter:
+          $ref: "#/components/schemas/PatientWorkFilter"
+        cursor:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+    PatientWorkPage:
+      type: object
+      additionalProperties: false
+      required: [rows, counts, totals, nextCursor]
+      properties:
+        rows:
+          description: Patients with a high-priority matching Task first, then by newest matching Task.
+          type: array
+          items:
+            $ref: "#/components/schemas/PatientWorkRow"
+        counts:
+          $ref: "#/components/schemas/PatientWorkCounts"
+        totals:
+          $ref: "#/components/schemas/PatientWorkTotals"
+        nextCursor:
+          type: string
+    PatientWorkRow:
+      type: object
+      additionalProperties: false
+      required: [phone, displayName, openCount, highPriority, hasUnowned, activityAt, top]
+      properties:
+        phone:
+          type: string
+        displayName:
+          description: The caller name when exactly one name was seen on the phone. Empty when none or several were seen.
+          type: string
+        openCount:
+          description: Every open Task for the phone in the Locations the reader may read, whatever the scope and filter.
+          type: integer
+          minimum: 1
+        highPriority:
+          description: Whether any Task matching the scope and filter is high priority.
+          type: boolean
+        hasUnowned:
+          type: boolean
+        activityAt:
+          description: When the newest Task matching the scope and filter last changed for the patient.
+          type: string
+          format: date-time
+        voicemailDurationSeconds:
+          description: Length of the voicemail when the top Task is a voicemail review with a recording.
+          type: integer
+          minimum: 1
+        top:
+          description: >-
+            The Task a reader opens for the patient. Among Tasks matching the scope and filter, high priority
+            comes first, then missed calls and voicemails, texts, appointment reviews, and other Tasks, newest first.
+          $ref: "#/components/schemas/Task"
+    PatientWorkCounts:
+      description: How many patients each filter matches in the requested scope, Locations, and search.
+      type: object
+      additionalProperties: false
+      required: [all, callBack, texts, appointments, unowned]
+      properties:
+        all:
+          type: integer
+          minimum: 0
+        callBack:
+          type: integer
+          minimum: 0
+        texts:
+          type: integer
+          minimum: 0
+        appointments:
+          type: integer
+          minimum: 0
+        unowned:
+          type: integer
+          minimum: 0
+    PatientWorkTotals:
+      description: Totals across the requested Locations, whatever the scope, filter, and search.
+      type: object
+      additionalProperties: false
+      required: [openTasks, patients, patientsOutsideScope]
+      properties:
+        openTasks:
+          type: integer
+          minimum: 0
+        patients:
+          type: integer
+          minimum: 0
+        patientsOutsideScope:
+          description: Patients with open Tasks that the requested scope leaves out.
+          type: integer
+          minimum: 0
     TaskPage:
       type: object
       additionalProperties: false

@@ -29,7 +29,10 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 		{"insurance", work.TaskCategoryInsurance, "backup"},
 		{"optical", work.TaskCategoryOptical, "primary"},
 	}
-	grants := []access.AccessGrantProvision{{Key: "admin", Email: "admin@shared-review.test", Role: access.RoleAdmin, LocationScope: access.LocationScopeAll}}
+	grants := []access.AccessGrantProvision{
+		{Key: "admin", Email: "admin@shared-review.test", Role: access.RoleAdmin, LocationScope: access.LocationScopeAll},
+		{Key: "records", Email: "records@shared-review.test", Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
+	}
 	for _, member := range staff {
 		grants = append(grants, access.AccessGrantProvision{Key: member.key, Email: member.key + "@shared-review.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"allowed"}})
 	}

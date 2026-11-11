@@ -108,22 +108,26 @@ const phoneClosedTodayQuery = phoneTasksSource + `
 	ORDER BY task.completed_at DESC, task.id DESC
 	LIMIT 20`
 
-const phoneNamesQuery = `
-	SELECT latest.name
-	FROM (
-		SELECT DISTINCT ON (lower(seen.name)) seen.name, seen.seen_at
-		FROM (
+func phoneNamesSeen(phone string) string {
+	return `
 			SELECT btrim(task.caller_name) AS name, task.created_at AS seen_at
 			FROM work_tasks task
 			WHERE task.practice_id = $1
 				AND task.location_id = ANY($2::uuid[])
-				AND task.phone = $3
+				AND task.phone = ` + phone + `
 			UNION ALL
 			SELECT btrim(thread.display_name), thread.created_at
 			FROM messaging_threads thread
 			WHERE thread.practice_id = $1
 				AND thread.location_id = ANY($2::uuid[])
-				AND thread.external_phone = $3
+				AND thread.external_phone = ` + phone
+}
+
+var phoneNamesQuery = `
+	SELECT latest.name
+	FROM (
+		SELECT DISTINCT ON (lower(seen.name)) seen.name, seen.seen_at
+		FROM (` + phoneNamesSeen("$3") + `
 		) seen
 		WHERE seen.name <> ''
 		ORDER BY lower(seen.name), seen.seen_at DESC

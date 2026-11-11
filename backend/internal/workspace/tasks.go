@@ -597,13 +597,12 @@ func normalizedDigits(value string) string {
 }
 
 func taskResponsibilityFilter(responsibility string, email string) string {
+	owner := `EXISTS (SELECT 1 FROM work_responsibilities responsibility
+ WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
+ AND responsibility.category=task.category AND ` + responsibilityHasLiveAccess
 	return `
  AND (` + responsibility + `::text <> 'mine' OR task.category IS NULL
  OR ` + work.TaskIsCommunicationReviewSQL + `
- OR NOT EXISTS (SELECT 1 FROM work_responsibilities owned
- WHERE owned.practice_id=task.practice_id AND owned.location_id=task.location_id
- AND owned.category=task.category)
- OR EXISTS (SELECT 1 FROM work_responsibilities responsibility
- WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
- AND responsibility.category=task.category AND responsibility.account_email=` + email + `))`
+ OR NOT ` + owner + `)
+ OR ` + owner + ` AND responsibility.account_email=` + email + `))`
 }
