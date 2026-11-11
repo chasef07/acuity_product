@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import test, { type TestContext } from "node:test"
+import { act } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
 
@@ -283,4 +284,80 @@ test("a completed Task row credits the team when no email is known and stays qui
 test("patient rows carry no tick and no close menu", () => {
   const html = rail(projection(Object.values(patients))).body.innerHTML
   assert.doesNotMatch(html, /Complete Task:|Close Task as:/)
+})
+
+async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/workspace" })
+  Object.defineProperties(dom.window, {
+    requestAnimationFrame: { configurable: true, value: () => 0 },
+    cancelAnimationFrame: { configurable: true, value: () => {} },
+    matchMedia: { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
+  })
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window },
+    document: { configurable: true, value: dom.window.document },
+    navigator: { configurable: true, value: dom.window.navigator },
+    HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    Element: { configurable: true, value: dom.window.Element },
+    Node: { configurable: true, value: dom.window.Node },
+    getComputedStyle: { configurable: true, value: dom.window.getComputedStyle.bind(dom.window) },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  })
+  const host = dom.window.document.createElement("div")
+  dom.window.document.body.append(host)
+  const { createRoot } = await import("react-dom/client")
+  const root = createRoot(host)
+  t.after(async () => {
+    await act(async () => root.unmount())
+    dom.window.close()
+  })
+  const intents: string[] = []
+  const show = (state: WorkspaceProjectionState) => act(async () => root.render(
+    <SidebarProvider>
+      <WorkspaceRail projection={state} onIntent={(intent) => intents.push(intent.type)} />
+    </SidebarProvider>,
+  ))
+  await show(initial)
+  const row = (phone: string) => host.querySelector(`[data-testid='patient-row'][data-phone='${phone}'] button`)!
+  const pointer = (type: "pointerover" | "pointerout", phone: string) => act(async () => {
+    row(phone).dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true, relatedTarget: dom.window.document.body }))
+  })
+  return {
+    show,
+    intents,
+    pointer,
+    click: (phone: string) => act(async () => (row(phone) as HTMLElement).click()),
+    phones: () => [...host.querySelectorAll("[data-testid='patient-row']")].map((item) => item.getAttribute("data-phone")),
+    reason: (phone: string) => rowText(dom.window.document, phone, "reason"),
+    held: () => host.querySelector("[data-testid='patient-list-held']")?.textContent,
+  }
+}
+
+test("rows under the pointer keep their place while new work arrives, and catch up when the pointer leaves", async (t) => {
+  const { followUp, callBack, texts, unowned } = patients
+  const base = projection([callBack, texts, followUp])
+  const withRows = (rows: PatientWorkRow[]) => ({ ...base, patients: { ...base.patients, items: rows } })
+  const page = await mountedRail(t, base)
+  assert.equal(page.held(), undefined)
+
+  await page.pointer("pointerover", texts.phone)
+  const longer = { ...callBack, top: { ...callBack.top, voicemailDurationSeconds: 61 } }
+  await page.show(withRows([unowned, longer, texts]))
+  assert.deepEqual(page.phones(), [callBack.phone, texts.phone, followUp.phone], "no row moved, joined or left")
+  assert.equal(page.reason(callBack.phone), "Voicemail · 1:01", "a listed row still refreshes in place")
+  assert.equal(page.held(), "New activity")
+
+  await page.click(followUp.phone)
+  assert.deepEqual(page.intents, ["select-task"], "the row that left elsewhere still opens its patient")
+  assert.deepEqual(page.phones(), [unowned.phone, callBack.phone, texts.phone], "their own click applies what was held")
+  assert.equal(page.held(), undefined)
+
+  await page.show(withRows([texts, longer]))
+  assert.deepEqual(page.phones(), [unowned.phone, callBack.phone, texts.phone], "the pointer is still in the list")
+  await page.pointer("pointerout", texts.phone)
+  assert.deepEqual(page.phones(), [texts.phone, callBack.phone])
+  assert.equal(page.held(), undefined)
+
+  await page.show(withRows([unowned, texts, longer]))
+  assert.deepEqual(page.phones(), [unowned.phone, texts.phone, callBack.phone], "with nobody in the list it follows live")
 })
