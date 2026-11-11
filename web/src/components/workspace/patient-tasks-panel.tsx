@@ -21,6 +21,7 @@ import { useEngagementSummary } from "@/lib/clients/engagement"
 import { signInRequired } from "@/lib/clients/portal-request"
 import { reopenTask } from "@/lib/clients/tasks"
 import type { PortalQuery } from "@/lib/data/queries"
+import { otherOpenTasks } from "@/lib/patient-tasks"
 import { cn } from "@/lib/utils"
 import {
   formatRelativeTime,
@@ -38,7 +39,7 @@ type TaskFailure = { taskID: string; message: string }
 
 type PatientTasksPanelProps = {
   currentTaskID?: string
-  otherThan?: readonly string[]
+  otherThan?: readonly Pick<Task, "id" | "state">[]
   callTaskID?: string
   completion: { pendingTaskID: string; errorTaskID: string; error: string }
   className?: string
@@ -118,16 +119,20 @@ export function PatientTasksPanelView({
   const [showAll, setShowAll] = useState(false)
   const loaded = summary.status === "ready" ? summary.data : undefined
   const title = otherThan ? "Other open Tasks" : "Open Tasks"
-  const open = useMemo(() => {
+  const listed = useMemo(() => {
     if (!loaded) return undefined
-    const listed = otherThan
-      ? loaded.openTasks.filter((task) => !otherThan.includes(task.id))
-      : loaded.openTasks
-    return [
-      ...listed.filter((task) => task.id === callTaskID),
-      ...listed.filter((task) => task.id !== callTaskID),
-    ]
+    const { tasks, count } = otherThan
+      ? otherOpenTasks(loaded, otherThan)
+      : { tasks: loaded.openTasks, count: loaded.openTaskCount }
+    return {
+      open: [
+        ...tasks.filter((task) => task.id === callTaskID),
+        ...tasks.filter((task) => task.id !== callTaskID),
+      ],
+      count,
+    }
   }, [loaded, otherThan, callTaskID])
+  const open = listed?.open
 
   useEffect(() => {
     const closed = closing.current
@@ -143,7 +148,7 @@ export function PatientTasksPanelView({
     ;(row ?? section.current)?.focus()
   }, [open, completion.pendingTaskID])
 
-  if (!loaded || !open) {
+  if (!loaded || !listed || !open) {
     return (
       <PanelFrame title={title} className={className} busy={summary.status === "loading"}>
         {summary.status === "loading" ? (
@@ -173,7 +178,7 @@ export function PatientTasksPanelView({
   if (otherThan && open.length === 0 && closedToday.length === 0) return null
   const shared = loaded.names.length > 1
   const shown = showAll ? open : open.slice(0, collapsedRowLimit)
-  const count = loaded.openTaskCount - (loaded.openTasks.length - open.length)
+  const { count } = listed
   const capped = count > open.length
 
   const complete = (task: Task, reason: StaffTaskCloseReason) => {

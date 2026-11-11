@@ -151,7 +151,7 @@ test("a Task closed today names its reason and who closed it, and offers Reopen"
 
 test("loading holds its heading and one row of space, under whichever heading the list will carry", () => {
   const current = fiveTasks[0]
-  for (const [otherThan, heading] of [[undefined, "Open Tasks"], [[current.id], "Other open Tasks"]] as const) {
+  for (const [otherThan, heading] of [[undefined, "Open Tasks"], [[current], "Other open Tasks"]] as const) {
     const loading = renderToStaticMarkup(view({ summary: { status: "loading" }, otherThan }))
     assert.match(loading, /aria-busy="true"/)
     assert.ok(loading.includes(`>${heading}</h2>`))
@@ -166,7 +166,7 @@ test("loading holds its heading and one row of space, under whichever heading th
 test("beside a selected Task the list is the patient's other open Tasks, and is absent when there are none", (t) => {
   t.mock.method(Date, "now", () => now)
   const [first, second] = fiveTasks
-  const others = renderToStaticMarkup(view({ summary: ready(fiveTasks), otherThan: [first.id] }))
+  const others = renderToStaticMarkup(view({ summary: ready(fiveTasks), otherThan: [first] }))
   assert.match(others, /<section[^>]*aria-label="Other open Tasks"/)
   assert.match(others, /<h2[^>]*>Other open Tasks<\/h2><span[^>]*>4<\/span>/)
   assert.deepEqual(
@@ -175,14 +175,14 @@ test("beside a selected Task the list is the patient's other open Tasks, and is 
   )
   assert.doesNotMatch(others, /Synthetic first request/, "the Task in the detail above is not repeated")
 
-  const grouped = renderToStaticMarkup(view({ summary: ready(fiveTasks), otherThan: [first.id, second.id] }))
+  const grouped = renderToStaticMarkup(view({ summary: ready(fiveTasks), otherThan: [first, second] }))
   assert.match(grouped, /<h2[^>]*>Other open Tasks<\/h2><span[^>]*>3<\/span>/)
   assert.equal(rows(grouped).length, 3, "a group's members are all in the detail above")
 
-  assert.equal(renderToStaticMarkup(view({ summary: ready([first]), otherThan: [first.id] })), "")
-  assert.equal(renderToStaticMarkup(view({ summary: ready([]), otherThan: [first.id] })), "")
+  assert.equal(renderToStaticMarkup(view({ summary: ready([first]), otherThan: [first] })), "")
+  assert.equal(renderToStaticMarkup(view({ summary: ready([]), otherThan: [first] })), "")
 
-  const onlyClosed = renderToStaticMarkup(view({ summary: ready([first], [closedTask]), otherThan: [first.id] }))
+  const onlyClosed = renderToStaticMarkup(view({ summary: ready([first], [closedTask]), otherThan: [first] }))
   assert.doesNotMatch(onlyClosed, /Other open Tasks|Nothing open/)
   assert.match(onlyClosed, /<section[^>]*aria-label="Closed today"/)
   assert.match(onlyClosed, /aria-label="Reopen Task: Synthetic closed request"/)
@@ -227,11 +227,16 @@ test("a long list shows eight rows until asked for all, and says when the server
   await act(async () => toggle()!.click())
 
   const twelve = manyTasks(12)
-  await page.render(view({ summary: ready(twelve), otherThan: [twelve[0].id] }))
+  await page.render(view({ summary: ready(twelve), otherThan: [twelve[0]] }))
   assert.equal(toggle()?.textContent, "Show all 11", "the count is of the Tasks the list can show")
   const fifty = manyTasks(50)
-  await page.render(view({ summary: ready(fifty, [], { openTaskCount: 63 }), otherThan: [fifty[0].id] }))
+  await page.render(view({ summary: ready(fifty, [], { openTaskCount: 63 }), otherThan: [fifty[0]] }))
   assert.equal(toggle()?.textContent, "Show 49 of 62")
+  await page.render(view({ summary: ready(fifty, [], { openTaskCount: 55 }), otherThan: [openTask("held back")] }))
+  assert.match(page.host.innerHTML, /<h2[^>]*>Other open Tasks<\/h2><span[^>]*>54<\/span>/, "a selected Task the server held back is not one of the others")
+  assert.equal(toggle()?.textContent, "Show 50 of 54")
+  await act(async () => toggle()!.click())
+  assert.match(page.host.textContent ?? "", /Showing 50 of 54/)
 })
 
 test("on a call the titles are text, and the call's own Task comes first with its marker", (t) => {
@@ -461,7 +466,7 @@ test("a call shows the caller's Tasks under its header, above the recording and 
 test("a selected Task keeps its detail first and lists the patient's other Tasks beneath it, for one Task and for a group", () => {
   const task = fiveTasks[0]
   const single = context({ task, view: "task" })
-  assert.deepEqual(single.asked, [[task.phone, { beside: "task", otherThan: [task.id] }]])
+  assert.deepEqual(single.asked, [[task.phone, { beside: "task", otherThan: [task] }]])
   const detail = single.markup.indexOf('aria-label="Focused Task"')
   const list = single.markup.indexOf("patient tasks for")
   assert.ok(detail !== -1 && detail < single.markup.indexOf("Complete &amp; next"))
@@ -471,7 +476,7 @@ test("a selected Task keeps its detail first and lists the patient's other Tasks
   assert.match(single.markup, /^<div class="[^"]*\bmin-w-0\b/, "the column cannot be widened by its content")
   const group = { ...task, groupMembers: [task, fiveTasks[1]] }
   const grouped = context({ task, group, taskRows: [group], onSelectTask: () => {}, view: "task" })
-  assert.deepEqual(grouped.asked, [[task.phone, { beside: "task", otherThan: [task.id, fiveTasks[1].id] }]])
+  assert.deepEqual(grouped.asked, [[task.phone, { beside: "task", otherThan: [task, fiveTasks[1]] }]])
   assert.ok(grouped.markup.indexOf("Complete all 2 requests") < grouped.markup.indexOf("patient tasks for"))
   assert.deepEqual(context({}).asked, [])
 })

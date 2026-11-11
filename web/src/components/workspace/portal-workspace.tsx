@@ -53,6 +53,7 @@ import { WorkEmptyState } from "@/components/workspace/work-empty-state"
 import type {
   AccessDiscovery,
   CallingCall,
+  Task,
 } from "@/lib/api/generated/types.gen"
 import { authClient } from "@/lib/auth-client"
 import { workspaceScopeForCall } from "@/lib/calling/workspace-scope"
@@ -340,7 +341,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       placement: {
         className: string
         currentTaskID?: string
-        otherThan?: readonly string[]
+        otherThan?: readonly Task[]
         callTaskID?: string
         titlesOpenTasks: boolean
       },

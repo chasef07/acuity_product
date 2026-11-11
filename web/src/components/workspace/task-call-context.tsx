@@ -29,7 +29,7 @@ type TaskCallContextProps = {
 }
 
 export type PatientTasksPlacement =
-  | { beside: "task"; otherThan: readonly string[] }
+  | { beside: "task"; otherThan: readonly Task[] }
   | { beside: "call"; callTaskID?: string }
 
 export function TaskCallContext({
@@ -53,8 +53,8 @@ export function TaskCallContext({
     },
     [onOpenTask],
   )
-  const shownTaskIDs = useMemo(
-    () => (group?.groupMembers ?? (task ? [task] : [])).map((shown) => shown.id),
+  const shownTasks = useMemo(
+    () => group?.groupMembers ?? (task ? [task] : []),
     [group, task],
   )
   if (view === "call" && activeCall) {
@@ -74,7 +74,7 @@ export function TaskCallContext({
     )
   }
   if (view === "task" && task) {
-    const otherTasks = patientTasks(task.phone, { beside: "task", otherThan: shownTaskIDs })
+    const otherTasks = patientTasks(task.phone, { beside: "task", otherThan: shownTasks })
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {group && onSelectTask ? (
