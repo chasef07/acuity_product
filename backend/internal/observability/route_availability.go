@@ -9,13 +9,14 @@ type DiagnosticRoute string
 
 const (
 	RouteTaskQuery        DiagnosticRoute = "/v1/tasks/query"
+	RoutePatientWorkQuery DiagnosticRoute = "/v1/tasks/patients/query"
 	RouteCallingReadiness DiagnosticRoute = "/v1/calling/readiness"
 	RouteEvents           DiagnosticRoute = "/v1/events"
 )
 
 func RouteAvailability(route DiagnosticRoute, outcome AvailabilityOutcome, stage FailureStage, duration time.Duration) Event {
 	return event("acuity_backend_route_availability",
-		"route", bounded(string(route), string(RouteTaskQuery), string(RouteCallingReadiness), string(RouteEvents)),
+		"route", bounded(string(route), string(RouteTaskQuery), string(RoutePatientWorkQuery), string(RouteCallingReadiness), string(RouteEvents)),
 		"outcome", bounded(string(outcome), "available", "unavailable"),
 		"failure_stage", bounded(string(stage), "none", "authentication", "authorization", "dependency", "handler"),
 		"seconds", positive(duration).Seconds())
