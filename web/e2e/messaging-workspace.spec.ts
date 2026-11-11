@@ -1,7 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test"
-import type { TaskPage } from "../src/lib/api/generated/types.gen"
 
-import { signInAs } from "./support"
+import { patientRow, railFilter, railScope, signInAs } from "./support"
 
 const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
@@ -66,19 +65,21 @@ test("appointment verification stays open until shared completion and can be reo
     return Boolean(task)
   }).toBe(true)
   await page.reload()
-  await page.getByRole("button", { name: /^Appointments/ }).click()
   const row = page.locator(`[data-task-id="${task.id}"]`)
   await expect(row).toBeVisible()
   await row.getByRole("button").first().click()
+  await railFilter(page, "appointments").click()
+  await expect(railFilter(page, "appointments")).toHaveAttribute("aria-pressed", "true")
   await expect(row).toBeVisible()
   const secondContext = await browser.newContext()
   try {
     const second = await secondContext.newPage()
     await signInAs(second, "selected@abita.test", "Second Synthetic Staff")
-    await second.getByRole("button", { name: /^Appointments/ }).click()
     const secondRow = second.locator(`[data-task-id="${task.id}"]`)
     await expect(secondRow).toBeVisible()
     await secondRow.getByRole("button").first().click()
+    await railFilter(second, "appointments").click()
+    await expect(secondRow).toBeVisible()
     await page.getByRole("button", { name: "Verify & next", exact: true }).click()
     await expect(row).toHaveCount(0)
     await expect(secondRow).toHaveCount(0)
@@ -234,11 +235,12 @@ test("rail hover details and the message composer preserve compact context", asy
     "hover-details",
   )
   await page.reload()
-  const taskRow = page.getByRole("button", {
-    name: /^Review billing balance/,
-  })
-  await taskRow.hover()
+  const taskRow = patientRow(page, "+17275550196")
+  await expect(taskRow.getByTestId("patient-row-reason")).toHaveText("Review billing balance")
+  await taskRow.getByRole("button").hover()
   const hoverDetails = page.getByTestId("rail-hover-details")
+  await expect(hoverDetails).toContainText("1 open")
+  await expect(hoverDetails).toContainText("Review billing balance")
   await expect(hoverDetails).toContainText("(727) 555-0196")
   await expect(hoverDetails).toContainText("Fixture Location 1")
   await expect(hoverDetails).toHaveCSS("opacity", "1")
@@ -305,9 +307,10 @@ test("rail hover details and the message composer preserve compact context", asy
     fullPage: true,
   })
 
-  await taskRow.hover()
+  await taskRow.getByRole("button").click()
   await page
-    .getByRole("button", { name: "Complete Task: Review billing balance" })
+    .getByRole("complementary", { name: "Task context" })
+    .getByRole("button", { name: "Complete & next", exact: true })
     .click()
   await expect(taskRow).toHaveCount(0)
 })
@@ -356,14 +359,9 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     page.getByRole("button", { name: "Workspace selector" }),
   ).toHaveAttribute("title", /Fixture Location 1/)
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
-  await expect(page.getByRole("button", { name: /^Tasks/ })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  )
-  await expect(
-    page.getByRole("button", { name: /^Tasks/ }),
-  ).toBeVisible()
-  await expect(page.getByLabel("Workspace folders").getByRole("button", { name: /^Texts/ })).toBeVisible()
+  await expect(railScope(page, "My Tasks")).toHaveAttribute("aria-pressed", "true")
+  await expect(railFilter(page, "all")).toHaveAttribute("aria-pressed", "true")
+  await expect(railFilter(page, "texts")).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
   await openNumberInbox(page, "7275550199")
   await expect(page.getByRole("button", { name: "Call", exact: true })).toBeVisible()
@@ -552,10 +550,11 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
       .getByText("Sent", { exact: true }),
   ).toBeVisible()
 
-  await page.getByRole("button", { name: /^Texts/ }).click()
   const inboundText = "Please call me about the pickup time."
   await sendInbound(page, "messaging-inbound", inboundText)
-  const firstThread = page.getByTestId("task-row").filter({ hasText: "(727) 555-0199" }).getByRole("button").first()
+  const texter = patientRow(page, "+17275550199")
+  await expect(texter.getByTestId("patient-row-reason")).toHaveText(inboundText)
+  const firstThread = texter.getByRole("button")
   await expect(page.getByText("Correspondence ledger", { exact: true })).toHaveCount(0)
   await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
   await firstThread.click()
@@ -575,8 +574,9 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toHaveCount(0)
 
   await expect(
-    page.getByRole("button", { name: "Follow up on text", exact: true }),
+    page.getByTestId("patient-row").filter({ hasText: "Follow up on text" }),
   ).toHaveCount(0)
+  await expect(texter.getByTestId("patient-row-count")).toHaveCount(0)
 
   await page.setViewportSize({ width: 390, height: 844 })
   const messageActions = inbound.locator('[data-slot="message-footer"]')
@@ -705,12 +705,9 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     "closed",
   )
 
-  const sidebarTask = page.getByRole("button", {
-    name: "Follow up on text",
-    exact: true,
-  })
-  await expect(sidebarTask).toBeVisible()
-  await sidebarTask.click()
+  await expect(texter.getByTestId("patient-row-count")).toHaveText("2 open")
+  await expect(texter.getByTestId("patient-row-reason")).toHaveText(inboundText)
+  await taskTouchpoint.click()
   const sidebarTaskContext = page.getByRole("complementary", {
     name: "Task context",
   })
@@ -785,11 +782,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     completedTaskContext.getByRole("button", { name: "Complete & next" }),
   ).toBeVisible()
-  await expect(
-    page
-      .getByTestId("task-row")
-      .filter({ hasText: "Follow up on text" }),
-  ).toBeVisible()
+  await expect(texter.getByTestId("patient-row-reason")).toHaveText("Follow up on text")
   await expect(
     completedTaskContext.getByRole("heading", {
       name: "Follow up on text",
@@ -819,98 +812,34 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).not.toBeVisible()
 
   await createAIStaffTask(page, "billing", "Review billing balance")
-  const billingTaskButton = page.getByRole("button", {
-    name: "Review billing balance",
-    exact: true,
-  })
-  await expect(billingTaskButton).toBeVisible()
-  const taskCountsResponse = page.waitForResponse(
-    async (response) => {
-      if (
-        response.url() !== `${portalURL}/v1/tasks/query` ||
-        response.request().method() !== "POST" ||
-        !response.ok()
-      ) return false
-      const query = response.request().postDataJSON()
-      if (query.state !== "OPEN" || query.includeCounts === false) return false
-      const result = (await response.json()) as TaskPage
-      return Boolean(result.counts) && result.items.some(
-        (task) => task.sourceCallId === "messaging-medication",
-      )
-    },
-  )
+  const billingRow = patientRow(page, "+17275550196")
+  await expect(billingRow.getByTestId("patient-row-reason")).toHaveText("Review billing balance")
   await createAIStaffTask(page, "medication", "Review medication refill")
-  const counts = ((await (await taskCountsResponse).json()) as TaskPage).counts!
-  const medicationTaskButton = page.getByRole("button", {
-    name: "Review medication refill",
-    exact: true,
-  })
-  await expect(medicationTaskButton).toBeVisible()
-
-  const taskFilter = page.getByRole("button", {
-    name: "Filter My Tasks",
-  })
-  await taskFilter.click()
-  for (const [label, count] of [
-    ["All categories", counts.tasks],
-    ["Scheduling follow-up", counts.categories.appointments],
-    ["Medical records", counts.categories.documentation],
-    ["Optical", counts.categories.optical],
-    ["Clinical & pharmacy", counts.categories.medication],
-    ["Referrals", counts.categories.referrals],
-    ["Other", counts.categories.other],
-  ] as const) {
-    const option = page.getByRole("menuitemradio", { name: `${label} ${count}` })
-    if (label === "All categories" || count > 0) await expect(option).toBeVisible()
-    else await expect(option).toHaveCount(0)
-  }
-  await page.getByRole("menuitemradio", { name: /^Other / }).click()
-  await expect(
-    page.getByRole("button", { name: "Filter My Tasks · Other" }),
-  ).toBeVisible()
-  await expect(billingTaskButton).toBeVisible()
-  await expect(medicationTaskButton).toHaveCount(0)
-  await expect(
-    page.getByRole("button", { name: /^Tasks/ }),
-  ).toBeVisible()
+  const medicationRow = patientRow(page, "+17275550195")
+  await expect(medicationRow.getByTestId("patient-row-reason")).toHaveText("Review medication refill")
 
   await page.reload()
-  await expect(
-    page.getByRole("button", { name: "Filter My Tasks · Other" }),
-  ).toBeVisible()
-  await expect(billingTaskButton).toBeVisible()
-  await expect(medicationTaskButton).toHaveCount(0)
+  await expect(billingRow).toBeVisible()
+  await expect(medicationRow).toBeVisible()
 
-  const contextClose = page.getByRole("button", { name: "Close context panel" })
-  if (await contextClose.isVisible()) await contextClose.click()
-  const taskItem = page
-    .getByTestId("task-row")
-    .filter({ hasText: "Review billing balance" })
-  const taskRow = taskItem.getByRole("button", {
-    name: /^Review billing balance/,
-  })
-  const completeTask = taskItem.getByRole("button", {
-    name: "Complete Task: Review billing balance",
-  })
-  const relativeTime = taskItem.locator("time")
-  await expect(completeTask).toHaveCSS("opacity", "0")
-  const beforeHover = await taskRow.boundingBox()
-  await taskRow.hover()
+  await billingRow.getByRole("button").hover()
   const taskHoverDetails = page.getByTestId("rail-hover-details")
   await expect(taskHoverDetails).toContainText("(727) 555-0196")
   await expect(taskHoverDetails).toContainText("Fixture Location 1")
-  await expect(taskHoverDetails).toContainText("Normal priority · Created")
-  await expect(completeTask).toHaveCSS("opacity", "1")
-  await expect(relativeTime).toHaveCSS("opacity", "0")
-  expect(await taskRow.boundingBox()).toEqual(beforeHover)
+  await expect(taskHoverDetails).toContainText("Review billing balance")
+  await expect(billingRow.getByRole("button")).toHaveCount(1)
 
-  await taskRow.focus()
-  await expect(completeTask).toHaveCSS("opacity", "1")
-  await page.keyboard.press("Tab")
-  await expect(completeTask).toBeFocused()
-  await page.emulateMedia({ reducedMotion: "reduce" })
-  await expect(completeTask).toHaveCSS("transition-duration", "0s")
-  await expect(relativeTime).toHaveCSS("transition-duration", "0s")
+  await billingRow.getByRole("button").click()
+  await page.getByRole("button", { name: "1 open Task", exact: true }).click()
+  const patientTasks = page.getByRole("complementary", { name: "Patient Tasks" })
+  const taskItem = patientTasks
+    .getByTestId("patient-task-row")
+    .filter({ hasText: "Review billing balance" })
+  const completeTask = taskItem.getByRole("button", {
+    name: "Mark done: Review billing balance",
+    exact: true,
+  })
+  await expect(completeTask).toBeVisible()
 
   await page.route("**/api/auth/token", (route) =>
     route.fulfill({
@@ -987,38 +916,34 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
 
   await completeTask.click()
   await expect(taskItem).toBeVisible()
-  await expect(page.getByTestId("context-panel")).toHaveAttribute(
-    "data-state",
-    "closed",
-  )
+  await expect(billingRow).toBeVisible()
   await expect(
     taskItem.getByRole("alert").filter({ hasText: "changed elsewhere" }),
   ).toBeVisible()
 
-  await taskRow.hover()
   await completeTask.click()
   await expect(taskItem).toBeVisible()
   await expect(
     taskItem.getByRole("alert").filter({ hasText: "could not be completed" }),
   ).toBeVisible()
 
-  await taskRow.hover()
   await completeTask.click()
   await expect(completeTask).toHaveAttribute("aria-busy", "true")
   await expect(completeTask.getByRole("status", { name: "Loading" })).toBeVisible()
   await expect(taskItem).toBeVisible()
   releaseSuccess()
   await expect(taskItem).toHaveCount(0)
+  await expect(billingRow).toHaveCount(0)
   await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
 
-  await page.getByRole("button", { name: "Filter My Tasks · Other" }).click()
-  await page.getByRole("menuitemradio", { name: /^Clinical & pharmacy / }).click()
-  await page.keyboard.press("Escape")
-  const medicationItem = page
-    .getByTestId("task-row")
+  await medicationRow.getByRole("button").click()
+  await page.getByRole("button", { name: "1 open Task", exact: true }).click()
+  const medicationItem = patientTasks
+    .getByTestId("patient-task-row")
     .filter({ hasText: "Review medication refill" })
   const completeMedication = medicationItem.getByRole("button", {
-    name: "Complete Task: Review medication refill",
+    name: "Mark done: Review medication refill",
+    exact: true,
   })
   let releaseStaleCompletion = () => {}
   const staleCompletionGate = new Promise<void>((resolve) => {
@@ -1042,21 +967,20 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     if (body.practiceId === sourcePracticeID) sourceTaskQueries += 1
     await route.continue()
   }
-  await page.route(/\/v1\/tasks\/query$/, taskQueryRoute)
+  await page.route(/\/v1\/tasks\/(patients\/)?query$/, taskQueryRoute)
   await page.route(
     /\/v1\/tasks\/[^/]+\/complete$/,
     staleCompletionRoute,
   )
 
   await expect(medicationItem).toBeVisible()
-  await medicationItem.hover()
   await completeMedication.click()
   await expect(completeMedication).toHaveAttribute("aria-busy", "true")
   await page.getByRole("button", { name: "Workspace selector" }).click()
   await page
     .getByRole("button", { name: "Stale Callback Location", exact: true })
     .click()
-  await expect(page.getByTestId("task-row")).toHaveCount(0)
+  await expect(page.getByTestId("patient-row")).toHaveCount(0)
   sourceTaskQueries = 0
   releaseStaleCompletion()
   expect(await staleCompletionHandled).toBe(200)
@@ -1171,7 +1095,7 @@ async function createAINoAppointmentCall(page: Page) {
 }
 
 
-test("Text folder counts include old work and unloaded pages", async ({ page }) => {
+test("the Texts filter counts every patient, including old work and unloaded pages", async ({ page }) => {
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   for (let index = 0; index < 64; index += 1) {
@@ -1179,17 +1103,20 @@ test("Text folder counts include old work and unloaded pages", async ({ page }) 
   }
   await page.getByLabel("Search tasks, names, or phone").fill("555040")
   await page.getByLabel("Search tasks, names, or phone").press("Enter")
-  await page.getByRole("button", { name: /^Texts/ }).click()
-  await expect(page.getByRole("button", { name: /^Texts/ })).toContainText("64", { timeout: 30_000 })
-  await expect(page.getByTestId("task-row")).toHaveCount(50)
+  const texts = railFilter(page, "texts")
+  await texts.click()
+  await expect(texts).toHaveText("Texts64", { timeout: 30_000 })
+  await expect(railFilter(page, "all")).toHaveText("All64")
+  await expect(page.getByTestId("patient-row")).toHaveCount(50)
   await page.getByRole("button", { name: "Show more", exact: true }).click()
-  await expect(page.getByTestId("task-row")).toHaveCount(64)
-  await page.getByTestId("task-row").first().getByRole("button").first().click()
-  await expect(page.getByRole("button", { name: /^Texts/ })).toContainText("64")
+  await expect(page.getByTestId("patient-row")).toHaveCount(64)
+  await page.getByTestId("patient-row").first().getByRole("button").click()
+  await expect(texts).toHaveText("Texts64")
   await page.reload()
   await page.getByLabel("Search tasks, names, or phone").fill("555040")
   await page.getByLabel("Search tasks, names, or phone").press("Enter")
-  await expect(page.getByRole("button", { name: /^Texts/ })).toContainText("64")
+  await expect(texts).toHaveText("Texts64")
+  await expect(texts).toHaveAttribute("aria-pressed", "true")
 })
 
 test("staff replies complete text conversations and new texts return to the inbox", async ({ page }) => {
@@ -1197,9 +1124,11 @@ test("staff replies complete text conversations and new texts return to the inbo
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   const phone = "+15550509999"
   await sendInbound(page, "review-version-first", "Initial synthetic question", phone)
-  await page.getByRole("button", { name: /^Texts/ }).click()
-  const row = page.getByTestId("task-row").filter({ hasText: "(555) 050-9999" })
+  await railFilter(page, "texts").click()
+  const row = patientRow(page, phone)
   await expect(row).toBeVisible({ timeout: 30_000 })
+  await expect(row.getByTestId("patient-row-name")).toHaveText("(555) 050-9999")
+  await expect(row.getByTestId("patient-row-reason")).toHaveText("Initial synthetic question")
   await row.getByRole("button").first().click()
   await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "closed")
   await expect(page.getByRole("button", { name: "Mark done", exact: true })).toBeVisible()
@@ -1226,9 +1155,9 @@ test("refresh and back keep the selected Task", async ({ page }) => {
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await sendInbound(page, "location-first", "First synthetic location question", "+15550601111")
   await sendInbound(page, "location-second", "Second synthetic location question", "+15550602222")
-  await page.getByRole("button", { name: /^Texts/ }).click()
-  const first = page.getByTestId("task-row").filter({ hasText: "(555) 060-1111" })
-  const second = page.getByTestId("task-row").filter({ hasText: "(555) 060-2222" })
+  await railFilter(page, "texts").click()
+  const first = patientRow(page, "+15550601111")
+  const second = patientRow(page, "+15550602222")
   await expect(first).toBeVisible({ timeout: 30_000 })
   await expect(second).toBeVisible()
   const firstID = await first.getAttribute("data-task-id")

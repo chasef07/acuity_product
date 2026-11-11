@@ -10,6 +10,18 @@ export async function signInAs(page: Page, email: string, name: string, path = "
   await page.goto(path)
 }
 
+export function patientRow(page: Page, phone: string) {
+  return page.locator(`[data-testid="patient-row"][data-phone="${phone}"]`)
+}
+
+export function railFilter(page: Page, filter: "all" | "callBack" | "texts" | "appointments" | "unowned") {
+  return page.getByRole("group", { name: "Filter patients", exact: true }).locator(`[data-filter="${filter}"]`)
+}
+
+export function railScope(page: Page, scope: "My Tasks" | "Everyone") {
+  return page.getByRole("group", { name: "Whose work", exact: true }).getByRole("button", { name: scope, exact: true })
+}
+
 export async function openAgentPage(page: Page, name: string) {
   const home = page.getByRole("navigation", { name: "Workspace" }).getByRole("button", { name: "Home", exact: true })
   const destination = page.getByRole("navigation", { name: "Manage agent" }).getByRole("button", { name, exact: true })
