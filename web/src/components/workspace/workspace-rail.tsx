@@ -101,6 +101,7 @@ export function WorkspaceRail({
   })
   const listedPhones = useRef<readonly string[]>([])
   const [rowChangedAt, setRowChangedAt] = useState<readonly (number | undefined)[]>([])
+  const [refused, setRefused] = useState<{ index: number; changedAt: number } | undefined>(undefined)
   const completed = projection.completedTasks
   const view = projection.selection.view
   const manageAgent = view === "manage-agent"
@@ -178,9 +179,13 @@ export function WorkspaceRail({
         practiceID={practice.id}
         active={row.phone === selectedPhone}
         guarded={changedAt !== undefined}
+        refused={changedAt !== undefined && refused?.index === index && refused.changedAt === changedAt}
         onSelect={(event) => {
           const byPointer = event.detail > 0
-          if (byPointer && !rowClickAllowed(changedAt, performance.now())) return
+          if (byPointer && changedAt !== undefined && !rowClickAllowed(changedAt, performance.now())) {
+            setRefused({ index, changedAt })
+            return
+          }
           selectTask(row.top)
         }}
       />
@@ -283,7 +288,7 @@ export function WorkspaceRail({
             <p
               role="status"
               data-testid="patient-list-updated"
-              className="sticky top-0 z-10 -mt-2 flex h-5 items-center bg-sidebar px-3.5 text-xs leading-4 text-muted-foreground md:bg-canvas"
+              className="sticky top-0 z-10 -mt-2 flex h-5 items-center bg-sidebar px-3.5 text-xs leading-4 font-medium text-sidebar-foreground md:bg-canvas"
             >
               {rowChangedAt.some((at) => at !== undefined) && "List just updated"}
             </p>

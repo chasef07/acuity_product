@@ -28,12 +28,14 @@ export function PatientRow({
   practiceID,
   active,
   guarded,
+  refused,
   onSelect,
 }: {
   row: PatientWorkRow
   practiceID: string
   active: boolean
   guarded: boolean
+  refused: boolean
   onSelect: (event: MouseEvent) => void
 }) {
   const priorityID = useId()
@@ -82,15 +84,24 @@ export function PatientRow({
                 </span>
               )}
             </span>
-            <span
-              data-testid="patient-row-reason"
-              className="flex min-w-0 items-center gap-1 text-xs leading-4 text-muted-foreground"
-            >
-              {reason.voicemail && (
-                <PlayIcon aria-hidden="true" className="size-3 shrink-0 fill-current" />
-              )}
-              <span className="truncate">{reason.text}</span>
-            </span>
+            {refused ? (
+              <span
+                data-testid="patient-row-refused"
+                className="truncate text-xs leading-4 font-medium text-sidebar-foreground"
+              >
+                List just updated, click again
+              </span>
+            ) : (
+              <span
+                data-testid="patient-row-reason"
+                className="flex min-w-0 items-center gap-1 text-xs leading-4 text-muted-foreground"
+              >
+                {reason.voicemail && (
+                  <PlayIcon aria-hidden="true" className="size-3 shrink-0 fill-current" />
+                )}
+                <span className="truncate">{reason.text}</span>
+              </span>
+            )}
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>

@@ -339,6 +339,10 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
     keyboardActivate: (phone: string) => activate(phone, 0),
     phones: () => [...host.querySelectorAll("[data-testid='patient-row']")].map((item) => item.getAttribute("data-phone")),
     notice: () => host.querySelector("[data-testid='patient-list-updated']")!.textContent,
+    refused: () => [...host.querySelectorAll("[data-testid='patient-row']")]
+      .filter((item) => item.querySelector("[data-testid='patient-row-refused']"))
+      .map((item) => item.getAttribute("data-phone")),
+    reason: (phone: string) => host.querySelector(`[data-testid='patient-row'][data-phone='${phone}'] button > span > span:last-child`)!.textContent,
     wait: (milliseconds: number) => act(() => sleep(milliseconds)),
   }
 }
@@ -360,13 +364,18 @@ test("the list follows live work at once and refuses a pointer click only where 
   assert.equal(page.notice(), "List just updated")
   await page.pointerClick(texts.phone)
   assert.deepEqual(page.opened, [texts.phone, texts.phone], "a row above the arrival did not move and opens")
+  assert.deepEqual(page.refused(), [])
   await page.pointerClick(unowned.phone)
   assert.deepEqual(page.opened, [texts.phone, texts.phone], "the click that may have been aimed at the patient who was there opens nothing")
+  assert.deepEqual(page.refused(), [unowned.phone], "the clicked row says why nothing opened")
+  assert.equal(page.reason(unowned.phone), "List just updated, click again")
   await page.keyboardActivate(unowned.phone)
   assert.deepEqual(page.opened, [texts.phone, texts.phone, unowned.phone], "Enter on the focused row opens it without waiting")
 
   await page.wait(rowClickGuardMilliseconds + 50)
   assert.equal(page.notice(), "")
+  assert.deepEqual(page.refused(), [])
+  assert.equal(page.reason(unowned.phone), "Referral to retina specialist")
   await page.pointerClick(unowned.phone)
   assert.deepEqual(page.opened.slice(3), [unowned.phone])
 
@@ -374,10 +383,12 @@ test("the list follows live work at once and refuses a pointer click only where 
   await page.pointerClick(texts.phone)
   await page.pointerClick(followUp.phone)
   assert.deepEqual(page.opened.slice(4), [texts.phone], "a patient left: only the positions below it refuse")
+  assert.deepEqual(page.refused(), [followUp.phone])
 
   await page.show(withRows([]))
   await page.show(withRows([followUp, texts]))
   assert.equal(page.notice(), "", "a list the staff member asked for starts clean")
+  assert.deepEqual(page.refused(), [])
   await page.pointerClick(followUp.phone)
   assert.deepEqual(page.opened.slice(5), [followUp.phone])
 })
