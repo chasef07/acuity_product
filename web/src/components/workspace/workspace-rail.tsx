@@ -31,6 +31,7 @@ import { AnalyticsNavigation, commandCenterPages, manageAgentPages, practiceAnal
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { PatientWorkRow, Task } from "@/lib/api/generated/types.gen"
 import {
+  belowListChangedAtAfter,
   offersAppointmentChecks,
   patientWorkFooter,
   rowChangedAtAfter,
@@ -101,7 +102,8 @@ export function WorkspaceRail({
   })
   const listedPhones = useRef<readonly string[]>([])
   const [rowChangedAt, setRowChangedAt] = useState<readonly (number | undefined)[]>([])
-  const [refused, setRefused] = useState<{ index: number; changedAt: number } | undefined>(undefined)
+  const [belowListChangedAt, setBelowListChangedAt] = useState<number | undefined>(undefined)
+  const [refused, setRefused] = useState<{ row: number | string; changedAt: number } | undefined>(undefined)
   const completed = projection.completedTasks
   const view = projection.selection.view
   const manageAgent = view === "manage-agent"
@@ -135,18 +137,22 @@ export function WorkspaceRail({
     const now = performance.now()
     listedPhones.current = after
     setRowChangedAt((changedAt) => rowChangedAtAfter(changedAt, before, after, now))
+    setBelowListChangedAt((changedAt) => belowListChangedAtAfter(changedAt, before, after, now))
   }, [patients.items])
 
   useEffect(() => {
-    const guarded = rowChangedAt.filter((at) => at !== undefined)
+    const guarded = [...rowChangedAt, belowListChangedAt].filter((at) => at !== undefined)
     if (guarded.length === 0) return
     const earliest = Math.min(...guarded)
     const timer = window.setTimeout(
-      () => setRowChangedAt((changedAt) => changedAt.map((at) => (at === earliest ? undefined : at))),
+      () => {
+        setRowChangedAt((changedAt) => changedAt.map((at) => (at === earliest ? undefined : at)))
+        setBelowListChangedAt((at) => (at === earliest ? undefined : at))
+      },
       earliest + rowClickGuardMilliseconds - performance.now(),
     )
     return () => window.clearTimeout(timer)
-  }, [rowChangedAt])
+  }, [rowChangedAt, belowListChangedAt])
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -180,11 +186,11 @@ export function WorkspaceRail({
         practiceID={practice.id}
         active={row.phone === selectedPhone}
         guarded={changedAt !== undefined}
-        refused={changedAt !== undefined && refused?.index === index && refused.changedAt === changedAt}
+        refused={changedAt !== undefined && refused?.row === index && refused.changedAt === changedAt}
         onSelect={(event) => {
           const byPointer = event.detail > 0
           if (byPointer && changedAt !== undefined && !rowClickAllowed(changedAt, performance.now())) {
-            setRefused({ index, changedAt })
+            setRefused({ row: index, changedAt })
             return
           }
           selectTask(row.top)
@@ -325,14 +331,25 @@ export function WorkspaceRail({
             <CompletedGroup
               title="Recently completed"
               expanded={projection.rail.completedExpanded}
-              onToggle={() => onIntent({ type: "toggle-completed" })}
+              onToggle={() => {
+                setBelowListChangedAt(undefined)
+                onIntent({ type: "toggle-completed" })
+              }}
             >
               {completed.items.map((task) => (
                 <CompletedTaskRow
                   key={task.id}
                   task={task}
                   active={task.id === selectedTaskID}
-                  onSelect={() => selectTask(task)}
+                  refused={belowListChangedAt !== undefined && refused?.row === task.id && refused.changedAt === belowListChangedAt}
+                  onSelect={(event) => {
+                    const byPointer = event.detail > 0
+                    if (byPointer && belowListChangedAt !== undefined && !rowClickAllowed(belowListChangedAt, performance.now())) {
+                      setRefused({ row: task.id, changedAt: belowListChangedAt })
+                      return
+                    }
+                    selectTask(task)
+                  }}
                 />
               ))}
               {completed.loading && completed.items.length === 0 && (

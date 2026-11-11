@@ -106,6 +106,7 @@ test("a completed text row keeps the patient's preview and names why it closed i
           version: 2,
         }}
         active={false}
+        refused={false}
         onSelect={() => {}}
       />
     </SidebarProvider>,

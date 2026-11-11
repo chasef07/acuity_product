@@ -118,10 +118,20 @@ export function rowChangedAtAfter(
   after: readonly string[],
   now: number,
 ) {
+  const onlyAppended = before.every((phone, index) => after[index] === phone)
   return after.map((phone, index) => {
-    if (index >= before.length) return undefined
+    if (index >= before.length) return onlyAppended ? undefined : now
     return before[index] === phone ? changedAt[index] : now
   })
+}
+
+export function belowListChangedAtAfter(
+  changedAt: number | undefined,
+  before: readonly string[],
+  after: readonly string[],
+  now: number,
+) {
+  return before.length === after.length ? changedAt : now
 }
 
 export function rowClickAllowed(changedAt: number | undefined, now: number) {

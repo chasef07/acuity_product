@@ -85,12 +85,7 @@ export function PatientRow({
               )}
             </span>
             {refused ? (
-              <span
-                data-testid="patient-row-refused"
-                className="truncate text-xs leading-4 font-medium text-sidebar-foreground"
-              >
-                List just updated, click again
-              </span>
+              <RowRefused />
             ) : (
               <span
                 data-testid="patient-row-reason"
@@ -113,11 +108,13 @@ export function PatientRow({
 export function CompletedTaskRow({
   task,
   active,
+  refused,
   onSelect,
 }: {
   task: Task
   active: boolean
-  onSelect: () => void
+  refused: boolean
+  onSelect: (event: MouseEvent) => void
 }) {
   const textReview = task.origin === "INBOUND_MESSAGE_REVIEW"
   const rowTitle = textReview
@@ -152,7 +149,7 @@ export function CompletedTaskRow({
           isActive={active}
           className={cn(
             "rounded-md px-2 pr-9 text-sidebar-foreground",
-            detail ? "h-auto py-1.5" : "h-8",
+            detail || refused ? "h-auto py-1.5" : "h-8",
           )}
           onClick={onSelect}
         >
@@ -165,7 +162,9 @@ export function CompletedTaskRow({
               )}
               <span className="truncate">{rowTitle}</span>
             </span>
-            {detail && (
+            {refused ? (
+              <RowRefused />
+            ) : detail && (
               <span className="truncate text-xs leading-4 text-muted-foreground">
                 {detail}
               </span>
@@ -175,6 +174,17 @@ export function CompletedTaskRow({
       </RailHoverDetails>
       <RowTime at={relative.at} />
     </SidebarMenuItem>
+  )
+}
+
+function RowRefused() {
+  return (
+    <span
+      data-testid="row-refused"
+      className="truncate text-xs leading-4 font-medium text-sidebar-foreground"
+    >
+      List just updated, click again
+    </span>
   )
 }
 

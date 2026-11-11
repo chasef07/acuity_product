@@ -3,6 +3,7 @@ import test from "node:test"
 
 import type { PatientWorkRow, Task } from "./api/generated/types.gen.ts"
 import {
+  belowListChangedAtAfter,
   nextAfterClose,
   offersAppointmentChecks,
   patientRowName,
@@ -133,9 +134,13 @@ test("each list position remembers when the patient shown there last changed", (
   const _ = undefined
   for (const [label, before, times, after, want] of [
     ["a refetch of the same rows", ["a", "b", "c"], [_, earlier, _], ["a", "b", "c"], [_, earlier, _]],
-    ["a patient arrives above: every position below changes", ["a", "b"], [_, _], ["n", "a", "b"], [now, now, _]],
-    ["a patient arrives between two rows: the row above is untouched", ["a", "b", "c"], [_, _, _], ["a", "n", "b", "c"], [_, now, now, _]],
-    ["a patient arrives below every row", ["a", "b"], [earlier, _], ["a", "b", "n"], [earlier, _, _]],
+    ["a patient arrives above: every position below changes, the new last one too", ["a", "b", "c"], [_, _, _], ["n", "a", "b", "c"], [now, now, now, now]],
+    ["a patient arrives between two rows: the row above is untouched", ["a", "b", "c"], [_, _, _], ["a", "n", "b", "c"], [_, now, now, now]],
+    ["a patient arrives just above the last row, who moves past the old end", ["a", "b", "c"], [_, _, _], ["a", "b", "n", "c"], [_, _, now, now]],
+    ["two patients arrive above at once", ["a", "b"], [_, _], ["n", "m", "a", "b"], [now, now, now, now]],
+    ["a patient arrives below every row", ["a", "b", "c"], [earlier, _, _], ["a", "b", "c", "n"], [earlier, _, _, _]],
+    ["a patient arrives above while Show more appends", ["a", "b"], [_, _], ["n", "a", "b", "c"], [now, now, now, now]],
+    ["Show more appends one row", ["a", "b", "c"], [_, earlier, _], ["a", "b", "c", "d"], [_, earlier, _, _]],
     ["one patient leaves and another takes its place", ["a", "b", "c"], [_, _, _], ["a", "n", "c"], [_, now, _]],
     ["Show more appends rows", ["a", "b"], [_, earlier], ["a", "b", "c", "d"], [_, earlier, _, _]],
     ["new work swaps two patients", ["a", "b", "c"], [earlier, _, _], ["a", "c", "b"], [earlier, now, now]],
@@ -145,6 +150,21 @@ test("each list position remembers when the patient shown there last changed", (
     ["the list they asked for loads", [], [], ["b", "a"], [_, _]],
   ] as const) {
     assert.deepEqual(rowChangedAtAfter(times, before, after, now), want, label)
+  }
+})
+
+test("whatever sits below the list remembers when the list last grew or shrank", () => {
+  const earlier = 4_000
+  const now = 9_000
+  for (const [label, before, at, after, want] of [
+    ["a refetch of the same rows", ["a", "b"], earlier, ["a", "b"], earlier],
+    ["one patient takes another's place", ["a", "b"], undefined, ["a", "n"], undefined],
+    ["a patient arrives above", ["a", "b"], undefined, ["n", "a", "b"], now],
+    ["a patient arrives below every row", ["a", "b"], earlier, ["a", "b", "n"], now],
+    ["a patient leaves", ["a", "b"], undefined, ["a"], now],
+    ["Show more appends rows", ["a", "b"], undefined, ["a", "b", "c", "d"], now],
+  ] as const) {
+    assert.equal(belowListChangedAtAfter(at, before, after, now), want, label)
   }
 })
 

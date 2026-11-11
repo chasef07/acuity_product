@@ -254,7 +254,7 @@ test("the list says when it is loading, empty, failed, or has more to show", () 
 function completedRow(task: Task) {
   return renderToStaticMarkup(
     <SidebarProvider>
-      <CompletedTaskRow task={task} active={false} onSelect={() => {}} />
+      <CompletedTaskRow task={task} active={false} refused={false} onSelect={() => {}} />
     </SidebarProvider>,
   )
 }
@@ -328,19 +328,29 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
     </SidebarProvider>,
   ))
   await show(initial)
-  const activate = (phone: string, detail: number) => act(async () => {
-    host.querySelector(`[data-testid='patient-row'][data-phone='${phone}'] button`)!
+  const activateRow = (row: string, detail: number) => act(async () => {
+    host.querySelector(`${row} button`)!
       .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, detail }))
   })
+  const activate = (phone: string, detail: number) =>
+    activateRow(`[data-testid='patient-row'][data-phone='${phone}']`, detail)
+  const completedRow = (taskID: string) => `[data-testid='completed-task-row'][data-task-id='${taskID}']`
   return {
     show,
     opened,
     pointerClick: (phone: string) => activate(phone, 1),
     keyboardActivate: (phone: string) => activate(phone, 0),
+    pointerClickCompleted: (taskID: string) => activateRow(completedRow(taskID), 1),
+    keyboardActivateCompleted: (taskID: string) => activateRow(completedRow(taskID), 0),
+    toggleCompleted: () => act(async () => {
+      [...host.querySelectorAll("button")].find((button) => button.textContent === "Recently completed")!
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, detail: 1 }))
+    }),
+    completedText: (taskID: string) => host.querySelector(`${completedRow(taskID)} button`)!.textContent,
     phones: () => [...host.querySelectorAll("[data-testid='patient-row']")].map((item) => item.getAttribute("data-phone")),
     notice: () => host.querySelector("[data-testid='patient-list-updated']")!.textContent,
     refused: () => [...host.querySelectorAll("[data-testid='patient-row']")]
-      .filter((item) => item.querySelector("[data-testid='patient-row-refused']"))
+      .filter((item) => item.querySelector("[data-testid='row-refused']"))
       .map((item) => item.getAttribute("data-phone")),
     reason: (phone: string) => host.querySelector(`[data-testid='patient-row'][data-phone='${phone}'] button > span > span:last-child`)!.textContent,
     wait: (milliseconds: number) => act(() => sleep(milliseconds)),
@@ -391,4 +401,52 @@ test("the list follows live work at once and refuses a pointer click only where 
   assert.deepEqual(page.refused(), [])
   await page.pointerClick(followUp.phone)
   assert.deepEqual(page.opened.slice(5), [followUp.phone])
+})
+
+test("a Recently completed row refuses a pointer click just after the patient list above it grew or shrank", async (t) => {
+  const { followUp, callBack, texts, unowned } = patients
+  const done: Task = {
+    ...railTask,
+    id: "done",
+    phone: "+13055550199",
+    title: "Fax the referral",
+    state: "COMPLETED",
+    completedBy: { kind: "HUMAN", subject: "user-1", email: "ines@abita.test" },
+    completedAt: "2026-08-30T13:00:00Z",
+    closeReason: "DONE",
+    version: 2,
+  }
+  const base = projection([callBack, texts])
+  const withRows = (rows: PatientWorkRow[]) => ({
+    ...base,
+    patients: { ...base.patients, items: rows },
+    completedTasks: { ...base.completedTasks, items: [done] },
+    rail: { ...base.rail, completedExpanded: true },
+  })
+  const page = await mountedRail(t, withRows([callBack, texts]))
+  await page.wait(rowClickGuardMilliseconds + 50)
+
+  await page.show(withRows([callBack, unowned]))
+  await page.pointerClickCompleted(done.id)
+  assert.deepEqual(page.opened, [done.phone], "one patient took another's place: nothing below the list moved")
+
+  await page.show(withRows([followUp, callBack, unowned]))
+  await page.pointerClickCompleted(done.id)
+  assert.deepEqual(page.opened, [done.phone], "a patient arrived: the click may have been aimed at what was there")
+  assert.match(page.completedText(done.id) ?? "", /Fax the referralList just updated, click again$/)
+  await page.keyboardActivateCompleted(done.id)
+  assert.deepEqual(page.opened, [done.phone, done.phone], "Enter on the focused row opens it without waiting")
+
+  await page.wait(rowClickGuardMilliseconds + 50)
+  assert.equal(page.completedText(done.id), "Fax the referralDone, by ines@abita.test")
+  await page.pointerClickCompleted(done.id)
+  assert.deepEqual(page.opened.slice(2), [done.phone])
+
+  await page.show(withRows([followUp, callBack]))
+  await page.pointerClickCompleted(done.id)
+  assert.deepEqual(page.opened.slice(3), [], "a patient left: the rows below moved up")
+
+  await page.toggleCompleted()
+  await page.pointerClickCompleted(done.id)
+  assert.deepEqual(page.opened.slice(3), [done.phone], "the staff member opened or closed the group themselves: its rows start clean")
 })
