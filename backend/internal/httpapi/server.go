@@ -3042,6 +3042,10 @@ func messageResponse(message messaging.Message) (api.Message, error) {
 			Kind:    api.TaskActorKind(message.CreatedBy.Kind),
 			Subject: message.CreatedBy.Subject,
 		}
+		if message.CreatedBy.Email != "" {
+			email := openapi_types.Email(message.CreatedBy.Email)
+			response.CreatedBy.Email = &email
+		}
 	}
 	if message.Attachment != nil {
 		attachment, err := messageAttachmentResponse(*message.Attachment)
@@ -3280,6 +3284,17 @@ func callHistoryItemResponse(
 	if item.PlacedByEmail != "" {
 		response.PlacedByEmail = &item.PlacedByEmail
 	}
+	if item.TaskID != "" {
+		taskID, err := uuid.Parse(item.TaskID)
+		if err != nil {
+			return api.CallHistoryItem{}, err
+		}
+		response.TaskId = &taskID
+		response.TaskTitle = &item.TaskTitle
+	}
+	if item.VoicemailDurationSeconds > 0 {
+		response.VoicemailDurationSeconds = &item.VoicemailDurationSeconds
+	}
 	return response, nil
 }
 
@@ -3438,6 +3453,7 @@ func aiOutcomeItemResponse(
 		AppointmentOccurredAt: item.AppointmentOccurredAt,
 		OldAppointmentId:      stringPointer(item.OldAppointmentID),
 		NewAppointmentId:      stringPointer(item.NewAppointmentID),
+		Resolved:              item.Resolved,
 	}
 	return response, nil
 }

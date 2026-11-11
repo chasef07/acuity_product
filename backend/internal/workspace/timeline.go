@@ -66,7 +66,21 @@ func (m *Module) QueryPhoneTimeline(
 }
 
 const messageProjectionSQL = `
-	SELECT ` + messaging.MessageColumns + `
+	SELECT ` + messaging.MessageColumns + `,
+		CASE WHEN message.created_by_kind = 'HUMAN' THEN COALESCE(
+			(
+				SELECT sender_membership.email
+				FROM access_memberships sender_membership
+				WHERE sender_membership.practice_id = thread.practice_id
+					AND sender_membership.user_subject = message.created_by_subject
+			),
+			(
+				SELECT sender_operator.email
+				FROM access_platform_operators sender_operator
+				WHERE sender_operator.user_subject = message.created_by_subject
+			),
+			''
+		) ELSE '' END
 	FROM messaging_messages message
 	JOIN messaging_threads thread ON thread.id = message.thread_id
 	JOIN access_locations location
@@ -108,9 +122,13 @@ func queryTimelineMessages(
 	defer rows.Close()
 	items := make([]TimelineItem, 0, limit+1)
 	for rows.Next() {
-		message, err := messaging.ScanMessage(rows)
+		var senderEmail string
+		message, err := messaging.ScanMessage(rows, &senderEmail)
 		if err != nil {
 			return nil, fmt.Errorf("scan Message: %w", err)
+		}
+		if message.CreatedBy != nil {
+			message.CreatedBy.Email = senderEmail
 		}
 		items = append(items, TimelineItem{
 			Type: "MESSAGE", ID: message.ID, OccurredAt: message.CreatedAt, Message: message,
@@ -158,7 +176,17 @@ const callProjectionSQL = `
 		(
 			SELECT call_state.state FROM human_calling_call_states call_state
 			WHERE call_state.call_id = call.id
-		)
+		),
+		(
+			SELECT ARRAY[placed_task.id::text, placed_task.title]
+			FROM work_tasks placed_task
+			WHERE placed_task.id = call.task_id
+				AND placed_task.location_id = ANY($2::uuid[])
+		),
+		COALESCE((
+			SELECT ` + humancalling.VoicemailSecondsSQL + ` FROM human_calling_voicemails voicemail
+			WHERE voicemail.call_id = call.id
+		), 0)
 	FROM human_calling_calls call
 	LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 	JOIN access_locations location
@@ -213,6 +241,7 @@ func queryTimelineCalls(
 	items := make([]TimelineItem, 0, limit+1)
 	for rows.Next() {
 		var call humancalling.CallHistoryItem
+		var placedTask []string
 		if err := rows.Scan(
 			&call.ID,
 			&call.Direction,
@@ -226,8 +255,13 @@ func queryTimelineCalls(
 			&call.TransferReason,
 			&call.SourceCallID,
 			&call.Outcome,
+			&placedTask,
+			&call.VoicemailDurationSeconds,
 		); err != nil {
 			return nil, fmt.Errorf("scan Call: %w", err)
+		}
+		if len(placedTask) == 2 {
+			call.TaskID, call.TaskTitle = placedTask[0], placedTask[1]
 		}
 		call.Type = "CALL"
 		items = append(items, TimelineItem{
@@ -265,7 +299,12 @@ func queryPhoneInteractions(
 			interaction.appointment_outcome,
 			interaction.appointment_occurred_at,
 			COALESCE(interaction.old_appointment_id, ''),
-			COALESCE(interaction.new_appointment_id, '')
+			COALESCE(interaction.new_appointment_id, ''),
+			COALESCE((
+				SELECT classification.status = 'complete' AND classification.outcome = 'resolved'
+				FROM ai_interaction_classifications classification
+				WHERE classification.interaction_id = interaction.id
+			), false)
 		FROM ai_interactions interaction
 		JOIN access_locations location
 			ON location.practice_id = interaction.practice_id
@@ -308,6 +347,7 @@ func queryPhoneInteractions(
 			&item.AppointmentOccurredAt,
 			&item.OldAppointmentID,
 			&item.NewAppointmentID,
+			&item.Resolved,
 		); err != nil {
 			return nil, fmt.Errorf("scan phone AI Interaction: %w", err)
 		}

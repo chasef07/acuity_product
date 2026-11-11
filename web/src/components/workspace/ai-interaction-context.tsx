@@ -7,7 +7,7 @@ import type {
   AiAppointmentFacts,
   AiInteractionDetail,
 } from "@/lib/api/generated/types.gen"
-import { aiCallTimelinePresentation } from "@/lib/ai-interactions"
+import { aiCallTitle } from "@/lib/ai-interactions"
 import { formatAppointmentDateTime, formatTimestamp } from "@/lib/format-time"
 import {
   appointmentOutcomeTitles,
@@ -52,7 +52,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
   const hasAppointmentOutcome = detail.appointmentOutcome !== "INDETERMINATE"
   const title = hasAppointmentOutcome
     ? appointmentOutcomeTitles[detail.appointmentOutcome]
-    : aiCallTimelinePresentation(detail.appointmentOutcome, detail.status).title
+    : aiCallTitle(detail.appointmentOutcome, detail.status)
   const exception = aiCallException(detail)
   return (
     <div className="flex min-h-0 flex-1 flex-col">

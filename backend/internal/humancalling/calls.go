@@ -81,7 +81,7 @@ func (m *Module) loadCallProjection(
 			),
 			COALESCE(voicemail.outcome, ''), COALESCE(voicemail.audio_state, ''),
 			COALESCE(voicemail.task_id::text, ''),
-			COALESCE(voicemail.duration_millis / 1000, 0),
+			COALESCE(`+VoicemailSecondsSQL+`, 0),
 			COALESCE(CASE
 				WHEN recording.audio_state = 'READY'
 					AND recording.content_expires_at <= $2

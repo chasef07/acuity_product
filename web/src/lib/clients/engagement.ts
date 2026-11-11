@@ -86,9 +86,10 @@ export function useEngagementTimeline({
     loadingOlder: timeline.loadingMore,
     requestedAt,
     failure: readFailure(timeline),
+    olderFailure: timeline.moreFailure,
     ...(sending ? { sent: { id: sending.item.id, visibleUntil: sending.visibleUntil } } : {}),
     refresh: timeline.retry,
-    showOlder: () => void timeline.loadMore(),
+    showOlder: timeline.loadMore,
     showSent,
   }
 }
@@ -96,14 +97,17 @@ export function useEngagementTimeline({
 export function useEngagementSummary({
   practiceID,
   phone,
+  enabled,
 }: {
   practiceID: string
   phone: string
+  enabled?: boolean
 }) {
   return useRead({
     live: "task-detail",
     name: "engagement-summary",
     identity: { practiceID, phone },
+    enabled,
     read: (identity, transport) =>
       getEngagementSummary({
         ...transport,

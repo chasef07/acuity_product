@@ -973,6 +973,10 @@ export type AiInteractionDetail = {
 };
 
 export type AiOutcomeItem = {
+    /**
+     * True only when the stored call label for this AI Interaction is complete and its outcome is resolved. False while the label is pending, failed or skipped, and for a transferred or abandoned call.
+     */
+    resolved: boolean;
     id: string;
     locationId: string;
     locationName: string;
@@ -2106,6 +2110,18 @@ export type CallHistoryItem = {
     transferReason: string;
     sourceCallId?: string;
     outcome: CallState;
+    /**
+     * The Task this outbound call was placed from. Absent when the call was not placed from a Task or the Task is in a Location the reader cannot access.
+     */
+    taskId?: string;
+    /**
+     * Title of the Task named by taskId. Absent whenever taskId is absent.
+     */
+    taskTitle?: string;
+    /**
+     * Length of the voicemail the caller left on this call, rounded to the nearest second and never below 1. Absent when no voicemail was recorded.
+     */
+    voicemailDurationSeconds?: number;
 };
 
 export type OperatorCallingTimelineEntry = {
