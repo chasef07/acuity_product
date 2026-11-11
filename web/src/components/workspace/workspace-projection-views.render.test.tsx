@@ -469,7 +469,14 @@ test("a call reads as one line with its outcome and expands in place to its step
   assert.equal(lines().length, 1)
   const line = lines()[0]!
   assert.equal(line.getAttribute("aria-expanded"), "false")
-  assert.match(line.textContent!, /^Called in · Insurance question · \d/)
+  const summary = line.querySelector('[data-slot="call-line-summary"]')!
+  const time = line.querySelector("time")!
+  assert.equal(summary.textContent, "Called in · Insurance question")
+  assert.match(time.textContent!, /^\d+:\d+\s[AP]M$/)
+  assert.ok(!summary.contains(time), "the time is not part of the text that truncates")
+  assert.equal(time.closest('[class*="line-clamp"], [class~="truncate"]'), null, "nothing that clamps holds the time")
+  assert.match(summary.className, /line-clamp-2/)
+  assert.match(time.className, /whitespace-nowrap/)
   assert.match(line.getAttribute("aria-label")!, /^Called in, Insurance question, \d+:\d+\s[AP]M, dana@example\.test answered$/)
   assert.equal(outcome(line).textContent, "dana@example.test answered")
   assert.match(outcome(line).className, /text-success/)
@@ -490,6 +497,35 @@ test("a call reads as one line with its outcome and expands in place to its step
     await act(async () => action.click())
   }
   assert.deepEqual(conversation.opened, ["ai:ai-call", "call:call", `task:${task.id}`])
+})
+
+test("a line with a very long Task title or summary still shows its time outside the clamped text", async (t) => {
+  const conversation = conversationHarness(t)
+  const title = "Call the patient back about the progressive lens remake, the frame warranty claim and the insurance resubmission for the second pair"
+  conversation.items = [
+    callLineFixture({ id: "callback", direction: "OUTBOUND", outcome: "UNANSWERED", placedByEmail: "caller@example.test", taskId: "task-callback", taskTitle: title }, { ai: false }),
+    {
+      id: "ai-long", type: "AI_INTERACTION", occurredAt: "2026-09-05T13:00:00Z", aiInteraction: {
+        id: "ai-long", locationId: projectedTask().locationId, locationName: "Office", sourceCallId: "source-long", phone: projectedTask().phone,
+        startedAt: "2026-09-05T13:00:00Z", status: "COMPLETED", appointmentOutcome: "INDETERMINATE", resolved: true,
+        summary: "Caller asked whether the office can move the annual exam to a later week and also whether the fitting can happen at the same visit",
+      },
+    },
+  ]
+  await conversation.render(0)
+  const { lines } = callLines(conversation.host)
+  assert.equal(lines().length, 2)
+  for (const line of lines()) {
+    const summary = line.querySelector('[data-slot="call-line-summary"]')!
+    const time = line.querySelector("time")!
+    assert.match(time.textContent!, /^\d+:\d+\s[AP]M$/)
+    assert.ok(!summary.contains(time))
+    assert.equal(time.closest('[class*="line-clamp"], [class~="truncate"]'), null)
+  }
+  const [callback, long] = lines().map((line) => line.querySelector('[data-slot="call-line-summary"]')!.textContent!)
+  assert.equal(callback, `caller@example.test called · about "${title}"`)
+  assert.equal(long, "Called in · Caller asked whether the office can move the annual exam to a later week and…")
+  assert.ok(long!.length - "Called in · ".length <= 81)
 })
 
 test("a missed transfer reads Missed, a voicemail offers its recording, and a callback names its Task", async (t) => {
@@ -814,7 +850,7 @@ test("the thread names the callback caller and marks which Task each entry descr
   await conversation.render(0, { selectedTaskID: selected.id, onHistoryChange: (value) => histories.push(value) })
   const timeline = conversation.host.querySelector('[aria-label="Conversation activity"]')!
   const text = timeline.textContent ?? ""
-  assert.match(text, /caller@example\.test called · \d[^A-Za-z]*[AP]MNo answer/)
+  assert.match(text, /caller@example\.test called\d[^A-Za-z]*[AP]MNo answer/)
   assert.match(text, /Missed call review completed after caller@example\.test's callback attempt/)
   assert.match(text, /This Task created by AI/)
   assert.doesNotMatch(text, /Task completed after callback attempt/)

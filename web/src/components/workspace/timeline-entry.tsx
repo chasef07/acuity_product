@@ -163,14 +163,19 @@ function CallLineEntry({
         }
       >
         <DirectionIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-        <span className="line-clamp-2 min-w-0 flex-1 text-muted-foreground">
-          <span className="font-medium text-foreground">{line.lead}</span>
-          {line.about && ` · ${line.about}`}
-          {" · "}
-          <time dateTime={occurredAt} className="tabular-nums">
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span data-slot="call-line-summary" className="line-clamp-2 text-muted-foreground wrap-anywhere">
+            <span className="font-medium text-foreground">{line.lead}</span>
+            {line.about && ` · ${line.about}`}
+            {otherLocations.map((location) => ` · ${location.name}`)}
+          </span>
+          <time
+            data-slot="call-line-time"
+            dateTime={occurredAt}
+            className="text-xs tabular-nums whitespace-nowrap text-muted-foreground"
+          >
             {time}
           </time>
-          {otherLocations.map((location) => ` · ${location.name}`)}
         </span>
         <span className={cn("max-w-[50%] shrink-0 text-right font-medium wrap-anywhere", toneClasses[line.outcome.tone])}>
           {line.outcome.label}
