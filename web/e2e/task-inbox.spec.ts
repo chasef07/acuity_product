@@ -1,3 +1,4 @@
+import { Client } from "pg"
 import { expect, test } from "@playwright/test"
 import { patientRow, railFilter, railScope, showPatientTask, signInAs } from "./support"
 
@@ -219,4 +220,70 @@ test("the workspace keeps one frame from loading to loaded", async ({ page }, te
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath("workspace-loaded.png") })
   expect(await frame()).toEqual(loading)
+})
+
+test("My Tasks leaves out a colleague's category, Everyone lists it, and work with no live owner is flagged for all", async ({ page }) => {
+  const databaseURL = process.env.E2E_DATABASE_URL
+  test.skip(!process.env.E2E_PROVISIONING_OUTPUT || !databaseURL, "E2E fixture and E2E_DATABASE_URL required")
+  if (!new URL(databaseURL!).pathname.endsWith("_e2e")) throw new Error("Disposable database required")
+  const db = new Client({ connectionString: databaseURL })
+  await db.connect()
+  const roster = ["secondary@abita.test", "never-signed-in@abita.test"]
+  const key = `owners-${Date.now()}`
+  const colleagues = "+12025550231"
+  const unowned = "+12025550232"
+  try {
+    await signInAs(page, "secondary@abita.test", "Synthetic Colleague")
+    await expect(page.getByTestId("mounted-workspace")).toBeVisible()
+    const { rows: [location] } = await db.query(
+      "SELECT id, practice_id FROM access_locations WHERE provisioning_key = 'fixture-location-1'",
+    )
+    await db.query("INSERT INTO work_responsibility_locations VALUES ($1, $2) ON CONFLICT DO NOTHING", [location.practice_id, location.id])
+    await db.query(
+      `INSERT INTO work_responsibilities VALUES ($1, $2, $3, 'referrals', 'primary'), ($1, $2, $4, 'medication', 'primary')
+       ON CONFLICT DO NOTHING`,
+      [location.practice_id, location.id, ...roster],
+    )
+    for (const [suffix, category, phone] of [["colleague", "referrals", colleagues], ["unowned", "medication", unowned]] as const) {
+      const created = await page.request.post(`${portalURL}/v1/tasks`, { headers: { authorization: "Bearer synthetic-service-token" }, data: {
+        callId: `${key}-${suffix}`, callerPhone: phone, category, idempotencyKey: `${key}-${suffix}`,
+        officeKey: "spring-hill", officePhone: "+17275550101", source: "agent", urgency: "normal",
+        summary: `${key} ${suffix}`, message: "Synthetic ownership work.",
+      } })
+      expect(created.ok(), await created.text()).toBeTruthy()
+    }
+
+    await signInAs(page, "selected@abita.test", "Synthetic Staff")
+    const search = page.getByLabel("Search tasks, names, or phone")
+    await search.fill(key)
+    await search.press("Enter")
+    const noOwner = railFilter(page, "unowned")
+    const footer = page.getByTestId("patient-work-footer")
+    await expect(railScope(page, "My Tasks")).toHaveAttribute("aria-pressed", "true")
+    await expect(railFilter(page, "all")).toHaveText("All1")
+    await expect(page.getByTestId("patient-row")).toHaveCount(1)
+    await expect(patientRow(page, unowned).getByTestId("patient-row-reason")).toHaveText(`${key} unowned`)
+    await expect(patientRow(page, colleagues)).toHaveCount(0)
+    await expect(footer).toHaveText(/^\d+ open for \d+ patients · 1 more under Everyone$/)
+    await expect(noOwner).toHaveText("No owner1")
+    await expect(noOwner).toHaveClass(/(^|\s)text-destructive(\s|$)/)
+    await noOwner.click()
+    await expect(noOwner).toHaveAttribute("aria-pressed", "true")
+    await expect(page.getByTestId("patient-row")).toHaveCount(1)
+    await expect(patientRow(page, unowned)).toBeVisible()
+
+    await railFilter(page, "all").click()
+    await railScope(page, "Everyone").click()
+    await expect(railFilter(page, "all")).toHaveText("All2")
+    await expect(page.getByTestId("patient-row")).toHaveCount(2)
+    await expect(patientRow(page, colleagues).getByTestId("patient-row-reason")).toHaveText(`${key} colleague`)
+    await expect(noOwner).toHaveText("No owner1")
+    await expect(footer).toHaveText(/^\d+ open for \d+ patients$/)
+    await noOwner.click()
+    await expect(patientRow(page, unowned)).toBeVisible()
+    await expect(patientRow(page, colleagues)).toHaveCount(0)
+  } finally {
+    await db.query("DELETE FROM work_responsibilities WHERE account_email = ANY($1::text[])", [roster])
+    await db.end()
+  }
 })
