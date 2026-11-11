@@ -3,10 +3,8 @@
 import {
   useEffect,
   useEffectEvent,
-  useReducer,
   useRef,
   useState,
-  type PointerEvent,
   type ReactNode,
 } from "react"
 import { ArrowRightIcon, SearchIcon } from "lucide-react"
@@ -31,13 +29,7 @@ import {
 import { AnalyticsNavigation, commandCenterPages, manageAgentPages, practiceAnalyticsPages, type CommandCenterPage, type PracticeAnalyticsPage } from "./analytics-navigation"
 import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type { PatientWorkRow, Task } from "@/lib/api/generated/types.gen"
-import {
-  offersAppointmentChecks,
-  patientListHeld,
-  patientListHold,
-  patientListShowing,
-  patientWorkFooter,
-} from "@/lib/patient-work"
+import { offersAppointmentChecks, patientWorkFooter } from "@/lib/patient-work"
 import {
   currentPractice,
   isWorkView,
@@ -100,15 +92,6 @@ export function WorkspaceRail({
   const publishSearch = useEffectEvent((value: string) => {
     if (value !== projectedSearch) onIntent({ type: "set-search", value })
   })
-  const [list, sendList] = useReducer(
-    patientListHold,
-    patientListShowing(patients.items, patients.loading),
-  )
-  if (list.incoming !== patients.items || list.loading !== patients.loading) {
-    sendList({ type: "incoming", rows: patients.items, loading: patients.loading })
-  }
-  const touchRelease = useRef<number | undefined>(undefined)
-  const pointerRest = useRef<number | undefined>(undefined)
   const completed = projection.completedTasks
   const view = projection.selection.view
   const manageAgent = view === "manage-agent"
@@ -134,28 +117,7 @@ export function WorkspaceRail({
     return () => window.clearTimeout(timer)
   }, [search])
 
-  useEffect(() => () => {
-    window.clearTimeout(scrollPersistTimer.current)
-    window.clearTimeout(touchRelease.current)
-  }, [])
-
-  useEffect(() => {
-    const holdWhileMoving = (event: globalThis.PointerEvent) => {
-      if (event.pointerType === "touch") return
-      if (pointerRest.current === undefined) sendList({ type: "hold", reason: "moving" })
-      window.clearTimeout(pointerRest.current)
-      pointerRest.current = window.setTimeout(() => {
-        pointerRest.current = undefined
-        sendList({ type: "release", reason: "moving" })
-      }, pointerRestMilliseconds)
-    }
-    window.addEventListener("pointermove", holdWhileMoving)
-    return () => {
-      window.removeEventListener("pointermove", holdWhileMoving)
-      window.clearTimeout(pointerRest.current)
-      pointerRest.current = undefined
-    }
-  }, [])
+  useEffect(() => () => window.clearTimeout(scrollPersistTimer.current), [])
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -178,21 +140,6 @@ export function WorkspaceRail({
       selection.contextView === "task" && selection.contextPanelOpen &&
       selection.task?.id === task.id
     onIntent(close ? { type: "close-context" } : { type: "select-task", task })
-  }
-
-  function holdForTouch(event: PointerEvent) {
-    if (event.pointerType !== "touch") return
-    window.clearTimeout(touchRelease.current)
-    sendList({ type: "hold", reason: "touch" })
-  }
-
-  function releaseTouch(event: PointerEvent, afterMilliseconds: number) {
-    if (event.pointerType !== "touch") return
-    window.clearTimeout(touchRelease.current)
-    touchRelease.current = window.setTimeout(
-      () => sendList({ type: "release", reason: "touch" }),
-      afterMilliseconds,
-    )
   }
 
   function renderPatient(row: PatientWorkRow) {
@@ -282,10 +229,10 @@ export function WorkspaceRail({
         ) : workView && (
         <SidebarContent
           ref={scrollContainer}
-          className="gap-2 overflow-y-auto px-2 pt-0 pb-2"
+          className="gap-2 overflow-y-auto px-2 py-2"
           onScroll={rememberScroll}
         >
-          <div className="space-y-2 px-1 pt-2">
+          <div className="space-y-2 px-1">
             <PatientScopeToggle
               scope={projection.rail.scope}
               onChange={(scope) => onIntent({ type: "set-rail-view", scope })}
@@ -300,49 +247,14 @@ export function WorkspaceRail({
               onChange={(filter) => onIntent({ type: "set-rail-view", filter })}
             />
           </div>
-          <SidebarGroup
-            className="p-0"
-            role="group"
-            aria-label="Patients with open work"
-            data-testid="patient-list"
-            onPointerEnter={(event) => {
-              if (event.pointerType !== "touch") sendList({ type: "hold", reason: "pointer" })
-            }}
-            onPointerLeave={(event) => {
-              if (event.pointerType !== "touch") sendList({ type: "release", reason: "pointer" })
-            }}
-            onPointerDown={holdForTouch}
-            onPointerUp={(event) => releaseTouch(event, touchClickWindowMilliseconds)}
-            onPointerCancel={(event) => releaseTouch(event, 0)}
-            onFocus={(event) => {
-              if (event.target.matches(":focus-visible")) sendList({ type: "hold", reason: "keyboard" })
-            }}
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget)) {
-                sendList({ type: "release", reason: "keyboard" })
-              }
-            }}
-            onClick={() => sendList({ type: "acted" })}
-          >
-            <div role="status" className="sticky top-0 z-10 -mt-2 flex h-5 items-center bg-canvas px-3.5">
-              {patientListHeld(list) && (
-                <button
-                  type="button"
-                  data-testid="patient-list-held"
-                  className="flex items-center gap-1.5 rounded-sm text-xs leading-4 text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-                >
-                  <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-                  New activity
-                </button>
-              )}
-            </div>
+          <SidebarGroup className="p-0" role="group" aria-label="Patients with open work">
             <SidebarGroupContent>
               <SidebarMenu className="mx-1 w-auto gap-0.5 px-1.5 py-0">
-                {list.rows.map(renderPatient)}
-                {patients.loading && list.rows.length === 0 && (
+                {patients.items.map(renderPatient)}
+                {patients.loading && patients.items.length === 0 && (
                   <RailLoading label="Loading patients" />
                 )}
-                {!patients.loading && !patients.error && list.rows.length === 0 && (
+                {!patients.loading && !patients.error && patients.items.length === 0 && (
                   <RailEmpty>Nothing waiting here.</RailEmpty>
                 )}
                 {patients.error && (
@@ -417,9 +329,5 @@ export function WorkspaceRail({
 }
 
 const searchDraftDelayMilliseconds = 250
-
-const touchClickWindowMilliseconds = 700
-
-const pointerRestMilliseconds = 1000
 
 const scrollPersistDelayMilliseconds = 150

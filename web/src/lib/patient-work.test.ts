@@ -7,10 +7,6 @@ import {
   offersAppointmentChecks,
   patientRowName,
   openTaskReason,
-  patientListHeld,
-  patientListHold,
-  patientListShowing,
-  type PatientListHoldEvent,
   patientWorkFooter,
   shownPatientWorkFilters,
 } from "./patient-work.ts"
@@ -124,48 +120,5 @@ test("after a Task is closed the next selection stays with the patient, then the
       want,
       label,
     )
-  }
-})
-
-test("the patient list holds its order and membership while the staff member is in it", () => {
-  const phones = { a: "+13055550101", b: "+13055550102", c: "+13055550103", n: "+13055550109" }
-  const patient = (name: keyof typeof phones, openCount = 1) =>
-    row({ phone: phones[name], openCount, top: top({ id: `${name}-${openCount}`, phone: phones[name] }) })
-  const [a, b, c, n] = [patient("a"), patient("b"), patient("c"), patient("n")]
-  const incoming = (rows: PatientWorkRow[], loading = false): PatientListHoldEvent => ({ type: "incoming", rows, loading })
-  const pointer: PatientListHoldEvent = { type: "hold", reason: "pointer" }
-  const keyboard: PatientListHoldEvent = { type: "hold", reason: "keyboard" }
-  const leave: PatientListHoldEvent = { type: "release", reason: "pointer" }
-  const blur: PatientListHoldEvent = { type: "release", reason: "keyboard" }
-  const acted: PatientListHoldEvent = { type: "acted" }
-  const moving: PatientListHoldEvent = { type: "hold", reason: "moving" }
-  const rest: PatientListHoldEvent = { type: "release", reason: "moving" }
-  const b2 = patient("b", 2)
-
-  const cases: Array<[string, PatientListHoldEvent[], PatientWorkRow[], boolean]> = [
-    ["nobody is in the list, a new patient sorts to the top", [incoming([n, a, b, c])], [n, a, b, c], false],
-    ["pointer in the list, a new patient sorts above", [pointer, incoming([n, a, b, c])], [a, b, c], true],
-    ["pointer in the list, a row changes content", [pointer, incoming([a, b2, c])], [a, b2, c], false],
-    ["pointer in the list, a row's last item closed elsewhere", [pointer, incoming([a, c])], [a, b, c], true],
-    ["pointer in the list, the rows reorder", [pointer, incoming([c, a, b2])], [a, b2, c], true],
-    ["pointer leaves, held changes apply", [pointer, incoming([n, a, c]), leave], [n, a, c], false],
-    ["the pointer is on its way, a new patient sorts above", [moving, incoming([n, a, b, c])], [a, b, c], true],
-    ["the pointer comes to rest outside the list", [moving, incoming([n, a, b, c]), rest], [n, a, b, c], false],
-    ["the pointer arrives in the list and stops", [moving, incoming([n, a, b, c]), pointer, rest], [a, b, c], true],
-    ["keyboard focus in the list holds too", [keyboard, incoming([n, a, b, c])], [a, b, c], true],
-    ["focus leaves, held changes apply", [keyboard, incoming([n, a, b, c]), blur], [n, a, b, c], false],
-    ["pointer leaves while focus stays", [pointer, keyboard, incoming([n, a, b, c]), leave], [a, b, c], true],
-    ["the staff member clicks or presses a key", [pointer, incoming([n, a, b, c]), acted], [n, a, b, c], false],
-    ["changes after their click are held again", [pointer, incoming([n, a, b, c]), acted, incoming([a, b, c])], [n, a, b, c], true],
-    ["a touch holds until its click", [{ type: "hold", reason: "touch" }, incoming([n, a, b, c]), acted, { type: "release", reason: "touch" }], [n, a, b, c], false],
-    ["a view they asked for starts loading", [pointer, incoming([], true)], [], false],
-    ["a view they asked for arrives", [pointer, incoming([], true), incoming([c, n])], [c, n], false],
-    ["more rows they asked for arrive", [pointer, incoming([a, b, c], true), incoming([a, b, c, n])], [a, b, c, n], false],
-    ["the pointer is reported twice", [pointer, pointer, incoming([n, a, b, c]), leave], [n, a, b, c], false],
-  ]
-  for (const [label, events, rows, held] of cases) {
-    const state = events.reduce(patientListHold, patientListShowing([a, b, c], false))
-    assert.deepEqual(state.rows, rows, label)
-    assert.equal(patientListHeld(state), held, label)
   }
 })
