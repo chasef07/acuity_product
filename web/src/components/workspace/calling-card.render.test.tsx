@@ -118,7 +118,6 @@ function render(snapshot: SoftphoneRuntimeSnapshot) {
       onEnd={noop}
       onMute={noop}
       onDTMF={noop}
-      onDisposition={noop}
       onRetry={noop}
       onRecover={noop}
       onClose={noop}

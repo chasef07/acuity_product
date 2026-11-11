@@ -230,7 +230,6 @@ export function CallingDock({
             onEnd={() => void runtime.hangup()}
             onMute={runtime.toggleMute}
             onDTMF={(digit) => void runtime.sendDTMF(digit)}
-            onDisposition={(outcome) => void dispose({ outcome, closures: [] })}
             onRetry={() => void runtime.retry(window.crypto.randomUUID())}
             onRecover={() => void runtime.recover()}
             onClose={runtime.dismissOutcome}
