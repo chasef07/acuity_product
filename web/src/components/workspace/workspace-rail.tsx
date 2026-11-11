@@ -33,9 +33,9 @@ import type { PatientWorkRow, Task } from "@/lib/api/generated/types.gen"
 import {
   offersAppointmentChecks,
   patientWorkFooter,
+  rowChangedAtAfter,
   rowClickAllowed,
   rowClickGuardMilliseconds,
-  rowsMovedAtAfter,
 } from "@/lib/patient-work"
 import {
   currentPractice,
@@ -100,7 +100,7 @@ export function WorkspaceRail({
     if (value !== projectedSearch) onIntent({ type: "set-search", value })
   })
   const listedPhones = useRef<readonly string[]>([])
-  const [rowsMovedAt, setRowsMovedAt] = useState<number | undefined>(undefined)
+  const [rowChangedAt, setRowChangedAt] = useState<readonly (number | undefined)[]>([])
   const completed = projection.completedTasks
   const view = projection.selection.view
   const manageAgent = view === "manage-agent"
@@ -133,14 +133,18 @@ export function WorkspaceRail({
     const after = patients.items.map((row) => row.phone)
     const now = performance.now()
     listedPhones.current = after
-    setRowsMovedAt((movedAt) => rowsMovedAtAfter(movedAt, before, after, now))
+    setRowChangedAt((changedAt) => rowChangedAtAfter(changedAt, before, after, now))
   }, [patients.items])
 
   useEffect(() => {
-    if (rowsMovedAt === undefined) return
-    const timer = window.setTimeout(() => setRowsMovedAt(undefined), rowClickGuardMilliseconds)
+    const guarded = rowChangedAt.filter((at) => at !== undefined)
+    if (guarded.length === 0) return
+    const timer = window.setTimeout(() => {
+      const now = performance.now()
+      setRowChangedAt((changedAt) => changedAt.map((at) => (rowClickAllowed(at, now) ? undefined : at)))
+    }, Math.min(...guarded) + rowClickGuardMilliseconds - performance.now())
     return () => window.clearTimeout(timer)
-  }, [rowsMovedAt])
+  }, [rowChangedAt])
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -165,17 +169,18 @@ export function WorkspaceRail({
     onIntent(close ? { type: "close-context" } : { type: "select-task", task })
   }
 
-  function renderPatient(row: PatientWorkRow) {
+  function renderPatient(row: PatientWorkRow, index: number) {
+    const changedAt = rowChangedAt[index]
     return (
       <PatientRow
         key={row.phone}
         row={row}
         practiceID={practice.id}
         active={row.phone === selectedPhone}
-        guarded={rowsMovedAt !== undefined}
+        guarded={changedAt !== undefined}
         onSelect={(event) => {
           const byPointer = event.detail > 0
-          if (byPointer && !rowClickAllowed(rowsMovedAt, performance.now())) return
+          if (byPointer && !rowClickAllowed(changedAt, performance.now())) return
           selectTask(row.top)
         }}
       />
@@ -280,7 +285,7 @@ export function WorkspaceRail({
               data-testid="patient-list-updated"
               className="sticky top-0 z-10 -mt-2 flex h-5 items-center bg-sidebar px-3.5 text-xs leading-4 text-muted-foreground md:bg-canvas"
             >
-              {rowsMovedAt !== undefined && "List just updated"}
+              {rowChangedAt.some((at) => at !== undefined) && "List just updated"}
             </p>
             <SidebarGroupContent>
               <SidebarMenu className="mx-1 w-auto gap-0.5 px-1.5 py-0">

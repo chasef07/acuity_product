@@ -343,7 +343,7 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
   }
 }
 
-test("the list follows live work at once and refuses a pointer click on a row that just moved", async (t) => {
+test("the list follows live work at once and refuses a pointer click only where the patient under the pointer just changed", async (t) => {
   const { followUp, callBack, texts, unowned } = patients
   const base = projection([callBack, texts, followUp])
   const withRows = (rows: PatientWorkRow[]) => ({ ...base, patients: { ...base.patients, items: rows } })
@@ -351,28 +351,33 @@ test("the list follows live work at once and refuses a pointer click on a row th
   assert.equal(page.notice(), "")
 
   await page.show(withRows([callBack, { ...texts, top: { ...texts.top, preview: "Thanks!" } }, followUp]))
-  assert.equal(page.notice(), "", "a row that only refreshed in place moved nothing")
+  assert.equal(page.notice(), "", "a row that only refreshed in place changed no position")
   await page.pointerClick(texts.phone)
   assert.deepEqual(page.opened, [texts.phone])
 
-  await page.show(withRows([unowned, callBack, texts, followUp]))
-  assert.deepEqual(page.phones(), [unowned.phone, callBack.phone, texts.phone, followUp.phone], "the new patient is listed at once")
+  await page.show(withRows([callBack, texts, unowned, followUp]))
+  assert.deepEqual(page.phones(), [callBack.phone, texts.phone, unowned.phone, followUp.phone], "the new patient is listed at once")
   assert.equal(page.notice(), "List just updated")
   await page.pointerClick(texts.phone)
-  assert.deepEqual(page.opened, [texts.phone], "the click that may have been aimed at the row above opens nothing")
-  await page.keyboardActivate(followUp.phone)
-  assert.deepEqual(page.opened, [texts.phone, followUp.phone], "Enter on the focused row opens it without waiting")
+  assert.deepEqual(page.opened, [texts.phone, texts.phone], "a row above the arrival did not move and opens")
+  await page.pointerClick(unowned.phone)
+  assert.deepEqual(page.opened, [texts.phone, texts.phone], "the click that may have been aimed at the patient who was there opens nothing")
+  await page.keyboardActivate(unowned.phone)
+  assert.deepEqual(page.opened, [texts.phone, texts.phone, unowned.phone], "Enter on the focused row opens it without waiting")
 
   await page.wait(rowClickGuardMilliseconds + 50)
   assert.equal(page.notice(), "")
-  await page.pointerClick(texts.phone)
-  assert.deepEqual(page.opened, [texts.phone, followUp.phone, texts.phone])
+  await page.pointerClick(unowned.phone)
+  assert.deepEqual(page.opened.slice(3), [unowned.phone])
 
-  await page.show(withRows([callBack, unowned, texts, followUp]))
-  assert.equal(page.notice(), "List just updated")
+  await page.show(withRows([callBack, texts, followUp]))
+  await page.pointerClick(texts.phone)
+  await page.pointerClick(followUp.phone)
+  assert.deepEqual(page.opened.slice(4), [texts.phone], "a patient left: only the positions below it refuse")
+
   await page.show(withRows([]))
   await page.show(withRows([followUp, texts]))
   assert.equal(page.notice(), "", "a list the staff member asked for starts clean")
   await page.pointerClick(followUp.phone)
-  assert.deepEqual(page.opened, [texts.phone, followUp.phone, texts.phone, followUp.phone])
+  assert.deepEqual(page.opened.slice(5), [followUp.phone])
 })
