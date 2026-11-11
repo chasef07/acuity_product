@@ -101,13 +101,17 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 	assertOpen(0)
 	apply(r, "DELIVERED")
 	assertOpen(0)
-	var actor string
-	if err := pool.QueryRow(ctx, `SELECT completed_by_email FROM work_tasks WHERE state='COMPLETED'`).Scan(&actor); err != nil || actor != identity.Email {
-		t.Fatalf("actor=%s err=%v", actor, err)
+	var actor, reason string
+	if err := pool.QueryRow(ctx, `SELECT completed_by_email,close_reason FROM work_tasks WHERE state='COMPLETED'`).Scan(&actor, &reason); err != nil || actor != identity.Email || reason != string(work.CloseReasonDone) {
+		t.Fatalf("actor=%s reason=%s err=%v", actor, reason, err)
 	}
 	insert(true)
 	apply(r, "FAILED")
 	assertOpen(1)
+	var keptReason int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM work_tasks WHERE state='OPEN' AND (close_reason IS NOT NULL OR closed_via_call_id IS NOT NULL)`).Scan(&keptReason); err != nil || keptReason != 0 {
+		t.Fatalf("Tasks reopened by a failed delivery that kept a close reason = %d, %v", keptReason, err)
+	}
 	tx, err := db.As(testdb.Worker).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

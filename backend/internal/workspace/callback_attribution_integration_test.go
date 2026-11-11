@@ -215,6 +215,7 @@ func TestPhoneHistoryNamesTheStaffMemberWhoPlacedAnUnansweredCallback(t *testing
 		t.Fatalf("a reopened Task must not keep its callback completion: %#v", reopenedRead.CallbackCompletion)
 	}
 	completedByStaff, err := writes.CompleteTask(ctx, work.CompleteTaskCommand{
+		Reason:   work.CloseReasonDone,
 		Identity: caller, TaskID: review.ID, ExpectedVersion: reopenedReview.Version,
 	})
 	if err != nil {

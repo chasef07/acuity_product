@@ -607,6 +607,16 @@ export type StaffTaskCategory = 'insurance' | 'pre_op' | 'post_op' | 'billing' |
 export type StaffTaskUrgency = 'high_priority' | 'normal' | 'non_urgent';
 
 /**
+ * Why a completed Task closed. EXPIRED is recorded only by the system.
+ */
+export type TaskCloseReason = 'DONE' | 'NOT_NEEDED' | 'UNREACHABLE' | 'EXPIRED';
+
+/**
+ * The reasons staff may give when they complete a Task.
+ */
+export type StaffTaskCloseReason = 'DONE' | 'NOT_NEEDED' | 'UNREACHABLE';
+
+/**
  * Compatibility-only fields sent by the existing Abita tool. Acuity may source-label the optional name but never persists the ID or date of birth.
  *
  */
@@ -678,6 +688,7 @@ export type Task = {
     createdAt: string;
     completedBy?: TaskActor;
     completedAt?: string;
+    closeReason?: TaskCloseReason;
     callbackCompletion?: TaskCallbackCompletion;
     version: number;
     updatedAt: string;
@@ -1915,6 +1926,7 @@ export type ChangeTaskCategoryRequest = {
 };
 
 export type CompleteTaskGroupRequest = {
+    reason?: StaffTaskCloseReason;
     members: Array<{
         id: string;
         expectedVersion: number;
@@ -1928,6 +1940,11 @@ export type RenameTaskRequest = {
 
 export type TaskTransitionRequest = {
     expectedVersion: number;
+};
+
+export type CompleteTaskRequest = {
+    expectedVersion: number;
+    reason?: StaffTaskCloseReason;
 };
 
 export type MessageDirection = 'INBOUND' | 'OUTBOUND';
@@ -2021,7 +2038,7 @@ export type ConversationTimelineItem = {
     id: string;
     occurredAt: string;
     /**
-     * Activity-specific evidence. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
+     * Activity-specific evidence. TASK_COMPLETED includes closeReason when the close recorded one. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
      */
     taskActivityDetails?: {
         [key: string]: unknown;
@@ -3885,7 +3902,7 @@ export type RenameTaskResponses = {
 export type RenameTaskResponse = RenameTaskResponses[keyof RenameTaskResponses];
 
 export type CompleteTaskData = {
-    body: TaskTransitionRequest;
+    body: CompleteTaskRequest;
     path: {
         taskId: string;
     };

@@ -821,7 +821,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		}
 	}
 	booking := adminReviews["abita-booking-63"]
-	completeBody, _ := json.Marshal(map[string]any{"expectedVersion": booking.Version})
+	completeBody, _ := json.Marshal(map[string]any{"expectedVersion": booking.Version, "reason": "DONE"})
 	denied := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/"+booking.Id.String()+"/complete", "hidden-token", completeBody)
 	if denied.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-Location completion: %d %s", denied.StatusCode, readBody(t, denied))

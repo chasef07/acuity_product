@@ -91,7 +91,7 @@ export function VoicemailSource({ call, compact = false, taskID, onUpdated }: {
     const task = reviewedTask.current
     if (!task) return
     reviewedTask.current = undefined
-    const result = await completeTask(task)
+    const result = await completeTask(task, "DONE")
     if (result.ok) onUpdated?.(result.data)
     else setCompletionError("Could not mark voicemail done. Review any new activity and use Mark done.")
   }

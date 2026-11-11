@@ -1365,7 +1365,7 @@ paths:
   /v1/tasks/{taskId}/complete:
     post:
       operationId: completeTask
-      summary: Complete one Task at its last observed version.
+      summary: Complete one Task at its last observed version, recording why it closed.
       parameters:
         - name: taskId
           in: path
@@ -1378,7 +1378,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/TaskTransitionRequest"
+              $ref: "#/components/schemas/CompleteTaskRequest"
       responses:
         "200":
           description: Completed or idempotently current Task.
@@ -3612,6 +3612,14 @@ components:
     StaffTaskUrgency:
       type: string
       enum: [high_priority, normal, non_urgent]
+    TaskCloseReason:
+      type: string
+      enum: [DONE, NOT_NEEDED, UNREACHABLE, EXPIRED]
+      description: Why a completed Task closed. EXPIRED is recorded only by the system.
+    StaffTaskCloseReason:
+      type: string
+      enum: [DONE, NOT_NEEDED, UNREACHABLE]
+      description: The reasons staff may give when they complete a Task.
     StaffTaskPatientCompatibility:
       type: object
       description: >
@@ -3802,6 +3810,9 @@ components:
         completedAt:
           type: string
           format: date-time
+        closeReason:
+          description: Why a completed Task closed. Never present on an open Task. Absent on a Task completed by a release that did not record it.
+          $ref: "#/components/schemas/TaskCloseReason"
         callbackCompletion:
           $ref: "#/components/schemas/TaskCallbackCompletion"
         version:
@@ -5734,6 +5745,9 @@ components:
       additionalProperties: false
       required: [members]
       properties:
+        reason:
+          description: Why the Tasks closed. DONE when omitted.
+          $ref: "#/components/schemas/StaffTaskCloseReason"
         members:
           type: array
           minItems: 1
@@ -5771,6 +5785,18 @@ components:
           type: integer
           format: int64
           minimum: 1
+    CompleteTaskRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          description: Why the Task closed. DONE when omitted.
+          $ref: "#/components/schemas/StaffTaskCloseReason"
     MessageDirection:
       type: string
       enum: [INBOUND, OUTBOUND]
@@ -6029,7 +6055,7 @@ components:
           type: string
           format: date-time
         taskActivityDetails:
-          description: Activity-specific evidence. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
+          description: Activity-specific evidence. TASK_COMPLETED includes closeReason when the close recorded one. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
           type: object
           additionalProperties: true
         taskActivityActor:

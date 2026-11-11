@@ -150,6 +150,14 @@ test("thread Task Activity names who acted and keeps automation automatic", () =
   assert.equal(taskActivityDetail(activity("TASK_REOPENED", service)), "Task reopened automatically")
   assert.equal(taskActivityDetail(activity("TASK_CREATED", { kind: "SERVICE", subject: "abita-ai" })), "Task created by AI")
   assert.equal(taskActivityDetail(activity("TASK_COMPLETED", undefined)), "Task completed")
+  const closedAs = (closeReason: string) => taskActivityDetail({ ...activity("TASK_COMPLETED", staff), taskActivityDetails: { closeReason } })
+  assert.equal(closedAs("DONE"), "Task completed by staff@example.test")
+  const anonymous = { kind: "HUMAN", subject: "staff-subject" } as const
+  assert.equal(taskActivityDetail(activity("TASK_COMPLETED", anonymous)), "Task completed by the team")
+  assert.equal(taskActivityDetail({ ...activity("TASK_COMPLETED", anonymous), taskActivityDetails: { closeReason: "UNREACHABLE" } }), "Task closed as Couldn't reach by the team")
+  assert.equal(closedAs("NOT_NEEDED"), "Task closed as Not needed by staff@example.test")
+  assert.equal(closedAs("UNREACHABLE"), "Task closed as Couldn't reach by staff@example.test")
+  assert.equal(taskActivityDetail({ ...activity("TASK_COMPLETED", service), taskActivityDetails: { closeReason: "EXPIRED" } }), "Task closed as Expired automatically")
   const automatic = { ...callbackCompletion, taskActivityActor: { kind: "SERVICE", subject: "work-recovery-resolution" } } as ConversationTimelineItem
   assert.equal(taskActivityDetail(automatic), "Missed call review completed after caller@example.test's callback attempt")
 })

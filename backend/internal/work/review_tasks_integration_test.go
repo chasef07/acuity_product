@@ -70,10 +70,10 @@ func TestSharedReviewTasksPreserveEvidenceAndRejectStaleCompletion(t *testing.T)
 	if changed.Version != original.Version+1 || !changed.CreatedAt.Equal(original.CreatedAt) || changed.MessageID != firstMessage {
 		t.Fatalf("new evidence rewrote source: %#v", changed)
 	}
-	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: taskID, ExpectedVersion: original.Version}); !errors.Is(err, work.ErrConflict) {
+	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: taskID, ExpectedVersion: original.Version}); !errors.Is(err, work.ErrConflict) {
 		t.Fatalf("stale completion: %v", err)
 	}
-	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: taskID, ExpectedVersion: changed.Version}); err != nil {
+	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: taskID, ExpectedVersion: changed.Version}); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
@@ -125,10 +125,10 @@ func TestAppointmentReviewIsOneSpringHillTaskPerInteraction(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT details->>'previousMessage' FROM work_task_activities WHERE task_id=$1 AND kind='SOURCE_UPDATED'`, first[0].id).Scan(&previousMessage); err != nil || previousMessage != first[0].message {
 		t.Fatalf("source update history = %q, %v", previousMessage, err)
 	}
-	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: first[0].id, ExpectedVersion: first[0].version}); !errors.Is(err, work.ErrConflict) {
+	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: first[0].id, ExpectedVersion: first[0].version}); !errors.Is(err, work.ErrConflict) {
 		t.Fatalf("stale completion cleared newer appointment evidence: %v", err)
 	}
-	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: first[0].id, ExpectedVersion: updated[0].version}); err != nil {
+	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: first[0].id, ExpectedVersion: updated[0].version}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -194,7 +194,7 @@ func TestCompletedCheckpointReviewCannotHideSameTimeCloseoutEvidence(t *testing.
 	if len(checkpoint) != 1 {
 		t.Fatalf("checkpoint review = %#v", checkpoint)
 	}
-	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: checkpoint[0].id, ExpectedVersion: checkpoint[0].version}); err != nil {
+	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: checkpoint[0].id, ExpectedVersion: checkpoint[0].version}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -87,12 +87,12 @@ func TestTaskSearchKeepsCaseInsensitiveSubstringSemantics(t *testing.T) {
 				id, practice_id, location_id, phone, title, caller_name, state,
 				created_by_kind, created_by_subject, created_at, updated_at, origin,
 				source_call_id, source_message, category, ai_idempotency_key, ai_input_fingerprint,
-				completed_by_kind, completed_by_subject, completed_by_email, completed_at
+				completed_by_kind, completed_by_subject, completed_by_email, completed_at, close_reason
 			) VALUES (
 				$1::uuid, $2, $3, $4, $5, $6, $7,
 				'SERVICE', 'task-search-fixture', $8, $8, 'ABITA_AI',
 				$1::text, 'Synthetic search evidence', $9, $1::text, decode(repeat('00', 32), 'hex'),
-				$10, $11, $12, $13
+				$10, $11, $12, $13, CASE WHEN $7 = 'COMPLETED' THEN 'DONE' END
 			)`,
 			id, practiceID, locationID, phone, title, callerName, state, now, category,
 			completedKind, completedSubject, completedEmail, completedAt,
