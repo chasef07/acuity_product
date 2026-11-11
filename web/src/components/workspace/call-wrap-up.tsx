@@ -1,6 +1,6 @@
 "use client"
 
-import { useId, useState } from "react"
+import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, type Ref } from "react"
 
 import { CallingFailureNotice } from "@/components/workspace/calling-card"
 import { Badge } from "@/components/ui/badge"
@@ -18,9 +18,11 @@ import {
   type WrapUpReason,
   type WrapUpRequest,
   type WrapUpState,
+  type WrapUpTick,
 } from "@/lib/calling/call-wrap-up"
-import type { SoftphoneRuntimeSnapshot } from "@/lib/calling/softphone-runtime"
+import type { SettledWrapUp, SoftphoneRuntimeSnapshot } from "@/lib/calling/softphone-runtime"
 import { useEngagementSummary } from "@/lib/clients/engagement"
+import { useOpenTask } from "@/lib/clients/tasks"
 import type { PortalQuery } from "@/lib/data/queries"
 import {
   callWrapUpReasons,
@@ -35,35 +37,58 @@ import { offersTaskCloseMenu } from "./task-close-menu"
 
 type CallWrapUpProps = {
   call: CallingCall
+  settled?: Pick<SettledWrapUp, "automatic" | "shortfall">
   saving: boolean
   failure?: SoftphoneRuntimeSnapshot["failure"]
+  incomingCall?: ReactNode
   onRecover: () => void
   onSave: (request: WrapUpRequest) => void
+  onDismiss: () => void
 }
 
 export function CallWrapUp(props: CallWrapUpProps & { sawConnected: boolean }) {
   const titleID = useId()
+  const primary = useRef<HTMLButtonElement>(null)
   const [endedAt] = useState(() => Date.now())
   const summary = useEngagementSummary({
     practiceID: props.call.practiceId,
     phone: props.call.phone,
   })
+  const callTaskID = props.call.entryPoint === "TASK" ? props.call.taskId : undefined
+  const callTask = useOpenTask(callTaskID)
+  const shortfall = props.settled?.shortfall
+  const refresh = useEffectEvent(() => {
+    void summary.retry()
+    void callTask.retry()
+  })
+  useEffect(() => {
+    if (shortfall) refresh()
+  }, [shortfall])
   return (
-    <Dialog open disablePointerDismissal>
+    <Dialog
+      open
+      disablePointerDismissal
+      onOpenChange={(open) => {
+        if (!open && props.settled) props.onDismiss()
+      }}
+    >
       <DialogContent
-        showCloseButton={false}
+        showCloseButton={props.settled !== undefined}
+        initialFocus={primary}
         aria-labelledby={titleID}
         className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 p-0 text-sm sm:max-w-lg"
       >
         <CallWrapUpView
           {...props}
           titleID={titleID}
+          primaryRef={primary}
           durationSeconds={
             props.sawConnected && props.call.connectedAt
               ? (endedAt - Date.parse(props.call.connectedAt)) / 1_000
               : undefined
           }
           summary={summary}
+          callTask={callTaskID ? callTask : undefined}
           onRetry={() => void summary.retry()}
         />
       </DialogContent>
@@ -75,46 +100,82 @@ export function CallWrapUpView({
   call,
   durationSeconds,
   summary,
+  callTask,
+  settled,
   saving,
   failure,
+  incomingCall,
   onRecover,
   onRetry,
   onSave,
+  onDismiss,
   titleID,
+  primaryRef,
 }: CallWrapUpProps & {
   durationSeconds?: number
   summary: PortalQuery<Pick<PhoneSummary, "names" | "openTasks" | "openTaskCount">>
+  callTask?: PortalQuery<Task>
   onRetry: () => void
   titleID?: string
+  primaryRef?: Ref<HTMLButtonElement>
 }) {
   const [state, setState] = useState<WrapUpState>({ ticks: new Map(), followUp: false })
+  const shortfall = settled?.shortfall
+  const [appliedShortfall, setAppliedShortfall] = useState(shortfall)
+  if (shortfall !== appliedShortfall) {
+    setAppliedShortfall(shortfall)
+    if (shortfall) {
+      setState((current) => ({
+        ...current,
+        ticks: new Map(
+          [...current.ticks].filter(([taskID]) => shortfall.unclosedTaskIds.includes(taskID)),
+        ),
+      }))
+    }
+  }
   const loaded = summary.status === "ready" ? summary.data : undefined
   const names = phoneNames(loaded?.names ?? [], call.displayName)
-  const tasks = loaded
-    ? [
-        ...loaded.openTasks.filter((task) => task.id === call.taskId),
-        ...loaded.openTasks.filter((task) => task.id !== call.taskId),
-      ].filter(offersTaskCloseMenu)
-    : []
+  const callTaskID = call.entryPoint === "TASK" ? call.taskId : undefined
+  const ownTask =
+    callTask?.status === "ready"
+      ? callTask.data.state === "OPEN"
+        ? callTask.data
+        : undefined
+      : loaded?.openTasks.find((task) => task.id === callTaskID)
+  const tasks = [
+    ...(ownTask ? [ownTask] : []),
+    ...(loaded?.openTasks ?? []).filter(
+      (task) => task.id !== callTaskID && offersTaskCloseMenu(task),
+    ),
+  ]
   const ticked = new Map(
     tasks.flatMap((task) => {
-      const reason = state.ticks.get(task.id)
-      return reason ? [[task.id, reason] as const] : []
+      const tick = state.ticks.get(task.id)
+      return tick ? [[task.id, tick] as const] : []
     }),
   )
   const followUpOffered = wrapUpOffersFollowUp(call)
-  const followUp = followUpOffered && state.followUp
+  const followUp = followUpOffered && state.followUp && !settled?.automatic
+  const followUpLost =
+    Boolean(shortfall?.followUpNotCreated) || Boolean(settled?.automatic && state.followUp)
 
-  function setTick(taskID: string, reason: WrapUpReason | undefined) {
+  function setTick(task: Task, reason: WrapUpReason | undefined) {
     setState((current) => {
-      const ticks = new Map(current.ticks)
-      if (reason) ticks.set(taskID, reason)
-      else ticks.delete(taskID)
+      const ticks = new Map<string, WrapUpTick>(current.ticks)
+      if (reason) {
+        ticks.set(task.id, {
+          reason,
+          expectedVersion: current.ticks.get(task.id)?.expectedVersion ?? task.version,
+        })
+      } else {
+        ticks.delete(task.id)
+      }
       return { ...current, ticks }
     })
   }
 
-  const keepAll = () => onSave(wrapUpRequest(call, { ticks: new Map(), followUp }))
+  const finish = () =>
+    settled ? onDismiss() : onSave(wrapUpRequest(call, { ticks: new Map(), followUp }))
   const closeTicked = () => onSave(wrapUpRequest(call, { ticks: ticked, followUp }))
 
   return (
@@ -133,6 +194,25 @@ export function CallWrapUpView({
         aria-busy={summary.status === "loading" || undefined}
         className="flex min-h-0 flex-col gap-3 overflow-y-auto px-5 py-4"
       >
+        {incomingCall}
+        {settled?.automatic && (
+          <p role="status" className="text-xs text-muted-foreground">
+            This call was marked resolved automatically. You can still close Tasks.
+          </p>
+        )}
+        {shortfall && shortfall.changedTaskIds.length + shortfall.unclosedTaskIds.length > 0 && (
+          <div role="alert" className="flex flex-col gap-1 text-xs text-destructive">
+            {shortfall.changedTaskIds.length > 0 && (
+              <p>
+                {countTasks(shortfall.changedTaskIds.length)} changed since you opened this and stayed
+                open. Check and tick again to close.
+              </p>
+            )}
+            {shortfall.unclosedTaskIds.length > 0 && (
+              <p>{countTasks(shortfall.unclosedTaskIds.length)} could not be closed. Try again.</p>
+            )}
+          </div>
+        )}
         {summary.status === "loading" && (
           <div data-testid="call-wrap-up-loading" className="flex items-start gap-3 rounded-lg border p-3">
             <span className="sr-only">Loading open Tasks</span>
@@ -152,9 +232,13 @@ export function CallWrapUpView({
           </div>
         )}
         {loaded && tasks.length === 0 && (
-          <p className="text-muted-foreground">No open Tasks for this patient.</p>
+          <p className="text-muted-foreground">
+            {loaded.openTaskCount > 0
+              ? "No Tasks to close from this call."
+              : "No open Tasks for this patient."}
+          </p>
         )}
-        {loaded && tasks.length > 0 && (
+        {tasks.length > 0 && (
           <>
             <p className="text-muted-foreground">
               Tick what this call took care of. Anything unticked stays open.
@@ -164,65 +248,83 @@ export function CallWrapUpView({
                 <WrapUpTaskRow
                   key={task.id}
                   task={task}
-                  thisCall={task.id === call.taskId}
+                  thisCall={task.id === callTaskID}
                   callerName={names.length > 1 ? task.callerName : undefined}
-                  reason={ticked.get(task.id)}
+                  note={
+                    shortfall?.changedTaskIds.includes(task.id)
+                      ? "Changed since you opened this"
+                      : shortfall?.unclosedTaskIds.includes(task.id)
+                        ? "Not closed"
+                        : undefined
+                  }
+                  reason={ticked.get(task.id)?.reason}
                   disabled={saving}
-                  onChange={(reason) => setTick(task.id, reason)}
+                  onChange={(reason) => setTick(task, reason)}
                 />
               ))}
             </ul>
-            {loaded.openTaskCount > loaded.openTasks.length && (
+            {loaded && loaded.openTaskCount > loaded.openTasks.length && (
               <p className="text-xs text-muted-foreground">
-                Showing {loaded.openTasks.length} of {loaded.openTaskCount}
+                Showing {tasks.length} of {loaded.openTaskCount} open Tasks
               </p>
             )}
           </>
         )}
         {followUpOffered && (
-          <label className="flex items-center gap-3 py-1">
-            <Checkbox
-              checked={state.followUp}
-              disabled={saving}
-              onCheckedChange={(checked) =>
-                setState((current) => ({ ...current, followUp: checked }))
-              }
-            />
-            <span>Create a follow-up Task</span>
-          </label>
+          <div className="flex flex-col gap-1 py-1">
+            <label className="flex items-center gap-3">
+              <Checkbox
+                checked={settled ? state.followUp && !followUpLost : state.followUp}
+                disabled={saving || settled !== undefined}
+                onCheckedChange={(checked) =>
+                  setState((current) => ({ ...current, followUp: checked }))
+                }
+              />
+              <span>Create a follow-up Task</span>
+            </label>
+            {settled && (
+              <p
+                data-testid="call-wrap-up-follow-up-reason"
+                className={followUpLost ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+              >
+                {followUpLost && "The follow-up Task was not created. "}
+                A follow-up can no longer be created from this call.
+              </p>
+            )}
+          </div>
         )}
         {failure && <CallingFailureNotice failure={failure} onRecover={onRecover} />}
       </div>
       <footer className="flex flex-wrap justify-end gap-2 border-t px-5 py-3">
-        {loaded && tasks.length === 0 ? (
-          <Button disabled={saving} onClick={keepAll}>
-            {saving && <Spinner data-icon="inline-start" />}
-            Finish
+        {ticked.size > 0 && (
+          <Button variant="outline" disabled={saving} onClick={finish}>
+            Keep all open
           </Button>
-        ) : (
-          <>
-            <Button variant="outline" disabled={saving} onClick={keepAll}>
-              Keep all open
-            </Button>
-            {loaded && (
-              <Button disabled={saving || ticked.size === 0} onClick={closeTicked}>
-                {saving && <Spinner data-icon="inline-start" />}
-                {ticked.size === 0
-                  ? "Tick a Task to close it"
-                  : `Close ${ticked.size} · keep ${tasks.length - ticked.size} open`}
-              </Button>
-            )}
-          </>
         )}
+        <Button ref={primaryRef} disabled={saving} onClick={ticked.size > 0 ? closeTicked : finish}>
+          {saving && <Spinner data-icon="inline-start" />}
+          {ticked.size > 0
+            ? `Close ${ticked.size} · keep ${tasks.length - ticked.size} open`
+            : settled
+              ? "Close"
+              : loaded && tasks.length === 0
+                ? "Finish"
+                : "Keep all open"}
+        </Button>
       </footer>
     </>
   )
+}
+
+function countTasks(count: number) {
+  return count === 1 ? "1 Task" : `${count} Tasks`
 }
 
 function WrapUpTaskRow({
   task,
   thisCall,
   callerName,
+  note,
   reason,
   disabled,
   onChange,
@@ -230,6 +332,7 @@ function WrapUpTaskRow({
   task: Task
   thisCall: boolean
   callerName?: string
+  note?: string
   reason: WrapUpReason | undefined
   disabled: boolean
   onChange: (reason: WrapUpReason | undefined) => void
@@ -262,6 +365,7 @@ function WrapUpTaskRow({
             {task.category ? taskGroupLabel(task.category) : taskOriginLabels[task.origin]} ·{" "}
             {task.locationName}
           </span>
+          {note && <span className="text-xs text-destructive">{note}</span>}
         </span>
       </label>
       {reason && (

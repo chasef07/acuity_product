@@ -60,8 +60,11 @@ test("the wrap-up is a dialog named for the patient that Escape and outside clic
     MouseEvent: { configurable: true, value: dom.window.MouseEvent },
     getComputedStyle: { configurable: true, value: dom.window.getComputedStyle.bind(dom.window) },
     IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
-    requestAnimationFrame: { configurable: true, value: () => 0 },
-    cancelAnimationFrame: { configurable: true, value: () => {} },
+    requestAnimationFrame: {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0),
+    },
+    cancelAnimationFrame: { configurable: true, value: clearTimeout },
   })
   Object.defineProperty(dom.window, "matchMedia", { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) })
   const previousAPIURL = process.env.NEXT_PUBLIC_PORTAL_API_URL
@@ -91,6 +94,7 @@ test("the wrap-up is a dialog named for the patient that Escape and outside clic
     dom.window.close()
   })
   const sent: WrapUpRequest[] = []
+  const dismissed: string[] = []
   await act(async () =>
     root.render(
       <DataProvider>
@@ -100,6 +104,7 @@ test("the wrap-up is a dialog named for the patient that Escape and outside clic
           saving={false}
           onRecover={() => {}}
           onSave={(request) => sent.push(request)}
+          onDismiss={() => dismissed.push("dismissed")}
         />
       </DataProvider>,
     ),
@@ -128,5 +133,47 @@ test("the wrap-up is a dialog named for the patient that Escape and outside clic
   })
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
   assert.ok(row(), "the wrap-up is still open")
-  assert.deepEqual(sent, [], "a dismissal attempt records nothing")
+  assert.equal(sent.length, 0, "a dismissal attempt records nothing")
+  assert.equal(dismissed.length, 0)
+  const primary = [...dialog()!.querySelectorAll("button")].at(-1)!
+  assert.equal(primary.textContent, "Keep all open")
+  assert.equal(
+    document.activeElement?.textContent,
+    "Keep all open",
+    "the dialog opens with focus on its primary button",
+  )
+  assert.ok(document.activeElement === primary)
+  assert.deepEqual(
+    [...dialog()!.querySelectorAll<HTMLElement>('[role="checkbox"], select, button')].map(
+      (control) => control.getAttribute("role") ?? control.textContent,
+    ),
+    ["checkbox", "checkbox", "Keep all open"],
+    "Tab reaches the Task rows, then the follow-up, then the button",
+  )
+
+  await act(async () =>
+    root.render(
+      <DataProvider>
+        <CallWrapUp
+          call={{ ...call, state: "RESOLVED" }}
+          settled={{ automatic: true }}
+          sawConnected
+          saving={false}
+          onRecover={() => {}}
+          onSave={(request) => sent.push(request)}
+          onDismiss={() => dismissed.push("dismissed")}
+        />
+      </DataProvider>,
+    ),
+  )
+  assert.ok(row(), "the wrap-up outlives the automatic resolve")
+  assert.match(dialog()!.textContent ?? "", /marked resolved automatically\. You can still close Tasks\./)
+  const close = dialog()!.querySelector<HTMLElement>('[data-slot="dialog-close"]')
+  assert.ok(close, "a resolved wrap-up shows a Close button")
+  await act(async () => close!.click())
+  await act(async () => {
+    dialog()!.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+  })
+  assert.equal(dismissed.length, 2, "the Close button and Escape both dismiss it")
+  assert.equal(sent.length, 0)
 })

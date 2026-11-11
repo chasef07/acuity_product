@@ -1949,7 +1949,6 @@ test("Hangup preserves Ending until committed disposition and disposition clears
   assert.equal(runtime.getSnapshot().endingCallID, "")
   assert.equal(runtime.getSnapshot().activeCall, undefined)
   assert.equal(runtime.getSnapshot().pendingDisposition?.id, "call-end")
-  assert.equal(runtime.getSnapshot().controls.canDispose, true)
 
   backend.disposeHandler = async () => {
     const resolved = call({ id: "call-end", state: "RESOLVED", version: 4 })
@@ -2217,7 +2216,7 @@ test("the disposition stage sends the wrap-up's outcome and closures, and a reje
   const sent: Parameters<SoftphoneBackend["dispose"]>[0][] = []
   const request = {
     outcome: "RESOLVED" as const,
-    closures: [{ taskId: "task-refill", reason: "NOT_NEEDED" as const }],
+    closures: [{ taskId: "task-refill", reason: "NOT_NEEDED" as const, expectedVersion: 2 }],
   }
   backend.disposeHandler = async (input) => {
     sent.push(input)
@@ -2225,7 +2224,6 @@ test("the disposition stage sends the wrap-up's outcome and closures, and a reje
   }
   assert.equal(await runtime.dispose(request), undefined)
   assert.equal(runtime.getSnapshot().pendingDisposition?.id, pending.id)
-  assert.equal(runtime.getSnapshot().controls.canDispose, true)
   assert.equal(
     runtime.getSnapshot().failure?.message,
     "The Call outcome could not be saved. Try again.",
@@ -2244,6 +2242,172 @@ test("the disposition stage sends the wrap-up's outcome and closures, and a reje
   assert.deepEqual(result?.closedTaskIds, ["task-refill"])
   assert.equal(runtime.getSnapshot().pendingDisposition, undefined)
   assert.equal(runtime.getSnapshot().failure, undefined)
+})
+
+async function automaticallyResolvedWrapUp(id: string) {
+  const backend = new DeterministicBackend()
+  const pending = call({ id, state: "NEEDS_DISPOSITION", version: 3 })
+  const resolved = call({ id, state: "RESOLVED", version: 4 })
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: stateCall(pending.id, "wrap-up-leg", pending.version),
+  })
+  backend.calls.set(pending.id, pending)
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  assert.equal(runtime.getSnapshot().pendingDisposition?.id, pending.id)
+  assert.equal(runtime.getSnapshot().settledWrapUp, undefined)
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.calls.set(resolved.id, resolved)
+  await runtime.signalRefresh()
+  return { backend, media, runtime, pending, resolved }
+}
+
+test("a wrap-up outlives the automatic resolve, and a late save sends its ticks", async () => {
+  const { backend, runtime, pending, resolved } = await automaticallyResolvedWrapUp("call-late-wrap-up")
+  assert.equal(runtime.getSnapshot().pendingDisposition, undefined)
+  assert.deepEqual(runtime.getSnapshot().settledWrapUp, { call: pending, automatic: true })
+  assert.equal(runtime.getSnapshot().occupied, false)
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().settledWrapUp?.call.id, pending.id, "a later refresh keeps the wrap-up")
+
+  const sent: Parameters<SoftphoneBackend["dispose"]>[0][] = []
+  const request = {
+    outcome: "RESOLVED" as const,
+    closures: [
+      { taskId: "task-refill", reason: "DONE" as const, expectedVersion: 2 },
+      { taskId: "task-billing", reason: "NOT_NEEDED" as const, expectedVersion: 5 },
+    ],
+  }
+  backend.disposeHandler = async (input) => {
+    sent.push(input)
+    throw new SoftphoneAdapterError("conflict", "The Call outcome could not be saved. Try again.")
+  }
+  assert.equal(await runtime.dispose(request), undefined)
+  assert.equal(runtime.getSnapshot().settledWrapUp?.call.id, pending.id, "a rejected late save keeps the wrap-up")
+  assert.equal(
+    runtime.getSnapshot().failure?.message,
+    "The Call outcome could not be saved. Try again.",
+  )
+
+  backend.disposeHandler = async (input) => {
+    sent.push(input)
+    return {
+      call: resolved,
+      closedTaskIds: ["task-refill"],
+      alreadyClosedTaskIds: [],
+      changedTaskIds: ["task-billing"],
+      recordedOutcome: "RESOLVED",
+    }
+  }
+  const partial = await runtime.dispose(request)
+  const expected = { callID: pending.id, sessionID: "session-1", ...request }
+  assert.deepEqual(sent, [expected, expected])
+  assert.deepEqual(partial?.changedTaskIds, ["task-billing"])
+  assert.deepEqual(runtime.getSnapshot().settledWrapUp, {
+    call: resolved,
+    automatic: true,
+    shortfall: { changedTaskIds: ["task-billing"], unclosedTaskIds: [], followUpNotCreated: false },
+  })
+  assert.equal(runtime.getSnapshot().failure, undefined)
+
+  backend.disposeHandler = async () => ({
+    call: resolved,
+    closedTaskIds: ["task-billing"],
+    alreadyClosedTaskIds: ["task-refill"],
+    changedTaskIds: [],
+    recordedOutcome: "RESOLVED",
+  })
+  await runtime.dispose(request)
+  assert.equal(runtime.getSnapshot().settledWrapUp, undefined, "a save that closed every tick closes the wrap-up")
+  await runtime.stop()
+})
+
+test("an incoming Call is offered beside an automatically resolved wrap-up, and answering it closes the wrap-up", async () => {
+  const { backend, media, runtime, pending } = await automaticallyResolvedWrapUp("call-wrap-up-then-offer")
+  const incoming = offer({
+    callId: "call-after-wrap-up",
+    callLegId: "leg-after-wrap-up",
+    mediaToken: "media-after-wrap-up",
+  })
+  backend.state = callingState({ softphone: backend.lease, ringing: [incoming] })
+  backend.calls.set(
+    incoming.callId,
+    call({ id: incoming.callId, direction: "INBOUND", state: "CONNECTING", version: 1 }),
+  )
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().offers[0]?.callLegId, incoming.callLegId)
+  assert.equal(runtime.getSnapshot().settledWrapUp?.call.id, pending.id)
+
+  media.emitIncoming(
+    mediaLeg({ providerLegID: "provider-after-wrap-up", mediaToken: incoming.mediaToken }),
+  )
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().offers[0]?.answerReady, true),
+  )
+  await runtime.answer(incoming.callLegId)
+  assert.equal(runtime.getSnapshot().settledWrapUp, undefined)
+  await runtime.stop()
+})
+
+test("an automatically resolved wrap-up can be dismissed, and a save that changed Tasks keeps it open", async () => {
+  const { runtime, pending } = await automaticallyResolvedWrapUp("call-dismissed-wrap-up")
+  runtime.dismissWrapUp()
+  assert.equal(runtime.getSnapshot().settledWrapUp, undefined)
+  assert.equal(await runtime.dispose({ outcome: "RESOLVED", closures: [] }), undefined)
+  await runtime.stop()
+
+  const backend = new DeterministicBackend()
+  const resolved = call({ id: pending.id, state: "RESOLVED", version: 4 })
+  backend.lease = lease({ owner: true, pendingOutcomeCallId: pending.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: stateCall(pending.id, "wrap-up-leg", pending.version),
+  })
+  backend.calls.set(pending.id, pending)
+  const saved = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await saved.start()
+  backend.disposeHandler = async () => {
+    backend.lease = lease({ owner: true })
+    backend.state = callingState({ softphone: backend.lease })
+    backend.calls.set(resolved.id, resolved)
+    return {
+      call: resolved,
+      closedTaskIds: [],
+      alreadyClosedTaskIds: [],
+      changedTaskIds: ["task-refill"],
+      recordedOutcome: "RESOLVED",
+    }
+  }
+  await saved.dispose({
+    outcome: "FOLLOW_UP_REQUIRED",
+    closures: [{ taskId: "task-refill", reason: "DONE", expectedVersion: 1 }],
+  })
+  assert.equal(saved.getSnapshot().pendingDisposition, undefined)
+  assert.deepEqual(saved.getSnapshot().settledWrapUp, {
+    call: resolved,
+    automatic: false,
+    shortfall: { changedTaskIds: ["task-refill"], unclosedTaskIds: [], followUpNotCreated: true },
+  })
+  assert.equal(saved.getSnapshot().pending.disposition, false)
+  await saved.stop()
 })
 
 test("offers use transient cadence and stop cleans timers, visibility, media, and microphone without severing subscribers", async () => {
@@ -5528,7 +5692,6 @@ test("a disposition failure for a Call whose Outcome another Call replaced does 
   await runtime.signalRefresh()
   assert.equal(runtime.getSnapshot().pendingDisposition?.id, next.id)
   assert.equal(runtime.getSnapshot().pending.disposition, false)
-  assert.equal(runtime.getSnapshot().controls.canDispose, true)
 
   response.reject(new SoftphoneAdapterError("temporary-request", "Disposition did not reach calling.", true))
   assert.equal(await disposing, undefined)

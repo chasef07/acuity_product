@@ -53,13 +53,13 @@ test("a wrap-up sends its closures, and leaves the field out when nothing is tic
   const adapter = createSoftphoneHTTPAdapter()
   const wrapUp = { callID: "call-1", sessionID: "browser-a", outcome: "RESOLVED" as const }
   await adapter.dispose({ ...wrapUp, closures: [] })
-  await adapter.dispose({ ...wrapUp, closures: [{ taskId: "task-1", reason: "NOT_NEEDED" }] })
+  await adapter.dispose({ ...wrapUp, closures: [{ taskId: "task-1", reason: "NOT_NEEDED", expectedVersion: 4 }] })
   assert.deepEqual(bodies, [
     { sessionId: "browser-a", outcome: "RESOLVED" },
     {
       sessionId: "browser-a",
       outcome: "RESOLVED",
-      closures: [{ taskId: "task-1", reason: "NOT_NEEDED" }],
+      closures: [{ taskId: "task-1", reason: "NOT_NEEDED", expectedVersion: 4 }],
     },
   ])
 })

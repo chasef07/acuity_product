@@ -5,8 +5,10 @@ import {
   wrapUpDuration,
   wrapUpOffersFollowUp,
   wrapUpRequest,
+  wrapUpShortfall,
   type WrapUpCall,
   type WrapUpReason,
+  type WrapUpRequest,
 } from "./call-wrap-up.ts"
 
 const inbound: WrapUpCall = { direction: "INBOUND", entryPoint: "STANDALONE" }
@@ -15,7 +17,7 @@ const direct: WrapUpCall = { direction: "OUTBOUND", entryPoint: "STANDALONE" }
 const fromTask: WrapUpCall = { direction: "OUTBOUND", entryPoint: "TASK", taskId: "task-call" }
 
 function ticks(...entries: [string, WrapUpReason][]) {
-  return new Map(entries)
+  return new Map(entries.map(([taskID, reason]) => [taskID, { reason, expectedVersion: 3 }]))
 }
 
 test("every wrap-up combination sends an outcome the server accepts for that Call", () => {
@@ -50,7 +52,7 @@ test("every wrap-up combination sends an outcome the server accepts for that Cal
       wrapUpRequest(item.call, { ticks: ticks(...item.ticks), followUp: item.followUp }),
       {
         outcome: item.outcome,
-        closures: item.ticks.map(([taskId, reason]) => ({ taskId, reason })),
+        closures: item.ticks.map(([taskId, reason]) => ({ taskId, reason, expectedVersion: 3 })),
       },
       item.name,
     )
@@ -68,6 +70,55 @@ test("a follow-up is offered unless the Call was placed from a Task, which stays
   assert.equal(wrapUpOffersFollowUp(handoff), true)
   assert.equal(wrapUpOffersFollowUp(direct), true)
   assert.equal(wrapUpOffersFollowUp(fromTask), false)
+})
+
+test("a save that closed or found closed every ticked Task leaves nothing to say", () => {
+  const request: WrapUpRequest = {
+    outcome: "FOLLOW_UP_REQUIRED",
+    closures: [
+      { taskId: "task-a", reason: "DONE", expectedVersion: 1 },
+      { taskId: "task-b", reason: "NOT_NEEDED", expectedVersion: 2 },
+    ],
+  }
+  assert.equal(
+    wrapUpShortfall(request, {
+      closedTaskIds: ["task-a"],
+      alreadyClosedTaskIds: ["task-b"],
+      changedTaskIds: [],
+      recordedOutcome: "FOLLOW_UP_REQUIRED",
+    }),
+    undefined,
+  )
+  assert.equal(wrapUpShortfall({ outcome: "RESOLVED", closures: [] }, {}), undefined)
+})
+
+test("a save names the ticked Tasks it left open and a follow-up it did not create", () => {
+  const request: WrapUpRequest = {
+    outcome: "CREATE_TASK",
+    closures: [
+      { taskId: "task-a", reason: "DONE", expectedVersion: 1 },
+      { taskId: "task-b", reason: "DONE", expectedVersion: 1 },
+      { taskId: "task-c", reason: "DONE", expectedVersion: 1 },
+    ],
+  }
+  assert.deepEqual(
+    wrapUpShortfall(request, {
+      closedTaskIds: ["task-a"],
+      alreadyClosedTaskIds: [],
+      changedTaskIds: ["task-b"],
+      recordedOutcome: "RESOLVED",
+    }),
+    { changedTaskIds: ["task-b"], unclosedTaskIds: ["task-c"], followUpNotCreated: true },
+  )
+  assert.deepEqual(
+    wrapUpShortfall({ outcome: "COMPLETE_TASK", closures: [] }, { recordedOutcome: "RESOLVED" }),
+    undefined,
+    "only a follow-up that was asked for can be missing",
+  )
+  assert.deepEqual(
+    wrapUpShortfall({ outcome: "FOLLOW_UP_REQUIRED", closures: [] }, { recordedOutcome: "RESOLVED" }),
+    { changedTaskIds: [], unclosedTaskIds: [], followUpNotCreated: true },
+  )
 })
 
 test("a Call's length reads in minutes and seconds", () => {

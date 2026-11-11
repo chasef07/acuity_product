@@ -2,20 +2,29 @@ import type {
   CallingCall,
   CallingDispositionClosure,
   CallingDispositionRequest,
+  CallingDispositionResult,
 } from "../api/generated/types.gen.ts"
 
 export type WrapUpReason = CallingDispositionClosure["reason"]
 
 export type WrapUpCall = Pick<CallingCall, "direction" | "entryPoint" | "taskId">
 
+export type WrapUpTick = Pick<CallingDispositionClosure, "reason" | "expectedVersion">
+
 export type WrapUpState = {
-  ticks: ReadonlyMap<string, WrapUpReason>
+  ticks: ReadonlyMap<string, WrapUpTick>
   followUp: boolean
 }
 
 export type WrapUpRequest = {
   outcome: CallingDispositionRequest["outcome"]
   closures: CallingDispositionClosure[]
+}
+
+export type WrapUpShortfall = {
+  changedTaskIds: string[]
+  unclosedTaskIds: string[]
+  followUpNotCreated: boolean
 }
 
 export function wrapUpOffersFollowUp(call: WrapUpCall) {
@@ -25,7 +34,7 @@ export function wrapUpOffersFollowUp(call: WrapUpCall) {
 export function wrapUpRequest(call: WrapUpCall, state: WrapUpState): WrapUpRequest {
   return {
     outcome: wrapUpOutcome(call, state),
-    closures: [...state.ticks].map(([taskId, reason]) => ({ taskId, reason })),
+    closures: [...state.ticks].map(([taskId, tick]) => ({ taskId, ...tick })),
   }
 }
 
@@ -37,6 +46,27 @@ function wrapUpOutcome(call: WrapUpCall, state: WrapUpState): WrapUpRequest["out
     return call.taskId !== undefined && state.ticks.has(call.taskId) ? "COMPLETE_TASK" : "KEEP_OPEN"
   }
   return state.followUp ? "CREATE_TASK" : "RESOLVED"
+}
+
+export function wrapUpShortfall(
+  request: WrapUpRequest,
+  result: Pick<
+    CallingDispositionResult,
+    "closedTaskIds" | "alreadyClosedTaskIds" | "changedTaskIds" | "recordedOutcome"
+  >,
+): WrapUpShortfall | undefined {
+  const closed = new Set([...(result.closedTaskIds ?? []), ...(result.alreadyClosedTaskIds ?? [])])
+  const changed = new Set(result.changedTaskIds ?? [])
+  const open = request.closures.map((closure) => closure.taskId).filter((taskID) => !closed.has(taskID))
+  const shortfall = {
+    changedTaskIds: open.filter((taskID) => changed.has(taskID)),
+    unclosedTaskIds: open.filter((taskID) => !changed.has(taskID)),
+    followUpNotCreated:
+      (request.outcome === "FOLLOW_UP_REQUIRED" || request.outcome === "CREATE_TASK") &&
+      result.recordedOutcome !== undefined &&
+      result.recordedOutcome !== request.outcome,
+  }
+  return open.length > 0 || shortfall.followUpNotCreated ? shortfall : undefined
 }
 
 export function wrapUpDuration(seconds: number) {
