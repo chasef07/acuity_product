@@ -169,15 +169,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
   useEffect(() => () => projection.stop(), [projection])
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (!document.hidden && (projection.getSnapshot().tasks.counts.texts ?? 0) > 0) {
-        void projection.dispatch({ type: "refresh-text-attention" })
-      }
-    }, 15 * 60_000)
-    return () => window.clearInterval(timer)
-  }, [projection])
-
-  useEffect(() => {
     const navigationChanged = () => {
       if (window.location.pathname === workspacePath) {
         void projection.dispatch({ type: "navigation-changed" })

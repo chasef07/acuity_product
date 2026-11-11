@@ -146,8 +146,6 @@ const (
 	TaskUrgencyRankSQL = `CASE task.urgency WHEN 'high_priority' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END`
 )
 
-const HiddenReviewRetirementSubject = "hidden-review-retirement"
-
 func (urgency TaskUrgency) Rank() int {
 	switch urgency {
 	case TaskUrgencyHighPriority:

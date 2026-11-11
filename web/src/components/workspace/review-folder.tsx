@@ -44,7 +44,7 @@ export function ReviewFolder({
       {page.status === "ready" && !error && items.length === 0 && (
         <SidebarMenuItem className="px-3 py-2 text-xs text-muted-foreground">
           {kind === "texts"
-            ? "No texts needing review in the past five days."
+            ? "No texts needing review."
             : "Nothing to review."}
         </SidebarMenuItem>
       )}

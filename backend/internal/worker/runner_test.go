@@ -1,8 +1,11 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,7 +25,7 @@ func TestRunnerDoesNotStartLaneWorkAfterCancellation(t *testing.T) {
 		RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize:      1,
 		CommandWorkers:                2,
-	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, &countingTaskWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -88,7 +91,7 @@ func newReceiptRunner(t *testing.T, work CallingWork, receiptWorkers int) *Runne
 		RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize:      1,
 		CommandWorkers:                2,
-	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, &countingTaskWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -131,7 +134,7 @@ func TestRunnerStopsMaintenanceLaneBetweenOperations(t *testing.T) {
 		RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize:      1,
 		CommandWorkers:                2,
-	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, &countingTaskWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -565,5 +568,87 @@ func waitForSignal(t *testing.T, signal <-chan struct{}, description string) {
 	case <-signal:
 	case <-time.After(time.Second):
 		t.Fatalf("timed out waiting for %s", description)
+	}
+}
+
+type countingTaskWork struct {
+	sweeps atomic.Int32
+	closed int
+	err    error
+}
+
+func (work *countingTaskWork) ExpireTextReviews(context.Context) (int, error) {
+	work.sweeps.Add(1)
+	return work.closed, work.err
+}
+
+func newMaintenanceRunner(t *testing.T, tasks TaskWork) *Runner {
+	t.Helper()
+	runner, err := New(Config{
+		WorkInterval:                  time.Hour,
+		WorkTimeout:                   time.Second,
+		CredentialInterval:            time.Hour,
+		CredentialTimeout:             time.Second,
+		HealthInterval:                time.Hour,
+		HealthTimeout:                 time.Second,
+		ReceiptBatchSize:              1,
+		RecoveryAndMessagingBatchSize: 1,
+		ProviderCommandBatchSize:      1,
+		CommandWorkers:                1,
+	}, newControlledWork(), &controlledMessagingWork{}, &controlledInteractionWork{}, tasks, healthyDependency{})
+	if err != nil {
+		t.Fatalf("create worker runner: %v", err)
+	}
+	return runner
+}
+
+func captureWorkerLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var log bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &log
+}
+
+func TestMaintenanceExpiresTextReviewsOncePerTickAndLogsTheCountClosed(t *testing.T) {
+	log := captureWorkerLog(t)
+	tasks := &countingTaskWork{closed: 3}
+	runner := newMaintenanceRunner(t, tasks)
+
+	if failed := runner.runMaintenance(context.Background()); failed {
+		t.Fatal("maintenance tick reported a failure")
+	}
+	if sweeps := tasks.sweeps.Load(); sweeps != 1 {
+		t.Fatalf("text review sweeps after one maintenance tick = %d, want 1", sweeps)
+	}
+	if !strings.Contains(log.String(), "msg=text_reviews_expired count=3") {
+		t.Fatalf("worker log = %q, want the count of text reviews closed", log.String())
+	}
+
+	log.Reset()
+	tasks.closed = 0
+	if failed := runner.runMaintenance(context.Background()); failed {
+		t.Fatal("maintenance tick reported a failure")
+	}
+	if sweeps := tasks.sweeps.Load(); sweeps != 2 {
+		t.Fatalf("text review sweeps after two maintenance ticks = %d, want 2", sweeps)
+	}
+	if strings.Contains(log.String(), "text_reviews_expired") {
+		t.Fatalf("worker log = %q, want no line for a sweep that closed nothing", log.String())
+	}
+}
+
+func TestMaintenanceReportsAFailedTextReviewSweep(t *testing.T) {
+	log := captureWorkerLog(t)
+	tasks := &countingTaskWork{closed: 2, err: errors.New("synthetic expiry failure")}
+	runner := newMaintenanceRunner(t, tasks)
+
+	if failed := runner.runMaintenance(context.Background()); !failed {
+		t.Fatal("maintenance tick hid a failed text review sweep")
+	}
+	if !strings.Contains(log.String(), "msg=text_review_expiry_failed") ||
+		!strings.Contains(log.String(), "msg=text_reviews_expired count=2") {
+		t.Fatalf("worker log = %q, want the failure and the reviews closed before it", log.String())
 	}
 }

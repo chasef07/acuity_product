@@ -1188,6 +1188,10 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil {
 		t.Fatalf("queue Message before STOP: %v", err)
 	}
+	var reviewUpdatedBeforeStop time.Time
+	if err := pool.QueryRow(context.Background(), `SELECT updated_at FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW'`).Scan(&reviewUpdatedBeforeStop); err != nil {
+		t.Fatalf("read review clock before STOP: %v", err)
+	}
 	rawStop := []byte(fmt.Sprintf(
 		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-stop","occurred_at":"%s","payload":{"id":"provider-inbound-stop","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100","status":"delivered"}],"text":"STOP","record_type":"message","direction":"inbound"}}}`,
 		now.Format(time.RFC3339),
@@ -1351,6 +1355,10 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if processed, err := moduleWorker.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("process newest START = %t, %v", processed, err)
+	}
+	var reviewUpdatedAfterStart time.Time
+	if err := pool.QueryRow(context.Background(), `SELECT updated_at FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW' AND state='OPEN'`).Scan(&reviewUpdatedAfterStart); err != nil || !reviewUpdatedAfterStart.Equal(reviewUpdatedBeforeStop) {
+		t.Fatalf("review clock after STOP and START texts = %s, %v; want it left at %s so they do not keep the review alive", reviewUpdatedAfterStart, err, reviewUpdatedBeforeStop)
 	}
 	newAttempt, newAttemptStatus, err := module.SendAgain(
 		context.Background(),
