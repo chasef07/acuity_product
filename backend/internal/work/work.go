@@ -272,14 +272,13 @@ type EnsureMessageFollowUpCommand struct {
 }
 
 type EnsureRecoveryTaskCommand struct {
-	CallID       string
-	SourceCallID string
-	PracticeID   string
-	LocationID   string
-	Phone        string
-	CallerName   string
-	Outcome      RecoveryOutcome
-	OccurredAt   time.Time
+	CallID     string
+	PracticeID string
+	LocationID string
+	Phone      string
+	CallerName string
+	Outcome    RecoveryOutcome
+	OccurredAt time.Time
 }
 
 type ResolveRecoveryTasksCommand struct {
@@ -527,7 +526,6 @@ func (m *Module) EnsureRecoveryTask(
 	command EnsureRecoveryTaskCommand,
 ) (Task, error) {
 	command.CallID = strings.TrimSpace(command.CallID)
-	command.SourceCallID = strings.TrimSpace(command.SourceCallID)
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	command.Phone = strings.TrimSpace(command.Phone)
@@ -575,23 +573,21 @@ func (m *Module) EnsureRecoveryTask(
 		FOR UPDATE OF task
 	`, command.CallID).Scan(&taskID, &taskOrigin)
 	inserted := false
-	if errors.Is(err, pgx.ErrNoRows) && command.SourceCallID != "" {
+	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `
 			SELECT task.id::text, task.origin
 			FROM work_tasks task
 			WHERE task.practice_id = $1
 				AND task.location_id = $2
 				AND task.phone = $3
-				AND task.source_call_id = $4
 				AND task.state = 'OPEN'
 				AND `+TaskIsFollowUpSQL+`
 			ORDER BY task.created_at DESC, task.id DESC
 			LIMIT 1
 			FOR UPDATE
-		`, command.PracticeID, command.LocationID, command.Phone,
-			command.SourceCallID).Scan(&taskID, &taskOrigin)
+		`, command.PracticeID, command.LocationID, command.Phone).Scan(&taskID, &taskOrigin)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return Task{}, fmt.Errorf("load the Task from the same call: %w", err)
+			return Task{}, fmt.Errorf("load caller's open Task: %w", err)
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -5546,26 +5546,6 @@ func TestFailedVoicemailGreetingCreatesMissedCallWithoutRecording(t *testing.T) 
 }
 
 func TestMissedHandoffAttachesToTheAITaskFromTheSameCall(t *testing.T) {
-	aiTaskID, voicemailTaskID, interactionTaskID, recoveryTasks := missHandoffWithOpenAITask(t, true)
-	if voicemailTaskID != aiTaskID || interactionTaskID != aiTaskID || recoveryTasks != 0 {
-		t.Fatalf("missed handoff went to Task %s / %s with %d recovery Tasks; want AI Task %s and none",
-			voicemailTaskID, interactionTaskID, recoveryTasks, aiTaskID)
-	}
-}
-
-func TestMissedHandoffAfterAnEarlierCallsAITaskGetsItsOwnRecoveryTask(t *testing.T) {
-	aiTaskID, voicemailTaskID, interactionTaskID, recoveryTasks := missHandoffWithOpenAITask(t, false)
-	if voicemailTaskID == aiTaskID || interactionTaskID != voicemailTaskID || recoveryTasks != 1 {
-		t.Fatalf("missed handoff went to Task %s / %s with %d recovery Tasks; want one recovery Task apart from AI Task %s",
-			voicemailTaskID, interactionTaskID, recoveryTasks, aiTaskID)
-	}
-}
-
-func missHandoffWithOpenAITask(
-	t *testing.T,
-	aiTaskFromSameCall bool,
-) (aiTaskID, voicemailTaskID, interactionTaskID string, recoveryTasks int) {
-	t.Helper()
 	now := time.Date(2026, time.October, 14, 17, 15, 0, 0, time.UTC)
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
 		CallControlID: "ai-task-staff-control", CallLegID: "ai-task-staff-leg",
@@ -5573,6 +5553,7 @@ func missHandoffWithOpenAITask(
 	pool, calling, caller, _ := prepareInboundFanout(
 		t, now, "missed-after-ai-task", provider, 1,
 	)
+	var aiTaskID string
 	if err := pool.QueryRow(context.Background(), `
 		INSERT INTO work_tasks (
 			practice_id, location_id, phone, title, state, origin, urgency, category,
@@ -5581,11 +5562,10 @@ func missHandoffWithOpenAITask(
 		)
 		SELECT practice_id, location_id, phone, 'Refill request', 'OPEN', 'ABITA_AI',
 			'normal', 'medication', 'SERVICE', 'abita-synthetic', $1, $1,
-			CASE WHEN $2 THEN source_call_id ELSE 'earlier-ai-call' END,
-			'Caller asked for a refill.', 'refill', sha256('refill')
+			source_call_id, 'Caller asked for a refill.', 'refill', sha256('refill')
 		FROM human_calling_handoffs
 		RETURNING id::text
-	`, now, aiTaskFromSameCall).Scan(&aiTaskID); err != nil {
+	`, now).Scan(&aiTaskID); err != nil {
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
@@ -5611,6 +5591,8 @@ func missHandoffWithOpenAITask(
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
+	var voicemailTaskID, interactionTaskID string
+	var recoveryTasks int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT voicemail.task_id::text, interaction.task_id::text,
 			(SELECT count(*) FROM work_tasks
@@ -5620,7 +5602,10 @@ func missHandoffWithOpenAITask(
 	`).Scan(&voicemailTaskID, &interactionTaskID, &recoveryTasks); err != nil {
 		t.Fatal(err)
 	}
-	return aiTaskID, voicemailTaskID, interactionTaskID, recoveryTasks
+	if voicemailTaskID != aiTaskID || interactionTaskID != aiTaskID || recoveryTasks != 0 {
+		t.Fatalf("missed handoff went to Task %s / %s with %d recovery Tasks; want AI Task %s and none",
+			voicemailTaskID, interactionTaskID, recoveryTasks, aiTaskID)
+	}
 }
 
 func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *testing.T) {
