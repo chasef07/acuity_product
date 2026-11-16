@@ -2,22 +2,40 @@ import type {
   AiAppointmentOutcome,
   AiInteractionCallStatus,
 } from "@/lib/api/generated/types.gen"
-import { appointmentOutcomeTitles, callLineLabels } from "./vocabulary.ts"
+import { appointmentOutcomeTitles } from "./vocabulary.ts"
 
-export function aiCallTitle(
+export function aiCallTimelinePresentation(
   outcome: AiAppointmentOutcome,
   status: AiInteractionCallStatus,
 ) {
-  if (outcome !== "INDETERMINATE") return appointmentOutcomeTitles[outcome]
+  if (outcome !== "INDETERMINATE") {
+    return {
+      title: appointmentOutcomeTitles[outcome],
+      detail: aiCallTimelineDetail(status),
+    }
+  }
 
   switch (status) {
     case "COMPLETED":
-      return appointmentOutcomeTitles.INDETERMINATE
+      return { title: "AI call", detail: "" }
     case "ESCALATED":
-      return callLineLabels.transferRequested
+      return { title: "Transfer requested", detail: "AI call" }
     case "FAILED":
-      return callLineLabels.aiFailed
+      return { title: "AI call failed", detail: "" }
     default:
-      return callLineLabels.aiInProgress
+      return { title: "AI call in progress", detail: "" }
+  }
+}
+
+function aiCallTimelineDetail(status: AiInteractionCallStatus) {
+  switch (status) {
+    case "COMPLETED":
+      return "AI call"
+    case "ESCALATED":
+      return "AI call · Transfer requested"
+    case "FAILED":
+      return "AI call failed"
+    default:
+      return "AI call in progress"
   }
 }

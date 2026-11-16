@@ -3,26 +3,14 @@ import type {
   AiInteractionDetail,
   CallingCall,
   CallingDispositionResult,
-  PatientWorkCounts,
-  PatientWorkFilter,
-  PatientWorkPage,
-  PatientWorkQueryRequest,
-  PatientWorkRow,
-  PatientWorkScope,
-  PatientWorkTotals,
-  StaffTaskCloseReason,
   Task,
+  TaskFolderCounts,
   TaskPage,
   TaskQueryRequest,
   WorkspaceSnapshot,
 } from "./api/generated/types.gen.ts"
 import type { PortalFailure } from "./clients/portal-request.ts"
 import { appendUniqueByID } from "./workspace-ordering.ts"
-import {
-  nextAfterClose,
-  offersAppointmentChecks,
-  patientWorkFilterShown,
-} from "./patient-work.ts"
 import { canViewPracticeAnalytics } from "./booking-analytics.ts"
 import {
   selectedWorkspaceLocation,
@@ -30,12 +18,13 @@ import {
   workspaceLocationSearch,
   type WorkspacePageView,
 } from "./workspace-location.ts"
-import { patientWorkFilterLabels, patientWorkScopeLabels } from "./vocabulary.ts"
 import { resolveWorkspaceSearch } from "./workspace-search.ts"
 import {
   createWorkspaceRequestBudget,
   type WorkspaceRequestBudget,
 } from "./workspace-sync/workspace-request-budget.ts"
+import type { TaskCategoryFilter, TaskResponsibility } from "./workspace-triage.ts"
+import { taskGroups } from "./vocabulary.ts"
 
 type WorkspaceLoadState =
   | "loading"
@@ -50,17 +39,18 @@ type WorkspaceConnectionState =
   | "degraded"
 
 export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics" | "manage-agent"
-type WorkspaceContextView = "task" | "call" | "ai-call" | "patient-tasks"
+type WorkspaceContextView = "task" | "call" | "ai-call"
 export type ManageAgentPage = "home" | "transcripts" | "knowledge" | "insurance"
 
 export function isWorkView(view: WorkspaceView) {
   return view === "none" || view === "engagement"
 }
+export type WorkspaceRailSection = "tasks" | "calls" | "appointments" | "texts" | "completed"
 
 type WorkspaceRailState = {
-  scope: PatientWorkScope
-  filter: PatientWorkFilter
-  completedExpanded: boolean
+  expanded: WorkspaceRailSection[]
+  taskResponsibility?: TaskResponsibility
+  taskCategory: TaskCategoryFilter
   scrollTop: number
 }
 
@@ -93,13 +83,11 @@ export type WorkspaceProjectionState = {
     applied: string
     error: string
   }
-  patients: WorkspaceQueryWindow<PatientWorkRow> & {
-    counts: PatientWorkCounts
-    totals: PatientWorkTotals
-  }
+  tasks: WorkspaceQueryWindow<Task> & { counts: TaskFolderCounts }
   completedTasks: WorkspaceQueryWindow<Task>
   selection: {
     task?: Task
+    taskGroup?: Task
     taskError: string
     engagement?: EngagementSummary
     aiInteractionID: string
@@ -114,8 +102,9 @@ export type WorkspaceProjectionState = {
   }
   detailRevision: number
   completion: {
-    pending: readonly string[]
-    errors: Readonly<Record<string, string>>
+    pendingTaskID: string
+    errorTaskID: string
+    error: string
   }
   rail: WorkspaceRailState
 }
@@ -139,11 +128,6 @@ export type WorkspaceAuthorityAdapter = {
     scope: { practiceID: string; locationID: string },
     signal: AbortSignal,
   ) => Promise<WorkspaceAuthorityResult<WorkspaceSnapshot>>
-  patients: (
-    token: string,
-    request: PatientWorkQueryRequest,
-    signal: AbortSignal,
-  ) => Promise<WorkspaceAuthorityResult<PatientWorkPage>>
   tasks: (
     token: string,
     request: TaskQueryRequest,
@@ -167,12 +151,11 @@ export type WorkspaceAuthorityAdapter = {
   completeTask: (
     token: string,
     task: Pick<Task, "id" | "version">,
-    reason: StaffTaskCloseReason,
     signal: AbortSignal,
   ) => Promise<WorkspaceAuthorityResult<Task>>
 }
 
-type WorkspaceWindow = "patients" | "completedTasks"
+type TaskWindow = "tasks" | "completedTasks"
 
 type Reconciliation = {
   version: number
@@ -237,11 +220,11 @@ export type WorkspaceProjectionIntent =
     }
   | {
       type: "load-more"
-      window: WorkspaceWindow
+      window: TaskWindow
     }
   | { type: "set-search"; value: string }
   | { type: "submit-search" }
-  | { type: "complete-task"; task: Task; reason: StaffTaskCloseReason; advance?: boolean }
+  | { type: "complete-task"; task: Task }
   | { type: "select-task"; task: Task; rememberForCall?: boolean }
   | { type: "select-analytics" }
   | { type: "select-operator-analytics" }
@@ -250,19 +233,20 @@ export type WorkspaceProjectionIntent =
   | { type: "open-ai-context"; interactionID: string }
   | { type: "open-task-context"; task: Task }
   | { type: "open-call-context"; callID: string }
-  | { type: "open-patient-tasks" }
   | { type: "close-context" }
   | { type: "context-transition-ended" }
   | { type: "task-committed"; task: Task; advance?: boolean }
   | { type: "task-created"; task: Task }
   | { type: "visibility-changed" }
   | { type: "retry" }
+  | { type: "refresh-text-attention" }
   | { type: "call-connected"; call: CallingCall }
   | { type: "remember-return-task"; taskID: string }
   | { type: "return-to-call" }
   | { type: "call-disposition"; result: CallingDispositionResult }
-  | { type: "toggle-completed" }
-  | { type: "set-rail-view"; scope?: PatientWorkScope; filter?: PatientWorkFilter }
+  | { type: "toggle-rail-section"; section: WorkspaceRailSection }
+  | { type: "set-task-category"; category: TaskCategoryFilter }
+  | { type: "set-task-filters"; responsibility?: TaskResponsibility; category?: TaskCategoryFilter }
   | { type: "remember-rail-scroll"; scrollTop: number }
   | { type: "navigation-changed" }
 
@@ -298,11 +282,11 @@ export function createWorkspaceProjection({
   let detailGeneration = 0
   let returnTaskID = ""
   let focusedCallID = ""
-  let firstLoad = true
   let railScrollTop = 0
   let navigationSearch = ""
   let navigationGeneration = 0
   let replaceNavigation = false
+  let restoredTaskID = ""
   const requestBudget: WorkspaceRequestBudget | undefined = environment
     ? createWorkspaceRequestBudget({
         clock: environment.clock,
@@ -314,10 +298,11 @@ export function createWorkspaceProjection({
       })
     : undefined
   const queryGenerations = {
-    patients: 0,
+    tasks: 0,
+    taskCounts: 0,
     completedTasks: 0,
   }
-  const windowLoads: Partial<Record<WorkspaceWindow, { query: number; depth: number }>> = {}
+  const windowLoads: Partial<Record<TaskWindow, { query: number; depth: number }>> = {}
   let scopeRequests = new AbortController()
   let accessController: AbortController | undefined
   const listeners = new Set<() => void>()
@@ -352,10 +337,9 @@ export function createWorkspaceProjection({
 
   function obsoleteScope() {
     scopeGeneration += 1
-    firstLoad = true
     scopeRequests.abort()
     scopeRequests = new AbortController()
-    delete windowLoads.patients
+    delete windowLoads.tasks
     delete windowLoads.completedTasks
   }
 
@@ -423,22 +407,23 @@ export function createWorkspaceProjection({
     minimumVersion,
   }: Parameters<WorkspaceRealtimeCallbacks["reconcile"]>[0]): Promise<Reconciliation> {
     const generation = scopeGeneration
-    const patientGeneration = ++queryGenerations.patients
+    const countGeneration = ++queryGenerations.taskCounts
+    const taskGeneration = ++queryGenerations.tasks
     const completedGeneration = ++queryGenerations.completedTasks
     const current = state
+    const taskRequest = taskQueryRequest(current.scope, current.search.applied, current.rail)
     const selectedTaskID = current.selection.task?.id
     const selectedAIInteractionID = current.selection.aiInteractionID
-    const patientDepth = windowDepth("patients", current.patients.items.length)
     const [
       snapshotResult,
-      requestedPatients,
+      taskPageResult,
       completedResult,
       selectedTaskResult,
       selectedAIResult,
     ] =
       await Promise.all([
         authority.workspace(token, scope, signal),
-        loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, current.rail), patientDepth, signal),
+        loadTaskWindow(token, taskRequest, windowDepth("tasks", current.tasks.items.length), signal),
         loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), windowDepth("completedTasks", current.completedTasks.items.length), signal),
         selectedTaskID
           ? authority.task(token, selectedTaskID, signal)
@@ -448,18 +433,6 @@ export function createWorkspaceProjection({
           : Promise.resolve(undefined),
       ])
 
-    const storedFilterHidden = firstLoad && !current.search.applied && requestedPatients.kind === "success" &&
-      !patientWorkFilterShown(
-        current.rail.filter,
-        requestedPatients.data.counts,
-        offersAppointmentChecks(
-          current.discovery?.practices.find((practice) => practice.id === scope.practiceID)?.locations ?? [],
-          current.scope.locationScopeID,
-        ),
-      )
-    const patientResult = storedFilterHidden
-      ? await loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, { ...current.rail, filter: "all" }), patientDepth, signal)
-      : requestedPatients
     if (
       stopped || signal.aborted || generation !== scopeGeneration ||
       state.scope.practiceID !== scope.practiceID ||
@@ -468,9 +441,10 @@ export function createWorkspaceProjection({
       return { version: minimumVersion, apply: () => {} }
     }
 
+    const taskResult = requireTaskCounts(taskPageResult)
     const authorityResults = [
       snapshotResult,
-      patientResult,
+      taskResult,
       completedResult,
       selectedTaskResult,
       selectedAIResult,
@@ -507,29 +481,22 @@ export function createWorkspaceProjection({
         ) {
           return
         }
-        const selectsFirstPatient = firstLoad
-        if (patientGeneration === queryGenerations.patients && patientResult.kind === "success") {
-          firstLoad = false
-          if (storedFilterHidden && state.rail.filter === current.rail.filter) {
-            updateRail((rail) => ({ ...rail, filter: "all" }))
-          }
-        }
         patch((currentState) => {
-          const patientWindowCurrent =
-            patientGeneration === queryGenerations.patients
+          const taskWindowCurrent =
+            taskGeneration === queryGenerations.tasks
           const completedWindowCurrent = completedGeneration === queryGenerations.completedTasks
           const refreshedSelected =
-            patientWindowCurrent && selectedTaskResult?.kind === "success" &&
+            taskWindowCurrent && selectedTaskResult?.kind === "success" &&
             !(currentState.selection.task?.id === selectedTaskResult.data.id &&
               currentState.selection.task.version > selectedTaskResult.data.version)
               ? selectedTaskResult.data
               : undefined
-          const patients = patientWindowCurrent && patientResult.kind === "success"
-            ? patientResult.data.rows.map((row) =>
-                refreshedSelected?.state === "OPEN" && row.top.id === refreshedSelected.id
-                  ? { ...row, top: refreshedSelected } : row)
-            : currentState.patients.items
-          const selectionStillMatches = patientWindowCurrent &&
+          const tasks = taskWindowCurrent && taskResult.kind === "success"
+            ? taskResult.data.items.map((task) =>
+                refreshedSelected?.state === "OPEN" && task.id === refreshedSelected.id && !task.groupMembers
+                  ? refreshedSelected : task)
+            : currentState.tasks.items
+          const selectionStillMatches = taskWindowCurrent &&
             Boolean(selectedTaskID) &&
             currentState.selection.task?.id === selectedTaskID
           const selectionMissing =
@@ -540,6 +507,7 @@ export function createWorkspaceProjection({
             selection = {
               ...selection,
               task: undefined,
+              taskGroup: undefined,
               taskError: "",
               contextPanelOpen:
                 selection.contextView === "task"
@@ -551,6 +519,7 @@ export function createWorkspaceProjection({
               selection = {
                 ...selection,
                 task: refreshedSelected,
+                taskGroup: refreshedSelected.state === "COMPLETED" ? undefined : selection.taskGroup,
                 taskError: "",
                 engagement: taskEngagement(refreshedSelected),
               }
@@ -560,21 +529,30 @@ export function createWorkspaceProjection({
                 taskError: selectedTaskDetailError,
               }
             }
-          } else if (patientWindowCurrent && selectsFirstPatient &&
+          } else if (taskWindowCurrent &&
             !currentState.selection.task &&
             currentState.selection.view === "none" &&
-            patients[0]
+            tasks[0]
           ) {
-            const firstTask = patients[0].top
+            const firstTask = tasks[0]
             selection = {
               ...selection,
               task: firstTask,
+              taskGroup: firstTask.groupMembers && firstTask.groupMembers.length > 1 ? firstTask : undefined,
               taskError: "",
               engagement: taskEngagement(firstTask),
               view: "engagement",
               contextView: "task",
               contextPanelOpen: false,
             }
+          }
+          if (taskWindowCurrent && restoredTaskID) {
+            const group = tasks.find((task) =>
+              task.id === restoredTaskID && (task.groupMembers?.length ?? 0) > 1)
+            if (group && selection.task?.id === restoredTaskID && !selection.taskGroup) {
+              selection = { ...selection, taskGroup: group }
+            }
+            restoredTaskID = ""
           }
           const aiSelectionStillMatches =
             Boolean(selectedAIInteractionID) &&
@@ -608,24 +586,28 @@ export function createWorkspaceProjection({
               aiInteractionError: aiInteractionDetailError,
             }
           }
-          let patientWindow = currentState.patients
-          if (patientWindowCurrent) {
-            patientWindow = patientResult.kind === "success"
+          let taskWindow = currentState.tasks
+          if (taskWindowCurrent) {
+            taskWindow = taskResult.kind === "success"
               ? {
-                  items: patients,
-                  nextCursor: patientResult.data.nextCursor,
-                  counts: patientResult.data.counts,
-                  totals: patientResult.data.totals,
+                  items: tasks,
+                  nextCursor: taskResult.data.nextCursor,
+                  counts: currentState.tasks.counts,
                   loading: false,
                   error: "",
                 }
-              : { ...patientWindow, loading: false, error: patientWindowError }
+              : { ...taskWindow, loading: false, error: taskWindowError }
+          }
+          if (countGeneration === queryGenerations.taskCounts) {
+            taskWindow = taskResult.kind === "success"
+              ? { ...taskWindow, counts: taskResult.data.counts }
+              : { ...taskWindow, error: taskWindowError }
           }
           return {
             ...currentState,
             loadState: "ready",
             workspace: snapshot,
-            patients: patientWindow,
+            tasks: taskWindow,
             completedTasks: completedWindowCurrent
               ? completedResult.kind === "success"
                 ? { items: completedResult.data.items, nextCursor: completedResult.data.nextCursor, loading: false, error: "" }
@@ -774,7 +756,10 @@ export function createWorkspaceProjection({
       if (scope?.practiceID !== task.practiceId) return
       selectScope({ type: "select-scope", practiceID: scope.practiceID, locationScopeID: scope.locationScopeID })
     }
-    selectEngagement(taskEngagement(task), task)
+    restoredTaskID = task.id
+    const group = state.tasks.items.find((item) =>
+      item.id === task.id && (item.groupMembers?.length ?? 0) > 1)
+    selectEngagement(taskEngagement(task), group ?? task)
   }
 
   function selectLocation(location: WorkspaceLocation) {
@@ -787,8 +772,8 @@ export function createWorkspaceProjection({
   }
 
   function selectWork() {
-    const first = !state.selection.engagement && state.loadState === "ready" && !state.patients.error
-      ? state.patients.items[0]?.top
+    const first = !state.selection.engagement && state.loadState === "ready" && !state.tasks.error
+      ? state.tasks.items[0]
       : undefined
     if (first) {
       selectEngagement(taskEngagement(first), first)
@@ -834,7 +819,7 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "complete-task") {
-      await completeTaskIntent(intent.task, intent.reason, intent.advance === true)
+      await completeTaskIntent(intent.task)
       return
     }
     if (intent.type === "select-task") {
@@ -885,18 +870,6 @@ export function createWorkspaceProjection({
       await openCallContext(intent.callID)
       return
     }
-    if (intent.type === "open-patient-tasks") {
-      detailGeneration += 1
-      patch((current) => ({
-        ...current,
-        selection: {
-          ...current.selection,
-          contextView: "patient-tasks",
-          contextPanelOpen: true,
-        },
-      }))
-      return
-    }
     if (intent.type === "close-context") {
       detailGeneration += 1
       patch((current) => ({
@@ -917,24 +890,28 @@ export function createWorkspaceProjection({
     if (intent.type === "task-committed") {
       const selectedID = state.selection.task?.id
       const generation = scopeGeneration
-      const ownsSelection = selectedID === intent.task.id
-      const before = state.patients.items
-      queryGenerations.patients += 1
+      const ownsSelection = selectedID === intent.task.id || state.selection.taskGroup?.groupMembers?.some((member) => member.id === intent.task.id)
+      queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
       await realtimeController.refresh()
-      if (intent.advance && intent.task.state === "COMPLETED" && ownsSelection && generation === scopeGeneration && state.selection.task?.id === selectedID && !state.patients.error) {
-        advanceAfterClose(before, intent.task.phone, [intent.task.id])
+      if (intent.advance && intent.task.state === "COMPLETED" && ownsSelection && generation === scopeGeneration && state.selection.task?.id === selectedID && !state.tasks.error) {
+        const next = state.tasks.items.find((task) => task.id !== intent.task.id)
+        if (next) selectEngagement(taskEngagement(next), next)
       }
       return
     }
     if (intent.type === "task-created") {
-      queryGenerations.patients += 1
+      queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
       await realtimeController.refresh()
       return
     }
     if (intent.type === "visibility-changed") {
       realtimeController.visibilityChanged()
+      return
+    }
+    if (intent.type === "refresh-text-attention") {
+      if (state.loadState === "ready") await refreshTaskWindows(state.search.applied)
       return
     }
     if (intent.type === "retry") {
@@ -968,17 +945,28 @@ export function createWorkspaceProjection({
       await handleDisposition(intent.result)
       return
     }
-    if (intent.type === "toggle-completed") {
-      updateRail((rail) => ({ ...rail, completedExpanded: !rail.completedExpanded }))
-      return
-    }
-    if (intent.type === "set-rail-view") {
+    if (intent.type === "toggle-rail-section") {
       updateRail((rail) => ({
         ...rail,
-        scope: intent.scope ?? rail.scope,
-        filter: intent.filter ?? rail.filter,
+        expanded: rail.expanded.includes(intent.section)
+          ? rail.expanded.filter((section) => section !== intent.section)
+          : [...rail.expanded, intent.section],
       }))
-      await refreshTaskWindows(state.search.applied)
+      return
+    }
+    if (intent.type === "set-task-category") {
+      updateRail((rail) => ({ ...rail, taskCategory: intent.category }))
+      await refreshTaskWindows(state.search.applied, true)
+      selectFirstVisibleTask()
+      return
+    }
+    if (intent.type === "set-task-filters") {
+      updateRail((rail) => ({ ...rail,
+        taskResponsibility: intent.responsibility ?? rail.taskResponsibility ?? "mine",
+        taskCategory: intent.category ?? rail.taskCategory,
+      }))
+      await refreshTaskWindows(state.search.applied, true)
+      selectFirstVisibleTask()
       return
     }
     if (intent.type === "remember-rail-scroll") {
@@ -1003,7 +991,7 @@ export function createWorkspaceProjection({
     if (!discovery || !state.scope.practiceID) return
     preferences.write(
       railStorageKey(discovery.actor.subject, state.scope.practiceID),
-      JSON.stringify({ version: railPreferencesVersion, ...rail }),
+      JSON.stringify({ version: 1, ...rail }),
     )
   }
 
@@ -1085,7 +1073,7 @@ export function createWorkspaceProjection({
     if (!activeScopeChanged) void realtimeController.refresh()
   }
 
-  async function loadMore(window: WorkspaceWindow) {
+  async function loadMore(window: TaskWindow) {
     if (state.loadState !== "ready") return
     const generation = scopeGeneration
     const currentWindow = state[window]
@@ -1096,36 +1084,40 @@ export function createWorkspaceProjection({
       ...current,
       [window]: { ...current[window], loading: true, error: "" },
     }))
-    if (window === "patients") {
-      const result = await authenticatedRequest((token, signal) =>
-        authority.patients(
-          token,
-          { ...patientQueryRequest(state.scope, state.search.applied, state.rail), cursor: currentWindow.nextCursor },
-          signal,
-        ),
-      )
-      if (!settledWindowLoad(window, generation, queryGeneration, result)) return
+    const result = await authenticatedRequest((token, signal) =>
+      authority.tasks(
+        token,
+        {
+          ...(window === "tasks"
+            ? taskQueryRequest(state.scope, state.search.applied, state.rail)
+            : completedTaskQueryRequest(state.scope, state.search.applied, state.rail)),
+          cursor: currentWindow.nextCursor,
+          includeCounts: false,
+        },
+        signal,
+      ),
+    )
+    if (generation !== scopeGeneration || stopped) return
+    settleWindowLoad(window, queryGeneration)
+    if (queryGeneration !== queryGenerations[window]) return
+    if (failIfAccessLost(result)) return
+    if (result.kind !== "success") {
+      setWindowFailure(window)
+      return
+    }
+    if (window === "tasks") {
       patch((current) => ({
         ...current,
-        patients: {
-          items: appendUniquePatients(current.patients.items, result.data.rows),
+        tasks: {
+          items: appendUniqueByID(current.tasks.items, result.data.items),
           nextCursor: result.data.nextCursor,
-          counts: result.data.counts,
-          totals: result.data.totals,
+          counts: current.tasks.counts,
           loading: false,
           error: "",
         },
       }))
       return
     }
-    const result = await authenticatedRequest((token, signal) =>
-      authority.tasks(
-        token,
-        { ...completedTaskQueryRequest(state.scope, state.search.applied, state.rail), cursor: currentWindow.nextCursor },
-        signal,
-      ),
-    )
-    if (!settledWindowLoad(window, generation, queryGeneration, result)) return
     patch((current) => ({
       ...current,
       completedTasks: {
@@ -1135,23 +1127,6 @@ export function createWorkspaceProjection({
         error: "",
       },
     }))
-  }
-
-  function settledWindowLoad<T>(
-    window: WorkspaceWindow,
-    generation: number,
-    queryGeneration: number,
-    result: WorkspaceAuthorityResult<T>,
-  ): result is { kind: "success"; data: T } {
-    if (generation !== scopeGeneration || stopped) return false
-    settleWindowLoad(window, queryGeneration)
-    if (queryGeneration !== queryGenerations[window]) return false
-    if (failIfAccessLost(result)) return false
-    if (result.kind !== "success") {
-      setWindowFailure(window)
-      return false
-    }
-    return true
   }
 
   async function submitSearch() {
@@ -1168,6 +1143,7 @@ export function createWorkspaceProjection({
         selection: {
           ...current.selection,
           task: undefined,
+          taskGroup: undefined,
           taskError: "",
           aiInteractionID: "",
           aiInteraction: undefined,
@@ -1183,29 +1159,25 @@ export function createWorkspaceProjection({
           contextPanelOpen: false,
         },
       }))
-      await refreshTaskWindows("")
+      await refreshTaskWindows("", true)
       return
     }
     patch((current) => ({
       ...current,
       search: { ...current.search, applied: resolved.value, error: "" },
     }))
-    await refreshTaskWindows(resolved.value)
+    await refreshTaskWindows(resolved.value, true)
   }
 
-  async function completeTaskIntent(task: Task, reason: StaffTaskCloseReason, advance: boolean) {
-    if (state.completion.pending.includes(task.id) || task.state !== "OPEN") return
+  async function completeTaskIntent(task: Task) {
+    if (state.completion.pendingTaskID || task.state !== "OPEN") return
     const generation = scopeGeneration
-    const before = state.patients.items
     patch((current) => ({
       ...current,
-      completion: {
-        pending: [...current.completion.pending, task.id],
-        errors: withoutKey(current.completion.errors, task.id),
-      },
+      completion: { pendingTaskID: task.id, errorTaskID: "", error: "" },
     }))
     const result = await authenticatedRequest((token, signal) =>
-      authority.completeTask(token, task, reason, signal),
+      authority.completeTask(token, task, signal),
     )
     if (generation !== scopeGeneration || stopped) return
     if (failIfAccessLost(result)) return
@@ -1220,56 +1192,23 @@ export function createWorkspaceProjection({
       )
       return
     }
-    queryGenerations.patients += 1
+    queryGenerations.taskCounts += 1
     projectTaskIntent(result.data, false)
     await realtimeController.refresh()
     if (generation !== scopeGeneration || stopped || state.loadState !== "ready") return
     patch((current) => ({
       ...current,
-      completion: {
-        ...current.completion,
-        pending: current.completion.pending.filter((id) => id !== task.id),
-      },
+      completion: { pendingTaskID: "", errorTaskID: "", error: "" },
     }))
-    if (advance && state.selection.task?.id === task.id && !state.patients.error) {
-      advanceAfterClose(before, task.phone, [task.id])
-    }
   }
 
-  function openTasks() {
-    return state.patients.items.map((row) => row.top)
-  }
-
-  function advanceAfterClose(
-    before: readonly PatientWorkRow[],
-    phone: string,
-    closedTaskIDs: readonly string[],
-  ) {
-    const next = nextAfterClose({ before, after: state.patients.items, phone, closedTaskIDs })
-    if (next && next.phone === phone && state.selection.contextView === "patient-tasks") {
-      patch((current) => ({
-        ...current,
-        selection: { ...current.selection, task: next, taskError: "", engagement: taskEngagement(next) },
-      }))
-      return
-    }
-    if (next) {
-      selectEngagement(taskEngagement(next), next)
-      return
-    }
-    patch((current) => ({
-      ...current,
-      selection: {
-        ...current.selection,
-        task: undefined,
-        taskError: "",
-        engagement: undefined,
-        historicalCall: undefined,
-        view: "none",
-        contextView: "task",
-        contextPanelOpen: false,
-      },
-    }))
+  function selectFirstVisibleTask() {
+    if (state.loadState !== "ready" || state.tasks.error || state.selection.contextView === "call") return
+    const selectedID = state.selection.task?.id
+    if (state.tasks.items.some((task) => task.id === selectedID || task.groupMembers?.some((member) => member.id === selectedID))) return
+    const first = state.tasks.items[0]
+    if (first) selectEngagement(taskEngagement(first), first)
+    else patch((current) => ({ ...current, selection: { ...current.selection, task: undefined, taskGroup: undefined, contextPanelOpen: false } }))
   }
 
   function selectEngagement(engagement: EngagementSummary, task: Task) {
@@ -1278,6 +1217,7 @@ export function createWorkspaceProjection({
       selection: {
         ...current.selection,
         task,
+        taskGroup: task.groupMembers && task.groupMembers.length > 1 ? task : undefined,
         taskError: "",
         engagement,
         aiInteractionID: "",
@@ -1294,33 +1234,36 @@ export function createWorkspaceProjection({
 
   function projectTaskIntent(task: Task, select: boolean) {
     detailGeneration += 1
-    patch((current) => ({
-      ...current,
-      search: select ? { ...current.search, input: "" } : current.search,
-      selection: select
-        ? {
-            ...current.selection,
-            task,
-            taskError: "",
-            engagement: taskEngagement(task),
-            aiInteractionID: "",
-            aiInteraction: undefined,
-            aiInteractionLoading: false,
-            aiInteractionError: "",
-            historicalCall: undefined,
-            view: "engagement",
-            contextView: "task",
-            contextPanelOpen: true,
-          }
-        : current.selection.task?.id === task.id
-          ? {
-              ...current.selection,
-              task,
-              taskError: "",
-            }
-          : current.selection,
-      detailRevision: current.detailRevision + 1,
-    }))
+    patch((current) => {
+      const selected = current.selection.task?.id === task.id
+      return {
+        ...current,
+        search: select ? { ...current.search, input: "" } : current.search,
+        selection:
+          select || selected
+            ? {
+                ...current.selection,
+                task,
+                taskGroup: select
+                  ? (task.groupMembers && task.groupMembers.length > 1 ? task : undefined)
+                  : task.state === "COMPLETED" ? undefined : current.selection.taskGroup,
+                taskError: "",
+                engagement: taskEngagement(task),
+                aiInteractionID: "",
+                aiInteraction: undefined,
+                aiInteractionLoading: false,
+                aiInteractionError: "",
+                historicalCall: undefined,
+                view: "engagement",
+                contextView: "task",
+                contextPanelOpen: select
+                  ? true
+                  : current.selection.contextPanelOpen,
+              }
+            : current.selection,
+        detailRevision: current.detailRevision + 1,
+      }
+    })
   }
 
   async function openCallContext(callID: string) {
@@ -1425,10 +1368,7 @@ export function createWorkspaceProjection({
 
   async function handleDisposition(result: CallingDispositionResult) {
     focusedCallID = ""
-    const before = state.patients.items
-    const phone = state.selection.engagement?.phone
-    const closedTaskIDs = [...(result.closedTaskIds ?? []), ...(result.alreadyClosedTaskIds ?? [])]
-    const refreshed = realtimeController.refresh()
+    void realtimeController.refresh()
     const generation = scopeGeneration
     if (result.taskId) {
       const taskResult = await authenticatedRequest((token, signal) =>
@@ -1441,19 +1381,10 @@ export function createWorkspaceProjection({
         return
       }
     }
-    const closedByWrapUp = closedTaskIDs.length > 0
-    if (closedByWrapUp) {
-      await refreshed
-      if (generation !== scopeGeneration || stopped) return
-    }
-    const previous = [...openTasks(), ...state.completedTasks.items].find(
-      (task) => task.id === returnTaskID && !closedTaskIDs.includes(task.id),
+    const previous = [...state.tasks.items, ...state.completedTasks.items].find(
+      (task) => task.id === returnTaskID,
     )
-    if (!previous && phone && closedByWrapUp && !state.patients.error) {
-      advanceAfterClose(before, phone, closedTaskIDs)
-      return
-    }
-    const nextTask = previous ?? openTasks()[0]
+    const nextTask = previous ?? state.tasks.items[0]
     if (nextTask) {
       selectEngagement(taskEngagement(nextTask), nextTask)
       return
@@ -1467,82 +1398,80 @@ export function createWorkspaceProjection({
   function setCompletionFailure(taskID: string, error: string) {
     patch((current) => ({
       ...current,
-      completion: {
-        pending: current.completion.pending.filter((id) => id !== taskID),
-        errors: { ...current.completion.errors, [taskID]: error },
-      },
-      detailRevision: current.detailRevision + 1,
+      completion: { pendingTaskID: "", errorTaskID: taskID, error },
     }))
   }
 
-  async function refreshTaskWindows(search: string) {
+  async function refreshTaskWindows(search: string, reset = false) {
     if (state.loadState !== "ready") return
     const generation = scopeGeneration
-    const patientGeneration = ++queryGenerations.patients
+    const countGeneration = ++queryGenerations.taskCounts
+    const taskGeneration = ++queryGenerations.tasks
     const completedGeneration = ++queryGenerations.completedTasks
     const scope = state.scope
     const rail = state.rail
-    windowLoads.patients = { query: patientGeneration, depth: 0 }
-    windowLoads.completedTasks = { query: completedGeneration, depth: 0 }
+    const taskDepth = reset ? 0 : windowDepth("tasks", state.tasks.items.length)
+    const completedDepth = reset ? 0 : windowDepth("completedTasks", state.completedTasks.items.length)
+    windowLoads.tasks = { query: taskGeneration, depth: taskDepth }
+    windowLoads.completedTasks = { query: completedGeneration, depth: completedDepth }
     patch((current) => ({
       ...current,
-      patients: {
-        ...current.patients,
-        items: [],
-        nextCursor: "",
+      tasks: {
+        ...current.tasks,
+        ...(reset ? { items: [], nextCursor: "", counts: emptyTaskFolderCounts() } : {}),
         loading: true,
         error: "",
       },
       completedTasks: {
         ...current.completedTasks,
-        items: [],
-        nextCursor: "",
+        ...(reset ? { items: [], nextCursor: "" } : {}),
         loading: true,
         error: "",
       },
     }))
     const result = await authenticatedRequest(async (token, signal) => {
-      const [patients, completedTasks] = await Promise.all([
-        loadPatientWindow(token, patientQueryRequest(scope, search, rail), 0, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail), 0, signal),
+      const [tasks, completedTasks] = await Promise.all([
+        loadTaskWindow(token, taskQueryRequest(scope, search, rail), taskDepth, signal),
+        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail), completedDepth, signal),
       ])
       if (
-        patients.kind === "unauthenticated" || patients.kind === "unauthorized"
-      ) return patients
+        tasks.kind === "unauthenticated" || tasks.kind === "unauthorized"
+      ) return tasks
       if (
         completedTasks.kind === "unauthenticated" ||
         completedTasks.kind === "unauthorized"
       ) return completedTasks
       return {
         kind: "success" as const,
-        data: { patients, completedTasks },
+        data: { tasks, completedTasks },
       }
     })
     if (generation !== scopeGeneration || stopped) return
-    settleWindowLoad("patients", patientGeneration)
+    settleWindowLoad("tasks", taskGeneration)
     settleWindowLoad("completedTasks", completedGeneration)
     if (failIfAccessLost(result)) return
-    const patients = result.kind === "success"
-      ? result.data.patients
-      : ({ kind: "unavailable", retryable: true } as const)
+    const tasks = requireTaskCounts(result.kind === "success"
+      ? result.data.tasks
+      : ({ kind: "unavailable", retryable: true } as const))
     const completedTasks = result.kind === "success"
       ? result.data.completedTasks
       : ({ kind: "unavailable", retryable: true } as const)
     patch((current) => ({
       ...current,
-      patients:
-        patientGeneration !== queryGenerations.patients
-          ? current.patients
-          : patients.kind === "success"
+      tasks:
+        taskGeneration !== queryGenerations.tasks
+          ? current.tasks
+          : tasks.kind === "success"
             ? {
-                items: patients.data.rows,
-                nextCursor: patients.data.nextCursor,
-                counts: patients.data.counts,
-                totals: patients.data.totals,
+                items: tasks.data.items,
+                nextCursor: tasks.data.nextCursor,
+                counts: countGeneration === queryGenerations.taskCounts
+                  ? tasks.data.counts
+                  : current.tasks.counts,
                 loading: false,
                 error: "",
               }
-            : { ...current.patients, loading: false, error: patientWindowError },
+            : { ...current.tasks, loading: false, error: taskWindowError },
       completedTasks:
         completedGeneration !== queryGenerations.completedTasks
           ? current.completedTasks
@@ -1561,11 +1490,11 @@ export function createWorkspaceProjection({
     }))
   }
 
-  function windowDepth(window: WorkspaceWindow, loadedCount: number) {
+  function windowDepth(window: TaskWindow, loadedCount: number) {
     return Math.max(loadedCount, windowLoads[window]?.depth ?? 0)
   }
 
-  function settleWindowLoad(window: WorkspaceWindow, query: number) {
+  function settleWindowLoad(window: TaskWindow, query: number) {
     if (windowLoads[window]?.query !== query) return
     delete windowLoads[window]
     if (query === queryGenerations[window] || !state[window].loading) return
@@ -1576,36 +1505,17 @@ export function createWorkspaceProjection({
   }
 
   function obsoleteAllQueries() {
-    queryGenerations.patients += 1
+    queryGenerations.tasks += 1
+    queryGenerations.taskCounts += 1
     queryGenerations.completedTasks += 1
   }
 
-  function setWindowFailure(window: WorkspaceWindow) {
-    const error = window === "patients" ? patientWindowError : completedWindowError
+  function setWindowFailure(window: TaskWindow) {
+    const error = window === "tasks" ? taskWindowError : completedWindowError
     patch((current) => ({
       ...current,
       [window]: { ...current[window], loading: false, error },
     }))
-  }
-
-  async function loadPatientWindow(
-    token: string,
-    request: PatientWorkQueryRequest,
-    loadedCount: number,
-    signal: AbortSignal,
-  ): Promise<WorkspaceAuthorityResult<PatientWorkPage>> {
-    const target = refreshLoadedWindowTarget(loadedCount)
-    const first = await authority.patients(token, request, signal)
-    if (first.kind !== "success") return first
-    let rows = first.data.rows
-    let cursor = first.data.nextCursor
-    while (cursor && rows.length < target) {
-      const result = await authority.patients(token, { ...request, cursor }, signal)
-      if (result.kind !== "success") return result
-      rows = appendUniquePatients(rows, result.data.rows)
-      cursor = result.data.nextCursor
-    }
-    return { kind: "success", data: { ...first.data, rows, nextCursor: cursor } }
   }
 
   async function loadTaskWindow(
@@ -1617,17 +1527,19 @@ export function createWorkspaceProjection({
     const target = refreshLoadedWindowTarget(loadedCount)
     const items: Task[] = []
     let cursor = ""
+    let counts: TaskFolderCounts | undefined
     do {
       const result = await authority.tasks(
         token,
-        { ...request, ...(cursor ? { cursor } : {}) },
+        { ...request, includeCounts: request.includeCounts !== false && !cursor, ...(cursor ? { cursor } : {}) },
         signal,
       )
       if (result.kind !== "success") return result
+      if (!cursor) counts = result.data.counts
       items.push(...appendUniqueByID(items, result.data.items).slice(items.length))
       cursor = result.data.nextCursor
     } while (cursor && items.length < target)
-    return { kind: "success", data: { items, nextCursor: cursor } }
+    return { kind: "success", data: { items, nextCursor: cursor, counts } }
   }
 
   function stop() {
@@ -1652,13 +1564,14 @@ export function createWorkspaceProjection({
   }
 }
 
-const railPreferencesVersion = 2
+const railSections: WorkspaceRailSection[] = ["tasks", "calls", "appointments", "texts", "completed"]
+
+const taskCategories: TaskCategoryFilter[] = ["all", ...taskGroups.map((group) => group.value)]
 
 function emptyRailState(): WorkspaceRailState {
   return {
-    scope: "mine",
-    filter: "all",
-    completedExpanded: false,
+    expanded: ["tasks"],
+    taskCategory: "all",
     scrollTop: 0,
   }
 }
@@ -1677,26 +1590,31 @@ function restoreRailPreferences(
       preferences.read(railStorageKey(userSubject, practiceID)) ?? "",
     ) as Partial<WorkspaceRailState> & { version?: unknown }
     if (
-      value.version !== railPreferencesVersion ||
-      !Object.hasOwn(patientWorkScopeLabels, String(value.scope)) ||
-      !Object.hasOwn(patientWorkFilterLabels, String(value.filter)) ||
+      (value.version !== undefined && value.version !== 1) ||
       !Number.isFinite(value.scrollTop)
     ) {
       return emptyRailState()
     }
+    const expanded = Array.isArray(value.expanded)
+      ? value.expanded.filter((section): section is WorkspaceRailSection => railSections.includes(section))
+      : []
+    const formerCategory = String(value.taskCategory)
+    if ((formerCategory === "texts" || formerCategory === "calls") && !expanded.includes(formerCategory)) {
+      expanded.push(formerCategory)
+    }
     return {
-      scope: value.scope as PatientWorkScope,
-      filter: value.filter as PatientWorkFilter,
-      completedExpanded: value.completedExpanded === true,
+      expanded,
+      ...(value.taskResponsibility === "mine" || value.taskResponsibility === "all" ? {taskResponsibility:value.taskResponsibility} : {}),
+      taskCategory: taskCategories.includes(
+        value.taskCategory as TaskCategoryFilter,
+      )
+        ? (value.taskCategory as TaskCategoryFilter)
+        : "all",
       scrollTop: Math.max(0, value.scrollTop ?? 0),
     }
   } catch {
     return emptyRailState()
   }
-}
-
-function withoutKey(record: Readonly<Record<string, string>>, key: string) {
-  return Object.fromEntries(Object.entries(record).filter(([name]) => name !== key))
 }
 
 function settledTaskRead(result: WorkspaceAuthorityResult<Task>) {
@@ -1736,16 +1654,21 @@ function restoreAuthorizedScope(
   }
 }
 
-function patientQueryRequest(
+function taskQueryRequest(
   scope: WorkspaceScope,
   search: string,
-  rail: WorkspaceRailState,
-): PatientWorkQueryRequest {
+  rail?: WorkspaceRailState,
+): TaskQueryRequest {
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
-    scope: rail.scope,
-    filter: rail.filter,
+    state: "OPEN",
+    ordering: "recent",
+    responsibility: rail?.taskResponsibility ?? "mine",
+    grouped: true,
+    kind: "follow_up",
+    ...(rail?.taskCategory && rail.taskCategory !== "all" ? { category: rail.taskCategory } : {}),
+    includeCounts: true,
     ...(search ? { search } : {}),
     limit: 50,
   }
@@ -1757,29 +1680,14 @@ function completedTaskQueryRequest(
   rail: WorkspaceRailState,
 ): TaskQueryRequest {
   return {
-    practiceId: scope.practiceID,
-    ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
+    ...taskQueryRequest(scope, search, rail),
     state: "COMPLETED",
+    kind: undefined,
     ordering: "recent",
-    responsibility: rail.scope === "mine" ? "mine" : "all",
+    grouped: false,
     includeCounts: false,
-    ...(search ? { search } : {}),
     limit: 10,
   }
-}
-
-function appendUniquePatients(current: PatientWorkRow[], incoming: PatientWorkRow[]) {
-  const phones = new Set(current.map((row) => row.phone))
-  return [...current, ...incoming.filter((row) => !phones.has(row.phone))]
-}
-
-export function currentPractice(projection: WorkspaceProjectionState) {
-  const discovery = projection.discovery!
-  return (
-    discovery.practices.find(
-      (item) => item.id === projection.scope.practiceID,
-    ) ?? discovery.practices[0]!
-  )
 }
 
 function taskEngagement(task: Task): EngagementSummary {
@@ -1815,7 +1723,13 @@ function initialState(): WorkspaceProjectionState {
     connection: "connecting",
     scope: { practiceID: "", locationID: "", locationScopeID: "" },
     search: { input: "", applied: "", error: "" },
-    patients: emptyPatientWindow(),
+    tasks: {
+      items: [],
+      nextCursor: "",
+      counts: emptyTaskFolderCounts(),
+      loading: false,
+      error: "",
+    },
     completedTasks: { items: [], nextCursor: "", loading: false, error: "" },
     selection: {
       taskError: "",
@@ -1828,19 +1742,23 @@ function initialState(): WorkspaceProjectionState {
       contextPanelOpen: false,
     },
     detailRevision: 0,
-    completion: { pending: [], errors: {} },
+    completion: { pendingTaskID: "", errorTaskID: "", error: "" },
     rail: emptyRailState(),
   }
 }
 
-function emptyPatientWindow(): WorkspaceProjectionState["patients"] {
+function emptyTaskFolderCounts(): TaskFolderCounts {
   return {
-    items: [],
-    nextCursor: "",
-    counts: { all: 0, followUp: 0, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
-    totals: { openTasks: 0, patients: 0, patientsOutsideScope: 0 },
-    loading: false,
-    error: "",
+    tasks: 0,
+    categories: {
+      billing: 0,
+      appointments: 0,
+      documentation: 0,
+      optical: 0,
+      medication: 0,
+      referrals: 0,
+      other: 0,
+    },
   }
 }
 
@@ -1848,7 +1766,15 @@ function refreshLoadedWindowTarget(loadedCount: number) {
   return Math.max(1, loadedCount)
 }
 
-const patientWindowError = "Open work is temporarily unavailable."
+const taskWindowError = "Tasks are temporarily unavailable."
 const selectedTaskDetailError = "Task details are temporarily unavailable."
 const completedWindowError = "Recently completed Tasks are temporarily unavailable."
 const aiInteractionDetailError = "This AI call could not be loaded."
+
+function requireTaskCounts(
+  result: WorkspaceAuthorityResult<TaskPage>,
+): WorkspaceAuthorityResult<TaskPage & { counts: TaskFolderCounts }> {
+  if (result.kind !== "success") return result
+  if (!result.data.counts) return { kind: "unavailable", retryable: true }
+  return { kind: "success", data: { ...result.data, counts: result.data.counts } }
+}

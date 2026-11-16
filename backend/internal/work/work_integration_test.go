@@ -123,7 +123,6 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 
 	now = now.Add(2 * time.Minute)
 	completed, err := module.CompleteTask(context.Background(), work.CompleteTaskCommand{
-		Reason:   work.CloseReasonDone,
 		Identity: identity, TaskID: read.ID, ExpectedVersion: read.Version,
 	})
 	if err != nil {
@@ -162,7 +161,7 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	}
 }
 
-func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
+func TestMissedCallJoinsTheCallersOpenTask(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	now := time.Date(2026, time.October, 14, 9, 0, 0, 0, time.UTC)
@@ -172,18 +171,38 @@ func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
 	ctx := context.Background()
 	locationID := authorization.Locations[0].ID
 	phone := "+15555550100"
-	ensureRecovery := func(callID, sourceCallID string, outcome work.RecoveryOutcome) work.Task {
+	createAITask := func(sourceCallID string) work.Task {
+		t.Helper()
+		task, _, err := module.CreateAITask(ctx, work.CreateAITaskCommand{
+			Service: access.ServiceIdentity{
+				Subject:       "abita-synthetic",
+				PracticeID:    authorization.Practice.ID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+			},
+			OfficeKey:      "spring-hill",
+			OfficePhone:    "+17275919997",
+			SourceCallID:   sourceCallID,
+			IdempotencyKey: "task-" + sourceCallID,
+			Phone:          phone,
+			Summary:        "Caller needs a refill.",
+			Message:        "Caller asked the office to refill eye drops.",
+			Category:       work.TaskCategoryMedication,
+			Urgency:        work.TaskUrgencyNormal,
+		})
+		if err != nil {
+			t.Fatalf("create AI Task: %v", err)
+		}
+		return task
+	}
+	ensureRecovery := func(command work.EnsureRecoveryTaskCommand) work.Task {
 		t.Helper()
 		tx, err := db.As(testdb.Worker).Begin(ctx)
 		if err != nil {
 			t.Fatalf("begin recovery transaction: %v", err)
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
-		task, err := module.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
-			CallID: callID, SourceCallID: sourceCallID,
-			PracticeID: authorization.Practice.ID, LocationID: locationID,
-			Phone: phone, Outcome: outcome, OccurredAt: now,
-		})
+		task, err := module.EnsureRecoveryTask(ctx, tx, command)
 		if err != nil {
 			t.Fatalf("ensure recovery Task: %v", err)
 		}
@@ -192,61 +211,21 @@ func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
 		}
 		return task
 	}
-	assertAITaskUntouched := func(aiTask work.Task) {
-		t.Helper()
-		read, err := module.ReadTask(ctx, identity, aiTask.ID)
-		if err != nil || read.State != work.TaskOpen || read.Version != aiTask.Version ||
-			len(read.Interactions) != 0 {
-			t.Fatalf("AI Task after the missed call = %#v, %v; want it open and unchanged", read, err)
-		}
-	}
 
-	aiTask, _, err := module.CreateAITask(ctx, work.CreateAITaskCommand{
-		Service: access.ServiceIdentity{
-			Subject:       "abita-synthetic",
-			PracticeID:    authorization.Practice.ID,
-			LocationScope: access.LocationScopeAll,
-			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
-		},
-		OfficeKey:      "spring-hill",
-		OfficePhone:    "+17275919997",
-		SourceCallID:   "earlier-ai-call",
-		IdempotencyKey: "task-earlier-ai-call",
-		Phone:          phone,
-		Summary:        "Caller needs a refill.",
-		Message:        "Caller asked the office to refill eye drops.",
-		Category:       work.TaskCategoryMedication,
-		Urgency:        work.TaskUrgencyNormal,
+	aiTask := createAITask("earlier-ai-call")
+	handoffCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill", now)
+	attached := ensureRecovery(work.EnsureRecoveryTaskCommand{
+		CallID:     handoffCallID,
+		PracticeID: authorization.Practice.ID, LocationID: locationID,
+		Phone: phone, Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: now,
 	})
-	if err != nil {
-		t.Fatalf("create AI Task: %v", err)
+	if attached.ID != aiTask.ID || attached.Origin != work.TaskOriginAbitaAI || attached.State != work.TaskOpen {
+		t.Fatalf("voicemail after AI Task = %#v, want AI Task %s", attached, aiTask.ID)
 	}
-
-	now = now.Add(time.Hour)
-	missedCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill", now)
-	recovery := ensureRecovery(missedCallID, "", work.RecoveryOutcomeMissedCall)
-	if recovery.ID == aiTask.ID || recovery.Origin != work.TaskOriginMissedCall ||
-		recovery.State != work.TaskOpen {
-		t.Fatalf("missed call after an open AI Task = %#v, want its own recovery Task", recovery)
+	read, err := module.ReadTask(ctx, identity, aiTask.ID)
+	if err != nil || len(read.Interactions) != 1 || read.Interactions[0].CallID != handoffCallID {
+		t.Fatalf("AI Task interactions = %#v, %v", read.Interactions, err)
 	}
-	assertAITaskUntouched(aiTask)
-	read, err := module.ReadTask(ctx, identity, recovery.ID)
-	if err != nil || len(read.Interactions) != 1 || read.Interactions[0].CallID != missedCallID {
-		t.Fatalf("recovery Task interactions = %#v, %v; want the missed call", read.Interactions, err)
-	}
-
-	replayed := ensureRecovery(missedCallID, "", work.RecoveryOutcomeMissedCall)
-	if replayed.ID != recovery.ID || replayed.Version != recovery.Version {
-		t.Fatalf("replayed missed call = %#v, want unchanged %#v", replayed, recovery)
-	}
-
-	now = now.Add(time.Hour)
-	voicemailCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill again", now)
-	joined := ensureRecovery(voicemailCallID, "another-ai-call", work.RecoveryOutcomeVoicemail)
-	if joined.ID != recovery.ID || joined.Origin != work.TaskOriginVoicemail {
-		t.Fatalf("second missed call = %#v, want it joined to recovery Task %s", joined, recovery.ID)
-	}
-	assertAITaskUntouched(aiTask)
 	var recoveryTasks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM work_tasks
@@ -254,20 +233,41 @@ func TestMissedCallAfterAnOpenAITaskGetsItsOwnRecoveryTask(t *testing.T) {
 	`).Scan(&recoveryTasks); err != nil {
 		t.Fatal(err)
 	}
-	if recoveryTasks != 1 {
-		t.Fatalf("recovery Tasks = %d, want 1 for the caller", recoveryTasks)
+	if recoveryTasks != 0 {
+		t.Fatalf("recovery Tasks = %d, want 0 while the caller has an open Task", recoveryTasks)
+	}
+	replayed := ensureRecovery(work.EnsureRecoveryTaskCommand{
+		CallID:     handoffCallID,
+		PracticeID: authorization.Practice.ID, LocationID: locationID,
+		Phone: phone, Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: now,
+	})
+	if replayed.ID != aiTask.ID || replayed.Origin != work.TaskOriginAbitaAI ||
+		replayed.Title != aiTask.Title || replayed.Version != attached.Version {
+		t.Fatalf("replayed voicemail changed the AI Task: %#v, attached %#v", replayed, attached)
+	}
+	read, err = module.ReadTask(ctx, identity, aiTask.ID)
+	if err != nil || len(read.Interactions) != 1 {
+		t.Fatalf("replay duplicated interactions: %#v, %v", read.Interactions, err)
 	}
 
 	now = now.Add(time.Hour)
-	handoffCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill handoff", now)
-	attached := ensureRecovery(handoffCallID, aiTask.SourceCallID, work.RecoveryOutcomeVoicemail)
-	if attached.ID != aiTask.ID || attached.Origin != work.TaskOriginAbitaAI ||
-		attached.Title != aiTask.Title || attached.State != work.TaskOpen {
-		t.Fatalf("missed handoff from the AI Task's call = %#v, want AI Task %s", attached, aiTask.ID)
+	laterCallID := insertCallAt(t, pool, authorization, locationID, phone, "Refill again", now)
+	completedAITask, err := module.ReadTask(ctx, identity, aiTask.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	read, err = module.ReadTask(ctx, identity, aiTask.ID)
-	if err != nil || len(read.Interactions) != 1 || read.Interactions[0].CallID != handoffCallID {
-		t.Fatalf("AI Task interactions = %#v, %v; want the handoff call", read.Interactions, err)
+	if _, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
+		Identity: identity, TaskID: completedAITask.ID, ExpectedVersion: completedAITask.Version,
+	}); err != nil {
+		t.Fatalf("complete AI Task: %v", err)
+	}
+	recovery := ensureRecovery(work.EnsureRecoveryTaskCommand{
+		CallID:     laterCallID,
+		PracticeID: authorization.Practice.ID, LocationID: locationID,
+		Phone: phone, Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now,
+	})
+	if recovery.Origin != work.TaskOriginMissedCall || recovery.ID == completedAITask.ID {
+		t.Fatalf("missed call after completed AI Task = %#v, want a new recovery Task", recovery)
 	}
 }
 
@@ -320,9 +320,8 @@ func TestNewTaskAbsorbsTheCallersOpenMissedCall(t *testing.T) {
 	}
 	absorbed, err := module.ReadTask(ctx, identity, springHill.ID)
 	if err != nil || absorbed.State != work.TaskCompleted || absorbed.CompletedBy == nil ||
-		absorbed.CompletedBy.Kind != access.ActorService ||
-		absorbed.CloseReason != work.CloseReasonNotNeeded {
-		t.Fatalf("Spring Hill voicemail Task = %#v, %v; want closed as not needed by the service", absorbed, err)
+		absorbed.CompletedBy.Kind != access.ActorService {
+		t.Fatalf("Spring Hill voicemail Task = %#v, %v; want completed by the service", absorbed, err)
 	}
 	read, err := module.ReadTask(ctx, identity, aiTask.ID)
 	if err != nil || len(read.Interactions) != 1 || read.Interactions[0].CallID != springHillCallID {
@@ -351,215 +350,6 @@ func TestNewTaskAbsorbsTheCallersOpenMissedCall(t *testing.T) {
 	read, err = module.ReadTask(ctx, identity, followUp.ID)
 	if err != nil || len(read.Interactions) != 1 {
 		t.Fatalf("staff follow-up interactions = %#v, %v", read.Interactions, err)
-	}
-}
-
-func TestAITaskFiledAfterItsOwnCallWasMissedAbsorbsTheRecoveryTask(t *testing.T) {
-	scenario := newRecoveryScenario(t)
-	recovery, missedCallID := scenario.miss("same-ai-call", work.RecoveryOutcomeMissedCall)
-	if recovery.Origin != work.TaskOriginMissedCall || recovery.State != work.TaskOpen {
-		t.Fatalf("missed call before any AI Task = %#v, want an open recovery Task", recovery)
-	}
-	aiTask := scenario.fileAITask("same-ai-call")
-
-	assertAbsorbed := func(step string) {
-		t.Helper()
-		closed := scenario.read(recovery.ID)
-		if closed.State != work.TaskCompleted || closed.CloseReason != work.CloseReasonNotNeeded ||
-			len(closed.Interactions) != 0 {
-			t.Fatalf("%s: recovery Task = %#v, want closed as not needed with no calls", step, closed)
-		}
-		read := scenario.read(aiTask.ID)
-		if read.State != work.TaskOpen || read.Origin != work.TaskOriginAbitaAI ||
-			len(read.Interactions) != 1 || read.Interactions[0].CallID != missedCallID {
-			t.Fatalf("%s: AI Task = %#v, want it open holding missed call %s", step, read, missedCallID)
-		}
-		scenario.assertTasks(step, 2, aiTask.ID)
-	}
-	assertAbsorbed("AI Task filed")
-
-	replayed := scenario.ensureRecovery(missedCallID, "same-ai-call", work.RecoveryOutcomeVoicemail)
-	if replayed.ID != aiTask.ID {
-		t.Fatalf("replayed voicemail went to Task %s, want AI Task %s", replayed.ID, aiTask.ID)
-	}
-	assertAbsorbed("voicemail replayed")
-}
-
-func TestMissedHandoffAfterItsAITaskWasCompletedGetsANewRecoveryTask(t *testing.T) {
-	scenario := newRecoveryScenario(t)
-	aiTask := scenario.fileAITask("same-ai-call")
-	completed, err := scenario.module.CompleteTask(scenario.ctx, work.CompleteTaskCommand{
-		Identity: scenario.identity, TaskID: aiTask.ID, ExpectedVersion: aiTask.Version,
-		Reason: work.CloseReasonDone,
-	})
-	if err != nil {
-		t.Fatalf("complete AI Task: %v", err)
-	}
-
-	recovery, missedCallID := scenario.miss("same-ai-call", work.RecoveryOutcomeMissedCall)
-	if recovery.ID == aiTask.ID || recovery.Origin != work.TaskOriginMissedCall ||
-		recovery.State != work.TaskOpen {
-		t.Fatalf("missed handoff after its AI Task closed = %#v, want a new open recovery Task", recovery)
-	}
-	read := scenario.read(recovery.ID)
-	if len(read.Interactions) != 1 || read.Interactions[0].CallID != missedCallID {
-		t.Fatalf("recovery Task interactions = %#v, want missed call %s", read.Interactions, missedCallID)
-	}
-	closed := scenario.read(aiTask.ID)
-	if closed.State != work.TaskCompleted || closed.CloseReason != work.CloseReasonDone ||
-		closed.Version != completed.Version || len(closed.Interactions) != 0 {
-		t.Fatalf("completed AI Task after the missed call = %#v, want it unchanged", closed)
-	}
-	scenario.assertTasks("missed handoff", 2, recovery.ID)
-}
-
-func TestAITaskFromALaterCallAbsorbsAnEarlierCallsRecoveryTask(t *testing.T) {
-	scenario := newRecoveryScenario(t)
-	firstTask := scenario.fileAITask("call-0")
-	recovery, missedCallID := scenario.miss("call-1", work.RecoveryOutcomeMissedCall)
-	if recovery.ID == firstTask.ID || recovery.Origin != work.TaskOriginMissedCall {
-		t.Fatalf("missed call 1 = %#v, want its own recovery Task", recovery)
-	}
-	laterTask := scenario.fileAITask("call-2")
-
-	assertAbsorbed := func(step string) {
-		t.Helper()
-		closed := scenario.read(recovery.ID)
-		if closed.State != work.TaskCompleted || closed.CloseReason != work.CloseReasonNotNeeded ||
-			len(closed.Interactions) != 0 {
-			t.Fatalf("%s: call 1 recovery Task = %#v, want closed as not needed with no calls", step, closed)
-		}
-		read := scenario.read(laterTask.ID)
-		if read.State != work.TaskOpen || len(read.Interactions) != 1 ||
-			read.Interactions[0].CallID != missedCallID {
-			t.Fatalf("%s: call 2 Task = %#v, want it open holding missed call %s", step, read, missedCallID)
-		}
-		untouched := scenario.read(firstTask.ID)
-		if untouched.State != work.TaskOpen || untouched.Version != firstTask.Version ||
-			len(untouched.Interactions) != 0 {
-			t.Fatalf("%s: call 0 Task = %#v, want it open and unchanged", step, untouched)
-		}
-		scenario.assertTasks(step, 3, firstTask.ID, laterTask.ID)
-	}
-	assertAbsorbed("call 2 Task filed")
-
-	replayed := scenario.ensureRecovery(missedCallID, "call-1", work.RecoveryOutcomeVoicemail)
-	if replayed.ID != laterTask.ID {
-		t.Fatalf("replayed call 1 voicemail went to Task %s, want call 2 Task %s", replayed.ID, laterTask.ID)
-	}
-	assertAbsorbed("call 1 voicemail replayed")
-}
-
-type recoveryScenario struct {
-	t             *testing.T
-	ctx           context.Context
-	db            *testdb.DB
-	module        *work.Module
-	authorization access.Authorization
-	identity      access.Identity
-	now           time.Time
-	phone         string
-}
-
-func newRecoveryScenario(t *testing.T) *recoveryScenario {
-	t.Helper()
-	scenario := &recoveryScenario{
-		t: t, ctx: context.Background(), db: testdb.Open(t),
-		now:   time.Date(2026, time.October, 14, 9, 0, 0, 0, time.UTC),
-		phone: "+15555550100",
-	}
-	clock := func() time.Time { return scenario.now }
-	accessModule := access.New(scenario.db.As(testdb.Portal), clock)
-	scenario.authorization, scenario.identity = provisionStaff(
-		t, scenario.db.Owner, accessModule, scenario.now,
-	)
-	scenario.module = work.New(scenario.db.As(testdb.Portal), accessModule, clock)
-	return scenario
-}
-
-func (scenario *recoveryScenario) fileAITask(sourceCallID string) work.Task {
-	scenario.t.Helper()
-	scenario.now = scenario.now.Add(time.Minute)
-	task, _, err := scenario.module.CreateAITask(scenario.ctx, work.CreateAITaskCommand{
-		Service: access.ServiceIdentity{
-			Subject: "abita-synthetic", PracticeID: scenario.authorization.Practice.ID,
-			LocationScope: access.LocationScopeAll,
-			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
-		},
-		OfficeKey: "spring-hill", OfficePhone: "+17275919997", SourceCallID: sourceCallID,
-		IdempotencyKey: "task-" + sourceCallID, Phone: scenario.phone,
-		Summary:  "Caller needs a refill.",
-		Message:  "Caller asked the office to refill eye drops on " + sourceCallID + ".",
-		Category: work.TaskCategoryMedication, Urgency: work.TaskUrgencyNormal,
-	})
-	if err != nil {
-		scenario.t.Fatalf("file AI Task for %s: %v", sourceCallID, err)
-	}
-	return task
-}
-
-func (scenario *recoveryScenario) miss(
-	sourceCallID string,
-	outcome work.RecoveryOutcome,
-) (work.Task, string) {
-	scenario.t.Helper()
-	scenario.now = scenario.now.Add(time.Minute)
-	callID := insertCallAt(
-		scenario.t, scenario.db.Owner, scenario.authorization,
-		scenario.authorization.Locations[0].ID, scenario.phone, "Missed "+sourceCallID, scenario.now,
-	)
-	return scenario.ensureRecovery(callID, sourceCallID, outcome), callID
-}
-
-func (scenario *recoveryScenario) ensureRecovery(
-	callID string,
-	sourceCallID string,
-	outcome work.RecoveryOutcome,
-) work.Task {
-	scenario.t.Helper()
-	tx, err := scenario.db.As(testdb.Worker).Begin(scenario.ctx)
-	if err != nil {
-		scenario.t.Fatalf("begin recovery transaction: %v", err)
-	}
-	defer func() { _ = tx.Rollback(scenario.ctx) }()
-	task, err := scenario.module.EnsureRecoveryTask(scenario.ctx, tx, work.EnsureRecoveryTaskCommand{
-		CallID: callID, SourceCallID: sourceCallID,
-		PracticeID: scenario.authorization.Practice.ID,
-		LocationID: scenario.authorization.Locations[0].ID,
-		Phone:      scenario.phone, Outcome: outcome, OccurredAt: scenario.now,
-	})
-	if err != nil {
-		scenario.t.Fatalf("ensure recovery Task: %v", err)
-	}
-	if err := tx.Commit(scenario.ctx); err != nil {
-		scenario.t.Fatalf("commit recovery Task: %v", err)
-	}
-	return task
-}
-
-func (scenario *recoveryScenario) read(taskID string) work.Task {
-	scenario.t.Helper()
-	task, err := scenario.module.ReadTask(scenario.ctx, scenario.identity, taskID)
-	if err != nil {
-		scenario.t.Fatalf("read Task %s: %v", taskID, err)
-	}
-	return task
-}
-
-func (scenario *recoveryScenario) assertTasks(step string, total int, open ...string) {
-	scenario.t.Helper()
-	var gotTotal int
-	var gotOpen []string
-	if err := scenario.db.Owner.QueryRow(scenario.ctx, `
-		SELECT count(*),
-			COALESCE(array_agg(id::text ORDER BY created_at) FILTER (WHERE state = 'OPEN'), '{}')
-		FROM work_tasks
-	`).Scan(&gotTotal, &gotOpen); err != nil {
-		scenario.t.Fatal(err)
-	}
-	if gotTotal != total || strings.Join(gotOpen, ",") != strings.Join(open, ",") {
-		scenario.t.Fatalf("%s: %d Tasks with open %v; want %d with open %v",
-			step, gotTotal, gotOpen, total, open)
 	}
 }
 
@@ -651,31 +441,14 @@ func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *tes
 		}
 	}
 
-	closingCall := func(taskID string) string {
-		t.Helper()
-		var callID string
-		if err := pool.QueryRow(context.Background(), `
-			SELECT COALESCE(closed_via_call_id::text, '') FROM work_tasks WHERE id = $1
-		`, taskID).Scan(&callID); err != nil {
-			t.Fatalf("read closing Call: %v", err)
-		}
-		return callID
-	}
-	connectedCall := insertCallAt(
-		t, pool, authorization, authorization.Locations[0].ID, phone, "Shared caller", resolutionAt,
-	)
-	resolve(resolutionAt, connectedCall)
-	resolve(resolutionAt, connectedCall)
+	resolve(resolutionAt, "connected-call")
+	resolve(resolutionAt, "connected-call")
 	for _, taskID := range []string{first.ID, second.ID} {
 		resolved, err := module.ReadTask(context.Background(), identity, taskID)
 		if err != nil || resolved.State != work.TaskCompleted ||
 			resolved.CompletedBy == nil ||
-			resolved.CompletedBy.Kind != access.ActorService ||
-			resolved.CloseReason != work.CloseReasonDone {
+			resolved.CompletedBy.Kind != access.ActorService {
 			t.Fatalf("resolved recovery Task = %#v, %v", resolved, err)
-		}
-		if got := closingCall(taskID); got != connectedCall {
-			t.Fatalf("recovery Task closed by Call %q, want %q", got, connectedCall)
 		}
 	}
 
@@ -699,18 +472,13 @@ func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *tes
 	if err != nil {
 		t.Fatalf("reopen automatically completed Task: %v", err)
 	}
-	if got := closingCall(first.ID); reopened.CloseReason != "" || got != "" {
-		t.Fatalf("reopened recovery Task kept reason %q and closing Call %q", reopened.CloseReason, got)
-	}
-	resolve(resolutionAt, connectedCall)
+	resolve(resolutionAt, "connected-call")
 	stillOpen, err := module.ReadTask(context.Background(), identity, first.ID)
 	if err != nil || stillOpen.State != work.TaskOpen ||
 		stillOpen.Version != reopened.Version {
 		t.Fatalf("reopened recovery Task after stale replay = %#v, %v", stillOpen, err)
 	}
-	resolve(resolutionAt.Add(2*time.Minute), insertCallAt(
-		t, pool, authorization, authorization.Locations[0].ID, phone, "Shared caller", resolutionAt.Add(2*time.Minute),
-	))
+	resolve(resolutionAt.Add(2*time.Minute), "new-connected-call")
 	resolvedAgain, err := module.ReadTask(context.Background(), identity, first.ID)
 	if err != nil || resolvedAgain.State != work.TaskCompleted ||
 		resolvedAgain.Version != reopened.Version+1 {
@@ -1262,7 +1030,6 @@ func TestTaskLifecycleRejectsStaleRenameAndKeepsCompletionRecoverable(t *testing
 
 	now = now.Add(time.Minute)
 	completed, err := module.CompleteTask(context.Background(), work.CompleteTaskCommand{
-		Reason:          work.CloseReasonDone,
 		Identity:        identity,
 		TaskID:          task.ID,
 		ExpectedVersion: renamed.Version,
@@ -1283,7 +1050,6 @@ func TestTaskLifecycleRejectsStaleRenameAndKeepsCompletionRecoverable(t *testing
 	replayedCompletion, err := module.CompleteTask(
 		context.Background(),
 		work.CompleteTaskCommand{
-			Reason:          work.CloseReasonDone,
 			Identity:        identity,
 			TaskID:          task.ID,
 			ExpectedVersion: renamed.Version,
@@ -1464,7 +1230,6 @@ func TestConcurrentCompletionAndReopenCommitOneActivityPerTransition(t *testing.
 		return module.CompleteTask(
 			context.Background(),
 			work.CompleteTaskCommand{
-				Reason:          work.CloseReasonDone,
 				Identity:        identity,
 				TaskID:          task.ID,
 				ExpectedVersion: task.Version,
@@ -1581,7 +1346,6 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 	completed, err := module.CompleteTask(
 		context.Background(),
 		work.CompleteTaskCommand{
-			Reason:          work.CloseReasonDone,
 			Identity:        operator,
 			TaskID:          task.ID,
 			ExpectedVersion: renamed.Version,
@@ -2063,7 +1827,7 @@ func TestReopenConflictsWithEquivalentOpenRecoveryTask(t *testing.T) {
 		return task
 	}
 	first := missedCall(now)
-	completed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: first.ID, ExpectedVersion: first.Version})
+	completed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: first.ID, ExpectedVersion: first.Version})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2072,215 +1836,5 @@ func TestReopenConflictsWithEquivalentOpenRecoveryTask(t *testing.T) {
 	}
 	if _, err := module.ReopenTask(ctx, work.ReopenTaskCommand{Identity: identity, TaskID: first.ID, ExpectedVersion: completed.Version}); !errors.Is(err, work.ErrConflict) {
 		t.Fatalf("reopen beside equivalent open Task = %v, want conflict", err)
-	}
-}
-
-func TestCompleteTaskRecordsWhyItClosedAndReopenClearsIt(t *testing.T) {
-	db := testdb.Open(t)
-	ctx := context.Background()
-	now := time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC)
-	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
-	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
-	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
-	stored := func(taskID string) (reason, recorded string) {
-		t.Helper()
-		if err := db.Owner.QueryRow(ctx, `
-			SELECT COALESCE(task.close_reason, ''), COALESCE(activity.details ->> 'closeReason', '')
-			FROM work_tasks task
-			JOIN work_task_activities activity
-				ON activity.task_id = task.id AND activity.task_version = task.version
-			WHERE task.id = $1
-		`, taskID).Scan(&reason, &recorded); err != nil {
-			t.Fatalf("read stored close reason: %v", err)
-		}
-		return reason, recorded
-	}
-
-	for index, reason := range []work.CloseReason{
-		work.CloseReasonDone, work.CloseReasonNotNeeded, work.CloseReasonUnreachable,
-	} {
-		task := createTask(
-			t, db, module, authorization, authorization.Locations[0].ID,
-			fmt.Sprintf("+1555555014%d", index), "Confirm surgery instructions", now,
-		)
-		completed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
-			Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version, Reason: reason,
-		})
-		if err != nil || completed.CloseReason != reason {
-			t.Fatalf("complete as %s = %#v, %v", reason, completed, err)
-		}
-		read, err := module.ReadTask(ctx, identity, task.ID)
-		if err != nil || read.CloseReason != reason {
-			t.Fatalf("read Task closed as %s = %#v, %v", reason, read, err)
-		}
-		if storedReason, recorded := stored(task.ID); storedReason != string(reason) || recorded != string(reason) {
-			t.Fatalf("stored reason %q, Activity reason %q, want %s", storedReason, recorded, reason)
-		}
-		replayed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
-			Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version, Reason: work.CloseReasonDone,
-		})
-		if err != nil || replayed.CloseReason != reason || replayed.Version != completed.Version {
-			t.Fatalf("completing a Task already closed as %s = %#v, %v", reason, replayed, err)
-		}
-		if storedReason, recorded := stored(task.ID); storedReason != string(reason) || recorded != string(reason) {
-			t.Fatalf("a replayed completion stored reason %q and Activity reason %q, want %s", storedReason, recorded, reason)
-		}
-		reopened, err := module.ReopenTask(ctx, work.ReopenTaskCommand{
-			Identity: identity, TaskID: task.ID, ExpectedVersion: completed.Version,
-		})
-		if err != nil || reopened.State != work.TaskOpen || reopened.CloseReason != "" {
-			t.Fatalf("reopen Task closed as %s = %#v, %v", reason, reopened, err)
-		}
-		if storedReason, _ := stored(task.ID); storedReason != "" {
-			t.Fatalf("reopened Task kept close reason %q", storedReason)
-		}
-	}
-
-	task := createTask(
-		t, db, module, authorization, authorization.Locations[0].ID,
-		"+15555550149", "Confirm surgery instructions", now,
-	)
-	for _, reason := range []work.CloseReason{"", work.CloseReasonExpired, "ABANDONED"} {
-		if _, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
-			Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version, Reason: reason,
-		}); !errors.Is(err, work.ErrInvalidInput) {
-			t.Fatalf("staff completion with reason %q = %v, want invalid input", reason, err)
-		}
-		if _, err := module.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-			Identity: identity, TaskID: task.ID, Reason: reason,
-			Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}},
-		}); !errors.Is(err, work.ErrInvalidInput) {
-			t.Fatalf("staff group completion with reason %q = %v, want invalid input", reason, err)
-		}
-	}
-	untouched, err := module.ReadTask(ctx, identity, task.ID)
-	if err != nil || untouched.State != work.TaskOpen || untouched.Version != task.Version {
-		t.Fatalf("refused completions changed the Task: %#v, %v", untouched, err)
-	}
-	group, err := module.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-		Identity: identity, TaskID: task.ID, Reason: work.CloseReasonUnreachable,
-		Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}},
-	})
-	if err != nil || group.CloseReason != work.CloseReasonUnreachable {
-		t.Fatalf("group completion = %#v, %v", group, err)
-	}
-}
-
-func TestRecoveryResolutionRecordsWhyAndWhichCallClosedTheTask(t *testing.T) {
-	db := testdb.Open(t)
-	ctx := context.Background()
-	now := time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC)
-	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
-	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
-	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
-	location := authorization.Locations[0].ID
-	resolvedAt := now.Add(2 * time.Minute)
-
-	for index, kind := range []work.RecoveryResolutionKind{
-		work.RecoveryResolutionBooking,
-		work.RecoveryResolutionCallbackAttempt,
-		work.RecoveryResolutionInboundCall,
-	} {
-		phone := fmt.Sprintf("+1555555016%d", index)
-		tx, err := db.As(testdb.Worker).Begin(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		task, err := module.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
-			CallID:     insertCallAt(t, db.Owner, authorization, location, phone, "Synthetic caller", now),
-			PracticeID: authorization.Practice.ID, LocationID: location, Phone: phone,
-			CallerName: "Synthetic caller", Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now,
-		})
-		if err != nil {
-			t.Fatalf("ensure recovery Task: %v", err)
-		}
-		command := work.ResolveRecoveryTasksCommand{
-			PracticeID: authorization.Practice.ID, Phone: phone, OccurredAt: resolvedAt,
-			Kind: kind, SourceID: "synthetic-booking",
-		}
-		wantCall := ""
-		if kind != work.RecoveryResolutionBooking {
-			wantCall = insertCallAt(t, db.Owner, authorization, location, phone, "Synthetic caller", resolvedAt)
-			command.SourceID = wantCall
-		}
-		if kind == work.RecoveryResolutionCallbackAttempt {
-			command.ActorSubject = identity.Subject
-		}
-		if closed, err := module.ResolveRecoveryTasks(ctx, tx, command); err != nil || closed != 1 {
-			t.Fatalf("%s resolution closed %d Tasks, %v", kind, closed, err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			t.Fatal(err)
-		}
-		var reason, closingCall string
-		if err := db.Owner.QueryRow(ctx, `
-			SELECT COALESCE(close_reason, ''), COALESCE(closed_via_call_id::text, '')
-			FROM work_tasks WHERE id = $1 AND state = 'COMPLETED'
-		`, task.ID).Scan(&reason, &closingCall); err != nil {
-			t.Fatalf("read Task closed by %s: %v", kind, err)
-		}
-		if reason != string(work.CloseReasonDone) || closingCall != wantCall {
-			t.Fatalf("%s close stored reason %q and Call %q, want DONE and %q", kind, reason, closingCall, wantCall)
-		}
-	}
-}
-
-func TestTasksWrittenByThePreviousReleaseReadAndTransition(t *testing.T) {
-	db := testdb.Open(t)
-	ctx := context.Background()
-	now := time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC)
-	accessModule := access.New(db.As(testdb.Portal), func() time.Time { return now })
-	authorization, identity := provisionStaff(t, db.Owner, accessModule, now)
-	module := work.New(db.As(testdb.Portal), accessModule, func() time.Time { return now })
-	location := authorization.Locations[0].ID
-
-	completedWithoutReason := createTask(t, db, module, authorization, location, "+15555550170", "Confirm surgery instructions", now)
-	completed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
-		Identity: identity, TaskID: completedWithoutReason.ID,
-		ExpectedVersion: completedWithoutReason.Version, Reason: work.CloseReasonDone,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	openWithReason := createTask(t, db, module, authorization, location, "+15555550171", "Confirm surgery instructions", now)
-	staleCall := insertCallAt(t, db.Owner, authorization, location, "+15555550171", "Synthetic caller", now)
-	if _, err := db.Owner.Exec(ctx, `
-		UPDATE work_tasks SET close_reason = NULL WHERE id = $1;
-	`, completed.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Owner.Exec(ctx, `
-		UPDATE work_tasks SET close_reason = 'NOT_NEEDED', closed_via_call_id = $2 WHERE id = $1
-	`, openWithReason.ID, staleCall); err != nil {
-		t.Fatal(err)
-	}
-
-	read, err := module.ReadTask(ctx, identity, completed.ID)
-	if err != nil || read.State != work.TaskCompleted || read.CloseReason != "" || read.CompletedBy == nil {
-		t.Fatalf("completed Task with no stored reason = %#v, %v", read, err)
-	}
-	if reopened, err := module.ReopenTask(ctx, work.ReopenTaskCommand{
-		Identity: identity, TaskID: completed.ID, ExpectedVersion: completed.Version,
-	}); err != nil || reopened.State != work.TaskOpen {
-		t.Fatalf("reopen a completed Task with no stored reason = %#v, %v", reopened, err)
-	}
-
-	read, err = module.ReadTask(ctx, identity, openWithReason.ID)
-	if err != nil || read.State != work.TaskOpen || read.CloseReason != "" {
-		t.Fatalf("open Task that kept a reason = %#v, %v", read, err)
-	}
-	closed, err := module.CompleteTask(ctx, work.CompleteTaskCommand{
-		Identity: identity, TaskID: openWithReason.ID,
-		ExpectedVersion: openWithReason.Version, Reason: work.CloseReasonUnreachable,
-	})
-	if err != nil || closed.CloseReason != work.CloseReasonUnreachable {
-		t.Fatalf("complete an open Task that kept a reason = %#v, %v", closed, err)
-	}
-	var reason, closingCall string
-	if err := db.Owner.QueryRow(ctx, `
-		SELECT close_reason, COALESCE(closed_via_call_id::text, '') FROM work_tasks WHERE id = $1
-	`, openWithReason.ID).Scan(&reason, &closingCall); err != nil ||
-		reason != string(work.CloseReasonUnreachable) || closingCall != "" {
-		t.Fatalf("stored reason %q and closing Call %q, %v; want UNREACHABLE and no Call", reason, closingCall, err)
 	}
 }

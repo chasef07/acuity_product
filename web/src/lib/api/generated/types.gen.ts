@@ -594,64 +594,17 @@ export type CallingRecoveryTask = {
 
 export type CallingDispositionRequest = {
     sessionId: string;
-    outcome: CallingDispositionOutcome;
-    /**
-     * Open Tasks for the Call's phone that the staff member closes with this outcome. Omitted or empty closes nothing beyond the outcome. Once an outcome is recorded, the staff member who took the Call may still close listed Tasks for 30 minutes after it ended; the recorded outcome never changes.
-     *
-     */
-    closures?: Array<CallingDispositionClosure>;
-};
-
-export type CallingDispositionOutcome = 'RESOLVED' | 'FOLLOW_UP_REQUIRED' | 'COMPLETE_TASK' | 'KEEP_OPEN' | 'CREATE_TASK' | 'NO_FOLLOW_UP';
-
-export type CallingDispositionClosure = {
-    taskId: string;
-    /**
-     * Why the Task closed after the staff member spoke with the patient.
-     */
-    reason: 'DONE' | 'NOT_NEEDED';
-    /**
-     * The Task version the staff member saw. An open Task at another version stays open and is reported in changedTaskIds.
-     *
-     */
-    expectedVersion: number;
+    outcome: 'RESOLVED' | 'FOLLOW_UP_REQUIRED' | 'COMPLETE_TASK' | 'KEEP_OPEN' | 'CREATE_TASK' | 'NO_FOLLOW_UP';
 };
 
 export type CallingDispositionResult = {
     call: CallingCall;
     taskId?: string;
-    /**
-     * Listed Tasks this Call closed.
-     */
-    closedTaskIds?: Array<string>;
-    /**
-     * Listed Tasks that were closed before this Call could close them.
-     */
-    alreadyClosedTaskIds?: Array<string>;
-    /**
-     * Listed Tasks left open because they changed after the staff member saw them.
-     */
-    changedTaskIds?: Array<string>;
-    /**
-     * The outcome stored for the Call. It differs from the requested one when an outcome was already recorded, or when the Call's own Task changed and was kept open.
-     *
-     */
-    recordedOutcome?: CallingDispositionOutcome;
 };
 
 export type StaffTaskCategory = 'insurance' | 'pre_op' | 'post_op' | 'billing' | 'appointments' | 'documentation' | 'optical' | 'medication' | 'referrals' | 'other';
 
 export type StaffTaskUrgency = 'high_priority' | 'normal' | 'non_urgent';
-
-/**
- * Why a completed Task closed. EXPIRED is recorded only by the system.
- */
-export type TaskCloseReason = 'DONE' | 'NOT_NEEDED' | 'UNREACHABLE' | 'EXPIRED';
-
-/**
- * The reasons staff may give when they complete a Task.
- */
-export type StaffTaskCloseReason = 'DONE' | 'NOT_NEEDED' | 'UNREACHABLE';
 
 /**
  * Compatibility-only fields sent by the existing Abita tool. Acuity may source-label the optional name but never persists the ID or date of birth.
@@ -717,10 +670,6 @@ export type Task = {
      * Latest incoming text preview for the workspace list.
      */
     preview?: string;
-    /**
-     * Length of the voicemail a voicemail review holds, rounded to the nearest second and never below 1. Absent when the Task has no recording.
-     */
-    voicemailDurationSeconds?: number;
     sourceMessage?: string;
     messageId?: string;
     messageThreadId?: string;
@@ -729,7 +678,6 @@ export type Task = {
     createdAt: string;
     completedBy?: TaskActor;
     completedAt?: string;
-    closeReason?: TaskCloseReason;
     callbackCompletion?: TaskCallbackCompletion;
     version: number;
     updatedAt: string;
@@ -749,91 +697,6 @@ export type TaskInteraction = {
     callId: string;
     occurredAt: string;
     type: 'CALL' | 'VOICEMAIL';
-};
-
-/**
- * Mine lists a patient when at least one open Task is in a category the reader is responsible for, is a missed-call, voicemail, text, or appointment review, or has no owner. Everyone lists every patient with an open Task.
- */
-export type PatientWorkScope = 'mine' | 'everyone';
-
-/**
- * followUp matches follow-up Tasks created by the AI, after a staff call, or after a staff text. callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
- */
-export type PatientWorkFilter = 'all' | 'followUp' | 'callBack' | 'texts' | 'appointments' | 'unowned';
-
-export type PatientWorkQueryRequest = {
-    practiceId: string;
-    locationId?: string;
-    /**
-     * Matches the patient name the row shows, and the phone, title, caller name, category and Location of the open Tasks in scope.
-     */
-    search?: string;
-    scope?: PatientWorkScope;
-    filter?: PatientWorkFilter;
-    cursor?: string;
-    limit?: number;
-};
-
-export type PatientWorkPage = {
-    /**
-     * Patients with a high-priority matching Task first, then by newest matching Task.
-     */
-    rows: Array<PatientWorkRow>;
-    counts: PatientWorkCounts;
-    totals: PatientWorkTotals;
-    nextCursor: string;
-};
-
-export type PatientWorkRow = {
-    phone: string;
-    /**
-     * The caller name when exactly one name was seen on the phone. Empty when none or several were seen.
-     */
-    displayName: string;
-    /**
-     * Every open Task for the phone in the Locations the reader may read, whatever the scope and filter.
-     */
-    openCount: number;
-    /**
-     * Whether any Task matching the scope and filter is high priority.
-     */
-    highPriority: boolean;
-    hasUnowned: boolean;
-    /**
-     * When the newest Task matching the scope and filter last changed for the patient.
-     */
-    activityAt: string;
-    top: Task;
-};
-
-/**
- * How many patients each filter matches in the requested scope, Locations, and search.
- */
-export type PatientWorkCounts = {
-    all: number;
-    followUp: number;
-    callBack: number;
-    texts: number;
-    appointments: number;
-    unowned: number;
-};
-
-/**
- * Totals for the requested scope across the requested Locations, whatever the filter and search.
- */
-export type PatientWorkTotals = {
-    /**
-     * Open Tasks the requested scope includes.
-     */
-    openTasks: number;
-    /**
-     * Patients with at least one open Task the requested scope includes.
-     */
-    patients: number;
-    /**
-     * Patients with open Tasks that the requested scope leaves out.
-     */
-    patientsOutsideScope: number;
 };
 
 export type TaskPage = {
@@ -1099,10 +962,6 @@ export type AiInteractionDetail = {
 };
 
 export type AiOutcomeItem = {
-    /**
-     * True only when the stored call label for this AI Interaction is complete and its outcome is resolved. False while the label is pending, failed or skipped, and for a transferred or abandoned call.
-     */
-    resolved: boolean;
     id: string;
     locationId: string;
     locationName: string;
@@ -2056,7 +1915,6 @@ export type ChangeTaskCategoryRequest = {
 };
 
 export type CompleteTaskGroupRequest = {
-    reason?: StaffTaskCloseReason;
     members: Array<{
         id: string;
         expectedVersion: number;
@@ -2070,11 +1928,6 @@ export type RenameTaskRequest = {
 
 export type TaskTransitionRequest = {
     expectedVersion: number;
-};
-
-export type CompleteTaskRequest = {
-    expectedVersion: number;
-    reason?: StaffTaskCloseReason;
 };
 
 export type MessageDirection = 'INBOUND' | 'OUTBOUND';
@@ -2168,7 +2021,7 @@ export type ConversationTimelineItem = {
     id: string;
     occurredAt: string;
     /**
-     * Activity-specific evidence. TASK_COMPLETED includes closeReason when the close recorded one. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
+     * Activity-specific evidence. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
      */
     taskActivityDetails?: {
         [key: string]: unknown;
@@ -2188,30 +2041,6 @@ export type ConversationTimelineItem = {
 export type ConversationTimelinePage = {
     items: Array<ConversationTimelineItem>;
     nextCursor: string;
-};
-
-export type PhoneSummary = {
-    phone: string;
-    /**
-     * The caller name when exactly one name was seen on the phone. Empty when none or several were seen.
-     */
-    displayName: string;
-    /**
-     * Distinct caller names seen on the phone, at most five, ordered by when each was last recorded. A Task records its name when it is created and a Message Thread when it starts.
-     */
-    names: Array<string>;
-    /**
-     * Open Tasks for the phone in the Locations the caller may read, newest activity first, at most fifty.
-     */
-    openTasks: Array<Task>;
-    /**
-     * How many open Tasks the phone has in the Locations the caller may read, including any beyond the fifty returned.
-     */
-    openTaskCount: number;
-    /**
-     * Tasks for the phone that staff or a call closed in the last 24 hours, newest first, at most twenty. Tasks the system expired are left out.
-     */
-    closedToday: Array<Task>;
 };
 
 export type CallState = 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'VOICEMAIL_GREETING' | 'VOICEMAIL_RECORDING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
@@ -2236,18 +2065,6 @@ export type CallHistoryItem = {
     transferReason: string;
     sourceCallId?: string;
     outcome: CallState;
-    /**
-     * The Task this outbound call was placed from. Absent when the call was not placed from a Task or the Task is in a Location the reader cannot access.
-     */
-    taskId?: string;
-    /**
-     * Title of the Task named by taskId. Absent whenever taskId is absent.
-     */
-    taskTitle?: string;
-    /**
-     * Length of the voicemail the caller left on this call, rounded to the nearest second and never below 1. Absent when no voicemail was recorded.
-     */
-    voicemailDurationSeconds?: number;
 };
 
 export type OperatorCallingTimelineEntry = {
@@ -3378,47 +3195,6 @@ export type GetEngagementTimelineResponses = {
 
 export type GetEngagementTimelineResponse = GetEngagementTimelineResponses[keyof GetEngagementTimelineResponses];
 
-export type GetEngagementSummaryData = {
-    body?: never;
-    path: {
-        phone: string;
-    };
-    query: {
-        practiceId: string;
-    };
-    url: '/v1/engagements/{phone}/summary';
-};
-
-export type GetEngagementSummaryErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type GetEngagementSummaryError = GetEngagementSummaryErrors[keyof GetEngagementSummaryErrors];
-
-export type GetEngagementSummaryResponses = {
-    /**
-     * Names seen on the phone, its open Tasks, and the Tasks closed in the last 24 hours.
-     */
-    200: PhoneSummary;
-};
-
-export type GetEngagementSummaryResponse = GetEngagementSummaryResponses[keyof GetEngagementSummaryResponses];
-
 export type IngestAiInteractionData = {
     body: AiInteractionIngestRequest;
     path?: never;
@@ -4030,43 +3806,6 @@ export type QueryTasksResponses = {
 
 export type QueryTasksResponse = QueryTasksResponses[keyof QueryTasksResponses];
 
-export type QueryPatientWorkData = {
-    body: PatientWorkQueryRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/tasks/patients/query';
-};
-
-export type QueryPatientWorkErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type QueryPatientWorkError = QueryPatientWorkErrors[keyof QueryPatientWorkErrors];
-
-export type QueryPatientWorkResponses = {
-    /**
-     * One page of patients with open Tasks.
-     */
-    200: PatientWorkPage;
-};
-
-export type QueryPatientWorkResponse = QueryPatientWorkResponses[keyof QueryPatientWorkResponses];
-
 export type ReadTaskData = {
     body?: never;
     path: {
@@ -4146,7 +3885,7 @@ export type RenameTaskResponses = {
 export type RenameTaskResponse = RenameTaskResponses[keyof RenameTaskResponses];
 
 export type CompleteTaskData = {
-    body: CompleteTaskRequest;
+    body: TaskTransitionRequest;
     path: {
         taskId: string;
     };

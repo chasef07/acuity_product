@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import {
   ArrowRightLeftIcon,
+  CheckIcon,
   Grid2X2Icon,
   LoaderCircleIcon,
   MicIcon,
@@ -32,6 +33,7 @@ import {
   type CallingCardFailure,
   type CallingCardFailureView,
   type CallingCardOfferView,
+  type CallingDispositionOutcome,
 } from "@/lib/calling/calling-card"
 import type { SoftphoneRuntimeSnapshot } from "@/lib/calling/softphone-runtime"
 import { cn } from "@/lib/utils"
@@ -46,6 +48,7 @@ type CallingCardProps = {
   onEnd: () => void
   onMute: () => void
   onDTMF: (digit: string) => void
+  onDisposition: (outcome: CallingDispositionOutcome) => void
   onRetry: () => void
   onRecover: () => void
   onClose: () => void
@@ -61,6 +64,7 @@ export function CallingCard({
   onEnd,
   onMute,
   onDTMF,
+  onDisposition,
   onRetry,
   onRecover,
   onClose,
@@ -112,6 +116,7 @@ export function CallingCard({
         <>
           <ActiveCallActions
             view={view}
+            onDisposition={onDisposition}
             onRetry={onRetry}
             onClose={onClose}
           />
@@ -462,16 +467,37 @@ function CallingFailure({
 
 function ActiveCallActions({
   view,
+  onDisposition,
   onRetry,
   onClose,
 }: {
   view: CallingCardCallView
+  onDisposition: (outcome: CallingDispositionOutcome) => void
   onRetry: () => void
   onClose: () => void
 }) {
-  if (!view.actions.retry && !view.actions.close) return null
+  if (
+    view.actions.dispositions.length === 0 &&
+    !view.actions.retry &&
+    !view.actions.close
+  ) {
+    return null
+  }
   return (
     <CardContent className="flex flex-wrap items-center gap-2">
+      {view.actions.dispositions.map((action) => (
+        <Button
+          key={action.outcome}
+          size="sm"
+          className="min-h-10 rounded-lg px-3"
+          variant={action.primary ? "default" : "outline"}
+          disabled={action.disabled}
+          onClick={() => onDisposition(action.outcome)}
+        >
+          {action.primary && <CheckIcon />}
+          {action.label}
+        </Button>
+      ))}
       {view.actions.retry && (
         <Button
           size="sm"

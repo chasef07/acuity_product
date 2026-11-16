@@ -157,13 +157,6 @@ func callingWorkError(err error) error {
 	return fmt.Errorf("update Call Task: %w", err)
 }
 
-func callingClosureError(err error) error {
-	if errors.Is(err, work.ErrDenied) {
-		return ErrInvalidInput
-	}
-	return callingWorkError(err)
-}
-
 type providerRecordingFailure struct {
 	OccurredAt time.Time
 }
@@ -382,25 +375,20 @@ type RecoveryTask struct {
 	RelatedInteractionCount int
 }
 
-const VoicemailSecondsSQL = `GREATEST(1, ROUND(voicemail.duration_millis / 1000.0))::bigint`
-
 type CallHistoryItem struct {
-	ID                       string
-	Type                     string
-	Direction                string
-	StartedAt                time.Time
-	EndedAt                  *time.Time
-	DurationSeconds          int64
-	LocationID               string
-	LocationName             string
-	AnsweredByEmail          string
-	PlacedByEmail            string
-	TransferReason           string
-	SourceCallID             string
-	Outcome                  CallState
-	TaskID                   string
-	TaskTitle                string
-	VoicemailDurationSeconds int64
+	ID              string
+	Type            string
+	Direction       string
+	StartedAt       time.Time
+	EndedAt         *time.Time
+	DurationSeconds int64
+	LocationID      string
+	LocationName    string
+	AnsweredByEmail string
+	PlacedByEmail   string
+	TransferReason  string
+	SourceCallID    string
+	Outcome         CallState
 }
 
 type OperatorTimeline struct {
@@ -435,16 +423,9 @@ const (
 	DispositionNoFollowUp       Disposition = "NO_FOLLOW_UP"
 )
 
-const (
-	defaultDispositionDuration = 60 * time.Second
-	lateClosureWindow          = 30 * time.Minute
-)
-
 type DispositionResult struct {
-	Call     Call
-	TaskID   string
-	Closures work.CallTaskClosures
-	Outcome  Disposition
+	Call   Call
+	TaskID string
 }
 
 type Module struct {
@@ -482,7 +463,7 @@ func New(
 		config.ReadinessGrace = 15 * time.Second
 	}
 	if config.DispositionDuration <= 0 {
-		config.DispositionDuration = defaultDispositionDuration
+		config.DispositionDuration = 20 * time.Second
 	}
 	if config.StaffTransferDuration <= 0 {
 		config.StaffTransferDuration = 20 * time.Second

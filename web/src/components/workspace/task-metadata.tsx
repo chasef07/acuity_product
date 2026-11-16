@@ -18,16 +18,18 @@ import { signInRequired } from "@/lib/clients/portal-request"
 import { changeTaskCategory } from "@/lib/clients/tasks"
 import { taskGroups, taskGroupLabel } from "@/lib/vocabulary"
 
-export function TaskMetadata({ task, onUpdated }: {
+export function TaskMetadata({ task, onUpdated, compact = false }: {
   task: Task
   onUpdated: (task: Task) => void
+  compact?: boolean
 }) {
-  return <TaskGroupMenu key={`${task.id}:${task.version}`} task={task} onUpdated={onUpdated} />
+  return <TaskGroupMenu key={`${task.id}:${task.version}`} task={task} onUpdated={onUpdated} compact={compact} />
 }
 
-function TaskGroupMenu({ task, onUpdated }: {
+function TaskGroupMenu({ task, onUpdated, compact }: {
   task: Task
   onUpdated: (task: Task) => void
+  compact: boolean
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
@@ -51,16 +53,16 @@ function TaskGroupMenu({ task, onUpdated }: {
   }
 
   return (
-    <div role="group" className="border-t pt-2 text-xs" aria-label="Task group">
+    <div role="group" className={compact ? "text-xs" : "border-t pt-2 text-xs"} aria-label="Task group">
       <div className="flex items-center justify-between gap-2">
-        <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{taskGroupLabel(task.category)}</p>
+        {!compact && <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{taskGroupLabel(task.category)}</p>}
         {task.state === "OPEN" && (
           <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="sm" variant="ghost" className="-mr-2 text-xs" disabled={pending} aria-busy={pending || undefined} />}>
+            <DropdownMenuTrigger render={<Button size="sm" variant="ghost" className={compact ? "-ml-2 text-xs" : "-mr-2 text-xs"} disabled={pending} aria-busy={pending || undefined} />}>
               {pending ? <Spinner /> : null}
               Move task <ChevronDown aria-hidden="true" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-60">
+            <DropdownMenuContent align={compact ? "start" : "end"} className="w-60">
               <DropdownMenuRadioGroup value={task.category ?? ""} onValueChange={(value) => void move(value as StaffTaskCategory)}>
                 <DropdownMenuLabel>Move to group</DropdownMenuLabel>
                 {taskGroups.map((group) => (

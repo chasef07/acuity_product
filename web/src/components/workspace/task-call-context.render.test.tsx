@@ -32,13 +32,10 @@ function panel(props: Partial<Parameters<typeof TaskCallContext>[0]>) {
       <TaskCallContext
         task={task}
         activeCall={undefined}
-        callControlsShowing={false}
         view="task"
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
-        onOpenTask={() => {}}
-        patientTasks={() => null}
         {...props}
       />
     </DataProvider>,
@@ -59,6 +56,21 @@ test("the Task panel heading fits the narrow column and leaves the number to the
   assert.match(markup, /Alex Example/)
 })
 
+test("the group panel keeps its office and caller names without repeating the number", () => {
+  const second: Task = { ...task, id: "task-2", title: "Send prescription copy", callerName: "Blair Example" }
+  const group: Task = { ...task, groupMembers: [task, second] }
+  const markup = panel({ group, taskRows: [group], onSelectTask: () => {} })
+  const [, classes, text] = heading(markup) ?? []
+  assert.ok(text)
+  assert.match(classes ?? "", /\btext-base\b/)
+  assert.doesNotMatch(classes ?? "", /\btext-lg\b/)
+  assert.doesNotMatch(markup, /\(555\) 123-4567/)
+  assert.match(markup, /2 related Tasks · Downtown/)
+  assert.match(markup, /Alex Example/)
+  assert.match(markup, /Blair Example/)
+  assert.match(markup, /Complete all 2 requests/)
+})
+
 test("the Task panel names urgency with the rail's words", () => {
   for (const [urgency, label] of [
     ["high_priority", "High priority"],
@@ -68,41 +80,4 @@ test("the Task panel names urgency with the rail's words", () => {
     const markup = panel({ task: { ...task, urgency } })
     assert.equal(markup.match(/>Urgency<\/span><span[^>]*>([^<]*)</)?.[1], label)
   }
-})
-
-test("a completed Task names why it closed and who closed it", () => {
-  const completed = {
-    ...task,
-    origin: "ABITA_AI",
-    state: "COMPLETED",
-    completedAt: "2026-08-30T13:00:00Z",
-  } as const
-  const staff = { kind: "HUMAN", subject: "user-1", email: "ines@abita.test" } as const
-  for (const [closeReason, summary] of [
-    ["DONE", "Done, by ines@abita.test"],
-    ["NOT_NEEDED", "Not needed, by ines@abita.test"],
-    ["UNREACHABLE", "Couldn&#x27;t reach, by ines@abita.test"],
-  ] as const) {
-    const markup = panel({ task: { ...completed, completedBy: staff, closeReason } })
-    assert.ok(markup.includes(summary), `${closeReason} reads "${summary}"`)
-    assert.doesNotMatch(markup, /Close as/)
-  }
-  const expired = panel({
-    task: { ...completed, completedBy: { kind: "SERVICE", subject: "task-expiry" }, closeReason: "EXPIRED" },
-  })
-  assert.ok(expired.includes("Expired, automatically"))
-  const anonymous = { kind: "HUMAN", subject: "user-1" } as const
-  assert.ok(panel({ task: { ...completed, completedBy: anonymous, closeReason: "NOT_NEEDED" } }).includes("Not needed, by the team"))
-  const withoutReason = panel({ task: { ...completed, completedBy: staff } })
-  assert.ok(withoutReason.includes("Completed by ines@abita.test"), "a Task closed before reasons were recorded reads as it did")
-  assert.doesNotMatch(withoutReason, /undefined/)
-  assert.ok(panel({ task: { ...completed, completedBy: anonymous } }).includes("Completed by the team"))
-})
-
-test("an open Task completes as done from the button and offers the other reasons beside it", () => {
-  const markup = panel({ task: { ...task, origin: "ABITA_AI" } })
-  assert.match(markup, /Complete &amp; next/)
-  const menu = /<button[^>]*aria-label="Close as"[^>]*>\s*<svg[^>]*>/.exec(markup)?.[0] ?? ""
-  assert.match(menu, /aria-haspopup="menu"/)
-  assert.match(menu, /lucide-ellipsis/)
 })

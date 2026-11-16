@@ -44,11 +44,6 @@ func provisionColleagues(t *testing.T, owner *pgxpool.Pool, now time.Time) {
 	}
 }
 
-func signInColleague(t *testing.T, a *access.Module) {
-	t.Helper()
-	testaccess.Activate(t, a, access.Identity{Subject: "synthetic-colleague-subject", Email: colleagueCoveringEveryLocation, EmailVerified: true})
-}
-
 func createRosterTask(t *testing.T, m *work.Module, practiceID string, category work.TaskCategory) {
 	t.Helper()
 	_, _, err := m.CreateAITask(context.Background(), work.CreateAITaskCommand{Service: access.ServiceIdentity{Subject: "synthetic-agent", PracticeID: practiceID, LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}}, OfficeKey: "spring-hill", OfficePhone: "+12025550100", SourceCallID: "roster-call", IdempotencyKey: string(category), Phone: "+12025550123", Summary: string(category), Message: "Synthetic staff follow-up", Category: category, Urgency: work.TaskUrgencyNormal})
@@ -102,11 +97,6 @@ func TestResponsibilitiesFilterWithoutGrantingAccess(t *testing.T) {
 	}
 	reads := workspace.New(db.As(testdb.Portal), a)
 	mine, count := myTaskCategories(t, reads, identity, auth.Practice.ID)
-	if !reflect.DeepEqual(mine, []string{"medication", "optical", "pre_op", "referrals"}) || count != 4 {
-		t.Fatalf("mine = %v count=%d, want every category while the colleague listed for optical has not signed in", mine, count)
-	}
-	signInColleague(t, a)
-	mine, count = myTaskCategories(t, reads, identity, auth.Practice.ID)
 	if !reflect.DeepEqual(mine, []string{"medication", "pre_op", "referrals"}) || count != 3 {
 		t.Fatalf("mine = %v count=%d, want my medication plus pre_op and referrals, which nobody owns; a colleague owns optical", mine, count)
 	}
@@ -162,7 +152,6 @@ func TestResponsibilityProvisioningConvergesOnTheInput(t *testing.T) {
 
 	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	createRosterTask(t, m, auth.Practice.ID, "optical")
-	signInColleague(t, a)
 	reads := workspace.New(db.As(testdb.Portal), a)
 	if mine, _ := myTaskCategories(t, reads, identity, auth.Practice.ID); len(mine) != 0 {
 		t.Fatalf("a colleague's optical Task showed in mine: %v", mine)
@@ -211,12 +200,12 @@ func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) 
 	}
 	reviewed := []work.ReviewedTask{{ID: first.ID, ExpectedVersion: first.Version}, {ID: second.ID, ExpectedVersion: second.Version}}
 	third := create("third", "Family Member Three")
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: first.ID, Members: reviewed})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: first.ID, Members: reviewed})
 	if !errors.Is(err, work.ErrConflict) {
 		t.Fatalf("unseen arrival: %v", err)
 	}
 	reviewed = append(reviewed, work.ReviewedTask{ID: third.ID, ExpectedVersion: third.Version})
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: first.ID, Members: reviewed})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: first.ID, Members: reviewed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,11 +296,11 @@ func TestRelatedTaskGroupsKeepCallersSeparate(t *testing.T) {
 			t.Fatalf("%s skipped a group: %+v", ordering, seen)
 		}
 	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}})
 	if !errors.Is(err, work.ErrConflict) {
 		t.Fatalf("resolving two callers as one group should fail: %v", err)
 	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}}})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +434,7 @@ func TestGroupMetadataCommandsDenyUnrelatedStaffWithoutSideEffects(t *testing.T)
 	if !errors.Is(err, work.ErrDenied) {
 		t.Fatalf("move denied: %v", err)
 	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: outsider, TaskID: task.ID, Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}}})
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: outsider, TaskID: task.ID, Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}}})
 	if !errors.Is(err, work.ErrDenied) {
 		t.Fatalf("group denied: %v", err)
 	}

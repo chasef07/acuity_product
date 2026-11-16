@@ -3,7 +3,6 @@ package workspace_test
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
 )
@@ -112,11 +112,11 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 				email = &staff.Email
 			}
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO work_tasks (id,practice_id,location_id,phone,title,state,created_by_kind,created_by_subject,created_at,updated_at,origin,source_call_id,source_message,category,ai_idempotency_key,ai_input_fingerprint,completed_by_kind,completed_by_subject,completed_by_email,completed_at,close_reason) VALUES ($1::uuid,$2,$3,'+15555550199','Synthetic task',$4,'SERVICE','fixture',$5,$5,'ABITA_AI',$1::text,'Synthetic task evidence','other',$1::text,decode(repeat('00',32),'hex'),$6,$7,$8,$9,CASE WHEN $4='COMPLETED' THEN 'DONE' END)`, id, practice, locA, state, day.Add(-time.Duration(i)*time.Hour), completedKind, subject, email, completed); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO work_tasks (id,practice_id,location_id,phone,title,state,created_by_kind,created_by_subject,created_at,updated_at,origin,source_call_id,source_message,category,ai_idempotency_key,ai_input_fingerprint,completed_by_kind,completed_by_subject,completed_by_email,completed_at) VALUES ($1::uuid,$2,$3,'+15555550199','Synthetic task',$4,'SERVICE','fixture',$5,$5,'ABITA_AI',$1::text,'Synthetic task evidence','other',$1::text,decode(repeat('00',32),'hex'),$6,$7,$8,$9)`, id, practice, locA, state, day.Add(-time.Duration(i)*time.Hour), completedKind, subject, email, completed); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO work_tasks (id,practice_id,location_id,phone,title,state,created_by_kind,created_by_subject,created_at,updated_at,origin,source_call_id,category,source_review_key,source_message,completed_by_kind,completed_by_subject,completed_at,close_reason) VALUES (gen_random_uuid(),$1,$2,'+15555550199','Review booked appointment','COMPLETED','SERVICE','appointment-review',$3,$3,'APPOINTMENT_REVIEW','retired-review','appointments','retired-review','Verify insurance','SERVICE','hidden-review-retirement',$3,'EXPIRED')`, practice, locA, day.Add(-time.Hour)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO work_tasks (id,practice_id,location_id,phone,title,state,created_by_kind,created_by_subject,created_at,updated_at,origin,source_call_id,category,source_review_key,source_message,completed_by_kind,completed_by_subject,completed_at) VALUES (gen_random_uuid(),$1,$2,'+15555550199','Review booked appointment','COMPLETED','SERVICE','appointment-review',$3,$3,'APPOINTMENT_REVIEW','retired-review','appointments','retired-review','Verify insurance','SERVICE',$4,$3)`, practice, locA, day.Add(-time.Hour), work.HiddenReviewRetirementSubject); err != nil {
 		t.Fatal(err)
 	}
 	module := workspace.New(db.As(testdb.Portal), a)
@@ -180,35 +180,5 @@ func TestStaffAnalyticsScopeConnectedCallsAndAllAccounts(t *testing.T) {
 	command.PracticeID = practice
 	if _, err := module.QueryStaffAnalytics(ctx, command); !errors.Is(err, workspace.ErrDenied) {
 		t.Fatalf("foreign Location must be denied: %v", err)
-	}
-}
-
-func TestStaffAnalyticsLeavesAnExpiredReviewOutOfCompletedWork(t *testing.T) {
-	f := newTextReviewFixture(t)
-	today := time.Now().In(interaction.ReportingZone)
-	f.now = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, interaction.ReportingZone).Add(-30 * time.Hour)
-	f.completeAsStaff(f.inboundText(1, time.Hour))
-	report := func() workspace.StaffAnalytics {
-		t.Helper()
-		report, err := f.reads.QueryStaffAnalytics(f.ctx, workspace.QueryStaffAnalyticsCommand{Identity: f.identity, PracticeID: f.auth.Practice.ID, Days: 7})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return report
-	}
-	before := report()
-	if before.Tasks.Completed != 1 || before.Tasks.P90Seconds == nil || *before.Tasks.P90Seconds != 3600 {
-		t.Fatalf("task KPI before the expiry = %+v; want one Task completed in an hour", before.Tasks)
-	}
-
-	f.inboundText(2, 121*time.Hour)
-	f.expire(1)
-
-	after := report()
-	if after.Tasks.Completed != before.Tasks.Completed || after.Total.TasksCompleted != before.Total.TasksCompleted ||
-		!reflect.DeepEqual(after.Tasks.P50Seconds, before.Tasks.P50Seconds) ||
-		!reflect.DeepEqual(after.Tasks.P90Seconds, before.Tasks.P90Seconds) ||
-		!reflect.DeepEqual(after.Daily, before.Daily) {
-		t.Fatalf("task KPI after a review expired = %+v daily %+v; want it unchanged from %+v daily %+v", after.Tasks, after.Daily, before.Tasks, before.Daily)
 	}
 }

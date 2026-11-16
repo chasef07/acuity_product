@@ -29,6 +29,7 @@ import {
 import { useSidebar } from "@/components/ui/sidebar"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { RailButton } from "@/components/workspace/workspace-rail-button"
+import { workspaceFolders } from "@/components/workspace/workspace-rail-folders"
 import { authClient } from "@/lib/auth-client"
 import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
 import {
@@ -55,7 +56,7 @@ export function WorkspaceNavRail({
   const view = projection.selection.view
   const workActive = isWorkView(view)
   const panelOpen = isMobile ? openMobile : open
-  const openCount = projection.patients.counts.all
+  const openCount = workspaceFolders(projection).reduce((total, folder) => total + folder.count, 0)
   const practiceName = discovery.practices.find((practice) => practice.id === projection.scope.practiceID)?.name
 
   function selectWithSidebar(active: boolean, intent: WorkspaceProjectionIntent) {

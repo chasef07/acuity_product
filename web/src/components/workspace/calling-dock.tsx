@@ -11,7 +11,6 @@ import {
   useSyncExternalStore,
 } from "react"
 
-import { CallWrapUp } from "@/components/workspace/call-wrap-up"
 import {
   CallingCard,
   CallingFailureNotice,
@@ -122,12 +121,6 @@ export function CallingDock({
   const scopedLocationID = scopedCall?.locationId
   const connectedCallID =
     snapshot.activeCall?.state === "CONNECTED" ? snapshot.activeCall.id : ""
-  const [sawConnectedCallID, setSawConnectedCallID] = useState("")
-  if (connectedCallID && connectedCallID !== sawConnectedCallID) {
-    setSawConnectedCallID(connectedCallID)
-  }
-  const wrapUpCall = snapshot.pendingDisposition ?? snapshot.settledWrapUp?.call
-  const offerInWrapUp = Boolean(snapshot.settledWrapUp && snapshot.offers.length > 0)
   const reportCallScope = useEffectEvent(onCallScope)
   const reportCallConnected = useEffectEvent(() => {
     if (snapshot.activeCall?.state === "CONNECTED") {
@@ -184,36 +177,11 @@ export function CallingDock({
   }
 
   async function dispose(
-    request: Parameters<SoftphoneRuntime["dispose"]>[0],
+    outcome: Parameters<SoftphoneRuntime["dispose"]>[0],
   ) {
-    const result = await runtime.dispose(request)
+    const result = await runtime.dispose(outcome)
     if (result) onDisposition(result)
   }
-
-  const callingCard = (
-    <CallingCard
-      snapshot={snapshot}
-      onAnswer={(callLegID) => void runtime.answer(callLegID)}
-      onDecline={(callLegID) => void runtime.declineTransfer(callLegID)}
-      onLoadTransferCandidates={() =>
-        void runtime.loadTransferCandidates()
-      }
-      onRequestTransfer={(recipientSubject, handoffNote) =>
-        void runtime.requestTransfer(
-          recipientSubject,
-          handoffNote,
-          window.crypto.randomUUID(),
-        )
-      }
-      onCancelTransfer={() => void runtime.cancelTransfer()}
-      onEnd={() => void runtime.hangup()}
-      onMute={runtime.toggleMute}
-      onDTMF={(digit) => void runtime.sendDTMF(digit)}
-      onRetry={() => void runtime.retry(window.crypto.randomUUID())}
-      onRecover={() => void runtime.recover()}
-      onClose={runtime.dismissOutcome}
-    />
-  )
 
   return (
     <CallingNavigationContext.Provider
@@ -233,43 +201,35 @@ export function CallingDock({
     >
       {children(snapshot.activeCall, snapshot.occupied)}
       <audio id={remoteAudioElementID} autoPlay className="hidden" />
-      {callingCardVisible && !offerInWrapUp && (
-        <div ref={publishDockClearance} className="fixed inset-x-3 bottom-28 z-40 md:left-auto md:right-5 md:w-[23rem]">
-          {callingCard}
+      {callingCardVisible && (
+        <div className="fixed inset-x-3 bottom-28 z-40 md:left-auto md:right-5 md:w-[23rem]">
+          <CallingCard
+            snapshot={snapshot}
+            onAnswer={(callLegID) => void runtime.answer(callLegID)}
+            onDecline={(callLegID) => void runtime.declineTransfer(callLegID)}
+            onLoadTransferCandidates={() =>
+              void runtime.loadTransferCandidates()
+            }
+            onRequestTransfer={(recipientSubject, handoffNote) =>
+              void runtime.requestTransfer(
+                recipientSubject,
+                handoffNote,
+                window.crypto.randomUUID(),
+              )
+            }
+            onCancelTransfer={() => void runtime.cancelTransfer()}
+            onEnd={() => void runtime.hangup()}
+            onMute={runtime.toggleMute}
+            onDTMF={(digit) => void runtime.sendDTMF(digit)}
+            onDisposition={(outcome) => void dispose(outcome)}
+            onRetry={() => void runtime.retry(window.crypto.randomUUID())}
+            onRecover={() => void runtime.recover()}
+            onClose={runtime.dismissOutcome}
+          />
         </div>
-      )}
-      {wrapUpCall && (
-        <CallWrapUp
-          key={wrapUpCall.id}
-          call={wrapUpCall}
-          settled={snapshot.settledWrapUp}
-          sawConnected={sawConnectedCallID === wrapUpCall.id}
-          saving={snapshot.pending.disposition}
-          failure={snapshot.failure}
-          incomingCall={offerInWrapUp ? callingCard : undefined}
-          onRecover={() => void runtime.recover()}
-          onSave={(request) => void dispose(request)}
-          onDismiss={runtime.dismissWrapUp}
-        />
       )}
     </CallingNavigationContext.Provider>
   )
-}
-
-function publishDockClearance(dock: HTMLDivElement) {
-  const root = document.documentElement
-  const publish = () =>
-    root.style.setProperty(
-      "--calling-dock-clearance",
-      `${dock.offsetHeight + parseFloat(getComputedStyle(dock).bottom)}px`,
-    )
-  const observer = new ResizeObserver(publish)
-  observer.observe(dock)
-  publish()
-  return () => {
-    observer.disconnect()
-    root.style.removeProperty("--calling-dock-clearance")
-  }
 }
 
 function createBrowserSoftphoneRuntime(actorSubject: string) {

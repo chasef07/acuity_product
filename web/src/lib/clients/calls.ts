@@ -52,17 +52,6 @@ export type RecoverySource = {
   failure?: PortalFailure
 }
 
-export function useCallingCall(callID: string | undefined, enabled: boolean) {
-  return useRead({
-    live: "task-detail",
-    name: "calling-call",
-    identity: { callID },
-    enabled: enabled && Boolean(callID),
-    read: (identity, transport) =>
-      getCallingCall({ ...transport, path: { callId: identity.callID ?? "" } }),
-  })
-}
-
 export function useRecoverySource(
   task: Pick<Task, "id" | "callId" | "interactions" | "relatedInteractionCount">,
 ): RecoverySource {
@@ -82,7 +71,14 @@ export function useRecoverySource(
     loaded || detail.status === "ready"
       ? (newestRecoveryInteraction(interactions)?.callId ?? task.callId)
       : undefined
-  const call = useCallingCall(callID, true)
+  const call = useRead({
+    live: "task-detail",
+    name: "calling-call",
+    identity: { callID },
+    enabled: Boolean(callID),
+    read: (identity, transport) =>
+      getCallingCall({ ...transport, path: { callId: identity.callID ?? "" } }),
+  })
   const failure = (loaded ? undefined : readFailure(detail)) ?? readFailure(call)
   return {
     interactions,

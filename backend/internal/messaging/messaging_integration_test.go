@@ -191,7 +191,7 @@ func TestQueueTaskAcknowledgementPreservesPreSendNonDeliveryEvidence(t *testing.
 					UPDATE work_tasks
 					SET state = 'COMPLETED', completed_by_kind = 'SERVICE',
 						completed_by_subject = 'test-resolution', completed_at = $2,
-						close_reason = 'DONE', version = version + 1, updated_at = $2
+						version = version + 1, updated_at = $2
 					WHERE id = $1
 				`, fixture.task.ID, fixture.now)
 				if err != nil {
@@ -1188,10 +1188,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil {
 		t.Fatalf("queue Message before STOP: %v", err)
 	}
-	var reviewUpdatedBeforeStop time.Time
-	if err := pool.QueryRow(context.Background(), `SELECT updated_at FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW'`).Scan(&reviewUpdatedBeforeStop); err != nil {
-		t.Fatalf("read review clock before STOP: %v", err)
-	}
 	rawStop := []byte(fmt.Sprintf(
 		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-stop","occurred_at":"%s","payload":{"id":"provider-inbound-stop","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100","status":"delivered"}],"text":"STOP","record_type":"message","direction":"inbound"}}}`,
 		now.Format(time.RFC3339),
@@ -1356,10 +1352,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		!processed {
 		t.Fatalf("process newest START = %t, %v", processed, err)
 	}
-	var reviewUpdatedAfterStart time.Time
-	if err := pool.QueryRow(context.Background(), `SELECT updated_at FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW' AND state='OPEN'`).Scan(&reviewUpdatedAfterStart); err != nil || !reviewUpdatedAfterStart.Equal(reviewUpdatedBeforeStop) {
-		t.Fatalf("review clock after STOP and START texts = %s, %v; want it left at %s so they do not keep the review alive", reviewUpdatedAfterStart, err, reviewUpdatedBeforeStop)
-	}
 	newAttempt, newAttemptStatus, err := module.SendAgain(
 		context.Background(),
 		messaging.SendAgainCommand{
@@ -1429,14 +1421,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			replayedAttemptStatus,
 			err,
 		)
-	}
-	for name, attempt := range map[string]messaging.Message{
-		"new attempt": newAttempt, "second attempt": secondAttempt,
-		"locked attempt": lockedAttempt, "replayed attempt": replayedAttempt,
-	} {
-		if attempt.CreatedBy == nil || attempt.CreatedBy.Email != identity.Email {
-			t.Fatalf("%s sender = %#v, want %q", name, attempt.CreatedBy, identity.Email)
-		}
 	}
 	var attemptsOfFailedMessage int
 	if err := pool.QueryRow(context.Background(), `
@@ -1676,7 +1660,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	completed, err := workModule.CompleteTask(
 		context.Background(),
 		work.CompleteTaskCommand{
-			Reason:          work.CloseReasonDone,
 			Identity:        identity,
 			TaskID:          followUp.ID,
 			ExpectedVersion: followUp.Version,
@@ -1857,7 +1840,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	completedAITask, err := workModule.CompleteTask(
 		context.Background(),
 		work.CompleteTaskCommand{
-			Reason:          work.CloseReasonDone,
 			Identity:        identity,
 			TaskID:          aiTask.ID,
 			ExpectedVersion: aiTask.Version,
