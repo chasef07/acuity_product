@@ -44,6 +44,7 @@ var packageRoles = map[string]role{
 	"realtime": adapter,
 	"worker":   adapter,
 
+	"gitsource":     platform,
 	"observability": platform,
 	"postgres":      platform,
 	"telnyxapi":     platform,

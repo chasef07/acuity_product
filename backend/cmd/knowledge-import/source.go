@@ -8,11 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/chasef07/acuity_product/backend/internal/gitsource"
 	"github.com/chasef07/acuity_product/backend/internal/knowledge"
 	"github.com/google/uuid"
 	yaml "github.com/oasdiff/yaml3"
@@ -100,40 +99,11 @@ func runSource(path, commit, expectedRevision, reason string, apply bool) error 
 		return err
 	}
 	if apply {
-		if err := verifySourceAtCommit(path, commit, body); err != nil {
+		if err := gitsource.Verify(path, commit, body); err != nil {
 			return err
 		}
 	}
 	return applyPublication(command, apply)
-}
-
-func verifySourceAtCommit(path, commit string, body []byte) error {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	directory, err := filepath.EvalSymlinks(filepath.Dir(absolute))
-	if err != nil {
-		return errors.New("could not resolve knowledge source directory")
-	}
-	absolute = filepath.Join(directory, filepath.Base(absolute))
-	rootBytes, err := exec.Command("git", "-C", directory, "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return errors.New("knowledge source must be inside its Git repository")
-	}
-	root := strings.TrimSpace(string(rootBytes))
-	relative, err := filepath.Rel(root, absolute)
-	if err != nil || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return errors.New("knowledge source is outside its Git repository")
-	}
-	committed, err := exec.Command("git", "-C", root, "show", commit+":"+filepath.ToSlash(relative)).Output()
-	if err != nil {
-		return errors.New("knowledge source does not exist at the declared Git commit")
-	}
-	if !bytes.Equal(committed, body) {
-		return errors.New("knowledge source differs from the declared Git commit; commit reviewed changes before publishing")
-	}
-	return nil
 }
 
 func exportSource(ctx context.Context, module *knowledge.Module, practice, office, revision string, w io.Writer) (string, error) {

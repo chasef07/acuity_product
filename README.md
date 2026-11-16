@@ -288,25 +288,54 @@ own credential for `POST /v1/agent/insurance/read` is
 `ABITA_EYE_GROUP_MIDDLEWARE_SERVICE_PRACTICE_ID`; set all three or none. Until
 they are set, that read answers 401.
 
-Seed a Practice's first insurance revision from an `InsuranceCatalog` JSON
-file with the operator command. The file is the middleware's frozen v1
-export, `internal/insurance/testdata/catalog.json` in amd_middleware (kept as
+Operators export, set up, and update a Practice's insurance list with
+`backend/cmd/insurance-import`. Set `INSURANCE_IMPORT_DATABASE_URL` to an
+authorized database connection for `--export` and `--apply`; `--apply` also
+needs `INSURANCE_OPERATOR_EMAIL` (an existing bound Platform Operator, recorded
+as the author). Every run that reads a file parses it strictly and has the
+middleware validate it, so set `MIDDLEWARE_BASE_URL` and
+`MIDDLEWARE_API_SECRET`. Without `--apply` it stops there. Publishes from the
+command have provenance `import`.
+
+Export a revision, the active one by default, as indented `InsuranceCatalog`
+JSON. The JSON goes to stdout and the exported revision ID to stderr:
+
+```sh
+go run ./backend/cmd/insurance-import --export \
+  --practice PRACTICE_UUID [--revision REVISION_UUID] > insurance.json
+```
+
+Set up a Practice that has no insurance list yet. The usual file is the
+middleware's frozen v1 export, `internal/insurance/testdata/catalog.json` in
+amd_middleware (kept as
 `backend/internal/migrations/testdata/insurance-catalog-v1.json`), converted to
 the v2 shape by migration `0116` as
 `backend/internal/insurance/testdata/export.json`. Regenerate it with
 `go test ./backend/internal/migrations -run TestInsuranceCatalogV2 -update-insurance-export`.
-The command parses the file strictly and has the middleware validate it. Without
-`--apply` it stops there. `--apply` also needs `INSURANCE_IMPORT_DATABASE_URL`
-and `INSURANCE_OPERATOR_EMAIL` (an existing bound Platform Operator, recorded
-as the author) and publishes it with provenance `import`. Rerunning with the
-same list changes nothing; once the Practice has a different active revision,
-the command refuses and the list is changed in the Portal instead.
+Rerunning with the same list changes nothing:
 
 ```sh
-MIDDLEWARE_BASE_URL=... MIDDLEWARE_API_SECRET=... \
-  go run ./backend/cmd/insurance-import --practice PRACTICE_UUID \
+go run ./backend/cmd/insurance-import --practice PRACTICE_UUID \
   --from-file backend/internal/insurance/testdata/export.json [--apply]
 ```
+
+Update a Practice that already has a list. Export its active revision, edit
+the JSON, commit it on a branch so the change is reviewable, then publish
+against the exported revision ID with a reason:
+
+```sh
+go run ./backend/cmd/insurance-import --practice PRACTICE_UUID \
+  --from-file insurance.json --expected-revision EXPORTED_REVISION_UUID \
+  --reason "Why it changed" --commit FULL_REVIEWED_GIT_SHA [--apply]
+```
+
+An update publishes the next revision exactly as a Portal publish does once it
+is authorized: the middleware validates the whole list first, History records
+the operator and reason, and the command refuses if anyone published after the
+exported revision. Export again and reapply your edits in that case. `--apply`
+rejects a file that differs from its bytes at `--commit`. Rerunning the same
+update after a failure is safe: if it already landed, it returns that revision
+instead of publishing another.
 
 Configure the frontend using [web/README.md](web/README.md), then start it with:
 

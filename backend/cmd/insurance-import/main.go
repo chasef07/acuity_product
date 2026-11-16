@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/gitsource"
 	"github.com/chasef07/acuity_product/backend/internal/insurance"
 	"github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/google/uuid"
@@ -21,34 +23,95 @@ import (
 const importReason = "Imported from the middleware's insurance files"
 
 type receipt struct {
-	Applied    bool                `json:"applied"`
-	Published  bool                `json:"published"`
-	PracticeID string              `json:"practiceId"`
-	Revision   *insurance.Revision `json:"revision,omitempty"`
-	Carriers   int                 `json:"carriers"`
-	Regions    int                 `json:"regions"`
-	Plans      int                 `json:"plans"`
-	Tables     int                 `json:"tables"`
+	Applied         bool                `json:"applied"`
+	Published       bool                `json:"published"`
+	PracticeID      string              `json:"practiceId"`
+	Revision        *insurance.Revision `json:"revision,omitempty"`
+	SourceGitCommit string              `json:"sourceGitCommit,omitempty"`
+	Carriers        int                 `json:"carriers"`
+	Regions         int                 `json:"regions"`
+	Plans           int                 `json:"plans"`
+	Tables          int                 `json:"tables"`
+}
+
+type options struct {
+	practice         string
+	fromFile         string
+	apply            bool
+	export           bool
+	revision         string
+	expectedRevision string
+	reason           string
+	commit           string
+}
+
+type updateCommand struct {
+	practice         string
+	expectedRevision string
+	reason           string
+	commit           string
+	body             []byte
+	catalog          insurance.Catalog
 }
 
 func main() {
-	practice := flag.String("practice", "", "Practice UUID whose insurance list to seed")
-	fromFile := flag.String("from-file", "", "path to the InsuranceCatalog JSON to seed")
-	apply := flag.Bool("apply", false, "publish the catalog as the Practice's first revision")
+	var o options
+	flag.StringVar(&o.practice, "practice", "", "Practice UUID whose insurance list to export, set up, or update")
+	flag.StringVar(&o.fromFile, "from-file", "", "path to the InsuranceCatalog JSON to publish")
+	flag.BoolVar(&o.apply, "apply", false, "publish the file; without it the middleware only checks it")
+	flag.BoolVar(&o.export, "export", false, "write an insurance list revision as JSON to stdout")
+	flag.StringVar(&o.revision, "revision", "", "revision UUID for --export; defaults to the active revision")
+	flag.StringVar(&o.expectedRevision, "expected-revision", "", "the active revision UUID, from --export, when updating a Practice's list")
+	flag.StringVar(&o.reason, "reason", "", "why the insurance list changed; required when updating")
+	flag.StringVar(&o.commit, "commit", "", "full Git commit SHA of the reviewed file; required to apply an update")
 	flag.Parse()
-	if err := run(*practice, *fromFile, *apply); err != nil {
+	if err := run(o); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(practice, fromFile string, apply bool) error {
-	if uuid.Validate(practice) != nil {
+func run(o options) error {
+	if uuid.Validate(o.practice) != nil {
 		return errors.New("--practice must be the Practice UUID")
 	}
-	catalog, err := readCatalog(fromFile)
+	if o.export {
+		if o.fromFile != "" || o.apply || o.expectedRevision != "" || o.reason != "" || o.commit != "" {
+			return errors.New("--export takes only --practice and --revision")
+		}
+		if o.revision != "" && uuid.Validate(o.revision) != nil {
+			return errors.New("--revision must be a revision UUID")
+		}
+		return runExport(o.practice, o.revision)
+	}
+	if o.revision != "" {
+		return errors.New("--revision is only for --export; update with --expected-revision")
+	}
+	updating := o.expectedRevision != ""
+	if !updating && (o.reason != "" || o.commit != "") {
+		return errors.New("--reason and --commit are for updates and need --expected-revision")
+	}
+	if updating {
+		expected, err := uuid.Parse(o.expectedRevision)
+		if err != nil {
+			return errors.New("--expected-revision must be the revision UUID printed by --export")
+		}
+		o.expectedRevision = expected.String()
+		if strings.TrimSpace(o.reason) == "" {
+			return errors.New("--reason must say why the insurance list changed")
+		}
+		if o.apply && o.commit == "" {
+			return errors.New("--commit must name the Git commit of the reviewed file to apply an update")
+		}
+	}
+	catalog, body, err := readCatalog(o.fromFile)
 	if err != nil {
 		return err
+	}
+	if updating && o.apply {
+		if err := gitsource.Verify(o.fromFile, o.commit, body); err != nil {
+			return err
+		}
 	}
 	middleware, err := insurance.NewMiddlewareClient(os.Getenv("MIDDLEWARE_BASE_URL"), os.Getenv("MIDDLEWARE_API_SECRET"), nil)
 	if err != nil {
@@ -58,8 +121,8 @@ func run(practice, fromFile string, apply bool) error {
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if !apply {
-		result, err := check(ctx, middleware, practice, catalog)
+	if !o.apply {
+		result, err := check(ctx, middleware, o.practice, catalog)
 		if err != nil {
 			return err
 		}
@@ -73,26 +136,70 @@ func run(practice, fromFile string, apply bool) error {
 		return err
 	}
 	defer pool.Close()
-	result, err := seed(ctx, pool, middleware, practice, os.Getenv("INSURANCE_OPERATOR_EMAIL"), catalog)
+	var result receipt
+	if updating {
+		result, err = update(ctx, pool, middleware, os.Getenv("INSURANCE_OPERATOR_EMAIL"), updateCommand{
+			practice: o.practice, expectedRevision: o.expectedRevision, reason: o.reason, commit: o.commit, body: body, catalog: catalog,
+		})
+	} else {
+		result, err = seed(ctx, pool, middleware, o.practice, os.Getenv("INSURANCE_OPERATOR_EMAIL"), catalog)
+	}
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }
 
-func readCatalog(path string) (insurance.Catalog, error) {
+func runExport(practice, revision string) error {
+	if os.Getenv("INSURANCE_IMPORT_DATABASE_URL") == "" {
+		return errors.New("INSURANCE_IMPORT_DATABASE_URL is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := postgres.OpenOperatorPool(ctx, "INSURANCE_IMPORT_DATABASE_URL", "INSURANCE_DATABASE_HOST")
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	exported, err := exportCatalog(ctx, pool, practice, revision, os.Stdout)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stderr).Encode(map[string]string{"practiceId": practice, "revisionId": exported})
+}
+
+func exportCatalog(ctx context.Context, db postgres.Database, practice, revision string, w io.Writer) (string, error) {
+	revisions, err := insurance.NewRevisions(db, access.New(db, nil), nil)
+	if err != nil {
+		return "", err
+	}
+	read, err := revisions.OperatorRead(ctx, practice, revision)
+	if err != nil {
+		return "", fmt.Errorf("could not read the insurance list: %w", err)
+	}
+	body, err := json.MarshalIndent(read.Catalog, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if _, err := w.Write(append(body, '\n')); err != nil {
+		return "", err
+	}
+	return read.Revision.ID, nil
+}
+
+func readCatalog(path string) (insurance.Catalog, []byte, error) {
 	if path == "" {
-		return insurance.Catalog{}, errors.New("--from-file must name the InsuranceCatalog JSON to seed")
+		return insurance.Catalog{}, nil, errors.New("--from-file must name the InsuranceCatalog JSON to publish")
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return insurance.Catalog{}, fmt.Errorf("read the catalog file: %w", err)
+		return insurance.Catalog{}, nil, fmt.Errorf("read the catalog file: %w", err)
 	}
 	catalog, err := insurance.ParseCatalog(body)
 	if err != nil {
-		return insurance.Catalog{}, fmt.Errorf("parse %s: %w", path, err)
+		return insurance.Catalog{}, nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return catalog, nil
+	return catalog, body, nil
 }
 
 func check(ctx context.Context, middleware *insurance.MiddlewareClient, practice string, catalog insurance.Catalog) (receipt, error) {
@@ -103,22 +210,50 @@ func check(ctx context.Context, middleware *insurance.MiddlewareClient, practice
 }
 
 func seed(ctx context.Context, db postgres.Database, middleware *insurance.MiddlewareClient, practice, operatorEmail string, catalog insurance.Catalog) (receipt, error) {
-	accessModule := access.New(db, nil)
-	subject, err := accessModule.ReadPlatformOperatorSubject(ctx, operatorEmail)
-	if err != nil {
-		return receipt{}, errors.New("import requires an existing bound Platform Operator")
+	revision, published, err := publish(ctx, db, middleware, operatorEmail, insurance.ImportCommand{
+		PracticeID: practice, RevisionID: uuid.NewString(), Reason: importReason, Catalog: catalog,
+	})
+	if errors.Is(err, insurance.ErrConflict) {
+		return receipt{}, fmt.Errorf("%w; export it with --export and publish your changes with --expected-revision", err)
 	}
-	revisions, err := insurance.NewRevisions(db, accessModule, middleware)
 	if err != nil {
 		return receipt{}, err
 	}
-	revision, published, err := revisions.Import(ctx, insurance.ImportCommand{
-		PracticeID: practice, RevisionID: uuid.NewString(), Reason: importReason, ActorSubject: subject, Catalog: catalog,
-	})
-	if err != nil {
-		return receipt{}, describe(err)
-	}
 	return summarize(receipt{Applied: true, Published: published, PracticeID: practice, Revision: &revision}, catalog), nil
+}
+
+func update(ctx context.Context, db postgres.Database, middleware *insurance.MiddlewareClient, operatorEmail string, cmd updateCommand) (receipt, error) {
+	revisionID := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(cmd.commit+"\n"+cmd.expectedRevision+"\n"+cmd.reason+"\n"), cmd.body...)).String()
+	revision, published, err := publish(ctx, db, middleware, operatorEmail, insurance.ImportCommand{
+		PracticeID: cmd.practice, RevisionID: revisionID, ExpectedRevisionID: cmd.expectedRevision, Reason: cmd.reason, Catalog: cmd.catalog,
+	})
+	switch {
+	case errors.Is(err, insurance.ErrNoCatalog):
+		return receipt{}, fmt.Errorf("%w; set it up without --expected-revision", err)
+	case errors.Is(err, insurance.ErrConflict):
+		return receipt{}, fmt.Errorf("%w; the active revision is not %s, so export again, reapply your edits, and publish against the new revision", err, cmd.expectedRevision)
+	case err != nil:
+		return receipt{}, err
+	}
+	return summarize(receipt{Applied: true, Published: published, PracticeID: cmd.practice, Revision: &revision, SourceGitCommit: cmd.commit}, cmd.catalog), nil
+}
+
+func publish(ctx context.Context, db postgres.Database, middleware *insurance.MiddlewareClient, operatorEmail string, cmd insurance.ImportCommand) (insurance.Revision, bool, error) {
+	accessModule := access.New(db, nil)
+	subject, err := accessModule.ReadPlatformOperatorSubject(ctx, operatorEmail)
+	if err != nil {
+		return insurance.Revision{}, false, errors.New("import requires an existing bound Platform Operator")
+	}
+	revisions, err := insurance.NewRevisions(db, accessModule, middleware)
+	if err != nil {
+		return insurance.Revision{}, false, err
+	}
+	cmd.ActorSubject = subject
+	revision, published, err := revisions.Import(ctx, cmd)
+	if err != nil {
+		return insurance.Revision{}, false, describe(err)
+	}
+	return revision, published, nil
 }
 
 func summarize(result receipt, catalog insurance.Catalog) receipt {
