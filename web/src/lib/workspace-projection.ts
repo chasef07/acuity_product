@@ -241,6 +241,7 @@ export type WorkspaceProjectionIntent =
   | { type: "task-created"; task: Task }
   | { type: "visibility-changed" }
   | { type: "retry" }
+  | { type: "refresh-text-attention" }
   | { type: "call-connected"; call: CallingCall }
   | { type: "remember-return-task"; taskID: string }
   | { type: "return-to-call" }
@@ -911,6 +912,10 @@ export function createWorkspaceProjection({
       realtimeController.visibilityChanged()
       return
     }
+    if (intent.type === "refresh-text-attention") {
+      if (state.loadState === "ready") await refreshTaskWindows(state.search.applied)
+      return
+    }
     if (intent.type === "retry") {
       if (state.discovery && state.scope.practiceID && state.scope.locationID) {
         void realtimeController.refresh()
@@ -953,7 +958,7 @@ export function createWorkspaceProjection({
     }
     if (intent.type === "set-task-category") {
       updateRail((rail) => ({ ...rail, taskCategory: intent.category }))
-      await refreshTaskWindows(state.search.applied)
+      await refreshTaskWindows(state.search.applied, true)
       selectFirstVisibleTask()
       return
     }
@@ -962,7 +967,7 @@ export function createWorkspaceProjection({
         taskResponsibility: intent.responsibility ?? rail.taskResponsibility ?? "mine",
         taskCategory: intent.category ?? rail.taskCategory,
       }))
-      await refreshTaskWindows(state.search.applied)
+      await refreshTaskWindows(state.search.applied, true)
       selectFirstVisibleTask()
       return
     }
@@ -1156,14 +1161,14 @@ export function createWorkspaceProjection({
           contextPanelOpen: false,
         },
       }))
-      await refreshTaskWindows("")
+      await refreshTaskWindows("", true)
       return
     }
     patch((current) => ({
       ...current,
       search: { ...current.search, applied: resolved.value, error: "" },
     }))
-    await refreshTaskWindows(resolved.value)
+    await refreshTaskWindows(resolved.value, true)
   }
 
   async function completeTaskIntent(task: Task, reason: StaffTaskCloseReason) {
@@ -1399,7 +1404,7 @@ export function createWorkspaceProjection({
     }))
   }
 
-  async function refreshTaskWindows(search: string) {
+  async function refreshTaskWindows(search: string, reset = false) {
     if (state.loadState !== "ready") return
     const generation = scopeGeneration
     const countGeneration = ++queryGenerations.taskCounts
@@ -1407,30 +1412,29 @@ export function createWorkspaceProjection({
     const completedGeneration = ++queryGenerations.completedTasks
     const scope = state.scope
     const rail = state.rail
-    windowLoads.tasks = { query: taskGeneration, depth: 0 }
-    windowLoads.completedTasks = { query: completedGeneration, depth: 0 }
+    const taskDepth = reset ? 0 : windowDepth("tasks", state.tasks.items.length)
+    const completedDepth = reset ? 0 : windowDepth("completedTasks", state.completedTasks.items.length)
+    windowLoads.tasks = { query: taskGeneration, depth: taskDepth }
+    windowLoads.completedTasks = { query: completedGeneration, depth: completedDepth }
     patch((current) => ({
       ...current,
       tasks: {
         ...current.tasks,
-        items: [],
-        nextCursor: "",
-        counts: emptyTaskFolderCounts(),
+        ...(reset ? { items: [], nextCursor: "", counts: emptyTaskFolderCounts() } : {}),
         loading: true,
         error: "",
       },
       completedTasks: {
         ...current.completedTasks,
-        items: [],
-        nextCursor: "",
+        ...(reset ? { items: [], nextCursor: "" } : {}),
         loading: true,
         error: "",
       },
     }))
     const result = await authenticatedRequest(async (token, signal) => {
       const [tasks, completedTasks] = await Promise.all([
-        loadTaskWindow(token, taskQueryRequest(scope, search, rail), 0, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail), 0, signal),
+        loadTaskWindow(token, taskQueryRequest(scope, search, rail), taskDepth, signal),
+        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail), completedDepth, signal),
       ])
       if (
         tasks.kind === "unauthenticated" || tasks.kind === "unauthorized"

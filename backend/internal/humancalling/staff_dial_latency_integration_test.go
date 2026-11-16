@@ -49,7 +49,7 @@ func TestInboundStaffDialFanoutProgressesWithTwoDatabaseConnections(t *testing.T
 		MetricInterval: time.Hour, MetricTimeout: time.Second,
 		ReceiptBatchSize: 8, RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize: 8, CommandWorkers: staffCount,
-	}, calling, idleMessagingWork{}, idleInteractionWork{}, idleTaskWork{}, runtimePool)
+	}, calling, idleMessagingWork{}, idleInteractionWork{}, runtimePool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestMixedInboundCallsReceiptsAndAnalyticsProgressWithBoundedDatabaseCapacit
 		CredentialInterval: time.Hour, CredentialTimeout: time.Second, HealthInterval: time.Hour, HealthTimeout: time.Second,
 		MetricInterval: time.Hour, MetricTimeout: time.Second, ReceiptBatchSize: 8, RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize: 8, CommandWorkers: 10,
-	}, calling, idleMessagingWork{}, idleInteractionWork{}, idleTaskWork{}, workerPool)
+	}, calling, idleMessagingWork{}, idleInteractionWork{}, workerPool)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2876,7 +2876,7 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 		IdleBackoffMax:                2 * time.Second,
 		ErrorBackoffMin:               250 * time.Millisecond,
 		ErrorBackoffMax:               10 * time.Second,
-	}, calling, idleMessagingWork{}, idleInteractionWork{}, idleTaskWork{}, workerPool)
+	}, calling, idleMessagingWork{}, idleInteractionWork{}, workerPool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3004,12 +3004,6 @@ func (idleInteractionWork) ProcessNextReceipt(context.Context) (bool, error) {
 
 func (idleInteractionWork) ProjectNextAnalyticsFacts(context.Context) (bool, error) {
 	return false, nil
-}
-
-type idleTaskWork struct{}
-
-func (idleTaskWork) ExpireTextReviews(context.Context) (int, error) {
-	return 0, nil
 }
 
 func TestConcurrentStaffDialsPreserveOneWinnerAndCleanUpLosers(t *testing.T) {
