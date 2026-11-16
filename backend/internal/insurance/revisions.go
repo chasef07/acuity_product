@@ -73,11 +73,12 @@ type PublishCommand struct {
 }
 
 type ImportCommand struct {
-	PracticeID   string
-	RevisionID   string
-	Reason       string
-	ActorSubject string
-	Catalog      Catalog
+	PracticeID         string
+	RevisionID         string
+	ExpectedRevisionID string
+	Reason             string
+	ActorSubject       string
+	Catalog            Catalog
 }
 
 type Revisions struct {
@@ -129,16 +130,18 @@ func (r *Revisions) Publish(ctx context.Context, cmd PublishCommand) (Revision, 
 	if err != nil {
 		return Revision{}, err
 	}
-	return r.replace(ctx, replacement{
+	revision, _, err := r.replace(ctx, replacement{
 		practiceID: cmd.PracticeID, revisionID: cmd.RevisionID, expectedRevisionID: cmd.ExpectedRevisionID,
 		reason: cmd.Reason, actor: cmd.Identity.Subject, provenance: cmd.Provenance, catalog: cmd.Catalog,
 	}, func(ctx context.Context, tx pgx.Tx, before Catalog) error {
 		return r.authorizeOffices(ctx, tx, cmd.Identity, cmd.PracticeID, cmd.LocationID, TouchedOffices(before, cmd.Catalog), nil)
 	})
+	return revision, err
 }
 
 func (r *Revisions) Import(ctx context.Context, cmd ImportCommand) (Revision, bool, error) {
-	if uuid.Validate(cmd.PracticeID) != nil || uuid.Validate(cmd.RevisionID) != nil || !validReason(cmd.Reason) || strings.TrimSpace(cmd.ActorSubject) == "" {
+	if uuid.Validate(cmd.PracticeID) != nil || uuid.Validate(cmd.RevisionID) != nil || !validReason(cmd.Reason) || strings.TrimSpace(cmd.ActorSubject) == "" ||
+		(cmd.ExpectedRevisionID != "" && uuid.Validate(cmd.ExpectedRevisionID) != nil) {
 		return Revision{}, false, ErrInvalidInput
 	}
 	if _, err := r.access.ReadPracticeKey(ctx, cmd.PracticeID); err != nil {
@@ -146,22 +149,23 @@ func (r *Revisions) Import(ctx context.Context, cmd ImportCommand) (Revision, bo
 	}
 	active, err := readActive(ctx, r.db, cmd.PracticeID)
 	switch {
-	case err == nil && active.hash == contentHash(cmd.Catalog.encode()):
+	case err != nil && !errors.Is(err, ErrNoCatalog):
+		return Revision{}, false, err
+	case cmd.ExpectedRevisionID != "" && err != nil:
+		return Revision{}, false, err
+	case cmd.ExpectedRevisionID == "" && err == nil && active.hash == contentHash(cmd.Catalog.encode()):
 		revision, err := r.withAuthor(ctx, cmd.PracticeID, active.revision)
 		return revision, false, err
-	case err == nil:
-		return Revision{}, false, fmt.Errorf("the Practice already has insurance list revision %s, so change it in the Portal: %w", active.revision.ID, ErrConflict)
-	case !errors.Is(err, ErrNoCatalog):
-		return Revision{}, false, err
+	case cmd.ExpectedRevisionID == "" && err == nil:
+		return Revision{}, false, fmt.Errorf("the Practice already has insurance list revision %s: %w", active.revision.ID, ErrConflict)
 	}
-	revision, err := r.replace(ctx, replacement{
-		practiceID: cmd.PracticeID, revisionID: cmd.RevisionID, reason: cmd.Reason,
+	return r.replace(ctx, replacement{
+		practiceID: cmd.PracticeID, revisionID: cmd.RevisionID, expectedRevisionID: cmd.ExpectedRevisionID, reason: cmd.Reason,
 		actor: cmd.ActorSubject, provenance: ProvenanceImport, catalog: cmd.Catalog,
 	}, nil)
-	return revision, err == nil, err
 }
 
-func (r *Revisions) replace(ctx context.Context, cmd replacement, authorize authorizer) (Revision, error) {
+func (r *Revisions) replace(ctx context.Context, cmd replacement, authorize authorizer) (Revision, bool, error) {
 	cmd.body = cmd.catalog.encode()
 	cmd.hash = contentHash(cmd.body)
 	check := func(tx pgx.Tx) (*Revision, error) {
@@ -178,57 +182,59 @@ func (r *Revisions) replace(ctx context.Context, cmd replacement, authorize auth
 	}
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return Revision{}, err
+		return Revision{}, false, err
 	}
 	replayed, err := check(tx)
 	_ = tx.Rollback(ctx)
 	if err != nil {
-		return Revision{}, err
+		return Revision{}, false, err
 	}
 	if replayed != nil {
-		return r.withAuthor(ctx, cmd.practiceID, *replayed)
+		revision, err := r.withAuthor(ctx, cmd.practiceID, *replayed)
+		return revision, false, err
 	}
 	if r.middleware == nil {
-		return Revision{}, fmt.Errorf("%w: the middleware validator is not configured", ErrUnavailable)
+		return Revision{}, false, fmt.Errorf("%w: the middleware validator is not configured", ErrUnavailable)
 	}
 	if err := r.middleware.Validate(ctx, cmd.catalog); err != nil {
-		return Revision{}, err
+		return Revision{}, false, err
 	}
 	tx, err = r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return Revision{}, err
+		return Revision{}, false, err
 	}
 	defer tx.Rollback(ctx)
 	if _, err = tx.Exec(ctx, `INSERT INTO insurance_catalogs(practice_id) VALUES($1) ON CONFLICT DO NOTHING`, cmd.practiceID); err != nil {
-		return Revision{}, err
+		return Revision{}, false, err
 	}
 	if _, err = tx.Exec(ctx, `SELECT 1 FROM insurance_catalogs WHERE practice_id=$1 FOR UPDATE`, cmd.practiceID); err != nil {
-		return Revision{}, err
+		return Revision{}, false, err
 	}
 	if replayed, err = check(tx); err != nil {
-		return Revision{}, err
+		return Revision{}, false, err
 	}
 	if replayed == nil {
 		if _, err = tx.Exec(ctx, `INSERT INTO insurance_revisions(id,practice_id,catalog,content_hash,reason,created_by,provenance,previous_revision_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
 			cmd.revisionID, cmd.practiceID, cmd.body, cmd.hash, cmd.reason, cmd.actor, cmd.provenance, optionalID(cmd.expectedRevisionID)); err != nil {
-			return Revision{}, err
+			return Revision{}, false, err
 		}
 		tag, err := tx.Exec(ctx, `UPDATE insurance_catalogs SET revision_id=$2 WHERE practice_id=$1 AND revision_id IS NOT DISTINCT FROM $3::uuid`, cmd.practiceID, cmd.revisionID, optionalID(cmd.expectedRevisionID))
 		if err != nil {
-			return Revision{}, err
+			return Revision{}, false, err
 		}
 		if tag.RowsAffected() != 1 {
-			return Revision{}, ErrConflict
+			return Revision{}, false, ErrConflict
 		}
 	}
 	active, err := readActive(ctx, tx, cmd.practiceID)
 	if err != nil {
-		return Revision{}, err
+		return Revision{}, false, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return Revision{}, err
+		return Revision{}, false, err
 	}
-	return r.withAuthor(ctx, cmd.practiceID, active.revision)
+	revision, err := r.withAuthor(ctx, cmd.practiceID, active.revision)
+	return revision, replayed == nil, err
 }
 
 func inspect(ctx context.Context, tx pgx.Tx, cmd replacement) (*Revision, Catalog, error) {
@@ -366,10 +372,7 @@ func (r *Revisions) ReadRevision(ctx context.Context, identity access.Identity, 
 	if _, err := r.readOffice(ctx, identity, practiceID, locationID); err != nil {
 		return RevisionCatalog{}, err
 	}
-	stored, err := scanRevision(r.db.QueryRow(ctx, `SELECT `+revisionColumns+` FROM insurance_revisions r WHERE r.practice_id = $1 AND r.id = $2`, practiceID, revisionID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return RevisionCatalog{}, ErrNotFound
-	}
+	stored, err := readStored(ctx, r.db, practiceID, revisionID)
 	if err != nil {
 		return RevisionCatalog{}, err
 	}
@@ -378,6 +381,23 @@ func (r *Revisions) ReadRevision(ctx context.Context, identity access.Identity, 
 		return RevisionCatalog{}, err
 	}
 	return RevisionCatalog{Revision: revision, Catalog: stored.catalog}, nil
+}
+
+func (r *Revisions) OperatorRead(ctx context.Context, practiceID, revisionID string) (RevisionCatalog, error) {
+	if uuid.Validate(practiceID) != nil || (revisionID != "" && uuid.Validate(revisionID) != nil) {
+		return RevisionCatalog{}, ErrInvalidInput
+	}
+	var stored storedRevision
+	var err error
+	if revisionID == "" {
+		stored, err = readActive(ctx, r.db, practiceID)
+	} else {
+		stored, err = readStored(ctx, r.db, practiceID, revisionID)
+	}
+	if err != nil {
+		return RevisionCatalog{}, err
+	}
+	return RevisionCatalog{Revision: stored.revision, Catalog: stored.catalog}, nil
 }
 
 func (r *Revisions) Read(ctx context.Context, identity access.ServiceIdentity) (ActiveCatalog, error) {
@@ -412,6 +432,14 @@ func readActive(ctx context.Context, db querier, practiceID string) (storedRevis
 	`, practiceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return storedRevision{}, ErrNoCatalog
+	}
+	return stored, err
+}
+
+func readStored(ctx context.Context, db querier, practiceID, revisionID string) (storedRevision, error) {
+	stored, err := scanRevision(db.QueryRow(ctx, `SELECT `+revisionColumns+` FROM insurance_revisions r WHERE r.practice_id = $1 AND r.id = $2`, practiceID, revisionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return storedRevision{}, ErrNotFound
 	}
 	return stored, err
 }

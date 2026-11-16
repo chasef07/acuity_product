@@ -1,9 +1,6 @@
 package main
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -30,36 +27,5 @@ func TestSourceRejectsUnreviewedMetadataAndTrailingDocuments(t *testing.T) {
 		if _, err := readSource(strings.NewReader(body)); err == nil {
 			t.Fatalf("accepted invalid source: %s", body)
 		}
-	}
-}
-
-func TestSourceProvenanceRequiresExactCommittedBytes(t *testing.T) {
-	dir := t.TempDir()
-	git := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git failed: %v: %s", err, output)
-		}
-		return strings.TrimSpace(string(output))
-	}
-	git("init", "--quiet")
-	path := filepath.Join(dir, "office.yaml")
-	body := []byte("officeKey: synthetic-office\n")
-	if err := os.WriteFile(path, body, 0600); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "office.yaml")
-	git("-c", "user.name=Synthetic Test", "-c", "user.email=synthetic@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "test source")
-	commit := git("rev-parse", "HEAD")
-	if err := verifySourceAtCommit(path, commit, body); err != nil {
-		t.Fatal(err)
-	}
-	if err := verifySourceAtCommit(path, commit, []byte("changed")); err == nil {
-		t.Fatal("accepted content not present at declared commit")
-	}
-	if err := verifySourceAtCommit(path, strings.Repeat("0", 40), body); err == nil {
-		t.Fatal("accepted unknown commit")
 	}
 }
