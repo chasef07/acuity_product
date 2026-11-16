@@ -38,7 +38,7 @@ export function TaskGroupContext({ group, taskRows, onSelect, onUpdated }: {
     if (pending || stale || reviewed.length === 0) return
     setPending(true)
     setError("")
-    const outcome = member ? await completeTask(member, "DONE") : await completeTaskGroup(reviewed, "DONE")
+    const outcome = member ? await completeTask(member) : await completeTaskGroup(reviewed)
     setPending(false)
     if (!outcome.ok) {
       const { kind } = outcome.failure

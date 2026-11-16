@@ -74,11 +74,11 @@ export function createWorkspaceAuthorityAdapter(): WorkspaceAuthorityAdapter {
       }).catch(() => undefined)
       return authorityResult(result)
     },
-    async completeTask(token, task, reason, signal) {
+    async completeTask(token, task, signal) {
       const result = await completeTaskRequest({
         client: portalClient(token),
         path: { taskId: task.id },
-        body: { expectedVersion: task.version, reason },
+        body: { expectedVersion: task.version },
         signal,
       }).catch(() => undefined)
       return authorityResult(result)

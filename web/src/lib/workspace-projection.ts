@@ -3,7 +3,6 @@ import type {
   AiInteractionDetail,
   CallingCall,
   CallingDispositionResult,
-  StaffTaskCloseReason,
   Task,
   TaskFolderCounts,
   TaskPage,
@@ -152,7 +151,6 @@ export type WorkspaceAuthorityAdapter = {
   completeTask: (
     token: string,
     task: Pick<Task, "id" | "version">,
-    reason: StaffTaskCloseReason,
     signal: AbortSignal,
   ) => Promise<WorkspaceAuthorityResult<Task>>
 }
@@ -226,7 +224,7 @@ export type WorkspaceProjectionIntent =
     }
   | { type: "set-search"; value: string }
   | { type: "submit-search" }
-  | { type: "complete-task"; task: Task; reason: StaffTaskCloseReason }
+  | { type: "complete-task"; task: Task }
   | { type: "select-task"; task: Task; rememberForCall?: boolean }
   | { type: "select-analytics" }
   | { type: "select-operator-analytics" }
@@ -821,7 +819,7 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "complete-task") {
-      await completeTaskIntent(intent.task, intent.reason)
+      await completeTaskIntent(intent.task)
       return
     }
     if (intent.type === "select-task") {
@@ -1171,7 +1169,7 @@ export function createWorkspaceProjection({
     await refreshTaskWindows(resolved.value, true)
   }
 
-  async function completeTaskIntent(task: Task, reason: StaffTaskCloseReason) {
+  async function completeTaskIntent(task: Task) {
     if (state.completion.pendingTaskID || task.state !== "OPEN") return
     const generation = scopeGeneration
     patch((current) => ({
@@ -1179,7 +1177,7 @@ export function createWorkspaceProjection({
       completion: { pendingTaskID: task.id, errorTaskID: "", error: "" },
     }))
     const result = await authenticatedRequest((token, signal) =>
-      authority.completeTask(token, task, reason, signal),
+      authority.completeTask(token, task, signal),
     )
     if (generation !== scopeGeneration || stopped) return
     if (failIfAccessLost(result)) return

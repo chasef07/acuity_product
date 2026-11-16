@@ -681,7 +681,7 @@ export const renameTask = <ThrowOnError extends boolean = false>(options: Option
 });
 
 /**
- * Complete one Task at its last observed version, recording why it closed.
+ * Complete one Task at its last observed version.
  */
 export const completeTask = <ThrowOnError extends boolean = false>(options: Options<CompleteTaskData, ThrowOnError>): RequestResult<CompleteTaskResponses, CompleteTaskErrors, ThrowOnError> => (options.client ?? client).post<CompleteTaskResponses, CompleteTaskErrors, ThrowOnError>({
     security: [{
