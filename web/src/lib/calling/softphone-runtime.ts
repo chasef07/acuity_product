@@ -1,6 +1,7 @@
 import { isSettledCallState } from "./call-state.ts"
 import type {
   CallingCall,
+  CallingDispositionRequest,
   CallingDispositionResult,
   CallingReadinessRequest,
   CallingState,
@@ -16,11 +17,6 @@ import {
   type CallingHintSource,
 } from "./calling-hints.ts"
 import { createCallingChangeMetric } from "./calling-change-metric.ts"
-import {
-  wrapUpShortfall,
-  type WrapUpRequest,
-  type WrapUpShortfall,
-} from "./call-wrap-up.ts"
 import {
   mediaKey,
   type CallingMediaAdapter,
@@ -97,12 +93,6 @@ type TrackingCall = Extract<CallPointer, { stage: "tracking" }>
 
 const idleCall: CallPointer = { stage: "idle" }
 
-export type SettledWrapUp = {
-  call: CallingCall
-  automatic: boolean
-  shortfall?: WrapUpShortfall
-}
-
 export type SoftphoneRuntimeSnapshot = {
   phase: "stopped" | "starting" | "running"
   lease?: SoftphoneState
@@ -119,7 +109,6 @@ export type SoftphoneRuntimeSnapshot = {
   pendingCall?: RuntimePendingCall
   activeCall?: CallingCall
   pendingDisposition?: CallingCall
-  settledWrapUp?: SettledWrapUp
   expectedCallID: string
   activeCallLegID: string
   expectedMedia?: Pick<RingingCallLeg, "callId" | "callLegId" | "mediaToken">
@@ -141,6 +130,7 @@ export type SoftphoneRuntimeSnapshot = {
     canMute: boolean
     canKeypad: boolean
     canRetry: boolean
+    canDispose: boolean
     canTransfer: boolean
   }
   failure?: SoftphoneFailure
@@ -278,7 +268,8 @@ export interface SoftphoneBackend {
   dispose(input: {
     callID: string
     sessionID: string
-  } & WrapUpRequest, signal?: AbortSignal): Promise<CallingDispositionResult>
+    outcome: CallingDispositionRequest["outcome"]
+  }, signal?: AbortSignal): Promise<CallingDispositionResult>
   listTransferCandidates(input: {
     callID: string
     sessionID: string
@@ -347,8 +338,7 @@ export type SoftphoneRuntime = {
   retry(idempotencyKey: string): Promise<void>
   recover(): Promise<void>
   dismissOutcome(): void
-  dismissWrapUp(): void
-  dispose(request: WrapUpRequest): Promise<CallingDispositionResult | undefined>
+  dispose(outcome: CallingDispositionRequest["outcome"]): Promise<CallingDispositionResult | undefined>
   toggleMute(): void
   sendDTMF(digit: string): boolean
 }
@@ -496,9 +486,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   }, operations)
 
   function publish(update: Partial<SoftphoneModel>, anchor?: Operation) {
-    const merged = { ...snapshot, ...update }
-    const model =
-      merged.call.stage === "idle" ? merged : { ...merged, settledWrapUp: undefined }
+    const model = { ...snapshot, ...update }
     if (anchor && operations.get(anchor.slot) === anchor) {
       anchor.identity = fenceIdentity(anchor.slot, model)
     }
@@ -527,7 +515,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         : call.stage === "outcome" || call.stage === "disposition"
           ? call.call.id
           : call.stage === "idle"
-            ? model.settledWrapUp?.call.id
+            ? undefined
             : call.pending?.id
     if (fence === "callID") return JSON.stringify([owner, callID])
     const subject =
@@ -981,10 +969,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     })
   }
 
-  function settledWrapUp(call: CallingCall): SettledWrapUp {
-    return { call, automatic: !operations.get("disposition")?.pending }
-  }
-
   function applyCall(call: CallingCall) {
     const pointer = snapshot.call
     const current = snapshot.activeCall
@@ -1031,9 +1015,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       ? persistMediaCorrelation(undefined)
       : snapshot.recoveryMedia
     publish({
-      ...(closed && pointer.stage === "disposition" && pointer.call.id === call.id
-        ? { settledWrapUp: settledWrapUp(call) }
-        : {}),
       call: needsDisposition
         ? { stage: "disposition", call }
         : closed
@@ -1379,10 +1360,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         }
         if (!live(refresh)) return
       } else if (snapshot.pendingDisposition) {
-        publish({
-          call: idleCall,
-          settledWrapUp: settledWrapUp(snapshot.pendingDisposition),
-        })
+        publish({ call: idleCall })
       }
       if (expectedCallID && !answeredLegLost) {
         const detail = open("detail")
@@ -2872,12 +2850,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       })
       void commitReadiness()
     },
-    dismissWrapUp() {
-      if (!snapshot.settledWrapUp || snapshot.pending.disposition) return
-      publish({ settledWrapUp: undefined })
-    },
-    async dispose(request) {
-      const call = snapshot.pendingDisposition ?? snapshot.settledWrapUp?.call
+    async dispose(outcome) {
+      const call = snapshot.pendingDisposition
       if (!call || snapshot.pending.disposition) return
       const disposition = open("disposition", { pending: true })
       signalStaffIntent()
@@ -2887,7 +2861,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             {
               callID: call.id,
               sessionID: options.sessionID,
-              ...request,
+              outcome,
             },
             signal,
           ),
@@ -2896,17 +2870,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           await reconcileStaleCommand()
           return stopped ? undefined : result
         }
-        if (snapshot.pendingDisposition) applyCall(result.call)
-        const shortfall = wrapUpShortfall(request, result)
+        applyCall(result.call)
         settle(disposition, {
           call: snapshot.call.stage === "disposition" ? idleCall : snapshot.call,
-          settledWrapUp: shortfall
-            ? {
-                call: result.call,
-                automatic: snapshot.settledWrapUp?.automatic ?? false,
-                shortfall,
-              }
-            : undefined,
         })
         await commitReadiness()
 
@@ -2917,20 +2883,10 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           await reconcileStaleCommand()
           return
         }
-        const atStake =
-          request.closures.length > 0 ||
-          request.outcome === "FOLLOW_UP_REQUIRED" ||
-          request.outcome === "CREATE_TASK"
-        if (
-          await commandFailed(
-            disposition,
-            error,
-            () => !snapshot.pendingDisposition && !(atStake && snapshot.settledWrapUp),
-          )
-        ) {
+        if (await commandFailed(disposition, error, () => !snapshot.pendingDisposition)) {
           await failRequest(disposition, error)
         } else {
-          settle(disposition, atStake ? {} : { settledWrapUp: undefined })
+          settle(disposition)
         }
       }
     },
@@ -3044,6 +3000,7 @@ function derive(
           !ending,
       ),
       canRetry: Boolean(snapshot.lease?.owner && call?.retryAllowed && !snapshot.expectedCallID),
+      canDispose: Boolean(snapshot.pendingDisposition && !snapshot.pending.disposition),
       canTransfer: Boolean(
         snapshot.lease?.owner &&
           snapshot.committedOwner &&

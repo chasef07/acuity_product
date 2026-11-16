@@ -8,7 +8,6 @@ import type {
   CallOutcome,
   CallState,
   CallingCall,
-  CallingDispositionClosure,
   InsuranceRevision,
   MessageAttachment,
   OperatorAiAnalyticsRange,
@@ -97,8 +96,6 @@ export const taskCloseReasonLabels = {
 } satisfies Record<TaskCloseReason, string>
 
 export const taskCloseMenuReasons = ["NOT_NEEDED", "UNREACHABLE"] satisfies StaffTaskCloseReason[]
-
-export const callWrapUpReasons = ["DONE", "NOT_NEEDED"] satisfies CallingDispositionClosure["reason"][]
 
 export function taskCloseSummary(task: Pick<Task, "closeReason" | "completedBy">) {
   if (!task.closeReason) return undefined

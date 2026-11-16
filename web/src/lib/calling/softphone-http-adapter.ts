@@ -188,11 +188,7 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       const result = await recordCallingDisposition({
         client,
         path: { callId: input.callID },
-        body: {
-          sessionId: input.sessionID,
-          outcome: input.outcome,
-          ...(input.closures.length > 0 ? { closures: input.closures } : {}),
-        },
+        body: { sessionId: input.sessionID, outcome: input.outcome },
         signal,
       }).catch(networkFailure)
       if (result.data) return result.data

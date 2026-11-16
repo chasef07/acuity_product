@@ -27,7 +27,7 @@ test("no answer has an explicit result, redial and dismissal with no empty contr
   const html = render(snapshot({
     pendingDisposition: call({ state: "UNANSWERED", retryAllowed: true }),
     controls: { canEnd: false, canMute: false, canKeypad: false, canTransfer: false,
-      canRetry: true },
+      canRetry: true, canDispose: false },
   }))
   assert.match(html, /aria-label="No answer"/)
   assert.match(html, />Call again</)
@@ -118,6 +118,7 @@ function render(snapshot: SoftphoneRuntimeSnapshot) {
       onEnd={noop}
       onMute={noop}
       onDTMF={noop}
+      onDisposition={noop}
       onRetry={noop}
       onRecover={noop}
       onClose={noop}
@@ -159,6 +160,7 @@ function snapshot(
       canMute: true,
       canKeypad: true,
       canRetry: false,
+      canDispose: false,
       canTransfer: false,
     },
     ...overrides,
