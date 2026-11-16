@@ -192,7 +192,6 @@ type Task struct {
 	SourceCallID             string
 	SourceMessage            string
 	Preview                  string
-	VoicemailDurationSeconds int
 	MessageID                string
 	MessageThreadID          string
 	ConversationThreadID     string

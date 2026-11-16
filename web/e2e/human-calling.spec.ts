@@ -7,7 +7,7 @@ import {
 } from "@playwright/test"
 import { Pool } from "pg"
 
-import { patientRow, railFilter, showPatientTask, signInAs } from "./support"
+import { signInAs } from "./support"
 
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
@@ -49,12 +49,11 @@ test("collapsing Task details preserves the Task in the outbound Call request", 
   const search = page.getByLabel("Search tasks, names, or phone")
   await search.fill(title)
   await search.press("Enter")
-  const taskRow = patientRow(page, "+12025550219")
-  await expect(taskRow.getByTestId("patient-row-reason")).toHaveText(title)
-  await taskRow.getByRole("button").click()
+  const taskRow = page.getByRole("button", { name: title, exact: true })
+  await taskRow.click()
   const context = page.getByRole("complementary", { name: "Task context" })
   await expect(context).toBeVisible()
-  await taskRow.getByRole("button").click()
+  await taskRow.click()
   await expect(context).toBeHidden()
 
   await page.route(`${portalURL}/v1/calling/outbound-calls`, (route) =>
@@ -66,12 +65,12 @@ test("collapsing Task details preserves the Task in the outbound Call request", 
   ])
   expect(outbound.postDataJSON()).toMatchObject({ taskId })
   expect(outbound.postDataJSON()).not.toHaveProperty("destination")
-  await taskRow.getByRole("button").click()
+  await taskRow.click()
   await context.getByRole("button", { name: "Complete & next", exact: true }).click()
   await expect(taskRow).toHaveCount(0)
 })
 
-test("voicemail and meaningful missed calls refresh into the Call back list", async ({
+test("voicemail and meaningful missed calls refresh into their recovery folders", async ({
   page,
 }, testInfo) => {
   test.setTimeout(300_000)
@@ -97,9 +96,8 @@ test("voicemail and meaningful missed calls refresh into the Call back list", as
     )
     const practiceID = scope.rows[0]!.practice_id
     const locationID = scope.rows[0]!.location_id
-    await railFilter(page, "callBack").click()
+    await page.getByRole("button", { name: /^Missed Calls/ }).click()
     const voicemailPhone = "+15555550111"
-    const voicemailRow = patientRow(page, voicemailPhone)
 
     for (const attempt of ["first", "second"] as const) {
       const caller = await startAnsweredInboundCall(
@@ -191,10 +189,11 @@ test("voicemail and meaningful missed calls refresh into the Call back list", as
       await deliverProviderEvent(page, savedEvent)
       await expect(activeCall).toHaveCount(0, { timeout: 30_000 })
 
-      await expect(voicemailRow).toBeVisible({ timeout: 30_000 })
-      await expect(voicemailRow.getByTestId("patient-row-name")).toHaveText("Voicemail caller")
-      await expect(voicemailRow.getByTestId("patient-row-reason")).toHaveText(/^Voicemail · \d+:\d{2}$/)
-      await expect(voicemailRow.getByTestId("patient-row-count")).toHaveCount(0)
+      await expect(
+        page.getByRole("button", {
+          name: /^Review voicemail/,
+        }),
+      ).toBeVisible({ timeout: 30_000 })
 
       await expect
         .poll(async () => {
@@ -242,7 +241,10 @@ test("voicemail and meaningful missed calls refresh into the Call back list", as
       interactions: "2",
       activities: ["1:TASK_CREATED", "2:INTERACTION_ATTACHED"],
     })
-    await voicemailRow.getByRole("button").click()
+    const voicemailRow = page.getByRole("button", {
+      name: /^Review voicemail/,
+    })
+    await voicemailRow.click()
     const taskContext = page.getByRole("complementary", {
       name: "Task context",
     })
@@ -304,9 +306,11 @@ test("voicemail and meaningful missed calls refresh into the Call back list", as
     await deliverProviderEvent(page, missedHangup)
     await deliverProviderEvent(page, missedHangup)
 
-    const missedRow = patientRow(page, missedPhone)
-    await expect(missedRow).toBeVisible({ timeout: 30_000 })
-    await expect(missedRow.getByTestId("patient-row-reason")).toHaveText("Missed call, no voicemail")
+    await expect(
+      page.getByRole("button", {
+        name: /^Return missed call/,
+      }),
+    ).toBeVisible({ timeout: 30_000 })
     await page.getByLabel("Search tasks, names, or phone").fill(missedPhone)
     await page.getByLabel("Search tasks, names, or phone").press("Enter")
     const activity = page.getByRole("region", { name: "Conversation activity" })
@@ -453,11 +457,9 @@ async function finishCallsFromTheWrapUp(page: Page, database: Pool) {
   await expect(
     page.getByRole("switch", { name: "Receive calls" }),
   ).toBeChecked()
-  await railFilter(page, "all").click()
   await search.fill(callTitle)
   await search.press("Enter")
-  await expect(patientRow(page, taskPhone).getByTestId("patient-row-reason")).toHaveText(callTitle)
-  await showPatientTask(page, taskPhone)
+  await page.getByRole("button", { name: callTitle, exact: true }).click()
   const fromTask = await placeConnectedCall(page, database, `${key}-from-task`)
   await endConnectedCall(page, fromTask, `${key}-from-task`)
   const ownRow = wrapUp.getByTestId("call-wrap-up-task").filter({ hasText: callTitle })
