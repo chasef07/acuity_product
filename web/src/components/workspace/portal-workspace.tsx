@@ -39,9 +39,7 @@ import {
 } from "@/components/workspace/calling-dock"
 import { AIInteractionContext } from "@/components/workspace/ai-interaction-context"
 import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
-import { PatientTasksPanel } from "@/components/workspace/patient-tasks-panel"
-import { callContactName } from "@/components/workspace/call-workspace"
-import { DetailsAbovePatientTasks, TaskCallContext } from "@/components/workspace/task-call-context"
+import { TaskCallContext } from "@/components/workspace/task-call-context"
 import { TaskCallAction } from "@/components/workspace/task-call-action"
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
 import { CallingRailControl } from "@/components/workspace/workspace-rail-button"
@@ -53,7 +51,6 @@ import { WorkEmptyState } from "@/components/workspace/work-empty-state"
 import type {
   AccessDiscovery,
   CallingCall,
-  Task,
 } from "@/lib/api/generated/types.gen"
 import { authClient } from "@/lib/auth-client"
 import { workspaceScopeForCall } from "@/lib/calling/workspace-scope"
@@ -251,9 +248,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       ? "Task context"
       : state.selection.contextView === "call"
         ? "Call context"
-        : state.selection.contextView === "ai-call"
-          ? "AI call context"
-          : "Patient Tasks"
+        : "AI call context"
   const callingShell = (
     children: (
       activeCall: CallingCall | undefined,
@@ -319,9 +314,8 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
   const selectedAIInteractionID = state.selection.aiInteractionID
   const historicalCall = state.selection.historicalCall
   const contextView = state.selection.contextView
-  const taskInFocus = contextView === "task" || contextView === "patient-tasks"
-  const textTask = taskInFocus && selectedTask?.origin === "INBOUND_MESSAGE_REVIEW" ? selectedTask : undefined
-  const contextPanelOpen = state.selection.contextPanelOpen && !(textTask && contextView === "task")
+  const textTask = contextView === "task" && selectedTask?.origin === "INBOUND_MESSAGE_REVIEW" ? selectedTask : undefined
+  const contextPanelOpen = state.selection.contextPanelOpen && !textTask
   const view = state.selection.view
 
   return callingShell((activeCall, callingOccupied) => {
@@ -332,34 +326,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       }
       void projection.dispatch(intent)
     }
-    const shownCall = historicalCall ?? activeCall
-    const onLiveCall = Boolean(activeCall) && !historicalCall
-    const patientTasksListed = contextPanelOpen &&
-      (contextView === "patient-tasks" || (onLiveCall && contextView === "call"))
-    const patientTasks = (
-      phone: string,
-      placement: {
-        className: string
-        currentTaskID?: string
-        otherThan?: readonly Task[]
-        callTaskID?: string
-        titlesOpenTasks: boolean
-      },
-    ) => (
-      <PatientTasksPanel
-        key={phone}
-        practiceID={state.scope.practiceID}
-        phone={phone}
-        currentTaskID={placement.currentTaskID}
-        otherThan={placement.otherThan}
-        callTaskID={placement.callTaskID}
-        completion={state.completion}
-        className={placement.className}
-        onComplete={(task, reason) => sendIntent({ type: "complete-task", task, reason })}
-        onOpen={placement.titlesOpenTasks ? (task) => sendIntent({ type: "select-task", task }) : undefined}
-        onTaskUpdated={(task) => void projection.dispatch({ type: "task-committed", task })}
-      />
-    )
     const locationControl = (
       <WorkspaceSelector
         discovery={discovery}
@@ -450,30 +416,15 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                     }
                     selectedCallID={
                       contextPanelOpen && contextView === "call"
-                        ? shownCall?.id
+                        ? (historicalCall ?? activeCall)?.id
                         : undefined
-                    }
-                    callName={
-                      contextPanelOpen && contextView === "call" && shownCall
-                        ? callContactName(shownCall)
-                        : undefined
-                    }
-                    patientTasksOpen={patientTasksListed}
-                    onPatientTasks={() =>
-                      void projection.dispatch(
-                        patientTasksListed
-                          ? { type: "close-context" }
-                          : onLiveCall
-                            ? { type: "return-to-call" }
-                            : { type: "open-patient-tasks" },
-                      )
                     }
                     selectedAIInteractionID={
                       contextPanelOpen && contextView === "ai-call"
                         ? selectedAIInteractionID
                         : undefined
                     }
-                    callAction={!state.selection.taskGroup && selectedTask && selectedTask.state === "OPEN" && taskInFocus ? (
+                    callAction={!state.selection.taskGroup && selectedTask && selectedTask.state === "OPEN" && contextView === "task" ? (
                       <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={!callingOccupied} pending={Boolean(taskCallRequest)} onCall={(task) => {
                         setTaskCallError("")
                         void projection.dispatch({ type: "remember-return-task", taskID: task.id })
@@ -535,26 +486,13 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   >
                     <PanelRightCloseIcon />
                   </Button>
-                  <div className="flex min-h-0 w-full flex-1 pb-[var(--calling-dock-clearance,0px)] lg:w-[calc(18rem-2px)]">
-                    {contextView === "patient-tasks" ? (
-                      patientTasks(selectedEngagement.phone, {
-                        className: "flex-1",
-                        currentTaskID: selectedTask?.id,
-                        titlesOpenTasks: true,
-                      })
-                    ) : contextView === "ai-call" ? (
-                      <DetailsAbovePatientTasks
-                        patientTasks={patientTasks(selectedEngagement.phone, {
-                          className: "max-h-80 shrink-0 border-t",
-                          titlesOpenTasks: true,
-                        })}
-                      >
-                        <AIInteractionContext
-                          detail={state.selection.aiInteraction}
-                          loading={state.selection.aiInteractionLoading}
-                          error={state.selection.aiInteractionError}
-                        />
-                      </DetailsAbovePatientTasks>
+                  <div className="flex min-h-0 w-full flex-1 lg:w-72">
+                    {contextView === "ai-call" ? (
+                      <AIInteractionContext
+                        detail={state.selection.aiInteraction}
+                        loading={state.selection.aiInteractionLoading}
+                        error={state.selection.aiInteractionError}
+                      />
                     ) : contextView === "task" && state.selection.taskError ? (
                       <div className="flex-1 p-4">
                         <WorkspaceWindowFailure
@@ -570,8 +508,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         group={state.selection.taskGroup}
                         taskRows={state.tasks.items}
                         onSelectTask={(task) => sendIntent({ type: "select-task", task })}
-                        activeCall={shownCall}
-                        callControlsShowing={onLiveCall}
+                        activeCall={historicalCall ?? activeCall}
                         view={contextView}
                         numberHistory={
                           numberHistory && numberHistory.phone === selectedTask?.phone
@@ -581,16 +518,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                         taskCallError={taskCallError}
                         onTaskUpdated={(task, advance) =>
                           void projection.dispatch({ type: "task-committed", task, advance: advance && !activeCall })
-                        }
-                        onOpenTask={(task) => sendIntent({ type: "select-task", task })}
-                        patientTasks={(phone, placement) =>
-                          patientTasks(phone, placement.beside === "call"
-                            ? { className: onLiveCall ? "shrink-0 pt-0" : "shrink-0 border-t", callTaskID: placement.callTaskID, titlesOpenTasks: false }
-                            : {
-                                className: state.selection.taskGroup ? "max-h-64 shrink-0 border-t" : "-mx-5 mt-4 border-t",
-                                otherThan: placement.otherThan,
-                                titlesOpenTasks: true,
-                              })
                         }
                         onReturnToCall={() => {
                           if (activeCall) {

@@ -32,13 +32,10 @@ function panel(props: Partial<Parameters<typeof TaskCallContext>[0]>) {
       <TaskCallContext
         task={task}
         activeCall={undefined}
-        callControlsShowing={false}
         view="task"
         taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
-        onOpenTask={() => {}}
-        patientTasks={() => null}
         {...props}
       />
     </DataProvider>,

@@ -45,7 +45,11 @@ export function AIInteractionContext({
     )
   }
   if (!detail) return null
-  return <AIInteractionDetailView detail={detail} />
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <AIInteractionDetailView detail={detail} />
+    </div>
+  )
 }
 
 function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
@@ -55,15 +59,14 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
     : aiCallTimelinePresentation(detail.appointmentOutcome, detail.status).title
   const exception = aiCallException(detail)
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 px-5 pt-5 pr-12">
-        <h2 className="text-lg font-semibold tracking-[-0.015em]">{title}</h2>
-        {exception && (
-          <Badge variant={exception.variant}>{exception.label}</Badge>
-        )}
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-      <section className="px-5 pb-5 pr-12">
+    <div>
+      <section className="px-5 py-5 pr-12">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold tracking-[-0.015em]">{title}</h2>
+          {exception && (
+            <Badge variant={exception.variant}>{exception.label}</Badge>
+          )}
+        </div>
         {detail.summary && (
           <p className="mt-3 text-sm leading-6">{detail.summary}</p>
         )}
@@ -139,7 +142,6 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
           )}
         </div>
       </details>
-      </div>
     </div>
   )
 }
