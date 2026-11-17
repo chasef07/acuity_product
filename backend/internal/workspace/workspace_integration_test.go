@@ -141,19 +141,6 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 			tracer.interactionProjectionQueries.Load(),
 		)
 	}
-	if tracer.taskCountQueries.Load() != 1 {
-		t.Fatalf("default Task count queries = %d, want 1", tracer.taskCountQueries.Load())
-	}
-	includeCounts := false
-	countFree, err := tracedReads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
-		Identity: identity, PracticeID: task.PracticeID, IncludeCounts: &includeCounts,
-	})
-	if err != nil || countFree.Counts != nil || len(countFree.Items) != 1 || countFree.Items[0].ID != task.ID {
-		t.Fatalf("count-free Task page = %#v, %v", countFree, err)
-	}
-	if tracer.taskCountQueries.Load() != 1 {
-		t.Fatalf("count-free query recomputed folder counts: %d", tracer.taskCountQueries.Load())
-	}
 	read, err := reads.ReadTask(context.Background(), identity, task.ID)
 	if err != nil {
 		t.Fatalf("read Workspace Task: %v", err)
@@ -216,7 +203,6 @@ func TestQueueReadsProjectConversationInOneAuthorizedFlow(t *testing.T) {
 }
 
 type workspaceQueryTracer struct {
-	taskCountQueries              atomic.Int64
 	taskResponseQueries           atomic.Int64
 	conversationProjectionQueries atomic.Int64
 	interactionProjectionQueries  atomic.Int64
@@ -232,9 +218,6 @@ func (tracer *workspaceQueryTracer) TraceQueryStart(
 		strings.Contains(data.SQL, "conversation ON true") {
 		tracer.taskResponseQueries.Add(1)
 		tracer.conversationProjectionQueries.Add(1)
-	}
-	if strings.Contains(data.SQL, "WITH scoped AS") && strings.Contains(data.SQL, "FROM work_tasks task") {
-		tracer.taskCountQueries.Add(1)
 	}
 	if strings.Contains(data.SQL, "FROM work_task_interactions interaction") {
 		tracer.interactionProjectionQueries.Add(1)

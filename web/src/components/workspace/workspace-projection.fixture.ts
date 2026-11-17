@@ -51,8 +51,8 @@ export function projectedWorkspace(task: Task): WorkspaceProjectionState {
       nextCursor: "",
       loading: false,
       error: "",
-      counts: { all: 1, followUp: 0, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
-      totals: { openTasks: 1, patients: 1, patientsOutsideScope: 0 },
+      counts: { all: 1, followUp: 0, callBack: 0, texts: 0, appointments: 0 },
+      totals: { openTasks: 1, patients: 1 },
     },
     completedTasks: { items: [], nextCursor: "", loading: false, error: "" },
     selection: {
@@ -89,7 +89,6 @@ export function projectedPatient(
     displayName: "",
     openCount: 1,
     highPriority: top.urgency === "high_priority",
-    hasUnowned: false,
     activityAt: top.createdAt,
     waitingSince: top.createdAt,
     top,

@@ -57,19 +57,14 @@ type TimelinePage struct {
 }
 
 type QueryTasksCommand struct {
-	Kind           string
-	Responsibility string
-	Category       work.TaskCategory
-	Grouped        bool
-	IncludeCounts  *bool
-	Identity       access.Identity
-	PracticeID     string
-	LocationID     string
-	Search         string
-	State          work.TaskState
-	Ordering       work.TaskOrdering
-	Cursor         string
-	Limit          int
+	Identity   access.Identity
+	PracticeID string
+	LocationID string
+	Search     string
+	State      work.TaskState
+	Ordering   work.TaskOrdering
+	Cursor     string
+	Limit      int
 }
 
 func (m *Module) authorizedLocationIDs(

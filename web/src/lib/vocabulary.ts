@@ -303,7 +303,7 @@ export const patientWorkFilterLabels = {
   callBack: "Call back",
   texts: "Texts",
   appointments: "Appointments",
-} satisfies Record<Exclude<PatientWorkFilter, "unowned">, string>
+} satisfies Record<PatientWorkFilter, string>
 
 export type RailFilter = keyof typeof patientWorkFilterLabels
 

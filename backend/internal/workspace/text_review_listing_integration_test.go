@@ -102,7 +102,7 @@ func (f *textReviewFixture) query(command workspace.QueryTasksCommand) work.Task
 	return page
 }
 
-func TestTextsFolderListsExactlyTheOpenTextReviews(t *testing.T) {
+func TestOpenTasksListExactlyTheOpenTextReviews(t *testing.T) {
 	f := newTextReviewFixture(t)
 	assertTextsFolderIsTheOpenReviews := func(want int) {
 		t.Helper()
@@ -110,11 +110,8 @@ func TestTextsFolderListsExactlyTheOpenTextReviews(t *testing.T) {
 		if err := f.db.Owner.QueryRow(f.ctx, `SELECT count(*) FROM work_tasks WHERE origin='INBOUND_MESSAGE_REVIEW' AND state='OPEN'`).Scan(&open); err != nil || open != want {
 			t.Fatalf("open text reviews = %d, %v; want %d", open, err, want)
 		}
-		for _, command := range []workspace.QueryTasksCommand{{Kind: "texts"}, {Kind: "texts", Grouped: true}, {}} {
-			page := f.query(command)
-			if len(page.Items) != open || page.Counts == nil || page.Counts.Texts != open {
-				t.Fatalf("kind %q grouped %v lists %d and counts %#v; want the %d open text reviews", command.Kind, command.Grouped, len(page.Items), page.Counts, open)
-			}
+		if page := f.query(workspace.QueryTasksCommand{}); len(page.Items) != open {
+			t.Fatalf("open Tasks list %d; want the %d open text reviews", len(page.Items), open)
 		}
 	}
 
@@ -138,11 +135,8 @@ func TestRecentlyCompletedLeavesOutExpiredReviewsAndSearchStillFindsThem(t *test
 	f.completeAsStaff(answered)
 	f.expire(2)
 
-	for _, kind := range []string{"", "texts"} {
-		page := f.query(workspace.QueryTasksCommand{State: work.TaskCompleted, Kind: kind})
-		if len(page.Items) != 1 || page.Items[0].CloseReason != work.CloseReasonDone {
-			t.Fatalf("completed Tasks of kind %q = %#v; want only the review staff closed as DONE", kind, page.Items)
-		}
+	if page := f.query(workspace.QueryTasksCommand{State: work.TaskCompleted}); len(page.Items) != 1 || page.Items[0].CloseReason != work.CloseReasonDone {
+		t.Fatalf("completed Tasks = %#v; want only the review staff closed as DONE", page.Items)
 	}
 	found := f.query(workspace.QueryTasksCommand{State: work.TaskCompleted, Search: "5555550002"})
 	if len(found.Items) != 1 || found.Items[0].CloseReason != work.CloseReasonExpired ||

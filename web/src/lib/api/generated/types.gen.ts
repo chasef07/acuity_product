@@ -695,10 +695,6 @@ export type TaskActor = {
 };
 
 export type Task = {
-    /**
-     * Complete open membership for this bucket, normalized number, and Location, including members outside a text filter. This is a display projection, never a merged Task.
-     */
-    groupMembers?: Array<Task>;
     id: string;
     practiceId: string;
     locationId: string;
@@ -752,23 +748,17 @@ export type TaskInteraction = {
 };
 
 /**
- * Mine lists a patient when at least one open Task is in a category the reader is responsible for, is a missed-call, voicemail, text, or appointment review, or has no owner. Everyone lists every patient with an open Task.
+ * followUp matches follow-up Tasks created by the AI, after a staff call, or after a staff text. callBack matches missed-call and voicemail reviews, texts matches text reviews, and appointments matches appointment reviews.
  */
-export type PatientWorkScope = 'mine' | 'everyone';
-
-/**
- * followUp matches follow-up Tasks created by the AI, after a staff call, or after a staff text. callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
- */
-export type PatientWorkFilter = 'all' | 'followUp' | 'callBack' | 'texts' | 'appointments' | 'unowned';
+export type PatientWorkFilter = 'all' | 'followUp' | 'callBack' | 'texts' | 'appointments';
 
 export type PatientWorkQueryRequest = {
     practiceId: string;
     locationId?: string;
     /**
-     * Matches the patient name the row shows, and the phone, title, caller name, category and Location of the open Tasks in scope.
+     * Matches the patient name the row shows, and the phone, title, caller name, category and Location of the open Tasks.
      */
     search?: string;
-    scope?: PatientWorkScope;
     filter?: PatientWorkFilter;
     cursor?: string;
     limit?: number;
@@ -791,27 +781,26 @@ export type PatientWorkRow = {
      */
     displayName: string;
     /**
-     * Every open Task for the phone in the Locations the reader may read, whatever the scope and filter.
+     * Every open Task for the phone in the Locations the reader may read, whatever the filter.
      */
     openCount: number;
     /**
-     * Whether any Task matching the scope and filter is high priority.
+     * Whether any Task matching the filter is high priority.
      */
     highPriority: boolean;
-    hasUnowned: boolean;
     /**
-     * When the newest Task matching the scope and filter last changed for the patient.
+     * When the newest Task matching the filter last changed for the patient.
      */
     activityAt: string;
     /**
-     * When the oldest open Task matching the scope and filter was created, which is how long the patient has been waiting.
+     * When the oldest open Task matching the filter was created, which is how long the patient has been waiting.
      */
     waitingSince: string;
     top: Task;
 };
 
 /**
- * How many patients each filter matches in the requested scope, Locations, and search.
+ * How many patients each filter matches in the requested Locations and search.
  */
 export type PatientWorkCounts = {
     all: number;
@@ -819,52 +808,25 @@ export type PatientWorkCounts = {
     callBack: number;
     texts: number;
     appointments: number;
-    unowned: number;
 };
 
 /**
- * Totals for the requested scope across the requested Locations, whatever the filter and search.
+ * Totals across the requested Locations, whatever the filter and search.
  */
 export type PatientWorkTotals = {
     /**
-     * Open Tasks the requested scope includes.
+     * Open Tasks.
      */
     openTasks: number;
     /**
-     * Patients with at least one open Task the requested scope includes.
+     * Patients with at least one open Task.
      */
     patients: number;
-    /**
-     * Patients with open Tasks that the requested scope leaves out.
-     */
-    patientsOutsideScope: number;
 };
 
 export type TaskPage = {
     items: Array<Task>;
     nextCursor: string;
-    counts?: TaskFolderCounts;
-};
-
-export type TaskFolderCounts = {
-    tasks: number;
-    texts?: number;
-    callRecovery?: number;
-    appointmentReviews?: number;
-    categories: TaskCategoryCounts;
-};
-
-export type TaskCategoryCounts = {
-    insurance?: number;
-    pre_op?: number;
-    post_op?: number;
-    billing: number;
-    appointments: number;
-    documentation: number;
-    optical: number;
-    medication: number;
-    referrals: number;
-    other: number;
 };
 
 export type AiInteractionMessageKind = 'START' | 'CLOSEOUT' | 'OUTCOME_CHECKPOINT';
@@ -2034,22 +1996,11 @@ export type OperatorAiInteractionAnalytics = {
 };
 
 export type TaskQueryRequest = {
-    /**
-     * Mine filters categorized follow-up by primary and backup responsibility. A category nobody is responsible for at the Task's Location stays visible to everyone. Appointment, text, missed-call, and voicemail reviews remain shared within authorized Locations, regardless of category. All removes only responsibility filtering.
-     */
-    responsibility?: 'mine' | 'all';
-    kind?: 'texts' | 'calls' | 'appointments' | 'follow_up';
-    category?: StaffTaskCategory;
-    grouped?: boolean;
     practiceId: string;
     locationId?: string;
     search?: string;
     state?: 'OPEN' | 'COMPLETED';
     ordering?: 'priority' | 'recent' | 'time';
-    /**
-     * Include fresh counts across all Task folders in the requested scope and search.
-     */
-    includeCounts?: boolean;
     cursor?: string;
     limit?: number;
 };
@@ -2057,14 +2008,6 @@ export type TaskQueryRequest = {
 export type ChangeTaskCategoryRequest = {
     expectedVersion: number;
     category: StaffTaskCategory;
-};
-
-export type CompleteTaskGroupRequest = {
-    reason?: StaffTaskCloseReason;
-    members: Array<{
-        id: string;
-        expectedVersion: number;
-    }>;
 };
 
 export type RenameTaskRequest = {
@@ -4234,49 +4177,6 @@ export type ChangeTaskCategoryResponses = {
 };
 
 export type ChangeTaskCategoryResponse = ChangeTaskCategoryResponses[keyof ChangeTaskCategoryResponses];
-
-export type CompleteTaskGroupData = {
-    body: CompleteTaskGroupRequest;
-    path: {
-        taskId: string;
-    };
-    query?: never;
-    url: '/v1/tasks/{taskId}/complete-group';
-};
-
-export type CompleteTaskGroupErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * The requested transition is no longer available.
-     */
-    409: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type CompleteTaskGroupError = CompleteTaskGroupErrors[keyof CompleteTaskGroupErrors];
-
-export type CompleteTaskGroupResponses = {
-    /**
-     * Completed or idempotently current Task.
-     */
-    200: Task;
-};
-
-export type CompleteTaskGroupResponse = CompleteTaskGroupResponses[keyof CompleteTaskGroupResponses];
 
 export type ReopenTaskData = {
     body: TaskTransitionRequest;

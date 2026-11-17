@@ -793,29 +793,21 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	if page.Items[0].AutomaticAcknowledgement != nil {
 		t.Fatalf("Task automatic acknowledgement = %#v", page.Items[0].AutomaticAcknowledgement)
 	}
-	if page.Counts.Tasks != 1 {
-		t.Fatalf("Task query counts = %#v, want one Task", page.Counts)
-	}
-
-	countFreeBody, _ := json.Marshal(map[string]any{
-		"practiceId":    authorization.Practice.ID,
-		"search":        "(985) 555-0100",
-		"includeCounts": false,
-	})
-	countFreeResponse := request(t, server.Client(), http.MethodPost,
-		server.URL+"/v1/tasks/query", "task-token", countFreeBody)
-	if countFreeResponse.StatusCode != http.StatusOK {
-		t.Fatalf("count-free Task query status = %d", countFreeResponse.StatusCode)
-	}
-	var countFreePage api.TaskPage
-	decode(t, countFreeResponse, &countFreePage)
-	if countFreePage.Counts != nil || len(countFreePage.Items) != 1 || countFreePage.Items[0].Id.String() != task.ID {
-		t.Fatalf("count-free Task query page = %#v", countFreePage)
+	for _, removed := range []map[string]any{
+		{"practiceId": authorization.Practice.ID, "includeCounts": false},
+		{"practiceId": authorization.Practice.ID, "responsibility": "all"},
+	} {
+		removedBody, _ := json.Marshal(removed)
+		removedResponse := request(t, server.Client(), http.MethodPost,
+			server.URL+"/v1/tasks/query", "task-token", removedBody)
+		if removedResponse.StatusCode != http.StatusBadRequest {
+			t.Fatalf("Task query with removed field %s status = %d, want 400", removedBody, removedResponse.StatusCode)
+		}
+		removedResponse.Body.Close()
 	}
 
 	patientBody, _ := json.Marshal(map[string]any{
 		"practiceId": authorization.Practice.ID,
-		"scope":      "everyone",
 		"filter":     "all",
 	})
 	patientResponse := request(t, server.Client(), http.MethodPost,

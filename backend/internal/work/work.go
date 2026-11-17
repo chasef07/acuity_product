@@ -141,11 +141,10 @@ const (
 	callRecoveryOrigins        = `'MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'`
 	communicationReviewOrigins = `'APPOINTMENT_REVIEW','INBOUND_MESSAGE_REVIEW',` + callRecoveryOrigins
 
-	TaskIsCallRecoverySQL        = `task.origin IN (` + callRecoveryOrigins + `)`
-	TaskIsTextReviewSQL          = `task.origin='INBOUND_MESSAGE_REVIEW'`
-	TaskIsAppointmentReviewSQL   = `task.origin='APPOINTMENT_REVIEW'`
-	TaskIsCommunicationReviewSQL = `task.origin IN (` + communicationReviewOrigins + `)`
-	TaskIsFollowUpSQL            = `task.origin NOT IN (` + communicationReviewOrigins + `)`
+	TaskIsCallRecoverySQL      = `task.origin IN (` + callRecoveryOrigins + `)`
+	TaskIsTextReviewSQL        = `task.origin='INBOUND_MESSAGE_REVIEW'`
+	TaskIsAppointmentReviewSQL = `task.origin='APPOINTMENT_REVIEW'`
+	TaskIsFollowUpSQL          = `task.origin NOT IN (` + communicationReviewOrigins + `)`
 
 	TaskUrgencyRankSQL = `CASE task.urgency WHEN 'high_priority' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END`
 )
@@ -176,7 +175,6 @@ type ActorSnapshot struct {
 }
 
 type Task struct {
-	GroupMembers             []Task
 	ID                       string
 	PracticeID               string
 	LocationID               string
@@ -337,18 +335,7 @@ type ReopenTaskCommand struct {
 type TaskPage struct {
 	Items      []Task
 	NextCursor string
-	Counts     *TaskFolderCounts
 }
-
-type TaskFolderCounts struct {
-	AppointmentReviews int
-	Texts              int
-	CallRecovery       int
-	Tasks              int
-	Categories         TaskCategoryCounts
-}
-
-type TaskCategoryCounts map[TaskCategory]int
 
 type Module struct {
 	database productpostgres.Database

@@ -1472,19 +1472,14 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	page, err := server.workspace.QueryTasks(ctx, workspace.QueryTasksCommand{
-		Kind:           stringValue((*string)(body.Kind)),
-		IncludeCounts:  body.IncludeCounts,
-		Responsibility: stringValue((*string)(body.Responsibility)),
-		Category:       work.TaskCategory(stringValue((*string)(body.Category))),
-		Grouped:        body.Grouped != nil && *body.Grouped,
-		Identity:       identity,
-		PracticeID:     body.PracticeId.String(),
-		LocationID:     uuidString(body.LocationId),
-		Search:         stringValue(body.Search),
-		State:          state,
-		Ordering:       ordering,
-		Cursor:         stringValue(body.Cursor),
-		Limit:          intValue(body.Limit),
+		Identity:   identity,
+		PracticeID: body.PracticeId.String(),
+		LocationID: uuidString(body.LocationId),
+		Search:     stringValue(body.Search),
+		State:      state,
+		Ordering:   ordering,
+		Cursor:     stringValue(body.Cursor),
+		Limit:      intValue(body.Limit),
 	})
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -1514,7 +1509,6 @@ func (server *Server) QueryPatientWork(w http.ResponseWriter, r *http.Request) {
 		PracticeID: body.PracticeId.String(),
 		LocationID: uuidString(body.LocationId),
 		Search:     stringValue(body.Search),
-		Scope:      workspace.PatientWorkScope(stringValue((*string)(body.Scope))),
 		Filter:     workspace.PatientWorkFilter(stringValue((*string)(body.Filter))),
 		Cursor:     stringValue(body.Cursor),
 		Limit:      intValue(body.Limit),
@@ -1641,43 +1635,6 @@ func (server *Server) ChangeTaskCategory(
 		TaskID:          taskID.String(),
 		ExpectedVersion: body.ExpectedVersion,
 		Category:        work.TaskCategory(body.Category),
-	})
-	if err != nil {
-		server.writeDomainError(w, r, err)
-		return
-	}
-	response, err := taskResponse(task)
-	if err != nil {
-		server.writeDomainError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) CompleteTaskGroup(
-	w http.ResponseWriter,
-	r *http.Request,
-	taskID openapi_types.UUID,
-) {
-	identity, ok := server.portalIdentity(w, r)
-	if !ok {
-		return
-	}
-	var body api.CompleteTaskGroupRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	members := make([]work.ReviewedTask, 0, len(body.Members))
-	for _, member := range body.Members {
-		members = append(members, work.ReviewedTask{ID: member.Id.String(), ExpectedVersion: member.ExpectedVersion})
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	task, err := server.work.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-		Identity: identity,
-		TaskID:   taskID.String(),
-		Members:  members,
-		Reason:   staffCloseReason(body.Reason),
 	})
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -2926,17 +2883,6 @@ func taskResponse(task work.Task) (api.Task, error) {
 		}
 		response.CallId = &callID
 	}
-	if len(task.GroupMembers) > 0 {
-		members := make([]api.Task, 0, len(task.GroupMembers))
-		for _, member := range task.GroupMembers {
-			converted, err := taskResponse(member)
-			if err != nil {
-				return api.Task{}, err
-			}
-			members = append(members, converted)
-		}
-		response.GroupMembers = &members
-	}
 	if task.Category != "" {
 		category := api.StaffTaskCategory(task.Category)
 		response.Category = &category
@@ -3292,12 +3238,10 @@ func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPag
 			CallBack:     page.Counts.CallBack,
 			Texts:        page.Counts.Texts,
 			Appointments: page.Counts.Appointments,
-			Unowned:      page.Counts.Unowned,
 		},
 		Totals: api.PatientWorkTotals{
-			OpenTasks:            page.Totals.OpenTasks,
-			Patients:             page.Totals.Patients,
-			PatientsOutsideScope: page.Totals.PatientsOutsideScope,
+			OpenTasks: page.Totals.OpenTasks,
+			Patients:  page.Totals.Patients,
 		},
 		NextCursor: page.NextCursor,
 	}
@@ -3311,7 +3255,6 @@ func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPag
 			DisplayName:  row.DisplayName,
 			OpenCount:    row.OpenCount,
 			HighPriority: row.HighPriority,
-			HasUnowned:   row.HasUnowned,
 			ActivityAt:   row.ActivityAt,
 			WaitingSince: row.WaitingSince,
 			Top:          top,
@@ -3324,28 +3267,6 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 	response := api.TaskPage{
 		Items:      make([]api.Task, 0, len(page.Items)),
 		NextCursor: page.NextCursor,
-	}
-	if page.Counts != nil {
-		categories := page.Counts.Categories
-		insurance := categories[work.TaskCategoryInsurance]
-		preOp := categories[work.TaskCategoryPreOp]
-		postOp := categories[work.TaskCategoryPostOp]
-		response.Counts = &api.TaskFolderCounts{
-			Tasks:              page.Counts.Tasks,
-			Texts:              &page.Counts.Texts,
-			CallRecovery:       &page.Counts.CallRecovery,
-			AppointmentReviews: &page.Counts.AppointmentReviews,
-			Categories: api.TaskCategoryCounts{
-				Billing:       categories[work.TaskCategoryBilling],
-				Appointments:  categories[work.TaskCategoryAppointments],
-				Documentation: categories[work.TaskCategoryDocumentation],
-				Optical:       categories[work.TaskCategoryOptical],
-				Medication:    categories[work.TaskCategoryMedication],
-				Referrals:     categories[work.TaskCategoryReferrals],
-				Other:         categories[work.TaskCategoryOther],
-				Insurance:     &insurance, PreOp: &preOp, PostOp: &postOp,
-			},
-		}
 	}
 	for _, task := range page.Items {
 		item, err := taskResponse(task)

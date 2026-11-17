@@ -14,27 +14,18 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
+func TestOpenTasksStaySharedWithinAuthorizedLocations(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.Open(t)
 	pool := db.Owner
 	now := time.Now().UTC()
 	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
-	staff := []struct {
-		key      string
-		category work.TaskCategory
-		role     string
-	}{
-		{"call-center", work.TaskCategoryAppointments, "primary"},
-		{"insurance", work.TaskCategoryInsurance, "backup"},
-		{"optical", work.TaskCategoryOptical, "primary"},
-	}
+	staff := []string{"call-center", "insurance", "optical"}
 	grants := []access.AccessGrantProvision{
 		{Key: "admin", Email: "admin@shared-review.test", Role: access.RoleAdmin, LocationScope: access.LocationScopeAll},
-		{Key: "records", Email: "records@shared-review.test", Role: access.RoleStaff, LocationScope: access.LocationScopeAll},
 	}
-	for _, member := range staff {
-		grants = append(grants, access.AccessGrantProvision{Key: member.key, Email: member.key + "@shared-review.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"allowed"}})
+	for _, key := range staff {
+		grants = append(grants, access.AccessGrantProvision{Key: key, Email: key + "@shared-review.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"allowed"}})
 	}
 	if _, err := access.New(pool, func() time.Time { return now }).Provision(ctx, access.Provisioning{Environment: "test", RequestedBy: "shared-review-test", Practices: []access.PracticeProvision{{
 		Key: "shared-review", Name: "Synthetic Shared Review", AccessGrants: grants,
@@ -44,7 +35,6 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 	}
 	admin := access.Identity{Subject: "shared-review-admin", Email: "admin@shared-review.test", EmailVerified: true}
 	auth := testaccess.Activate(t, a, admin)
-	testaccess.Activate(t, a, access.Identity{Subject: "shared-review-records", Email: "records@shared-review.test", EmailVerified: true})
 	m := work.New(db.As(testdb.Portal), a, func() time.Time { return now })
 	reads := workspace.New(db.As(testdb.Portal), a)
 	locations := map[string]string{}
@@ -54,12 +44,6 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 			t.Fatal(err)
 		}
 		locations[key] = locationID
-		if _, err := pool.Exec(ctx, `INSERT INTO work_responsibility_locations VALUES($1,$2)`, auth.Practice.ID, locationID); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := pool.Exec(ctx, `INSERT INTO work_responsibilities VALUES($1,$2,'records@shared-review.test','documentation','primary')`, auth.Practice.ID, locationID); err != nil {
-			t.Fatal(err)
-		}
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -103,69 +87,46 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, member := range staff {
-		t.Run(member.key, func(t *testing.T) {
-			identity := access.Identity{Subject: member.key, Email: member.key + "@shared-review.test", EmailVerified: true}
-			testaccess.Activate(t, a, identity)
-			if _, err := pool.Exec(ctx, `INSERT INTO work_responsibilities VALUES($1,$2,$3,$4,$5)`, auth.Practice.ID, locations["allowed"], identity.Email, member.category, member.role); err != nil {
-				t.Fatal(err)
+	identity := func(key string) access.Identity {
+		return access.Identity{Subject: key, Email: key + "@shared-review.test", EmailVerified: true}
+	}
+	for _, key := range staff {
+		testaccess.Activate(t, a, identity(key))
+		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity(key), PracticeID: auth.Practice.ID})
+		if err != nil || len(page.Items) != 5 {
+			t.Fatalf("%s: rows=%d err=%v; want the 4 reviews and the follow-up at the allowed Location", key, len(page.Items), err)
+		}
+		for _, task := range page.Items {
+			if task.LocationID != locations["allowed"] {
+				t.Fatalf("%s: leaked a Task at an unauthorized Location: %s", key, task.ID)
 			}
-			for _, classified := range []bool{false, true} {
-				category := any(nil)
-				if classified {
-					category = "documentation"
-				}
-				if _, err := pool.Exec(ctx, `UPDATE work_tasks SET category=$1 WHERE origin IN ('INBOUND_MESSAGE_REVIEW','MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')`, category); err != nil {
-					t.Fatal(err)
-				}
-				for _, kind := range []string{"", "texts", "calls"} {
-					page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Responsibility: "mine", Kind: kind, Grouped: true})
-					want := map[string]int{"": 4, "texts": 1, "calls": 2}[kind]
-					if err != nil || len(page.Items) != want || page.Counts == nil || page.Counts.Tasks != 4 || page.Counts.Texts != 1 || page.Counts.CallRecovery != 2 || page.Counts.Categories[work.TaskCategoryAppointments] != 1 {
-						t.Fatalf("classified=%t kind=%q: rows=%d counts=%+v err=%v; want %d visible shared reviews and counts 4/1/2 with one appointment", classified, kind, len(page.Items), page.Counts, err, want)
-					}
-					for _, task := range page.Items {
-						if task.LocationID != locations["allowed"] || task.Origin == work.TaskOriginAbitaAI {
-							t.Fatalf("leaked unauthorized or another category's ordinary Task: %s", task.ID)
-						}
-					}
-				}
-			}
-			all, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Responsibility: "all"})
-			if err != nil || len(all.Items) != 5 || all.Counts.Tasks != 5 {
-				t.Fatalf("All tasks must include authorized documentation but no other location: rows=%d err=%v", len(all.Items), err)
-			}
-			if _, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, LocationID: locations["denied"], Responsibility: "all"}); !errors.Is(err, workspace.ErrDenied) {
-				t.Fatalf("explicit unauthorized location: %v", err)
-			}
-		})
+		}
+		if _, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity(key), PracticeID: auth.Practice.ID, LocationID: locations["denied"]}); !errors.Is(err, workspace.ErrDenied) {
+			t.Fatalf("%s: explicit unauthorized Location: %v", key, err)
+		}
 	}
-	followUp, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, Responsibility: "all", Kind: "follow_up"})
-	if err != nil || len(followUp.Items) != 2 || followUp.Counts.Tasks != 2 || followUp.Counts.Categories[work.TaskCategoryAppointments] != 0 {
-		t.Fatalf("follow-up folder includes communication reviews: %#v, %v", followUp, err)
+	everything, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID})
+	perLocation := map[string]int{}
+	for _, task := range everything.Items {
+		perLocation[task.LocationID]++
 	}
-	springHill, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, Kind: "appointments"})
-	if err != nil || len(springHill.Items) != 1 || springHill.Items[0].LocationID != locations["allowed"] {
-		t.Fatalf("appointment folder must contain only Spring Hill reviews: %#v, %v", springHill, err)
+	if err != nil || perLocation[locations["allowed"]] != 5 || perLocation[locations["denied"]] == 0 {
+		t.Fatalf("admin rows per Location=%v err=%v; want the 5 at the allowed Location and the denied Location's too", perLocation, err)
 	}
-	otherOffice, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: admin, PracticeID: auth.Practice.ID, LocationID: locations["denied"], Kind: "appointments"})
-	if err != nil || len(otherOffice.Items) != 0 {
-		t.Fatalf("appointment reviews leaked into another office: %#v, %v", otherOffice, err)
+	checkingStaff := identity("call-center")
+	var appointment work.Task
+	for _, task := range everything.Items {
+		if task.Origin == work.TaskOriginAppointmentReview && task.LocationID == locations["allowed"] {
+			appointment = task
+		}
 	}
-	checkingStaff := access.Identity{Subject: "call-center", Email: "call-center@shared-review.test", EmailVerified: true}
-	appointments, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: checkingStaff, PracticeID: auth.Practice.ID, Responsibility: "mine", Category: work.TaskCategoryAppointments})
-	if err != nil || len(appointments.Items) != 1 {
-		t.Fatalf("appointment review query: rows=%d err=%v", len(appointments.Items), err)
-	}
-	appointment := appointments.Items[0]
 	if _, err := m.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: checkingStaff, TaskID: appointment.ID, ExpectedVersion: appointment.Version}); err != nil {
 		t.Fatal(err)
 	}
-	for _, member := range staff {
-		identity := access.Identity{Subject: member.key, Email: member.key + "@shared-review.test", EmailVerified: true}
-		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Responsibility: "mine"})
-		if err != nil || len(page.Items) != 3 || page.Counts.Categories[work.TaskCategoryAppointments] != 0 {
-			t.Fatalf("%s retained a checked appointment: rows=%d counts=%+v err=%v", member.key, len(page.Items), page.Counts, err)
+	for _, key := range staff {
+		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity(key), PracticeID: auth.Practice.ID})
+		if err != nil || len(page.Items) != 4 {
+			t.Fatalf("%s retained a checked appointment review: rows=%d err=%v", key, len(page.Items), err)
 		}
 	}
 }

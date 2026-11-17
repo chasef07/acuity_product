@@ -1488,40 +1488,6 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/tasks/{taskId}/complete-group:
-    post:
-      operationId: completeTaskGroup
-      summary: Resolve exactly the reviewed open group membership.
-      parameters:
-        - name: taskId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CompleteTaskGroupRequest"
-      responses:
-        "200":
-          description: Completed or idempotently current Task.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Task"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/tasks/{taskId}/reopen:
     post:
       operationId: reopenTask
@@ -3854,11 +3820,6 @@ components:
         - relatedInteractionCount
         - interactions
       properties:
-        groupMembers:
-          description: Complete open membership for this bucket, normalized number, and Location, including members outside a text filter. This is a display projection, never a merged Task.
-          type: array
-          items:
-            $ref: "#/components/schemas/Task"
         id:
           type: string
           format: uuid
@@ -3981,22 +3942,13 @@ components:
         type:
           type: string
           enum: [CALL, VOICEMAIL]
-    PatientWorkScope:
-      type: string
-      enum: [mine, everyone]
-      description: >-
-        Mine lists a patient when at least one open Task is in a category the reader is responsible for,
-        is a missed-call, voicemail, text, or appointment review, or has no owner. Everyone lists every
-        patient with an open Task.
     PatientWorkFilter:
       type: string
-      enum: [all, followUp, callBack, texts, appointments, unowned]
+      enum: [all, followUp, callBack, texts, appointments]
       description: >-
         followUp matches follow-up Tasks created by the AI, after a staff call, or after a staff text.
-        callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches
-        appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person
-        listed for the category is its owner at a Location only while they hold an unrevoked membership
-        that includes the Task's Location.
+        callBack matches missed-call and voicemail reviews, texts matches text reviews, and appointments
+        matches appointment reviews.
     PatientWorkQueryRequest:
       type: object
       additionalProperties: false
@@ -4013,9 +3965,7 @@ components:
           maxLength: 500
           description: >-
             Matches the patient name the row shows, and the phone, title, caller name, category and
-            Location of the open Tasks in scope.
-        scope:
-          $ref: "#/components/schemas/PatientWorkScope"
+            Location of the open Tasks.
         filter:
           $ref: "#/components/schemas/PatientWorkFilter"
         cursor:
@@ -4043,7 +3993,7 @@ components:
     PatientWorkRow:
       type: object
       additionalProperties: false
-      required: [phone, displayName, openCount, highPriority, hasUnowned, activityAt, waitingSince, top]
+      required: [phone, displayName, openCount, highPriority, activityAt, waitingSince, top]
       properties:
         phone:
           type: string
@@ -4051,32 +4001,30 @@ components:
           description: The caller name when exactly one name was seen on the phone. Empty when none or several were seen.
           type: string
         openCount:
-          description: Every open Task for the phone in the Locations the reader may read, whatever the scope and filter.
+          description: Every open Task for the phone in the Locations the reader may read, whatever the filter.
           type: integer
           minimum: 1
         highPriority:
-          description: Whether any Task matching the scope and filter is high priority.
-          type: boolean
-        hasUnowned:
+          description: Whether any Task matching the filter is high priority.
           type: boolean
         activityAt:
-          description: When the newest Task matching the scope and filter last changed for the patient.
+          description: When the newest Task matching the filter last changed for the patient.
           type: string
           format: date-time
         waitingSince:
-          description: When the oldest open Task matching the scope and filter was created, which is how long the patient has been waiting.
+          description: When the oldest open Task matching the filter was created, which is how long the patient has been waiting.
           type: string
           format: date-time
         top:
           description: >-
-            The Task a reader opens for the patient. Among Tasks matching the scope and filter, high priority
+            The Task a reader opens for the patient. Among Tasks matching the filter, high priority
             comes first, then missed calls and voicemails, texts, appointment reviews, and other Tasks, newest first.
           $ref: "#/components/schemas/Task"
     PatientWorkCounts:
-      description: How many patients each filter matches in the requested scope, Locations, and search.
+      description: How many patients each filter matches in the requested Locations and search.
       type: object
       additionalProperties: false
-      required: [all, followUp, callBack, texts, appointments, unowned]
+      required: [all, followUp, callBack, texts, appointments]
       properties:
         all:
           type: integer
@@ -4093,25 +4041,18 @@ components:
         appointments:
           type: integer
           minimum: 0
-        unowned:
-          type: integer
-          minimum: 0
     PatientWorkTotals:
-      description: Totals for the requested scope across the requested Locations, whatever the filter and search.
+      description: Totals across the requested Locations, whatever the filter and search.
       type: object
       additionalProperties: false
-      required: [openTasks, patients, patientsOutsideScope]
+      required: [openTasks, patients]
       properties:
         openTasks:
-          description: Open Tasks the requested scope includes.
+          description: Open Tasks.
           type: integer
           minimum: 0
         patients:
-          description: Patients with at least one open Task the requested scope includes.
-          type: integer
-          minimum: 0
-        patientsOutsideScope:
-          description: Patients with open Tasks that the requested scope leaves out.
+          description: Patients with at least one open Task.
           type: integer
           minimum: 0
     TaskPage:
@@ -4125,60 +4066,6 @@ components:
             $ref: "#/components/schemas/Task"
         nextCursor:
           type: string
-        counts:
-          description: Present unless the query explicitly disables counts.
-          $ref: "#/components/schemas/TaskFolderCounts"
-    TaskFolderCounts:
-      type: object
-      additionalProperties: false
-      required: [tasks, categories]
-      properties:
-        tasks:
-          type: integer
-          minimum: 0
-        texts:
-          type: integer
-          minimum: 0
-        callRecovery:
-          type: integer
-          minimum: 0
-        appointmentReviews:
-          type: integer
-          minimum: 0
-        categories:
-          $ref: "#/components/schemas/TaskCategoryCounts"
-    TaskCategoryCounts:
-      type: object
-      additionalProperties: false
-      required: [billing, appointments, documentation, optical, medication, referrals, other]
-      properties:
-        insurance:
-          type: integer
-        pre_op:
-          type: integer
-        post_op:
-          type: integer
-        billing:
-          type: integer
-          minimum: 0
-        appointments:
-          type: integer
-          minimum: 0
-        documentation:
-          type: integer
-          minimum: 0
-        optical:
-          type: integer
-          minimum: 0
-        medication:
-          type: integer
-          minimum: 0
-        referrals:
-          type: integer
-          minimum: 0
-        other:
-          type: integer
-          minimum: 0
     AIInteractionMessageKind:
       type: string
       enum: [START, CLOSEOUT, OUTCOME_CHECKPOINT]
@@ -5945,21 +5832,6 @@ components:
       additionalProperties: false
       required: [practiceId]
       properties:
-        responsibility:
-          type: string
-          enum: [mine, all]
-          description: >-
-            Mine filters categorized follow-up by primary and backup responsibility.
-            A category nobody is responsible for at the Task's Location stays visible to everyone.
-            Appointment, text, missed-call, and voicemail reviews remain shared within authorized
-            Locations, regardless of category. All removes only responsibility filtering.
-        kind:
-          type: string
-          enum: [texts, calls, appointments, follow_up]
-        category:
-          $ref: "#/components/schemas/StaffTaskCategory"
-        grouped:
-          type: boolean
         practiceId:
           type: string
           format: uuid
@@ -5975,10 +5847,6 @@ components:
         ordering:
           type: string
           enum: [priority, recent, time]
-        includeCounts:
-          description: Include fresh counts across all Task folders in the requested scope and search.
-          type: boolean
-          default: true
         cursor:
           type: string
         limit:
@@ -5996,29 +5864,6 @@ components:
           minimum: 1
         category:
           $ref: "#/components/schemas/StaffTaskCategory"
-    CompleteTaskGroupRequest:
-      type: object
-      additionalProperties: false
-      required: [members]
-      properties:
-        reason:
-          description: Why the Tasks closed. DONE when omitted.
-          $ref: "#/components/schemas/StaffTaskCloseReason"
-        members:
-          type: array
-          minItems: 1
-          items:
-            type: object
-            additionalProperties: false
-            required: [id, expectedVersion]
-            properties:
-              id:
-                type: string
-                format: uuid
-              expectedVersion:
-                type: integer
-                format: int64
-                minimum: 1
     RenameTaskRequest:
       type: object
       additionalProperties: false

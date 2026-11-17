@@ -3,8 +3,6 @@ package work_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -56,61 +54,6 @@ func TestTaskCompletionsPublishOneWorkspaceHintPerTransaction(t *testing.T) {
 	}
 	t.Logf("CompleteTask: %d statements", statements.count.Load())
 	assertOneWorkspaceHint(t, db, listener, authorization.Practice.ID)
-
-	members := []work.ReviewedTask{}
-	for index := range 5 {
-		task := create(fmt.Sprintf("group-%d", index))
-		members = append(members, work.ReviewedTask{ID: task.ID, ExpectedVersion: task.Version})
-	}
-	drainWorkspaceHints(t, listener)
-	statements.count.Store(0)
-	anchor, err := traced.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-		Reason:   work.CloseReasonDone,
-		Identity: identity, TaskID: members[2].ID, Members: members,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("CompleteTaskGroup of 5: %d statements", statements.count.Load())
-	assertOneWorkspaceHint(t, db, listener, authorization.Practice.ID)
-	if anchor.ID != members[2].ID || anchor.State != work.TaskCompleted ||
-		anchor.Version != members[2].ExpectedVersion+1 || anchor.CompletedBy == nil ||
-		anchor.CompletedBy.Subject != identity.Subject || anchor.Title != "Optical request group-2" {
-		t.Fatalf("completed group anchor = %#v", anchor)
-	}
-	for _, member := range members {
-		var activities int
-		if err := db.Owner.QueryRow(ctx, `
-			SELECT count(*) FROM work_task_activities
-			WHERE task_id = $1 AND kind = 'TASK_COMPLETED' AND task_version = $2
-		`, member.ID, member.ExpectedVersion+1).Scan(&activities); err != nil {
-			t.Fatal(err)
-		}
-		if activities != 1 {
-			t.Fatalf("Task %s completion Activities = %d, want 1", member.ID, activities)
-		}
-	}
-
-	stale := create("stale")
-	_, err = traced.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-		Reason:   work.CloseReasonDone,
-		Identity: identity, TaskID: stale.ID,
-		Members: []work.ReviewedTask{{ID: stale.ID, ExpectedVersion: stale.Version + 1}},
-	})
-	if !errors.Is(err, work.ErrConflict) {
-		t.Fatalf("stale group completion error = %v, want ErrConflict", err)
-	}
-	_, err = traced.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-		Reason:   work.CloseReasonDone,
-		Identity: identity, TaskID: stale.ID,
-		Members: []work.ReviewedTask{
-			{ID: stale.ID, ExpectedVersion: stale.Version},
-			{ID: "00000000-0000-4000-8000-000000000000", ExpectedVersion: 1},
-		},
-	})
-	if !errors.Is(err, work.ErrDenied) {
-		t.Fatalf("missing group member error = %v, want ErrDenied", err)
-	}
 }
 
 func listenForWorkspaceHints(t *testing.T, db *testdb.DB) *pgx.Conn {

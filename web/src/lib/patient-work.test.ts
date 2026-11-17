@@ -42,7 +42,6 @@ function row(overrides: Partial<PatientWorkRow> = {}): PatientWorkRow {
     displayName: "",
     openCount: 1,
     highPriority: false,
-    hasUnowned: false,
     activityAt: "2026-11-09T12:00:00Z",
     waitingSince: "2026-11-09T12:00:00Z",
     top: top(),
@@ -71,8 +70,8 @@ test("the second line says why the patient is waiting", () => {
   }
 })
 
-test("filter chips count patients, never offer No owner, and offer Appointments only where it has something to offer", () => {
-  const counts = { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 0, unowned: 4 }
+test("filter chips count patients and offer Appointments only where it has something to offer", () => {
+  const counts = { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 0 }
   const values = (shown: ReturnType<typeof shownPatientWorkFilters>) => shown.map((filter) => filter.value)
 
   assert.deepEqual(shownPatientWorkFilters(counts, "all", false), [
@@ -98,8 +97,8 @@ test("appointment checks are offered where Spring Hill is the office in view", (
 })
 
 test("the footer states how much is open for how many patients", () => {
-  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }), "14 open for 9 patients")
-  assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }), "1 open for 1 patient")
+  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9 }), "14 open for 9 patients")
+  assert.equal(patientWorkFooter({ openTasks: 1, patients: 1 }), "1 open for 1 patient")
 })
 
 test("after a Task is closed the next selection stays with the patient, then the neighbouring row", () => {

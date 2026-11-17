@@ -37,17 +37,16 @@ func TestTaskClassificationCoversEveryOriginAndUrgency(t *testing.T) {
 		if !ok {
 			t.Fatalf("stored origin %q has no folder", origin)
 		}
-		var calls, texts, appointments, review, followUp bool
+		var calls, texts, appointments, followUp bool
 		if err := pool.QueryRow(ctx, `SELECT `+work.TaskIsCallRecoverySQL+`,`+work.TaskIsTextReviewSQL+`,
- `+work.TaskIsAppointmentReviewSQL+`,`+work.TaskIsCommunicationReviewSQL+`,`+work.TaskIsFollowUpSQL+`
- FROM (SELECT $1::text AS origin) task`, origin).Scan(&calls, &texts, &appointments, &review, &followUp); err != nil {
+ `+work.TaskIsAppointmentReviewSQL+`,`+work.TaskIsFollowUpSQL+`
+ FROM (SELECT $1::text AS origin) task`, origin).Scan(&calls, &texts, &appointments, &followUp); err != nil {
 			t.Fatal(err)
 		}
 		if calls != (folder == "calls") || texts != (folder == "texts") ||
-			appointments != (folder == "appointments") || followUp != (folder == "follow_up") ||
-			review == followUp {
-			t.Fatalf("origin %q classified as calls=%v texts=%v appointments=%v review=%v followUp=%v, want %s",
-				origin, calls, texts, appointments, review, followUp, folder)
+			appointments != (folder == "appointments") || followUp != (folder == "follow_up") {
+			t.Fatalf("origin %q classified as calls=%v texts=%v appointments=%v followUp=%v, want %s",
+				origin, calls, texts, appointments, followUp, folder)
 		}
 	}
 	for want, urgency := range []work.TaskUrgency{

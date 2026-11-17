@@ -3,7 +3,6 @@ package workspace_test
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
 	"time"
 
@@ -16,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testing.T) {
+func TestQueryTasksPagesEveryOrderingAndSearches(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	now := time.Date(2026, time.August, 15, 14, 0, 0, 0, time.UTC)
@@ -102,8 +101,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		t.Fatalf("query first priority page: %v", err)
 	}
 	assertWorkspaceTaskIDs(t, first.Items, high.ID, normalOld.ID)
-	if first.NextCursor == "" || first.Counts.Tasks != 4 ||
-		first.Counts.Categories[work.TaskCategoryDocumentation] != 4 {
+	if first.NextCursor == "" {
 		t.Fatalf("first priority page metadata = %#v", first)
 	}
 	second, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
@@ -114,17 +112,34 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		t.Fatalf("query second priority page: %v", err)
 	}
 	assertWorkspaceTaskIDs(t, second.Items, normalNew.ID, nonUrgent.ID)
-	if second.NextCursor != "" || second.Counts == nil || first.Counts == nil || !reflect.DeepEqual(second.Counts, first.Counts) {
-		t.Fatalf("second priority page metadata = %#v, want counts %#v", second, first.Counts)
+	if second.NextCursor != "" {
+		t.Fatalf("second priority page metadata = %#v", second)
 	}
-	timeOrdered, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
-		Identity: identity, PracticeID: authorization.Practice.ID,
-		Ordering: work.TaskOrderingTime,
-	})
-	if err != nil {
-		t.Fatalf("query time-ordered Queue: %v", err)
+	for _, test := range []struct {
+		ordering work.TaskOrdering
+		want     []string
+	}{
+		{work.TaskOrderingTime, []string{high.ID, normalOld.ID, normalNew.ID, nonUrgent.ID}},
+		{work.TaskOrderingRecent, []string{nonUrgent.ID, normalNew.ID, normalOld.ID, high.ID}},
+	} {
+		command := workspace.QueryTasksCommand{
+			Identity: identity, PracticeID: authorization.Practice.ID,
+			Ordering: test.ordering, Limit: 1,
+		}
+		var paged []work.Task
+		for {
+			page, err := reads.QueryTasks(context.Background(), command)
+			if err != nil {
+				t.Fatalf("query %s page: %v", test.ordering, err)
+			}
+			paged = append(paged, page.Items...)
+			if page.NextCursor == "" || len(paged) > len(test.want) {
+				break
+			}
+			command.Cursor = page.NextCursor
+		}
+		assertWorkspaceTaskIDs(t, paged, test.want...)
 	}
-	assertWorkspaceTaskIDs(t, timeOrdered.Items, high.ID, normalOld.ID, normalNew.ID, nonUrgent.ID)
 	search, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity: identity, PracticeID: authorization.Practice.ID, Search: "SURGERY",
 	})
@@ -139,49 +154,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		t.Fatalf("cross-order cursor error = %v, want invalid input", err)
 	}
 
-	create("optical", "Optical request", work.TaskUrgencyNormal, work.TaskCategoryOptical)
-	create("other", "Other request", work.TaskUrgencyNormal, work.TaskCategoryOther)
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `INSERT INTO work_responsibility_locations (practice_id, location_id) VALUES ($1, $2)`, authorization.Practice.ID, authorization.Locations[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO work_responsibilities (practice_id, location_id, account_email, category, role)
-		VALUES ($1,$2,$3,'documentation','primary'), ($1,$2,$3,'optical','backup'),
-			($1,$2,'colleague@workspace-queue.test','other','primary')`, authorization.Practice.ID, authorization.Locations[0].ID, identity.Email); err != nil {
-		t.Fatal(err)
-	}
-	for _, responsibility := range []string{"all", "mine"} {
-		t.Run(responsibility+" category menu counts", func(t *testing.T) {
-			command := workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, Responsibility: responsibility, Kind: "follow_up", Grouped: true}
-			baseline, err := reads.QueryTasks(ctx, command)
-			if err != nil {
-				t.Fatal(err)
-			}
-			wantTotal, wantOther := 6, 1
-			if responsibility == "mine" {
-				wantTotal, wantOther = 5, 0
-			}
-			if baseline.Counts == nil || baseline.Counts.Tasks != wantTotal || baseline.Counts.Categories[work.TaskCategoryOther] != wantOther {
-				t.Fatalf("responsibility-scoped counts = %+v", baseline.Counts)
-			}
-			for _, category := range []work.TaskCategory{work.TaskCategoryDocumentation, work.TaskCategoryOptical, work.TaskCategoryOther} {
-				command.Category = category
-				filtered, err := reads.QueryTasks(ctx, command)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, item := range filtered.Items {
-					if item.Category != category {
-						t.Fatalf("category %s returned %s", category, item.Category)
-					}
-				}
-				if filtered.Counts == nil || !reflect.DeepEqual(filtered.Counts, baseline.Counts) {
-					t.Errorf("category %s changed menu totals: got %+v, want %+v", category, filtered.Counts, baseline.Counts)
-				}
-			}
-		})
-	}
-
 	_, err = workModule.CompleteTask(ctx, work.CompleteTaskCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: high.ID, ExpectedVersion: high.Version})
 	if err != nil {
 		t.Fatal(err)

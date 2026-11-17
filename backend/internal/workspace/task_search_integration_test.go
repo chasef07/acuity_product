@@ -130,7 +130,7 @@ func TestTaskSearchKeepsCaseInsensitiveSubstringSemantics(t *testing.T) {
 	}
 
 	reads := workspace.New(db.As(testdb.Portal), accessModule)
-	query := func(search string, state work.TaskState) ([]string, int) {
+	query := func(search string, state work.TaskState) []string {
 		t.Helper()
 		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{
 			Identity: identity, PracticeID: practiceID, Search: search, State: state,
@@ -144,7 +144,7 @@ func TestTaskSearchKeepsCaseInsensitiveSubstringSemantics(t *testing.T) {
 			ids = append(ids, item.ID)
 		}
 		sort.Strings(ids)
-		return ids, page.Counts.Tasks
+		return ids
 	}
 	legacy := func(search string, state work.TaskState) []string {
 		t.Helper()
@@ -199,15 +199,15 @@ func TestTaskSearchKeepsCaseInsensitiveSubstringSemantics(t *testing.T) {
 		{"%_\\", work.TaskOpen, []string{}},
 		{"no synthetic match", work.TaskOpen, []string{}},
 	} {
-		got, total := query(test.search, test.state)
-		if !equalIDs(got, test.want) || total != len(test.want) {
-			t.Errorf("search %q in %s = %v (count %d), want %v", test.search, test.state, got, total, test.want)
+		got := query(test.search, test.state)
+		if !equalIDs(got, test.want) {
+			t.Errorf("search %q in %s = %v, want %v", test.search, test.state, got, test.want)
 		}
 	}
 
-	all, total := query("  ", work.TaskOpen)
-	if len(all) != 12 || total != 12 {
-		t.Fatalf("blank search returned %d Tasks (count %d), want every open Task", len(all), total)
+	all := query("  ", work.TaskOpen)
+	if len(all) != 12 {
+		t.Fatalf("blank search returned %d Tasks, want every open Task", len(all))
 	}
 	for _, id := range []string{percentDecoy, underscoreDecoy, backslashDecoy} {
 		if !containsID(all, id) {
@@ -221,10 +221,10 @@ func TestTaskSearchKeepsCaseInsensitiveSubstringSemantics(t *testing.T) {
 		"ö", "copay 1", "pending", "fo", "x", "Rückruf", "ärztin", "ZOË", "ångström", "zoë ång",
 	} {
 		for _, state := range []work.TaskState{work.TaskOpen, work.TaskCompleted} {
-			got, total := query(search, state)
+			got := query(search, state)
 			want := legacy(search, state)
-			if !equalIDs(got, want) || total != len(want) {
-				t.Errorf("search %q in %s = %v (count %d), legacy predicate = %v", search, state, got, total, want)
+			if !equalIDs(got, want) {
+				t.Errorf("search %q in %s = %v, legacy predicate = %v", search, state, got, want)
 			}
 		}
 	}

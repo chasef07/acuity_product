@@ -83,9 +83,8 @@ func TestTaskQueriesUseSearchAndLocationIndexes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		plan := explain(tx, taskQuerySQL(work.TaskOpen, test.ordering, false, search), search.arguments(
+		plan := explain(tx, taskQuerySQL(work.TaskOpen, test.ordering, search), search.arguments(
 			practiceID, locationIDs, search.pattern, search.digits, false, time.Now(), "", 1, 51,
-			"all", "synthetic@staff.test", "", "",
 		)...)
 		_ = tx.Rollback(ctx)
 		indexes := map[string]bool{}
@@ -107,8 +106,8 @@ func TestTaskQueriesUseSearchAndLocationIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	plan := explain(tx, taskQuerySQL(work.TaskOpen, work.TaskOrderingRecent, false, taskSearch{}),
-		practiceID, locationIDs[:1], "", "", false, time.Now(), "", 1, 51, "all", "synthetic@staff.test", "", "")
+	plan := explain(tx, taskQuerySQL(work.TaskOpen, work.TaskOrderingRecent, taskSearch{}),
+		practiceID, locationIDs[:1], "", "", false, time.Now(), "", 1, 51)
 	var scoped bool
 	inspect(plan, func(node map[string]any) {
 		if condition, ok := node["Index Cond"].(string); ok && strings.Contains(condition, "location_id") {

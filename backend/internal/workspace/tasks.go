@@ -33,8 +33,6 @@ func (m *Module) QueryTasks(
 	}
 	if m.database == nil || m.access == nil || command.PracticeID == "" ||
 		len(command.Search) > 500 ||
-		(command.Kind != "" && command.Kind != "texts" && command.Kind != "calls" && command.Kind != "appointments" && command.Kind != "follow_up") ||
-		(command.Responsibility != "" && command.Responsibility != "mine" && command.Responsibility != "all") ||
 		(command.State != work.TaskOpen && command.State != work.TaskCompleted) ||
 		(command.Ordering != work.TaskOrderingTime &&
 			command.Ordering != work.TaskOrderingPriority &&
@@ -48,12 +46,7 @@ func (m *Module) QueryTasks(
 	if limit < 1 || limit > 50 {
 		return work.TaskPage{}, ErrInvalidInput
 	}
-	cursor, err := decodeTaskCursor(
-		command.Cursor,
-		command.Ordering,
-		command.State,
-		command.Kind,
-	)
+	cursor, err := decodeTaskCursor(command.Cursor, command.Ordering, command.State)
 	if err != nil {
 		return work.TaskPage{}, ErrInvalidInput
 	}
@@ -74,7 +67,7 @@ func (m *Module) QueryTasks(
 	if err != nil {
 		return work.TaskPage{}, err
 	}
-	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering, command.Grouped, search), search.arguments(
+	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering, search), search.arguments(
 		command.PracticeID,
 		locationIDs,
 		search.pattern,
@@ -84,7 +77,6 @@ func (m *Module) QueryTasks(
 		cursor.ID,
 		cursor.Urgency.Rank(),
 		limit+1,
-		command.Responsibility, strings.ToLower(command.Identity.Email), command.Category, command.Kind,
 	)...)
 	if err != nil {
 		return work.TaskPage{}, fmt.Errorf("query Tasks: %w", err)
@@ -103,36 +95,18 @@ func (m *Module) QueryTasks(
 		return work.TaskPage{}, fmt.Errorf("iterate Tasks: %w", err)
 	}
 	rows.Close()
-	var counts *work.TaskFolderCounts
-	if command.IncludeCounts == nil || *command.IncludeCounts {
-		value, err := queryTaskFolderCounts(ctx, tx, command, locationIDs, search)
-		if err != nil {
-			return work.TaskPage{}, err
-		}
-		counts = &value
-	}
 	nextCursor := ""
 	if len(items) > limit {
 		items = items[:limit]
-		nextCursor, err = encodeTaskCursor(
-			items[len(items)-1],
-			command.Ordering,
-			command.Kind,
-		)
+		nextCursor, err = encodeTaskCursor(items[len(items)-1], command.Ordering)
 		if err != nil {
 			return work.TaskPage{}, err
 		}
 	}
-	if command.Grouped && command.State == work.TaskOpen {
-		if err := loadGroupMembers(ctx, tx, items); err != nil {
-			return work.TaskPage{}, err
-		}
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return work.TaskPage{}, fmt.Errorf("commit Task query: %w", err)
 	}
-	return work.TaskPage{Items: items, NextCursor: nextCursor, Counts: counts}, nil
+	return work.TaskPage{Items: items, NextCursor: nextCursor}, nil
 }
 
 func (m *Module) ReadTask(
@@ -245,12 +219,6 @@ const taskProjectionJoins = `
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin
 
-const taskIsSpringHillReview = `(` + work.TaskIsAppointmentReviewSQL + ` AND EXISTS (
- SELECT 1 FROM access_abita_office_locations route
- WHERE route.practice_id=task.practice_id AND route.location_id=task.location_id
- AND route.office_key='spring-hill'
-))`
-
 const taskMatchSource = `
 	FROM work_tasks task
 	JOIN access_locations location
@@ -327,33 +295,12 @@ func (search taskSearch) filter(locations string) string {
 		)`
 }
 
-func taskQueryFilter(search taskSearch) string {
-	return `
-	WHERE task.practice_id = $1
-		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter("$10", "$11") + `
- AND ($12::text = '' OR task.category=$12)
- AND ($13::text = '' OR ($13='texts' AND ` + work.TaskIsTextReviewSQL + `) OR ($13='calls' AND ` + work.TaskIsCallRecoverySQL + `)
- OR ($13='appointments' AND ` + taskIsSpringHillReview + `)
- OR ($13='follow_up' AND ` + work.TaskIsFollowUpSQL + `))` + search.filter("$14")
-}
-
-func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool, search taskSearch) string {
+func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, search taskSearch) string {
 	window, order := taskPageWindow(state, ordering)
-	filter := taskQueryFilter(search)
-	candidates := taskMatchSource + filter
-	if grouped && state == work.TaskOpen {
-		candidates = `
-	FROM (
-		SELECT task.*, row_number() OVER (
-			PARTITION BY task.practice_id, task.location_id, task.phone, task.category, task.origin
-			ORDER BY ` + order + `
-		) AS member_rank` + taskMatchSource + filter + `
-			AND task.state = 'OPEN'
-	) task
-	WHERE task.member_rank = 1`
-	}
 	return `WITH page AS (
-	SELECT task.id` + candidates + `
+	SELECT task.id` + taskMatchSource + `
+	WHERE task.practice_id = $1
+		AND task.location_id = ANY($2::uuid[])` + search.filter("$10") + `
 		AND ` + window + `
 	ORDER BY ` + order + `
 	LIMIT $9
@@ -482,59 +429,7 @@ func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
 	return task, nil
 }
 
-func queryTaskFolderCounts(
-	ctx context.Context,
-	tx pgx.Tx,
-	command QueryTasksCommand,
-	locationIDs []string,
-	search taskSearch,
-) (work.TaskFolderCounts, error) {
-	var counts work.TaskFolderCounts
-	categoryCounts := make([]int, len(work.TaskCategories))
-	destinations := []any{&counts.Tasks}
-	for i := range categoryCounts {
-		destinations = append(destinations, &categoryCounts[i])
-	}
-	destinations = append(destinations, &counts.Texts, &counts.CallRecovery, &counts.AppointmentReviews)
-	err := tx.QueryRow(ctx, `
-		WITH scoped AS (
-			SELECT
-				task.category,
-				($8::text <> 'follow_up' OR `+work.TaskIsFollowUpSQL+`) AS listed,
-				`+work.TaskIsCallRecoverySQL+` AS call_recovery,
-				`+work.TaskIsTextReviewSQL+` AS text_review,
-				`+taskIsSpringHillReview+` AS spring_hill_review`+taskMatchSource+`
-			WHERE task.practice_id = $1
-				AND task.location_id = ANY($2::uuid[])`+search.filter("$9")+`
-				AND task.state = $5`+taskResponsibilityFilter("$6", "$7")+`
-		)
-		SELECT
-			count(*) FILTER (WHERE listed),`+taskCategoryCountColumns+`
-			count(*) FILTER (WHERE text_review),
-			count(*) FILTER (WHERE call_recovery),
-			count(*) FILTER (WHERE spring_hill_review)
-		FROM scoped
-	`, search.arguments(command.PracticeID, locationIDs, search.pattern, search.digits, command.State, command.Responsibility, strings.ToLower(command.Identity.Email), command.Kind)...).Scan(destinations...)
-	if err != nil {
-		return work.TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)
-	}
-	counts.Categories = make(work.TaskCategoryCounts, len(work.TaskCategories))
-	for i, category := range work.TaskCategories {
-		counts.Categories[category] = categoryCounts[i]
-	}
-	return counts, nil
-}
-
-var taskCategoryCountColumns = func() string {
-	var columns strings.Builder
-	for _, category := range work.TaskCategories {
-		columns.WriteString("\n\t\t\tcount(*) FILTER (WHERE listed AND category = '" + string(category) + "'),")
-	}
-	return columns.String()
-}()
-
 type taskCursor struct {
-	Kind      string            `json:"kind,omitempty"`
 	Present   bool              `json:"-"`
 	Ordering  work.TaskOrdering `json:"ordering"`
 	State     work.TaskState    `json:"state"`
@@ -543,11 +438,7 @@ type taskCursor struct {
 	ID        string            `json:"id"`
 }
 
-func encodeTaskCursor(
-	task work.Task,
-	ordering work.TaskOrdering,
-	kind string,
-) (string, error) {
+func encodeTaskCursor(task work.Task, ordering work.TaskOrdering) (string, error) {
 	orderedAt := task.CreatedAt
 	if task.State == work.TaskCompleted {
 		if task.CompletedAt == nil {
@@ -560,7 +451,6 @@ func encodeTaskCursor(
 	encoded, err := json.Marshal(taskCursor{
 		Ordering:  ordering,
 		State:     task.State,
-		Kind:      kind,
 		Urgency:   task.Urgency,
 		OrderedAt: orderedAt,
 		ID:        task.ID,
@@ -575,7 +465,6 @@ func decodeTaskCursor(
 	raw string,
 	ordering work.TaskOrdering,
 	state work.TaskState,
-	kind string,
 ) (taskCursor, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -590,7 +479,7 @@ func decodeTaskCursor(
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cursor); err != nil || cursor.OrderedAt.IsZero() ||
 		uuid.Validate(cursor.ID) != nil || cursor.Ordering != ordering ||
-		cursor.State != state || cursor.Kind != kind ||
+		cursor.State != state ||
 		(cursor.Urgency != work.TaskUrgencyHighPriority &&
 			cursor.Urgency != work.TaskUrgencyNormal &&
 			cursor.Urgency != work.TaskUrgencyNonUrgent) {
@@ -608,15 +497,4 @@ func normalizedDigits(value string) string {
 		}
 	}
 	return digits.String()
-}
-
-func taskResponsibilityFilter(responsibility string, email string) string {
-	owner := `EXISTS (SELECT 1 FROM work_responsibilities responsibility
- WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
- AND responsibility.category=task.category AND ` + responsibilityOwnerIsLive
-	return `
- AND (` + responsibility + `::text <> 'mine' OR task.category IS NULL
- OR ` + work.TaskIsCommunicationReviewSQL + `
- OR NOT ` + owner + `)
- OR ` + owner + ` AND responsibility.account_email=` + email + `))`
 }

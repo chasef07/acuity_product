@@ -795,7 +795,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	interactionClock = now.Add(30 * 24 * time.Hour)
 	queryReviews := func(token, state string) map[string]api.Task {
 		t.Helper()
-		body, _ := json.Marshal(map[string]any{"practiceId": practiceID, "state": state, "responsibility": "all"})
+		body, _ := json.Marshal(map[string]any{"practiceId": practiceID, "state": state})
 		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/query", token, body)
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("query shared review Tasks: %d %s", response.StatusCode, readBody(t, response))

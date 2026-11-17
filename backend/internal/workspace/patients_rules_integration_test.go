@@ -5,89 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chasef07/acuity_product/backend/internal/access"
-	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 )
-
-func (f *patientWorkFixture) hasOwner(reader access.Identity, phone string) bool {
-	f.t.Helper()
-	mine := slices.Contains(patientPhones(f.query(workspace.QueryPatientWorkCommand{Identity: reader})), phone)
-	unowned := slices.Contains(patientPhones(f.query(workspace.QueryPatientWorkCommand{
-		Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkUnowned,
-	})), phone)
-	legacy, err := f.reads.QueryTasks(f.ctx, workspace.QueryTasksCommand{
-		Identity: reader, PracticeID: f.practiceID, Responsibility: "mine", Ordering: work.TaskOrderingRecent,
-	})
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	listed := slices.ContainsFunc(legacy.Items, func(task work.Task) bool { return task.Phone == phone })
-	if mine != unowned || mine != listed {
-		f.t.Fatalf("patient %s: in My Tasks %t, under No owner %t, in the Task query %t; want one answer", phone, mine, unowned, listed)
-	}
-	return !mine
-}
-
-func TestPatientWorkOwnerNeedsAnUnrevokedMembershipCoveringTheLocation(t *testing.T) {
-	f := newPatientWorkFixture(t)
-	reader := f.activate("reader")
-	former := f.activate("former")
-	f.activate("elsewhere")
-	f.activate("local")
-	cases := []struct {
-		name, phone, office, owner, category string
-		owned                                bool
-	}{
-		{"never signed in", "+17275550401", "north", "pending", "optical", false},
-		{"signed in", "+17275550402", "north", "former", "medication", true},
-		{"membership without the Location", "+17275550403", "north", "elsewhere", "referrals", false},
-		{"membership with the Location", "+17275550404", "north", "local", "insurance", true},
-		{"same owner at a Location outside the membership", "+17275550405", "south", "local", "insurance", false},
-		{"no access at all", "+17275550406", "north", "ghost", "documentation", false},
-	}
-	for _, test := range cases {
-		f.own(test.office, test.owner, test.category)
-		f.open(patientTask{origin: work.TaskOriginAbitaAI, office: test.office, phone: test.phone, category: test.category})
-	}
-	check := func(stage string) {
-		t.Helper()
-		for _, test := range cases {
-			if got := f.hasOwner(reader, test.phone); got != test.owned {
-				t.Fatalf("%s: owner %q (%s) counts = %t, want %t", stage, test.owner, test.name, got, test.owned)
-			}
-		}
-	}
-	check("before any change")
-
-	f.activate("pending")
-	formerAuthorization, err := f.accessPort.ResolveActor(f.ctx, former, f.practiceID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	testaccess.SeedRevokedMembership(t, f.db.Owner, formerAuthorization, f.at)
-	cases[0].name, cases[0].owned = "signed in since", true
-	cases[1].name, cases[1].owned = "membership revoked", false
-	check("after the pending owner signs in and the other is revoked")
-}
-
-func TestPatientWorkTreatsARosteredPlatformOperatorAsNoOwner(t *testing.T) {
-	f := newPatientWorkFixture(t)
-	reader := f.activate("reader")
-	operator := access.Identity{Subject: "patient-work-operator", Email: "operator@patient-work.test", EmailVerified: true}
-	const phone = "+17275550451"
-	f.own("north", "operator", "pre_op")
-	f.open(patientTask{origin: work.TaskOriginAbitaAI, office: "north", phone: phone, category: "pre_op"})
-
-	if f.hasOwner(reader, phone) {
-		t.Fatal("a category listed only for a platform operator has an owner, want No owner for staff")
-	}
-	mine := f.query(workspace.QueryPatientWorkCommand{Identity: operator})
-	if row := patientRow(t, mine, phone); !row.HasUnowned || mine.Counts.Unowned != 1 {
-		t.Fatalf("operator's My Tasks = %+v %+v, want the Task listed as No owner", row, mine.Counts)
-	}
-}
 
 func TestPatientWorkPagesAcrossPriorityAndTiedActivity(t *testing.T) {
 	f := newPatientWorkFixture(t)
@@ -107,7 +27,7 @@ func TestPatientWorkPagesAcrossPriorityAndTiedActivity(t *testing.T) {
 		"+17275550507", "+17275550505", "+17275550504", "+17275550503",
 	}
 	for limit := 1; limit <= len(want); limit++ {
-		command := workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Limit: limit}
+		command := workspace.QueryPatientWorkCommand{Identity: reader, Limit: limit}
 		got := []string{}
 		for {
 			page := f.query(command)
@@ -151,7 +71,7 @@ func TestPatientWorkRowReportsTheVoicemailLengthAndTheNewestTextTime(t *testing.
 		t.Fatalf("record a newer text: %v", err)
 	}
 
-	page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone})
+	page := f.query(workspace.QueryPatientWorkCommand{Identity: reader})
 	if phones := patientPhones(page); !slices.Equal(phones, []string{texted, voicemail}) {
 		t.Fatalf("order = %v, want the patient whose text is newest first", phones)
 	}
@@ -172,38 +92,32 @@ func TestPatientWorkRowReportsTheVoicemailLengthAndTheNewestTextTime(t *testing.
 	}
 }
 
-func TestPatientWorkSearchMatchesTheDisplayedNameWithinScope(t *testing.T) {
+func TestPatientWorkSearchMatchesTheDisplayedName(t *testing.T) {
 	f := newPatientWorkFixture(t)
 	reader := f.activate("reader")
-	owner := f.activate("owner")
-	f.own("north", "owner", "insurance")
 	const (
-		textOnly   = "+17275550701"
-		mixed      = "+17275550702"
-		colleagues = "+17275550703"
+		textOnly = "+17275550701"
+		mixed    = "+17275550702"
+		other    = "+17275550703"
 	)
 	f.open(patientTask{origin: work.TaskOriginInboundMessageReview, office: "north", phone: textOnly, threadName: "Marisol Vega"})
 	f.open(patientTask{origin: work.TaskOriginAbitaAI, office: "north", phone: mixed, category: "insurance", title: "Crown estimate", callerName: "Tobias Lund"})
 	f.open(patientTask{origin: work.TaskOriginInboundMessageReview, office: "north", phone: mixed})
-	f.open(patientTask{origin: work.TaskOriginAbitaAI, office: "north", phone: colleagues, category: "insurance", title: "Crown estimate", callerName: "Petra Novak"})
+	f.open(patientTask{origin: work.TaskOriginAbitaAI, office: "north", phone: other, category: "insurance", title: "Crown estimate", callerName: "Petra Novak"})
 
 	for _, test := range []struct {
-		label    string
-		identity access.Identity
-		scope    workspace.PatientWorkScope
-		search   string
-		want     []string
+		label  string
+		search string
+		want   []string
 	}{
-		{"a name known only from the text thread", reader, workspace.PatientWorkMine, "marisol", []string{textOnly}},
-		{"the same name under Everyone", reader, workspace.PatientWorkEveryone, "Marisol Vega", []string{textOnly}},
-		{"a title only in a colleague's Task", reader, workspace.PatientWorkMine, "crown", nil},
-		{"the same title for its owner", owner, workspace.PatientWorkMine, "crown", []string{mixed, colleagues}},
-		{"the same title under Everyone", reader, workspace.PatientWorkEveryone, "crown", []string{mixed, colleagues}},
-		{"the name the row shows", reader, workspace.PatientWorkMine, "tobias", []string{mixed}},
-		{"a name on a patient with nothing in scope", reader, workspace.PatientWorkMine, "petra", nil},
-		{"the phone of a patient with nothing in scope", reader, workspace.PatientWorkMine, "555-0703", nil},
+		{"a name known only from the text thread", "marisol", []string{textOnly}},
+		{"the full name from the text thread", "Marisol Vega", []string{textOnly}},
+		{"a title on two patients", "crown", []string{mixed, other}},
+		{"the name the row shows", "tobias", []string{mixed}},
+		{"a caller name", "petra", []string{other}},
+		{"a phone", "555-0703", []string{other}},
 	} {
-		page := f.query(workspace.QueryPatientWorkCommand{Identity: test.identity, Scope: test.scope, Search: test.search})
+		page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Search: test.search})
 		assertPatients(t, test.label, page, test.want...)
 		if page.Counts.All != len(test.want) {
 			t.Fatalf("%s: All count = %d, want %d", test.label, page.Counts.All, len(test.want))

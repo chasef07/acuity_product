@@ -2146,23 +2146,10 @@ func TestCompleteTaskRecordsWhyItClosedAndReopenClearsIt(t *testing.T) {
 		}); !errors.Is(err, work.ErrInvalidInput) {
 			t.Fatalf("staff completion with reason %q = %v, want invalid input", reason, err)
 		}
-		if _, err := module.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-			Identity: identity, TaskID: task.ID, Reason: reason,
-			Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}},
-		}); !errors.Is(err, work.ErrInvalidInput) {
-			t.Fatalf("staff group completion with reason %q = %v, want invalid input", reason, err)
-		}
 	}
 	untouched, err := module.ReadTask(ctx, identity, task.ID)
 	if err != nil || untouched.State != work.TaskOpen || untouched.Version != task.Version {
 		t.Fatalf("refused completions changed the Task: %#v, %v", untouched, err)
-	}
-	group, err := module.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-		Identity: identity, TaskID: task.ID, Reason: work.CloseReasonUnreachable,
-		Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}},
-	})
-	if err != nil || group.CloseReason != work.CloseReasonUnreachable {
-		t.Fatalf("group completion = %#v, %v", group, err)
 	}
 }
 

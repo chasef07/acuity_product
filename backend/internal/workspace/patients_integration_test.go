@@ -59,9 +59,8 @@ func newPatientWorkFixture(t *testing.T) *patientWorkFixture {
 		}
 	}
 	if _, err := access.New(f.db.Owner, clock).Provision(f.ctx, access.Provisioning{
-		Environment:       "test",
-		RequestedBy:       "patient-work-test",
-		PlatformOperators: []string{"operator@patient-work.test"},
+		Environment: "test",
+		RequestedBy: "patient-work-test",
 		Practices: []access.PracticeProvision{{
 			Key:  "patient-work",
 			Name: "Synthetic Patient Work",
@@ -72,11 +71,6 @@ func newPatientWorkFixture(t *testing.T) *patientWorkFixture {
 			},
 			AccessGrants: []access.AccessGrantProvision{
 				grant("reader", access.LocationScopeSelected, "north", "south"),
-				grant("owner", access.LocationScopeAll),
-				grant("former", access.LocationScopeAll),
-				grant("pending", access.LocationScopeAll),
-				grant("local", access.LocationScopeSelected, "north"),
-				grant("elsewhere", access.LocationScopeSelected, "hidden"),
 			},
 		}},
 	}); err != nil {
@@ -106,22 +100,6 @@ func (f *patientWorkFixture) activate(key string) access.Identity {
 	}
 	testaccess.Activate(f.t, f.accessPort, identity)
 	return identity
-}
-
-func (f *patientWorkFixture) own(office, key, category string) {
-	f.t.Helper()
-	if _, err := f.db.Owner.Exec(f.ctx,
-		`INSERT INTO work_responsibility_locations VALUES($1,$2) ON CONFLICT DO NOTHING`,
-		f.practiceID, f.locations[office],
-	); err != nil {
-		f.t.Fatal(err)
-	}
-	if _, err := f.db.Owner.Exec(f.ctx,
-		`INSERT INTO work_responsibilities VALUES($1,$2,$3,$4,'primary')`,
-		f.practiceID, f.locations[office], key+"@patient-work.test", category,
-	); err != nil {
-		f.t.Fatal(err)
-	}
 }
 
 func (f *patientWorkFixture) open(task patientTask) string {
@@ -319,7 +297,7 @@ func TestPatientWorkListsEveryOpenTaskUnderExactlyOnePatient(t *testing.T) {
 	f.open(patientTask{origin: work.TaskOriginAbitaAI, office: "south", phone: shared, category: "referrals", callerName: "Rita Okafor"})
 	f.open(patientTask{origin: work.TaskOriginVoicemail, office: "north", phone: urgent, voicemail: 4000})
 
-	everyone := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone})
+	everyone := f.query(workspace.QueryPatientWorkCommand{Identity: reader})
 	phones := patientPhones(everyone)
 	if want := []string{urgent, shared, appointed, texted, missed, voicemail, everything}; !slices.Equal(phones, want) {
 		t.Fatalf("Everyone order = %v, want high priority first then newest first %v", phones, want)
@@ -334,8 +312,8 @@ func TestPatientWorkListsEveryOpenTaskUnderExactlyOnePatient(t *testing.T) {
 	for _, row := range everyone.Rows {
 		listed += row.OpenCount
 	}
-	if everyone.Totals.OpenTasks != readable || listed != readable || everyone.Totals.Patients != len(everyone.Rows) || everyone.Totals.PatientsOutsideScope != 0 {
-		t.Fatalf("totals = %+v with %d listed, want %d open Tasks for %d patients and none outside Everyone", everyone.Totals, listed, readable, len(everyone.Rows))
+	if everyone.Totals.OpenTasks != readable || listed != readable || everyone.Totals.Patients != len(everyone.Rows) {
+		t.Fatalf("totals = %+v with %d listed, want %d open Tasks for %d patients", everyone.Totals, listed, readable, len(everyone.Rows))
 	}
 	if row := patientRow(t, everyone, everything); row.OpenCount != len(everyTaskOrigin) || row.DisplayName != "Dolores Reyes" || row.HighPriority {
 		t.Fatalf("patient with every origin = %+v, want %d open, the one readable name, not high priority", row, len(everyTaskOrigin))
@@ -358,9 +336,8 @@ func TestPatientWorkListsEveryOpenTaskUnderExactlyOnePatient(t *testing.T) {
 		{workspace.PatientWorkCallBack, func(c workspace.PatientWorkCounts) int { return c.CallBack }, []string{everything, voicemail, missed, urgent}, work.TaskOriginMissedCall},
 		{workspace.PatientWorkTexts, func(c workspace.PatientWorkCounts) int { return c.Texts }, []string{everything, texted}, work.TaskOriginInboundMessageReview},
 		{workspace.PatientWorkAppointments, func(c workspace.PatientWorkCounts) int { return c.Appointments }, []string{everything, appointed}, work.TaskOriginAppointmentReview},
-		{workspace.PatientWorkUnowned, func(c workspace.PatientWorkCounts) int { return c.Unowned }, []string{everything, urgent, shared}, work.TaskOriginStaffMessageFollowUp},
 	} {
-		page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: test.filter})
+		page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Filter: test.filter})
 		assertPatients(t, string(test.filter), page, test.phones...)
 		if got := test.count(page.Counts); got != len(test.phones) {
 			t.Fatalf("%s count = %d, want %d patients", test.filter, got, len(test.phones))
@@ -373,14 +350,14 @@ func TestPatientWorkListsEveryOpenTaskUnderExactlyOnePatient(t *testing.T) {
 		}
 	}
 
-	tasks := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkFollowUp})
+	tasks := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Filter: workspace.PatientWorkFollowUp})
 	if phones := patientPhones(tasks); !slices.Equal(phones, []string{urgent, shared, everything}) {
 		t.Fatalf("Tasks order = %v, want high priority first then the newest follow-up", phones)
 	}
 	if row := patientRow(t, tasks, urgent); !row.HighPriority || row.Top.ID != urgentTask {
 		t.Fatalf("Tasks row for the high priority patient = %+v, want its high priority follow-up on top", row)
 	}
-	callBack := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkCallBack})
+	callBack := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Filter: workspace.PatientWorkCallBack})
 	if row := patientRow(t, callBack, voicemail); row.Top.VoicemailDurationSeconds != 38 || row.Top.Origin != work.TaskOriginVoicemail {
 		t.Fatalf("voicemail row = %+v, want a 38 second voicemail", row)
 	}
@@ -390,12 +367,12 @@ func TestPatientWorkListsEveryOpenTaskUnderExactlyOnePatient(t *testing.T) {
 	if row := patientRow(t, callBack, urgent); row.HighPriority || row.Top.VoicemailDurationSeconds != 4 {
 		t.Fatalf("call back row for the high priority patient = %+v, want only its voicemail to count", row)
 	}
-	texts := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkTexts})
+	texts := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Filter: workspace.PatientWorkTexts})
 	if row := patientRow(t, texts, texted); row.Top.Preview != "Running ten minutes late" {
 		t.Fatalf("text row preview = %q, want the newest inbound text", row.Top.Preview)
 	}
 
-	south := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, LocationID: f.locations["south"]})
+	south := f.query(workspace.QueryPatientWorkCommand{Identity: reader, LocationID: f.locations["south"]})
 	assertPatients(t, "south office", south, everything, missed, appointed, shared)
 	if row := patientRow(t, south, shared); row.OpenCount != 1 || row.DisplayName != "Rita Okafor" {
 		t.Fatalf("shared phone at one office = %+v, want only that office's Task and name", row)
@@ -412,118 +389,12 @@ func TestPatientWorkListsEveryOpenTaskUnderExactlyOnePatient(t *testing.T) {
 		t.Fatalf("stranger error = %v, want denied", err)
 	}
 	for _, command := range []workspace.QueryPatientWorkCommand{
-		{Scope: "team"}, {Filter: "calls"}, {Limit: 51}, {Cursor: "not-a-cursor"},
+		{Filter: "unowned"}, {Filter: "calls"}, {Limit: 51}, {Cursor: "not-a-cursor"},
 	} {
 		command.Identity, command.PracticeID = reader, f.practiceID
 		if _, err := f.reads.QueryPatientWork(f.ctx, command); !errors.Is(err, workspace.ErrInvalidInput) {
 			t.Fatalf("command %+v error = %v, want invalid input", command, err)
 		}
-	}
-}
-
-func TestPatientWorkMineShowsOwnedSharedAndUnownedWork(t *testing.T) {
-	f := newPatientWorkFixture(t)
-	reader := f.activate("reader")
-	owner := f.activate("owner")
-	former := f.activate("former")
-	f.activate("elsewhere")
-	f.activate("local")
-	formerAuthorization, err := f.accessPort.ResolveActor(f.ctx, former, f.practiceID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	testaccess.SeedRevokedMembership(t, f.db.Owner, formerAuthorization, f.at)
-	f.own("north", "owner", "insurance")
-	f.own("north", "former", "medication")
-	f.own("north", "local", "optical")
-	f.own("north", "elsewhere", "referrals")
-	f.own("north", "owner", "appointments")
-	const (
-		owned       = "+17275550201"
-		lapsed      = "+17275550202"
-		colleagues  = "+17275550203"
-		unlisted    = "+17275550204"
-		followUp    = "+17275550205"
-		voicemail   = "+17275550206"
-		texted      = "+17275550207"
-		appointed   = "+17275550208"
-		mixed       = "+17275550209"
-		uncovered   = "+17275550210"
-		otherOffice = "+17275550211"
-	)
-	ai := func(phone, office, category string) string {
-		return f.open(patientTask{origin: work.TaskOriginAbitaAI, office: office, phone: phone, category: category})
-	}
-	ai(owned, "north", "insurance")
-	ai(lapsed, "north", "medication")
-	ai(colleagues, "north", "optical")
-	ai(unlisted, "north", "documentation")
-	f.open(patientTask{origin: work.TaskOriginHumanCallFollowUp, office: "north", phone: followUp})
-	f.open(patientTask{origin: work.TaskOriginVoicemail, office: "north", phone: voicemail, voicemail: 9000})
-	f.open(patientTask{origin: work.TaskOriginInboundMessageReview, office: "north", phone: texted})
-	f.open(patientTask{origin: work.TaskOriginAppointmentReview, office: "north", phone: appointed})
-	ai(mixed, "north", "optical")
-	mixedText := f.open(patientTask{origin: work.TaskOriginInboundMessageReview, office: "north", phone: mixed})
-	ai(uncovered, "north", "referrals")
-	ai(otherOffice, "south", "insurance")
-
-	everyone := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone})
-	if len(everyone.Rows) != 11 || everyone.Totals.Patients != 11 || everyone.Totals.OpenTasks != 12 || everyone.Totals.PatientsOutsideScope != 0 {
-		t.Fatalf("Everyone = %v %+v, want all 11 patients and 12 open Tasks", patientPhones(everyone), everyone.Totals)
-	}
-	unowned := []string{lapsed, unlisted, followUp, uncovered, otherOffice}
-	assertPatients(t, "No owner under Everyone", f.query(workspace.QueryPatientWorkCommand{
-		Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkUnowned,
-	}), unowned...)
-	for _, row := range everyone.Rows {
-		if row.HasUnowned != slices.Contains(unowned, row.Phone) {
-			t.Fatalf("patient %s hasUnowned = %t", row.Phone, row.HasUnowned)
-		}
-	}
-
-	shared := []string{lapsed, unlisted, followUp, voicemail, texted, appointed, mixed, uncovered, otherOffice}
-	mine := f.query(workspace.QueryPatientWorkCommand{Identity: reader})
-	assertPatients(t, "My Tasks for a reader who owns nothing", mine, shared...)
-	if mine.Totals != (workspace.PatientWorkTotals{OpenTasks: 9, Patients: 9, PatientsOutsideScope: 2}) {
-		t.Fatalf("My Tasks totals = %+v, want the 9 open Tasks and 9 patients in scope with 2 patients outside", mine.Totals)
-	}
-	if mine.Counts != (workspace.PatientWorkCounts{All: 9, FollowUp: 5, CallBack: 1, Texts: 2, Appointments: 1, Unowned: 5}) {
-		t.Fatalf("My Tasks counts = %+v", mine.Counts)
-	}
-	assertPatients(t, "Tasks under My Tasks", f.query(workspace.QueryPatientWorkCommand{
-		Identity: reader, Filter: workspace.PatientWorkFollowUp,
-	}), lapsed, unlisted, followUp, uncovered, otherOffice)
-	everyoneTasks := f.query(workspace.QueryPatientWorkCommand{
-		Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkFollowUp,
-	})
-	assertPatients(t, "Tasks under Everyone", everyoneTasks, owned, lapsed, colleagues, unlisted, followUp, mixed, uncovered, otherOffice)
-	if everyoneTasks.Counts.FollowUp != 8 {
-		t.Fatalf("Tasks count under Everyone = %d, want 8 patients", everyoneTasks.Counts.FollowUp)
-	}
-	if row := patientRow(t, mine, mixed); row.Top.ID != mixedText || row.OpenCount != 2 {
-		t.Fatalf("patient with a text and a colleague's Task = %+v, want the text on top and both counted", row)
-	}
-
-	ownerMine := f.query(workspace.QueryPatientWorkCommand{Identity: owner})
-	assertPatients(t, "My Tasks for the insurance owner", ownerMine, append([]string{owned}, shared...)...)
-	if ownerMine.Totals != (workspace.PatientWorkTotals{OpenTasks: 10, Patients: 10, PatientsOutsideScope: 1}) ||
-		ownerMine.Counts.All != 10 || ownerMine.Counts.FollowUp != 6 || ownerMine.Counts.Unowned != 5 {
-		t.Fatalf("owner totals and counts = %+v %+v, want 10 patients in scope, one outside, 6 with a follow-up and the same No owner count", ownerMine.Totals, ownerMine.Counts)
-	}
-
-	legacy, err := f.reads.QueryTasks(f.ctx, workspace.QueryTasksCommand{
-		Identity: reader, PracticeID: f.practiceID, Responsibility: "mine", Kind: "follow_up", Ordering: work.TaskOrderingRecent,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyPhones := []string{}
-	for _, task := range legacy.Items {
-		legacyPhones = append(legacyPhones, task.Phone)
-	}
-	slices.Sort(legacyPhones)
-	if want := []string{lapsed, unlisted, followUp, uncovered, otherOffice}; !slices.Equal(legacyPhones, want) {
-		t.Fatalf("Task query mine = %v, want the same ownership rule %v", legacyPhones, want)
 	}
 }
 
@@ -546,7 +417,7 @@ func TestPatientWorkSearchesAndPagesWithoutGapsOrDuplicates(t *testing.T) {
 	f.open(patientTask{origin: work.TaskOriginInboundMessageReview, office: "south", phone: want[0]})
 	want = []string{want[5], want[2], want[0], want[6], want[4], want[3], want[1]}
 
-	command := workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Limit: 3}
+	command := workspace.QueryPatientWorkCommand{Identity: reader, Limit: 3}
 	got := []string{}
 	pages := 0
 	for {
@@ -565,20 +436,20 @@ func TestPatientWorkSearchesAndPagesWithoutGapsOrDuplicates(t *testing.T) {
 		t.Fatalf("paged patients = %v in %d pages, want %v in 3", got, pages, want)
 	}
 	if _, err := f.reads.QueryPatientWork(f.ctx, workspace.QueryPatientWorkCommand{
-		Identity: reader, PracticeID: f.practiceID, Scope: workspace.PatientWorkEveryone,
+		Identity: reader, PracticeID: f.practiceID,
 		Filter: workspace.PatientWorkTexts, Cursor: command.Cursor,
 	}); !errors.Is(err, workspace.ErrInvalidInput) {
 		t.Fatalf("cursor reused under another filter = %v, want invalid input", err)
 	}
 
 	for _, search := range []string{"dolores", "(727) 555-0304"} {
-		page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Search: search})
+		page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Search: search})
 		assertPatients(t, "search "+search, page, "+17275550304")
 		if page.Counts.All != 1 || page.Totals.Patients != 7 || page.Totals.OpenTasks != 8 {
 			t.Fatalf("search %q counts and totals = %+v %+v, want counts narrowed and totals whole", search, page.Counts, page.Totals)
 		}
 	}
-	if page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Search: "nobody by this name"}); len(page.Rows) != 0 || page.Counts.All != 0 {
+	if page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Search: "nobody by this name"}); len(page.Rows) != 0 || page.Counts.All != 0 {
 		t.Fatalf("search without a match = %v", patientPhones(page))
 	}
 }
@@ -608,7 +479,7 @@ func TestPatientWorkWaitingSinceIsTheOldestOpenRequestInView(t *testing.T) {
 	}
 	waiting := func(filter workspace.PatientWorkFilter) time.Time {
 		t.Helper()
-		page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: filter})
+		page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Filter: filter})
 		for _, row := range page.Rows {
 			if row.Phone == phone {
 				return row.WaitingSince

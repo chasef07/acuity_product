@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
+func TestAgent444CapturedTasksAndStaffTaskCommands(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
@@ -141,7 +141,7 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 	}
 	query := func() api.TaskPage {
 		t.Helper()
-		body, _ := json.Marshal(map[string]any{"practiceId": practiceID, "grouped": true, "responsibility": "mine"})
+		body, _ := json.Marshal(map[string]any{"practiceId": practiceID})
 		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/query", "staff-token", body)
 		defer response.Body.Close()
 		if response.StatusCode != 200 {
@@ -154,19 +154,19 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 		return page
 	}
 	page := query()
-	if page.Counts.Tasks != len(payloads) {
-		t.Fatalf("underlying Tasks: %d, want %d", page.Counts.Tasks, len(payloads))
+	if len(page.Items) != len(payloads) {
+		t.Fatalf("underlying Tasks: %d, want %d", len(page.Items), len(payloads))
 	}
-	var optical api.Task
+	var optical []api.Task
 	for _, task := range page.Items {
 		if task.Category != nil && *task.Category == "optical" {
-			optical = task
+			optical = append(optical, task)
 		}
 	}
-	if optical.GroupMembers == nil || len(*optical.GroupMembers) < 2 {
+	if len(optical) < 2 {
 		t.Fatal("shared-number Optical requests were not preserved")
 	}
-	target := (*optical.GroupMembers)[0]
+	target := optical[0]
 	move, _ := json.Marshal(map[string]any{"expectedVersion": target.Version, "category": "medication"})
 	response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/"+target.Id.String()+"/category", "staff-token", move)
 	if response.StatusCode != 200 {
@@ -180,8 +180,7 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 	if moved.Category == nil || *moved.Category != "medication" {
 		t.Fatalf("moved Task category: %v", moved.Category)
 	}
-	refreshed := query()
-	if refreshed.Counts.Tasks != len(payloads) {
+	if refreshed := query(); len(refreshed.Items) != len(payloads) {
 		t.Fatal("metadata changed open work count")
 	}
 	for _, payload := range payloads {
@@ -211,24 +210,8 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 	single := moved.Id.String() + "/complete"
 	complete(single, map[string]any{"expectedVersion": moved.Version, "reason": "EXPIRED"}, http.StatusBadRequest)
 	complete(single, map[string]any{"expectedVersion": moved.Version, "reason": "ABANDONED"}, http.StatusBadRequest)
-	var group api.Task
-	for _, task := range refreshed.Items {
-		if task.Category != nil && *task.Category == "optical" {
-			group = task
-		}
-	}
-	members := []map[string]any{{"id": group.Id, "expectedVersion": group.Version}}
-	if group.GroupMembers != nil {
-		members = members[:0]
-		for _, member := range *group.GroupMembers {
-			members = append(members, map[string]any{"id": member.Id, "expectedVersion": member.Version})
-		}
-	}
-	groupPath := group.Id.String() + "/complete-group"
-	complete(groupPath, map[string]any{"members": members, "reason": "EXPIRED"}, http.StatusBadRequest)
-	complete(groupPath, map[string]any{"members": members, "reason": "ABANDONED"}, http.StatusBadRequest)
-	if stillOpen := query(); stillOpen.Counts.Tasks != len(payloads) {
-		t.Fatalf("a completion with a reason staff may not give closed work: %d open, want %d", stillOpen.Counts.Tasks, len(payloads))
+	if stillOpen := query(); len(stillOpen.Items) != len(payloads) {
+		t.Fatalf("a completion with a reason staff may not give closed work: %d open, want %d", len(stillOpen.Items), len(payloads))
 	}
 	wantReason := func(what string, task api.Task, want api.TaskCloseReason) {
 		t.Helper()
@@ -248,9 +231,8 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 		t.Fatalf("reopened Task = %s with close reason %v", reopened.State, reopened.CloseReason)
 	}
 	wantReason("a completion as unreachable", complete(single, map[string]any{"expectedVersion": reopened.Version, "reason": "UNREACHABLE"}, http.StatusOK), api.TaskCloseReasonUNREACHABLE)
-	wantReason("a group completion that names no reason", complete(groupPath, map[string]any{"members": members}, http.StatusOK), api.TaskCloseReasonDONE)
-	if remaining := query(); remaining.Counts.Tasks != len(payloads)-1-len(members) {
-		t.Fatalf("open Tasks after both completions = %d, want %d", remaining.Counts.Tasks, len(payloads)-1-len(members))
+	if remaining := query(); len(remaining.Items) != len(payloads)-1 {
+		t.Fatalf("open Tasks after the completion = %d, want %d", len(remaining.Items), len(payloads)-1)
 	}
 
 	readRaw := func() (api.Task, string) {

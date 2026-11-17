@@ -58,7 +58,7 @@ test("appointment verification stays open until shared completion and can be reo
   await expect.poll(async () => {
     const response = await page.request.post(`${portalURL}/v1/tasks/query`, {
       headers: { authorization: `Bearer ${token}` },
-      data: { practiceId: (await (await page.request.get(`${portalURL}/v1/access`, { headers: { authorization: `Bearer ${token}` } })).json()).practices[0].id, state: "OPEN", responsibility: "all", limit: 50 },
+      data: { practiceId: (await (await page.request.get(`${portalURL}/v1/access`, { headers: { authorization: `Bearer ${token}` } })).json()).practices[0].id, state: "OPEN", limit: 50 },
     })
     const data = await response.json()
     task = data.items?.find((item: { sourceCallId?: string }) => item.sourceCallId === sourceCallId)

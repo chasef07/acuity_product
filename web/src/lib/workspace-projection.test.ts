@@ -46,7 +46,6 @@ function createWorkspaceProjection(
           ...(request.search ? { search: request.search } : {}),
           ...(request.cursor ? { cursor: request.cursor } : {}),
           state: "OPEN",
-          responsibility: "all",
           limit: request.limit,
         }, signal)
         return result.kind === "success"
@@ -454,8 +453,8 @@ test("temporary token failure keeps Task completion retryable without expiring t
 test("each page of patients brings the counts and totals the list shows", async () => {
   const realtime = deterministicRealtime()
   const requests: PatientWorkQueryRequest[] = []
-  const counts = { all: 6, followUp: 2, callBack: 2, texts: 1, appointments: 0, unowned: 3 }
-  const totals = { openTasks: 9, patients: 7, patientsOutsideScope: 1 }
+  const counts = { all: 6, followUp: 2, callBack: 2, texts: 1, appointments: 0 }
+  const totals = { openTasks: 9, patients: 7 }
   const projection = createWorkspaceProjection({
     authority: {
       ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: taskPage([]) }),
@@ -473,7 +472,7 @@ test("each page of patients brings the counts and totals the list shows", async 
   })
   await projection.start()
   await realtime.reconcile(0)
-  assert.deepEqual(requests.map((request) => [request.scope, request.filter, request.cursor]), [["everyone", "all", undefined]])
+  assert.deepEqual(requests.map((request) => [request.filter, request.cursor]), [["all", undefined]])
   assert.deepEqual(projection.getSnapshot().patients.counts, counts)
   assert.deepEqual(projection.getSnapshot().patients.totals, totals)
   await projection.dispatch({ type: "load-more", window: "patients" })
@@ -543,7 +542,7 @@ test("rail preferences restore through the projection and corrupted or older val
   projection.stop()
 })
 
-test("changing the filter reloads the list and the completed shelf, always for everyone", async () => {
+test("changing the filter reloads the list and the completed shelf", async () => {
   const realtime = deterministicRealtime()
   const patientRequests: PatientWorkQueryRequest[] = []
   const completedRequests: Parameters<WorkspaceAuthorityAdapter["tasks"]>[1][] = []
@@ -552,11 +551,11 @@ test("changing the filter reloads the list and the completed shelf, always for e
       ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(14), tasks: taskPage([]) }),
       patients: async (_token, request) => {
         patientRequests.push(request)
-        return success(patientPage([patientRow(task(`${request.scope}-${request.filter}`))]))
+        return success(patientPage([patientRow(task(`patient-${request.filter}`))]))
       },
       tasks: async (_token, request) => {
         completedRequests.push(request)
-        return success(taskPage([task(`${request.responsibility}-done`, { state: "COMPLETED" })]))
+        return success(taskPage([task(`${request.state}-done`, { state: "COMPLETED" })]))
       },
     },
     realtime: realtime.adapter,
@@ -572,11 +571,11 @@ test("changing the filter reloads the list and the completed shelf, always for e
     stale.apply()
     const state = projection.getSnapshot()
     assert.equal(state.rail.filter, filter)
-    assert.deepEqual(patientRequests.map((request) => [request.scope, request.filter]), [["everyone", filter]])
-    assert.deepEqual(completedRequests.map((request) => [request.state, request.responsibility]), [["COMPLETED", "all"]])
-    assert.deepEqual(openTasks(state).map((item) => item.id), [`everyone-${filter}`])
-    assert.deepEqual(state.completedTasks.items.map((item) => item.id), ["all-done"])
-    assert.equal(state.selection.task?.id, "everyone-all", "the patient opened on first load stays selected after it left the list")
+    assert.deepEqual(patientRequests.map((request) => request.filter), [filter])
+    assert.deepEqual(completedRequests.map((request) => request.state), ["COMPLETED"])
+    assert.deepEqual(openTasks(state).map((item) => item.id), [`patient-${filter}`])
+    assert.deepEqual(state.completedTasks.items.map((item) => item.id), ["COMPLETED-done"])
+    assert.equal(state.selection.task?.id, "patient-all", "the patient opened on first load stays selected after it left the list")
   }
   const requestCount = patientRequests.length + completedRequests.length
   await projection.dispatch({ type: "toggle-completed" })
@@ -993,7 +992,6 @@ function patientRow(top: Task, overrides: Partial<PatientWorkRow> = {}): Patient
     displayName: "",
     openCount: 1,
     highPriority: top.urgency === "high_priority",
-    hasUnowned: false,
     activityAt: top.updatedAt,
     waitingSince: top.updatedAt,
     top,
@@ -1004,8 +1002,8 @@ function patientRow(top: Task, overrides: Partial<PatientWorkRow> = {}): Patient
 function patientPage(rows: PatientWorkRow[], nextCursor = ""): PatientWorkPage {
   return {
     rows,
-    counts: { all: rows.length, followUp: 0, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
-    totals: { openTasks: rows.length, patients: rows.length, patientsOutsideScope: 0 },
+    counts: { all: rows.length, followUp: 0, callBack: 0, texts: 0, appointments: 0 },
+    totals: { openTasks: rows.length, patients: rows.length },
     nextCursor,
   }
 }
@@ -1041,18 +1039,6 @@ function taskPage(items: Task[]): TaskPage {
   return {
     items,
     nextCursor: "",
-    counts: {
-      tasks: items.length,
-      categories: {
-        billing: 0,
-        appointments: 0,
-        documentation: 0,
-        optical: 0,
-        medication: 0,
-        referrals: 0,
-        other: items.length,
-      },
-    },
   }
 }
 
@@ -1752,7 +1738,6 @@ function liveWorkspace({ openRows, hidden = () => false, environment }: {
     return success({
       items,
       nextCursor: start + limit < rows.length ? items.at(-1)!.id : "",
-      ...(request.includeCounts !== false ? { counts: taskPage(rows).counts } : {}),
     })
   }
   const authority: TestAuthority = {
@@ -2263,7 +2248,7 @@ test("ticks save independently and each failure stays on its own Task", async ()
 })
 
 for (const [label, stored, counts, restored] of [
-  ["No owner, which is no longer offered, falls back to All", "unowned", { unowned: 3 }, "all"],
+  ["No owner, which is no longer offered, falls back to All", "unowned", {}, "all"],
   ["Appt checks where none are offered or waiting falls back to All", "appointments", { appointments: 0 }, "all"],
   ["Appt checks with a check waiting is kept", "appointments", { appointments: 1 }, "appointments"],
   ["Call back with nothing to call back is kept", "callBack", { callBack: 0 }, "callBack"],

@@ -1718,7 +1718,6 @@ function patientQueryRequest(
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
-    scope: "everyone",
     filter,
     ...(search ? { search } : {}),
     limit: 50,
@@ -1734,8 +1733,6 @@ function completedTaskQueryRequest(
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
     state: "COMPLETED",
     ordering: "recent",
-    responsibility: "all",
-    includeCounts: false,
     ...(search ? { search } : {}),
     limit: 10,
   }
@@ -1810,8 +1807,8 @@ function emptyPatientWindow(): WorkspaceProjectionState["patients"] {
   return {
     items: [],
     nextCursor: "",
-    counts: { all: 0, followUp: 0, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
-    totals: { openTasks: 0, patients: 0, patientsOutsideScope: 0 },
+    counts: { all: 0, followUp: 0, callBack: 0, texts: 0, appointments: 0 },
+    totals: { openTasks: 0, patients: 0 },
     loading: false,
     error: "",
   }

@@ -50,7 +50,7 @@ const railTask: Task = {
   interactions: [],
 }
 
-const patients: Record<Exclude<PatientWorkFilter, "all">, PatientWorkRow> = {
+const patients: Record<Exclude<PatientWorkFilter, "all"> | "urgent", PatientWorkRow> = {
   followUp: projectedPatient(
     { ...railTask, id: "follow-up", phone: "+13055550177", origin: "HUMAN_CALL_FOLLOW_UP", title: "Mail the surgery packet" },
     { displayName: "Marta Ruiz" },
@@ -66,9 +66,9 @@ const patients: Record<Exclude<PatientWorkFilter, "all">, PatientWorkRow> = {
   appointments: projectedPatient(
     { ...railTask, id: "appointment", phone: "+13525550110", origin: "APPOINTMENT_REVIEW", title: "Verify Nov 14 appointment" },
   ),
-  unowned: projectedPatient(
-    { ...railTask, id: "unowned", phone: "+13055550126", title: "Referral to retina specialist", urgency: "high_priority" },
-    { displayName: "Hank Okafor", hasUnowned: true },
+  urgent: projectedPatient(
+    { ...railTask, id: "urgent", phone: "+13055550126", title: "Referral to retina specialist", urgency: "high_priority" },
+    { displayName: "Hank Okafor" },
   ),
 }
 
@@ -82,8 +82,8 @@ function projection(
     patients: {
       ...base.patients,
       items: rows,
-      counts: { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 1, unowned: 0 },
-      totals: { openTasks: 14, patients: 9, patientsOutsideScope: 2 },
+      counts: { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 1 },
+      totals: { openTasks: 14, patients: 9 },
     },
     ...overrides,
   }
@@ -171,12 +171,12 @@ test("the count pill shows only when a patient has more than one thing open", ()
 
 test("a high-priority patient carries the marker and the selected patient's row is active", () => {
   const selected = patients.texts.top
-  const base = projection([patients.unowned, patients.texts])
+  const base = projection([patients.urgent, patients.texts])
   const document = rail({
     ...base,
     selection: { ...base.selection, task: selected, engagement: { phone: selected.phone, locations: [] } },
   })
-  const urgent = document.querySelector(`[data-phone='${patients.unowned.phone}'] button`)!
+  const urgent = document.querySelector(`[data-phone='${patients.urgent.phone}'] button`)!
   assert.equal(document.getElementById(urgent.getAttribute("aria-describedby")!)?.textContent, "High priority")
   const calm = document.querySelector(`[data-phone='${patients.texts.phone}'] button`)!
   assert.equal(calm.getAttribute("aria-describedby"), null)
@@ -187,16 +187,15 @@ test("a high-priority patient carries the marker and the selected patient's row 
 test("the patient list has no My Tasks or Everyone switch", () => {
   assert.equal(rail(projection([patients.callBack])).querySelector("[aria-label='Whose work']"), null)
 })
-test("filter chips count patients in one quiet tone and never offer No owner", () => {
+test("filter chips count patients in one quiet tone", () => {
   const chips = (state: WorkspaceProjectionState) =>
     [...rail(state).querySelectorAll("[aria-label='Filter patients'] button")]
   const base = projection([patients.callBack])
-  const counted = { ...base, patients: { ...base.patients, counts: { ...base.patients.counts, unowned: 4 } } }
   assert.deepEqual(
-    chips(counted).map((chip) => chip.textContent),
+    chips(base).map((chip) => chip.textContent),
     ["All9", "Tasks4", "Call back3", "Texts2", "Appointments1"],
   )
-  assert.ok(chips(counted).every((chip) => !(chip.getAttribute("class") ?? "").split(/\s+/).some((name) => /^(text|bg)-destructive$/.test(name))))
+  assert.ok(chips(base).every((chip) => !(chip.getAttribute("class") ?? "").split(/\s+/).some((name) => /^(text|bg)-destructive$/.test(name))))
   const withoutAppointments = chips({
     ...base,
     patients: { ...base.patients, counts: { ...base.patients.counts, appointments: 0 } },
@@ -405,7 +404,7 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
 }
 
 test("the list follows live work at once and refuses a pointer click only where the patient under the pointer just changed", async (t) => {
-  const { followUp, callBack, texts, unowned } = patients
+  const { followUp, callBack, texts, urgent } = patients
   const base = projection([callBack, texts, followUp])
   const withRows = (rows: PatientWorkRow[]) => ({ ...base, patients: { ...base.patients, items: rows } })
   const page = await mountedRail(t, base)
@@ -416,25 +415,25 @@ test("the list follows live work at once and refuses a pointer click only where 
   await page.pointerClick(texts.phone)
   assert.deepEqual(page.opened, [texts.phone])
 
-  await page.show(withRows([callBack, texts, unowned, followUp]))
-  assert.deepEqual(page.phones(), [callBack.phone, texts.phone, unowned.phone, followUp.phone], "the new patient is listed at once")
+  await page.show(withRows([callBack, texts, urgent, followUp]))
+  assert.deepEqual(page.phones(), [callBack.phone, texts.phone, urgent.phone, followUp.phone], "the new patient is listed at once")
   assert.equal(page.notice(), "List just updated")
   await page.pointerClick(texts.phone)
   assert.deepEqual(page.opened, [texts.phone, texts.phone], "a row above the arrival did not move and opens")
   assert.deepEqual(page.refused(), [])
-  await page.pointerClick(unowned.phone)
+  await page.pointerClick(urgent.phone)
   assert.deepEqual(page.opened, [texts.phone, texts.phone], "the click that may have been aimed at the patient who was there opens nothing")
-  assert.deepEqual(page.refused(), [unowned.phone], "the clicked row says why nothing opened")
-  assert.equal(page.reason(unowned.phone), "List just updated, click again")
-  await page.keyboardActivate(unowned.phone)
-  assert.deepEqual(page.opened, [texts.phone, texts.phone, unowned.phone], "Enter on the focused row opens it without waiting")
+  assert.deepEqual(page.refused(), [urgent.phone], "the clicked row says why nothing opened")
+  assert.equal(page.reason(urgent.phone), "List just updated, click again")
+  await page.keyboardActivate(urgent.phone)
+  assert.deepEqual(page.opened, [texts.phone, texts.phone, urgent.phone], "Enter on the focused row opens it without waiting")
 
   await page.wait(rowClickGuardMilliseconds + 50)
   assert.equal(page.notice(), "")
   assert.deepEqual(page.refused(), [])
-  assert.equal(page.reason(unowned.phone), "Referral to retina specialist")
-  await page.pointerClick(unowned.phone)
-  assert.deepEqual(page.opened.slice(3), [unowned.phone])
+  assert.equal(page.reason(urgent.phone), "Referral to retina specialist")
+  await page.pointerClick(urgent.phone)
+  assert.deepEqual(page.opened.slice(3), [urgent.phone])
 
   await page.show(withRows([callBack, texts, followUp]))
   await page.pointerClick(texts.phone)
@@ -451,7 +450,7 @@ test("the list follows live work at once and refuses a pointer click only where 
 })
 
 test("a Recently completed row refuses a pointer click just after the patient list above it grew or shrank", async (t) => {
-  const { followUp, callBack, texts, unowned } = patients
+  const { followUp, callBack, texts, urgent } = patients
   const done: Task = {
     ...railTask,
     id: "done",
@@ -473,11 +472,11 @@ test("a Recently completed row refuses a pointer click just after the patient li
   const page = await mountedRail(t, withRows([callBack, texts]))
   await page.wait(rowClickGuardMilliseconds + 50)
 
-  await page.show(withRows([callBack, unowned]))
+  await page.show(withRows([callBack, urgent]))
   await page.pointerClickCompleted(done.id)
   assert.deepEqual(page.opened, [done.phone], "one patient took another's place: nothing below the list moved")
 
-  await page.show(withRows([followUp, callBack, unowned]))
+  await page.show(withRows([followUp, callBack, urgent]))
   await page.pointerClickCompleted(done.id)
   assert.deepEqual(page.opened, [done.phone], "a patient arrived: the click may have been aimed at what was there")
   assert.match(page.completedText(done.id) ?? "", /^\(305\) 555-0199List just updated, click again$/)
