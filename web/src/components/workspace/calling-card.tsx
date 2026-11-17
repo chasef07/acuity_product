@@ -8,17 +8,18 @@ import {
   MicIcon,
   MicOffIcon,
   PhoneCallIcon,
+  PhoneIcon,
+  PhoneIncomingIcon,
   PhoneOffIcon,
   RotateCcwIcon,
 } from "lucide-react"
 
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardFooter,
@@ -90,7 +91,7 @@ export function CallingCard({
       role="region"
       aria-label="Call controls"
       data-calling-card-shell={view.shell}
-      className="max-h-[calc(100dvh-8rem)] gap-4 overflow-y-auto rounded-2xl shadow-lg shadow-black/5 [--card-spacing:--spacing(5)]"
+      className="max-h-[calc(100dvh-8rem)] gap-3 overflow-y-auto rounded-2xl shadow-lg shadow-black/5 [--card-spacing:--spacing(4)]"
     >
       {view.kind === "offers" ? (
         <IncomingOfferTray
@@ -152,33 +153,45 @@ export function CallingCard({
 
 function ActiveCallHeader({ view }: { view: CallingCardCallView }) {
   const ended = view.phase === "ended"
+  const details = [...(ended ? [view.identity.primary] : []), ...view.identity.details]
   return (
-    <CardHeader className="gap-2">
-      <CardTitle className="min-w-0 text-xl font-semibold tracking-tight">
-        {ended ? (
-          <h2><span role="status" aria-label={view.status}>{view.status}</span></h2>
-        ) : (
-          <h2 className="truncate">{view.identity.primary}</h2>
+    <CardHeader className="flex items-center gap-3">
+      <span
+        aria-hidden="true"
+        className={cn(
+          "flex size-9 shrink-0 items-center justify-center rounded-full",
+          view.phase === "connected" ? "bg-success/10 text-success" : "bg-muted text-muted-foreground",
         )}
-      </CardTitle>
-      {(ended || view.identity.details.length > 0) && (
-        <CardDescription className="min-w-0 break-words text-sm">
-          {[...(ended ? [view.identity.primary] : []), ...view.identity.details].join(" · ")}
-        </CardDescription>
-      )}
+      >
+        {ended ? <PhoneOffIcon className="size-4" /> : <PhoneIcon className="size-4" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <CardTitle className="min-w-0 text-sm font-medium">
+          {ended ? (
+            <h2><span role="status" aria-label={view.status}>{view.status}</span></h2>
+          ) : (
+            <h2 className="truncate">{view.identity.primary}</h2>
+          )}
+        </CardTitle>
+        {details.length > 0 && (
+          <CardDescription className="min-w-0 truncate text-xs">
+            {details.join(" · ")}
+          </CardDescription>
+        )}
+      </div>
       {!ended && (
-        <div className="flex items-center gap-2 text-sm">
+        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">
           <span aria-hidden className={cn(
-            "size-2 rounded-full",
+            "size-1.5 rounded-full",
             view.phase === "connected" ? "bg-success" : "bg-muted-foreground motion-safe:animate-pulse",
           )} />
           <span role="status" aria-label={view.status}>{view.status}</span>
           {view.elapsed && (
             <span aria-label={`Call duration ${view.elapsed}`} className="tabular-nums text-muted-foreground">
-              · {view.elapsed}
+              {view.elapsed}
             </span>
           )}
-        </div>
+        </span>
       )}
     </CardHeader>
   )
@@ -194,71 +207,60 @@ function IncomingOfferTray({
   onDecline: (callLegID: string) => void
 }) {
   return (
-    <>
-      <CardHeader>
-        <CardTitle className="sr-only">Calling</CardTitle>
-        <CardAction>
-          <LifecycleStatus status={view.status} />
-        </CardAction>
-      </CardHeader>
-      <CardContent>
-        <ul
-          aria-label={view.trayLabel}
-          className="max-h-[min(24rem,calc(100vh-8rem))] divide-y overflow-y-auto"
-        >
-          {view.offers.map((offer) => (
-            <li
-              key={offer.callLegId}
-              data-call-leg-id={offer.callLegId}
-              className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 py-3 first:pt-0 last:pb-0"
+    <CardContent>
+      <span role="status" aria-label={view.status} className="sr-only">{view.status}</span>
+      <ul
+        aria-label={view.trayLabel}
+        className="max-h-[min(24rem,calc(100vh-8rem))] divide-y overflow-y-auto"
+      >
+        {view.offers.map((offer) => (
+          <li
+            key={offer.callLegId}
+            data-call-leg-id={offer.callLegId}
+            className="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
+          >
+            <span aria-hidden="true" className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-success/10 text-success">
+              <span className="absolute inset-0 rounded-full bg-success/20 motion-safe:animate-ping" />
+              <PhoneIncomingIcon className="relative size-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-sm font-medium">{offer.identity.primary}</h3>
+              {offer.identity.details.length > 0 && (
+                <p className="truncate text-xs text-muted-foreground">
+                  {offer.identity.details.join(" · ")}
+                </p>
+              )}
+            </div>
+            <span
+              aria-label={offer.countdownLabel}
+              className="shrink-0 text-xs tabular-nums text-muted-foreground"
             >
-              <div className="min-w-0">
-                <h3 className="truncate text-sm font-semibold">
-                  {offer.identity.primary}
-                </h3>
-                {offer.identity.details.map((detail) => (
-                  <p
-                    key={detail}
-                    className="truncate text-xs text-muted-foreground"
-                  >
-                    {detail}
-                  </p>
-                ))}
-              </div>
-              <div className="row-span-2 flex items-center gap-2">
-                <Badge
-                  aria-label={offer.countdownLabel}
-                  variant="outline"
-                  className="tabular-nums"
-                >
-                  {offer.countdown}
-                </Badge>
-                {offer.decline && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    aria-label={offer.decline.label}
-                    disabled={offer.decline.disabled}
-                    onClick={() => onDecline(offer.callLegId)}
-                  >
-                    Decline
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  aria-label={offer.answer.label}
-                  disabled={!offer.answer.eligible}
-                  onClick={() => onAnswer(offer.callLegId)}
-                >
-                  <PhoneCallIcon />
-                  Answer
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </>
+              {offer.countdown}
+            </span>
+            {offer.decline && (
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={offer.decline.label}
+                disabled={offer.decline.disabled}
+                onClick={() => onDecline(offer.callLegId)}
+              >
+                Decline
+              </Button>
+            )}
+            <Button
+              size="sm"
+              aria-label={offer.answer.label}
+              disabled={!offer.answer.eligible}
+              onClick={() => onAnswer(offer.callLegId)}
+            >
+              <PhoneCallIcon />
+              Answer
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </CardContent>
   )
 }
 
@@ -371,19 +373,6 @@ function TransferPanel({
         )}
       </div>
     </CardContent>
-  )
-}
-
-function LifecycleStatus({ status }: { status: string }) {
-  return (
-    <Badge
-      role="status"
-      aria-label={status}
-      variant="outline"
-      className="tabular-nums"
-    >
-      {status}
-    </Badge>
   )
 }
 
@@ -517,15 +506,16 @@ function ActiveCallControls({
   const [mute, end, keypad] = view.controls.slots
   if (view.phase === "ended") return null
   if (!view.controls.slots.some((control) => control.visible)) return null
+  const quiet = "size-9 rounded-full text-muted-foreground hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground aria-pressed:bg-foreground aria-pressed:text-background"
 
   return (
-    <CardFooter className="justify-center gap-3">
+    <CardFooter className="gap-1">
       {mute.visible && (
         <ControlSlot kind="mute" label={mute.label}>
           <Button
             size="icon"
-            variant="secondary"
-            className="size-11 rounded-full aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+            variant="ghost"
+            className={quiet}
             aria-label={mute.label}
             aria-pressed={mute.label === "Unmute"}
             disabled={mute.disabled}
@@ -539,8 +529,8 @@ function ActiveCallControls({
         <ControlSlot kind="keypad" label="Keypad">
           <Button
             size="icon"
-            variant="secondary"
-            className="size-11 rounded-full"
+            variant="ghost"
+            className={quiet}
             aria-label="Keypad"
             aria-expanded={keypadOpen}
             disabled={keypad.disabled}
@@ -554,8 +544,8 @@ function ActiveCallControls({
         <ControlSlot kind="transfer" label="Transfer">
           <Button
             size="icon"
-            variant="secondary"
-            className="size-11 rounded-full"
+            variant="ghost"
+            className={quiet}
             aria-label="Transfer"
             aria-expanded={transferOpen}
             disabled={!view.transfer.canStart || view.transfer.pending}
@@ -566,22 +556,23 @@ function ActiveCallControls({
         </ControlSlot>
       )}
       {end.visible && (
-        <ControlSlot kind="end" label={end.label}>
+        <div data-control-slot="end" className="ml-auto">
           <Button
-            size="icon"
             variant="destructive"
             aria-label={end.label}
-            className="size-11 rounded-full bg-destructive text-white hover:bg-destructive/85 hover:text-white"
+            title={end.label}
+            className="h-9 rounded-full bg-destructive px-4 text-white hover:bg-destructive/85 hover:text-white"
             disabled={end.disabled}
             onClick={onEnd}
           >
             {end.label === "Ending…" ? (
-              <LoaderCircleIcon className="size-5 motion-safe:animate-spin" />
+              <LoaderCircleIcon className="size-4 motion-safe:animate-spin" />
             ) : (
-              <PhoneOffIcon className="size-5" />
+              <PhoneOffIcon className="size-4" />
             )}
+            {end.label === "Ending…" ? "Ending…" : "End"}
           </Button>
-        </ControlSlot>
+        </div>
       )}
     </CardFooter>
   )
@@ -597,10 +588,12 @@ function ControlSlot({
   children: React.ReactNode
 }) {
   return (
-    <div data-control-slot={kind} className="flex flex-1 flex-col items-center gap-2">
-      {children}
-      <span className="whitespace-nowrap text-xs font-medium">{label}</span>
-    </div>
+    <Tooltip>
+      <TooltipTrigger render={<span data-control-slot={kind} className="inline-flex" />}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 

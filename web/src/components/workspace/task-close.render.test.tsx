@@ -44,11 +44,10 @@ test("the Task panel menu sends the chosen reason and is offered only for Tasks 
         activeCall={undefined}
         callControlsShowing={false}
         view="task"
-        taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
         onOpenTask={() => {}}
-        patientTasks={() => null}
+        patientTasks={(_, placement) => placement.beside === "task" ? placement.expanded?.content : null}
       />
     </DataProvider>,
   )

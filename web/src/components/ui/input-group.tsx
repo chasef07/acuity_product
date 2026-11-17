@@ -21,6 +21,7 @@ const inputGroupVariants = cva(
         default:
           "rounded-md has-data-[align=block-end]:rounded-md has-data-[align=block-start]:rounded-md has-[textarea]:rounded-md",
         pill: "rounded-full",
+        card: "rounded-2xl",
       },
     },
     defaultVariants: {

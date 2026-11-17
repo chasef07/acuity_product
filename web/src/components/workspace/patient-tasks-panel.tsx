@@ -21,7 +21,6 @@ import { useEngagementSummary } from "@/lib/clients/engagement"
 import { signInRequired } from "@/lib/clients/portal-request"
 import { reopenTask } from "@/lib/clients/tasks"
 import type { PortalQuery } from "@/lib/data/queries"
-import { otherOpenTasks } from "@/lib/patient-tasks"
 import { cn } from "@/lib/utils"
 import {
   formatRelativeTime,
@@ -37,9 +36,11 @@ const collapsedRowLimit = 8
 
 type TaskFailure = { taskID: string; message: string }
 
+export type ExpandedTask = { task: Task; content: ReactNode }
+
 type PatientTasksPanelProps = {
   currentTaskID?: string
-  otherThan?: readonly Pick<Task, "id" | "state">[]
+  expanded?: ExpandedTask
   callTaskID?: string
   completion: { pending: readonly string[]; errors: Readonly<Record<string, string>> }
   className?: string
@@ -98,7 +99,7 @@ export function PatientTasksPanel({
 export function PatientTasksPanelView({
   summary,
   currentTaskID,
-  otherThan,
+  expanded,
   callTaskID,
   completion,
   reopening,
@@ -120,20 +121,17 @@ export function PatientTasksPanelView({
   const closing = useRef<{ taskID: string; index: number }>(undefined)
   const [showAll, setShowAll] = useState(false)
   const loaded = summary.status === "ready" ? summary.data : undefined
-  const title = otherThan ? "Other open Tasks" : "Open Tasks"
   const listed = useMemo(() => {
     if (!loaded) return undefined
-    const { tasks, count } = otherThan
-      ? otherOpenTasks(loaded, otherThan)
-      : { tasks: loaded.openTasks, count: loaded.openTaskCount }
+    const tasks = loaded.openTasks
     return {
       open: [
         ...tasks.filter((task) => task.id === callTaskID),
         ...tasks.filter((task) => task.id !== callTaskID),
       ],
-      count,
+      count: loaded.openTaskCount,
     }
-  }, [loaded, otherThan, callTaskID])
+  }, [loaded, callTaskID])
   const open = listed?.open
 
   useEffect(() => {
@@ -152,7 +150,8 @@ export function PatientTasksPanelView({
 
   if (!loaded || !listed || !open) {
     return (
-      <PanelFrame title={title} className={className} busy={summary.status === "loading"}>
+      <PanelFrame className={className} busy={summary.status === "loading"}>
+        {expanded && <ul><ExpandedRow expanded={expanded} /></ul>}
         {summary.status === "loading" ? (
           <div data-testid="patient-tasks-loading" className="flex items-start gap-2 py-2">
             <span className="sr-only">Loading open Tasks</span>
@@ -176,10 +175,12 @@ export function PatientTasksPanelView({
     )
   }
 
-  const { closedToday } = loaded
-  if (otherThan && open.length === 0 && closedToday.length === 0) return null
+  const closedToday = loaded.closedToday.filter((task) => task.id !== expanded?.task.id)
+  const expandedListed = expanded && open.some((task) => task.id === expanded.task.id)
   const shared = loaded.names.length > 1
-  const shown = showAll ? open : open.slice(0, collapsedRowLimit)
+  const shown = showAll
+    ? open
+    : open.filter((task, index) => index < collapsedRowLimit || task.id === expanded?.task.id)
   const { count } = listed
   const capped = count > open.length
 
@@ -189,11 +190,9 @@ export function PatientTasksPanelView({
   }
 
   return (
+    <div className={cn("flex min-h-0 min-w-0 flex-col gap-3", className)}>
     <PanelFrame
       ref={section}
-      title={otherThan && open.length === 0 ? undefined : title}
-      label={otherThan && open.length === 0 ? "Closed today" : title}
-      className={className}
       count={count}
     >
       {summary.status === "ready" && summary.refreshFailure && (
@@ -204,11 +203,14 @@ export function PatientTasksPanelView({
           </button>
         </p>
       )}
+      {expanded && !expandedListed && <ul><ExpandedRow expanded={expanded} /></ul>}
       {open.length === 0 ? (
-        !otherThan && <p className="mt-1 text-xs text-muted-foreground">Nothing open for this patient.</p>
+        !expanded && <p className="mt-1 text-xs text-muted-foreground">Nothing open for this patient.</p>
       ) : (
-        <ul className="divide-y">
-          {shown.map((task) => (
+        <ul className="-mx-2 flex flex-col gap-0.5">
+          {shown.map((task) => task.id === expanded?.task.id ? (
+            <ExpandedRow key={task.id} expanded={expanded} />
+          ) : (
             <OpenTaskRow
               key={task.id}
               task={task}
@@ -239,24 +241,29 @@ export function PatientTasksPanelView({
           Showing {open.length} of {count}
         </p>
       )}
+    </PanelFrame>
       {closedToday.length > 0 && (
-        <>
-          <h2 className={cn("text-sm font-medium", (open.length > 0 || !otherThan) && "mt-4")}>
-            Closed today
+        <section aria-label="Done today" className="shrink-0 rounded-2xl border bg-background px-5 pt-3 pb-2 shadow-sm">
+          <h2 className="flex h-8 items-center text-xs font-medium text-muted-foreground">
+            Done today
           </h2>
-          <ul className="mt-1 divide-y">
+          <ul className="-mx-2 flex flex-col gap-0.5">
             {closedToday.map((task) => (
-              <li key={task.id} data-patient-task-id={task.id} className="py-2">
-                <div className="flex items-center gap-2">
+              <li key={task.id} data-patient-task-id={task.id} className="group/done rounded-md px-2 py-1.5 hover:bg-muted/60">
+                <div className="flex items-start gap-2">
+                  <span aria-hidden="true" className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted-foreground/80 text-background">
+                    <CheckIcon className="size-3" />
+                  </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-muted-foreground">{task.title}</p>
+                    <p className="truncate text-sm text-muted-foreground line-through decoration-muted-foreground/60">{task.title}</p>
                     <p className="truncate text-xs text-muted-foreground">
                       {taskCloseSummary(task) ?? "Completed"}
                     </p>
                   </div>
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="ghost"
+                    className="text-muted-foreground [@media(hover:hover)]:opacity-0 group-hover/done:opacity-100 focus-visible:opacity-100"
                     aria-label={`Reopen Task: ${task.title}`}
                     disabled={Boolean(reopening)}
                     onClick={() => onReopen(task)}
@@ -273,24 +280,32 @@ export function PatientTasksPanelView({
               </li>
             ))}
           </ul>
-        </>
+        </section>
       )}
-    </PanelFrame>
+    </div>
+  )
+}
+
+function ExpandedRow({ expanded }: { expanded: ExpandedTask }) {
+  return (
+    <li
+      data-patient-task-id={expanded.task.id}
+      data-expanded="true"
+      className="py-1"
+    >
+      {expanded.content}
+    </li>
   )
 }
 
 function PanelFrame({
   ref,
-  title,
-  label = title,
   className,
   busy,
   count,
   children,
 }: {
   ref?: Ref<HTMLElement>
-  title?: string
-  label?: string
   className?: string
   busy?: boolean
   count?: number
@@ -300,18 +315,16 @@ function PanelFrame({
     <section
       ref={ref}
       tabIndex={-1}
-      aria-label={label}
+      aria-label="Open Tasks"
       aria-busy={busy || undefined}
-      className={cn("flex min-h-0 min-w-0 flex-col pt-3 pb-2 outline-none", className)}
+      className={cn("flex min-h-0 min-w-0 flex-col rounded-2xl border bg-background pt-3 pb-2 shadow-sm outline-none", className)}
     >
-      {title && (
-        <header className="flex h-8 shrink-0 items-center gap-2 pr-12 pl-5">
-          <h2 className="truncate text-sm font-medium">{title}</h2>
-          {count !== undefined && (
-            <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
-          )}
-        </header>
-      )}
+      <header className="flex h-8 shrink-0 items-center gap-2 pr-11 pl-5">
+        <h2 className="truncate text-xs font-medium text-muted-foreground">Open Tasks</h2>
+        {count !== undefined && (
+          <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
+        )}
+      </header>
       <div data-testid="patient-tasks-body" className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto px-5">
         {children}
       </div>
@@ -355,7 +368,7 @@ function OpenTaskRow({
       data-testid="patient-task-row"
       data-patient-task-id={task.id}
       tabIndex={-1}
-      className="rounded-sm py-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+      className="rounded-md px-2 py-1.5 outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/30"
     >
       <div className="flex min-w-0 items-start gap-2">
         {closable ? (

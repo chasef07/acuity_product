@@ -51,14 +51,13 @@ function TaskGroupMenu({ task, onUpdated }: {
   }
 
   return (
-    <div role="group" className="border-t pt-2 text-xs" aria-label="Task group">
-      <div className="flex items-center justify-between gap-2">
-        <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{taskGroupLabel(task.category)}</p>
-        {task.state === "OPEN" && (
+    <div role="group" className="min-w-0 text-xs" aria-label="Task group">
+      <div className="flex min-w-0 items-center">
+        {task.state === "OPEN" ? (
           <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="sm" variant="ghost" className="-mr-2 text-xs" disabled={pending} aria-busy={pending || undefined} />}>
+            <DropdownMenuTrigger render={<Button size="xs" variant="ghost" aria-label={`Move task: ${taskGroupLabel(task.category)}`} className="-ml-1.5 h-6 min-w-0 px-1.5 text-xs font-normal text-muted-foreground" disabled={pending} aria-busy={pending || undefined} />}>
               {pending ? <Spinner /> : null}
-              Move task <ChevronDown aria-hidden="true" />
+              <span className="truncate">{taskGroupLabel(task.category)}</span> <ChevronDown aria-hidden="true" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-60">
               <DropdownMenuRadioGroup value={task.category ?? ""} onValueChange={(value) => void move(value as StaffTaskCategory)}>
@@ -71,6 +70,8 @@ function TaskGroupMenu({ task, onUpdated }: {
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
+        ) : (
+          <p className="min-w-0 leading-5">{taskGroupLabel(task.category)}</p>
         )}
       </div>
       {error && <p role="alert" className="mt-2 text-destructive">{error}</p>}

@@ -8,7 +8,6 @@ import type {
   PatientWorkPage,
   PatientWorkQueryRequest,
   PatientWorkRow,
-  PatientWorkScope,
   PatientWorkTotals,
   StaffTaskCloseReason,
   Task,
@@ -30,7 +29,7 @@ import {
   workspaceLocationSearch,
   type WorkspacePageView,
 } from "./workspace-location.ts"
-import { patientWorkFilterLabels, patientWorkScopeLabels } from "./vocabulary.ts"
+import { patientWorkFilterLabels } from "./vocabulary.ts"
 import { resolveWorkspaceSearch } from "./workspace-search.ts"
 import {
   createWorkspaceRequestBudget,
@@ -58,7 +57,6 @@ export function isWorkView(view: WorkspaceView) {
 }
 
 type WorkspaceRailState = {
-  scope: PatientWorkScope
   filter: PatientWorkFilter
   completedExpanded: boolean
   scrollTop: number
@@ -241,7 +239,7 @@ export type WorkspaceProjectionIntent =
     }
   | { type: "set-search"; value: string }
   | { type: "submit-search" }
-  | { type: "complete-task"; task: Task; reason: StaffTaskCloseReason; advance?: boolean }
+  | { type: "complete-task"; task: Task; reason: StaffTaskCloseReason }
   | { type: "select-task"; task: Task; rememberForCall?: boolean }
   | { type: "select-analytics" }
   | { type: "select-operator-analytics" }
@@ -253,7 +251,7 @@ export type WorkspaceProjectionIntent =
   | { type: "open-patient-tasks" }
   | { type: "close-context" }
   | { type: "context-transition-ended" }
-  | { type: "task-committed"; task: Task; advance?: boolean }
+  | { type: "task-committed"; task: Task }
   | { type: "task-created"; task: Task }
   | { type: "visibility-changed" }
   | { type: "retry" }
@@ -262,7 +260,7 @@ export type WorkspaceProjectionIntent =
   | { type: "return-to-call" }
   | { type: "call-disposition"; result: CallingDispositionResult }
   | { type: "toggle-completed" }
-  | { type: "set-rail-view"; scope?: PatientWorkScope; filter?: PatientWorkFilter }
+  | { type: "set-rail-view"; filter: PatientWorkFilter }
   | { type: "remember-rail-scroll"; scrollTop: number }
   | { type: "navigation-changed" }
 
@@ -439,7 +437,7 @@ export function createWorkspaceProjection({
       await Promise.all([
         authority.workspace(token, scope, signal),
         loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, current.rail), patientDepth, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), windowDepth("completedTasks", current.completedTasks.items.length), signal),
+        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied), windowDepth("completedTasks", current.completedTasks.items.length), signal),
         selectedTaskID
           ? authority.task(token, selectedTaskID, signal)
           : Promise.resolve(undefined),
@@ -572,8 +570,8 @@ export function createWorkspaceProjection({
               taskError: "",
               engagement: taskEngagement(firstTask),
               view: "engagement",
-              contextView: "task",
-              contextPanelOpen: false,
+              contextView: "patient-tasks",
+              contextPanelOpen: true,
             }
           }
           const aiSelectionStillMatches =
@@ -834,7 +832,7 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "complete-task") {
-      await completeTaskIntent(intent.task, intent.reason, intent.advance === true)
+      await completeTaskIntent(intent.task, intent.reason)
       return
     }
     if (intent.type === "select-task") {
@@ -915,16 +913,9 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "task-committed") {
-      const selectedID = state.selection.task?.id
-      const generation = scopeGeneration
-      const ownsSelection = selectedID === intent.task.id
-      const before = state.patients.items
       queryGenerations.patients += 1
       projectTaskIntent(intent.task, false)
       await realtimeController.refresh()
-      if (intent.advance && intent.task.state === "COMPLETED" && ownsSelection && generation === scopeGeneration && state.selection.task?.id === selectedID && !state.patients.error) {
-        advanceAfterClose(before, intent.task.phone, [intent.task.id])
-      }
       return
     }
     if (intent.type === "task-created") {
@@ -973,11 +964,7 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "set-rail-view") {
-      updateRail((rail) => ({
-        ...rail,
-        scope: intent.scope ?? rail.scope,
-        filter: intent.filter ?? rail.filter,
-      }))
+      updateRail((rail) => ({ ...rail, filter: intent.filter }))
       await refreshTaskWindows(state.search.applied)
       return
     }
@@ -1121,7 +1108,7 @@ export function createWorkspaceProjection({
     const result = await authenticatedRequest((token, signal) =>
       authority.tasks(
         token,
-        { ...completedTaskQueryRequest(state.scope, state.search.applied, state.rail), cursor: currentWindow.nextCursor },
+        { ...completedTaskQueryRequest(state.scope, state.search.applied), cursor: currentWindow.nextCursor },
         signal,
       ),
     )
@@ -1180,7 +1167,8 @@ export function createWorkspaceProjection({
             current.scope.locationScopeID,
           ),
           view: "engagement",
-          contextPanelOpen: false,
+          contextView: "patient-tasks",
+          contextPanelOpen: true,
         },
       }))
       await refreshTaskWindows("")
@@ -1193,10 +1181,9 @@ export function createWorkspaceProjection({
     await refreshTaskWindows(resolved.value)
   }
 
-  async function completeTaskIntent(task: Task, reason: StaffTaskCloseReason, advance: boolean) {
+  async function completeTaskIntent(task: Task, reason: StaffTaskCloseReason) {
     if (state.completion.pending.includes(task.id) || task.state !== "OPEN") return
     const generation = scopeGeneration
-    const before = state.patients.items
     patch((current) => ({
       ...current,
       completion: {
@@ -1231,9 +1218,6 @@ export function createWorkspaceProjection({
         pending: current.completion.pending.filter((id) => id !== task.id),
       },
     }))
-    if (advance && state.selection.task?.id === task.id && !state.patients.error) {
-      advanceAfterClose(before, task.phone, [task.id])
-    }
   }
 
   function openTasks() {
@@ -1504,7 +1488,7 @@ export function createWorkspaceProjection({
     const result = await authenticatedRequest(async (token, signal) => {
       const [patients, completedTasks] = await Promise.all([
         loadPatientWindow(token, patientQueryRequest(scope, search, rail), 0, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail), 0, signal),
+        loadTaskWindow(token, completedTaskQueryRequest(scope, search), 0, signal),
       ])
       if (
         patients.kind === "unauthenticated" || patients.kind === "unauthorized"
@@ -1656,7 +1640,6 @@ const railPreferencesVersion = 2
 
 function emptyRailState(): WorkspaceRailState {
   return {
-    scope: "mine",
     filter: "all",
     completedExpanded: false,
     scrollTop: 0,
@@ -1678,14 +1661,12 @@ function restoreRailPreferences(
     ) as Partial<WorkspaceRailState> & { version?: unknown }
     if (
       value.version !== railPreferencesVersion ||
-      !Object.hasOwn(patientWorkScopeLabels, String(value.scope)) ||
       !Object.hasOwn(patientWorkFilterLabels, String(value.filter)) ||
       !Number.isFinite(value.scrollTop)
     ) {
       return emptyRailState()
     }
     return {
-      scope: value.scope as PatientWorkScope,
       filter: value.filter as PatientWorkFilter,
       completedExpanded: value.completedExpanded === true,
       scrollTop: Math.max(0, value.scrollTop ?? 0),
@@ -1744,7 +1725,7 @@ function patientQueryRequest(
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
-    scope: rail.scope,
+    scope: "everyone",
     filter: rail.filter,
     ...(search ? { search } : {}),
     limit: 50,
@@ -1754,14 +1735,13 @@ function patientQueryRequest(
 function completedTaskQueryRequest(
   scope: WorkspaceScope,
   search: string,
-  rail: WorkspaceRailState,
 ): TaskQueryRequest {
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
     state: "COMPLETED",
     ordering: "recent",
-    responsibility: rail.scope === "mine" ? "mine" : "all",
+    responsibility: "all",
     includeCounts: false,
     ...(search ? { search } : {}),
     limit: 10,

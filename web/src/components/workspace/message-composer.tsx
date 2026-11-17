@@ -221,8 +221,8 @@ export function MessageComposer({
       <div className="mx-auto max-w-2xl">
         <InputGroup
           focusStyle="quiet"
-          shape="pill"
-          className={cn("h-auto min-h-16 flex-col justify-center bg-card px-1.5 shadow-sm", file && "rounded-2xl")}
+          shape="card"
+          className="h-auto flex-col items-stretch bg-card shadow-sm"
         >
           {file && (
             <div className="w-full px-3 pt-3">
@@ -237,15 +237,14 @@ export function MessageComposer({
               />
             </div>
           )}
-          <div className="flex w-full min-w-0 items-center">
-            <InputGroupTextarea
+          <InputGroupTextarea
               ref={textarea}
               aria-label="Message"
               aria-invalid={Boolean(error)}
               rows={1}
               maxLength={maximumMessageLength}
               placeholder="Message"
-              className="max-h-40 min-h-12 py-3 text-sm leading-5"
+              className="max-h-40 min-h-11 px-3.5 pt-3 pb-1 text-sm leading-5"
               value={body}
               disabled={disabled || pending}
               onChange={(event) => setBody(event.target.value)}
@@ -262,10 +261,11 @@ export function MessageComposer({
                 }
               }}
             />
-            <InputGroupAddon align="inline-end">
+            <InputGroupAddon align="block-end" className="justify-between px-2 pt-0 pb-2">
               <InputGroupButton
                 type="button"
                 size="icon-sm"
+                className="text-muted-foreground"
                 aria-label="Attach one file"
                 disabled={disabled || pending}
                 onClick={() => fileInput.current?.click()}
@@ -278,7 +278,7 @@ export function MessageComposer({
                 size="icon-sm"
                 variant="default"
                 aria-label="Send message"
-                className="size-9 rounded-full"
+                className="size-8 rounded-full"
                 disabled={
                   disabled ||
                   pending ||
@@ -289,7 +289,6 @@ export function MessageComposer({
                 {pending ? <Spinner /> : <ArrowUpIcon />}
               </InputGroupButton>
             </InputGroupAddon>
-          </div>
         </InputGroup>
         <input
           ref={fileInput}

@@ -142,7 +142,7 @@ function CallLineEntry({
       render={
         <Item
           data-selected={selected || undefined}
-          className="relative mx-auto max-w-xl flex-col items-stretch gap-0 p-0 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent data-[selected=true]:before:bg-foreground"
+          className="mx-auto max-w-xl flex-col items-stretch gap-0 rounded-2xl border border-border/60 bg-muted/20 p-0 transition-colors data-[selected=true]:border-border data-[selected=true]:bg-muted/60"
         />
       }
     >
@@ -158,11 +158,11 @@ function CallLineEntry({
               ...otherLocations.map((location) => location.name),
               line.outcome.label,
             ].filter(Boolean).join(", ")}
-            className="flex w-full items-start gap-2.5 rounded-md px-3 py-2.5 text-left outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="flex w-full items-start gap-2.5 rounded-2xl px-3 py-2 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
           />
         }
       >
-        <DirectionIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        <DirectionIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 stroke-2 text-muted-foreground" />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span data-slot="call-line-summary" className="line-clamp-2 text-muted-foreground wrap-anywhere">
             <span className="font-medium text-foreground">{line.lead}</span>
@@ -300,7 +300,7 @@ function ActivityItem({
   return (
     <Item
       data-selected={selected || undefined}
-      className="relative mx-auto max-w-xl cursor-pointer text-left before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent hover:bg-muted data-[selected=true]:bg-transparent data-[selected=true]:before:bg-foreground data-[selected=true]:hover:bg-transparent"
+      className="mx-auto max-w-xl cursor-pointer rounded-2xl border border-border/60 bg-muted/20 text-left transition-colors hover:bg-muted/40 data-[selected=true]:border-border data-[selected=true]:bg-muted/60"
       render={
         <button
           type="button"

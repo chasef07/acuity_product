@@ -34,11 +34,10 @@ function panel(props: Partial<Parameters<typeof TaskCallContext>[0]>) {
         activeCall={undefined}
         callControlsShowing={false}
         view="task"
-        taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
         onOpenTask={() => {}}
-        patientTasks={() => null}
+        patientTasks={(_, placement) => placement.beside === "task" ? placement.expanded?.content : null}
         {...props}
       />
     </DataProvider>,
@@ -53,8 +52,8 @@ test("the Task panel heading fits the narrow column and leaves the number to the
   const markup = panel({})
   const [, classes, text] = heading(markup) ?? []
   assert.equal(text, "Review booked appointment")
-  assert.match(classes ?? "", /\btext-base\b/)
-  assert.doesNotMatch(classes ?? "", /\btext-lg\b/)
+  assert.match(classes ?? "", /\btext-sm\b/, "list-sized, since it opens inside the patient's Task list")
+  assert.doesNotMatch(classes ?? "", /\btext-(base|lg)\b/)
   assert.doesNotMatch(markup, /\(555\) 123-4567/)
   assert.match(markup, /Alex Example/)
 })
@@ -101,7 +100,7 @@ test("a completed Task names why it closed and who closed it", () => {
 
 test("an open Task completes as done from the button and offers the other reasons beside it", () => {
   const markup = panel({ task: { ...task, origin: "ABITA_AI" } })
-  assert.match(markup, /Complete &amp; next/)
+  assert.match(markup, /Complete/)
   const menu = /<button[^>]*aria-label="Close as"[^>]*>\s*<svg[^>]*>/.exec(markup)?.[0] ?? ""
   assert.match(menu, /aria-haspopup="menu"/)
   assert.match(menu, /lucide-ellipsis/)

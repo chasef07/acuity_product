@@ -3313,6 +3313,7 @@ func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPag
 			HighPriority: row.HighPriority,
 			HasUnowned:   row.HasUnowned,
 			ActivityAt:   row.ActivityAt,
+			WaitingSince: row.WaitingSince,
 			Top:          top,
 		})
 	}

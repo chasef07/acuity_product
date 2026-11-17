@@ -803,6 +803,10 @@ export type PatientWorkRow = {
      * When the newest Task matching the scope and filter last changed for the patient.
      */
     activityAt: string;
+    /**
+     * When the oldest open Task matching the scope and filter was created, which is how long the patient has been waiting.
+     */
+    waitingSince: string;
     top: Task;
 };
 

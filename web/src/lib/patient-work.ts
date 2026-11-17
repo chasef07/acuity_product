@@ -2,7 +2,6 @@ import type {
   PatientWorkCounts,
   PatientWorkFilter,
   PatientWorkRow,
-  PatientWorkScope,
   PatientWorkTotals,
   Task,
 } from "./api/generated/types.gen.ts"
@@ -14,7 +13,7 @@ import {
 } from "./vocabulary.ts"
 
 const filterShown: Record<
-  PatientWorkFilter,
+  keyof typeof patientWorkFilterLabels,
   (counts: PatientWorkCounts, appointmentsOffered: boolean) => boolean
 > = {
   all: () => true,
@@ -22,7 +21,6 @@ const filterShown: Record<
   callBack: () => true,
   texts: () => true,
   appointments: (counts, appointmentsOffered) => appointmentsOffered || counts.appointments > 0,
-  unowned: () => true,
 }
 
 export function patientWorkFilterShown(
@@ -30,7 +28,7 @@ export function patientWorkFilterShown(
   counts: PatientWorkCounts,
   appointmentsOffered: boolean,
 ) {
-  return filterShown[filter](counts, appointmentsOffered)
+  return filter !== "unowned" && filterShown[filter](counts, appointmentsOffered)
 }
 
 export function shownPatientWorkFilters(
@@ -60,29 +58,23 @@ export function patientRowName(row: Pick<PatientWorkRow, "displayName" | "phone"
 
 export function openTaskReason(
   task: Pick<Task, "origin" | "title" | "preview" | "voicemailDurationSeconds">,
-): { voicemail: boolean; text: string } {
+): string {
   switch (task.origin) {
     case "VOICEMAIL_RECOVERY":
-      return {
-        voicemail: true,
-        text: task.voicemailDurationSeconds
-          ? `Voicemail · ${formatClock(task.voicemailDurationSeconds)}`
-          : "Voicemail",
-      }
+      return task.voicemailDurationSeconds
+        ? `Voicemail · ${formatClock(task.voicemailDurationSeconds)}`
+        : "Voicemail"
     case "MISSED_CALL_RECOVERY":
-      return { voicemail: false, text: "Missed call, no voicemail" }
+      return "Missed call, no voicemail"
     case "INBOUND_MESSAGE_REVIEW":
-      return { voicemail: false, text: task.preview || task.title }
+      return task.preview || task.title
     default:
-      return { voicemail: false, text: task.title }
+      return task.title
   }
 }
 
-export function patientWorkFooter(totals: PatientWorkTotals, scope: PatientWorkScope) {
-  const open = `${totals.openTasks} open for ${totals.patients} ${totals.patients === 1 ? "patient" : "patients"}`
-  return scope === "mine" && totals.patientsOutsideScope > 0
-    ? `${open} · ${totals.patientsOutsideScope} more under Everyone`
-    : open
+export function patientWorkFooter(totals: PatientWorkTotals) {
+  return `${totals.openTasks} open for ${totals.patients} ${totals.patients === 1 ? "patient" : "patients"}`
 }
 
 export function nextAfterClose({

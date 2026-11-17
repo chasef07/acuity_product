@@ -38,10 +38,12 @@ import {
   CallingFailureStatus,
 } from "@/components/workspace/calling-dock"
 import { AIInteractionContext } from "@/components/workspace/ai-interaction-context"
-import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
-import { PatientTasksPanel } from "@/components/workspace/patient-tasks-panel"
+import { EngagementWorkspace, textReviewKey } from "@/components/workspace/engagement-workspace"
+import { PatientActions, PatientIdentity, senderRoute } from "@/components/workspace/patient-bar"
+import { type ExpandedTask, PatientTasksPanel } from "@/components/workspace/patient-tasks-panel"
 import { callContactName } from "@/components/workspace/call-workspace"
-import { DetailsAbovePatientTasks, TaskCallContext } from "@/components/workspace/task-call-context"
+import { TextReviewCard } from "@/components/workspace/text-conversation-action"
+import { DetailsAbovePatientTasks, reviewedInConversation, TaskCallContext } from "@/components/workspace/task-call-context"
 import { TaskCallAction } from "@/components/workspace/task-call-action"
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
 import { CallingRailControl } from "@/components/workspace/workspace-rail-button"
@@ -151,8 +153,10 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
     id: string
     taskID: string
   }>()
-  const [taskCallError, setTaskCallError] = useState("")
+  const [taskCallError, setTaskCallError] = useState({ taskID: "", message: "" })
   const [numberHistory, setNumberHistory] = useState<NumberHistory>()
+  const [routeChoice, setRouteChoice] = useState({ phone: "", id: "" })
+  const [reviewedTextKey, setReviewedTextKey] = useState("")
   const [commandCenterPage, setCommandCenterPage] = useState<CommandCenterPage>("calls")
   const [analyticsPage, setAnalyticsPage] = useState<PracticeAnalyticsPage>("bookings")
   useLiveRefresh({
@@ -267,10 +271,13 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
         practiceID={state.scope.practiceID}
         taskCallRequest={taskCallRequest}
         onTaskCallHandled={(requestID, requestError) => {
+          setTaskCallError({
+            taskID: taskCallRequest?.id === requestID ? taskCallRequest.taskID : "",
+            message: requestError ?? "",
+          })
           setTaskCallRequest((current) =>
             current?.id === requestID ? undefined : current,
           )
-          setTaskCallError(requestError ?? "")
         }}
         onCallScope={(call) => {
           const scope = workspaceScopeForCall(
@@ -320,8 +327,8 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
   const historicalCall = state.selection.historicalCall
   const contextView = state.selection.contextView
   const taskInFocus = contextView === "task" || contextView === "patient-tasks"
-  const textTask = taskInFocus && selectedTask?.origin === "INBOUND_MESSAGE_REVIEW" ? selectedTask : undefined
-  const contextPanelOpen = state.selection.contextPanelOpen && !(textTask && contextView === "task")
+  const textTask = taskInFocus && selectedTask && reviewedInConversation(selectedTask) ? selectedTask : undefined
+  const contextPanelOpen = state.selection.contextPanelOpen
   const view = state.selection.view
   const nextTask = (after: Task) =>
     nextAfterClose({
@@ -341,6 +348,12 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
     }
     const shownCall = historicalCall ?? activeCall
     const onLiveCall = Boolean(activeCall) && !historicalCall
+    const route = selectedEngagement
+      ? senderRoute(selectedEngagement, routeChoice.phone === selectedEngagement.phone ? routeChoice.id : "")
+      : ""
+    const callName = contextPanelOpen && contextView === "call" && shownCall
+      ? callContactName(shownCall)
+      : undefined
     const patientTasksListed = contextPanelOpen &&
       (contextView === "patient-tasks" || (onLiveCall && contextView === "call"))
     const patientTasks = (
@@ -348,7 +361,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       placement: {
         className: string
         currentTaskID?: string
-        otherThan?: readonly Task[]
+        expanded?: ExpandedTask
         callTaskID?: string
         titlesOpenTasks: boolean
       },
@@ -358,11 +371,11 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
         practiceID={state.scope.practiceID}
         phone={phone}
         currentTaskID={placement.currentTaskID}
-        otherThan={placement.otherThan}
+        expanded={placement.expanded}
         callTaskID={placement.callTaskID}
         completion={state.completion}
         className={placement.className}
-        onComplete={(task, reason) => sendIntent({ type: "complete-task", task, reason, advance: !activeCall })}
+        onComplete={(task, reason) => sendIntent({ type: "complete-task", task, reason })}
         onOpen={placement.titlesOpenTasks ? (task) => sendIntent({ type: "select-task", task }) : undefined}
         opensReviews={!activeCall}
         onTaskUpdated={(task) => void projection.dispatch({ type: "task-committed", task })}
@@ -400,9 +413,45 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
         <div data-testid="workspace-panel" className={cn("relative flex-col overflow-hidden", workspacePanel)}>
           <WorkspaceTopBar
             section={section}
-            page={page}
+            page={view === "engagement" && selectedEngagement ? (
+              <PatientIdentity
+                key={selectedEngagement.phone}
+                engagement={selectedEngagement}
+                practiceID={state.scope.practiceID}
+                route={route}
+                onRoute={(id) => setRouteChoice({ phone: selectedEngagement.phone, id })}
+                callName={callName}
+              />
+            ) : page}
             onSection={view === "manage-agent" ? () => sendIntent({ type: "select-manage-agent", page: "home" }) : undefined}
-          />
+          >
+            {view === "engagement" && selectedEngagement && (
+              <PatientActions
+                key={selectedEngagement.phone}
+                engagement={selectedEngagement}
+                practiceID={state.scope.practiceID}
+                route={route}
+                callError={taskCallError.taskID && taskCallError.taskID === selectedTask?.id ? taskCallError.message : ""}
+                callAction={selectedTask && selectedTask.state === "OPEN" && taskInFocus ? (
+                        <TaskCallAction key={`call:${selectedTask.id}`} task={selectedTask} canCall={!callingOccupied} pending={Boolean(taskCallRequest)} onCall={(task) => {
+                          setTaskCallError({ taskID: "", message: "" })
+                          void projection.dispatch({ type: "remember-return-task", taskID: task.id })
+                          setTaskCallRequest({ id: window.crypto.randomUUID(), taskID: task.id })
+                        }} />
+                      ) : undefined}
+                patientTasksOpen={patientTasksListed}
+                onPatientTasks={() =>
+                  void projection.dispatch(
+                    patientTasksListed
+                      ? { type: "close-context" }
+                      : onLiveCall
+                        ? { type: "return-to-call" }
+                        : { type: "open-patient-tasks" },
+                  )
+                }
+              />
+            )}
+          </WorkspaceTopBar>
           <div className="relative flex min-h-0 flex-1 overflow-clip">
           <WorkspaceRail
             projection={state}
@@ -445,75 +494,50 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
               />
             ) : view === "engagement" && selectedEngagement ? (
               <div className="relative flex min-h-0 flex-1 bg-background">
-                <div className="flex min-h-0 min-w-0 flex-1 bg-background">
-                  <EngagementWorkspace
-                    key={selectedEngagement.phone}
-                    engagement={selectedEngagement}
-                    practiceID={state.scope.practiceID}
-                    practiceName={practice.name}
-                    selectedTaskID={
-                      contextPanelOpen && contextView === "task"
-                        ? selectedTask?.id
-                        : undefined
-                    }
-                    selectedCallID={
-                      contextPanelOpen && contextView === "call"
-                        ? shownCall?.id
-                        : undefined
-                    }
-                    callName={
-                      contextPanelOpen && contextView === "call" && shownCall
-                        ? callContactName(shownCall)
-                        : undefined
-                    }
-                    patientTasksOpen={patientTasksListed}
-                    onPatientTasks={() =>
-                      void projection.dispatch(
-                        patientTasksListed
-                          ? { type: "close-context" }
-                          : onLiveCall
-                            ? { type: "return-to-call" }
-                            : { type: "open-patient-tasks" },
-                      )
-                    }
-                    selectedAIInteractionID={
-                      contextPanelOpen && contextView === "ai-call"
-                        ? selectedAIInteractionID
-                        : undefined
-                    }
-                    callAction={selectedTask && selectedTask.state === "OPEN" && taskInFocus ? (
-                      <TaskCallAction key={selectedTask.id} task={selectedTask} canCall={!callingOccupied} pending={Boolean(taskCallRequest)} onCall={(task) => {
-                        setTaskCallError("")
-                        void projection.dispatch({ type: "remember-return-task", taskID: task.id })
-                        setTaskCallRequest({ id: window.crypto.randomUUID(), taskID: task.id })
-                      }} />
-                    ) : undefined}
-                    textTask={textTask}
-                    onNextTask={!activeCall && textTask && nextTask(textTask) ? () => { const next = nextTask(textTask); if (next) sendIntent({ type: "select-task", task: next }) } : undefined}
-                    onTextTaskUpdated={(task) => sendIntent({ type: "task-committed", task, advance: !activeCall })}
-                    onTaskCreated={(task) =>
-                      void projection.dispatch({ type: "task-created", task })
-                    }
-                    onTaskOpen={(task) =>
-                      void projection.dispatch(
-                        contextPanelOpen && contextView === "task" &&
-                        selectedTask?.id === task.id
-                          ? { type: "close-context" }
-                          : { type: "open-task-context", task },
-                      )
-                    }
-                    onCallOpen={(callID) =>
-                      void projection.dispatch({ type: "open-call-context", callID })
-                    }
-                    onAIInteractionOpen={(interactionID) =>
-                      void projection.dispatch({
-                        type: "open-ai-context",
-                        interactionID,
-                      })
-                    }
-                    onHistoryChange={setNumberHistory}
-                  />
-                </div>
+                <EngagementWorkspace
+                  key={selectedEngagement.phone}
+                  engagement={selectedEngagement}
+                  practiceID={state.scope.practiceID}
+                  route={route}
+                  textTask={textTask}
+                  onTextReviewed={setReviewedTextKey}
+                  selectedTaskID={
+                    contextPanelOpen && contextView === "task"
+                      ? selectedTask?.id
+                      : undefined
+                  }
+                  selectedCallID={
+                    contextPanelOpen && contextView === "call"
+                      ? shownCall?.id
+                      : undefined
+                  }
+                  selectedAIInteractionID={
+                    contextPanelOpen && contextView === "ai-call"
+                      ? selectedAIInteractionID
+                      : undefined
+                  }
+                  onTaskCreated={(task) =>
+                    void projection.dispatch({ type: "task-created", task })
+                  }
+                  onTaskOpen={(task) =>
+                    void projection.dispatch(
+                      contextPanelOpen && contextView === "task" &&
+                      selectedTask?.id === task.id
+                        ? { type: "close-context" }
+                        : { type: "open-task-context", task },
+                    )
+                  }
+                  onCallOpen={(callID) =>
+                    void projection.dispatch({ type: "open-call-context", callID })
+                  }
+                  onAIInteractionOpen={(interactionID) =>
+                    void projection.dispatch({
+                      type: "open-ai-context",
+                      interactionID,
+                    })
+                  }
+                  onHistoryChange={setNumberHistory}
+                />
                 <aside
                   aria-label={contextPanelLabel}
                   aria-hidden={!contextPanelOpen}
@@ -521,9 +545,9 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                   data-testid="context-panel"
                   inert={!contextPanelOpen}
                   className={cn(
-                    "absolute top-20 right-3 flex h-fit max-h-[calc(100%-5.75rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:h-auto lg:max-h-none lg:max-w-none lg:shrink-0 lg:self-stretch lg:rounded-xl lg:bg-background lg:shadow-sm",
+                    "absolute top-2 right-2 flex h-fit max-h-[calc(100%-1rem)] w-[calc(100%-1rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-2xl border bg-popover shadow-lg transition-[width,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:h-auto lg:max-h-none lg:max-w-none lg:shrink-0 lg:self-stretch lg:overflow-visible lg:rounded-none lg:border-0 lg:bg-transparent lg:shadow-none",
                     contextPanelOpen
-                      ? "translate-x-0 opacity-100 lg:my-2 lg:mr-2 lg:w-72"
+                      ? "translate-x-0 opacity-100 lg:w-80"
                       : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:w-0",
                   )}
                   onTransitionEnd={(event) => {
@@ -536,17 +560,16 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    className="absolute top-3 right-3 z-10"
+                    className="absolute top-3 right-3 z-10 lg:top-5 lg:right-5"
                     aria-label="Close context panel"
                     onClick={() => void projection.dispatch({ type: "close-context" })}
                   >
                     <PanelRightCloseIcon />
                   </Button>
-                  <div className="flex min-h-0 w-full flex-1 pb-[var(--calling-dock-clearance,0px)] lg:w-[calc(18rem-2px)]">
+                  <div className="flex min-h-0 w-full flex-1 flex-col pb-[var(--calling-dock-clearance,0px)] lg:w-80 lg:py-3 lg:pr-3">
                     {contextView === "patient-tasks" ? (
                       patientTasks(selectedEngagement.phone, {
                         className: "flex-1",
-                        currentTaskID: selectedTask?.id,
                         titlesOpenTasks: true,
                       })
                     ) : contextView === "ai-call" ? (
@@ -584,17 +607,28 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                             ? numberHistory.items
                             : undefined
                         }
-                        taskCallError={taskCallError}
-                        onTaskUpdated={(task, advance) =>
-                          void projection.dispatch({ type: "task-committed", task, advance: advance && !activeCall })
+                        onTaskUpdated={(task) =>
+                          void projection.dispatch({ type: "task-committed", task })
                         }
                         onOpenTask={(task) => sendIntent({ type: "select-task", task })}
                         patientTasks={(phone, placement) =>
                           patientTasks(phone, placement.beside === "call"
                             ? { className: onLiveCall ? "shrink-0 pt-0" : "shrink-0 border-t", callTaskID: placement.callTaskID, titlesOpenTasks: false }
                             : {
-                                className: "-mx-5 mt-4 border-t",
-                                otherThan: placement.otherThan,
+                                className: "flex-1",
+                                currentTaskID: selectedTask?.id,
+                                expanded: placement.expanded ?? (textTask ? {
+                                  task: textTask,
+                                  content: (
+                                    <TextReviewCard
+                                      key={textTask.id}
+                                      task={textTask}
+                                      reviewed={reviewedTextKey === textReviewKey(textTask)}
+                                      onUpdated={(task) => sendIntent({ type: "task-committed", task })}
+                                      onNext={!activeCall && nextTask(textTask) ? () => { const next = nextTask(textTask); if (next) sendIntent({ type: "select-task", task: next }) } : undefined}
+                                    />
+                                  ),
+                                } : undefined),
                                 titlesOpenTasks: true,
                               })
                         }

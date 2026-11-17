@@ -3,7 +3,6 @@
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, type Ref } from "react"
 
 import { CallingFailureNotice } from "@/components/workspace/calling-card"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
@@ -25,6 +24,7 @@ import type { SettledWrapUp, SoftphoneRuntimeSnapshot } from "@/lib/calling/soft
 import { useEngagementSummary } from "@/lib/clients/engagement"
 import { useOpenTask } from "@/lib/clients/tasks"
 import type { PortalQuery } from "@/lib/data/queries"
+import { cn } from "@/lib/utils"
 import {
   callWrapUpReasons,
   formatPhone,
@@ -33,7 +33,7 @@ import {
   taskOriginLabels,
 } from "@/lib/vocabulary"
 
-import { phoneNames } from "./engagement-workspace"
+import { phoneNames } from "./patient-bar"
 import { offersTaskCloseMenu } from "./task-close-menu"
 
 type CallWrapUpProps = {
@@ -188,14 +188,14 @@ export function CallWrapUpView({
 
   return (
     <>
-      <header className="flex flex-col gap-1 px-5 pt-5">
+      <header className="flex flex-col gap-0.5 px-5 pt-5">
+        <h2 id={titleID} className="truncate text-base font-medium">
+          {names.length === 1 ? names[0] : formatPhone(call.phone) || "Unknown caller"}
+        </h2>
         <p className="text-xs text-muted-foreground">
           Call ended
           {durationSeconds !== undefined && ` · ${wrapUpDuration(durationSeconds)}`}
         </p>
-        <h2 id={titleID} className="truncate text-base font-medium">
-          {names.length === 1 ? names[0] : formatPhone(call.phone) || "Unknown caller"}
-        </h2>
       </header>
       <div
         data-testid="call-wrap-up-body"
@@ -248,10 +248,10 @@ export function CallWrapUpView({
         )}
         {tasks.length > 0 && (
           <>
-            <p className="text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Tick what this call took care of. Anything unticked stays open.
             </p>
-            <ul className="flex flex-col gap-1.5">
+            <ul className="-mx-2 flex flex-col gap-0.5">
               {tasks.map((task) => (
                 <WrapUpTaskRow
                   key={task.id}
@@ -280,8 +280,9 @@ export function CallWrapUpView({
         )}
         {followUpOffered && (
           <div className="flex flex-col gap-1 py-1">
-            <label className="flex items-center gap-3">
+            <label className="flex items-center gap-3 text-sm">
               <Checkbox
+                className="rounded-full"
                 checked={settled ? state.followUp && !followUpLost : state.followUp}
                 disabled={saving || settled !== undefined}
                 onCheckedChange={(checked) =>
@@ -303,9 +304,9 @@ export function CallWrapUpView({
         )}
         {failure && <CallingFailureNotice failure={failure} onRecover={onRecover} />}
       </div>
-      <footer className="flex flex-wrap justify-end gap-2 border-t px-5 py-3">
+      <footer className="flex flex-wrap justify-end gap-2 px-5 pt-1 pb-5">
         {ticked.size > 0 && (
-          <Button variant="outline" disabled={saving} onClick={finish}>
+          <Button variant="ghost" disabled={saving} onClick={finish}>
             Keep all open
           </Button>
         )}
@@ -350,22 +351,20 @@ function WrapUpTaskRow({
       data-testid="call-wrap-up-task"
       data-wrap-up-task-id={task.id}
       data-ticked={reason ? "" : undefined}
-      className="flex flex-wrap items-start gap-2 rounded-lg border p-3 data-ticked:border-foreground"
+      className="flex flex-wrap items-center gap-2 rounded-lg px-2 py-2 hover:bg-muted/60 data-ticked:bg-muted/60"
     >
       <label className="flex min-w-0 flex-[1_1_13rem] items-start gap-3">
         <Checkbox
-          className="mt-0.5"
+          className="mt-0.5 rounded-full"
           checked={reason !== undefined}
           disabled={disabled}
           onCheckedChange={(checked) => onChange(checked ? "DONE" : undefined)}
         />
         <span className="flex min-w-0 flex-col">
           <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-medium">{task.title}</span>
+            <span className={cn("truncate text-sm font-medium", reason && "text-muted-foreground line-through")}>{task.title}</span>
             {thisCall && (
-              <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
-                This call
-              </Badge>
+              <span className="shrink-0 text-[11px] text-muted-foreground">This call</span>
             )}
           </span>
           <span className="truncate text-xs text-muted-foreground">
@@ -379,7 +378,7 @@ function WrapUpTaskRow({
       {reason && (
         <NativeSelect
           size="sm"
-          className="ml-auto shrink-0"
+          className="ml-auto shrink-0 text-xs"
           aria-label={`Reason for closing: ${task.title}`}
           value={reason}
           disabled={disabled}

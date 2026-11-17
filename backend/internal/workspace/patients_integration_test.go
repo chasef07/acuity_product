@@ -582,3 +582,45 @@ func TestPatientWorkSearchesAndPagesWithoutGapsOrDuplicates(t *testing.T) {
 		t.Fatalf("search without a match = %v", patientPhones(page))
 	}
 }
+
+func TestPatientWorkWaitingSinceIsTheOldestOpenRequestInView(t *testing.T) {
+	f := newPatientWorkFixture(t)
+	reader := f.activate("reader")
+	const phone = "+17275550131"
+	request := f.open(patientTask{origin: work.TaskOriginAbitaAI, office: "north", phone: phone, category: "insurance", callerName: "Dolores Reyes"})
+	voicemail := f.open(patientTask{origin: work.TaskOriginVoicemail, office: "north", phone: phone, voicemail: 1000})
+	oldest := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	backdate, err := f.db.Owner.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = backdate.Rollback(f.ctx) }()
+	if _, err := backdate.Exec(f.ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	for id, at := range map[string]time.Time{request: oldest, voicemail: oldest.Add(2 * time.Hour)} {
+		if _, err := backdate.Exec(f.ctx, `UPDATE work_tasks SET created_at=$2, updated_at=$2 WHERE id=$1`, id, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := backdate.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	waiting := func(filter workspace.PatientWorkFilter) time.Time {
+		t.Helper()
+		page := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: filter})
+		for _, row := range page.Rows {
+			if row.Phone == phone {
+				return row.WaitingSince
+			}
+		}
+		t.Fatalf("%s not listed under %s", phone, filter)
+		return time.Time{}
+	}
+	if got := waiting(workspace.PatientWorkAll); !got.Equal(oldest) {
+		t.Fatalf("waiting since = %v, want the oldest open request %v", got, oldest)
+	}
+	if got := waiting(workspace.PatientWorkCallBack); !got.Equal(oldest.Add(2 * time.Hour)) {
+		t.Fatalf("Call back waiting since = %v, want the oldest call back %v", got, oldest.Add(2*time.Hour))
+	}
+}

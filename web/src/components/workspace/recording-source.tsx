@@ -21,7 +21,7 @@ export function RecoveryTaskSource({
   onUpdated,
 }: {
   task: Task
-  onUpdated: (task: Task, advance?: boolean) => void
+  onUpdated: (task: Task) => void
 }) {
   const { call, interactions, failure } = useRecoverySource(task)
   const error =
@@ -69,7 +69,7 @@ export function VoicemailSource({ call, compact = false, autoPlay = false, taskI
   compact?: boolean
   autoPlay?: boolean
   taskID?: string
-  onUpdated?: (task: Task, advance?: boolean) => void
+  onUpdated?: (task: Task) => void
 }) {
   const reviewedTask = useRef<Task | undefined>(undefined)
   const [completionError, setCompletionError] = useState("")

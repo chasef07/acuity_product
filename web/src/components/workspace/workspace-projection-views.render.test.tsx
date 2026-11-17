@@ -1,13 +1,15 @@
 import assert from "node:assert/strict"
 import test, { type TestContext } from "node:test"
-import { act, type ComponentProps, type ReactNode } from "react"
+import { act, type ComponentProps, type ReactNode, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
 
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
-import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
+import { EngagementWorkspace, textReviewKey } from "./engagement-workspace.tsx"
+import { PatientIdentityView, senderRoute } from "./patient-bar.tsx"
+import { TextReviewCard } from "./text-conversation-action.tsx"
 import { DetailsAbovePatientTasks, TaskCallContext } from "./task-call-context.tsx"
 import { TaskCallAction } from "./task-call-action.tsx"
 import { VoicemailSource } from "./recording-source.tsx"
@@ -76,23 +78,22 @@ test("Task rail toggles the selected context while preserving the conversation",
   )
   const canvasMarkup = renderToStaticMarkup(
     <DataProvider>
-    <EngagementWorkspaceView
-      practiceName="Synthetic Practice"
+    <PatientIdentityView
       engagement={projection.selection.engagement!}
       practiceID={projection.scope.practiceID}
+      route={projection.selection.engagement!.locations[0]!.id}
+      onRoute={() => {}}
+    />
+    <EngagementWorkspace
+      route={projection.selection.engagement!.locations[0]!.id}
+      engagement={projection.selection.engagement!}
+      practiceID={projection.scope.practiceID}
+      onTextReviewed={() => {}}
       selectedTaskID={projection.selection.task?.id}
-      patientTasksOpen={false}
-      onPatientTasks={() => {}}
       onTaskCreated={() => {}}
       onTaskOpen={() => {}}
       onCallOpen={() => {}}
       onAIInteractionOpen={() => {}}
-      calling={{
-        callingOccupied: false,
-        outboundPending: false,
-        ownsSoftphone: false,
-        startOutbound: async () => undefined,
-      }}
     />
     </DataProvider>,
   )
@@ -378,34 +379,15 @@ test("a missing access token leaves a retryable conversation error instead of a 
   assert.equal(conversation.timelineRequests, 1)
 })
 
-test("the sender office follows the offices of the selected Task", async (t) => {
-  const conversation = conversationHarness(t)
+test("the sender office follows the offices of the selected Task", () => {
   const engagement = projectedWorkspace(projectedTask()).selection.engagement!
   const officeA = { id: "location-a", name: "Office A" }
   const officeB = { id: "location-b", name: "Office B" }
-  const started: string[] = []
-  const calling = {
-    callingOccupied: false,
-    outboundPending: false,
-    ownsSoftphone: true,
-    startOutbound: async (locationID: string) => {
-      started.push(locationID)
-      return undefined
-    },
-  }
-  await conversation.render(0, { calling, engagement: { ...engagement, locations: [officeA, officeB] } })
-  const office = conversation.host.querySelector<HTMLSelectElement>('select[aria-label="Sender office"]')
-  assert.ok(office)
-  await act(async () => {
-    office.value = officeA.id
-    office.dispatchEvent(new window.Event("change", { bubbles: true }))
-  })
-
-  await conversation.render(0, { calling, engagement: { ...engagement, locations: [officeB] } })
-  const call = Array.from(conversation.host.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Call")
-  assert.ok(call)
-  await act(async () => call.click())
-  assert.deepEqual(started, [officeB.id])
+  const both = { ...engagement, locations: [officeA, officeB] }
+  assert.equal(senderRoute(both, officeA.id), officeA.id)
+  assert.equal(senderRoute(both, ""), "", "several offices wait for a choice")
+  assert.equal(senderRoute(both, "location-gone"), "", "a choice from another patient does not carry over")
+  assert.equal(senderRoute({ ...engagement, locations: [officeB] }, officeA.id), officeB.id, "one office needs no choice")
 })
 
 function callLineFixture(
@@ -629,67 +611,36 @@ test("an AI call that only ended reads Handled by AI, a stored resolved label re
   assert.doesNotMatch(timeline.textContent!, /transferred/)
 })
 
-function threadTabs(host: HTMLElement) {
-  const tab = (name: string) => [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Conversation view"] button')]
-    .find((element) => element.textContent === name)!
-  return {
-    pressed: () => [...host.querySelectorAll('[aria-label="Conversation view"] button[aria-pressed="true"]')].map((element) => element.textContent),
-    show: (name: string) => act(async () => tab(name).click()),
-    activity: () => host.querySelector('[aria-label="Conversation activity"]')!,
-    texts: () => [...host.querySelectorAll('[aria-label="Conversation activity"] [role=article]')].map((element) => element.textContent),
-    lines: () => host.querySelectorAll('[aria-label="Conversation activity"] button[aria-expanded]').length,
-    composer: () => host.querySelector<HTMLFormElement>('form[aria-label="Message composer"]'),
-  }
-}
 
 function textFixture(id: string, occurredAt: string, overrides: Partial<Message> = {}): ConversationTimelineItem {
   return { id, type: "MESSAGE", occurredAt, message: { ...message, id, body: `Synthetic text ${id}`, attachment: undefined, createdAt: occurredAt, ...overrides } }
 }
 
-test("the thread tabs show everything, only texts or only calls and keep the composer on each", async (t) => {
+test("a failed earlier page shows the error with a retry while the conversation stays on screen", async (t) => {
   const conversation = conversationHarness(t)
-  const task = projectedTask()
-  conversation.items = [
-    textFixture("first", "2026-09-05T11:00:00Z"),
-    callLineFixture({ id: "missed", outcome: "MISSED" }),
-    { id: "created", type: "TASK", occurredAt: "2026-09-05T13:00:00Z", taskActivity: "TASK_CREATED", task },
-  ]
+  conversation.timelinePage = (cursor) => cursor
+    ? { items: [textFixture("older", "2026-09-01T11:00:00Z")], nextCursor: "" }
+    : { items: [textFixture("newest", "2026-09-05T11:00:00Z")], nextCursor: "one" }
   await conversation.render(0)
-  const tabs = threadTabs(conversation.host)
-  assert.deepEqual(tabs.pressed(), ["Everything"])
-  assert.deepEqual([tabs.texts().length, tabs.lines()], [1, 1])
-  assert.match(tabs.activity().textContent!, /Projected follow-up/)
+  const earlier = () => [...conversation.host.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Earlier activity")
+  const alert = () => conversation.host.querySelector('[role="alert"]')
+  conversation.timelineStatus = 503
+  await act(async () => earlier()!.click())
+  await waitFor(() => conversation.timelineRequests === 2 && alert() !== null)
+  assert.equal(alert()!.textContent, "Earlier activity could not be loadedTry again")
+  assert.doesNotMatch(alert()!.textContent!, /Conversation unavailable/, "the conversation itself is on screen")
 
-  await tabs.show("Texts")
-  assert.deepEqual(tabs.pressed(), ["Texts"])
-  assert.deepEqual([tabs.texts().length, tabs.lines()], [1, 0])
-  assert.doesNotMatch(tabs.activity().textContent!, /Projected follow-up|Called in/)
-  assert.ok(tabs.composer())
+  conversation.timelineStatus = 200
+  await act(async () => [...alert()!.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Try again")!.click())
+  await waitFor(() => conversation.timelineRequests === 3 && !earlier())
+  assert.equal(alert(), null)
+})
 
-  await tabs.show("Calls")
-  assert.deepEqual(tabs.pressed(), ["Calls"])
-  assert.deepEqual([tabs.texts().length, tabs.lines()], [0, 1])
-  assert.doesNotMatch(tabs.activity().textContent!, /Projected follow-up|Synthetic text/)
-  assert.ok(tabs.composer())
-  assert.equal(conversation.timelineRequests, 1, "tabs filter the loaded history without another request")
-
-  await typeInto(tabs.composer()!.querySelector("textarea")!, "Synthetic reply from Calls")
-  await act(async () => {
-    tabs.composer()!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  })
-  assert.deepEqual(tabs.pressed(), ["Everything"], "sending from Calls shows the sent text")
-  assert.match(tabs.activity().textContent!, /Synthetic reply from Calls/)
-  assert.match(
-    tabs.activity().querySelector('[data-slot="message-sender"]')!.textContent!,
-    /^sender@example\.test · \d+:\d+\s[AP]M$/,
-    "a text names its sender as soon as it is sent",
-  )
-
-  await tabs.show("Texts")
-  const other = projectedWorkspace(projectedTask()).selection.engagement!
-  await conversation.render(0, { engagement: { ...other, phone: "+15551230000" } })
-  assert.deepEqual(threadTabs(conversation.host).pressed(), ["Everything"], "another conversation starts on Everything")
+test("the conversation has no view tabs, only the one stream of texts, calls and Tasks", async (t) => {
+  const conversation = conversationHarness(t)
+  await conversation.render(0)
+  assert.equal(conversation.host.querySelector('[aria-label="Conversation view"]'), null)
+  assert.ok(conversation.host.querySelector('[aria-label="Conversation activity"]'))
 })
 
 test("an outbound text names the staff member who sent it and an automated text stays Automated", async (t) => {
@@ -710,8 +661,13 @@ test("an outbound text names the staff member who sent it and an automated text 
     const footer = article.querySelector('[data-slot="message-footer"]')!
     assert.equal(sender?.closest('[data-slot="message-footer"]') ?? null, null, "the sender is outside the footer that hides until hover")
     assert.doesNotMatch(sender?.className ?? "", /opacity-0/)
-    return { sender: sender?.textContent ?? "", footer: footer.textContent!, hidden: /opacity-0/.test(footer.className) }
+    return { sender: sender?.textContent ?? "", footer: footer.textContent!, hidden: /opacity-0/.test(footer.className), bubble: article.querySelector('[data-slot="bubble"]')!.getAttribute("data-variant") }
   }
+  assert.deepEqual(
+    ["inbound", "staff", "automated", "unresolved"].map((id) => text(id).bubble),
+    ["ghost", "muted", "outline", "muted"],
+    "the patient's texts read as plain text, the office's sit in a soft bubble, and automated texts are outlined",
+  )
   assert.match(text("staff").sender, /^staff@example\.test · \d+:01\s[AP]M$/)
   assert.deepEqual([text("staff").footer, text("staff").hidden], ["Delivered", true])
   assert.match(text("automated").sender, /^Automated · \d+:02\s[AP]M$/)
@@ -720,172 +676,6 @@ test("an outbound text names the staff member who sent it and an automated text 
   assert.match(text("unresolved").footer, /^\d+:03\s[AP]M·Delivered$/)
   assert.equal(text("inbound").sender, "")
   assert.match(text("inbound").footer, /^\d+:00\s[AP]M$/)
-})
-
-test("a tab with nothing loaded keeps loading earlier activity until something matches or the history ends", async (t) => {
-  const conversation = conversationHarness(t)
-  const pages: ConversationTimelinePage[] = [
-    { items: [callLineFixture({ id: "newest", outcome: "MISSED" })], nextCursor: "one" },
-    { items: [callLineFixture({ id: "older", outcome: "MISSED" })], nextCursor: "two" },
-    { items: [textFixture("oldest", "2026-09-01T11:00:00Z")], nextCursor: "" },
-  ]
-  conversation.timelinePage = (cursor) => pages[["", "one", "two"].indexOf(cursor)]!
-  await conversation.render(0)
-  const tabs = threadTabs(conversation.host)
-  assert.equal(conversation.timelineRequests, 1)
-  await tabs.show("Texts")
-  await waitFor(() => tabs.texts().length === 1)
-  assert.equal(conversation.timelineRequests, 3)
-  assert.match(tabs.texts()[0]!, /Synthetic text oldest/)
-  assert.doesNotMatch(tabs.activity().textContent!, /No texts yet/)
-
-  await tabs.show("Calls")
-  assert.equal(tabs.lines(), 2)
-  assert.equal(conversation.timelineRequests, 3)
-})
-
-test("a tab searches at most three earlier pages by itself, then one page per request", async (t) => {
-  const conversation = conversationHarness(t)
-  const cursors = ["", "one", "two", "three", "four", "five"]
-  conversation.timelinePage = (cursor) => {
-    const index = cursors.indexOf(cursor)
-    return index === cursors.length - 1
-      ? { items: [textFixture("oldest", "2026-09-01T11:00:00Z")], nextCursor: "" }
-      : { items: [callLineFixture({ id: `call-${index}`, outcome: "MISSED" })], nextCursor: cursors[index + 1]! }
-  }
-  await conversation.render(0)
-  const tabs = threadTabs(conversation.host)
-  const earlier = () => [...conversation.host.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Earlier activity")
-  const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
-  await tabs.show("Texts")
-  await waitFor(() => conversation.timelineRequests === 4 && earlier()?.disabled === false)
-  await settle()
-  assert.equal(conversation.timelineRequests, 4, "the search stops after three earlier pages")
-  assert.match(tabs.activity().textContent!, /No texts yet/)
-  assert.match(tabs.activity().textContent!, /Earlier activity is not loaded/)
-
-  await act(async () => earlier()!.click())
-  await waitFor(() => conversation.timelineRequests === 5 && earlier()?.disabled === false)
-  await settle()
-  assert.equal(conversation.timelineRequests, 5, "one request loads one earlier page")
-  await act(async () => earlier()!.click())
-  await waitFor(() => tabs.texts().length === 1)
-  assert.equal(conversation.timelineRequests, 6)
-})
-
-test("leaving Everything and coming back returns the reader to where they were", async (t) => {
-  const conversation = conversationHarness(t)
-  conversation.items = [textFixture("first", "2026-09-05T11:00:00Z"), callLineFixture({ id: "missed", outcome: "MISSED" })]
-  await conversation.render(0)
-  const tabs = threadTabs(conversation.host)
-  const viewport = conversation.host.querySelector<HTMLElement>('[data-testid="message-timeline"]')!
-  const scrolls: number[] = []
-  const place = { scrollHeight: 1000, scrollTop: 300 }
-  Object.defineProperties(viewport, {
-    scrollHeight: { configurable: true, get: () => place.scrollHeight },
-    clientHeight: { configurable: true, value: 200 },
-    scrollTop: { configurable: true, get: () => place.scrollTop },
-    scrollTo: { configurable: true, value: ({ top }: ScrollToOptions) => { place.scrollTop = top!; scrolls.push(top!) } },
-  })
-  const layout: Record<string, number> = { "MESSAGE:first": 250, "CALL_HISTORY:history-missed": 420 }
-  window.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
-    if (this === viewport) return { top: 100, bottom: 300 } as DOMRect
-    const top = 100 + (layout[this.dataset.messageId ?? ""] ?? 0) - place.scrollTop
-    return { top, bottom: top + 170 } as DOMRect
-  }
-  const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
-  await tabs.show("Calls")
-  await settle()
-  assert.equal(scrolls.at(-1), 800, "Calls opens on its latest call")
-  await tabs.show("Texts")
-  await settle()
-  assert.equal(scrolls.at(-1), 800)
-  layout["MESSAGE:first"] = 600
-  place.scrollHeight = 1400
-  await tabs.show("Everything")
-  await settle()
-  assert.equal(scrolls.at(-1), 650, "Everything puts the item the reader was on back where it sat, 50 above the top edge, whatever the heights around it became")
-  const before = scrolls.length
-  await tabs.show("Everything")
-  await settle()
-  assert.equal(scrolls.length, before, "choosing the tab already shown does not move the reader")
-
-  place.scrollTop = 1190
-  await tabs.show("Calls")
-  await settle()
-  place.scrollHeight = 2000
-  await tabs.show("Everything")
-  await settle()
-  assert.equal(scrolls.at(-1), 1800, "a reader who left Everything at the latest activity returns to the latest activity")
-})
-
-test("a failed earlier page shows the error with a retry instead of an empty tab, and a tab says so when the whole history holds nothing for it", async (t) => {
-  const conversation = conversationHarness(t)
-  conversation.timelinePage = (cursor) => cursor
-    ? { items: [textFixture("older", "2026-09-01T11:00:00Z")], nextCursor: "" }
-    : { items: [textFixture("newest", "2026-09-05T11:00:00Z")], nextCursor: "one" }
-  await conversation.render(0)
-  const tabs = threadTabs(conversation.host)
-  const earlier = () => [...conversation.host.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Earlier activity")
-  conversation.timelineStatus = 503
-  await tabs.show("Calls")
-  await waitFor(() => conversation.timelineRequests === 2 && earlier()?.disabled === false)
-  await act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
-  assert.equal(conversation.timelineRequests, 2, "a failed earlier page is not requested again without the user asking")
-  const alert = () => conversation.host.querySelector('[role="alert"]')
-  assert.equal(alert()!.textContent, "Earlier activity could not be loadedTry again")
-  assert.doesNotMatch(alert()!.textContent!, /Conversation unavailable/, "the conversation itself is on screen")
-  assert.doesNotMatch(tabs.activity().textContent!, /No calls yet/)
-
-  conversation.timelineStatus = 200
-  await act(async () => [...alert()!.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Try again")!.click())
-  await waitFor(() => conversation.timelineRequests === 3 && !earlier())
-  assert.equal(alert(), null)
-  assert.match(tabs.activity().textContent!, /No calls yet/)
-  assert.doesNotMatch(tabs.activity().textContent!, /Earlier activity is not loaded/)
-  assert.ok(tabs.composer())
-})
-
-test("a manual earlier load that adds nothing for the tab says so in place", async (t) => {
-  const conversation = conversationHarness(t)
-  const cursors = ["", "one", "two", "three", "four"]
-  conversation.timelinePage = (cursor) => {
-    const index = cursors.indexOf(cursor)
-    const items = index === 0
-      ? [callLineFixture({ id: "newest", outcome: "MISSED" }), textFixture("newest", "2026-09-05T11:00:00Z")]
-      : index === 4
-        ? [callLineFixture({ id: "oldest", outcome: "MISSED" })]
-        : [textFixture(`older-${index}-a`, `2026-09-0${4 - index}T11:00:00Z`), textFixture(`older-${index}-b`, `2026-09-0${4 - index}T10:00:00Z`)]
-    return { items, nextCursor: cursors[index + 1] ?? "" }
-  }
-  await conversation.render(0)
-  const tabs = threadTabs(conversation.host)
-  const earlier = () => [...conversation.host.querySelectorAll("button")].find((element) => element.textContent?.trim() === "Earlier activity")
-  const note = () => tabs.activity().querySelector('[role="status"]')?.textContent ?? ""
-  const press = async (requests: number) => {
-    await act(async () => earlier()!.click())
-    await waitFor(() => conversation.timelineRequests === requests && earlier()?.disabled !== true)
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
-  }
-  await press(2)
-  assert.equal(note(), "", "Everything shows what was loaded and needs no note")
-
-  await tabs.show("Calls")
-  assert.equal(tabs.lines(), 1)
-  assert.equal(note(), "")
-  await press(3)
-  assert.equal(tabs.lines(), 1)
-  assert.equal(note(), "No calls in the next 2 items. Load more to keep looking.")
-  await press(4)
-  assert.equal(note(), "No calls in the next 4 items. Load more to keep looking.", "each press that finds nothing changes what the reader sees")
-
-  await tabs.show("Texts")
-  assert.equal(note(), "", "the note belongs to the tab that was searched")
-  await tabs.show("Calls")
-  await press(5)
-  assert.equal(tabs.lines(), 2)
-  assert.equal(note(), "", "a load that found a call clears the note")
-  assert.equal(earlier(), undefined)
 })
 
 test("an expanded line's Task follows the patient's Tasks while new activity stays held", async (t) => {
@@ -960,17 +750,16 @@ test("the Task panel credits the callback caller from the Task and flags an open
         callControlsShowing={false}
         view="task"
         numberHistory={numberHistory}
-        taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
         onOpenTask={() => {}}
-        patientTasks={() => null}
+        patientTasks={(_, placement) => placement.beside === "task" ? placement.expanded?.content : null}
       />
     </DataProvider>,
   )
   const open = panel(selected, history)
   assert.match(open, /caller@example\.test called this number \(no answer\) · .+\. This Task is still open\./)
-  assert.ok(open.indexOf("This Task is still open.") < open.indexOf("Complete &amp; next"))
+  assert.match(open, /aria-label="Complete"/, "the Task can still be completed from its circle")
   assert.doesNotMatch(panel(selected), /still open/)
   assert.doesNotMatch(panel(selected, history.filter((item) => item.type !== "CALL_HISTORY")), /still open/)
   const callbackReview = { ...review, callbackCompletion: { callerEmail: "caller@example.test" } }
@@ -993,11 +782,10 @@ test("an AI Task shows the missed handoff call attached to it", () => {
         activeCall={undefined}
         callControlsShowing={false}
         view="task"
-        taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
         onOpenTask={() => {}}
-        patientTasks={() => null}
+        patientTasks={(_, placement) => placement.beside === "task" ? placement.expanded?.content : null}
       />
     </DataProvider>,
   )
@@ -1027,21 +815,21 @@ test("completing a Task keeps Next task in place and holds Reopen until the chan
         activeCall={undefined}
         callControlsShowing={false}
         view="task"
-        taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
         onOpenTask={() => {}}
-        patientTasks={() => null}
+        patientTasks={(_, placement) => placement.beside === "task" ? placement.expanded?.content : null}
       />
     </DataProvider>,
   ))
-  const actions = () => [...host.querySelectorAll<HTMLButtonElement>("section[aria-label='Focused Task'] div.flex-col button")]
+  const actions = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="task-actions"] button')]
   const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === name)
   try {
     await render(open)
-    assert.equal(actions()[0]?.textContent?.trim(), "Complete & next")
+    assert.ok(host.querySelector('header button[aria-label="Complete"]'), "an open Task completes from the circle beside its title")
     await render({ ...open, state: "COMPLETED", version: 2, completedAt: "2026-08-30T12:05:00Z", completedBy: { kind: "HUMAN", subject: "user-1", email: "staff@example.test" } })
-    assert.equal(actions()[0]?.textContent?.trim(), "Next task", "the primary position keeps a forward action")
+    assert.match(host.querySelector("h2")!.className, /\bline-through\b/, "a completed Task is struck through")
+    assert.equal(actions()[0]?.textContent?.trim(), "Next task", "the first action is a forward one")
     assert.equal(button("Reopen")?.disabled, true, "a Reopen click landing during the flip is ignored")
     await act(async () => button("Reopen")!.click())
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_100)) })
@@ -1080,28 +868,26 @@ test("the focused Task shows each projected version and completes only the versi
         activeCall={undefined}
         callControlsShowing={false}
         view="task"
-        taskCallError=""
         onTaskUpdated={() => {}}
         onReturnToCall={() => {}}
         onOpenTask={() => {}}
-        patientTasks={() => null}
+        patientTasks={(_, placement) => placement.beside === "task" ? placement.expanded?.content : null}
       />
     </DataProvider>,
   ))
-  const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === name)
+  const button = (name: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => (candidate.getAttribute("aria-label") ?? candidate.textContent?.trim()) === name)
   try {
     await render(reviewed)
-    assert.equal(button("Verify & next")?.disabled, false)
+    assert.equal(button("Verify")?.disabled, false)
     await render(changed)
     assert.equal(host.querySelector("h2")?.textContent, changed.title, "the panel shows the projected Task, not a held copy")
-    assert.equal(button("Verify & next")?.disabled, true, "a version the operator has not reviewed cannot be completed")
-    const pinned = host.querySelector('[data-testid="task-actions"]')!
-    assert.ok(pinned.classList.contains("sticky"), "the action row stays in view over a long source message")
-    assert.ok(pinned.contains(button("Review latest")!), "the pinned row holds the action that is enabled while completing is not")
+    assert.equal(button("Verify")?.disabled, true, "a version the operator has not reviewed cannot be completed")
+    assert.ok(button("Verify")!.closest("header"), "completing sits beside the title, above any long source message")
+    assert.ok(host.querySelector('[data-testid="task-actions"]')!.contains(button("Review latest")!), "the action that is enabled while completing is not sits under the title")
     assert.equal(button("Review latest")?.disabled, false)
     await act(async () => button("Review latest")!.click())
-    assert.equal(button("Verify & next")?.disabled, false)
-    await act(async () => button("Verify & next")!.click())
+    assert.equal(button("Verify")?.disabled, false)
+    await act(async () => button("Verify")!.click())
     assert.deepEqual(completions, [{ expectedVersion: changed.version, reason: "DONE" }], "completion submits the projected version as done")
   } finally {
     await act(async () => root.unmount())
@@ -1112,17 +898,19 @@ test("the focused Task shows each projected version and completes only the versi
   }
 })
 
-test("a text conversation keeps Reopen away from Mark done and holds it until the change settles", async (t) => {
+test("a text review is a card with a circle, and once closed offers Next task and holds Reopen until the change settles", async (t) => {
   const conversation = conversationHarness(t)
   const task = { ...projectedTask(), origin: "INBOUND_MESSAGE_REVIEW" as const }
   conversation.textTask = task
   await conversation.render(0, { onNextTask: () => {} })
-  const header = () => [...conversation.host.querySelectorAll<HTMLButtonElement>("header button")].map((button) => button.textContent?.trim())
-  assert.equal(header().at(-1), "Mark done")
+  const card = () => conversation.host.querySelector('section[aria-label="Text review"]')!
+  const buttons = () => [...card().querySelectorAll<HTMLButtonElement>("button")].map((button) => button.getAttribute("aria-label") ?? button.textContent?.trim())
+  assert.deepEqual(buttons(), ["Mark done"], "an open text has only its circle")
   conversation.textTask = { ...task, state: "COMPLETED", version: 2 }
   await conversation.render(1, { onNextTask: () => {} })
-  assert.equal(header().at(-1), "Next task", "Mark done's position becomes a forward action")
-  const reopen = () => [...conversation.host.querySelectorAll<HTMLButtonElement>("header button")].find((button) => button.textContent?.trim() === "Reopen")!
+  assert.deepEqual(buttons(), ["Next task", "Reopen"], "a closed text offers a forward action first and Reopen beside it")
+  assert.match(card().querySelector("h2")!.className, /\bline-through\b/)
+  const reopen = () => [...card().querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Reopen")!
   assert.equal(reopen().disabled, true)
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_100)) })
   assert.equal(reopen().disabled, false)
@@ -1458,30 +1246,22 @@ function conversationHarness(t: TestContext) {
   const projection = projectedWorkspace(projectedTask())
   async function render(
     revision: number,
-    overrides: Partial<ComponentProps<typeof EngagementWorkspaceView>> = {},
+    overrides: Partial<ComponentProps<typeof TextReviewPage>> = {},
   ) {
     await act(async () => {
       root.render(
         <DataProvider>
         <LiveDetail revision={revision}>
-        <EngagementWorkspaceView
-          practiceName="Synthetic Practice"
+        <TextReviewPage
+          route={projection.selection.engagement!.locations[0]!.id}
           engagement={projection.selection.engagement!}
           practiceID={projection.scope.practiceID}
           textTask={conversation.textTask}
-          patientTasksOpen={false}
-          onPatientTasks={() => {}}
           onTextTaskUpdated={() => {}}
           onTaskCreated={() => {}}
           onTaskOpen={(task) => conversation.opened.push(`task:${task.id}`)}
           onCallOpen={(id) => conversation.opened.push(`call:${id}`)}
           onAIInteractionOpen={(id) => conversation.opened.push(`ai:${id}`)}
-          calling={{
-            callingOccupied: false,
-            outboundPending: false,
-            ownsSoftphone: false,
-            startOutbound: async () => undefined,
-          }}
           {...overrides}
         />
         </LiveDetail>
@@ -1505,7 +1285,7 @@ function conversationHarness(t: TestContext) {
 test("text completion requires a successful conversation reload for the current Task version", async (t) => {
   const conversation = conversationHarness(t)
   const task = { ...projectedTask(), origin: "INBOUND_MESSAGE_REVIEW" as const }
-  const done = () => Array.from(conversation.host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Mark done")!
+  const done = () => conversation.host.querySelector<HTMLButtonElement>('button[aria-label="Mark done"]')!
   conversation.textTask = task
   let release!: () => void
   conversation.timelineGate = new Promise<void>((resolve) => { release = resolve })
@@ -1606,6 +1386,30 @@ async function waitFor(ready: () => boolean) {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
   }
   assert.ok(ready(), "condition was not reached")
+}
+
+function TextReviewPage({
+  onTextTaskUpdated,
+  onNextTask,
+  ...props
+}: Omit<ComponentProps<typeof EngagementWorkspace>, "onTextReviewed"> & {
+  onTextTaskUpdated: (task: Task) => void
+  onNextTask?: () => void
+}) {
+  const [reviewed, setReviewed] = useState("")
+  return (
+    <>
+      {props.textTask && (
+        <TextReviewCard
+          task={props.textTask}
+          reviewed={reviewed === textReviewKey(props.textTask)}
+          onUpdated={onTextTaskUpdated}
+          onNext={onNextTask}
+        />
+      )}
+      <EngagementWorkspace {...props} onTextReviewed={setReviewed} />
+    </>
+  )
 }
 
 function installDOM() {

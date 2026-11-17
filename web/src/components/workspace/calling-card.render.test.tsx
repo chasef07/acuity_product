@@ -23,6 +23,16 @@ test("connected controls stay ordered during hangup without claiming the call en
   }
 })
 
+test("a connected call is one compact header and a row of quiet icon controls with an End pill", () => {
+  const html = render(snapshot({ activeCall: call({ state: "CONNECTED", connectedAt: "2026-08-26T15:00:00Z" }) }))
+  for (const label of ["Mute", "Keypad", "Transfer"]) {
+    assert.match(html, new RegExp(`aria-label="${label}"`))
+    assert.doesNotMatch(html, new RegExp(`<span[^>]*>${label}</span>`), `${label} has no text label under it`)
+  }
+  assert.match(html, /aria-label="End call"[^>]*>.*End<\/button>/)
+  assert.doesNotMatch(html, /text-xl/, "the caller's name is not oversized")
+})
+
 test("no answer has an explicit result, redial and dismissal with no empty controls", () => {
   const html = render(snapshot({
     pendingDisposition: call({ state: "UNANSWERED", retryAllowed: true }),
@@ -86,6 +96,15 @@ test("live call warnings distinguish delayed requests and automatic reconnects w
     assert.doesNotMatch(html, /Calling disconnected|Calls are paused|Refresh page/)
     assert.doesNotMatch(html, /technical request detail/)
   }
+})
+
+test("a ringing call is one compact row: caller, details, time left, and Answer, with no label row", () => {
+  const html = render(snapshot({ offers: [offer("call-ring", "ring-leg", "+15551110002")] }))
+  assert.doesNotMatch(html, /data-slot="card-header"/, "no header row above the caller")
+  assert.doesNotMatch(html, /data-slot="badge"/, "no boxed label or countdown")
+  assert.match(html, /<span[^>]*role="status"[^>]*class="sr-only"[^>]*>Incoming call<\/span>/, "screen readers still hear it")
+  assert.match(html, /aria-label="Answer \(555\) 111-0002"/)
+  assert.ok(html.indexOf("(555) 111-0002") < html.indexOf("Answer"))
 })
 
 test("rendered Staff transfer exposes handoff context, Answer, and Decline", () => {
