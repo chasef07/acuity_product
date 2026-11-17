@@ -39,7 +39,6 @@ type TaskFailure = { taskID: string; message: string }
 export type ExpandedTask = { task: Task; content: ReactNode }
 
 type PatientTasksPanelProps = {
-  currentTaskID?: string
   expanded?: ExpandedTask
   callTaskID?: string
   completion: { pending: readonly string[]; errors: Readonly<Record<string, string>> }
@@ -98,7 +97,6 @@ export function PatientTasksPanel({
 
 export function PatientTasksPanelView({
   summary,
-  currentTaskID,
   expanded,
   callTaskID,
   completion,
@@ -214,7 +212,6 @@ export function PatientTasksPanelView({
             <OpenTaskRow
               key={task.id}
               task={task}
-              current={task.id === currentTaskID}
               thisCall={task.id === callTaskID}
               callerName={shared ? task.callerName : undefined}
               pending={completion.pending.includes(task.id)}
@@ -334,7 +331,6 @@ function PanelFrame({
 
 function OpenTaskRow({
   task,
-  current,
   thisCall,
   callerName,
   pending,
@@ -343,7 +339,6 @@ function OpenTaskRow({
   onOpen,
 }: {
   task: Task
-  current: boolean
   thisCall: boolean
   callerName?: string
   pending: boolean
@@ -399,8 +394,7 @@ function OpenTaskRow({
               <button
                 type="button"
                 aria-label={`Open Task: ${task.title}`}
-                aria-current={current}
-                className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left text-sm leading-5 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/30 aria-[current=true]:font-medium"
+                className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left text-sm leading-5 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/30"
                 onClick={onOpen}
               >
                 {title}
@@ -408,7 +402,7 @@ function OpenTaskRow({
             ) : (
               <p
                 data-testid="patient-task-title"
-                className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-sm leading-5", current && "font-medium")}
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-sm leading-5"
               >
                 {title}
               </p>
@@ -445,7 +439,7 @@ function OpenTaskRow({
             <EllipsisIcon aria-hidden="true" />
           </TaskCloseMenu>
         )}
-        {!closable && onOpen && !current && (
+        {!closable && onOpen && (
           <Button
             size="xs"
             variant="outline"

@@ -25,36 +25,47 @@ export function CompletedGroup({
 }: {
   title: string
   expanded: boolean
-  onToggle: () => void
+  onToggle?: () => void
   children: React.ReactNode
 }) {
+  const heading = (
+    <>
+      <span className="truncate">{title}</span>
+      <span aria-hidden="true" className="h-px flex-1 bg-sidebar-border" />
+    </>
+  )
   return (
     <Collapsible
-      open={expanded}
+      open={expanded || !onToggle}
       onOpenChange={(open) => {
-        if (open !== expanded) onToggle()
+        if (onToggle && open !== expanded) onToggle()
       }}
-      render={<SidebarGroup className="p-0" />}
+      render={<SidebarGroup className="p-0" role="group" aria-label={title} />}
     >
       <div className="flex min-w-0 items-center gap-0.5">
-        <CollapsibleTrigger
-          render={
-            <Button
-              variant="ghost"
-              className="group/disclosure flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        {onToggle ? (
+          <CollapsibleTrigger
+            render={
+              <Button
+                variant="ghost"
+                className="group/disclosure flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+              />
+            }
+          >
+            {heading}
+            <ChevronDownIcon
+              aria-hidden="true"
+              className={cn(
+                "size-3 shrink-0 transition-transform",
+                !expanded && "-rotate-90",
+              )}
             />
-          }
-        >
-          <span className="truncate">{title}</span>
-          <span aria-hidden="true" className="h-px flex-1 bg-sidebar-border" />
-          <ChevronDownIcon
-            aria-hidden="true"
-            className={cn(
-              "size-3 shrink-0 transition-transform",
-              !expanded && "-rotate-90",
-            )}
-          />
-        </CollapsibleTrigger>
+          </CollapsibleTrigger>
+        ) : (
+          <p className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2.5 text-xs text-muted-foreground">
+            {heading}
+          </p>
+        )}
       </div>
       <CollapsibleContent>
         <SidebarGroupContent>

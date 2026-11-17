@@ -274,7 +274,55 @@ test("a completed Task row credits the team when no email is known and stays qui
   assert.match(completedRow({ ...completed, closeReason: "DONE" }), /Done, by the team/)
   const withoutReason = completedRow(completed)
   assert.match(withoutReason, /Send prior authorization form/)
-  assert.doesNotMatch(withoutReason, /undefined|by the team|text-xs leading-4 text-muted-foreground/)
+  assert.doesNotMatch(withoutReason, /undefined|by the team| · /)
+})
+
+test("a completed Task row leads with the patient so search history reads by person", () => {
+  const completed = {
+    ...railTask,
+    state: "COMPLETED",
+    closeReason: "DONE",
+    completedBy: { kind: "HUMAN", subject: "user-1", email: "ines@abita.test" },
+    completedAt: "2026-08-30T13:00:00Z",
+    version: 2,
+  } as const
+  assert.match(completedRow({ ...completed, callerName: "Rosa Diaz" }), /aria-label="Rosa Diaz".*>Rosa Diaz<.*Send prior authorization form · Done, by ines@abita\.test/)
+  assert.match(completedRow(completed), /aria-label="\(305\) 555-0142"/)
+})
+
+test("a search shows completed matches open, with no toggle", () => {
+  const done = { ...railTask, id: "done", state: "COMPLETED", closeReason: "DONE", completedAt: "2026-08-30T13:00:00Z", version: 2 } as const
+  const base = projection(Object.values(patients))
+  const searched = rail({
+    ...base,
+    search: { input: "rosa", applied: "rosa" },
+    completedTasks: { ...base.completedTasks, items: [done] },
+    rail: { ...base.rail, completedExpanded: false },
+  }).body.innerHTML
+  assert.match(searched, /aria-label="Completed matches"/)
+  assert.match(searched, /data-testid="completed-task-row" data-task-id="done"/)
+  assert.doesNotMatch(searched, /Recently completed/)
+  const browsing = rail({ ...base, rail: { ...base.rail, completedExpanded: false } }).body.innerHTML
+  assert.match(browsing, /Recently completed/)
+})
+
+test("typing in search applies it after a short pause, once", async (t) => {
+  const page = await mountedRail(t, projection(Object.values(patients)))
+  await page.type("ro")
+  await page.type("rosa")
+  assert.deepEqual(page.intents.filter((intent) => intent.includes("search")), [])
+  await page.wait(400)
+  assert.deepEqual(page.intents.filter((intent) => intent.includes("search")), ["apply-search:rosa"])
+})
+
+test("a search the projection resets in one batch clears the box and is not applied again", async (t) => {
+  const base = projection(Object.values(patients))
+  const page = await mountedRail(t, base)
+  await page.type("7275550199")
+  await page.show({ ...base, search: { input: "", applied: "" } })
+  await page.wait(400)
+  assert.equal(document.querySelector<HTMLInputElement>("input[aria-label='Search tasks, names, or phone']")!.value, "")
+  assert.deepEqual(page.intents.filter((intent) => intent.includes("search")), ["apply-search:"])
 })
 
 test("patient rows carry no tick and no close menu", () => {
@@ -308,11 +356,13 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
     dom.window.close()
   })
   const opened: string[] = []
+  const intents: string[] = []
   const show = (state: WorkspaceProjectionState) => act(async () => root.render(
     <SidebarProvider>
       <WorkspaceRail
         projection={state}
         onIntent={(intent) => {
+          intents.push(intent.type === "apply-search" || intent.type === "submit-search" ? `${intent.type}:${intent.value}` : intent.type)
           if (intent.type === "select-task") opened.push(intent.task.phone)
         }}
       />
@@ -329,6 +379,12 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
   return {
     show,
     opened,
+    intents,
+    type: (value: string) => act(async () => {
+      const input = host.querySelector<HTMLInputElement>("input[aria-label='Search tasks, names, or phone']")!
+      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, value)
+      input.dispatchEvent(new dom.window.Event("input", { bubbles: true }))
+    }),
     pointerClick: (phone: string) => activate(phone, 1),
     keyboardActivate: (phone: string) => activate(phone, 0),
     pointerClickCompleted: (taskID: string) => activateRow(completedRow(taskID), 1),
@@ -424,12 +480,12 @@ test("a Recently completed row refuses a pointer click just after the patient li
   await page.show(withRows([followUp, callBack, unowned]))
   await page.pointerClickCompleted(done.id)
   assert.deepEqual(page.opened, [done.phone], "a patient arrived: the click may have been aimed at what was there")
-  assert.match(page.completedText(done.id) ?? "", /Fax the referralList just updated, click again$/)
+  assert.match(page.completedText(done.id) ?? "", /^\(305\) 555-0199List just updated, click again$/)
   await page.keyboardActivateCompleted(done.id)
   assert.deepEqual(page.opened, [done.phone, done.phone], "Enter on the focused row opens it without waiting")
 
   await page.wait(rowClickGuardMilliseconds + 50)
-  assert.equal(page.completedText(done.id), "Fax the referralDone, by ines@abita.test")
+  assert.equal(page.completedText(done.id), "(305) 555-0199Fax the referral · Done, by ines@abita.test")
   await page.pointerClickCompleted(done.id)
   assert.deepEqual(page.opened.slice(2), [done.phone])
 

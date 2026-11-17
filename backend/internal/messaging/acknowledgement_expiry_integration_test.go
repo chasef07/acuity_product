@@ -2,10 +2,15 @@ package messaging_test
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
 func TestAutomaticAcknowledgementExpiresWithoutChangingPatientTask(t *testing.T) {
@@ -135,5 +140,234 @@ func TestAcknowledgementDeadlineDoesNotExpireStaffMessages(t *testing.T) {
 	}
 	if fixture.provider.commands[0].MessageID != message.ID {
 		t.Fatal("provider received the wrong Message")
+	}
+}
+
+func TestAutomaticAcknowledgementIsSentOncePerPatientPerDay(t *testing.T) {
+	fixture := newAutomaticAcknowledgementTestFixture(t, true)
+	ctx := context.Background()
+	create := func(key string, category work.TaskCategory) work.Task {
+		t.Helper()
+		task, status, err := fixture.work.CreateAITask(ctx, work.CreateAITaskCommand{
+			Service: access.ServiceIdentity{
+				Subject:       "abita-automatic-acknowledgement",
+				PracticeID:    fixture.practiceID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+			},
+			OfficeKey:      "automatic-acknowledgement-scenarios-office",
+			OfficePhone:    "+17275919997",
+			SourceCallID:   "automatic-acknowledgement-" + key,
+			IdempotencyKey: "automatic-acknowledgement-" + key,
+			Phone:          "+17275550199",
+			Summary:        "Caller needs " + key,
+			Message:        "Caller asked about " + key + ".",
+			Category:       category,
+			Urgency:        work.TaskUrgencyNormal,
+		})
+		if err != nil || status != work.TaskCreated {
+			t.Fatalf("create %s = %q, %v", key, status, err)
+		}
+		return task
+	}
+	second := create("medication", work.TaskCategoryMedication)
+	third := create("optical", work.TaskCategoryOptical)
+	for range 3 {
+		if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+			t.Fatalf("queue acknowledgement = %t, %v", processed, err)
+		}
+	}
+	states := map[string]string{}
+	rows, err := fixture.pool.Query(ctx, `
+		SELECT task_id::text, state || ':' || COALESCE(safe_failure_code, '')
+		FROM work_task_acknowledgements
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, state string
+		if err := rows.Scan(&id, &state); err != nil {
+			t.Fatal(err)
+		}
+		states[id] = state
+	}
+	rows.Close()
+	outcomes := map[string]int{}
+	for _, task := range []work.Task{fixture.task, second, third} {
+		outcomes[states[task.ID]]++
+	}
+	if outcomes["MESSAGE_QUEUED:"] != 1 || outcomes["NOT_NEEDED:RECENTLY_ACKNOWLEDGED"] != 2 {
+		t.Fatalf("same-day acknowledgements = %v, want one text and two skipped", outcomes)
+	}
+	var texts int
+	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM messaging_messages WHERE direction = 'OUTBOUND'`).Scan(&texts); err != nil {
+		t.Fatal(err)
+	}
+	if texts != 1 {
+		t.Fatalf("automatic texts = %d, want 1", texts)
+	}
+
+	*fixture.clock = fixture.now.Add(25 * time.Hour)
+	next := create("records", work.TaskCategoryDocumentation)
+	if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+		t.Fatalf("queue next-day acknowledgement = %t, %v", processed, err)
+	}
+	var state string
+	if err := fixture.pool.QueryRow(ctx, `SELECT state FROM work_task_acknowledgements WHERE task_id = $1`, next.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "MESSAGE_QUEUED" {
+		t.Fatalf("next-day acknowledgement = %s, want a new text", state)
+	}
+}
+
+func TestCourtesyReplyToAnAutomaticTextOpensNoReview(t *testing.T) {
+	fixture := newAutomaticAcknowledgementTestFixture(t, true)
+	ctx := context.Background()
+	if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+		t.Fatalf("queue acknowledgement = %t, %v", processed, err)
+	}
+	reply := func(id, text string, at time.Time) int {
+		t.Helper()
+		raw := []byte(fmt.Sprintf(
+			`{"data":{"record_type":"event","event_type":"message.received","id":"%s","occurred_at":"%s","payload":{"id":"provider-%s","from":{"phone_number":"%s"},"to":[{"phone_number":"+17275550100","status":"webhook_delivered"}],"text":%q}}}`,
+			id, at.Format(time.RFC3339), id, fixture.task.Phone, text,
+		))
+		timestamp := fmt.Sprintf("%d", time.Now().Unix())
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			fixture.privateKey,
+			append([]byte(timestamp+"|"), raw...),
+		))
+		if _, err := fixture.ingress.ReceiveWebhook(ctx, "", raw, timestamp, signature); err != nil {
+			t.Fatalf("receive %q: %v", text, err)
+		}
+		if processed, err := fixture.worker.ProcessNextReceipt(ctx); err != nil || !processed {
+			t.Fatalf("project %q = %t, %v", text, processed, err)
+		}
+		var reviews int
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT count(*) FROM work_tasks WHERE origin = 'INBOUND_MESSAGE_REVIEW' AND state = 'OPEN'
+		`).Scan(&reviews); err != nil {
+			t.Fatal(err)
+		}
+		return reviews
+	}
+	for index, text := range []string{"Thanks!", "ok 👍", "Thank you so much.", "👍"} {
+		if reviews := reply(fmt.Sprintf("courtesy-%d", index), text, fixture.now.Add(time.Duration(index+1)*time.Minute)); reviews != 0 {
+			t.Fatalf("%q after the automatic text opened %d reviews, want none", text, reviews)
+		}
+	}
+	if reviews := reply("question", "Thanks, can I also change my appointment?", fixture.now.Add(10*time.Minute)); reviews != 1 {
+		t.Fatalf("a real reply opened %d reviews, want 1", reviews)
+	}
+}
+
+func TestCourtesyReplyWithNoRecentAutomaticTextStillOpensAReview(t *testing.T) {
+	fixture := newAutomaticAcknowledgementTestFixture(t, true)
+	ctx := context.Background()
+	if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+		t.Fatalf("queue acknowledgement = %t, %v", processed, err)
+	}
+	at := fixture.now.Add(25 * time.Hour)
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"message.received","id":"late-thanks","occurred_at":"%s","payload":{"id":"provider-late-thanks","from":{"phone_number":"%s"},"to":[{"phone_number":"+17275550100","status":"webhook_delivered"}],"text":"Thanks"}}}`,
+		at.Format(time.RFC3339), fixture.task.Phone,
+	))
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(fixture.privateKey, append([]byte(timestamp+"|"), raw...)))
+	if _, err := fixture.ingress.ReceiveWebhook(ctx, "", raw, timestamp, signature); err != nil {
+		t.Fatal(err)
+	}
+	if processed, err := fixture.worker.ProcessNextReceipt(ctx); err != nil || !processed {
+		t.Fatalf("project late thanks = %t, %v", processed, err)
+	}
+	var reviews int
+	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM work_tasks WHERE origin = 'INBOUND_MESSAGE_REVIEW'`).Scan(&reviews); err != nil {
+		t.Fatal(err)
+	}
+	if reviews != 1 {
+		t.Fatalf("thanks a day after the automatic text opened %d reviews, want 1", reviews)
+	}
+}
+
+func TestCourtesyReplyStillOpensAReviewAfterAStaffTextOrWithAnAttachment(t *testing.T) {
+	fixture := newAutomaticAcknowledgementTestFixture(t, true)
+	ctx := context.Background()
+	if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+		t.Fatalf("queue acknowledgement = %t, %v", processed, err)
+	}
+	reply := func(id, text, media string, at time.Time) int {
+		t.Helper()
+		raw := []byte(fmt.Sprintf(
+			`{"data":{"record_type":"event","event_type":"message.received","id":"%s","occurred_at":"%s","payload":{"id":"provider-%s","from":{"phone_number":"%s"},"to":[{"phone_number":"+17275550100","status":"webhook_delivered"}],"text":%q%s}}}`,
+			id, at.Format(time.RFC3339), id, fixture.task.Phone, text, media,
+		))
+		timestamp := fmt.Sprintf("%d", time.Now().Unix())
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(fixture.privateKey, append([]byte(timestamp+"|"), raw...)))
+		if _, err := fixture.ingress.ReceiveWebhook(ctx, "", raw, timestamp, signature); err != nil {
+			t.Fatalf("receive %q: %v", text, err)
+		}
+		if processed, err := fixture.worker.ProcessNextReceipt(ctx); err != nil || !processed {
+			t.Fatalf("project %q = %t, %v", text, processed, err)
+		}
+		var reviews int
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT count(*) FROM work_tasks WHERE origin = 'INBOUND_MESSAGE_REVIEW' AND state = 'OPEN'
+		`).Scan(&reviews); err != nil {
+			t.Fatal(err)
+		}
+		return reviews
+	}
+	if reviews := reply("photo-thanks", "Thanks", `,"media":[{"url":"https://media.example.test/card.jpg","content_type":"image/jpeg"}]`, fixture.now.Add(time.Minute)); reviews != 1 {
+		t.Fatalf("thanks with a photo opened %d reviews, want 1", reviews)
+	}
+	if _, err := fixture.pool.Exec(ctx, `UPDATE work_tasks SET state = 'COMPLETED', completed_at = $1, completed_by_kind = 'SERVICE', completed_by_subject = 'test', close_reason = 'DONE', version = version + 1 WHERE origin = 'INBOUND_MESSAGE_REVIEW'`, fixture.now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	*fixture.clock = fixture.now.Add(3 * time.Minute)
+	if _, _, err := fixture.module.Send(ctx, messaging.SendCommand{
+		Identity: fixture.identity, PracticeID: fixture.practiceID, LocationID: fixture.locationID,
+		Destination: fixture.task.Phone, Body: "Can you come in at 3pm?", IdempotencyKey: "staff-question",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if reviews := reply("staff-ok", "ok", "", fixture.now.Add(4*time.Minute)); reviews != 1 {
+		t.Fatalf("ok after a staff question opened %d reviews, want 1", reviews)
+	}
+}
+
+func TestFailedAcknowledgementDoesNotBlockTheNextOne(t *testing.T) {
+	fixture := newAutomaticAcknowledgementTestFixture(t, true)
+	ctx := context.Background()
+	if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+		t.Fatalf("queue acknowledgement = %t, %v", processed, err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `UPDATE messaging_messages SET delivery_state = 'FAILED', safe_failure_code = 'PROVIDER_REJECTED' WHERE direction = 'OUTBOUND'`); err != nil {
+		t.Fatal(err)
+	}
+	next, status, err := fixture.work.CreateAITask(ctx, work.CreateAITaskCommand{
+		Service: access.ServiceIdentity{
+			Subject: "abita-automatic-acknowledgement", PracticeID: fixture.practiceID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+		},
+		OfficeKey: "automatic-acknowledgement-scenarios-office", OfficePhone: "+17275919997",
+		SourceCallID: "after-failure", IdempotencyKey: "after-failure", Phone: fixture.task.Phone,
+		Summary: "Caller needs records", Message: "Caller asked about records.",
+		Category: work.TaskCategoryDocumentation, Urgency: work.TaskUrgencyNormal,
+	})
+	if err != nil || status != work.TaskCreated {
+		t.Fatalf("create next Task = %q, %v", status, err)
+	}
+	if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
+		t.Fatalf("queue next acknowledgement = %t, %v", processed, err)
+	}
+	var state string
+	if err := fixture.pool.QueryRow(ctx, `SELECT state FROM work_task_acknowledgements WHERE task_id = $1`, next.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "MESSAGE_QUEUED" {
+		t.Fatalf("acknowledgement after a failed one = %s, want a new text", state)
 	}
 }

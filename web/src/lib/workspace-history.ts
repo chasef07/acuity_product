@@ -14,7 +14,6 @@ import {
 } from "./vocabulary.ts"
 import { newestFirst, oldestFirst } from "./workspace-ordering.ts"
 
-
 export function presentTimeline(items: ConversationTimelineItem[]) {
   return oldestFirst(
     [...new Map(items.map((item) => [`${item.type}:${item.id}`, item])).values()]

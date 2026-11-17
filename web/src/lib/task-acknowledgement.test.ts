@@ -24,3 +24,14 @@ test("queued acknowledgement routes delivery evidence to its linked Message", ()
     "Automatic text created · see Messages for delivery evidence",
   )
 })
+
+test("a repeat acknowledgement within a day says the patient was already texted", () => {
+  assert.equal(
+    automaticAcknowledgementLabel({
+      state: "NOT_NEEDED",
+      safeFailureCode: "RECENTLY_ACKNOWLEDGED",
+      updatedAt: "2026-08-20T09:00:00Z",
+    }),
+    "Not sent · The patient already got an automatic text in the last 24 hours",
+  )
+})

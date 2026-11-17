@@ -136,7 +136,7 @@ test("one open Task shows its tick, title, category, office, age and close menu"
 
 test("five open Tasks at two offices are all listed in the order given", (t) => {
   t.mock.method(Date, "now", () => now)
-  const markup = renderToStaticMarkup(view({ summary: ready(fiveTasks), currentTaskID: "task-third" }))
+  const markup = renderToStaticMarkup(view({ summary: ready(fiveTasks) }))
   const listed = rows(markup)
   assert.match(markup, /<h2[^>]*>Open Tasks<\/h2><span[^>]*>5<\/span>/)
   assert.deepEqual(
@@ -146,8 +146,6 @@ test("five open Tasks at two offices are all listed in the order given", (t) => 
   assert.equal(listed.filter((row) => row.includes("North Office")).length, 3)
   assert.equal(listed.filter((row) => row.includes("South Office")).length, 2)
   assert.match(listed[1], /Urgent/)
-  assert.match(listed[2], /aria-current="true"/)
-  assert.match(listed[0], /aria-current="false"/)
   assert.match(listed[3], /Missed-call follow-up · South Office/)
   assert.match(listed[3], />2d<\/time>/)
   assert.match(listed[4], /Incoming text · North Office/)
@@ -177,16 +175,15 @@ test("loading holds its heading and one row of space", () => {
   assert.ok(loading.includes(">Open Tasks</h2>"))
   assert.match(loading, /Loading open Tasks/)
   assert.equal(loading.match(/data-slot="skeleton"/g)?.length, 3)
-  const one = renderToStaticMarkup(view({ summary: ready([current]), currentTaskID: current.id }))
+  const one = renderToStaticMarkup(view({ summary: ready([current]) }))
   assert.equal(rows(one).length, 1, "the one Task takes the row the skeleton held")
-  assert.match(rows(one)[0], /aria-current="true"/)
 })
 
 test("a selected Task opens in place in the list, and a Task not in the list opens above it", (t) => {
   t.mock.method(Date, "now", () => now)
   const [first, second] = fiveTasks
   const detail = <p>detail of the selected Task</p>
-  const inPlace = renderToStaticMarkup(view({ summary: ready(fiveTasks), currentTaskID: second.id, expanded: { task: second, content: detail } }))
+  const inPlace = renderToStaticMarkup(view({ summary: ready(fiveTasks), expanded: { task: second, content: detail } }))
   assert.match(inPlace, /<h2[^>]*>Open Tasks<\/h2><span[^>]*>5<\/span>/)
   assert.equal(rows(inPlace).length, 4, "the selected Task's row gives way to its detail")
   const order = [first.title, "detail of the selected Task", fiveTasks[2].title].map((text) => inPlace.indexOf(text))
@@ -194,7 +191,7 @@ test("a selected Task opens in place in the list, and a Task not in the list ope
   assert.match(inPlace, new RegExp(`data-patient-task-id="${second.id}"[^>]*data-expanded="true"`))
 
   const completed = { ...first, state: "COMPLETED" as const }
-  const above = renderToStaticMarkup(view({ summary: ready(fiveTasks.slice(1)), currentTaskID: first.id, expanded: { task: completed, content: detail } }))
+  const above = renderToStaticMarkup(view({ summary: ready(fiveTasks.slice(1)), expanded: { task: completed, content: detail } }))
   assert.equal(rows(above).length, 4)
   assert.ok(above.indexOf("detail of the selected Task") < above.indexOf(second.title), "a Task that left the list stays on top")
 
@@ -241,7 +238,7 @@ test("a long list shows eight rows until asked for all, and says when the server
 test("a selected Task past the first rows stays in its place while the rest are folded away", () => {
   const twelve = manyTasks(12)
   const tenth = twelve[9]
-  const markup = renderToStaticMarkup(view({ summary: ready(twelve), currentTaskID: tenth.id, expanded: { task: tenth, content: <p>detail of the tenth</p> } }))
+  const markup = renderToStaticMarkup(view({ summary: ready(twelve), expanded: { task: tenth, content: <p>detail of the tenth</p> } }))
   assert.ok(markup.includes("detail of the tenth"))
   assert.equal(rows(markup).length, 8, "the first eight rows are still shown")
   assert.ok(markup.indexOf(twelve[7].title) < markup.indexOf("detail of the tenth"))
@@ -251,7 +248,7 @@ test("a selected Task past the first rows stays in its place while the rest are 
 test("a Task opened above the list after closing is not repeated under Done today", () => {
   const [first, second] = fiveTasks
   const completed = { ...closedTask, id: first.id }
-  const markup = renderToStaticMarkup(view({ summary: ready([second], [completed]), currentTaskID: first.id, expanded: { task: completed, content: <p>detail of the closed Task</p> } }))
+  const markup = renderToStaticMarkup(view({ summary: ready([second], [completed]), expanded: { task: completed, content: <p>detail of the closed Task</p> } }))
   assert.ok(markup.includes("detail of the closed Task"))
   assert.doesNotMatch(markup, /Done today/)
 })
@@ -326,7 +323,7 @@ test("a row is built to truncate inside its column and keep its age and menu, as
 
 test("a failed or stale read is said, with a way to retry", () => {
   const failure = { kind: "unavailable", retryable: true } as const
-  const failed = renderToStaticMarkup(view({ summary: { status: "failed", failure }, currentTaskID: "task-first" }))
+  const failed = renderToStaticMarkup(view({ summary: { status: "failed", failure } }))
   assert.match(failed, /role="alert"[^>]*>This patient&#x27;s open Tasks could not be loaded\./)
   assert.match(failed, />Retry<\/button>/)
   const stale = renderToStaticMarkup(view({
@@ -394,9 +391,9 @@ test("a text review and an appointment check each offer Open for their own Task 
   }
   assert.deepEqual(opened, [text.id, check.id])
 
-  await render({ opensReviews: true, currentTaskID: text.id })
-  assert.deepEqual(reviewControls(text), [], "the review that is already open offers nothing to open")
-  assert.deepEqual(reviewControls(check), ["Open Task: Synthetic check request"])
+  await render({ opensReviews: true, expanded: { task: text, content: <p>the open text review</p> } })
+  assert.equal(page.host.querySelector(`button[aria-label="Open Task: ${text.title}"]`), null, "the review that is already open shows in place, with nothing to open")
+  assert.ok(page.host.querySelector(`button[aria-label="Open Task: ${check.title}"]`))
 
   await render({ opensReviews: false })
   assert.deepEqual([reviewControls(text), reviewControls(check)], [[], []], "during a live call a review is text")

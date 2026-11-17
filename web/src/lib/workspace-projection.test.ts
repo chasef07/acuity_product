@@ -46,7 +46,7 @@ function createWorkspaceProjection(
           ...(request.search ? { search: request.search } : {}),
           ...(request.cursor ? { cursor: request.cursor } : {}),
           state: "OPEN",
-          responsibility: request.scope === "everyone" ? "all" : "mine",
+          responsibility: "all",
           limit: request.limit,
         }, signal)
         return result.kind === "success"
@@ -360,11 +360,9 @@ test("search resets only Task windows and delayed prior search cannot overwrite 
 
   await projection.start()
   await realtime.reconcile(0)
-  await projection.dispatch({ type: "set-search", value: "first" })
-  const staleSearch = projection.dispatch({ type: "submit-search" })
+  const staleSearch = projection.dispatch({ type: "submit-search", value: "first" })
   await firstSearchRequested.promise
-  await projection.dispatch({ type: "set-search", value: "second" })
-  await projection.dispatch({ type: "submit-search" })
+  await projection.dispatch({ type: "submit-search", value: "second" })
   releaseFirstSearch.resolve()
   await staleSearch
 
@@ -566,22 +564,18 @@ test("changing the filter reloads the list and the completed shelf, always for e
   })
   await projection.start()
   await realtime.reconcile(0)
-  for (const [intent, scope, filter, responsibility] of [
-    [{ type: "set-rail-view", filter: "texts" }, "everyone", "texts", "all"],
-    [{ type: "set-rail-view", filter: "callBack" }, "everyone", "callBack", "all"],
-    [{ type: "set-rail-view", filter: "followUp" }, "everyone", "followUp", "all"],
-  ] as const) {
+  for (const filter of ["texts", "callBack", "followUp"] as const) {
     const stale = await realtime.prepareReconciliation(0)
     patientRequests.length = 0
     completedRequests.length = 0
-    await projection.dispatch(intent)
+    await projection.dispatch({ type: "set-rail-view", filter })
     stale.apply()
     const state = projection.getSnapshot()
     assert.equal(state.rail.filter, filter)
-    assert.deepEqual(patientRequests.map((request) => [request.scope, request.filter]), [[scope, filter]])
-    assert.deepEqual(completedRequests.map((request) => [request.state, request.responsibility]), [["COMPLETED", responsibility]])
-    assert.deepEqual(openTasks(state).map((item) => item.id), [`${scope}-${filter}`])
-    assert.deepEqual(state.completedTasks.items.map((item) => item.id), [`${responsibility}-done`])
+    assert.deepEqual(patientRequests.map((request) => [request.scope, request.filter]), [["everyone", filter]])
+    assert.deepEqual(completedRequests.map((request) => [request.state, request.responsibility]), [["COMPLETED", "all"]])
+    assert.deepEqual(openTasks(state).map((item) => item.id), [`everyone-${filter}`])
+    assert.deepEqual(state.completedTasks.items.map((item) => item.id), ["all-done"])
     assert.equal(state.selection.task?.id, "everyone-all", "the patient opened on first load stays selected after it left the list")
   }
   const requestCount = patientRequests.length + completedRequests.length
@@ -623,8 +617,7 @@ test("a filter change never moves the selection or the panel", async () => {
     assert.deepEqual(projection.getSnapshot().selection, reading, JSON.stringify(intent))
   }
   assert.deepEqual(openTasks(projection.getSnapshot()).map((item) => item.id), [other.id, text.id], "the list changed while the selection did not")
-  await projection.dispatch({ type: "set-search", value: "other" })
-  await projection.dispatch({ type: "submit-search" })
+  await projection.dispatch({ type: "submit-search", value: "other" })
   await realtime.reconcile(0)
   assert.deepEqual(projection.getSnapshot().selection, reading, "a text search")
   projection.stop()
@@ -639,8 +632,7 @@ test("a chip keeps a searched number that has no Task", async () => {
   })
   await projection.start()
   await realtime.reconcile(0)
-  await projection.dispatch({ type: "set-search", value: "(305) 555-0199" })
-  await projection.dispatch({ type: "submit-search" })
+  await projection.dispatch({ type: "submit-search", value: "(305) 555-0199" })
   const searched = projection.getSnapshot().selection
   assert.equal(searched.engagement?.phone, "+13055550199")
   assert.equal(searched.task, undefined)
@@ -666,8 +658,7 @@ test("search and live refreshes never open a patient once the first load has set
   assert.equal(projection.getSnapshot().selection.view, "none")
   rows = [task("arrived-later")]
   await realtime.reconcile(0)
-  await projection.dispatch({ type: "set-search", value: "arrived" })
-  await projection.dispatch({ type: "submit-search" })
+  await projection.dispatch({ type: "submit-search", value: "arrived" })
   await realtime.reconcile(0)
   const state = projection.getSnapshot()
   assert.deepEqual(openTasks(state).map((item) => item.id), ["arrived-later"])
@@ -1126,8 +1117,8 @@ test("opening Task context preserves pending authoritative count reconciliation"
   projection.stop()
 })
 
-for (const type of ["task-committed", "task-created"] as const) {
-  test(`${type} fences counts fetched before the committed change`, async () => {
+for (const created of [false, true]) {
+  test(`committing ${created ? "a new" : "an edited"} Task fences counts fetched before the change`, async () => {
     const realtime = deterministicRealtime()
     const openTask = task("task-1")
     let currentPage = taskPage([openTask])
@@ -1143,10 +1134,10 @@ for (const type of ["task-committed", "task-created"] as const) {
     await realtime.reconcile(0)
     currentPage = taskPage(Array.from({ length: 5 }, (_, i) => task(`task-${i + 1}`)))
     const pending = await realtime.prepareReconciliation(0)
-    currentPage = taskPage(type === "task-created" ? [openTask, task("new-task")] : [openTask])
-    await projection.dispatch({ type, task: type === "task-created" ? task("new-task") : task("task-1", { version: 2 }) })
+    currentPage = taskPage(created ? [openTask, task("new-task")] : [openTask])
+    await projection.dispatch({ type: "task-committed", task: created ? task("new-task") : task("task-1", { version: 2 }) })
     const committedCounts = projection.getSnapshot().patients.counts
-    assert.equal(committedCounts.all, type === "task-created" ? 2 : 1)
+    assert.equal(committedCounts.all, created ? 2 : 1)
     pending.apply()
     assert.deepEqual(projection.getSnapshot().patients.counts, committedCounts)
     assert.equal(realtime.refreshes, 1)
@@ -1232,8 +1223,7 @@ test("phone search opens Engagement history without inventing or hiding a Task",
   })
   await projection.start()
   await realtime.reconcile(0)
-  await projection.dispatch({ type: "set-search", value: "(555) 123-4567" })
-  await projection.dispatch({ type: "submit-search" })
+  await projection.dispatch({ type: "submit-search", value: "(555) 123-4567" })
   assert.equal(projection.getSnapshot().selection.engagement?.phone, "+15551234567")
   assert.equal(projection.getSnapshot().selection.task, undefined)
   assert.deepEqual(openTasks(projection.getSnapshot()), [open])
@@ -2023,8 +2013,7 @@ test("a phone search shows the patient's card and Tasks without selecting one, a
   })
   await projection.start()
   await realtime.reconcile(0)
-  await projection.dispatch({ type: "set-search", value: "(555) 987-6543" })
-  await projection.dispatch({ type: "submit-search" })
+  await projection.dispatch({ type: "submit-search", value: "(555) 987-6543" })
   let { selection } = projection.getSnapshot()
   assert.equal(selection.contextView, "patient-tasks", "a searched number can be called or texted at once")
   assert.equal(selection.contextPanelOpen, true)
@@ -2330,12 +2319,41 @@ test("a search that hides every appointment check does not replace the stored Ap
   await projection.start()
   await realtime.reconcile(0)
   await projection.dispatch({ type: "set-rail-view", filter: "appointments" })
-  await projection.dispatch({ type: "set-search", value: "nobody" })
-  await projection.dispatch({ type: "submit-search" })
+  await projection.dispatch({ type: "submit-search", value: "nobody" })
   requests.length = 0
   await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
   await realtime.reconcile(0)
   assert.equal(projection.getSnapshot().rail.filter, "appointments")
   assert.deepEqual([...new Set(requests)], ["appointments:nobody"])
+  projection.stop()
+})
+
+test("typing searches as you go without opening a typed number until Enter", async () => {
+  const realtime = deterministicRealtime()
+  const searches: string[] = []
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(14), tasks: taskPage([task("open")]) }),
+      tasks: async (_token, request) => {
+        if (request.state === "COMPLETED") searches.push(request.search ?? "")
+        return success(taskPage([]))
+      },
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  const before = projection.getSnapshot().selection
+  searches.length = 0
+
+  await projection.dispatch({ type: "apply-search", value: " (305) 555-0199 " })
+  await projection.dispatch({ type: "apply-search", value: " (305) 555-0199 " })
+  assert.equal(projection.getSnapshot().search.applied, "(305) 555-0199")
+  assert.deepEqual(searches, ["(305) 555-0199"], "one request per changed search")
+  assert.deepEqual(projection.getSnapshot().selection, before, "typing never opens a conversation")
+
+  await projection.dispatch({ type: "submit-search", value: " (305) 555-0199 " })
+  assert.equal(projection.getSnapshot().selection.engagement?.phone, "+13055550199")
   projection.stop()
 })

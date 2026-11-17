@@ -24,16 +24,15 @@ import type { SettledWrapUp, SoftphoneRuntimeSnapshot } from "@/lib/calling/soft
 import { useEngagementSummary } from "@/lib/clients/engagement"
 import { useOpenTask } from "@/lib/clients/tasks"
 import type { PortalQuery } from "@/lib/data/queries"
+import { patientName, phoneNames } from "@/lib/patient-work"
 import { cn } from "@/lib/utils"
 import {
   callWrapUpReasons,
-  formatPhone,
   taskCloseReasonLabels,
   taskGroupLabel,
   taskOriginLabels,
 } from "@/lib/vocabulary"
 
-import { phoneNames } from "./patient-bar"
 import { offersTaskCloseMenu } from "./task-close-menu"
 
 type CallWrapUpProps = {
@@ -190,7 +189,7 @@ export function CallWrapUpView({
     <>
       <header className="flex flex-col gap-0.5 px-5 pt-5">
         <h2 id={titleID} className="truncate text-base font-medium">
-          {names.length === 1 ? names[0] : formatPhone(call.phone) || "Unknown caller"}
+          {patientName(names.length === 1 ? names[0] : undefined, call.phone) || "Unknown caller"}
         </h2>
         <p className="text-xs text-muted-foreground">
           Call ended

@@ -1,6 +1,5 @@
 import type {
   PatientWorkCounts,
-  PatientWorkFilter,
   PatientWorkRow,
   PatientWorkTotals,
   Task,
@@ -10,30 +9,20 @@ import {
   formatPhone,
   labelOptions,
   patientWorkFilterLabels,
+  type RailFilter,
 } from "./vocabulary.ts"
 
-const filterShown: Record<
-  keyof typeof patientWorkFilterLabels,
-  (counts: PatientWorkCounts, appointmentsOffered: boolean) => boolean
-> = {
-  all: () => true,
-  followUp: () => true,
-  callBack: () => true,
-  texts: () => true,
-  appointments: (counts, appointmentsOffered) => appointmentsOffered || counts.appointments > 0,
-}
-
 export function patientWorkFilterShown(
-  filter: PatientWorkFilter,
+  filter: RailFilter,
   counts: PatientWorkCounts,
   appointmentsOffered: boolean,
 ) {
-  return filter !== "unowned" && filterShown[filter](counts, appointmentsOffered)
+  return filter !== "appointments" || appointmentsOffered || counts.appointments > 0
 }
 
 export function shownPatientWorkFilters(
   counts: PatientWorkCounts,
-  active: PatientWorkFilter,
+  active: RailFilter,
   appointmentsOffered: boolean,
 ) {
   return labelOptions(patientWorkFilterLabels)
@@ -52,8 +41,15 @@ export function offersAppointmentChecks(
   )
 }
 
-export function patientRowName(row: Pick<PatientWorkRow, "displayName" | "phone">) {
-  return row.displayName || formatPhone(row.phone)
+export function patientName(name: string | undefined, phone: string) {
+  return name || formatPhone(phone)
+}
+
+export function phoneNames(names: string[], callName = "") {
+  const known = callName.trim().toLowerCase()
+  return !known || names.some((name) => name.toLowerCase() === known)
+    ? names
+    : [...names, callName.trim()]
 }
 
 export function openTaskReason(

@@ -45,7 +45,7 @@ export function projectedWorkspace(task: Task): WorkspaceProjectionState {
       locationID: "location-1",
       locationScopeID: "",
     },
-    search: { input: "", applied: "", error: "" },
+    search: { input: "", applied: "" },
     patients: {
       items: [projectedPatient(task)],
       nextCursor: "",

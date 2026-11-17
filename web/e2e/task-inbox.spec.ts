@@ -116,7 +116,6 @@ test("a text review expires after five days and a new inbound text opens another
 test("the sidebar remembers its filter and whether it is collapsed", async ({ page }) => {
   test.skip(!process.env.E2E_PROVISIONING_OUTPUT, "E2E fixture required")
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
-  await expect(page.getByRole("group", { name: "Whose work" })).toHaveCount(0)
   await expect(railFilter(page, "all")).toHaveAttribute("aria-pressed", "true")
   await railFilter(page, "texts").click()
   await expect(railFilter(page, "texts")).toHaveAttribute("aria-pressed", "true")
@@ -247,13 +246,11 @@ test("everyone sees every patient, including a colleague's category and work wit
     const search = page.getByLabel("Search tasks, names, or phone")
     await search.fill(key)
     await search.press("Enter")
-    await expect(page.getByRole("group", { name: "Whose work" })).toHaveCount(0)
     await expect(railFilter(page, "all")).toHaveText("All2")
     await expect(page.getByTestId("patient-row")).toHaveCount(2)
     await expect(patientRow(page, unowned).getByTestId("patient-row-reason")).toHaveText(`${key} unowned`)
     await expect(patientRow(page, colleagues).getByTestId("patient-row-reason")).toHaveText(`${key} colleague`)
     await expect(page.getByTestId("patient-work-footer")).toHaveText(/^\d+ open for \d+ patients$/)
-    await expect(page.locator('[data-filter="unowned"]')).toHaveCount(0)
   } finally {
     await db.query("DELETE FROM work_responsibilities WHERE account_email = ANY($1::text[])", [roster])
     await db.end()

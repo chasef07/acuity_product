@@ -6,7 +6,6 @@ import {
   EllipsisIcon,
   PencilIcon,
   PhoneCallIcon,
-  RotateCcwIcon,
   XIcon,
 } from "lucide-react"
 
@@ -34,6 +33,7 @@ import {
 import { offersTaskCloseMenu, TaskCloseMenu } from "./task-close-menu"
 import { TaskMetadata } from "./task-metadata"
 import { RecoveryTaskSource } from "./recording-source"
+import { ClosedTaskActions, TaskCheck } from "./task-check"
 import { actorLabel, Metadata, TaskSourceDetails } from "./task-details"
 
 export function TaskWorkspace({
@@ -78,8 +78,7 @@ export function TaskWorkspace({
 
   const [reviewedVersion, setReviewedVersion] = useState(task.version)
   const stateSettled = useSettledState(task.state)
-  const reviewRequired = task.origin === "APPOINTMENT_REVIEW" || task.origin === "INBOUND_MESSAGE_REVIEW"
-  const needsReview = reviewRequired && task.state === "OPEN" && reviewedVersion !== task.version
+  const needsReview = task.origin === "APPOINTMENT_REVIEW" && task.state === "OPEN" && reviewedVersion !== task.version
   function acceptUpdate(updated: Task) {
     setReviewedVersion(updated.version)
     onTaskUpdated(updated)
@@ -154,23 +153,14 @@ export function TaskWorkspace({
       className="group/task flex flex-col rounded-lg bg-muted/60 px-3 py-2.5"
     >
       <header className="flex items-start gap-2">
-        {open ? (
-          <Button
-            size="icon-xs"
-            variant="outline"
-            className="mt-0.5 shrink-0 rounded-full bg-background text-transparent hover:text-success focus-visible:text-success [@media(hover:none)]:text-muted-foreground/50"
-            aria-label={completeLabel}
-            title={needsReview ? "Review the latest activity first" : completeLabel}
-            disabled={pending || needsReview}
-            onClick={() => void transition("DONE")}
-          >
-            {pending ? <Spinner className="text-muted-foreground" /> : <CheckIcon />}
-          </Button>
-        ) : (
-          <span aria-hidden="true" className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
-            <CheckIcon className="size-3" />
-          </span>
-        )}
+        <TaskCheck
+          open={open}
+          label={completeLabel}
+          title={needsReview ? "Review the latest activity first" : completeLabel}
+          pending={pending}
+          blocked={needsReview}
+          onComplete={() => void transition("DONE")}
+        />
         {editing && open ? (
           <div className="flex min-w-0 flex-1 items-center gap-1">
             <Input
@@ -265,18 +255,12 @@ export function TaskWorkspace({
               <p role="status" className="text-xs leading-5 text-muted-foreground">
                 {completion}{task.completedAt ? ` · ${formatTimestamp(task.completedAt)}` : ""}. Completed for everyone with access.
               </p>
-              <div className="flex items-center gap-1">
-                {onNextTask && <Button size="sm" onClick={onNextTask}>Next task</Button>}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={() => void transition()}
-                  disabled={pending || !stateSettled}
-                >
-                  {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
-                </Button>
-              </div>
+              <ClosedTaskActions
+                pending={pending}
+                settled={stateSettled}
+                onNext={onNextTask}
+                onReopen={() => void transition()}
+              />
             </>
           )}
         </div>

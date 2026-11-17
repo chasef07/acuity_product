@@ -38,11 +38,11 @@ import {
   CallingFailureStatus,
 } from "@/components/workspace/calling-dock"
 import { AIInteractionContext } from "@/components/workspace/ai-interaction-context"
-import { EngagementWorkspace, textReviewKey } from "@/components/workspace/engagement-workspace"
 import { PatientActions, PatientIdentity, senderRoute } from "@/components/workspace/patient-bar"
 import { type ExpandedTask, PatientTasksPanel } from "@/components/workspace/patient-tasks-panel"
 import { callContactName } from "@/components/workspace/call-workspace"
-import { TextReviewCard } from "@/components/workspace/text-conversation-action"
+import { MessageConversation } from "@/components/workspace/message-conversation"
+import { TextReviewCard, textReviewKey } from "@/components/workspace/text-conversation-action"
 import { DetailsAbovePatientTasks, reviewedInConversation, TaskCallContext } from "@/components/workspace/task-call-context"
 import { TaskCallAction } from "@/components/workspace/task-call-action"
 import { WorkspaceNavRail } from "@/components/workspace/workspace-nav-rail"
@@ -360,7 +360,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       phone: string,
       placement: {
         className: string
-        currentTaskID?: string
         expanded?: ExpandedTask
         callTaskID?: string
         titlesOpenTasks: boolean
@@ -370,7 +369,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
         key={phone}
         practiceID={state.scope.practiceID}
         phone={phone}
-        currentTaskID={placement.currentTaskID}
         expanded={placement.expanded}
         callTaskID={placement.callTaskID}
         completion={state.completion}
@@ -397,7 +395,7 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
       ? manageAgentPages.find((item) => item.value === state.selection.agentPage)?.label
       : view === "analytics" ? practiceAnalyticsPages.find((item) => item.value === analyticsPage)?.label
       : view === "operator-analytics" ? commandCenterPages.find((item) => item.value === commandCenterPage)?.label
-      : isWorkView(view) ? (textTask ? "Texts" : selectedTask?.title) : undefined
+      : undefined
     return (
       <>
         <WorkspaceNavRail
@@ -494,50 +492,51 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
               />
             ) : view === "engagement" && selectedEngagement ? (
               <div className="relative flex min-h-0 flex-1 bg-background">
-                <EngagementWorkspace
-                  key={selectedEngagement.phone}
-                  engagement={selectedEngagement}
-                  practiceID={state.scope.practiceID}
-                  route={route}
-                  textTask={textTask}
-                  onTextReviewed={setReviewedTextKey}
-                  selectedTaskID={
-                    contextPanelOpen && contextView === "task"
-                      ? selectedTask?.id
-                      : undefined
-                  }
-                  selectedCallID={
-                    contextPanelOpen && contextView === "call"
-                      ? shownCall?.id
-                      : undefined
-                  }
-                  selectedAIInteractionID={
-                    contextPanelOpen && contextView === "ai-call"
-                      ? selectedAIInteractionID
-                      : undefined
-                  }
-                  onTaskCreated={(task) =>
-                    void projection.dispatch({ type: "task-created", task })
-                  }
-                  onTaskOpen={(task) =>
-                    void projection.dispatch(
-                      contextPanelOpen && contextView === "task" &&
-                      selectedTask?.id === task.id
-                        ? { type: "close-context" }
-                        : { type: "open-task-context", task },
-                    )
-                  }
-                  onCallOpen={(callID) =>
-                    void projection.dispatch({ type: "open-call-context", callID })
-                  }
-                  onAIInteractionOpen={(interactionID) =>
-                    void projection.dispatch({
-                      type: "open-ai-context",
-                      interactionID,
-                    })
-                  }
-                  onHistoryChange={setNumberHistory}
-                />
+                <section key={selectedEngagement.phone} className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  <MessageConversation
+                    phone={selectedEngagement.phone}
+                    practiceID={state.scope.practiceID}
+                    locationID={route}
+                    reviewKey={textReviewKey(textTask)}
+                    onReviewed={setReviewedTextKey}
+                    selectedTaskID={
+                      contextPanelOpen && contextView === "task"
+                        ? selectedTask?.id
+                        : undefined
+                    }
+                    selectedCallID={
+                      contextPanelOpen && contextView === "call"
+                        ? shownCall?.id
+                        : undefined
+                    }
+                    selectedAIInteractionID={
+                      contextPanelOpen && contextView === "ai-call"
+                        ? selectedAIInteractionID
+                        : undefined
+                    }
+                    onTaskCreated={(task) =>
+                      void projection.dispatch({ type: "task-committed", task })
+                    }
+                    onTaskOpen={(task) =>
+                      void projection.dispatch(
+                        contextPanelOpen && contextView === "task" &&
+                        selectedTask?.id === task.id
+                          ? { type: "close-context" }
+                          : { type: "open-task-context", task },
+                      )
+                    }
+                    onCallOpen={(callID) =>
+                      void projection.dispatch({ type: "open-call-context", callID })
+                    }
+                    onAIInteractionOpen={(interactionID) =>
+                      void projection.dispatch({
+                        type: "open-ai-context",
+                        interactionID,
+                      })
+                    }
+                    onHistoryChange={setNumberHistory}
+                  />
+                </section>
                 <aside
                   aria-label={contextPanelLabel}
                   aria-hidden={!contextPanelOpen}
@@ -616,7 +615,6 @@ export function PortalWorkspace({ defaultSidebarOpen = true }: { defaultSidebarO
                             ? { className: onLiveCall ? "shrink-0 pt-0" : "shrink-0 border-t", callTaskID: placement.callTaskID, titlesOpenTasks: false }
                             : {
                                 className: "flex-1",
-                                currentTaskID: selectedTask?.id,
                                 expanded: placement.expanded ?? (textTask ? {
                                   task: textTask,
                                   content: (

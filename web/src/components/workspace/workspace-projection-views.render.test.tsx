@@ -7,9 +7,9 @@ import { JSDOM } from "jsdom"
 
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
-import { EngagementWorkspace, textReviewKey } from "./engagement-workspace.tsx"
+import { MessageConversation } from "./message-conversation.tsx"
 import { PatientIdentityView, senderRoute } from "./patient-bar.tsx"
-import { TextReviewCard } from "./text-conversation-action.tsx"
+import { TextReviewCard, textReviewKey } from "./text-conversation-action.tsx"
 import { DetailsAbovePatientTasks, TaskCallContext } from "./task-call-context.tsx"
 import { TaskCallAction } from "./task-call-action.tsx"
 import { VoicemailSource } from "./recording-source.tsx"
@@ -84,11 +84,12 @@ test("Task rail toggles the selected context while preserving the conversation",
       route={projection.selection.engagement!.locations[0]!.id}
       onRoute={() => {}}
     />
-    <EngagementWorkspace
-      route={projection.selection.engagement!.locations[0]!.id}
-      engagement={projection.selection.engagement!}
+    <MessageConversation
+      locationID={projection.selection.engagement!.locations[0]!.id}
+      phone={projection.selection.engagement!.phone}
       practiceID={projection.scope.practiceID}
-      onTextReviewed={() => {}}
+      reviewKey=""
+      onReviewed={() => {}}
       selectedTaskID={projection.selection.task?.id}
       onTaskCreated={() => {}}
       onTaskOpen={() => {}}
@@ -1253,8 +1254,8 @@ function conversationHarness(t: TestContext) {
         <DataProvider>
         <LiveDetail revision={revision}>
         <TextReviewPage
-          route={projection.selection.engagement!.locations[0]!.id}
-          engagement={projection.selection.engagement!}
+          locationID={projection.selection.engagement!.locations[0]!.id}
+          phone={projection.selection.engagement!.phone}
           practiceID={projection.scope.practiceID}
           textTask={conversation.textTask}
           onTextTaskUpdated={() => {}}
@@ -1389,25 +1390,27 @@ async function waitFor(ready: () => boolean) {
 }
 
 function TextReviewPage({
+  textTask,
   onTextTaskUpdated,
   onNextTask,
   ...props
-}: Omit<ComponentProps<typeof EngagementWorkspace>, "onTextReviewed"> & {
+}: Omit<ComponentProps<typeof MessageConversation>, "reviewKey" | "onReviewed"> & {
+  textTask?: Task
   onTextTaskUpdated: (task: Task) => void
   onNextTask?: () => void
 }) {
   const [reviewed, setReviewed] = useState("")
   return (
     <>
-      {props.textTask && (
+      {textTask && (
         <TextReviewCard
-          task={props.textTask}
-          reviewed={reviewed === textReviewKey(props.textTask)}
+          task={textTask}
+          reviewed={reviewed === textReviewKey(textTask)}
           onUpdated={onTextTaskUpdated}
           onNext={onNextTask}
         />
       )}
-      <EngagementWorkspace {...props} onTextReviewed={setReviewed} />
+      <MessageConversation {...props} reviewKey={textReviewKey(textTask)} onReviewed={setReviewed} />
     </>
   )
 }

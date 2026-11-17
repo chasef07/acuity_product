@@ -85,21 +85,21 @@ export function WorkspaceRail({
       ? (projection.selection.engagement?.phone ?? "")
       : ""
   const projectedSearch = projection.search.input
-  const engagementError = projection.search.error
   const connection = projection.connection
   const railStateKey = `${discovery.actor.subject}:${practice.id}`
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const scrollPersistTimer = useRef<number | undefined>(undefined)
   const [search, setSearch] = useState(projectedSearch)
-  const [syncedSearch, setSyncedSearch] = useState(projectedSearch)
-  if (projectedSearch !== syncedSearch) {
-    setSyncedSearch(projectedSearch)
+  const [syncedSearch, setSyncedSearch] = useState(projection.search)
+  if (projection.search !== syncedSearch) {
+    setSyncedSearch(projection.search)
     setSearch(projectedSearch)
   }
   const publishSearch = useEffectEvent((value: string) => {
-    if (value !== projectedSearch) onIntent({ type: "set-search", value })
+    onIntent({ type: "apply-search", value })
   })
+  const searching = projection.search.applied !== ""
   const listedPhones = useRef<readonly string[]>([])
   const [rowChangedAt, setRowChangedAt] = useState<readonly (number | undefined)[]>([])
   const [belowListChangedAt, setBelowListChangedAt] = useState<number | undefined>(undefined)
@@ -212,8 +212,7 @@ export function WorkspaceRail({
             <form className="min-w-0 flex-1"
               onSubmit={(event) => {
                 event.preventDefault()
-                onIntent({ type: "set-search", value: search })
-                onIntent({ type: "submit-search" })
+                onIntent({ type: "submit-search", value: search })
               }}
             >
               <InputGroup className="h-9 rounded-md border-transparent bg-transparent! shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-sidebar-border hover:bg-background! focus-within:border-sidebar-ring focus-within:bg-background! focus-within:ring-2 focus-within:ring-sidebar-ring/30">
@@ -223,17 +222,11 @@ export function WorkspaceRail({
                 <InputGroupInput
                   ref={searchInput}
                   aria-label="Search tasks, names, or phone"
-                  aria-invalid={Boolean(engagementError)}
                   autoComplete="off"
                   enterKeyHint="go"
                   placeholder="Search"
                   value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value)
-                    if (engagementError) {
-                      onIntent({ type: "set-search", value: event.target.value })
-                    }
-                  }}
+                  onChange={(event) => setSearch(event.target.value)}
                 />
                 <InputGroupAddon align="inline-end" className="md:hidden">
                   <InputGroupButton
@@ -245,11 +238,6 @@ export function WorkspaceRail({
                   </InputGroupButton>
                 </InputGroupAddon>
               </InputGroup>
-              {engagementError && (
-                <p role="alert" className="px-2 pt-1 text-xs text-destructive">
-                  {engagementError}
-                </p>
-              )}
             </form>
           </div>}
         </SidebarHeader>
@@ -302,7 +290,7 @@ export function WorkspaceRail({
                   <RailLoading label="Loading patients" />
                 )}
                 {!patients.loading && !patients.error && patients.items.length === 0 && (
-                  <RailEmpty>Nothing waiting here.</RailEmpty>
+                  <RailEmpty>{searching ? "No open work matches." : "Nothing waiting here."}</RailEmpty>
                 )}
                 {patients.error && (
                   <SidebarMenuItem>
@@ -325,9 +313,9 @@ export function WorkspaceRail({
 
           <div className="mt-3">
             <CompletedGroup
-              title="Recently completed"
+              title={searching ? "Completed matches" : "Recently completed"}
               expanded={projection.rail.completedExpanded}
-              onToggle={() => {
+              onToggle={searching ? undefined : () => {
                 setBelowListChangedAt(undefined)
                 onIntent({ type: "toggle-completed" })
               }}

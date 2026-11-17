@@ -1,11 +1,9 @@
 "use client"
 
 import { Badge } from "@/components/ui/badge"
-import type {
-  PatientWorkCounts,
-  PatientWorkFilter,
-} from "@/lib/api/generated/types.gen"
+import type { PatientWorkCounts } from "@/lib/api/generated/types.gen"
 import { shownPatientWorkFilters } from "@/lib/patient-work"
+import type { RailFilter } from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
 
 export function PatientFilterChips({
@@ -14,10 +12,10 @@ export function PatientFilterChips({
   appointmentsOffered,
   onChange,
 }: {
-  filter: PatientWorkFilter
+  filter: RailFilter
   counts: PatientWorkCounts
   appointmentsOffered: boolean
-  onChange: (filter: PatientWorkFilter) => void
+  onChange: (filter: RailFilter) => void
 }) {
   return (
     <div role="group" aria-label="Filter patients" className="flex min-h-12 flex-wrap content-start gap-1 [@media(pointer:coarse)]:min-h-24">

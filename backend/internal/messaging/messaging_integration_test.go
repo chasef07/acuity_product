@@ -35,6 +35,7 @@ type automaticAcknowledgementTestFixture struct {
 	ingress    *messaging.Module
 	provider   *providerFixture
 	task       work.Task
+	work       *work.Module
 	practiceID string
 	locationID string
 	identity   access.Identity
@@ -165,7 +166,7 @@ func newAutomaticAcknowledgementTestFixture(
 		t.Fatalf("create automatic acknowledgement scenario Task = %#v, %q, %v", task, status, err)
 	}
 	return automaticAcknowledgementTestFixture{
-		db: db, pool: pool, module: module, worker: worker, ingress: ingress, provider: provider, task: task,
+		db: db, pool: pool, module: module, worker: worker, ingress: ingress, provider: provider, task: task, work: workModule,
 		practiceID: practiceID, locationID: locationID, identity: identity, now: now,
 		clock:      clock,
 		privateKey: privateKey,

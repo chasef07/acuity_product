@@ -54,9 +54,7 @@ export function MessageEntry({
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
   const automated = outbound && message.createdBy?.kind === "SERVICE"
-  const sentBy = !outbound
-    ? undefined
-    : message.createdBy?.kind === "SERVICE" ? "Automated" : message.createdBy?.email
+  const sentBy = !outbound ? undefined : automated ? "Automated" : message.createdBy?.email
 
   async function createTask() {
     setPending(true)

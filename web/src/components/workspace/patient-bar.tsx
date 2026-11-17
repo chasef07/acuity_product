@@ -15,6 +15,7 @@ import { useCallingNavigation } from "@/components/workspace/calling-dock"
 import { useCopyState } from "@/hooks/use-copy-state"
 import type { PhoneSummary } from "@/lib/api/generated/types.gen"
 import { useEngagementSummary } from "@/lib/clients/engagement"
+import { patientName, phoneNames } from "@/lib/patient-work"
 import { formatPhone } from "@/lib/vocabulary"
 import type { EngagementSummary } from "@/lib/workspace-projection"
 
@@ -46,7 +47,7 @@ export function PatientIdentityView({
   return (
     <div data-testid="patient-identity" className="group/patient flex min-w-0 items-center gap-x-2">
       <h1 className="truncate text-sm font-medium">
-        {names.length === 1 ? names[0] : formatPhone(engagement.phone)}
+        {patientName(names.length === 1 ? names[0] : undefined, engagement.phone)}
       </h1>
       {names.length === 1 && (
         <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -154,7 +155,7 @@ export function PatientActionsView({
   const { callingOccupied, outboundPending, ownsSoftphone, startOutbound } = calling
   const shownError = actionError || callError
   return (
-    <div data-testid="patient-actions" className="relative flex shrink-0 items-center gap-1.5">
+    <div className="relative flex shrink-0 items-center gap-1.5">
       {callAction ?? (
         <Button
           type="button"
@@ -203,11 +204,4 @@ export function PatientActionsView({
 export function senderRoute(engagement: EngagementSummary, chosen: string) {
   if (engagement.locations.length === 1) return engagement.locations[0]!.id
   return engagement.locations.some((location) => location.id === chosen) ? chosen : ""
-}
-
-export function phoneNames(names: string[], callName = "") {
-  const known = callName.trim().toLowerCase()
-  return !known || names.some((name) => name.toLowerCase() === known)
-    ? names
-    : [...names, callName.trim()]
 }

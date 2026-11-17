@@ -305,6 +305,8 @@ export const patientWorkFilterLabels = {
   appointments: "Appointments",
 } satisfies Record<Exclude<PatientWorkFilter, "unowned">, string>
 
+export type RailFilter = keyof typeof patientWorkFilterLabels
+
 export function taskRelativeTime(task: Pick<Task, "state" | "origin" | "completedAt" | "updatedAt" | "createdAt">) {
   if (task.state === "COMPLETED") {
     return { at: task.completedAt ?? task.updatedAt, label: "Completed" }

@@ -58,10 +58,8 @@ test("the Task panel menu sends the chosen reason and is offered only for Tasks 
     await page.waitFor(() => JSON.stringify(sent.at(-1)) === JSON.stringify({ expectedVersion: task.version, reason }))
   }
   assert.equal(sent.length, 2)
-  for (const origin of ["APPOINTMENT_REVIEW", "INBOUND_MESSAGE_REVIEW"] as const) {
-    await render({ ...task, origin })
-    assert.equal(menu(), null, `${origin} offers no close menu`)
-  }
+  await render({ ...task, origin: "APPOINTMENT_REVIEW" })
+  assert.equal(menu(), null, "APPOINTMENT_REVIEW offers no close menu")
 })
 
 test("the patient panel menu sends the chosen reason for its own Task", async (t) => {

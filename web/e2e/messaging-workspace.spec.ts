@@ -346,7 +346,6 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     page.getByRole("button", { name: "Workspace selector" }),
   ).toHaveAttribute("title", /Fixture Location 1/)
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
-  await expect(page.getByRole("group", { name: "Whose work" })).toHaveCount(0)
   await expect(railFilter(page, "all")).toHaveAttribute("aria-pressed", "true")
   await expect(railFilter(page, "texts")).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)

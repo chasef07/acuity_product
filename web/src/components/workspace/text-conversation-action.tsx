@@ -1,16 +1,15 @@
 "use client"
 
 import { useState } from "react"
-import { CheckIcon, RotateCcwIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/spinner"
 import { useSettledState } from "@/hooks/use-settled-state"
 import type { Task } from "@/lib/api/generated/types.gen"
 import { signInRequired } from "@/lib/clients/portal-request"
 import { completeTask, reopenTask } from "@/lib/clients/tasks"
 import { cn } from "@/lib/utils"
 import { taskCloseSummary } from "@/lib/vocabulary"
+
+import { ClosedTaskActions, TaskCheck } from "./task-check"
 
 export function TextReviewCard({ task, reviewed, onUpdated, onNext }: {
   task: Task
@@ -41,23 +40,14 @@ export function TextReviewCard({ task, reviewed, onUpdated, onNext }: {
   return (
     <section aria-label="Text review" className="flex flex-col rounded-lg bg-muted/60 px-3 py-2.5">
       <header className="flex items-start gap-2">
-        {open ? (
-          <Button
-            size="icon-xs"
-            variant="outline"
-            className="mt-0.5 shrink-0 rounded-full bg-background text-transparent hover:text-success focus-visible:text-success [@media(hover:none)]:text-muted-foreground/50"
-            aria-label="Mark done"
-            title={needsReview ? "Load the latest messages first" : "Mark done without replying"}
-            disabled={pending || needsReview}
-            onClick={() => void transition()}
-          >
-            {pending ? <Spinner className="text-muted-foreground" /> : <CheckIcon />}
-          </Button>
-        ) : (
-          <span aria-hidden="true" className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
-            <CheckIcon className="size-3" />
-          </span>
-        )}
+        <TaskCheck
+          open={open}
+          label="Mark done"
+          title={needsReview ? "Load the latest messages first" : "Mark done without replying"}
+          pending={pending}
+          blocked={needsReview}
+          onComplete={() => void transition()}
+        />
         <h2 className={cn("min-w-0 flex-1 text-sm font-medium leading-5", !open && "text-muted-foreground line-through")}>
           {task.preview || task.title}
         </h2>
@@ -69,15 +59,20 @@ export function TextReviewCard({ task, reviewed, onUpdated, onNext }: {
             : taskCloseSummary(task) ?? "Completed"}
         </p>
         {!open && (
-          <div className="mt-2 flex items-center gap-1">
-            {onNext && <Button size="sm" onClick={onNext}>Next task</Button>}
-            <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={pending || !stateSettled} onClick={() => void transition()}>
-              {pending ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}Reopen
-            </Button>
-          </div>
+          <ClosedTaskActions
+            className="mt-2"
+            pending={pending}
+            settled={stateSettled}
+            onNext={onNext}
+            onReopen={() => void transition()}
+          />
         )}
         {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
       </div>
     </section>
   )
+}
+
+export function textReviewKey(task: Task | undefined) {
+  return task ? `${task.id}:${task.version}` : ""
 }

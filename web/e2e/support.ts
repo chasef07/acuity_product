@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test"
+import type { RailFilter } from "../src/lib/vocabulary"
 
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 
@@ -36,7 +37,7 @@ export async function showPatientTask(page: Page, phone: string) {
   await panel.locator(`[data-patient-task-id="${top}"]`).getByRole("button", { name: /^Open( Task:|$)/ }).click()
 }
 
-export function railFilter(page: Page, filter: "all" | "callBack" | "texts" | "appointments") {
+export function railFilter(page: Page, filter: RailFilter) {
   return page.getByRole("group", { name: "Filter patients", exact: true }).locator(`[data-filter="${filter}"]`)
 }
 

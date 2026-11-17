@@ -21,7 +21,7 @@ import {
 import type { PatientWorkRow, Task } from "@/lib/api/generated/types.gen"
 import { useEngagementSummary } from "@/lib/clients/engagement"
 import { formatTimestamp } from "@/lib/format-time"
-import { openTaskReason, patientRowName } from "@/lib/patient-work"
+import { openTaskReason, patientName } from "@/lib/patient-work"
 import {
   formatPhone,
   formatRelativeTime,
@@ -30,6 +30,8 @@ import {
   taskUrgencyLabels,
 } from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
+
+import { reviewedInConversation } from "./task-call-context"
 
 const hoverItemLimit = 5
 
@@ -59,7 +61,7 @@ export function PatientRow({
   onSelect: (event: MouseEvent) => void
 }) {
   const priorityID = useId()
-  const name = patientRowName(row)
+  const name = patientName(row.displayName, row.phone)
   const reason = openTaskReason(row.top)
   const ChannelIcon = channelIcons[row.top.origin]
   return (
@@ -141,15 +143,13 @@ export function CompletedTaskRow({
   refused: boolean
   onSelect: (event: MouseEvent) => void
 }) {
-  const textReview = task.origin === "INBOUND_MESSAGE_REVIEW"
-  const rowTitle = textReview
-    ? (task.callerName ?? formatPhone(task.phone))
-    : task.title
+  const textReview = reviewedInConversation(task)
+  const rowTitle = patientName(task.callerName, task.phone)
   const urgent = task.urgency === "high_priority"
   const urgencyID = useId()
   const relative = taskRelativeTime(task)
   const closed = taskCloseSummary(task)
-  const detail = textReview ? task.preview : closed
+  const detail = textReview ? task.preview : [task.title, closed].filter(Boolean).join(" · ")
   return (
     <SidebarMenuItem
       data-testid="completed-task-row"

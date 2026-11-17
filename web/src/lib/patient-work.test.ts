@@ -6,7 +6,7 @@ import {
   belowListChangedAtAfter,
   nextAfterClose,
   offersAppointmentChecks,
-  patientRowName,
+  patientName,
   openTaskReason,
   patientWorkFooter,
   rowChangedAtAfter,
@@ -50,9 +50,10 @@ function row(overrides: Partial<PatientWorkRow> = {}): PatientWorkRow {
   }
 }
 
-test("a patient row is named by its one known name, else by the phone", () => {
-  assert.equal(patientRowName(row({ displayName: "Dolores Vega" })), "Dolores Vega")
-  assert.equal(patientRowName(row()), "(305) 555-0142")
+test("a patient is named by its one known name, else by the phone", () => {
+  assert.equal(patientName("Dolores Vega", "+13055550142"), "Dolores Vega")
+  assert.equal(patientName("", "+13055550142"), "(305) 555-0142")
+  assert.equal(patientName(undefined, "+13055550142"), "(305) 555-0142")
 })
 
 test("the second line says why the patient is waiting", () => {
