@@ -1,5 +1,30 @@
 # Changelog
 
+## [3.6.0](https://github.com/chasef07/acuity_product/compare/v3.5.0...v3.6.0) (2026-11-17)
+
+
+### Features
+
+* **calling:** tick off the patient's open Tasks when a connected call ends ([#640](https://github.com/chasef07/acuity_product/issues/640)) ([9e75f06](https://github.com/chasef07/acuity_product/commit/9e75f06e83484a44f6d36fe6525e3f972c39063f))
+* **insurance:** export and update insurance lists from the operator command ([#644](https://github.com/chasef07/acuity_product/issues/644)) ([85bc953](https://github.com/chasef07/acuity_product/commit/85bc9531221eb423f595f8e40af4c958e9d73d3f))
+* **thread:** show each call as one line with its outcome and add thread tabs ([#639](https://github.com/chasef07/acuity_product/issues/639)) ([1387987](https://github.com/chasef07/acuity_product/commit/13879877cf8ce7d334d66c4a04fe11265af39ce9))
+* **work:** record why a Task closed ([#633](https://github.com/chasef07/acuity_product/issues/633)) ([f07c040](https://github.com/chasef07/acuity_product/commit/f07c040ed723557ee801aea90d11569cbeec309a))
+* **workspace:** list patients instead of Tasks in the Work sidebar ([#641](https://github.com/chasef07/acuity_product/issues/641)) ([5654493](https://github.com/chasef07/acuity_product/commit/56544936c55e2e5994b0107f82a5646510c33277))
+* **workspace:** show the patient's open Tasks beside every conversation and call ([#638](https://github.com/chasef07/acuity_product/issues/638)) ([9a60a53](https://github.com/chasef07/acuity_product/commit/9a60a53a35fbb4f6f3684947a05f0912a0576271))
+
+
+### Bug Fixes
+
+* **deps:** build with Go 1.27.4 to clear GO-2026-6859 ([#643](https://github.com/chasef07/acuity_product/issues/643)) ([7a121a8](https://github.com/chasef07/acuity_product/commit/7a121a81d04e69390cea6467d770c9064f435cb0))
+* **deps:** upgrade Next.js to 16.4.5 to clear GHSA-mfr8-8qww-v76h ([#647](https://github.com/chasef07/acuity_product/issues/647)) ([a433477](https://github.com/chasef07/acuity_product/commit/a43347700ce3f214df31dcbb76296fa4efca7f75))
+* **work:** close text reviews as expired after 120 hours ([#637](https://github.com/chasef07/acuity_product/issues/637)) ([b33a8ed](https://github.com/chasef07/acuity_product/commit/b33a8edee907ce7c74a2eec0b84bda2fa06ce31c))
+* **work:** give every missed call and voicemail its own recovery Task ([#634](https://github.com/chasef07/acuity_product/issues/634)) ([e8d64ac](https://github.com/chasef07/acuity_product/commit/e8d64ac8b99df8a4d89c2373a13552d1360d1f46))
+
+
+### Reverts
+
+* hold the post-3.5 Task and thread changes for a later release ([#645](https://github.com/chasef07/acuity_product/issues/645)) ([8c63fce](https://github.com/chasef07/acuity_product/commit/8c63fce54e90d0c20fb590a7c95945a56335dc65))
+
 ## [3.5.0](https://github.com/chasef07/acuity_product/compare/v3.4.0...v3.5.0) (2026-11-10)
 
 
