@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -867,6 +868,56 @@ func insertOutboundMessage(
 	return messageID, err
 }
 
+func (m *Module) skipTaskAcknowledgement(
+	ctx context.Context,
+	tx pgx.Tx,
+	claim work.TaskAcknowledgementClaim,
+	code string,
+	now time.Time,
+) (bool, error) {
+	if err := m.work.MarkTaskAcknowledgementNotNeeded(ctx, tx, claim.ID, code, now); err != nil {
+		return false, err
+	}
+	return m.finishTaskAcknowledgement(ctx, tx, claim.PracticeID, "commit skipped Task acknowledgement "+code)
+}
+
+func (m *Module) finishTaskAcknowledgement(ctx context.Context, tx pgx.Tx, practiceID, step string) (bool, error) {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("%s: %w", step, err)
+	}
+	return true, nil
+}
+
+func lockPatientAcknowledgements(ctx context.Context, tx pgx.Tx, practiceID, phone string, now time.Time) (bool, error) {
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended('acuity.messaging.acknowledgement:' || $1, 0) # hashtextextended($2, 1))
+	`, practiceID, phone); err != nil {
+		return false, fmt.Errorf("lock patient acknowledgements: %w", err)
+	}
+	var sent bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM messaging_threads thread
+			JOIN messaging_messages message ON message.thread_id = thread.id
+			WHERE thread.practice_id = $1
+				AND thread.external_phone = $2
+				AND message.direction = 'OUTBOUND'
+				AND message.created_by_kind = $3
+				AND message.created_by_subject = $4
+				AND message.delivery_state <> 'FAILED'
+				AND message.created_at > $5::timestamptz - interval '24 hours'
+		)
+	`, practiceID, phone, access.ActorService, automaticTaskAcknowledgementActor, now).Scan(&sent)
+	if err != nil {
+		return false, fmt.Errorf("find recent patient acknowledgement: %w", err)
+	}
+	return sent, nil
+}
+
 func insertMessageProviderCommand(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -924,22 +975,7 @@ func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error)
 				failureCode = "ACKNOWLEDGEMENT_EXPIRED"
 			}
 		}
-		if err := m.work.MarkTaskAcknowledgementNotNeeded(
-			ctx,
-			tx,
-			claim.ID,
-			failureCode,
-			now,
-		); err != nil {
-			return false, err
-		}
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
-			return false, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("commit unsent Task acknowledgement: %w", err)
-		}
-		return true, nil
+		return m.skipTaskAcknowledgement(ctx, tx, claim, failureCode, now)
 	}
 
 	nextAttemptAt := now.Add(automaticTaskAcknowledgementConfigurationRetryDelay)
@@ -967,13 +1003,7 @@ func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error)
 		); err != nil {
 			return false, err
 		}
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
-			return false, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("commit unavailable automatic acknowledgement sender: %w", err)
-		}
-		return true, nil
+		return m.finishTaskAcknowledgement(ctx, tx, claim.PracticeID, "commit unavailable automatic acknowledgement sender")
 	}
 
 	if !active {
@@ -987,15 +1017,16 @@ func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error)
 		); err != nil {
 			return false, err
 		}
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
-			return false, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("commit inactive automatic acknowledgement sender: %w", err)
-		}
-		return true, nil
+		return m.finishTaskAcknowledgement(ctx, tx, claim.PracticeID, "commit inactive automatic acknowledgement sender")
 	}
 
+	recentlyAcknowledged, err := lockPatientAcknowledgements(ctx, tx, claim.PracticeID, claim.Phone, now)
+	if err != nil {
+		return false, err
+	}
+	if recentlyAcknowledged {
+		return m.skipTaskAcknowledgement(ctx, tx, claim, "RECENTLY_ACKNOWLEDGED", now)
+	}
 	thread, err := findOrCreateMessageThread(
 		ctx,
 		tx,
@@ -1016,22 +1047,7 @@ func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error)
 		return false, err
 	}
 	if lockedTask.State != work.TaskOpen {
-		if err := m.work.MarkTaskAcknowledgementNotNeeded(
-			ctx,
-			tx,
-			claim.ID,
-			"TASK_ALREADY_RESOLVED",
-			now,
-		); err != nil {
-			return false, err
-		}
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
-			return false, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("commit concurrently resolved Task acknowledgement: %w", err)
-		}
-		return true, nil
+		return m.skipTaskAcknowledgement(ctx, tx, claim, "TASK_ALREADY_RESOLVED", now)
 	}
 
 	delivery := DeliverySending
@@ -1094,13 +1110,7 @@ func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error)
 	); err != nil {
 		return false, err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
-		return false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit automatic Task acknowledgement: %w", err)
-	}
-	return true, nil
+	return m.finishTaskAcknowledgement(ctx, tx, claim.PracticeID, "commit automatic Task acknowledgement")
 }
 
 func (m *Module) SendAgain(
@@ -2478,7 +2488,15 @@ func (m *Module) projectInboundReceipt(
 	}
 	blocked := isStop(body)
 	started := isStart(body)
-	if inserted && !blocked && !started {
+	review := inserted && !blocked && !started
+	if review && len(payload.Media) == 0 && isCourtesyReply(body) {
+		courtesy, err := followsAutomaticText(ctx, tx, threadID, occurredAt)
+		if err != nil {
+			return err
+		}
+		review = !courtesy
+	}
+	if review {
 		if err := m.work.EnsureInboundMessageReview(ctx, tx, practiceID, locationID, from, threadID, messageID, occurredAt); err != nil {
 			return fmt.Errorf("project inbound Message review: %w", err)
 		}
@@ -2623,6 +2641,46 @@ func isStart(body string) bool {
 	default:
 		return false
 	}
+}
+
+var courtesyReplies = map[string]bool{
+	"ok": true, "okay": true, "k": true, "kk": true,
+	"thanks": true, "thank you": true, "thank u": true, "thx": true, "ty": true, "tysm": true,
+	"ok thanks": true, "ok thank you": true, "okay thanks": true, "okay thank you": true,
+	"thanks so much": true, "thank you so much": true,
+	"got it": true, "sounds good": true, "great": true, "great thanks": true,
+	"perfect": true, "perfect thanks": true,
+}
+
+func isCourtesyReply(body string) bool {
+	words := strings.FieldsFunc(strings.ToLower(body), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	if len(words) == 0 {
+		return body != "" && strings.Trim(body, " 👍🙏👌\u200d\ufe0f🏻🏼🏽🏾🏿") == ""
+	}
+	return courtesyReplies[strings.Join(words, " ")]
+}
+
+func followsAutomaticText(ctx context.Context, tx pgx.Tx, threadID string, occurredAt time.Time) (bool, error) {
+	var automatic bool
+	err := tx.QueryRow(ctx, `
+		SELECT created_by_kind = $3
+		FROM messaging_messages
+		WHERE thread_id = $1
+			AND direction = 'OUTBOUND'
+			AND created_at <= $2
+			AND created_at > $2::timestamptz - interval '24 hours'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, threadID, occurredAt, access.ActorService).Scan(&automatic)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("find automatic text before reply: %w", err)
+	}
+	return automatic, nil
 }
 
 const MessageColumns = `

@@ -54,8 +54,9 @@ test("collapsing Task details preserves the Task in the outbound Call request", 
   await taskRow.getByRole("button").click()
   const context = page.getByRole("complementary", { name: "Task context" })
   await expect(context).toBeVisible()
-  await taskRow.getByRole("button").click()
-  await expect(context).toBeHidden()
+  await expect(context.locator('[data-expanded="true"]')).toBeVisible()
+  await page.getByRole("button", { name: "1 open Task", exact: true }).click()
+  await expect(page.locator('[data-expanded="true"]')).toHaveCount(0)
 
   await page.route(`${portalURL}/v1/calling/outbound-calls`, (route) =>
     route.fulfill({ status: 409, json: { message: "Synthetic outbound request inspection" } }),
@@ -67,7 +68,7 @@ test("collapsing Task details preserves the Task in the outbound Call request", 
   expect(outbound.postDataJSON()).toMatchObject({ taskId })
   expect(outbound.postDataJSON()).not.toHaveProperty("destination")
   await taskRow.getByRole("button").click()
-  await context.getByRole("button", { name: "Complete & next", exact: true }).click()
+  await context.getByRole("button", { name: "Complete", exact: true }).click()
   await expect(taskRow).toHaveCount(0)
 })
 
@@ -319,7 +320,7 @@ test("voicemail and meaningful missed calls refresh into the Call back list", as
     await expect(
       missedCallContext.getByRole("heading", { name: "Missed call" }),
     ).toBeVisible()
-    await expect(missedCallContext).toHaveCSS("width", "288px")
+    await expect(missedCallContext).toHaveCSS("width", "320px")
     await expect(missedCallContext.getByText("Live call")).toHaveCount(0)
     await expect(missedCallContext.getByText("Contact Context")).toHaveCount(0)
     await page.screenshot({
@@ -897,9 +898,7 @@ async function startAndEndOutboundWhileVoicemail(
   const endingButton = page.getByRole("button", { name: "Ending…", exact: true })
   await expect(endingButton).toBeVisible()
   await expect(endingButton).toBeDisabled()
-  await expect(
-    endingButton.locator("xpath=following-sibling::span"),
-  ).toHaveText("Ending…")
+  await expect(endingButton).toHaveText("Ending…")
   await expect(
     page.getByText("End was not committed", { exact: false }),
   ).toHaveCount(0)
@@ -1000,10 +999,10 @@ async function startAndEndOutboundWhileVoicemail(
   }
   const patientTasks = page.getByRole("region", { name: "Open Tasks", exact: true })
   await expect(patientTasks.getByText("Synthetic insurance question")).toBeVisible()
-  await expect(patientTasks.getByText("Closed today")).toBeVisible()
-  await expect(patientTasks.getByText("Synthetic refill request")).toBeVisible()
+  const doneToday = page.getByRole("region", { name: "Done today", exact: true })
+  await expect(doneToday.getByText("Synthetic refill request")).toBeVisible()
   await expect(
-    patientTasks.getByText("Not needed, by messaging@abita.test"),
+    doneToday.getByText("Not needed, by messaging@abita.test"),
   ).toBeVisible()
 
   const tokenResponse = await page.request.get(`${webURL}/api/auth/token`)

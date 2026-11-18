@@ -10,13 +10,13 @@ export function WorkspaceTopBar({
   children,
 }: {
   section: string
-  page?: string
+  page?: ReactNode
   onSection?: () => void
   children?: ReactNode
 }) {
   return (
     <header className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b px-4 py-1.5">
-      <nav aria-label="Current location" className="min-w-0 text-xs">
+      <nav aria-label="Current location" className="min-w-0 flex-1 text-xs">
         <ol className="flex min-w-0 items-center gap-2">
           <li className="shrink-0">
             {page && onSection ? (
@@ -26,12 +26,16 @@ export function WorkspaceTopBar({
           {page && (
             <li className="flex min-w-0 items-center gap-2">
               <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
-              <span aria-current="page" className="truncate font-medium">{page}</span>
+              {typeof page === "string" ? (
+                <span aria-current="page" className="truncate font-medium">{page}</span>
+              ) : (
+                <div aria-current="page" className="min-w-0">{page}</div>
+              )}
             </li>
           )}
         </ol>
       </nav>
-      {children && <div className="w-56 max-w-[50%] shrink-0">{children}</div>}
+      {children}
     </header>
   )
 }

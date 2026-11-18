@@ -1,6 +1,6 @@
 "use client"
 
-import { type ReactNode, useCallback, useMemo } from "react"
+import { type ReactNode, useCallback } from "react"
 
 import type {
   CallingCall,
@@ -10,6 +10,7 @@ import type {
 import { readTask } from "@/lib/clients/tasks"
 
 import { CallWorkspace } from "./call-workspace"
+import type { ExpandedTask } from "./patient-tasks-panel"
 import { TaskWorkspace } from "./task-workspace"
 
 type TaskCallContextProps = {
@@ -20,15 +21,14 @@ type TaskCallContextProps = {
   callControlsShowing: boolean
   view: "none" | "task" | "call"
   numberHistory?: ConversationTimelineItem[]
-  taskCallError: string
-  onTaskUpdated: (task: Task, advance?: boolean) => void
+  onTaskUpdated: (task: Task) => void
   onOpenTask: (task: Task) => void
   onReturnToCall: () => void
   patientTasks: (phone: string, placement: PatientTasksPlacement) => ReactNode
 }
 
 export type PatientTasksPlacement =
-  | { beside: "task"; otherThan: readonly Task[] }
+  | { beside: "task"; expanded?: ExpandedTask }
   | { beside: "call"; callTaskID?: string }
 
 export function TaskCallContext({
@@ -39,7 +39,6 @@ export function TaskCallContext({
   callControlsShowing,
   view,
   numberHistory,
-  taskCallError,
   onTaskUpdated,
   onOpenTask,
   onReturnToCall,
@@ -52,7 +51,6 @@ export function TaskCallContext({
     },
     [onOpenTask],
   )
-  const shownTasks = useMemo(() => (task ? [task] : []), [task])
   if (view === "call" && activeCall) {
     return (
       <CallWorkspace
@@ -71,25 +69,33 @@ export function TaskCallContext({
     )
   }
   if (view === "task" && task) {
-    const otherTasks = patientTasks(task.phone, { beside: "task", otherThan: shownTasks })
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <TaskWorkspace
-          key={task.id}
-          task={task}
-          onNextTask={onSelectTask && nextTask ? () => onSelectTask(nextTask) : undefined}
-          activeCall={activeCall}
-          numberHistory={numberHistory}
-          taskCallError={taskCallError}
-          onTaskUpdated={onTaskUpdated}
-          onReturnToCall={onReturnToCall}
-        >
-          {otherTasks}
-        </TaskWorkspace>
+        {patientTasks(task.phone, reviewedInConversation(task) ? { beside: "task" } : {
+          beside: "task",
+          expanded: {
+            task,
+            content: (
+              <TaskWorkspace
+                key={task.id}
+                task={task}
+                onNextTask={onSelectTask && nextTask ? () => onSelectTask(nextTask) : undefined}
+                activeCall={activeCall}
+                numberHistory={numberHistory}
+                onTaskUpdated={onTaskUpdated}
+                onReturnToCall={onReturnToCall}
+              />
+            ),
+          },
+        })}
       </div>
     )
   }
   return <section aria-label="No Task selected" className="min-h-0 flex-1" />
+}
+
+export function reviewedInConversation(task: Pick<Task, "origin">) {
+  return task.origin === "INBOUND_MESSAGE_REVIEW"
 }
 
 export function DetailsAbovePatientTasks({

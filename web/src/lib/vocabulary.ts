@@ -14,7 +14,6 @@ import type {
   OperatorAiAnalyticsRange,
   OperatorAiCallIssueOutcome,
   PatientWorkFilter,
-  PatientWorkScope,
   StaffTaskCategory,
   StaffTaskCloseReason,
   StaffTaskUrgency,
@@ -72,12 +71,6 @@ export const aiAppointmentLabels = {
   RESCHEDULE: "Rescheduled by AI",
   CANCELLATION: "Cancelled by AI",
 } satisfies Partial<Record<AiAppointmentOutcome, string>>
-
-export const threadTabLabels = {
-  all: "Everything",
-  texts: "Texts",
-  calls: "Calls",
-} as const
 
 export const callEntryPointLabels = {
   AI_HANDOFF: "AI handoff",
@@ -304,19 +297,15 @@ export function formatPhone(value: string) {
   return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`
 }
 
-export const patientWorkScopeLabels = {
-  mine: "My Tasks",
-  everyone: "Everyone",
-} satisfies Record<PatientWorkScope, string>
-
 export const patientWorkFilterLabels = {
   all: "All",
   followUp: "Tasks",
   callBack: "Call back",
   texts: "Texts",
   appointments: "Appointments",
-  unowned: "No owner",
-} satisfies Record<PatientWorkFilter, string>
+} satisfies Record<Exclude<PatientWorkFilter, "unowned">, string>
+
+export type RailFilter = keyof typeof patientWorkFilterLabels
 
 export function taskRelativeTime(task: Pick<Task, "state" | "origin" | "completedAt" | "updatedAt" | "createdAt">) {
   if (task.state === "COMPLETED") {

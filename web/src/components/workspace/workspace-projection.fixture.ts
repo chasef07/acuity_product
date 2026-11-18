@@ -45,7 +45,7 @@ export function projectedWorkspace(task: Task): WorkspaceProjectionState {
       locationID: "location-1",
       locationScopeID: "",
     },
-    search: { input: "", applied: "", error: "" },
+    search: { input: "", applied: "" },
     patients: {
       items: [projectedPatient(task)],
       nextCursor: "",
@@ -73,7 +73,6 @@ export function projectedWorkspace(task: Task): WorkspaceProjectionState {
     detailRevision: 0,
     completion: { pending: [], errors: {} },
     rail: {
-      scope: "mine",
       filter: "all",
       completedExpanded: false,
       scrollTop: 0,
@@ -92,6 +91,7 @@ export function projectedPatient(
     highPriority: top.urgency === "high_priority",
     hasUnowned: false,
     activityAt: top.createdAt,
+    waitingSince: top.createdAt,
     top,
     ...overrides,
   }

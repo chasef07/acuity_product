@@ -65,6 +65,7 @@ type PatientWorkRow struct {
 	HighPriority bool
 	HasUnowned   bool
 	ActivityAt   time.Time
+	WaitingSince time.Time
 	Top          work.Task
 }
 
@@ -149,7 +150,7 @@ func (m *Module) QueryPatientWork(
 		var displayName *string
 		row.Top, err = scanTaskProjection(rows,
 			&row.Phone, &row.OpenCount, &row.HighPriority, &row.HasUnowned,
-			&row.ActivityAt, &displayName,
+			&row.ActivityAt, &row.WaitingSince, &displayName,
 		)
 		if err != nil {
 			rows.Close()
@@ -256,6 +257,7 @@ func patientWorkSource(
 			ELSE 3
 		END AS kind_rank,
 		CASE WHEN ` + work.TaskIsTextReviewSQL + ` THEN task.updated_at ELSE task.created_at END AS activity_at,
+		task.created_at,
 		(` + work.TaskIsFollowUpSQL + ` AND owner.category IS NULL) AS unowned,
 		(` + work.TaskIsCommunicationReviewSQL + ` OR owner.category IS NULL OR owner.mine) AS mine,
 		(true` + search.filter(searchLocations) + `) AS searched
@@ -280,7 +282,8 @@ func patientWorkSource(
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 2) AS in_appointments,
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.unowned) AS in_unowned,
 		COALESCE(bool_or(item.high_priority) FILTER (WHERE ` + patientWorkHit(scope, filter) + `), false) AS high_priority,
-		max(item.activity_at) FILTER (WHERE ` + patientWorkHit(scope, filter) + `) AS activity_at
+		max(item.activity_at) FILTER (WHERE ` + patientWorkHit(scope, filter) + `) AS activity_at,
+		min(item.created_at) FILTER (WHERE ` + patientWorkHit(scope, filter) + `) AS waiting_since
 	FROM item
 	GROUP BY item.phone
 )`
@@ -292,7 +295,7 @@ func patientWorkHit(scope PatientWorkScope, filter PatientWorkFilter) string {
 
 func patientWorkPageSQL(scope PatientWorkScope, filter PatientWorkFilter, search taskSearch) string {
 	return patientWorkSource(scope, filter, search, "$11") + `, page AS (
-	SELECT patient.phone, patient.open_count, patient.high_priority, patient.has_unowned, patient.activity_at
+	SELECT patient.phone, patient.open_count, patient.high_priority, patient.has_unowned, patient.activity_at, patient.waiting_since
 	FROM patient
 	WHERE patient.searched
 		AND patient.activity_at IS NOT NULL
@@ -313,6 +316,7 @@ SELECT
 	page.high_priority,
 	page.has_unowned,
 	page.activity_at,
+	page.waiting_since,
 	` + patientDisplayNameSQL("page.phone") + `,` + taskReadColumns + `
 FROM page
 JOIN LATERAL (

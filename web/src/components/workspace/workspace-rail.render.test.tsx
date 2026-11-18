@@ -110,7 +110,6 @@ test("each filter lists one row per patient with why that patient is waiting", (
     ["callBack", patients.callBack, "Dolores Vega", "Voicemail · 0:38"],
     ["texts", patients.texts, "Priya Raman", "Is Dr. Shah in on Friday?"],
     ["appointments", patients.appointments, "(352) 555-0110", "Verify Nov 14 appointment"],
-    ["unowned", patients.unowned, "Hank Okafor", "Referral to retina specialist"],
   ] as const) {
     const base = projection([row])
     const document = rail({ ...base, rail: { ...base.rail, filter } })
@@ -131,15 +130,37 @@ test("each filter lists one row per patient with why that patient is waiting", (
   assert.equal(all.querySelector("[aria-label='Filter patients'] [aria-pressed='true']")?.getAttribute("data-filter"), "all")
 })
 
-test("a voicemail row shows the play glyph and its length, and a missed call says there is none", () => {
-  const missed = projectedPatient({ ...railTask, id: "missed", phone: "+13055550171", origin: "MISSED_CALL_RECOVERY", title: "Return missed call" })
-  const document = rail(projection([patients.callBack, missed]))
-  const voicemail = document.querySelector(`[data-phone='${patients.callBack.phone}'] [data-testid='patient-row-reason']`)!
-  assert.equal(voicemail.textContent, "Voicemail · 0:38")
-  assert.ok(voicemail.querySelector("svg.lucide-play"))
-  const missedReason = document.querySelector(`[data-phone='${missed.phone}'] [data-testid='patient-row-reason']`)!
-  assert.equal(missedReason.textContent, "Missed call, no voicemail")
-  assert.equal(missedReason.querySelector("svg"), null)
+test("each row names what is waiting with a small icon, and a voicemail shows its length", () => {
+  const row = (id: string, origin: Task["origin"], phone: string) =>
+    projectedPatient({ ...railTask, id, phone, origin, title: `Synthetic ${id}` })
+  const cases = [
+    [row("missed", "MISSED_CALL_RECOVERY", "+13055550181"), "lucide-phone-missed"],
+    [row("texted", "INBOUND_MESSAGE_REVIEW", "+13055550182"), "lucide-message-square"],
+    [row("booked-ai", "APPOINTMENT_REVIEW", "+13055550183"), "lucide-calendar-check"],
+    [row("abita-call", "ABITA_AI", "+13055550184"), "lucide-phone-incoming"],
+    [row("staff-follow-up", "HUMAN_CALL_FOLLOW_UP", "+13055550185"), "lucide-phone"],
+  ] as const
+  const document = rail(projection([patients.callBack, ...cases.map(([patient]) => patient)]))
+  const reason = (phone: string) => document.querySelector(`[data-phone='${phone}'] [data-testid='patient-row-reason']`)!
+  assert.equal(reason(patients.callBack.phone).textContent, "Voicemail · 0:38")
+  const icons = (phone: string) => document.querySelectorAll(`[data-phone='${phone}'] button svg`)
+  assert.ok(icons(patients.callBack.phone)[0]!.classList.contains("lucide-voicemail"))
+  assert.equal(reason(patients.callBack.phone).querySelector("svg"), null, "the reason line is text only")
+  assert.equal(reason(cases[0][0].phone).textContent, "Missed call, no voicemail")
+  for (const [patient, icon] of cases) {
+    const shown = icons(patient.phone)
+    assert.equal(shown.length, 1, `${patient.top.origin} has one icon`)
+    assert.ok(shown[0]!.classList.contains(icon), `${patient.top.origin} shows ${icon}`)
+    assert.equal(shown[0]!.getAttribute("aria-hidden"), "true")
+  }
+})
+
+test("each row's time is how long the patient has been waiting, from their oldest open request", () => {
+  const waiting = projectedPatient(railTask, { activityAt: "2026-11-09T12:00:00Z", waitingSince: "2026-11-09T09:00:00Z" })
+  const document = rail(projection([waiting]))
+  const time = document.querySelector(`[data-phone='${waiting.phone}'] time`)!
+  assert.equal(time.getAttribute("datetime"), "2026-11-09T09:00:00Z")
+  assert.match(time.getAttribute("title") ?? "", /^Waiting since /)
 })
 
 test("the count pill shows only when a patient has more than one thing open", () => {
@@ -163,75 +184,45 @@ test("a high-priority patient carries the marker and the selected patient's row 
   assert.equal(urgent.hasAttribute("data-active"), false)
 })
 
-test("the scope toggle offers My Tasks and Everyone and presses the current one", () => {
-  const pressed = (state: WorkspaceProjectionState) =>
-    [...rail(state).querySelectorAll("[aria-label='Whose work'] button")]
-      .map((button) => [button.textContent, button.getAttribute("aria-pressed")])
-  const base = projection([patients.callBack])
-  assert.deepEqual(pressed(base), [["My Tasks", "true"], ["Everyone", "false"]])
-  assert.deepEqual(
-    pressed({ ...base, rail: { ...base.rail, scope: "everyone" } }),
-    [["My Tasks", "false"], ["Everyone", "true"]],
-  )
+test("the patient list has no My Tasks or Everyone switch", () => {
+  assert.equal(rail(projection([patients.callBack])).querySelector("[aria-label='Whose work']"), null)
 })
-
-test("filter chips count patients, and No owner is always listed, in the destructive tone only when something has no owner", () => {
+test("filter chips count patients in one quiet tone and never offer No owner", () => {
   const chips = (state: WorkspaceProjectionState) =>
     [...rail(state).querySelectorAll("[aria-label='Filter patients'] button")]
   const base = projection([patients.callBack])
+  const counted = { ...base, patients: { ...base.patients, counts: { ...base.patients.counts, unowned: 4 } } }
   assert.deepEqual(
-    chips(base).map((chip) => chip.textContent),
-    ["All9", "Tasks4", "Call back3", "Texts2", "Appointments1", "No owner0"],
+    chips(counted).map((chip) => chip.textContent),
+    ["All9", "Tasks4", "Call back3", "Texts2", "Appointments1"],
   )
-  const [texts, , none] = chips(base).slice(-3)
-  assert.equal(none.getAttribute("class"), texts.getAttribute("class"), "at zero it looks like any other inactive chip")
-  assert.equal(none.querySelector("span")!.getAttribute("class"), texts.querySelector("span")!.getAttribute("class"))
-  const unowned = chips({
-    ...base,
-    patients: { ...base.patients, counts: { ...base.patients.counts, unowned: 4 } },
-  }).at(-1)!
-  assert.equal(unowned.textContent, "No owner4")
-  assert.equal(unowned.getAttribute("data-filter"), "unowned")
-  assert.match(unowned.getAttribute("class") ?? "", /\btext-destructive\b/)
+  assert.ok(chips(counted).every((chip) => !(chip.getAttribute("class") ?? "").split(/\s+/).some((name) => /^(text|bg)-destructive$/.test(name))))
   const withoutAppointments = chips({
     ...base,
     patients: { ...base.patients, counts: { ...base.patients.counts, appointments: 0 } },
   })
   assert.deepEqual(
     withoutAppointments.map((chip) => chip.getAttribute("data-filter")),
-    ["all", "followUp", "callBack", "texts", "unowned"],
+    ["all", "followUp", "callBack", "texts"],
     "Appointments is offered only where appointment checks exist",
   )
 })
 
-test("the active chip is filled with the primary colour, and No owner fills with its own", () => {
+test("the active chip is filled with the primary colour", () => {
   const base = projection([patients.callBack])
-  const counted = { ...base, patients: { ...base.patients, counts: { ...base.patients.counts, unowned: 4 } } }
-  const classes = (filter: PatientWorkFilter) => {
-    const document = rail({ ...counted, rail: { ...counted.rail, filter } })
-    return new Map(
-      [...document.querySelectorAll("[aria-label='Filter patients'] button")]
-        .map((chip) => [chip.getAttribute("data-filter"), (chip.getAttribute("class") ?? "").split(/\s+/)] as const),
-    )
-  }
   for (const filter of ["all", "followUp", "callBack", "texts", "appointments"] as const) {
-    const chips = classes(filter)
-    for (const [name, chip] of chips) {
-      assert.equal(chip.includes("bg-primary") && chip.includes("text-primary-foreground"), name === filter, `${name} while ${filter} is active`)
+    const document = rail({ ...base, rail: { ...base.rail, filter } })
+    for (const chip of document.querySelectorAll("[aria-label='Filter patients'] button")) {
+      const classes = (chip.getAttribute("class") ?? "").split(/\s+/)
+      const name = chip.getAttribute("data-filter")
+      assert.equal(classes.includes("bg-primary") && classes.includes("text-primary-foreground"), name === filter, `${name} while ${filter} is active`)
     }
-    assert.ok(chips.get("unowned")!.includes("text-destructive"), "No owner keeps its tone while inactive")
   }
-  const unowned = classes("unowned").get("unowned")!
-  assert.ok(unowned.includes("bg-destructive") && unowned.includes("text-primary-foreground"))
-  assert.equal(unowned.includes("text-destructive"), false)
 })
 
-test("the footer states the totals and what My Tasks leaves under Everyone", () => {
-  const footer = (state: WorkspaceProjectionState) =>
-    rail(state).querySelector("[data-testid='patient-work-footer']")?.textContent
-  const base = projection([patients.callBack])
-  assert.equal(footer(base), "14 open for 9 patients · 2 more under Everyone")
-  assert.equal(footer({ ...base, rail: { ...base.rail, scope: "everyone" } }), "14 open for 9 patients")
+test("the footer states the totals", () => {
+  const footer = rail(projection([patients.callBack])).querySelector("[data-testid='patient-work-footer']")?.textContent
+  assert.equal(footer, "14 open for 9 patients")
 })
 
 test("the list says when it is loading, empty, failed, or has more to show", () => {
@@ -283,7 +274,55 @@ test("a completed Task row credits the team when no email is known and stays qui
   assert.match(completedRow({ ...completed, closeReason: "DONE" }), /Done, by the team/)
   const withoutReason = completedRow(completed)
   assert.match(withoutReason, /Send prior authorization form/)
-  assert.doesNotMatch(withoutReason, /undefined|by the team|text-xs leading-4 text-muted-foreground/)
+  assert.doesNotMatch(withoutReason, /undefined|by the team| · /)
+})
+
+test("a completed Task row leads with the patient so search history reads by person", () => {
+  const completed = {
+    ...railTask,
+    state: "COMPLETED",
+    closeReason: "DONE",
+    completedBy: { kind: "HUMAN", subject: "user-1", email: "ines@abita.test" },
+    completedAt: "2026-08-30T13:00:00Z",
+    version: 2,
+  } as const
+  assert.match(completedRow({ ...completed, callerName: "Rosa Diaz" }), /aria-label="Rosa Diaz".*>Rosa Diaz<.*Send prior authorization form · Done, by ines@abita\.test/)
+  assert.match(completedRow(completed), /aria-label="\(305\) 555-0142"/)
+})
+
+test("a search shows completed matches open, with no toggle", () => {
+  const done = { ...railTask, id: "done", state: "COMPLETED", closeReason: "DONE", completedAt: "2026-08-30T13:00:00Z", version: 2 } as const
+  const base = projection(Object.values(patients))
+  const searched = rail({
+    ...base,
+    search: { input: "rosa", applied: "rosa" },
+    completedTasks: { ...base.completedTasks, items: [done] },
+    rail: { ...base.rail, completedExpanded: false },
+  }).body.innerHTML
+  assert.match(searched, /aria-label="Completed matches"/)
+  assert.match(searched, /data-testid="completed-task-row" data-task-id="done"/)
+  assert.doesNotMatch(searched, /Recently completed/)
+  const browsing = rail({ ...base, rail: { ...base.rail, completedExpanded: false } }).body.innerHTML
+  assert.match(browsing, /Recently completed/)
+})
+
+test("typing in search applies it after a short pause, once", async (t) => {
+  const page = await mountedRail(t, projection(Object.values(patients)))
+  await page.type("ro")
+  await page.type("rosa")
+  assert.deepEqual(page.intents.filter((intent) => intent.includes("search")), [])
+  await page.wait(400)
+  assert.deepEqual(page.intents.filter((intent) => intent.includes("search")), ["apply-search:rosa"])
+})
+
+test("a search the projection resets in one batch clears the box and is not applied again", async (t) => {
+  const base = projection(Object.values(patients))
+  const page = await mountedRail(t, base)
+  await page.type("7275550199")
+  await page.show({ ...base, search: { input: "", applied: "" } })
+  await page.wait(400)
+  assert.equal(document.querySelector<HTMLInputElement>("input[aria-label='Search tasks, names, or phone']")!.value, "")
+  assert.deepEqual(page.intents.filter((intent) => intent.includes("search")), ["apply-search:"])
 })
 
 test("patient rows carry no tick and no close menu", () => {
@@ -317,11 +356,13 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
     dom.window.close()
   })
   const opened: string[] = []
+  const intents: string[] = []
   const show = (state: WorkspaceProjectionState) => act(async () => root.render(
     <SidebarProvider>
       <WorkspaceRail
         projection={state}
         onIntent={(intent) => {
+          intents.push(intent.type === "apply-search" || intent.type === "submit-search" ? `${intent.type}:${intent.value}` : intent.type)
           if (intent.type === "select-task") opened.push(intent.task.phone)
         }}
       />
@@ -338,6 +379,12 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
   return {
     show,
     opened,
+    intents,
+    type: (value: string) => act(async () => {
+      const input = host.querySelector<HTMLInputElement>("input[aria-label='Search tasks, names, or phone']")!
+      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, value)
+      input.dispatchEvent(new dom.window.Event("input", { bubbles: true }))
+    }),
     pointerClick: (phone: string) => activate(phone, 1),
     keyboardActivate: (phone: string) => activate(phone, 0),
     pointerClickCompleted: (taskID: string) => activateRow(completedRow(taskID), 1),
@@ -433,12 +480,12 @@ test("a Recently completed row refuses a pointer click just after the patient li
   await page.show(withRows([followUp, callBack, unowned]))
   await page.pointerClickCompleted(done.id)
   assert.deepEqual(page.opened, [done.phone], "a patient arrived: the click may have been aimed at what was there")
-  assert.match(page.completedText(done.id) ?? "", /Fax the referralList just updated, click again$/)
+  assert.match(page.completedText(done.id) ?? "", /^\(305\) 555-0199List just updated, click again$/)
   await page.keyboardActivateCompleted(done.id)
   assert.deepEqual(page.opened, [done.phone, done.phone], "Enter on the focused row opens it without waiting")
 
   await page.wait(rowClickGuardMilliseconds + 50)
-  assert.equal(page.completedText(done.id), "Fax the referralDone, by ines@abita.test")
+  assert.equal(page.completedText(done.id), "(305) 555-0199Fax the referral · Done, by ines@abita.test")
   await page.pointerClickCompleted(done.id)
   assert.deepEqual(page.opened.slice(2), [done.phone])
 

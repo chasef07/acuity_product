@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test"
 
-import { patientListSettled, patientRow, railFilter, railScope, showPatientTask, signInAs } from "./support"
+import { patientListSettled, patientRow, railFilter, showPatientTask, signInAs } from "./support"
 
 const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
@@ -68,7 +68,7 @@ test("appointment verification stays open until shared completion and can be reo
   const row = page.locator(`[data-task-id="${task.id}"]`)
   await expect(row).toBeVisible()
   await showPatientTask(page, "+17275550188")
-  await expect(page.getByRole("button", { name: "Verify & next", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Verify", exact: true })).toBeVisible()
   await railFilter(page, "appointments").click()
   await expect(railFilter(page, "appointments")).toHaveAttribute("aria-pressed", "true")
   await expect(row).toBeVisible()
@@ -81,16 +81,15 @@ test("appointment verification stays open until shared completion and can be reo
     await showPatientTask(second, "+17275550188")
     await railFilter(second, "appointments").click()
     await expect(secondRow).toBeVisible()
-    await page.getByRole("button", { name: "Verify & next", exact: true }).click()
+    await page.getByRole("button", { name: "Verify", exact: true }).click()
     await expect(row).toHaveCount(0)
     await expect(secondRow).toHaveCount(0)
     await expect(second.getByText("Completed for everyone with access.")).toBeVisible()
     const completedContext = page.getByRole("complementary", { name: "Task context" })
-    await expect(completedContext).toBeHidden()
+    await expect(completedContext.getByText("Completed for everyone with access.")).toBeVisible()
     await expect(page.getByTestId("patient-row")).toHaveCount(0)
     await page.getByRole("button", { name: "Recently completed", exact: true }).click()
     await expect(row).toBeVisible()
-    await row.getByRole("button").first().click()
     await expect(completedContext).toBeVisible()
     await page.getByRole("button", { name: "Reopen", exact: true }).click()
     await expect(secondRow).toBeVisible()
@@ -163,20 +162,8 @@ test("an AI call without appointment actions stays call-first", async ({
   await expect(callRow).toHaveAttribute("aria-current", "true")
   await expect(callItem).toHaveAttribute("data-selected", "true")
   await expect
-    .poll(() =>
-      callItem.evaluate((element) => ({
-        background: getComputedStyle(element).backgroundColor,
-        marker: getComputedStyle(element, "::before").backgroundColor,
-      })),
-    )
-    .toMatchObject({
-      background: "rgba(0, 0, 0, 0)",
-    })
-  expect(
-    await callItem.evaluate(
-      (element) => getComputedStyle(element, "::before").backgroundColor,
-    ),
-  ).not.toBe("rgba(0, 0, 0, 0)")
+    .poll(() => callItem.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .not.toBe("rgba(0, 0, 0, 0)")
 
   const callContext = page.getByRole("complementary", {
     name: "AI call context",
@@ -198,7 +185,7 @@ test("an AI call without appointment actions stays call-first", async ({
 
   await linkedTask.click()
   const taskContext = page.getByRole("complementary", { name: "Task context" })
-  await taskContext.getByRole("button", { name: "Complete & next", exact: true }).click()
+  await taskContext.getByRole("button", { name: "Complete", exact: true }).click()
   await expect(callItem).toContainText(/Confirm office paperwork · Done, by \S+@\S+/)
   await expect(page.getByText(/Task completed by \S+@\S+ ·/)).toBeVisible()
 })
@@ -263,12 +250,12 @@ test("rail hover details and the message composer preserve compact context", asy
   const composerHeight = await composerSurface.evaluate(
     (element) => element.getBoundingClientRect().height,
   )
-  expect(composerHeight).toBeGreaterThanOrEqual(60)
-  expect(composerHeight).toBeLessThanOrEqual(72)
+  expect(composerHeight).toBeGreaterThanOrEqual(72)
+  expect(composerHeight).toBeLessThanOrEqual(96)
   const composerRadius = await composerSurface.evaluate((element) =>
     Number.parseFloat(getComputedStyle(element).borderTopLeftRadius),
   )
-  expect(composerRadius).toBeGreaterThanOrEqual(composerHeight / 2)
+  expect(composerRadius).toBeGreaterThanOrEqual(16)
   const idleComposerPresentation = await composerSurface.evaluate((element) => {
     const styles = getComputedStyle(element)
     return {
@@ -310,7 +297,7 @@ test("rail hover details and the message composer preserve compact context", asy
   await taskRow.getByRole("button").click()
   await page
     .getByRole("complementary", { name: "Task context" })
-    .getByRole("button", { name: "Complete & next", exact: true })
+    .getByRole("button", { name: "Complete", exact: true })
     .click()
   await expect(taskRow).toHaveCount(0)
 })
@@ -359,7 +346,6 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     page.getByRole("button", { name: "Workspace selector" }),
   ).toHaveAttribute("title", /Fixture Location 1/)
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
-  await expect(railScope(page, "My Tasks")).toHaveAttribute("aria-pressed", "true")
   await expect(railFilter(page, "all")).toHaveAttribute("aria-pressed", "true")
   await expect(railFilter(page, "texts")).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
@@ -588,8 +574,8 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   const restingComposerHeight = await composerSurface.evaluate(
     (element) => element.getBoundingClientRect().height,
   )
-  expect(restingComposerHeight).toBeGreaterThanOrEqual(60)
-  expect(restingComposerHeight).toBeLessThanOrEqual(72)
+  expect(restingComposerHeight).toBeGreaterThanOrEqual(72)
+  expect(restingComposerHeight).toBeLessThanOrEqual(96)
   const sendButton = page.getByRole("button", { name: "Send message" })
   const sendButtonBox = await sendButton.boundingBox()
   expect(sendButtonBox?.width).toBe(sendButtonBox?.height)
@@ -687,7 +673,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     contextPanel.getByRole("heading", { name: "Follow up on text" }),
   ).toBeVisible()
-  await expect(contextPanel).toHaveCSS("width", "288px")
+  await expect(contextPanel).toHaveCSS("width", "320px")
   await expect(contextPanel.getByText("Task context", { exact: true })).toHaveCount(0)
   await expect(contextPanel.getByText("Normal priority", { exact: true })).toBeHidden()
   await page.screenshot({
@@ -750,7 +736,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toBeVisible()
 
   await sidebarTaskContext
-    .getByRole("button", { name: "Complete & next", exact: true })
+    .getByRole("button", { name: "Complete", exact: true })
     .click()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
@@ -781,7 +767,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toBeEnabled()
   await completedTaskContext.getByRole("button", { name: "Reopen", exact: true }).click()
   await expect(
-    completedTaskContext.getByRole("button", { name: "Complete & next" }),
+    completedTaskContext.getByRole("button", { name: "Complete" }),
   ).toBeVisible()
   await expect(texter.getByTestId("patient-row-reason")).toHaveText("Follow up on text")
   await expect(
@@ -1132,7 +1118,8 @@ test("staff replies complete text conversations and new texts return to the inbo
   await expect(row.getByTestId("patient-row-reason")).toHaveText("Initial synthetic question")
   await patientListSettled(page)
   await row.getByRole("button").first().click()
-  await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "closed")
+  await expect(page.getByTestId("context-panel")).toHaveAttribute("data-state", "open")
+  await expect(page.getByTestId("patient-identity")).toContainText("(555) 050-9999")
   await expect(page.getByRole("button", { name: "Mark done", exact: true })).toBeVisible()
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Here is the answer to your synthetic question.")
   await page.getByRole("button", { name: "Send message", exact: true }).click()
@@ -1148,7 +1135,7 @@ test("staff replies complete text conversations and new texts return to the inbo
   await expect(row).toHaveCount(0)
   await page.getByRole("button", { name: "Recently completed", exact: true }).click()
   const completedReview = page.locator(`[data-task-id="${reviewID}"]`)
-  await completedReview.getByRole("button").first().click()
+  await expect(completedReview).toBeVisible()
   await page.getByRole("button", { name: "Reopen", exact: true }).click()
   await expect(completedReview).toBeVisible()
 })

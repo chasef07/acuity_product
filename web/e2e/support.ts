@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test"
+import type { RailFilter } from "../src/lib/vocabulary"
 
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 
@@ -22,18 +23,22 @@ export async function showPatientTask(page: Page, phone: string) {
   const row = patientRow(page, phone).getByRole("button")
   await expect(row).toBeVisible()
   await patientListSettled(page)
+  const panel = page.getByTestId("context-panel")
   const shown =
     (await row.getAttribute("data-active")) !== null &&
-    (await page.getByTestId("context-panel").getAttribute("data-state")) === "open"
-  if (!shown) await row.click()
+    (await panel.getAttribute("data-state")) === "open"
+  if (!shown) {
+    await row.click()
+    return
+  }
+  const top = await patientRow(page, phone).getAttribute("data-task-id")
+  const expanded = panel.locator('[data-expanded="true"]')
+  if (await expanded.count() > 0 && await expanded.getAttribute("data-patient-task-id") === top) return
+  await panel.locator(`[data-patient-task-id="${top}"]`).getByRole("button", { name: /^Open( Task:|$)/ }).click()
 }
 
-export function railFilter(page: Page, filter: "all" | "callBack" | "texts" | "appointments" | "unowned") {
+export function railFilter(page: Page, filter: RailFilter) {
   return page.getByRole("group", { name: "Filter patients", exact: true }).locator(`[data-filter="${filter}"]`)
-}
-
-export function railScope(page: Page, scope: "My Tasks" | "Everyone") {
-  return page.getByRole("group", { name: "Whose work", exact: true }).getByRole("button", { name: scope, exact: true })
 }
 
 export async function openAgentPage(page: Page, name: string) {

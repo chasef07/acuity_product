@@ -4043,7 +4043,7 @@ components:
     PatientWorkRow:
       type: object
       additionalProperties: false
-      required: [phone, displayName, openCount, highPriority, hasUnowned, activityAt, top]
+      required: [phone, displayName, openCount, highPriority, hasUnowned, activityAt, waitingSince, top]
       properties:
         phone:
           type: string
@@ -4061,6 +4061,10 @@ components:
           type: boolean
         activityAt:
           description: When the newest Task matching the scope and filter last changed for the patient.
+          type: string
+          format: date-time
+        waitingSince:
+          description: When the oldest open Task matching the scope and filter was created, which is how long the patient has been waiting.
           type: string
           format: date-time
         top:

@@ -53,9 +53,8 @@ export function MessageEntry({
   const [confirmingSendAgain, setConfirmingSendAgain] = useState(false)
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
-  const sentBy = !outbound
-    ? undefined
-    : message.createdBy?.kind === "SERVICE" ? "Automated" : message.createdBy?.email
+  const automated = outbound && message.createdBy?.kind === "SERVICE"
+  const sentBy = !outbound ? undefined : automated ? "Automated" : message.createdBy?.email
 
   async function createTask() {
     setPending(true)
@@ -114,8 +113,13 @@ export function MessageEntry({
       }}
     >
       <MessageContent className="gap-1">
-        <Bubble variant={outbound ? "muted" : "ghost"}>
-          <BubbleContent>
+        <Bubble variant={!outbound ? "ghost" : automated ? "outline" : "muted"}>
+          <BubbleContent
+            className={cn(
+              outbound && "rounded-2xl px-3.5 py-2",
+              automated && "border-border/70 text-muted-foreground",
+            )}
+          >
             {message.body && (
               <p className="whitespace-pre-wrap">{message.body}</p>
             )}

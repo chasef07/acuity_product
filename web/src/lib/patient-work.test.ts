@@ -6,7 +6,7 @@ import {
   belowListChangedAtAfter,
   nextAfterClose,
   offersAppointmentChecks,
-  patientRowName,
+  patientName,
   openTaskReason,
   patientWorkFooter,
   rowChangedAtAfter,
@@ -44,33 +44,35 @@ function row(overrides: Partial<PatientWorkRow> = {}): PatientWorkRow {
     highPriority: false,
     hasUnowned: false,
     activityAt: "2026-11-09T12:00:00Z",
+    waitingSince: "2026-11-09T12:00:00Z",
     top: top(),
     ...overrides,
   }
 }
 
-test("a patient row is named by its one known name, else by the phone", () => {
-  assert.equal(patientRowName(row({ displayName: "Dolores Vega" })), "Dolores Vega")
-  assert.equal(patientRowName(row()), "(305) 555-0142")
+test("a patient is named by its one known name, else by the phone", () => {
+  assert.equal(patientName("Dolores Vega", "+13055550142"), "Dolores Vega")
+  assert.equal(patientName("", "+13055550142"), "(305) 555-0142")
+  assert.equal(patientName(undefined, "+13055550142"), "(305) 555-0142")
 })
 
 test("the second line says why the patient is waiting", () => {
-  const cases: Array<[Partial<Task>, { voicemail: boolean; text: string }]> = [
-    [{ origin: "VOICEMAIL_RECOVERY", title: "Review voicemail", voicemailDurationSeconds: 38 }, { voicemail: true, text: "Voicemail · 0:38" }],
-    [{ origin: "VOICEMAIL_RECOVERY", title: "Review voicemail" }, { voicemail: true, text: "Voicemail" }],
-    [{ origin: "MISSED_CALL_RECOVERY", title: "Return missed call" }, { voicemail: false, text: "Missed call, no voicemail" }],
-    [{ origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text", preview: "Is Dr. Shah in on Friday?" }, { voicemail: false, text: "Is Dr. Shah in on Friday?" }],
-    [{ origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text" }, { voicemail: false, text: "Review inbound text" }],
-    [{ origin: "APPOINTMENT_REVIEW", title: "Verify Nov 14 appointment" }, { voicemail: false, text: "Verify Nov 14 appointment" }],
-    [{}, { voicemail: false, text: "Send prior authorization form" }],
+  const cases: Array<[Partial<Task>, string]> = [
+    [{ origin: "VOICEMAIL_RECOVERY", title: "Review voicemail", voicemailDurationSeconds: 38 }, "Voicemail · 0:38"],
+    [{ origin: "VOICEMAIL_RECOVERY", title: "Review voicemail" }, "Voicemail"],
+    [{ origin: "MISSED_CALL_RECOVERY", title: "Return missed call" }, "Missed call, no voicemail"],
+    [{ origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text", preview: "Is Dr. Shah in on Friday?" }, "Is Dr. Shah in on Friday?"],
+    [{ origin: "INBOUND_MESSAGE_REVIEW", title: "Review inbound text" }, "Review inbound text"],
+    [{ origin: "APPOINTMENT_REVIEW", title: "Verify Nov 14 appointment" }, "Verify Nov 14 appointment"],
+    [{}, "Send prior authorization form"],
   ]
   for (const [overrides, reason] of cases) {
-    assert.deepEqual(openTaskReason(top(overrides)), reason)
+    assert.equal(openTaskReason(top(overrides)), reason)
   }
 })
 
-test("filter chips count patients, No owner is always offered and Appointments only where it has something to offer", () => {
-  const counts = { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 0, unowned: 0 }
+test("filter chips count patients, never offer No owner, and offer Appointments only where it has something to offer", () => {
+  const counts = { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 0, unowned: 4 }
   const values = (shown: ReturnType<typeof shownPatientWorkFilters>) => shown.map((filter) => filter.value)
 
   assert.deepEqual(shownPatientWorkFilters(counts, "all", false), [
@@ -78,13 +80,11 @@ test("filter chips count patients, No owner is always offered and Appointments o
     { value: "followUp", label: "Tasks", count: 4 },
     { value: "callBack", label: "Call back", count: 3 },
     { value: "texts", label: "Texts", count: 2 },
-    { value: "unowned", label: "No owner", count: 0 },
   ])
-  assert.deepEqual(values(shownPatientWorkFilters(counts, "all", true)), ["all", "followUp", "callBack", "texts", "appointments", "unowned"])
-  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, appointments: 1 }, "all", false)), ["all", "followUp", "callBack", "texts", "appointments", "unowned"])
-  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, unowned: 4 }, "all", false)), ["all", "followUp", "callBack", "texts", "unowned"])
-  assert.deepEqual(values(shownPatientWorkFilters(counts, "appointments", false)), ["all", "followUp", "callBack", "texts", "appointments", "unowned"], "the active filter stays reachable at zero")
-  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, followUp: 0 }, "all", false)), ["all", "followUp", "callBack", "texts", "unowned"], "Tasks is offered at zero")
+  assert.deepEqual(values(shownPatientWorkFilters(counts, "all", true)), ["all", "followUp", "callBack", "texts", "appointments"])
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, appointments: 1 }, "all", false)), ["all", "followUp", "callBack", "texts", "appointments"])
+  assert.deepEqual(values(shownPatientWorkFilters(counts, "appointments", false)), ["all", "followUp", "callBack", "texts", "appointments"], "the active filter stays reachable at zero")
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, followUp: 0 }, "all", false)), ["all", "followUp", "callBack", "texts"], "Tasks is offered at zero")
 })
 
 test("appointment checks are offered where Spring Hill is the office in view", () => {
@@ -97,11 +97,9 @@ test("appointment checks are offered where Spring Hill is the office in view", (
   assert.equal(offersAppointmentChecks([hollywood], ""), false)
 })
 
-test("the footer describes the scope in view and says what Everyone adds", () => {
-  const totals = { openTasks: 14, patients: 9, patientsOutsideScope: 2 }
-  assert.equal(patientWorkFooter(totals, "mine"), "14 open for 9 patients · 2 more under Everyone")
-  assert.equal(patientWorkFooter(totals, "everyone"), "14 open for 9 patients")
-  assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }, "mine"), "1 open for 1 patient")
+test("the footer states how much is open for how many patients", () => {
+  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }), "14 open for 9 patients")
+  assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }), "1 open for 1 patient")
 })
 
 test("after a Task is closed the next selection stays with the patient, then the neighbouring row", () => {

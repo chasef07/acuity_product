@@ -1,6 +1,6 @@
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { patientRow, railFilter, railScope, showPatientTask, signInAs } from "./support"
+import { patientRow, railFilter, showPatientTask, signInAs } from "./support"
 
 const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
 const fixtureURL = process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
@@ -38,7 +38,9 @@ test("visible workload filters show message previews and completion opens the ne
   await expect(page.getByRole("region", { name: "Conversation activity" })).toBeVisible()
   await taskCard.click()
   await expect(taskPanel).toBeVisible()
-  await page.getByRole("button", { name: "Complete & next", exact: true }).click()
+  await page.getByRole("button", { name: "Complete", exact: true }).click()
+  await expect(page.getByRole("heading", { name: `${key} urgent`, exact: true })).toHaveClass(/(^|\s)line-through(\s|$)/)
+  await page.getByRole("button", { name: "Next task", exact: true }).click()
   await expect(page.getByRole("heading", { name: `${key} normal`, exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath("compact-workspace.png"), fullPage: true })
   await search.fill("")
@@ -62,15 +64,11 @@ test("visible workload filters show message previews and completion opens the ne
   await expect(texter).toBeVisible()
   await search.fill("5550203")
   await search.press("Enter")
-  for (const scope of ["My Tasks", "Everyone"] as const) {
-    await railScope(page, scope).click()
-    await expect(railScope(page, scope)).toHaveAttribute("aria-pressed", "true")
-    await expect(railFilter(page, "all")).toHaveText("All1")
-    await expect(railFilter(page, "texts")).toHaveText("Texts1")
-    await expect(railFilter(page, "callBack")).toHaveText("Call back0")
-    await expect(page.getByTestId("patient-row")).toHaveCount(1)
-    await expect(texter).toBeVisible()
-  }
+  await expect(railFilter(page, "all")).toHaveText("All1")
+  await expect(railFilter(page, "texts")).toHaveText("Texts1")
+  await expect(railFilter(page, "callBack")).toHaveText("Call back0")
+  await expect(page.getByTestId("patient-row")).toHaveCount(1)
+  await expect(texter).toBeVisible()
 })
 
 test("a text review expires after five days and a new inbound text opens another", async ({ page }) => {
@@ -115,32 +113,25 @@ test("a text review expires after five days and a new inbound text opens another
   await expect(texts).toHaveText("Texts1")
 })
 
-test("the sidebar remembers its scope, its filter, and whether it is collapsed", async ({ page }) => {
+test("the sidebar remembers its filter and whether it is collapsed", async ({ page }) => {
   test.skip(!process.env.E2E_PROVISIONING_OUTPUT, "E2E fixture required")
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
-  await expect(railScope(page, "My Tasks")).toHaveAttribute("aria-pressed", "true")
   await expect(railFilter(page, "all")).toHaveAttribute("aria-pressed", "true")
-  await railScope(page, "Everyone").click()
   await railFilter(page, "texts").click()
-  await expect(railScope(page, "Everyone")).toHaveAttribute("aria-pressed", "true")
   await expect(railFilter(page, "texts")).toHaveAttribute("aria-pressed", "true")
   await page.reload()
-  await expect(railScope(page, "Everyone")).toHaveAttribute("aria-pressed", "true")
   await expect(railFilter(page, "texts")).toHaveAttribute("aria-pressed", "true")
   await expect(railFilter(page, "all")).toHaveAttribute("aria-pressed", "false")
   await railFilter(page, "all").click()
-  await railScope(page, "My Tasks").click()
-  await expect(railScope(page, "My Tasks")).toHaveAttribute("aria-pressed", "true")
   await page.getByRole("button", { name: "Work", exact: true }).click()
   await expect(page.locator('[data-slot="sidebar"]')).toHaveAttribute("data-state", "collapsed")
   await page.reload()
   await expect(page.locator('[data-slot="sidebar"]')).toHaveAttribute("data-state", "collapsed")
   await page.getByRole("button", { name: "Work", exact: true }).click()
-  await expect(railScope(page, "My Tasks")).toBeVisible()
   await expect(railFilter(page, "all")).toHaveAttribute("aria-pressed", "true")
 })
 
-test("the Appointments filter lists Spring Hill reviews only and they do not count as work without an owner", async ({ page }, testInfo) => {
+test("the Appointments filter lists Spring Hill reviews only", async ({ page }, testInfo) => {
   test.skip(!process.env.E2E_PROVISIONING_OUTPUT, "E2E fixture required")
   await signInAs(page, "admin@abita.test", "Synthetic Admin")
   for (const [officeKey, officePhone] of [["spring-hill", "+17275550101"], ["hollywood", "+17275550103"]]) {
@@ -163,20 +154,15 @@ test("the Appointments filter lists Spring Hill reviews only and they do not cou
   const caller = patientRow(page, "+12025550280")
   await expect(appointments).toHaveText("Appointments1")
   await expect(railFilter(page, "all")).toHaveText("All1")
-  await expect(railFilter(page, "unowned")).toHaveText("No owner0")
   await expect(page.getByTestId("patient-row")).toHaveCount(1)
   await expect(caller.getByTestId("patient-row-count")).toHaveCount(0)
   await showPatientTask(page, "+12025550280")
   await expect(page.getByRole("heading", { name: "(202) 555-0280", exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Verify & next", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Verify", exact: true })).toBeVisible()
   await appointments.click()
   await expect(appointments).toHaveAttribute("aria-pressed", "true")
   await expect(page.getByTestId("patient-row")).toHaveCount(1)
-  await railScope(page, "Everyone").click()
-  await expect(appointments).toHaveText("Appointments1")
-  await expect(page.getByTestId("patient-row")).toHaveCount(1)
-  await railScope(page, "My Tasks").click()
-  await expect(page.getByRole("button", { name: "Verify & next", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Verify", exact: true })).toBeVisible()
   await page.mouse.move(700, 50)
   await expect(page.getByTestId("rail-hover-details")).toBeHidden()
   await page.screenshot({ path: testInfo.outputPath("spring-hill-appointments.png"), fullPage: true })
@@ -222,7 +208,7 @@ test("the workspace keeps one frame from loading to loaded", async ({ page }, te
   expect(await frame()).toEqual(loading)
 })
 
-test("My Tasks leaves out a colleague's category, Everyone lists it, and work with no live owner is flagged for all", async ({ page }) => {
+test("everyone sees every patient, including a colleague's category and work with no live owner", async ({ page }) => {
   const databaseURL = process.env.E2E_DATABASE_URL
   test.skip(!process.env.E2E_PROVISIONING_OUTPUT || !databaseURL, "E2E fixture and E2E_DATABASE_URL required")
   if (!new URL(databaseURL!).pathname.endsWith("_e2e")) throw new Error("Disposable database required")
@@ -254,61 +240,17 @@ test("My Tasks leaves out a colleague's category, Everyone lists it, and work wi
       return (await created.json()).taskId as string
     }
     await file("colleague", "referrals", colleagues)
-    const unownedTask = await file("unowned", "medication", unowned)
+    await file("unowned", "medication", unowned)
 
     await signInAs(page, "selected@abita.test", "Synthetic Staff")
     const search = page.getByLabel("Search tasks, names, or phone")
     await search.fill(key)
     await search.press("Enter")
-    const noOwner = railFilter(page, "unowned")
-    const footer = page.getByTestId("patient-work-footer")
-    await expect(railScope(page, "My Tasks")).toHaveAttribute("aria-pressed", "true")
-    await expect(railFilter(page, "all")).toHaveText("All1")
-    await expect(page.getByTestId("patient-row")).toHaveCount(1)
-    await expect(patientRow(page, unowned).getByTestId("patient-row-reason")).toHaveText(`${key} unowned`)
-    await expect(patientRow(page, colleagues)).toHaveCount(0)
-    await expect(footer).toHaveText(/^\d+ open for \d+ patients · 1 more under Everyone$/)
-    await expect(noOwner).toHaveText("No owner1")
-    await expect(noOwner).toHaveClass(/(^|\s)text-destructive(\s|$)/)
-    await noOwner.click()
-    await expect(noOwner).toHaveAttribute("aria-pressed", "true")
-    await expect(page.getByTestId("patient-row")).toHaveCount(1)
-    await expect(patientRow(page, unowned)).toBeVisible()
-
-    await railFilter(page, "all").click()
-    await railScope(page, "Everyone").click()
     await expect(railFilter(page, "all")).toHaveText("All2")
     await expect(page.getByTestId("patient-row")).toHaveCount(2)
+    await expect(patientRow(page, unowned).getByTestId("patient-row-reason")).toHaveText(`${key} unowned`)
     await expect(patientRow(page, colleagues).getByTestId("patient-row-reason")).toHaveText(`${key} colleague`)
-    await expect(noOwner).toHaveText("No owner1")
-    await expect(footer).toHaveText(/^\d+ open for \d+ patients$/)
-    await noOwner.click()
-    await expect(patientRow(page, unowned)).toBeVisible()
-    await expect(patientRow(page, colleagues)).toHaveCount(0)
-
-    await railFilter(page, "all").click()
-    await expect(page.getByTestId("patient-row")).toHaveCount(2)
-    const { token } = await (await page.request.get("/api/auth/token")).json()
-    const complete = async (taskID: string) => {
-      const completed = await page.request.post(`${portalURL}/v1/tasks/${taskID}/complete`, {
-        headers: { authorization: `Bearer ${token}` },
-        data: { expectedVersion: 1, reason: "DONE" },
-      })
-      expect(completed.ok(), await completed.text()).toBeTruthy()
-    }
-    const firstRowTop = async () => (await page.getByTestId("patient-row").first().boundingBox())?.y
-    await complete(unownedTask)
-    await expect(noOwner).toHaveText("No owner0")
-    await expect(noOwner).not.toHaveClass(/(^|\s)text-destructive(\s|$)/)
-    await expect(page.getByTestId("patient-row")).toHaveCount(1)
-    const top = await firstRowTop()
-    const again = await file("unowned-again", "medication", unowned)
-    await expect(noOwner).toHaveText("No owner1")
-    await expect(noOwner).toHaveClass(/(^|\s)text-destructive(\s|$)/)
-    expect(await firstRowTop()).toBe(top)
-    await complete(again)
-    await expect(noOwner).toHaveText("No owner0")
-    expect(await firstRowTop()).toBe(top)
+    await expect(page.getByTestId("patient-work-footer")).toHaveText(/^\d+ open for \d+ patients$/)
   } finally {
     await db.query("DELETE FROM work_responsibilities WHERE account_email = ANY($1::text[])", [roster])
     await db.end()

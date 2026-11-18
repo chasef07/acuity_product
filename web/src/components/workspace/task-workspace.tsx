@@ -1,18 +1,15 @@
 "use client"
 
-import { type ReactNode, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   CheckIcon,
-  CheckCircle2Icon,
   EllipsisIcon,
   PencilIcon,
   PhoneCallIcon,
-  RotateCcwIcon,
   XIcon,
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
@@ -36,6 +33,7 @@ import {
 import { offersTaskCloseMenu, TaskCloseMenu } from "./task-close-menu"
 import { TaskMetadata } from "./task-metadata"
 import { RecoveryTaskSource } from "./recording-source"
+import { ClosedTaskActions, TaskCheck } from "./task-check"
 import { actorLabel, Metadata, TaskSourceDetails } from "./task-details"
 
 export function TaskWorkspace({
@@ -43,19 +41,15 @@ export function TaskWorkspace({
   onNextTask,
   activeCall,
   numberHistory = [],
-  taskCallError,
   onTaskUpdated,
   onReturnToCall,
-  children,
 }: {
   task: Task
   onNextTask?: () => void
   activeCall: CallingCall | undefined
   numberHistory?: ConversationTimelineItem[]
-  taskCallError: string
-  onTaskUpdated: (task: Task, advance?: boolean) => void
+  onTaskUpdated: (task: Task) => void
   onReturnToCall: () => void
-  children?: ReactNode
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(task.title)
@@ -84,11 +78,10 @@ export function TaskWorkspace({
 
   const [reviewedVersion, setReviewedVersion] = useState(task.version)
   const stateSettled = useSettledState(task.state)
-  const reviewRequired = task.origin === "APPOINTMENT_REVIEW" || task.origin === "INBOUND_MESSAGE_REVIEW"
-  const needsReview = reviewRequired && task.state === "OPEN" && reviewedVersion !== task.version
-  function acceptUpdate(updated: Task, advance = false) {
+  const needsReview = task.origin === "APPOINTMENT_REVIEW" && task.state === "OPEN" && reviewedVersion !== task.version
+  function acceptUpdate(updated: Task) {
     setReviewedVersion(updated.version)
-    onTaskUpdated(updated, advance)
+    onTaskUpdated(updated)
   }
 
   async function refreshTask() {
@@ -132,7 +125,7 @@ export function TaskWorkspace({
     const outcome = await (closeReason ? completeTask(task, closeReason) : reopenTask(task))
     setPending(false)
     if (outcome.ok) {
-      acceptUpdate(outcome.data, Boolean(closeReason))
+      acceptUpdate(outcome.data)
       return
     }
     if (outcome.failure.kind === "signedOut") return
@@ -151,175 +144,165 @@ export function TaskWorkspace({
     `Completed by ${task.completedBy?.email ?? "the team"}`
   const callbackNotice = openTaskCallbackNotice(numberHistory, task, formatTimestamp)
 
+  const completeLabel = task.origin === "APPOINTMENT_REVIEW" ? "Verify" : recovery ? "Mark done" : "Complete"
+  const open = task.state === "OPEN"
+
   return (
     <section
       aria-label="Focused Task"
-      className="flex h-full min-h-0 flex-1 flex-col bg-transparent"
+      className="group/task flex flex-col rounded-lg bg-muted/60 px-3 py-2.5"
     >
-      <header className="max-h-32 min-h-11 shrink-0 overflow-y-auto px-5 pt-5">
-      {editing && task.state === "OPEN" ? (
-        <div className="flex items-center gap-1">
-          <Input
-            aria-label="Task title"
-            autoFocus
-            maxLength={500}
-            value={draft}
-            disabled={pending}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void saveTitle()
-              if (event.key === "Escape") closeTitleEditor()
-            }}
-          />
-          <Button
-            size="icon"
-            aria-label="Save title"
-            onClick={() => void saveTitle()}
-          >
-            {pending ? <Spinner /> : <CheckIcon />}
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label="Cancel rename"
-            onClick={closeTitleEditor}
-          >
-            <XIcon />
-          </Button>
-        </div>
-      ) : (
-        <div className="flex items-start gap-1 pr-8">
-          <h2 className="min-w-0 flex-1 text-base font-medium leading-snug">
-            {task.title}
-          </h2>
-          {task.state === "OPEN" && (
-            <Button
-              ref={renameButton}
-              variant="ghost"
-              size="icon"
-              aria-label="Rename task"
-              onClick={openTitleEditor}
-            >
-              <PencilIcon />
+      <header className="flex items-start gap-2">
+        <TaskCheck
+          open={open}
+          label={completeLabel}
+          title={needsReview ? "Review the latest activity first" : completeLabel}
+          pending={pending}
+          blocked={needsReview}
+          onComplete={() => void transition("DONE")}
+        />
+        {editing && open ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <Input
+              aria-label="Task title"
+              autoFocus
+              maxLength={500}
+              value={draft}
+              disabled={pending}
+              className="h-7"
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void saveTitle()
+                if (event.key === "Escape") closeTitleEditor()
+              }}
+            />
+            <Button size="icon-sm" aria-label="Save title" onClick={() => void saveTitle()}>
+              {pending ? <Spinner /> : <CheckIcon />}
             </Button>
-          )}
-        </div>
-      )}
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-      {task.urgency === "high_priority" && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Badge variant="destructive">{taskUrgencyLabels.high_priority}</Badge>
-        </div>
-      )}
-      <TaskMetadata task={task} onUpdated={acceptUpdate} />
-      {task.sourceMessage && (
-        <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-          {task.sourceMessage}
-        </p>
-      )}
-      {task.state === "COMPLETED" && <p role="status" className="mt-3 text-sm text-muted-foreground">{completion}{task.completedAt ? ` · ${formatTimestamp(task.completedAt)}` : ""}. <span className="block mt-1 text-xs">Completed for everyone with access.</span></p>}
-      <div data-testid="task-actions" className="sticky bottom-0 z-10 mt-4 flex flex-col gap-2 bg-popover pb-1 lg:bg-background">
-        {needsReview && <div role="status" className="rounded-md border p-3 text-sm">
-          This Task changed. Review the latest activity before completing it.
-          <Button size="sm" variant="outline" className="mt-2" onClick={() => setReviewedVersion(task.version)}>Review latest</Button>
-        </div>}
-        {task.state === "OPEN" ? (
-          <>
-            {callbackNotice && (
-              <p role="status" className={cn("text-xs leading-5 text-muted-foreground", recovery && "order-2")}>
-                {callbackNotice}
-              </p>
-            )}
-            <div className={cn("flex gap-1", recovery && "order-2")}>
-              <Button
-                variant={recovery ? "ghost" : "default"}
-                className="min-w-0 flex-1"
-                onClick={() => void transition("DONE")}
-                disabled={pending || needsReview}
-              >
-                {pending ? <Spinner /> : <CheckCircle2Icon />} {task.origin === "APPOINTMENT_REVIEW" ? "Verify & next" : recovery ? "Mark done" : "Complete & next"}
-              </Button>
-              {offersTaskCloseMenu(task) && (
-                <TaskCloseMenu
-                  trigger={
-                    <Button
-                      variant={recovery ? "ghost" : "outline"}
-                      size="icon"
-                      aria-label="Close as"
-                      disabled={pending || needsReview}
-                    />
-                  }
-                  onClose={(reason) => void transition(reason)}
-                >
-                  <EllipsisIcon />
-                </TaskCloseMenu>
-              )}
-            </div>
-            {activeCall ? (
-              <Button variant="outline" onClick={onReturnToCall}>
-                <PhoneCallIcon /> Return to active call
-              </Button>
-            ) : null}
-          </>
+            <Button size="icon-sm" variant="ghost" aria-label="Cancel rename" onClick={closeTitleEditor}>
+              <XIcon />
+            </Button>
+          </div>
         ) : (
           <>
-          {onNextTask && <Button onClick={onNextTask}>Next task</Button>}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-2 self-start text-muted-foreground"
-            onClick={() => void transition()}
-            disabled={pending || !stateSettled}
-          >
-            {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
-          </Button>
+            <h2 className={cn("min-w-0 flex-1 text-sm font-medium leading-5", !open && "text-muted-foreground line-through")}>
+              {task.title}
+            </h2>
+            {open && (
+              <div className="flex shrink-0 items-center [@media(hover:hover)]:opacity-0 group-hover/task:opacity-100 group-focus-within/task:opacity-100">
+                <Button
+                  ref={renameButton}
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Rename task"
+                  className="text-muted-foreground"
+                  onClick={openTitleEditor}
+                >
+                  <PencilIcon />
+                </Button>
+                {offersTaskCloseMenu(task) && (
+                  <TaskCloseMenu
+                    trigger={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Close as"
+                        className="text-muted-foreground"
+                        disabled={pending || needsReview}
+                      />
+                    }
+                    onClose={(reason) => void transition(reason)}
+                  >
+                    <EllipsisIcon />
+                  </TaskCloseMenu>
+                )}
+              </div>
+            )}
           </>
         )}
-      </div>
-      {taskCallError && (
-        <p className="mt-3 text-xs text-destructive">{taskCallError}</p>
-      )}
-      {error && (
-        <Alert variant="destructive" className="mt-3">
-          <AlertTitle>Task changed</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-      {(recovery || task.relatedInteractionCount > (task.callId ? 1 : 0)) && (
-        <RecoveryTaskSource task={task} onUpdated={onTaskUpdated} />
-      )}
-      <details className="group mt-4 border-t pt-4">
-        <summary className="cursor-pointer text-sm font-medium">
-          Details
-        </summary>
-        <div className="mt-3 flex flex-col gap-3">
-          <TaskSourceDetails task={task} />
-          {task.sourceCallId && (
-            <Metadata label="Source call" value={task.sourceCallId} />
+      </header>
+      <div className="pl-7">
+        <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          {task.urgency === "high_priority" && (
+            <span className="text-destructive">{taskUrgencyLabels.high_priority}</span>
           )}
-          <Metadata
-            label="Created"
-            value={`${formatTimestamp(task.createdAt)} · ${actorLabel(task.createdBy)}`}
-          />
-          {task.automaticAcknowledgement && (
-            <Metadata
-              label="Caller acknowledgement"
-              value={automaticAcknowledgementLabel(
-                task.automaticAcknowledgement,
-              )}
-            />
-          )}
-          <Metadata label="Last changed" value={formatTimestamp(task.updatedAt)} />
-          <Metadata
-            label="Completed"
-            value={
-              task.completedAt ? formatTimestamp(task.completedAt) : "Not completed"
-            }
-          />
+          <TaskMetadata task={task} onUpdated={acceptUpdate} />
         </div>
-      </details>
-      {children}
+        {task.sourceMessage && (
+          <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+            {task.sourceMessage}
+          </p>
+        )}
+        <div data-testid="task-actions" className="flex flex-col gap-2 empty:hidden [&:not(:empty)]:mt-2">
+          {needsReview && (
+            <p role="status" className="text-xs leading-5 text-muted-foreground">
+              This Task changed. Review the latest activity before completing it.{" "}
+              <button type="button" className="font-medium text-foreground underline underline-offset-2" onClick={() => setReviewedVersion(task.version)}>
+                Review latest
+              </button>
+            </p>
+          )}
+          {open && callbackNotice && (
+            <p role="status" className="text-xs leading-5 text-muted-foreground">{callbackNotice}</p>
+          )}
+          {open && activeCall && (
+            <Button size="sm" variant="outline" className="self-start" onClick={onReturnToCall}>
+              <PhoneCallIcon /> Return to active call
+            </Button>
+          )}
+          {!open && (
+            <>
+              <p role="status" className="text-xs leading-5 text-muted-foreground">
+                {completion}{task.completedAt ? ` · ${formatTimestamp(task.completedAt)}` : ""}. Completed for everyone with access.
+              </p>
+              <ClosedTaskActions
+                pending={pending}
+                settled={stateSettled}
+                onNext={onNextTask}
+                onReopen={() => void transition()}
+              />
+            </>
+          )}
+        </div>
+        {error && (
+          <Alert variant="destructive" className="mt-2">
+            <AlertTitle>Task changed</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {(recovery || task.relatedInteractionCount > (task.callId ? 1 : 0)) && (
+          <RecoveryTaskSource task={task} onUpdated={onTaskUpdated} />
+        )}
+        <details className="group mt-2">
+          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+            Details
+          </summary>
+          <div className="mt-2 flex flex-col gap-2">
+            <TaskSourceDetails task={task} />
+            {task.sourceCallId && (
+              <Metadata label="Source call" value={task.sourceCallId} />
+            )}
+            <Metadata
+              label="Created"
+              value={`${formatTimestamp(task.createdAt)} · ${actorLabel(task.createdBy)}`}
+            />
+            {task.automaticAcknowledgement && (
+              <Metadata
+                label="Caller acknowledgement"
+                value={automaticAcknowledgementLabel(
+                  task.automaticAcknowledgement,
+                )}
+              />
+            )}
+            <Metadata label="Last changed" value={formatTimestamp(task.updatedAt)} />
+            <Metadata
+              label="Completed"
+              value={
+                task.completedAt ? formatTimestamp(task.completedAt) : "Not completed"
+              }
+            />
+          </div>
+        </details>
       </div>
     </section>
   )

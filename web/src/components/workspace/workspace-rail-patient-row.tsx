@@ -1,7 +1,16 @@
 "use client"
 
 import { useId, type MouseEvent } from "react"
-import { Building2Icon, PhoneIcon, PlayIcon } from "lucide-react"
+import {
+  Building2Icon,
+  CalendarCheckIcon,
+  type LucideIcon,
+  MessageSquareIcon,
+  PhoneIcon,
+  PhoneIncomingIcon,
+  PhoneMissedIcon,
+  VoicemailIcon,
+} from "lucide-react"
 
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar"
 import {
@@ -11,7 +20,8 @@ import {
 } from "@/components/ui/tooltip"
 import type { PatientWorkRow, Task } from "@/lib/api/generated/types.gen"
 import { useEngagementSummary } from "@/lib/clients/engagement"
-import { openTaskReason, patientRowName } from "@/lib/patient-work"
+import { formatTimestamp } from "@/lib/format-time"
+import { openTaskReason, patientName } from "@/lib/patient-work"
 import {
   formatPhone,
   formatRelativeTime,
@@ -21,7 +31,19 @@ import {
 } from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
 
+import { reviewedInConversation } from "./task-call-context"
+
 const hoverItemLimit = 5
+
+const channelIcons = {
+  VOICEMAIL_RECOVERY: VoicemailIcon,
+  MISSED_CALL_RECOVERY: PhoneMissedIcon,
+  INBOUND_MESSAGE_REVIEW: MessageSquareIcon,
+  STAFF_MESSAGE_FOLLOW_UP: MessageSquareIcon,
+  APPOINTMENT_REVIEW: CalendarCheckIcon,
+  ABITA_AI: PhoneIncomingIcon,
+  HUMAN_CALL_FOLLOW_UP: PhoneIcon,
+} satisfies Record<Task["origin"], LucideIcon>
 
 export function PatientRow({
   row,
@@ -39,8 +61,9 @@ export function PatientRow({
   onSelect: (event: MouseEvent) => void
 }) {
   const priorityID = useId()
-  const name = patientRowName(row)
+  const name = patientName(row.displayName, row.phone)
   const reason = openTaskReason(row.top)
+  const ChannelIcon = channelIcons[row.top.origin]
   return (
     <SidebarMenuItem
       data-testid="patient-row"
@@ -60,24 +83,31 @@ export function PatientRow({
           aria-describedby={row.highPriority ? priorityID : undefined}
           isActive={active}
           className={cn(
-            "h-auto rounded-md px-2 py-1.5 pr-9 text-sidebar-foreground",
+            "group/patient-row h-auto rounded-md px-2.5 py-1.5 pr-9 text-sidebar-foreground data-active:ring-1 data-active:ring-sidebar-border/70 data-active:ring-inset",
             guarded && !active && "hover:bg-transparent active:bg-transparent data-open:hover:bg-transparent",
           )}
           onClick={onSelect}
         >
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="flex min-w-0 items-center gap-1.5 text-sm leading-5">
+            <span className="flex min-w-0 items-center gap-2 text-sm leading-5">
+              <ChannelIcon
+                aria-hidden="true"
+                className={cn(
+                  "size-3.5 shrink-0 text-muted-foreground transition-opacity",
+                  !active && "opacity-50 group-hover/patient-row:opacity-100",
+                )}
+              />
+              <span data-testid="patient-row-name" className="truncate">{name}</span>
               {row.highPriority && (
                 <span className="size-1.5 shrink-0 rounded-full bg-destructive">
                   <span id={priorityID} className="sr-only">High priority</span>
                 </span>
               )}
-              <span data-testid="patient-row-name" className="truncate">{name}</span>
               {row.openCount > 1 && (
                 <span
                   data-testid="patient-row-count"
                   title={`${row.openCount} open for this patient`}
-                  className="shrink-0 rounded-full bg-sidebar-accent px-1.5 text-[10px] leading-4 tabular-nums text-muted-foreground"
+                  className="shrink-0 text-[11px] leading-4 tabular-nums text-muted-foreground"
                 >
                   {row.openCount}
                   <span className="sr-only"> open</span>
@@ -89,18 +119,15 @@ export function PatientRow({
             ) : (
               <span
                 data-testid="patient-row-reason"
-                className="flex min-w-0 items-center gap-1 text-xs leading-4 text-muted-foreground"
+                className="block truncate pl-5.5 text-xs leading-4 text-muted-foreground"
               >
-                {reason.voicemail && (
-                  <PlayIcon aria-hidden="true" className="size-3 shrink-0 fill-current" />
-                )}
-                <span className="truncate">{reason.text}</span>
+                {reason}
               </span>
             )}
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>
-      <RowTime at={row.activityAt} />
+      <RowTime at={row.waitingSince} title={`Waiting since ${formatTimestamp(row.waitingSince)}`} />
     </SidebarMenuItem>
   )
 }
@@ -116,15 +143,13 @@ export function CompletedTaskRow({
   refused: boolean
   onSelect: (event: MouseEvent) => void
 }) {
-  const textReview = task.origin === "INBOUND_MESSAGE_REVIEW"
-  const rowTitle = textReview
-    ? (task.callerName ?? formatPhone(task.phone))
-    : task.title
+  const textReview = reviewedInConversation(task)
+  const rowTitle = patientName(task.callerName, task.phone)
   const urgent = task.urgency === "high_priority"
   const urgencyID = useId()
   const relative = taskRelativeTime(task)
   const closed = taskCloseSummary(task)
-  const detail = textReview ? task.preview : closed
+  const detail = textReview ? task.preview : [task.title, closed].filter(Boolean).join(" · ")
   return (
     <SidebarMenuItem
       data-testid="completed-task-row"
@@ -188,9 +213,10 @@ function RowRefused() {
   )
 }
 
-function RowTime({ at }: { at: string }) {
+function RowTime({ at, title }: { at: string; title?: string }) {
   return (
     <time
+      title={title}
       className="pointer-events-none absolute top-0 right-1 flex h-8 w-7 items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground [@media(pointer:coarse)]:h-11"
       dateTime={at}
     >
@@ -221,7 +247,7 @@ function PatientOpenItems({
           className="flex min-w-0 items-baseline gap-2 text-xs leading-4 text-popover-foreground"
         >
           <span className="min-w-0 flex-1 truncate">
-            {openTaskReason(task).text}
+            {openTaskReason(task)}
           </span>
           <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
             {formatRelativeTime(taskRelativeTime(task).at)}

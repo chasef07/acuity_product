@@ -1,50 +1,10 @@
 "use client"
 
 import { Badge } from "@/components/ui/badge"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import type {
-  PatientWorkCounts,
-  PatientWorkFilter,
-  PatientWorkScope,
-} from "@/lib/api/generated/types.gen"
+import type { PatientWorkCounts } from "@/lib/api/generated/types.gen"
 import { shownPatientWorkFilters } from "@/lib/patient-work"
-import { labelOptions, patientWorkScopeLabels } from "@/lib/vocabulary"
+import type { RailFilter } from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
-
-const patientWorkScopes = labelOptions(patientWorkScopeLabels)
-
-export function PatientScopeToggle({
-  scope,
-  onChange,
-}: {
-  scope: PatientWorkScope
-  onChange: (scope: PatientWorkScope) => void
-}) {
-  return (
-    <ToggleGroup
-      aria-label="Whose work"
-      variant="segmented"
-      size="sm"
-      spacing={0}
-      className="w-full"
-      value={[scope]}
-      onValueChange={(values) => {
-        const next = patientWorkScopes.find((option) => option.value === values[0])
-        if (next) onChange(next.value)
-      }}
-    >
-      {patientWorkScopes.map((option) => (
-        <ToggleGroupItem
-          key={option.value}
-          value={option.value}
-          className="h-7 flex-1 text-xs data-pressed:bg-background data-pressed:shadow-xs"
-        >
-          {option.label}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
-  )
-}
 
 export function PatientFilterChips({
   filter,
@@ -52,16 +12,15 @@ export function PatientFilterChips({
   appointmentsOffered,
   onChange,
 }: {
-  filter: PatientWorkFilter
+  filter: RailFilter
   counts: PatientWorkCounts
   appointmentsOffered: boolean
-  onChange: (filter: PatientWorkFilter) => void
+  onChange: (filter: RailFilter) => void
 }) {
   return (
-    <div role="group" aria-label="Filter patients" className="flex h-20 flex-wrap content-start gap-1 [@media(pointer:coarse)]:h-35">
+    <div role="group" aria-label="Filter patients" className="flex min-h-12 flex-wrap content-start gap-1 [@media(pointer:coarse)]:min-h-24">
       {shownPatientWorkFilters(counts, filter, appointmentsOffered).map((option) => {
         const pressed = option.value === filter
-        const unowned = option.value === "unowned" && option.count > 0
         return (
           <Badge
             key={option.value}
@@ -73,15 +32,14 @@ export function PatientFilterChips({
                 onClick={() => onChange(option.value)}
               />
             }
-            variant={pressed ? "default" : unowned ? "destructive" : "outline"}
+            variant={pressed ? "default" : "outline"}
             className={cn(
               "cursor-pointer rounded-full px-2 font-normal outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
               pressed && "font-medium",
-              pressed && unowned && "bg-destructive",
             )}
           >
             {option.label}
-            <span className={cn("tabular-nums", !pressed && !unowned && "opacity-70")}>{option.count}</span>
+            <span className={cn("tabular-nums", !pressed && "opacity-70")}>{option.count}</span>
           </Badge>
         )
       })}
