@@ -7,24 +7,22 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { workspaceFolders } from "@/components/workspace/workspace-rail-folders"
 import type { WorkspaceProjectionState } from "@/lib/workspace-projection"
 
 export function WorkEmptyState({ projection }: { projection: WorkspaceProjectionState }) {
-  const openCount = workspaceFolders(projection).reduce((total, folder) => total + folder.count, 0)
-  const inboxClear = openCount === 0 && !projection.tasks.loading && !projection.tasks.error
+  const inboxClear = projection.patients.counts.all === 0 && !projection.patients.loading && !projection.patients.error
   return (
-    <section aria-label="No task selected" className="flex min-h-0 flex-1">
+    <section aria-label="No patient selected" className="flex min-h-0 flex-1">
       <Empty>
         <EmptyHeader>
           <EmptyMedia variant="icon">
             {inboxClear ? <InboxIcon aria-hidden="true" /> : <MousePointerClickIcon aria-hidden="true" />}
           </EmptyMedia>
-          <EmptyTitle>{inboxClear ? "Inbox clear" : "Select a task"}</EmptyTitle>
+          <EmptyTitle>{inboxClear ? "Inbox clear" : "Select a patient"}</EmptyTitle>
           <EmptyDescription>
             {inboxClear
-              ? "No open tasks, missed calls, or texts in this view. New ones appear in the sidebar."
-              : "Choose a task, missed call, or text from the sidebar to open its conversation."}
+              ? "No patients are waiting in this view. New ones appear in the sidebar."
+              : "Choose a patient from the sidebar to open their conversation."}
           </EmptyDescription>
         </EmptyHeader>
       </Empty>

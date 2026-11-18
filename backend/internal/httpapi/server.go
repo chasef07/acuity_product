@@ -1017,6 +1017,43 @@ func (server *Server) GetEngagementTimeline(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) GetEngagementSummary(
+	w http.ResponseWriter,
+	r *http.Request,
+	phone string,
+	params api.GetEngagementSummaryParams,
+) {
+	identity, ok := server.portalIdentity(w, r)
+	if !ok {
+		return
+	}
+	normalized, err := contactcontext.NormalizePhone(phone)
+	if err != nil {
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	summary, err := server.workspace.QueryPhoneSummary(
+		ctx,
+		workspace.QueryPhoneSummaryCommand{
+			Identity:   identity,
+			PracticeID: params.PracticeId.String(),
+			Phone:      normalized,
+		},
+	)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	response, err := phoneSummaryResponse(summary)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) StartOutboundCall(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1355,6 +1392,16 @@ func (server *Server) RecordCallingDisposition(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
+	var closures []work.CallTaskClosure
+	if body.Closures != nil {
+		for _, closure := range *body.Closures {
+			closures = append(closures, work.CallTaskClosure{
+				TaskID:          closure.TaskId.String(),
+				Reason:          work.CloseReason(closure.Reason),
+				ExpectedVersion: closure.ExpectedVersion,
+			})
+		}
+	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	result, err := server.calling.RecordDisposition(
@@ -1363,6 +1410,7 @@ func (server *Server) RecordCallingDisposition(
 		body.SessionId,
 		callID.String(),
 		humancalling.Disposition(body.Outcome),
+		closures,
 	)
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -1373,7 +1421,26 @@ func (server *Server) RecordCallingDisposition(
 		server.writeDomainError(w, r, err)
 		return
 	}
-	response := api.CallingDispositionResult{Call: callResponse}
+	closed, err := parseUUIDs(result.Closures.Closed)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	alreadyClosed, err := parseUUIDs(result.Closures.AlreadyClosed)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	changed, err := parseUUIDs(result.Closures.Changed)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	recorded := api.CallingDispositionOutcome(result.Outcome)
+	response := api.CallingDispositionResult{
+		Call: callResponse, ClosedTaskIds: &closed, AlreadyClosedTaskIds: &alreadyClosed,
+		ChangedTaskIds: &changed, RecordedOutcome: &recorded,
+	}
 	if result.TaskID != "" {
 		taskID, err := uuid.Parse(result.TaskID)
 		if err != nil {
@@ -1424,6 +1491,39 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, err := taskPageResponse(page)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) QueryPatientWork(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.portalIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.PatientWorkQueryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	page, err := server.workspace.QueryPatientWork(ctx, workspace.QueryPatientWorkCommand{
+		Identity:   identity,
+		PracticeID: body.PracticeId.String(),
+		LocationID: uuidString(body.LocationId),
+		Search:     stringValue(body.Search),
+		Scope:      workspace.PatientWorkScope(stringValue((*string)(body.Scope))),
+		Filter:     workspace.PatientWorkFilter(stringValue((*string)(body.Filter))),
+		Cursor:     stringValue(body.Cursor),
+		Limit:      intValue(body.Limit),
+	})
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	response, err := patientWorkPageResponse(page)
 	if err != nil {
 		server.writeDomainError(w, r, err)
 		return
@@ -1497,7 +1597,7 @@ func (server *Server) CompleteTask(
 	if !ok {
 		return
 	}
-	var body api.TaskTransitionRequest
+	var body api.CompleteTaskRequest
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
@@ -1507,6 +1607,7 @@ func (server *Server) CompleteTask(
 		Identity:        identity,
 		TaskID:          taskID.String(),
 		ExpectedVersion: body.ExpectedVersion,
+		Reason:          staffCloseReason(body.Reason),
 	})
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -1576,6 +1677,7 @@ func (server *Server) CompleteTaskGroup(
 		Identity: identity,
 		TaskID:   taskID.String(),
 		Members:  members,
+		Reason:   staffCloseReason(body.Reason),
 	})
 	if err != nil {
 		server.writeDomainError(w, r, err)
@@ -2767,6 +2869,13 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 	return response, nil
 }
 
+func staffCloseReason(reason *api.StaffTaskCloseReason) work.CloseReason {
+	if reason == nil {
+		return work.CloseReasonDone
+	}
+	return work.CloseReason(*reason)
+}
+
 func taskResponse(task work.Task) (api.Task, error) {
 	id, err := uuid.Parse(task.ID)
 	if err != nil {
@@ -2841,6 +2950,9 @@ func taskResponse(task work.Task) (api.Task, error) {
 	if task.Preview != "" {
 		response.Preview = &task.Preview
 	}
+	if task.VoicemailDurationSeconds > 0 {
+		response.VoicemailDurationSeconds = &task.VoicemailDurationSeconds
+	}
 	if task.SourceMessage != "" {
 		response.SourceMessage = &task.SourceMessage
 	}
@@ -2903,6 +3015,10 @@ func taskResponse(task work.Task) (api.Task, error) {
 		}
 	}
 	response.CompletedAt = task.CompletedAt
+	if task.CloseReason != "" {
+		reason := api.TaskCloseReason(task.CloseReason)
+		response.CloseReason = &reason
+	}
 	if task.CallbackCompletion != nil {
 		response.CallbackCompletion = &api.TaskCallbackCompletion{}
 		if task.CallbackCompletion.CallerEmail != "" {
@@ -2991,6 +3107,10 @@ func messageResponse(message messaging.Message) (api.Message, error) {
 		response.CreatedBy = &api.TaskActor{
 			Kind:    api.TaskActorKind(message.CreatedBy.Kind),
 			Subject: message.CreatedBy.Subject,
+		}
+		if message.CreatedBy.Email != "" {
+			email := openapi_types.Email(message.CreatedBy.Email)
+			response.CreatedBy.Email = &email
 		}
 	}
 	if message.Attachment != nil {
@@ -3132,6 +3252,73 @@ func visibleDelivery(state messaging.DeliveryState) api.MessageDeliveryState {
 	}
 }
 
+func phoneSummaryResponse(summary workspace.PhoneSummary) (api.PhoneSummary, error) {
+	openTasks, err := taskResponses(summary.OpenTasks)
+	if err != nil {
+		return api.PhoneSummary{}, err
+	}
+	closedToday, err := taskResponses(summary.ClosedToday)
+	if err != nil {
+		return api.PhoneSummary{}, err
+	}
+	return api.PhoneSummary{
+		Phone:         summary.Phone,
+		DisplayName:   summary.DisplayName,
+		Names:         summary.Names,
+		OpenTasks:     openTasks,
+		OpenTaskCount: summary.OpenTaskCount,
+		ClosedToday:   closedToday,
+	}, nil
+}
+
+func taskResponses(tasks []work.Task) ([]api.Task, error) {
+	responses := make([]api.Task, 0, len(tasks))
+	for _, task := range tasks {
+		response, err := taskResponse(task)
+		if err != nil {
+			return nil, err
+		}
+		responses = append(responses, response)
+	}
+	return responses, nil
+}
+
+func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPage, error) {
+	response := api.PatientWorkPage{
+		Rows: make([]api.PatientWorkRow, 0, len(page.Rows)),
+		Counts: api.PatientWorkCounts{
+			All:          page.Counts.All,
+			FollowUp:     page.Counts.FollowUp,
+			CallBack:     page.Counts.CallBack,
+			Texts:        page.Counts.Texts,
+			Appointments: page.Counts.Appointments,
+			Unowned:      page.Counts.Unowned,
+		},
+		Totals: api.PatientWorkTotals{
+			OpenTasks:            page.Totals.OpenTasks,
+			Patients:             page.Totals.Patients,
+			PatientsOutsideScope: page.Totals.PatientsOutsideScope,
+		},
+		NextCursor: page.NextCursor,
+	}
+	for _, row := range page.Rows {
+		top, err := taskResponse(row.Top)
+		if err != nil {
+			return api.PatientWorkPage{}, err
+		}
+		response.Rows = append(response.Rows, api.PatientWorkRow{
+			Phone:        row.Phone,
+			DisplayName:  row.DisplayName,
+			OpenCount:    row.OpenCount,
+			HighPriority: row.HighPriority,
+			HasUnowned:   row.HasUnowned,
+			ActivityAt:   row.ActivityAt,
+			Top:          top,
+		})
+	}
+	return response, nil
+}
+
 func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 	response := api.TaskPage{
 		Items:      make([]api.Task, 0, len(page.Items)),
@@ -3198,6 +3385,17 @@ func callHistoryItemResponse(
 	}
 	if item.PlacedByEmail != "" {
 		response.PlacedByEmail = &item.PlacedByEmail
+	}
+	if item.TaskID != "" {
+		taskID, err := uuid.Parse(item.TaskID)
+		if err != nil {
+			return api.CallHistoryItem{}, err
+		}
+		response.TaskId = &taskID
+		response.TaskTitle = &item.TaskTitle
+	}
+	if item.VoicemailDurationSeconds > 0 {
+		response.VoicemailDurationSeconds = &item.VoicemailDurationSeconds
 	}
 	return response, nil
 }
@@ -3357,6 +3555,7 @@ func aiOutcomeItemResponse(
 		AppointmentOccurredAt: item.AppointmentOccurredAt,
 		OldAppointmentId:      stringPointer(item.OldAppointmentID),
 		NewAppointmentId:      stringPointer(item.NewAppointmentID),
+		Resolved:              item.Resolved,
 	}
 	return response, nil
 }
@@ -3575,6 +3774,18 @@ func uuidString(value *openapi_types.UUID) string {
 		return ""
 	}
 	return value.String()
+}
+
+func parseUUIDs(values []string) ([]openapi_types.UUID, error) {
+	parsed := make([]openapi_types.UUID, 0, len(values))
+	for _, value := range values {
+		id, err := uuid.Parse(value)
+		if err != nil {
+			return nil, err
+		}
+		parsed = append(parsed, id)
+	}
+	return parsed, nil
 }
 
 func intValue(value *int) int {

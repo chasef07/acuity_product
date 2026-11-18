@@ -18,7 +18,7 @@ test("Home connects the animated Acuity mark to three keyboard-accessible areas"
   await expect(page.getByRole("heading", { level: 1 })).not.toHaveText("Your agent")
   await expect(page.locator("time[datetime]").first()).toHaveText(/\w+ \w+ \d+(st|nd|rd|th) \d{4}/)
   await page.getByRole("navigation", { name: "Workspace" }).getByRole("button", { name: "Work", exact: true }).click()
-  await expect(sidebar.getByRole("group", { name: "Workspace folders" })).toBeVisible()
+  await expect(sidebar.getByRole("group", { name: "Patients with open work" })).toBeVisible()
   const workBrand = await sidebar.getByText("Acuity Health", { exact: true }).boundingBox()
   expect(workBrand?.x).toBe(brand?.x)
   expect(workBrand?.y).toBe(brand?.y)

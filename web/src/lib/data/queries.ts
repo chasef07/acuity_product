@@ -18,7 +18,7 @@ import {
   portalRequest,
 } from "../clients/portal-request"
 
-type Live = "workspace" | "review-folders" | "task-detail" | "analytics"
+type Live = "workspace" | "task-detail" | "analytics"
 
 const analyticsRefreshMs = 5_000
 
@@ -169,21 +169,19 @@ export function readFailure(query: PortalQuery<unknown>) {
 
 export function useLiveRefresh(signals: {
   workspaceVersion: number | undefined
-  taskCounts: string
   detailRevision: number
 }) {
   const client = useQueryClient()
   const seen = useRef(signals)
   const analytics = useRef<{ refreshedAt: number; trailing?: ReturnType<typeof setTimeout> }>({ refreshedAt: 0 })
-  const { workspaceVersion, taskCounts, detailRevision } = signals
+  const { workspaceVersion, detailRevision } = signals
   useEffect(() => () => clearTimeout(analytics.current.trailing), [])
   useEffect(() => {
     const previous = seen.current
-    seen.current = { workspaceVersion, taskCounts, detailRevision }
+    seen.current = { workspaceVersion, detailRevision }
     const stale = new Set<Live>()
     if (previous.workspaceVersion !== workspaceVersion) {
       stale.add("workspace")
-      stale.add("review-folders")
       const throttle = analytics.current
       const refreshAnalytics = () => {
         throttle.trailing = undefined
@@ -194,10 +192,9 @@ export function useLiveRefresh(signals: {
       if (wait <= 0) refreshAnalytics()
       else throttle.trailing ??= setTimeout(refreshAnalytics, wait)
     }
-    if (previous.taskCounts !== taskCounts) stale.add("review-folders")
     if (previous.detailRevision !== detailRevision) stale.add("task-detail")
     for (const live of stale) void client.invalidateQueries({ queryKey: [live] })
-  }, [client, workspaceVersion, taskCounts, detailRevision])
+  }, [client, workspaceVersion, detailRevision])
 }
 
 function useRetry(refetch: () => Promise<unknown>, queryKey: QueryKey, enabled: boolean) {

@@ -805,7 +805,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		t.Fatalf("completed connected Call = %#v, %v", connectedCall, err)
 	}
 	processAllCommands(t, callingWorker)
-	currentTime = now.Add(30 * time.Second)
+	currentTime = now.Add(70 * time.Second)
 	if expired, err := callingWorker.ExpireDispositions(context.Background()); err != nil || expired != 1 {
 		t.Fatalf("expire connected disposition = %d, %v", expired, err)
 	}
@@ -2876,7 +2876,7 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 		IdleBackoffMax:                2 * time.Second,
 		ErrorBackoffMin:               250 * time.Millisecond,
 		ErrorBackoffMax:               10 * time.Second,
-	}, calling, idleMessagingWork{}, idleInteractionWork{}, workerPool)
+	}, calling, idleMessagingWork{}, idleInteractionWork{}, idleTaskWork{}, workerPool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3004,6 +3004,12 @@ func (idleInteractionWork) ProcessNextReceipt(context.Context) (bool, error) {
 
 func (idleInteractionWork) ProjectNextAnalyticsFacts(context.Context) (bool, error) {
 	return false, nil
+}
+
+type idleTaskWork struct{}
+
+func (idleTaskWork) ExpireTextReviews(context.Context) (int, error) {
+	return 0, nil
 }
 
 func TestConcurrentStaffDialsPreserveOneWinnerAndCleanUpLosers(t *testing.T) {
@@ -5546,6 +5552,26 @@ func TestFailedVoicemailGreetingCreatesMissedCallWithoutRecording(t *testing.T) 
 }
 
 func TestMissedHandoffAttachesToTheAITaskFromTheSameCall(t *testing.T) {
+	aiTaskID, voicemailTaskID, interactionTaskID, recoveryTasks := missHandoffWithOpenAITask(t, true)
+	if voicemailTaskID != aiTaskID || interactionTaskID != aiTaskID || recoveryTasks != 0 {
+		t.Fatalf("missed handoff went to Task %s / %s with %d recovery Tasks; want AI Task %s and none",
+			voicemailTaskID, interactionTaskID, recoveryTasks, aiTaskID)
+	}
+}
+
+func TestMissedHandoffAfterAnEarlierCallsAITaskGetsItsOwnRecoveryTask(t *testing.T) {
+	aiTaskID, voicemailTaskID, interactionTaskID, recoveryTasks := missHandoffWithOpenAITask(t, false)
+	if voicemailTaskID == aiTaskID || interactionTaskID != voicemailTaskID || recoveryTasks != 1 {
+		t.Fatalf("missed handoff went to Task %s / %s with %d recovery Tasks; want one recovery Task apart from AI Task %s",
+			voicemailTaskID, interactionTaskID, recoveryTasks, aiTaskID)
+	}
+}
+
+func missHandoffWithOpenAITask(
+	t *testing.T,
+	aiTaskFromSameCall bool,
+) (aiTaskID, voicemailTaskID, interactionTaskID string, recoveryTasks int) {
+	t.Helper()
 	now := time.Date(2026, time.October, 14, 17, 15, 0, 0, time.UTC)
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
 		CallControlID: "ai-task-staff-control", CallLegID: "ai-task-staff-leg",
@@ -5553,7 +5579,6 @@ func TestMissedHandoffAttachesToTheAITaskFromTheSameCall(t *testing.T) {
 	pool, calling, caller, _ := prepareInboundFanout(
 		t, now, "missed-after-ai-task", provider, 1,
 	)
-	var aiTaskID string
 	if err := pool.QueryRow(context.Background(), `
 		INSERT INTO work_tasks (
 			practice_id, location_id, phone, title, state, origin, urgency, category,
@@ -5562,10 +5587,11 @@ func TestMissedHandoffAttachesToTheAITaskFromTheSameCall(t *testing.T) {
 		)
 		SELECT practice_id, location_id, phone, 'Refill request', 'OPEN', 'ABITA_AI',
 			'normal', 'medication', 'SERVICE', 'abita-synthetic', $1, $1,
-			source_call_id, 'Caller asked for a refill.', 'refill', sha256('refill')
+			CASE WHEN $2 THEN source_call_id ELSE 'earlier-ai-call' END,
+			'Caller asked for a refill.', 'refill', sha256('refill')
 		FROM human_calling_handoffs
 		RETURNING id::text
-	`, now).Scan(&aiTaskID); err != nil {
+	`, now, aiTaskFromSameCall).Scan(&aiTaskID); err != nil {
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
@@ -5591,8 +5617,6 @@ func TestMissedHandoffAttachesToTheAITaskFromTheSameCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
-	var voicemailTaskID, interactionTaskID string
-	var recoveryTasks int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT voicemail.task_id::text, interaction.task_id::text,
 			(SELECT count(*) FROM work_tasks
@@ -5602,10 +5626,7 @@ func TestMissedHandoffAttachesToTheAITaskFromTheSameCall(t *testing.T) {
 	`).Scan(&voicemailTaskID, &interactionTaskID, &recoveryTasks); err != nil {
 		t.Fatal(err)
 	}
-	if voicemailTaskID != aiTaskID || interactionTaskID != aiTaskID || recoveryTasks != 0 {
-		t.Fatalf("missed handoff went to Task %s / %s with %d recovery Tasks; want AI Task %s and none",
-			voicemailTaskID, interactionTaskID, recoveryTasks, aiTaskID)
-	}
+	return aiTaskID, voicemailTaskID, interactionTaskID, recoveryTasks
 }
 
 func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *testing.T) {

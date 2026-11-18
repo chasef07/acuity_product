@@ -185,6 +185,7 @@ func TestStartOutboundCallReportsAClosedOrMissingTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := workModule.CompleteTask(ctx, work.CompleteTaskCommand{
+		Reason:   work.CloseReasonDone,
 		Identity: fixture.identity, TaskID: task.ID, ExpectedVersion: task.Version,
 	}); err != nil {
 		t.Fatalf("complete synthetic Task: %v", err)

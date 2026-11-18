@@ -1,6 +1,5 @@
 import type {
   CallingCall,
-  CallingDispositionRequest,
   RingingCallLeg,
   StaffTransfer,
 } from "../api/generated/types.gen.ts"
@@ -62,7 +61,6 @@ export type CallingCardSnapshot = {
     canMute: boolean
     canKeypad: boolean
     canRetry: boolean
-    canDispose: boolean
     canTransfer?: boolean
   }
 }
@@ -159,15 +157,7 @@ export type CallingCardFailureView = {
   }
 }
 
-export type CallingDispositionOutcome = CallingDispositionRequest["outcome"]
-
 type CallingCardActions = {
-  dispositions: Array<{
-    outcome: CallingDispositionOutcome
-    label: string
-    primary: boolean
-    disabled: boolean
-  }>
   retry?: {
     label: string
     disabled: boolean
@@ -311,15 +301,6 @@ function projectActions(
   call: CallingCardCall,
   snapshot: CallingCardSnapshot,
 ): CallingCardActions {
-  const dispositionPending = Boolean(snapshot.pending?.disposition)
-  const dispositions =
-    snapshot.controls.canDispose ||
-    (call.state === "NEEDS_DISPOSITION" && dispositionPending)
-    ? dispositionChoices(call).map((choice) => ({
-        ...choice,
-        disabled: dispositionPending,
-      }))
-    : []
   const retry = snapshot.controls.canRetry && call.retryAllowed
     ? {
         label: snapshot.pending?.retry ? "Calling…" : "Call again",
@@ -334,7 +315,6 @@ function projectActions(
       ? { label: "Dismiss" as const }
       : undefined
   return {
-    dispositions,
     ...(retry ? { retry } : {}),
     ...(close ? { close } : {}),
   }
@@ -348,37 +328,6 @@ function settledOutcomeCanClose(state: CallingCardCall["state"]) {
     "RESOLVED",
     "FOLLOW_UP_REQUIRED",
   ].includes(state)
-}
-
-function dispositionChoices(
-  call: CallingCardCall,
-): Array<Omit<CallingCardActions["dispositions"][number], "disabled">> {
-  if (call.direction === "INBOUND") {
-    return [
-      { outcome: "RESOLVED", label: "Resolved on call", primary: true },
-      {
-        outcome: "FOLLOW_UP_REQUIRED",
-        label: "Create follow-up task",
-        primary: false,
-      },
-    ]
-  }
-  if (call.entryPoint === "TASK") {
-    return [
-      { outcome: "COMPLETE_TASK", label: "Complete task", primary: true },
-      { outcome: "KEEP_OPEN", label: "Keep task open", primary: false },
-    ]
-  }
-  if (call.connectedAt) {
-    return [
-      { outcome: "RESOLVED", label: "Resolved on call", primary: true },
-      { outcome: "CREATE_TASK", label: "Create follow-up task", primary: false },
-    ]
-  }
-  return [
-    { outcome: "NO_FOLLOW_UP", label: "No follow-up", primary: true },
-    { outcome: "CREATE_TASK", label: "Create task", primary: false },
-  ]
 }
 
 export function projectCallingFailure(

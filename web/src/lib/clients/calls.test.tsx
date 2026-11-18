@@ -171,7 +171,7 @@ function mount<P, R>(t: TestContext, hook: (props: P) => R) {
   })
   const seen: R[] = []
   function Probe({ props, live }: { props: P; live: number }) {
-    useLiveRefresh({ workspaceVersion: live, taskCounts: "", detailRevision: live })
+    useLiveRefresh({ workspaceVersion: live, detailRevision: live })
     seen.push(hook(props))
     return null
   }

@@ -5,6 +5,7 @@ import {
   getAiInteraction,
   getCallingCall,
   getWorkspace,
+  queryPatientWork,
   queryTasks,
   readTask,
 } from "./api/generated/sdk.gen"
@@ -42,6 +43,14 @@ export function createWorkspaceAuthorityAdapter(): WorkspaceAuthorityAdapter {
       }).catch(() => undefined)
       return authorityResult(result)
     },
+    async patients(token, request, signal) {
+      const result = await queryPatientWork({
+        client: portalClient(token),
+        body: request,
+        signal,
+      }).catch(() => undefined)
+      return authorityResult(result)
+    },
     async tasks(token, request, signal) {
       const result = await queryTasks({
         client: portalClient(token),
@@ -74,11 +83,11 @@ export function createWorkspaceAuthorityAdapter(): WorkspaceAuthorityAdapter {
       }).catch(() => undefined)
       return authorityResult(result)
     },
-    async completeTask(token, task, signal) {
+    async completeTask(token, task, reason, signal) {
       const result = await completeTaskRequest({
         client: portalClient(token),
         path: { taskId: task.id },
-        body: { expectedVersion: task.version },
+        body: { expectedVersion: task.version, reason },
         signal,
       }).catch(() => undefined)
       return authorityResult(result)

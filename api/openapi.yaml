@@ -633,7 +633,7 @@ paths:
   /v1/calling/calls/{callId}/disposition:
     post:
       operationId: recordCallingDisposition
-      summary: Resolve the provider-terminated Call and optionally ensure its one follow-up Task.
+      summary: Resolve the provider-terminated Call, optionally ensure its one follow-up Task and close listed Tasks for its phone.
       parameters:
         - name: callId
           in: path
@@ -853,6 +853,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ConversationTimelinePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/engagements/{phone}/summary:
+    get:
+      operationId: getEngagementSummary
+      summary: Read the names and Tasks for one authorized exact phone.
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 32
+        - name: practiceId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Names seen on the phone, its open Tasks, and the Tasks closed in the last 24 hours.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhoneSummary"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1304,6 +1337,31 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/tasks/patients/query:
+    post:
+      operationId: queryPatientWork
+      summary: List the patients with open Tasks, one row per phone, with filter counts and totals.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientWorkQueryRequest"
+      responses:
+        "200":
+          description: One page of patients with open Tasks.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatientWorkPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks/{taskId}:
     get:
       operationId: readTask
@@ -1365,7 +1423,7 @@ paths:
   /v1/tasks/{taskId}/complete:
     post:
       operationId: completeTask
-      summary: Complete one Task at its last observed version.
+      summary: Complete one Task at its last observed version, recording why it closed.
       parameters:
         - name: taskId
           in: path
@@ -1378,7 +1436,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/TaskTransitionRequest"
+              $ref: "#/components/schemas/CompleteTaskRequest"
       responses:
         "200":
           description: Completed or idempotently current Task.
@@ -3578,14 +3636,46 @@ components:
           type: string
           minLength: 1
         outcome:
+          $ref: "#/components/schemas/CallingDispositionOutcome"
+        closures:
+          type: array
+          maxItems: 50
+          description: >
+            Open Tasks for the Call's phone that the staff member closes with
+            this outcome. Omitted or empty closes nothing beyond the outcome.
+            Once an outcome is recorded, the staff member who took the Call may
+            still close listed Tasks for 30 minutes after it ended; the recorded
+            outcome never changes.
+          items:
+            $ref: "#/components/schemas/CallingDispositionClosure"
+    CallingDispositionOutcome:
+      type: string
+      enum:
+        - RESOLVED
+        - FOLLOW_UP_REQUIRED
+        - COMPLETE_TASK
+        - KEEP_OPEN
+        - CREATE_TASK
+        - NO_FOLLOW_UP
+    CallingDispositionClosure:
+      type: object
+      additionalProperties: false
+      required: [taskId, reason, expectedVersion]
+      properties:
+        taskId:
           type: string
-          enum:
-            - RESOLVED
-            - FOLLOW_UP_REQUIRED
-            - COMPLETE_TASK
-            - KEEP_OPEN
-            - CREATE_TASK
-            - NO_FOLLOW_UP
+          format: uuid
+        reason:
+          type: string
+          enum: [DONE, NOT_NEEDED]
+          description: Why the Task closed after the staff member spoke with the patient.
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >
+            The Task version the staff member saw. An open Task at another
+            version stays open and is reported in changedTaskIds.
     CallingDispositionResult:
       type: object
       additionalProperties: false
@@ -3596,6 +3686,31 @@ components:
         taskId:
           type: string
           format: uuid
+        closedTaskIds:
+          type: array
+          description: Listed Tasks this Call closed.
+          items:
+            type: string
+            format: uuid
+        alreadyClosedTaskIds:
+          type: array
+          description: Listed Tasks that were closed before this Call could close them.
+          items:
+            type: string
+            format: uuid
+        changedTaskIds:
+          type: array
+          description: Listed Tasks left open because they changed after the staff member saw them.
+          items:
+            type: string
+            format: uuid
+        recordedOutcome:
+          allOf:
+            - $ref: "#/components/schemas/CallingDispositionOutcome"
+          description: >
+            The outcome stored for the Call. It differs from the requested one
+            when an outcome was already recorded, or when the Call's own Task
+            changed and was kept open.
     StaffTaskCategory:
       type: string
       enum:
@@ -3612,6 +3727,14 @@ components:
     StaffTaskUrgency:
       type: string
       enum: [high_priority, normal, non_urgent]
+    TaskCloseReason:
+      type: string
+      enum: [DONE, NOT_NEEDED, UNREACHABLE, EXPIRED]
+      description: Why a completed Task closed. EXPIRED is recorded only by the system.
+    StaffTaskCloseReason:
+      type: string
+      enum: [DONE, NOT_NEEDED, UNREACHABLE]
+      description: The reasons staff may give when they complete a Task.
     StaffTaskPatientCompatibility:
       type: object
       description: >
@@ -3781,6 +3904,10 @@ components:
         preview:
           description: Latest incoming text preview for the workspace list.
           type: string
+        voicemailDurationSeconds:
+          description: Length of the voicemail a voicemail review holds, rounded to the nearest second and never below 1. Absent when the Task has no recording.
+          type: integer
+          minimum: 1
         sourceMessage:
           type: string
         messageId:
@@ -3802,6 +3929,9 @@ components:
         completedAt:
           type: string
           format: date-time
+        closeReason:
+          description: Why a completed Task closed. Never present on an open Task. Absent on a Task completed by a release that did not record it.
+          $ref: "#/components/schemas/TaskCloseReason"
         callbackCompletion:
           $ref: "#/components/schemas/TaskCallbackCompletion"
         version:
@@ -3851,6 +3981,135 @@ components:
         type:
           type: string
           enum: [CALL, VOICEMAIL]
+    PatientWorkScope:
+      type: string
+      enum: [mine, everyone]
+      description: >-
+        Mine lists a patient when at least one open Task is in a category the reader is responsible for,
+        is a missed-call, voicemail, text, or appointment review, or has no owner. Everyone lists every
+        patient with an open Task.
+    PatientWorkFilter:
+      type: string
+      enum: [all, followUp, callBack, texts, appointments, unowned]
+      description: >-
+        followUp matches follow-up Tasks created by the AI, after a staff call, or after a staff text.
+        callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches
+        appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person
+        listed for the category is its owner at a Location only while they hold an unrevoked membership
+        that includes the Task's Location.
+    PatientWorkQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        search:
+          type: string
+          maxLength: 500
+          description: >-
+            Matches the patient name the row shows, and the phone, title, caller name, category and
+            Location of the open Tasks in scope.
+        scope:
+          $ref: "#/components/schemas/PatientWorkScope"
+        filter:
+          $ref: "#/components/schemas/PatientWorkFilter"
+        cursor:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+    PatientWorkPage:
+      type: object
+      additionalProperties: false
+      required: [rows, counts, totals, nextCursor]
+      properties:
+        rows:
+          description: Patients with a high-priority matching Task first, then by newest matching Task.
+          type: array
+          items:
+            $ref: "#/components/schemas/PatientWorkRow"
+        counts:
+          $ref: "#/components/schemas/PatientWorkCounts"
+        totals:
+          $ref: "#/components/schemas/PatientWorkTotals"
+        nextCursor:
+          type: string
+    PatientWorkRow:
+      type: object
+      additionalProperties: false
+      required: [phone, displayName, openCount, highPriority, hasUnowned, activityAt, top]
+      properties:
+        phone:
+          type: string
+        displayName:
+          description: The caller name when exactly one name was seen on the phone. Empty when none or several were seen.
+          type: string
+        openCount:
+          description: Every open Task for the phone in the Locations the reader may read, whatever the scope and filter.
+          type: integer
+          minimum: 1
+        highPriority:
+          description: Whether any Task matching the scope and filter is high priority.
+          type: boolean
+        hasUnowned:
+          type: boolean
+        activityAt:
+          description: When the newest Task matching the scope and filter last changed for the patient.
+          type: string
+          format: date-time
+        top:
+          description: >-
+            The Task a reader opens for the patient. Among Tasks matching the scope and filter, high priority
+            comes first, then missed calls and voicemails, texts, appointment reviews, and other Tasks, newest first.
+          $ref: "#/components/schemas/Task"
+    PatientWorkCounts:
+      description: How many patients each filter matches in the requested scope, Locations, and search.
+      type: object
+      additionalProperties: false
+      required: [all, followUp, callBack, texts, appointments, unowned]
+      properties:
+        all:
+          type: integer
+          minimum: 0
+        followUp:
+          type: integer
+          minimum: 0
+        callBack:
+          type: integer
+          minimum: 0
+        texts:
+          type: integer
+          minimum: 0
+        appointments:
+          type: integer
+          minimum: 0
+        unowned:
+          type: integer
+          minimum: 0
+    PatientWorkTotals:
+      description: Totals for the requested scope across the requested Locations, whatever the filter and search.
+      type: object
+      additionalProperties: false
+      required: [openTasks, patients, patientsOutsideScope]
+      properties:
+        openTasks:
+          description: Open Tasks the requested scope includes.
+          type: integer
+          minimum: 0
+        patients:
+          description: Patients with at least one open Task the requested scope includes.
+          type: integer
+          minimum: 0
+        patientsOutsideScope:
+          description: Patients with open Tasks that the requested scope leaves out.
+          type: integer
+          minimum: 0
     TaskPage:
       type: object
       additionalProperties: false
@@ -4363,7 +4622,11 @@ components:
         - startedAt
         - status
         - appointmentOutcome
+        - resolved
       properties:
+        resolved:
+          description: True only when the stored call label for this AI Interaction is complete and its outcome is resolved. False while the label is pending, failed or skipped, and for a transferred or abandoned call.
+          type: boolean
         id:
           type: string
           format: uuid
@@ -5734,6 +5997,9 @@ components:
       additionalProperties: false
       required: [members]
       properties:
+        reason:
+          description: Why the Tasks closed. DONE when omitted.
+          $ref: "#/components/schemas/StaffTaskCloseReason"
         members:
           type: array
           minItems: 1
@@ -5771,6 +6037,18 @@ components:
           type: integer
           format: int64
           minimum: 1
+    CompleteTaskRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          description: Why the Task closed. DONE when omitted.
+          $ref: "#/components/schemas/StaffTaskCloseReason"
     MessageDirection:
       type: string
       enum: [INBOUND, OUTBOUND]
@@ -5863,6 +6141,7 @@ components:
           type: string
           format: uuid
         createdBy:
+          description: Who created this Message. Every Message response carries the email of the staff member who sent it, read from that Practice's memberships and then from the platform operators. Inbound and automated Messages, and a sender neither list names, carry no email.
           $ref: "#/components/schemas/TaskActor"
         attachment:
           $ref: "#/components/schemas/MessageAttachment"
@@ -6029,7 +6308,7 @@ components:
           type: string
           format: date-time
         taskActivityDetails:
-          description: Activity-specific evidence. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
+          description: Activity-specific evidence. TASK_COMPLETED includes closeReason when the close recorded one. TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT includes callId, callerSubject, and callerEmail when the staff member who placed the callback attempt is known.
           type: object
           additionalProperties: true
         taskActivityActor:
@@ -6073,6 +6352,38 @@ components:
             $ref: "#/components/schemas/ConversationTimelineItem"
         nextCursor:
           type: string
+    PhoneSummary:
+      type: object
+      additionalProperties: false
+      required: [phone, displayName, names, openTasks, openTaskCount, closedToday]
+      properties:
+        phone:
+          type: string
+        displayName:
+          description: The caller name when exactly one name was seen on the phone. Empty when none or several were seen.
+          type: string
+        names:
+          description: Distinct caller names seen on the phone, at most five, ordered by when each was last recorded. A Task records its name when it is created and a Message Thread when it starts.
+          type: array
+          maxItems: 5
+          items:
+            type: string
+        openTasks:
+          description: Open Tasks for the phone in the Locations the caller may read, newest activity first, at most fifty.
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/Task"
+        openTaskCount:
+          description: How many open Tasks the phone has in the Locations the caller may read, including any beyond the fifty returned.
+          type: integer
+          minimum: 0
+        closedToday:
+          description: Tasks for the phone that staff or a call closed in the last 24 hours, newest first, at most twenty. Tasks the system expired are left out.
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/Task"
     CallState:
       type: string
       enum:
@@ -6139,6 +6450,18 @@ components:
           type: string
         outcome:
           $ref: "#/components/schemas/CallState"
+        taskId:
+          description: The Task this outbound call was placed from. Absent when the call was not placed from a Task or the Task is in a Location the reader cannot access.
+          type: string
+          format: uuid
+        taskTitle:
+          description: Title of the Task named by taskId. Absent whenever taskId is absent.
+          type: string
+        voicemailDurationSeconds:
+          description: Length of the voicemail the caller left on this call, rounded to the nearest second and never below 1. Absent when no voicemail was recorded.
+          type: integer
+          format: int64
+          minimum: 1
     OperatorCallingTimelineEntry:
       type: object
       additionalProperties: false

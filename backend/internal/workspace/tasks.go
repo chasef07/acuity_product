@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -201,6 +202,14 @@ const taskColumns = work.TaskColumns + `,
 				AND activity.kind = 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'
 				AND activity.occurred_at = task.completed_at
 			LIMIT 1
+		) END,
+		CASE WHEN task.origin = 'VOICEMAIL_RECOVERY' THEN (
+			SELECT ` + humancalling.VoicemailSecondsSQL + `
+			FROM human_calling_voicemails voicemail
+			WHERE voicemail.task_id = task.id
+				AND voicemail.outcome = 'VOICEMAIL'
+			ORDER BY voicemail.created_at DESC
+			LIMIT 1
 		) END`
 
 const taskAcknowledgementJoin = `
@@ -235,15 +244,6 @@ const taskProjectionJoins = `
 	JOIN access_locations location
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin
-
-const taskHasRecentTextAttention = `(NOT ` + work.TaskIsTextReviewSQL + `
- OR task.state <> 'OPEN'
- OR EXISTS (
-   SELECT 1 FROM messaging_messages recent_message
-   WHERE recent_message.thread_id=task.message_thread_id
-     AND recent_message.direction='INBOUND'
-     AND recent_message.created_at >= CURRENT_TIMESTAMP - INTERVAL '120 hours'
- ))`
 
 const taskIsSpringHillReview = `(` + work.TaskIsAppointmentReviewSQL + ` AND EXISTS (
  SELECT 1 FROM access_abita_office_locations route
@@ -332,7 +332,6 @@ func taskQueryFilter(search taskSearch) string {
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter("$10", "$11") + `
  AND ($12::text = '' OR task.category=$12)
- AND ($13::text <> 'texts' OR ` + taskHasRecentTextAttention + `)
  AND ($13::text = '' OR ($13='texts' AND ` + work.TaskIsTextReviewSQL + `) OR ($13='calls' AND ` + work.TaskIsCallRecoverySQL + `)
  OR ($13='appointments' AND ` + taskIsSpringHillReview + `)
  OR ($13='follow_up' AND ` + work.TaskIsFollowUpSQL + `))` + search.filter("$14")
@@ -386,6 +385,7 @@ func taskPageWindow(state work.TaskState, ordering work.TaskOrdering) (string, s
 		AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))`, `task.updated_at DESC, task.id DESC`
 	default:
 		return `task.state = 'COMPLETED'
+		AND ($3::text <> '' OR task.close_reason IS DISTINCT FROM 'EXPIRED')
 		AND $8::int >= 0
 		AND (NOT $5 OR (task.completed_at, task.id::text) < ($6, $7))`, `task.completed_at DESC, task.id DESC`
 	}
@@ -443,6 +443,7 @@ func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
 	var acknowledgementState, acknowledgementFailure, acknowledgementMessageID *string
 	var acknowledgementUpdatedAt *time.Time
 	var callbackCallerEmail *string
+	var voicemailSeconds *int
 	task, err := work.ScanTask(row, prefix,
 		&preview,
 		&acknowledgementState,
@@ -450,6 +451,7 @@ func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
 		&acknowledgementMessageID,
 		&acknowledgementUpdatedAt,
 		&callbackCallerEmail,
+		&voicemailSeconds,
 		&conversationThreadID,
 		&relatedInteractionCount,
 	)
@@ -459,6 +461,9 @@ func scanTaskProjection(row pgx.Row, prefix ...any) (work.Task, error) {
 	task.Preview = preview
 	task.ConversationThreadID = conversationThreadID
 	task.RelatedInteractionCount = relatedInteractionCount
+	if voicemailSeconds != nil {
+		task.VoicemailDurationSeconds = *voicemailSeconds
+	}
 	if callbackCallerEmail != nil {
 		task.CallbackCompletion = &work.TaskCallbackCompletion{CallerEmail: *callbackCallerEmail}
 	}
@@ -498,7 +503,6 @@ func queryTaskFolderCounts(
 				($8::text <> 'follow_up' OR `+work.TaskIsFollowUpSQL+`) AS listed,
 				`+work.TaskIsCallRecoverySQL+` AS call_recovery,
 				`+work.TaskIsTextReviewSQL+` AS text_review,
-				`+taskHasRecentTextAttention+` AS recent_text_attention,
 				`+taskIsSpringHillReview+` AS spring_hill_review`+taskMatchSource+`
 			WHERE task.practice_id = $1
 				AND task.location_id = ANY($2::uuid[])`+search.filter("$9")+`
@@ -506,7 +510,7 @@ func queryTaskFolderCounts(
 		)
 		SELECT
 			count(*) FILTER (WHERE listed),`+taskCategoryCountColumns+`
-			count(*) FILTER (WHERE text_review AND recent_text_attention),
+			count(*) FILTER (WHERE text_review),
 			count(*) FILTER (WHERE call_recovery),
 			count(*) FILTER (WHERE spring_hill_review)
 		FROM scoped
@@ -607,13 +611,12 @@ func normalizedDigits(value string) string {
 }
 
 func taskResponsibilityFilter(responsibility string, email string) string {
+	owner := `EXISTS (SELECT 1 FROM work_responsibilities responsibility
+ WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
+ AND responsibility.category=task.category AND ` + responsibilityOwnerIsLive
 	return `
  AND (` + responsibility + `::text <> 'mine' OR task.category IS NULL
  OR ` + work.TaskIsCommunicationReviewSQL + `
- OR NOT EXISTS (SELECT 1 FROM work_responsibilities owned
- WHERE owned.practice_id=task.practice_id AND owned.location_id=task.location_id
- AND owned.category=task.category)
- OR EXISTS (SELECT 1 FROM work_responsibilities responsibility
- WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
- AND responsibility.category=task.category AND responsibility.account_email=` + email + `))`
+ OR NOT ` + owner + `)
+ OR ` + owner + ` AND responsibility.account_email=` + email + `))`
 }

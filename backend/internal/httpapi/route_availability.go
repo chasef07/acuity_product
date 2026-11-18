@@ -17,6 +17,8 @@ func diagnosticRoute(role, method, path string) observability.DiagnosticRoute {
 	switch {
 	case method == http.MethodPost && path == string(observability.RouteTaskQuery):
 		return observability.RouteTaskQuery
+	case method == http.MethodPost && path == string(observability.RoutePatientWorkQuery):
+		return observability.RoutePatientWorkQuery
 	case method == http.MethodPut && path == string(observability.RouteCallingReadiness):
 		return observability.RouteCallingReadiness
 	default:

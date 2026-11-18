@@ -38,3 +38,28 @@ for (const [code, message] of [
     )
   })
 }
+
+test("a wrap-up sends its closures, and leaves the field out when nothing is ticked", async (t) => {
+  process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
+  clearAccessToken()
+  const bodies: unknown[] = []
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    if (input === "/api/auth/token") return Response.json({ token: "synthetic-token" })
+    const request = input as Request
+    assert.equal(new URL(request.url).pathname, "/v1/calling/calls/call-1/disposition")
+    bodies.push(await request.json())
+    return Response.json({ call: { id: "call-1" }, closedTaskIds: [], alreadyClosedTaskIds: [] })
+  })
+  const adapter = createSoftphoneHTTPAdapter()
+  const wrapUp = { callID: "call-1", sessionID: "browser-a", outcome: "RESOLVED" as const }
+  await adapter.dispose({ ...wrapUp, closures: [] })
+  await adapter.dispose({ ...wrapUp, closures: [{ taskId: "task-1", reason: "NOT_NEEDED", expectedVersion: 4 }] })
+  assert.deepEqual(bodies, [
+    { sessionId: "browser-a", outcome: "RESOLVED" },
+    {
+      sessionId: "browser-a",
+      outcome: "RESOLVED",
+      closures: [{ taskId: "task-1", reason: "NOT_NEEDED", expectedVersion: 4 }],
+    },
+  ])
+})

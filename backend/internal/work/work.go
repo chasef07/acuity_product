@@ -27,6 +27,40 @@ const (
 	TaskCompleted TaskState = "COMPLETED"
 )
 
+type CloseReason string
+
+const (
+	CloseReasonDone        CloseReason = "DONE"
+	CloseReasonNotNeeded   CloseReason = "NOT_NEEDED"
+	CloseReasonUnreachable CloseReason = "UNREACHABLE"
+	CloseReasonExpired     CloseReason = "EXPIRED"
+)
+
+func (reason CloseReason) staffMayChoose() bool {
+	return reason == CloseReasonDone ||
+		reason == CloseReasonNotNeeded ||
+		reason == CloseReasonUnreachable
+}
+
+func (reason CloseReason) closesAfterConversation() bool {
+	return reason == CloseReasonDone || reason == CloseReasonNotNeeded
+}
+
+var systemCloseReasons = map[string]CloseReason{
+	"TASK_AUTO_COMPLETED_INBOUND_CALL":     CloseReasonDone,
+	"TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT": CloseReasonDone,
+	"TASK_AUTO_COMPLETED_BOOKING":          CloseReasonDone,
+	"TASK_AUTO_COMPLETED_DUPLICATE":        CloseReasonNotNeeded,
+}
+
+var systemCloseReasonsJSON = func() string {
+	encoded, err := json.Marshal(systemCloseReasons)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}()
+
 type TaskOrigin string
 
 const (
@@ -116,8 +150,6 @@ const (
 	TaskUrgencyRankSQL = `CASE task.urgency WHEN 'high_priority' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END`
 )
 
-const HiddenReviewRetirementSubject = "hidden-review-retirement"
-
 func (urgency TaskUrgency) Rank() int {
 	switch urgency {
 	case TaskUrgencyHighPriority:
@@ -160,6 +192,7 @@ type Task struct {
 	SourceCallID             string
 	SourceMessage            string
 	Preview                  string
+	VoicemailDurationSeconds int
 	MessageID                string
 	MessageThreadID          string
 	ConversationThreadID     string
@@ -170,6 +203,7 @@ type Task struct {
 	CreatedAt                time.Time
 	CompletedBy              *ActorSnapshot
 	CompletedAt              *time.Time
+	CloseReason              CloseReason
 	CallbackCompletion       *TaskCallbackCompletion
 	Version                  int64
 	UpdatedAt                time.Time
@@ -241,13 +275,14 @@ type EnsureMessageFollowUpCommand struct {
 }
 
 type EnsureRecoveryTaskCommand struct {
-	CallID     string
-	PracticeID string
-	LocationID string
-	Phone      string
-	CallerName string
-	Outcome    RecoveryOutcome
-	OccurredAt time.Time
+	CallID       string
+	SourceCallID string
+	PracticeID   string
+	LocationID   string
+	Phone        string
+	CallerName   string
+	Outcome      RecoveryOutcome
+	OccurredAt   time.Time
 }
 
 type ResolveRecoveryTasksCommand struct {
@@ -270,6 +305,27 @@ type CompleteTaskCommand struct {
 	Identity        access.Identity
 	TaskID          string
 	ExpectedVersion int64
+	Reason          CloseReason
+}
+
+type CallTaskClosure struct {
+	TaskID          string
+	Reason          CloseReason
+	ExpectedVersion int64
+}
+
+type CloseTasksForCallCommand struct {
+	CallID   string
+	Phone    string
+	Closures []CallTaskClosure
+}
+
+const maxCallTaskClosures = 50
+
+type CallTaskClosures struct {
+	Closed        []string
+	AlreadyClosed []string
+	Changed       []string
 }
 
 type ReopenTaskCommand struct {
@@ -494,6 +550,7 @@ func (m *Module) EnsureRecoveryTask(
 	command EnsureRecoveryTaskCommand,
 ) (Task, error) {
 	command.CallID = strings.TrimSpace(command.CallID)
+	command.SourceCallID = strings.TrimSpace(command.SourceCallID)
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	command.Phone = strings.TrimSpace(command.Phone)
@@ -541,21 +598,23 @@ func (m *Module) EnsureRecoveryTask(
 		FOR UPDATE OF task
 	`, command.CallID).Scan(&taskID, &taskOrigin)
 	inserted := false
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) && command.SourceCallID != "" {
 		err = tx.QueryRow(ctx, `
 			SELECT task.id::text, task.origin
 			FROM work_tasks task
 			WHERE task.practice_id = $1
 				AND task.location_id = $2
 				AND task.phone = $3
+				AND task.source_call_id = $4
 				AND task.state = 'OPEN'
 				AND `+TaskIsFollowUpSQL+`
 			ORDER BY task.created_at DESC, task.id DESC
 			LIMIT 1
 			FOR UPDATE
-		`, command.PracticeID, command.LocationID, command.Phone).Scan(&taskID, &taskOrigin)
+		`, command.PracticeID, command.LocationID, command.Phone,
+			command.SourceCallID).Scan(&taskID, &taskOrigin)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return Task{}, fmt.Errorf("load caller's open Task: %w", err)
+			return Task{}, fmt.Errorf("load the Task from the same call: %w", err)
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -815,6 +874,8 @@ func (m *Module) absorbOpenRecoveryTasks(
 				completed_by_subject = 'work-recovery-resolution',
 				completed_by_email = NULL,
 				completed_at = $5,
+				close_reason = $6::jsonb ->> 'TASK_AUTO_COMPLETED_DUPLICATE',
+				closed_via_call_id = NULL,
 				version = task.version + 1,
 				updated_at = GREATEST(task.updated_at, $5)
 			WHERE task.practice_id = $1
@@ -843,7 +904,8 @@ func (m *Module) absorbOpenRecoveryTasks(
 			'work-recovery-resolution', NULL, $5,
 			jsonb_build_object('taskId', $4::text)
 		FROM absorbed
-	`, task.PracticeID, task.LocationID, task.Phone, task.ID, task.CreatedAt); err != nil {
+	`, task.PracticeID, task.LocationID, task.Phone, task.ID, task.CreatedAt,
+		systemCloseReasonsJSON); err != nil {
 		return fmt.Errorf("absorb open recovery Tasks: %w", err)
 	}
 	return nil
@@ -872,7 +934,13 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 	var completed int64
 	if err := tx.QueryRow(ctx, `
 		WITH checkpoint AS (
-			SELECT resolved_at, kind,
+			SELECT resolved_at,
+				CASE kind
+					WHEN 'BOOKING' THEN 'TASK_AUTO_COMPLETED_BOOKING'
+					WHEN 'CALLBACK_ATTEMPT' THEN 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'
+					ELSE 'TASK_AUTO_COMPLETED_INBOUND_CALL'
+				END AS activity_kind,
+				CASE WHEN kind <> 'BOOKING' THEN source_id::uuid END AS call_id,
 				CASE WHEN kind = 'CALLBACK_ATTEMPT' THEN updated_at ELSE resolved_at END AS completed_at,
 				CASE WHEN kind = 'CALLBACK_ATTEMPT' THEN jsonb_strip_nulls(jsonb_build_object(
 					'callId', source_id,
@@ -881,7 +949,8 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 			FROM work_recovery_resolution_checkpoints
 			WHERE practice_id = $1 AND phone = $2
 		), eligible AS (
-			SELECT task.id, checkpoint.completed_at, checkpoint.kind, checkpoint.details
+			SELECT task.id, checkpoint.completed_at, checkpoint.activity_kind,
+				checkpoint.call_id, checkpoint.details
 			FROM work_tasks task
 			CROSS JOIN checkpoint
 			WHERE task.practice_id = $1
@@ -911,12 +980,14 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 				completed_by_subject = 'work-recovery-resolution',
 				completed_by_email = NULL,
 				completed_at = eligible.completed_at,
+				close_reason = $3::jsonb ->> eligible.activity_kind,
+				closed_via_call_id = eligible.call_id,
 				version = task.version + 1,
 				updated_at = GREATEST(task.updated_at, eligible.completed_at)
 			FROM eligible
 			WHERE task.id = eligible.id
-			RETURNING task.id, task.version, task.completed_at, eligible.kind,
-				eligible.details
+			RETURNING task.id, task.version, task.completed_at,
+				eligible.activity_kind, eligible.details
 		), activities AS (
 			INSERT INTO work_task_activities (
 				task_id,
@@ -931,11 +1002,7 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 			SELECT
 				updated.id,
 				updated.version,
-				CASE updated.kind
-					WHEN 'BOOKING' THEN 'TASK_AUTO_COMPLETED_BOOKING'
-					WHEN 'CALLBACK_ATTEMPT' THEN 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'
-					ELSE 'TASK_AUTO_COMPLETED_INBOUND_CALL'
-				END,
+				updated.activity_kind,
 				'SERVICE',
 				'work-recovery-resolution',
 				NULL,
@@ -945,7 +1012,7 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 			RETURNING task_id
 		)
 		SELECT count(*) FROM activities
-	`, practiceID, phone).Scan(&completed); err != nil {
+	`, practiceID, phone, systemCloseReasonsJSON).Scan(&completed); err != nil {
 		return 0, fmt.Errorf("complete recovery Tasks: %w", err)
 	}
 	return completed, nil
@@ -1151,22 +1218,47 @@ func (m *Module) LockOutboundTask(
 	return loadTask(ctx, tx, taskID, true)
 }
 
+func (m *Module) LockTasks(ctx context.Context, tx pgx.Tx, taskIDs []string) error {
+	if tx == nil {
+		return ErrInvalidInput
+	}
+	ordered := slices.Clone(taskIDs)
+	slices.Sort(ordered)
+	for _, taskID := range slices.Compact(ordered) {
+		if strings.TrimSpace(taskID) == "" {
+			return ErrInvalidInput
+		}
+		if _, err := tx.Exec(ctx, `
+			SELECT 1 FROM work_tasks WHERE id = $1::uuid FOR UPDATE
+		`, taskID); err != nil {
+			return fmt.Errorf("lock Task: %w", err)
+		}
+	}
+	return nil
+}
+
 func (m *Module) ApplyCallTaskDisposition(
 	ctx context.Context,
 	tx pgx.Tx,
 	authorization access.Authorization,
 	taskID string,
 	complete bool,
+	reason CloseReason,
+	expectedVersion int64,
+	callID string,
 	callPlacedAt time.Time,
 ) (Task, error) {
-	if tx == nil || m.access == nil || strings.TrimSpace(taskID) == "" || callPlacedAt.IsZero() {
+	if tx == nil || m.access == nil || strings.TrimSpace(taskID) == "" ||
+		strings.TrimSpace(callID) == "" || callPlacedAt.IsZero() ||
+		(complete && !reason.closesAfterConversation()) {
 		return Task{}, ErrInvalidInput
 	}
 	task, err := loadTask(ctx, tx, taskID, true)
 	if err != nil {
 		return Task{}, err
 	}
-	if !complete || task.State == TaskCompleted {
+	if !complete || task.State == TaskCompleted ||
+		(expectedVersion != 0 && task.Version != expectedVersion) {
 		return task, nil
 	}
 	var newerEvidence bool
@@ -1184,7 +1276,7 @@ func (m *Module) ApplyCallTaskDisposition(
 	if newerEvidence {
 		return task, ErrConflict
 	}
-	task, err = m.completeLockedTask(ctx, tx, authorization, task)
+	task, err = m.completeLockedTask(ctx, tx, authorization, task, reason, callID)
 	if err != nil {
 		return Task{}, err
 	}
@@ -1192,6 +1284,88 @@ func (m *Module) ApplyCallTaskDisposition(
 		return Task{}, err
 	}
 	return task, nil
+}
+
+func (m *Module) CloseTasksForCall(
+	ctx context.Context,
+	tx pgx.Tx,
+	authorization access.Authorization,
+	command CloseTasksForCallCommand,
+) (CallTaskClosures, error) {
+	result := CallTaskClosures{Closed: []string{}, AlreadyClosed: []string{}, Changed: []string{}}
+	if len(command.Closures) == 0 {
+		return result, nil
+	}
+	if tx == nil || m.access == nil || strings.TrimSpace(command.CallID) == "" ||
+		!contactcontext.IsCanonicalPhone(command.Phone) ||
+		len(command.Closures) > maxCallTaskClosures {
+		return CallTaskClosures{}, ErrInvalidInput
+	}
+	closures := slices.Clone(command.Closures)
+	slices.SortFunc(closures, func(left, right CallTaskClosure) int {
+		return strings.Compare(left.TaskID, right.TaskID)
+	})
+	taskIDs := make([]string, len(closures))
+	for index, closure := range closures {
+		if strings.TrimSpace(closure.TaskID) == "" || !closure.Reason.closesAfterConversation() ||
+			closure.ExpectedVersion <= 0 ||
+			(index > 0 && closures[index-1].TaskID == closure.TaskID) {
+			return CallTaskClosures{}, ErrInvalidInput
+		}
+		taskIDs[index] = closure.TaskID
+	}
+	readable := map[string]bool{}
+	for _, location := range authorization.Locations {
+		readable[location.ID] = true
+	}
+	tasks := make([]Task, len(closures))
+	for index, closure := range closures {
+		task, err := loadTask(ctx, tx, closure.TaskID, true)
+		if err != nil {
+			return CallTaskClosures{}, err
+		}
+		if task.PracticeID != authorization.Practice.ID || task.Phone != command.Phone ||
+			!readable[task.LocationID] {
+			return CallTaskClosures{}, ErrDenied
+		}
+		tasks[index] = task
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT id::text FROM work_tasks
+		WHERE id = ANY($1::uuid[]) AND state = 'COMPLETED' AND closed_via_call_id = $2
+	`, taskIDs, command.CallID)
+	if err != nil {
+		return CallTaskClosures{}, fmt.Errorf("read Tasks closed by Call: %w", err)
+	}
+	closedByCall, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return CallTaskClosures{}, fmt.Errorf("read Tasks closed by Call: %w", err)
+	}
+	completed := false
+	for index, task := range tasks {
+		switch {
+		case slices.Contains(closedByCall, task.ID):
+			result.Closed = append(result.Closed, task.ID)
+		case task.State == TaskCompleted:
+			result.AlreadyClosed = append(result.AlreadyClosed, task.ID)
+		case task.Version != closures[index].ExpectedVersion:
+			result.Changed = append(result.Changed, task.ID)
+		default:
+			if _, err := m.completeLockedTask(
+				ctx, tx, authorization, task, closures[index].Reason, command.CallID,
+			); err != nil {
+				return CallTaskClosures{}, err
+			}
+			result.Closed = append(result.Closed, task.ID)
+			completed = true
+		}
+	}
+	if completed {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, authorization.Practice.ID); err != nil {
+			return CallTaskClosures{}, err
+		}
+	}
+	return result, nil
 }
 
 func (m *Module) CreateAITask(
@@ -1441,7 +1615,8 @@ func (m *Module) CompleteTask(
 ) (Task, error) {
 	if m.access == nil ||
 		strings.TrimSpace(command.TaskID) == "" ||
-		command.ExpectedVersion <= 0 {
+		command.ExpectedVersion <= 0 ||
+		!command.Reason.staffMayChoose() {
 		return Task{}, ErrInvalidInput
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -1472,7 +1647,7 @@ func (m *Module) CompleteTask(
 	if task.Version != command.ExpectedVersion {
 		return task, ErrConflict
 	}
-	task, err = m.completeLockedTask(ctx, tx, authorization, task)
+	task, err = m.completeLockedTask(ctx, tx, authorization, task, command.Reason, "")
 	if err != nil {
 		return Task{}, err
 	}
@@ -1532,6 +1707,8 @@ func (m *Module) ReopenTask(
 			completed_by_subject = NULL,
 			completed_by_email = NULL,
 			completed_at = NULL,
+			close_reason = NULL,
+			closed_via_call_id = NULL,
 			version = version + 1,
 			updated_at = $2
 		WHERE id = $1
@@ -1546,6 +1723,7 @@ func (m *Module) ReopenTask(
 	task.State = TaskOpen
 	task.CompletedBy = nil
 	task.CompletedAt = nil
+	task.CloseReason = ""
 	task.UpdatedAt = reopenedAt
 	if err := appendActivity(
 		ctx,
@@ -1890,6 +2068,7 @@ const TaskColumns = `
 			task.completed_by_subject,
 			task.completed_by_email,
 			task.completed_at,
+			task.close_reason,
 			task.version,
 			task.updated_at`
 
@@ -1897,7 +2076,7 @@ func ScanTask(row pgx.Row, prefix []any, suffix ...any) (Task, error) {
 	var task Task
 	var callID, category, callerName, sourceCall, sourceMessage *string
 	var messageID, messageThreadID, recoveryOutcome *string
-	var createdEmail, completedSubject, completedEmail *string
+	var createdEmail, completedSubject, completedEmail, closeReason *string
 	if err := row.Scan(slices.Concat(prefix, []any{
 		&task.ID,
 		&task.PracticeID,
@@ -1923,6 +2102,7 @@ func ScanTask(row pgx.Row, prefix []any, suffix ...any) (Task, error) {
 		&completedSubject,
 		&completedEmail,
 		&task.CompletedAt,
+		&closeReason,
 		&task.Version,
 		&task.UpdatedAt,
 	}, suffix)...); err != nil {
@@ -1943,6 +2123,9 @@ func ScanTask(row pgx.Row, prefix []any, suffix ...any) (Task, error) {
 		createdEmail,
 	)
 	setCompletionActor(&task, completedSubject, completedEmail)
+	if closeReason != nil && task.State == TaskCompleted {
+		task.CloseReason = CloseReason(*closeReason)
+	}
 	return task, nil
 }
 
@@ -2115,7 +2298,7 @@ func nullIfEmpty(value string) any {
 	return value
 }
 
-func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorization access.Authorization, task Task) (Task, error) {
+func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorization access.Authorization, task Task, reason CloseReason, closingCallID string) (Task, error) {
 	actor := authorization.Actor
 	completedAt := m.now()
 	if err := tx.QueryRow(ctx, `
@@ -2126,17 +2309,20 @@ func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorizatio
 			completed_by_subject = $2,
 			completed_by_email = $3,
 			completed_at = $4,
+			close_reason = $5,
+			closed_via_call_id = $6,
 			version = version + 1,
 			updated_at = $4
 		WHERE id = $1
 		RETURNING version
-	`, task.ID, actor.Subject, actor.Email, completedAt).Scan(&task.Version); err != nil {
+	`, task.ID, actor.Subject, actor.Email, completedAt, reason, nullIfEmpty(closingCallID)).Scan(&task.Version); err != nil {
 		return Task{}, fmt.Errorf("complete Task: %w", err)
 	}
 	task.State = TaskCompleted
 	completionActor := humanActorSnapshot(actor)
 	task.CompletedBy = &completionActor
 	task.CompletedAt = &completedAt
+	task.CloseReason = reason
 	task.UpdatedAt = completedAt
 	if err := appendActivity(
 		ctx,
@@ -2145,7 +2331,7 @@ func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorizatio
 		"TASK_COMPLETED",
 		humanActorSnapshot(actor),
 		completedAt,
-		nil,
+		map[string]any{"closeReason": reason},
 	); err != nil {
 		return Task{}, err
 	}
