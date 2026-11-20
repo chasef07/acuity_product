@@ -21,6 +21,27 @@ export function formatDate(value: string, now = new Date()) {
   }).format(date)
 }
 
+export function formatDayDivider(value: string, now = new Date()) {
+  const label = formatDate(value, now)
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()) || label === "Today" || label === "Yesterday") return label
+
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  })
+    .formatToParts(date)
+    .map((part) => (part.type === "day" ? ordinalDay(date.getDate()) : part.value))
+    .join("")
+}
+
+export function ordinalDay(day: number) {
+  const suffix = day % 100 >= 11 && day % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[day % 10] ?? "th")
+  return `${day}${suffix}`
+}
+
 export function formatClockTime(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return "Unknown time"
