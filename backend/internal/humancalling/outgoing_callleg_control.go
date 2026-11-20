@@ -25,6 +25,11 @@ func (m *Module) processCommand(
 	return m.executeCallLegCommand(ctx, claim)
 }
 
+const activeCallLaneCommand = `(active.state = 'SENDING' OR (
+	active.state = 'AMBIGUOUS'
+	AND active.action NOT IN ('START_RING_WINDOW', 'STOP_RING_WINDOW')
+))`
+
 const nextCallLegCommandQuery = `
 	WITH call_candidate AS MATERIALIZED (
 		SELECT command.id, command.call_leg_id, command.created_at, command.action
@@ -45,7 +50,7 @@ const nextCallLegCommandQuery = `
 			AND NOT EXISTS (
 				SELECT 1 FROM human_calling_provider_commands active
 				WHERE active.call_id = call.id
-					AND active.state IN ('SENDING', 'AMBIGUOUS')
+					AND ` + activeCallLaneCommand + `
 					AND (
 						command.action <> 'DIAL_STAFF'
 						OR active.action <> 'DIAL_STAFF'
@@ -218,7 +223,7 @@ func (m *Module) claimCallLegCommand(
 				SELECT 1 FROM human_calling_provider_commands active
 				WHERE active.call_id = human_calling_provider_commands.call_id
 					AND active.id <> human_calling_provider_commands.id
-					AND active.state IN ('SENDING', 'AMBIGUOUS')
+					AND `+activeCallLaneCommand+`
 			)
 		RETURNING attempts
 	`, commandID, m.now()).Scan(&claim.attempts)
