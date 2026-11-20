@@ -1,0 +1,176 @@
+practiceId: 31d82880-f0b6-4637-a472-ff5f5b8f74d4
+officeKey: sweetwater
+entries:
+  - id: current-address
+    title: Address
+    text: 'Abita Eye Group Sweetwater, 12750 NW 17th St, #201, Miami, FL 33182.'
+  - id: phone
+    title: Phone number
+    text: (786) 465-4836
+  - id: fax
+    title: Fax number
+    text: (305) 723-1910
+  - id: paperwork-email
+    title: Email for new-patient paperwork and documents
+    text: newpatient@abitaeye.com, for new-patient paperwork and requested documents only.
+  - id: directions
+    title: Directions and parking
+    text: On the corner of NW 127th Avenue and NW 17th Street.
+  - id: other-offices
+    title: Other Abita Eye Group offices
+    text: |-
+      - Hollywood: Abita Eye Group Hollywood, 4330 Sheridan St, Suite 102B, Hollywood, FL 33021. (954) 287-2010. Sweetwater's other scheduling office.
+      - Spring Hill: Abita Eye Group, 10495 SpringHill Drive, Springhill, FL 34608. Phone not supplied.
+      - Crystal River: Eye Radiance, 1100 N Lyle Avenue, Crystal River, FL 34429. Phone not supplied.
+      - North Miami Beach Optical (BrightView Optical): 633 NE 167th Street, North Miami Beach, FL 33162. (305) 509-5333.
+
+      The practice has no other offices.
+  - id: hours
+    title: Hours
+    text: |-
+      - Monday–Thursday: 8:30 AM–4:30 PM
+      - Friday: 8:30 AM–2:30 PM
+      - Saturday and Sunday: closed
+  - id: holiday-closures
+    title: Holiday closures
+    text: We are open for Veterans Day
+  - id: after-hours
+    title: After-hours doctor
+    text: Not supplied.
+  - id: providers
+    title: Doctors
+    text: |-
+      - Medical: Dr. Austin Bach, who sees patients at both our Hollywood and Sweetwater offices, including cataract exams and evaluations, cataract surgery, and pediatric ophthalmology.
+      - Adult medical: Dr. Carol Villafuerte sees adult (18+) medical exams on Dr. Bach's adult medical schedule at Hollywood and Sweetwater. She does not see double vision (diplopia), strabismus, eye turns, esotropia, or exotropia; book those patients with Dr. Austin Bach.
+      - Routine vision (optometrists): Dr. Maria Casas (age 7+), Dr. Kyler Farnan (age 5+), and Dr. Gisselle Calero (age 4+).
+  - id: provider-languages
+    title: Spanish and other languages
+    text: All of our doctors and staff speak Spanish and English.
+  - id: scope-of-services
+    title: Services
+    text: |-
+      - Medical: current eye problems, symptoms, conditions, and ophthalmology care.
+      - Routine vision: eye exams, eyeglass prescriptions, contact lens fittings, and insertion training when there is no active eye problem.
+
+      Retina surgery is not performed here; it needs a retina surgeon.
+
+      Also offered: driver's license and employment vision forms, prism glasses, new lenses in the patient's own frame, and contact lens orders.
+      Ocular prosthetics: SNG visits the Hollywood office twice a month on Fridays.
+  - id: routine-vision-and-children
+    title: Children and astigmatism
+    text: |-
+      Children below a routine-vision doctor's minimum age see Dr. Bach for pediatric ophthalmology.
+      Astigmatism is a routine-vision visit with an optometrist for age 4+. Age 3 or younger with astigmatism sees Dr. Bach as a medical visit.
+  - id: appointment-confirmation
+    title: Appointment confirmation email
+    text: |-
+      The practice usually emails a confirmation after an appointment is scheduled.
+
+      The confirmation email includes a link to the visit paperwork, so make sure the email on file is correct.
+  - id: new-patient-visit
+    title: New patient visit length and dilation
+    text: |-
+      1–2 hours depending on testing. Dilation may cause temporary blurry vision and light sensitivity.
+
+      A routine eye exam takes about an hour, including dilation.
+  - id: exam-walk-ins
+    title: Walk-ins for exams
+    text: Exams are by appointment. Walk-ins are seen only when there is a cancellation, so it is best to book.
+  - id: what-to-bring
+    title: What to bring
+    text: Photo ID, insurance card, list of current medications, and previous eye records if available.
+  - id: referral-requirements
+    title: Referrals
+    text: General referral requirements are not supplied. Retina surgery needs a referral to a retina surgeon; a patient without one can get it from their primary care provider or insurance company.
+  - id: billing
+    title: Billing questions and balances
+    text: The billing department, (786) 446-8333, handles balances, payments, and billing concerns. Do not offer staff tasks or callbacks for billing questions.
+  - id: payments
+    title: Payment plans and financing (CareCredit)
+    text: Not supplied; the billing department handles payments.
+  - id: self-pay-pricing
+    title: Self-pay prices
+    text: |-
+      | Visit | New patient | Established patient |
+      |---|---|---|
+      | Medical, optometrist | $150 | $75 |
+      | Medical, ophthalmologist | $250 | $125 |
+
+      - Routine vision exam: $100. With contact lens fitting: $150.
+      - Each test the doctor orders adds $50. Give the new and established prices plus $50 per test, never one total.
+      - Abita's eligibility team calls the patient to confirm the final cost.
+  - id: retinal-photo-fee
+    title: Retinal photo charge
+    text: $39 for routine-vision patients whose insurance does not cover retinal photos.
+  - id: medical-records-requests
+    title: Medical records requests
+    text: |-
+      Ask who is requesting (patient, medical office, or attorney office) and which records.
+      - Patient: full name and date of birth.
+      - Medical office: office name and requesting doctor.
+
+      Keep the patient's details separate from the requester's. Save what was collected and list what is missing, even if intake is incomplete. Saving the request sends it to staff review; it is not delivery or verified authorization.
+  - id: attorney-records-requests
+    title: Attorney records requests
+    text: Attorney offices must fax both the records request and the patient authorization first. Ask whether each was faxed (yes, no, or unknown) and when. If either is missing, explain the fax requirement. A caller saying it was sent does not confirm the office received it or that it is valid.
+  - id: records-delivery
+    title: How records are delivered
+    text: |-
+      - Fax: collect the destination fax number.
+      - Email to patients: collect the full email address. Only a visit summary can be emailed, not full visit notes.
+
+      If full notes are requested, save the request and delivery preference for staff; do not substitute a summary or promise another method.
+  - id: prescription-copies
+    title: Copies of glasses or contact lens prescriptions
+    text: An optical request, not a medical records request. Delivery method and timing are not supplied.
+  - id: contact-lenses
+    title: Contact lenses and first-time fittings
+    text: Patients with a prescription can bring it from their optometrist. A first-time fitting includes insertion training and takes longer, so it must be booked before 3:00 PM Monday–Thursday or before 1:00 PM Friday.
+  - id: frame-brands
+    title: Frame brands, titanium frames, and Meta smart glasses
+    text: |-
+      - Brands include Ray-Ban, Nike, Gucci, Chloe, Montblanc, Puma, Cartier, Lindberg, Mykita, and YSL.
+      - Titanium: Mykita, Lindberg, and Nike Flexon.
+      - Meta smart glasses from Ray-Ban and Oakley.
+  - id: lens-options
+    title: Lens upgrades and treatments
+    text: All lens types, upgrades, and treatments are available.
+  - id: outside-prescriptions
+    title: Bringing an outside glasses prescription
+    text: Patients can bring a prescription from their optometrist and choose frames here. Without one, they need an optometrist appointment.
+  - id: eyeglass-prescription-validity
+    title: How long a glasses prescription is valid
+    text: Up to 2 years; a yearly eye exam is recommended to keep it current.
+  - id: glasses-turnaround
+    title: How long glasses take
+    text: Usually under 10 business days.
+  - id: glasses-pickup-and-remakes
+    title: Picking up glasses, delivery, and remakes
+    text: |-
+      - Someone else can pick up a patient's glasses with the patient's permission. Stellest lenses are the exception: FDA rules require fitting them on the child's face.
+      - Home delivery is $25.
+      - Finished glasses are held for one calendar year (for example, glasses from 2025 are held until 2027).
+      - No refunds. Prescription remakes are done within 90 days, or 6 months for Stellest.
+  - id: sunglasses
+    title: Sunglasses
+    text: Non-prescription sunglasses are for sale, including Maui Jim, Costa, Ray-Ban, and Gucci. Prescription lenses can be put in those frames. Most vision plans do not cover non-prescription sunglasses.
+  - id: optician
+    title: Optician and optical staff
+    text: Betty is the licensed optician, with over 30 years of experience in frames, lenses, and fittings. Oliva also works in optical.
+  - id: optical-walk-ins
+    title: Walk-ins for browsing and adjustments
+    text: No appointment is needed to look at glasses or have current glasses adjusted, during office hours.
+  - id: repairs-and-warranty
+    title: Broken glasses, repairs, and warranty
+    text: |-
+      - Minor repairs are done in the office at no cost when possible.
+      - Frames: 2- or 3-year warranty depending on the frame, covering everything except loss or chew marks.
+      - Lenses: 1- or 2-year warranty depending on the lens.
+
+      Patients should come in during office hours so staff can check repair or warranty options.
+  - id: social-follow-up
+    title: Social media
+    text: 'Facebook and Instagram: @abitaeyegroup.'
+  - id: cancelation-fee
+    title: Cancelation fee
+    text: We do not have a cancelation fee.
