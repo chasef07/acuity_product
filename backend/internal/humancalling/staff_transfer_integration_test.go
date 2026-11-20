@@ -1130,3 +1130,111 @@ func TestUntaggedTransferPeerCannotCompleteExactTransfer(t *testing.T) {
 	}
 	assertTransferLegStates(t, fixture.pool, transfer.ID, "COMPLETED", "ENDED", "BRIDGED")
 }
+
+func TestStaffTransferRecipientCanAnswerWhileRingWindowIsAmbiguous(t *testing.T) {
+	ctx := context.Background()
+	sentStopRingWindowAfterRingbackStarted := func(t *testing.T, fixture connectedStaffTransferFixture) string {
+		t.Helper()
+		ringState, _ := fixture.provider.last(humancalling.CommandStartRingWindow).Payload["client_state"].(string)
+		started := fixture.caller
+		started.EventID = fixture.callID + "-ring-window-started"
+		started.Type = humancalling.FactPlaybackStarted
+		started.OccurredAt = fixture.now.Add(2 * time.Second)
+		started.ClientState = ringState
+		if err := fixture.calling.ApplyProviderFact(ctx, started); err != nil {
+			t.Fatalf("apply ring-window started: %v", err)
+		}
+		var id string
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT id::text FROM human_calling_provider_commands
+			WHERE call_id = $1 AND action = 'STOP_RING_WINDOW' AND state = 'SENT'
+		`, fixture.callID).Scan(&id); err != nil {
+			t.Fatalf("read sent Stop ring-window: %v", err)
+		}
+		return id
+	}
+	assertStopState := func(t *testing.T, fixture connectedStaffTransferFixture, id, wantState, wantError string) {
+		t.Helper()
+		var state, errorCode string
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT state, COALESCE(last_error_code, '')
+			FROM human_calling_provider_commands WHERE id = $1
+		`, id).Scan(&state, &errorCode); err != nil {
+			t.Fatal(err)
+		}
+		if state != wantState || errorCode != wantError {
+			t.Fatalf("Stop ring-window = %s/%s, want %s/%s", state, errorCode, wantState, wantError)
+		}
+	}
+	assertTransferAnswerable := func(t *testing.T, fixture connectedStaffTransferFixture, transfer humancalling.StaffTransfer, prefix string) {
+		t.Helper()
+		if got := fixture.provider.count(humancalling.CommandTransferStaff); got != 1 {
+			t.Fatalf("transfer executions = %d, want 1", got)
+		}
+		command := fixture.provider.last(humancalling.CommandTransferStaff)
+		if command.CallLegID != transfer.TargetCallLegID {
+			t.Fatalf("transfer dialed CallLeg %s, want %s", command.CallLegID, transfer.TargetCallLegID)
+		}
+		completeFixtureTransfer(t, fixture, transfer, command, prefix)
+		assertTransferLegStates(t, fixture.pool, transfer.ID, "COMPLETED", "ENDED", "BRIDGED")
+	}
+	request := func(t *testing.T, fixture connectedStaffTransferFixture, key string) humancalling.StaffTransfer {
+		t.Helper()
+		call, err := fixture.calling.ReadCall(ctx, fixture.staff[0], fixture.callID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		transfer, err := fixture.calling.RequestStaffTransfer(ctx, humancalling.RequestStaffTransferCommand{
+			Identity: fixture.staff[0], CallID: fixture.callID,
+			SessionID:        "staff-transfer-" + key + "-browser-1",
+			RecipientSubject: fixture.staff[1].Subject, IdempotencyKey: key,
+			HandoffNote: "Synthetic handoff note", ExpectedVersion: call.Version,
+		})
+		if err != nil {
+			t.Fatalf("request Staff transfer: %v", err)
+		}
+		return transfer
+	}
+
+	t.Run("playback event absent on a live caller", func(t *testing.T) {
+		fixture := prepareConnectedStaffTransfer(t, "staff-transfer-ring-event-absent")
+		stopID := sentStopRingWindowAfterRingbackStarted(t, fixture)
+		if _, err := fixture.pool.Exec(ctx, `
+			UPDATE human_calling_call_legs SET updated_at = $2
+			WHERE call_id = $1 AND role = 'CALLER'
+		`, fixture.callID, fixture.now.Add(-2*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if reconciled, err := fixture.calling.MaintainOutgoingCallLegs(ctx); err != nil || !reconciled {
+			t.Fatalf("reconcile live caller = %t, %v", reconciled, err)
+		}
+		assertStopState(t, fixture, stopID, "AMBIGUOUS", "STOP_RING_WINDOW_EVENT_ABSENT")
+
+		transfer := request(t, fixture, "ring-event-absent")
+		assertTransferAnswerable(t, fixture, transfer, "ring-event-absent-target")
+	})
+
+	t.Run("worker interrupted while stopping the ring window", func(t *testing.T) {
+		fixture := prepareConnectedStaffTransfer(t, "staff-transfer-ring-interrupted")
+		stopID := sentStopRingWindowAfterRingbackStarted(t, fixture)
+		old := fixture.now.Add(-2 * time.Minute)
+		if _, err := fixture.pool.Exec(ctx, `
+			UPDATE human_calling_provider_commands
+			SET state = 'SENDING', sent_at = NULL, created_at = $2, updated_at = $2
+			WHERE id = $1
+		`, stopID, old); err != nil {
+			t.Fatal(err)
+		}
+		transfer := request(t, fixture, "ring-interrupted")
+		if got := fixture.provider.count(humancalling.CommandTransferStaff); got != 0 {
+			t.Fatalf("transfer executed beside an in-flight Stop ring-window: %d", got)
+		}
+		if recovered, err := fixture.calling.MaintainOutgoingCallLegs(ctx); err != nil || !recovered {
+			t.Fatalf("recover interrupted Stop ring-window = %t, %v", recovered, err)
+		}
+		assertStopState(t, fixture, stopID, "AMBIGUOUS", "PROVIDER_EFFECT_UNCERTAIN")
+
+		processAllCommands(t, fixture.calling)
+		assertTransferAnswerable(t, fixture, transfer, "ring-interrupted-target")
+	})
+}

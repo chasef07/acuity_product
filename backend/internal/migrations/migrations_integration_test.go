@@ -407,6 +407,28 @@ func TestConcurrentStaffDialMigrationEnforcesActiveCommandLanes(t *testing.T) {
 		) VALUES ($1, $2, 'BRIDGE', 'bridge', 'SENDING', $3, $3, $3)
 	`, call, secondLeg, now)
 	assertUniqueViolation(t, err, "second active non-Dial command for one Call")
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE human_calling_provider_commands SET state = 'AMBIGUOUS'
+		WHERE call_id = $1 AND action = 'STOP_RING_WINDOW'
+	`, call); err != nil {
+		t.Fatalf("mark Stop ring-window ambiguous: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, state,
+			created_at, next_attempt_at, updated_at
+		) VALUES ($1, $2, 'TRANSFER_STAFF', 'transfer', 'SENDING', $3, $3, $3)
+	`, call, secondLeg, now); err != nil {
+		t.Fatalf("send transfer beside an ambiguous ring window: %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, state,
+			created_at, next_attempt_at, updated_at
+		) VALUES ($1, $2, 'BRIDGE', 'uncertain-bridge', 'AMBIGUOUS', $3, $3, $3)
+	`, call, secondLeg, now)
+	assertUniqueViolation(t, err, "ambiguous non-ring-window command beside an active one")
 }
 
 func assertUniqueViolation(t *testing.T, err error, operation string) {
