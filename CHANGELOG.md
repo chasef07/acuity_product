@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.7.2](https://github.com/chasef07/acuity_product/compare/v3.7.1...v3.7.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cost:** price gpt-live-1.1 voice minutes like gpt-live-1 ([#656](https://github.com/chasef07/acuity_product/issues/656)) ([262c5f4](https://github.com/chasef07/acuity_product/commit/262c5f43e27eaadad4737b9246cfe119347c678d))
+
 ## [3.7.1](https://github.com/chasef07/acuity_product/compare/v3.7.0...v3.7.1) (2026-11-20)
 
 
