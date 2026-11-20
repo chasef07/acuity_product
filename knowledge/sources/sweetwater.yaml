@@ -105,14 +105,19 @@ entries:
   - id: medical-records-requests
     title: Medical records requests
     text: |-
-      Ask who is requesting (patient, medical office, or attorney office) and which records.
+      Ask who is requesting and which records. Anyone other than the patient or a medical office follows the third-party records requests entry instead.
       - Patient: full name and date of birth.
       - Medical office: office name and requesting doctor.
 
       Keep the patient's details separate from the requester's. Save what was collected and list what is missing, even if intake is incomplete. Saving the request sends it to staff review; it is not delivery or verified authorization.
-  - id: attorney-records-requests
-    title: Attorney records requests
-    text: Attorney offices must fax both the records request and the patient authorization first. Ask whether each was faxed (yes, no, or unknown) and when. If either is missing, explain the fax requirement. A caller saying it was sent does not confirm the office received it or that it is valid.
+  - id: third-party-records-requests
+    title: Third-party records requests from attorneys, insurance, and disability offices
+    text: |-
+      Attorney offices, insurance companies, disability offices, services like Help the Blind, and anyone giving only an email address must fax a proper medical records request together with a medical records release form signed by the patient, with the patient's full name and date of birth.
+
+      Fax (305) 723-1910, read digit by digit: 3-0-5, 7-2-3, 1-9-1-0.
+
+      A phone call or email does not replace the fax, so do not save a request for them. A caller saying it was faxed does not confirm the office received it or that it is valid.
   - id: records-delivery
     title: How records are delivered
     text: |-
