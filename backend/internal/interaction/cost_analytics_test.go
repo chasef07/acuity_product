@@ -35,6 +35,20 @@ func TestGPTLiveAndLunaRecordedCosts(t *testing.T) {
 	assertCostClose(t, report.CacheSavingsUSD, .00018)
 }
 
+func TestGPTLive11VoiceCostsTheSameAsGPTLive1(t *testing.T) {
+	started := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
+	report := newCostAnalytics(started, started.Add(time.Hour))
+	report.addCall(started, started.Add(2*time.Minute), json.RawMessage(`[
+ {"provider":"api.openai.com","model":"gpt-live-1.1","session_duration":91.5},
+ {"provider":"api.openai.com","model":"gpt-6-luna","input_tokens":10000,"input_cached_tokens":2000,"input_cache_creation_tokens":1000,"output_tokens":500}
+ ]`))
+	report.finalize()
+	if report.PricedCalls != 1 || report.UnpricedUsage != 0 {
+		t.Fatalf("missing coverage: %+v", report)
+	}
+	assertCostClose(t, *costItemForID(report.Items, costVoice).CostUSD, .07625)
+}
+
 func TestLunaCostsReadCamelCaseTokenCounts(t *testing.T) {
 	started := time.Date(2026, 9, 25, 1, 0, 0, 0, time.UTC)
 	report := newCostAnalytics(started, started.Add(time.Hour))
