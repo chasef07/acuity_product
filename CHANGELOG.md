@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.7.1](https://github.com/chasef07/acuity_product/compare/v3.7.0...v3.7.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **workspace:** show open Tasks in the patient panel as empty circles ([#654](https://github.com/chasef07/acuity_product/issues/654)) ([b56d850](https://github.com/chasef07/acuity_product/commit/b56d8502c015c21ac1bee4bbd952b838b4189319))
+
 ## [3.7.0](https://github.com/chasef07/acuity_product/compare/v3.6.0...v3.7.0) (2026-11-20)
 
 
