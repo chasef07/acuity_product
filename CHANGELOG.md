@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.7.0](https://github.com/chasef07/acuity_product/compare/v3.6.0...v3.7.0) (2026-11-20)
+
+
+### Features
+
+* re-land the post-3.5 Task and thread changes ([#646](https://github.com/chasef07/acuity_product/issues/646)) ([ea4541f](https://github.com/chasef07/acuity_product/commit/ea4541ff02adeca22486f14c3041240e80742313))
+* **workspace:** patient-first Work tab, one acknowledgement a day, and search as you type ([#649](https://github.com/chasef07/acuity_product/issues/649)) ([46d12ed](https://github.com/chasef07/acuity_product/commit/46d12ed6dd507db178633ef169bf776c6eb5583c))
+
+
+### Bug Fixes
+
+* **calling:** let staff transfers dial while a ring window is ambiguous ([#653](https://github.com/chasef07/acuity_product/issues/653)) ([dff4519](https://github.com/chasef07/acuity_product/commit/dff451927372c05bf8c092b1dbdef7f2e125393d))
+
 ## [3.6.0](https://github.com/chasef07/acuity_product/compare/v3.5.0...v3.6.0) (2026-11-17)
 
 
