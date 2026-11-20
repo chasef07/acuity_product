@@ -129,6 +129,8 @@ test("one open Task shows its tick, title, category, office, age and close menu"
     [...row.matchAll(/<button[^>]*aria-label="([^"]*)"/g)].map((match) => match[1]),
     ["Mark done: Synthetic first request", "Open Task: Synthetic first request", "Close as: Synthetic first request"],
   )
+  const tick = row.match(/<button[^>]*aria-label="Mark done: [^"]*"[^>]*>/)?.[0] ?? ""
+  assert.match(tick, /\btext-transparent\b/, "an open Task's tick stays an empty circle until hover, as in the focused Task")
   assert.match(row, /Insurance &amp; prior authorizations · North Office/)
   assert.match(row, /<time[^>]*dateTime="2026-08-30T12:00:00Z"[^>]*>3h<\/time>/)
   assert.match(row, /aria-haspopup="menu"/)
