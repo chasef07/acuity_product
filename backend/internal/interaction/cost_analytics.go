@@ -72,7 +72,7 @@ const (
 
 func costItems() []CostItem {
 	return []CostItem{
-		{ID: costVoice, Label: "GPT Live 1 · voice", Unit: "minutes", RateUSD: 0.05, RateQuantity: 1, RateUnit: "minute"},
+		{ID: costVoice, Label: "GPT Live · voice", Unit: "minutes", RateUSD: 0.05, RateQuantity: 1, RateUnit: "minute"},
 		{ID: costLunaInput, Label: "GPT-6 Luna · uncached input", Unit: "tokens", RateUSD: 0.10, RateQuantity: 1e6, RateUnit: "tokens"},
 		{ID: costLunaCached, Label: "GPT-6 Luna · cached input", Unit: "tokens", RateUSD: 0.01, RateQuantity: 1e6, RateUnit: "tokens"},
 		{ID: costLunaWrite, Label: "GPT-6 Luna · cache writes", Unit: "tokens", RateUSD: 0.125, RateQuantity: 1e6, RateUnit: "tokens"},
@@ -175,7 +175,7 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 		openAI := provider == "openai" || provider == "api_openai_com"
 		switch usageType(entry) {
 		case "llm_usage":
-			if model == "gpt_live_1" {
+			if model == "gpt_live_1" || model == "gpt_live_1_1" {
 				seconds, valid := usageQuantity(entry, "session_duration")
 				_, present := entry["session_duration"]
 				if !openAI || !valid || !present {

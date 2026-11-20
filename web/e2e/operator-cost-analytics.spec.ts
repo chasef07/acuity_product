@@ -71,7 +71,7 @@ test("Platform Operator sees recorded costs and incomplete usage", async ({
       name: "Cost breakdown",
     })
     const expected = [
-      ["GPT Live 1 · voice", "$1.00", "77.2%"],
+      ["GPT Live · voice", "$1.00", "77.2%"],
       ["GPT-6 Luna · uncached input", "$0.0130", "1.0%"],
       ["GPT-6 Luna · cached input", "$0.0005", "0.0%"],
       ["GPT-6 Luna · cache writes", "$0.0025", "0.2%"],
