@@ -34,6 +34,7 @@ export function TaskCheck({
       variant="outline"
       className="mt-0.5 shrink-0 rounded-full bg-background text-transparent hover:text-success focus-visible:text-success [@media(hover:none)]:text-muted-foreground/50"
       aria-label={label}
+      aria-busy={pending || undefined}
       title={title}
       disabled={pending || blocked}
       onClick={onComplete}

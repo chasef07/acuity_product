@@ -7,11 +7,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import type {
   PhoneSummary,
   StaffTaskCloseReason,
@@ -30,6 +25,7 @@ import {
   taskRelativeTime,
 } from "@/lib/vocabulary"
 
+import { TaskCheck } from "./task-check"
 import { offersTaskCloseMenu, TaskCloseMenu } from "./task-close-menu"
 
 const collapsedRowLimit = 8
@@ -367,24 +363,14 @@ function OpenTaskRow({
     >
       <div className="flex min-w-0 items-start gap-2">
         {closable ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="icon-xs"
-                  variant="outline"
-                  className="mt-0.5 rounded-full hover:text-success"
-                  aria-label={`Mark done: ${task.title}`}
-                  aria-busy={pending || undefined}
-                  disabled={pending}
-                  onClick={() => onComplete("DONE")}
-                />
-              }
-            >
-              {pending ? <Spinner /> : <CheckIcon aria-hidden="true" />}
-            </TooltipTrigger>
-            <TooltipContent side="left">Done</TooltipContent>
-          </Tooltip>
+          <TaskCheck
+            open
+            label={`Mark done: ${task.title}`}
+            title="Done"
+            pending={pending}
+            blocked={false}
+            onComplete={() => onComplete("DONE")}
+          />
         ) : (
           <span aria-hidden="true" className="size-5 shrink-0" />
         )}
