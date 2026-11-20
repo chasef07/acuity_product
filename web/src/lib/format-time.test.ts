@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { formatClockTime, formatDate, formatTimestamp } from "./format-time.ts"
+import { formatClockTime, formatDate, formatDayDivider, formatTimestamp } from "./format-time.ts"
 
 const now = new Date(2026, 9, 14, 18, 30)
 const at = (year: number, month: number, day: number, hour: number, minute: number, second = 0) =>
@@ -28,6 +28,15 @@ test("a date label is the timestamp without its time", () => {
   assert.equal(formatDate(at(2026, 10, 13, 23, 59), now), "Yesterday")
   assert.equal(formatDate(at(2026, 10, 12, 23, 59), now), "Oct 12")
   assert.equal(formatDate(at(2025, 12, 31, 12, 0), now), "Dec 31, 2025")
+})
+
+test("a day divider leads with the weekday and an ordinal day", () => {
+  assert.equal(formatDayDivider(at(2026, 10, 14, 9, 0), now), "Today")
+  assert.equal(formatDayDivider(at(2026, 10, 13, 9, 0), now), "Yesterday")
+  assert.equal(formatDayDivider(at(2026, 10, 12, 9, 0), now), "Monday, October 12th")
+  assert.equal(formatDayDivider(at(2026, 10, 1, 9, 0), now), "Thursday, October 1st")
+  assert.equal(formatDayDivider(at(2025, 12, 31, 12, 0), now), "Wednesday, December 31st, 2025")
+  assert.equal(formatDayDivider("not a date", now), "Unknown date")
 })
 
 test("an unreadable value says so instead of throwing", () => {

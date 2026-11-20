@@ -24,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import type { Task } from "@/lib/api/generated/types.gen"
 import { useEngagementSummary, useEngagementTimeline } from "@/lib/clients/engagement"
-import { formatDate } from "@/lib/format-time"
+import { formatDayDivider } from "@/lib/format-time"
 import {
   type NumberHistory,
   presentTimeline,
@@ -213,8 +213,8 @@ function Conversation({
                       item.occurredAt,
                     )) && (
                     <Marker className="my-2">
-                      <MarkerContent>
-                        {formatDate(item.occurredAt)}
+                      <MarkerContent className="rounded-full border bg-background px-3 py-1 font-medium text-foreground">
+                        {formatDayDivider(item.occurredAt)}
                       </MarkerContent>
                     </Marker>
                   )}
