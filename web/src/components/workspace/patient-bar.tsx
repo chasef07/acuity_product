@@ -223,19 +223,22 @@ export function PatientActionsView({
       )}
       {textsBlocked && (
         <span data-testid="texts-blocked" className="flex items-center gap-1 text-xs text-muted-foreground">
-          <BanIcon aria-hidden="true" className="size-3.5" /> Texts blocked
+          <BanIcon aria-hidden="true" className="size-3.5" />
+          <span className="max-sm:sr-only">Texts blocked</span>
         </span>
       )}
       <Button
         type="button"
         size="sm"
         variant="ghost"
-        className="text-muted-foreground aria-pressed:text-foreground"
+        className="text-muted-foreground aria-pressed:text-foreground max-sm:px-2"
         aria-pressed={patientTasksOpen}
         onClick={onPatientTasks}
       >
         <PanelRightIcon data-icon="inline-start" />
-        {openTaskCount === 0 ? "Patient" : openTaskCount === 1 ? "1 open Task" : `${openTaskCount} open Tasks`}
+        <span className="max-sm:sr-only">
+          {openTaskCount === 0 ? "Patient" : openTaskCount === 1 ? "1 open Task" : `${openTaskCount} open Tasks`}
+        </span>
       </Button>
       {onTextsBlocked && textsBlocked !== undefined && (
         <DropdownMenu>

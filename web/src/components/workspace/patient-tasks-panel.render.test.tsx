@@ -693,8 +693,8 @@ test("the chosen office reaches Call, and a Task call failure shows under the ac
 })
 
 test("the header reopens the patient panel, naming the open Tasks when there are some", async (t) => {
-  const button = (markup: string) => /<button[^>]*aria-pressed="(true|false)"[^>]*>(?:<svg.*?<\/svg>)?([^<]*open Tasks?)<\/button>/.exec(markup)
-  const toggle = (markup: string) => /<button[^>]*aria-pressed="(true|false)"[^>]*>(?:<svg.*?<\/svg>)?([^<]*)<\/button>/.exec(markup)?.[2]
+  const button = (markup: string) => /<button[^>]*aria-pressed="(true|false)"[^>]*>(?:<svg.*?<\/svg>)?(?:<span[^>]*>)?([^<]*open Tasks?)(?:<\/span>)?<\/button>/.exec(markup)
+  const toggle = (markup: string) => /<button[^>]*aria-pressed="(true|false)"[^>]*>(?:<svg.*?<\/svg>)?(?:<span[^>]*>)?([^<]*)(?:<\/span>)?<\/button>/.exec(markup)?.[2]
   assert.equal(toggle(header({ caller: caller([], 0) })), "Patient", "the patient panel can always be reopened")
   assert.equal(toggle(header()), "Patient")
   assert.equal(button(header({ caller: caller([], 1) }))?.[2], "1 open Task")
