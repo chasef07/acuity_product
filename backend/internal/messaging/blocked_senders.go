@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
-	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -45,9 +44,7 @@ func (m *Module) SetSenderBlocked(ctx context.Context, command BlockSenderComman
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return false, fmt.Errorf("block sender: %w", err)
 		}
-		if err := m.work.CloseTextReviewsForBlockedSender(ctx, tx, command.PracticeID, phone, work.ActorSnapshot{
-			Kind: access.ActorHuman, Subject: authorization.Actor.Subject, Email: authorization.Actor.Email,
-		}); err != nil {
+		if err := m.work.CloseTextReviewsForBlockedSender(ctx, tx, command.Identity, command.PracticeID, phone); err != nil {
 			return false, err
 		}
 		if newBlock {
