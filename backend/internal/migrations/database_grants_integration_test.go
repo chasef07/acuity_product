@@ -634,6 +634,7 @@ func expectedTablePrivileges() map[string]bool {
 		"knowledge_passages",
 		"knowledge_retrieval_observations",
 		"messaging_attachments",
+		"messaging_blocked_senders",
 		"messaging_location_configurations",
 		"messaging_messages",
 		"messaging_threads",
@@ -666,6 +667,7 @@ func expectedTablePrivileges() map[string]bool {
 		"knowledge_retrieval_observations",
 		"knowledge_revisions",
 		"messaging_attachments",
+		"messaging_blocked_senders",
 		"messaging_messages",
 		"messaging_provider_commands",
 		"messaging_threads",
@@ -689,6 +691,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
+	grant("acuity_portal", "DELETE", "messaging_blocked_senders")
 	grant("acuity_provider", "SELECT", "messaging_attachments")
 
 	grant("acuity_realtime", "SELECT",
@@ -724,6 +727,7 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_timeline",
 		"human_calling_voicemails",
 		"messaging_attachments",
+		"messaging_blocked_senders",
 		"messaging_location_configurations",
 		"messaging_messages",
 		"messaging_provider_commands",

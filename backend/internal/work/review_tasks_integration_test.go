@@ -37,7 +37,7 @@ func TestSharedReviewTasksPreserveEvidenceAndRejectStaleCompletion(t *testing.T)
 		if _, err := tx.Exec(ctx, `INSERT INTO messaging_messages(id,thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,provider_message_id,created_at,updated_at) VALUES($1::uuid,$2,$3,$4,'INBOUND','Synthetic request','+15555550123','+15555550100','DELIVERED',$1::text,$5,$5)`, id, thread, practice, location, now); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.EnsureInboundMessageReview(ctx, tx, practice, location, "+15555550123", thread, id, now); err != nil {
+		if err := m.EnsureInboundMessageReview(ctx, tx, practice, location, "+15555550123", thread, id, "", now); err != nil {
 			t.Fatal(err)
 		}
 		if !rollback {

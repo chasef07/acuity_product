@@ -241,7 +241,7 @@ function VoicemailPlayback({ voicemail }: { voicemail: NonNullable<CallLine["voi
         <Button
           size="xs"
           variant="outline"
-          className="self-start"
+          className="-mt-7 self-end"
           aria-label={`Play voicemail${length}`}
           disabled={loading}
           onClick={() => (failed ? void call.retry() : setOpened(true))}

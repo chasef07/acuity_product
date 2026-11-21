@@ -751,15 +751,34 @@ export type TaskInteraction = {
     type: 'CALL' | 'VOICEMAIL';
 };
 
+export type BlockedSenderReadRequest = {
+    practiceId: string;
+    phone: string;
+};
+
+export type BlockedSenderSetRequest = {
+    practiceId: string;
+    /**
+     * An office the staff member may act in. It authorizes the change; the block covers the Practice.
+     */
+    locationId: string;
+    phone: string;
+    blocked: boolean;
+};
+
+export type BlockedSender = {
+    blocked: boolean;
+};
+
 /**
  * Mine lists a patient when at least one open Task is in a category the reader is responsible for, is a missed-call, voicemail, text, or appointment review, or has no owner. Everyone lists every patient with an open Task.
  */
 export type PatientWorkScope = 'mine' | 'everyone';
 
 /**
- * callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
+ * callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, unowned matches follow-up Tasks whose category has no owner, and highPriorityOnly matches high-priority Tasks. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
  */
-export type PatientWorkFilter = 'all' | 'callBack' | 'texts' | 'appointments' | 'unowned';
+export type PatientWorkFilter = 'all' | 'callBack' | 'texts' | 'appointments' | 'unowned' | 'highPriorityOnly';
 
 export type PatientWorkQueryRequest = {
     practiceId: string;
@@ -770,13 +789,17 @@ export type PatientWorkQueryRequest = {
     search?: string;
     scope?: PatientWorkScope;
     filter?: PatientWorkFilter;
+    /**
+     * Limits follow-up Tasks to these groups. Call, voicemail, text and appointment reviews have no group and always match. Empty or absent means every group.
+     */
+    groups?: Array<StaffTaskCategory>;
     cursor?: string;
     limit?: number;
 };
 
 export type PatientWorkPage = {
     /**
-     * Patients with a high-priority matching Task first, then by newest matching Task.
+     * Patients by newest matching Task first.
      */
     rows: Array<PatientWorkRow>;
     counts: PatientWorkCounts;
@@ -811,7 +834,7 @@ export type PatientWorkRow = {
 };
 
 /**
- * How many patients each filter matches in the requested scope, Locations, and search.
+ * How many patients each filter matches in the requested scope, groups, Locations, and search.
  */
 export type PatientWorkCounts = {
     all: number;
@@ -819,10 +842,11 @@ export type PatientWorkCounts = {
     texts: number;
     appointments: number;
     unowned: number;
+    highPriorityOnly: number;
 };
 
 /**
- * Totals for the requested scope across the requested Locations, whatever the filter and search.
+ * Totals for the requested scope and groups across the requested Locations, whatever the filter and search.
  */
 export type PatientWorkTotals = {
     /**
@@ -834,7 +858,7 @@ export type PatientWorkTotals = {
      */
     patients: number;
     /**
-     * Patients with open Tasks that the requested scope leaves out.
+     * Patients with open Tasks in the requested groups that the requested scope leaves out.
      */
     patientsOutsideScope: number;
 };
@@ -2064,6 +2088,19 @@ export type CompleteTaskGroupRequest = {
         id: string;
         expectedVersion: number;
     }>;
+};
+
+export type CompletePatientTasksRequest = {
+    phone: string;
+    reason?: StaffTaskCloseReason;
+    tasks: Array<{
+        id: string;
+        expectedVersion: number;
+    }>;
+};
+
+export type CompletePatientTasksResult = {
+    closed: number;
 };
 
 export type RenameTaskRequest = {
@@ -4277,6 +4314,47 @@ export type CompleteTaskGroupResponses = {
 
 export type CompleteTaskGroupResponse = CompleteTaskGroupResponses[keyof CompleteTaskGroupResponses];
 
+export type CompletePatientTasksData = {
+    body: CompletePatientTasksRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/tasks/complete-for-patient';
+};
+
+export type CompletePatientTasksErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CompletePatientTasksError = CompletePatientTasksErrors[keyof CompletePatientTasksErrors];
+
+export type CompletePatientTasksResponses = {
+    /**
+     * How many Tasks closed.
+     */
+    200: CompletePatientTasksResult;
+};
+
+export type CompletePatientTasksResponse = CompletePatientTasksResponses[keyof CompletePatientTasksResponses];
+
 export type ReopenTaskData = {
     body: TaskTransitionRequest;
     path: {
@@ -4573,6 +4651,80 @@ export type CreateMessageFollowUpTaskResponses = {
 };
 
 export type CreateMessageFollowUpTaskResponse = CreateMessageFollowUpTaskResponses[keyof CreateMessageFollowUpTaskResponses];
+
+export type ReadBlockedSenderData = {
+    body: BlockedSenderReadRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/messages/blocked-senders/read';
+};
+
+export type ReadBlockedSenderErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReadBlockedSenderError = ReadBlockedSenderErrors[keyof ReadBlockedSenderErrors];
+
+export type ReadBlockedSenderResponses = {
+    /**
+     * Whether the phone is blocked.
+     */
+    200: BlockedSender;
+};
+
+export type ReadBlockedSenderResponse = ReadBlockedSenderResponses[keyof ReadBlockedSenderResponses];
+
+export type SetBlockedSenderData = {
+    body: BlockedSenderSetRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/messages/blocked-senders/set';
+};
+
+export type SetBlockedSenderErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type SetBlockedSenderError = SetBlockedSenderErrors[keyof SetBlockedSenderErrors];
+
+export type SetBlockedSenderResponses = {
+    /**
+     * The phone's block state after the change.
+     */
+    200: BlockedSender;
+};
+
+export type SetBlockedSenderResponse = SetBlockedSenderResponses[keyof SetBlockedSenderResponses];
 
 export type ReceiveTelnyxMessagingWebhookData = {
     body: {

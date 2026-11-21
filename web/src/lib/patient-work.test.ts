@@ -73,7 +73,7 @@ test("the second line says why the patient is waiting", () => {
 })
 
 test("filter chips count patients, never offer No owner, and offer Appointments only where it has something to offer", () => {
-  const counts = { all: 9, callBack: 3, texts: 2, appointments: 0, unowned: 4 }
+  const counts = { all: 9, callBack: 3, texts: 2, appointments: 0, unowned: 4, highPriorityOnly: 0 }
   const values = (shown: ReturnType<typeof shownPatientWorkFilters>) => shown.map((filter) => filter.value)
 
   assert.deepEqual(shownPatientWorkFilters(counts, "all", false), [
@@ -85,6 +85,8 @@ test("filter chips count patients, never offer No owner, and offer Appointments 
   assert.deepEqual(values(shownPatientWorkFilters({ ...counts, appointments: 1 }, "all", false)), ["all", "callBack", "texts", "appointments"])
   assert.deepEqual(values(shownPatientWorkFilters(counts, "appointments", false)), ["all", "callBack", "texts", "appointments"], "the active filter stays reachable at zero")
   assert.deepEqual(values(shownPatientWorkFilters({ ...counts, callBack: 0 }, "all", false)), ["all", "callBack", "texts"], "Call back is offered at zero")
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, highPriorityOnly: 2 }, "all", false)), ["all", "callBack", "texts", "highPriorityOnly"], "High priority is offered when some patient has it")
+  assert.deepEqual(values(shownPatientWorkFilters(counts, "highPriorityOnly", false)), ["all", "callBack", "texts", "highPriorityOnly"], "the active High priority filter stays reachable at zero")
 })
 
 test("appointment checks are offered where Spring Hill is the office in view", () => {

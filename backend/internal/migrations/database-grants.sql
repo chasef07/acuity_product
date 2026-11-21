@@ -44,6 +44,7 @@ GRANT SELECT ON TABLE
     public.human_calling_timeline,
     public.human_calling_voicemails,
     public.messaging_attachments,
+    public.messaging_blocked_senders,
     public.messaging_location_configurations,
     public.messaging_messages,
     public.messaging_threads,
@@ -125,6 +126,7 @@ GRANT INSERT ON TABLE
     public.human_calling_staff_transfers,
     public.human_calling_timeline,
     public.messaging_attachments,
+    public.messaging_blocked_senders,
     public.messaging_messages,
     public.messaging_provider_commands,
     public.messaging_threads,
@@ -221,6 +223,9 @@ TO acuity_portal;
 
 GRANT UPDATE (updated_at)
 ON TABLE public.messaging_threads
+TO acuity_portal;
+
+GRANT DELETE ON TABLE public.messaging_blocked_senders
 TO acuity_portal;
 
 GRANT UPDATE (task_id, version, updated_at)
@@ -350,6 +355,7 @@ GRANT SELECT ON TABLE
     public.human_calling_timeline,
     public.human_calling_voicemails,
     public.messaging_attachments,
+    public.messaging_blocked_senders,
     public.messaging_location_configurations,
     public.messaging_messages,
     public.messaging_provider_commands,

@@ -1522,6 +1522,35 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/tasks/complete-for-patient:
+    post:
+      operationId: completePatientTasks
+      summary: >-
+        Close exactly the listed open Tasks for one patient phone, all or none. Each Task must still be open at its
+        listed version, so nothing a coworker changed is closed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompletePatientTasksRequest"
+      responses:
+        "200":
+          description: How many Tasks closed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompletePatientTasksResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks/{taskId}/reopen:
     post:
       operationId: reopenTask
@@ -1751,6 +1780,59 @@ paths:
           $ref: "#/components/responses/Denied"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/messages/blocked-senders/read:
+    post:
+      operationId: readBlockedSender
+      summary: Say whether a phone's inbound texts are blocked in the Practice.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockedSenderReadRequest"
+      responses:
+        "200":
+          description: Whether the phone is blocked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockedSender"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/messages/blocked-senders/set:
+    post:
+      operationId: setBlockedSender
+      summary: >-
+        Block or unblock a phone's inbound texts for the whole Practice. Blocked texts are still stored but open no
+        review, and blocking closes the phone's open text reviews as not needed. Telnyx has no per-sender inbound block,
+        so this is the block.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockedSenderSetRequest"
+      responses:
+        "200":
+          description: The phone's block state after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockedSender"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
   /v1/provider/telnyx/messaging-webhooks:
@@ -3981,6 +4063,41 @@ components:
         type:
           type: string
           enum: [CALL, VOICEMAIL]
+    BlockedSenderReadRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, phone]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        phone:
+          type: string
+          maxLength: 40
+    BlockedSenderSetRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId, phone, blocked]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          description: An office the staff member may act in. It authorizes the change; the block covers the Practice.
+          type: string
+          format: uuid
+        phone:
+          type: string
+          maxLength: 40
+        blocked:
+          type: boolean
+    BlockedSender:
+      type: object
+      additionalProperties: false
+      required: [blocked]
+      properties:
+        blocked:
+          type: boolean
     PatientWorkScope:
       type: string
       enum: [mine, everyone]
@@ -3990,10 +4107,11 @@ components:
         patient with an open Task.
     PatientWorkFilter:
       type: string
-      enum: [all, callBack, texts, appointments, unowned]
+      enum: [all, callBack, texts, appointments, unowned, highPriorityOnly]
       description: >-
         callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches
-        appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person
+        appointment reviews, unowned matches follow-up Tasks whose category has no owner, and highPriorityOnly
+        matches high-priority Tasks. A person
         listed for the category is its owner at a Location only while they hold an unrevoked membership
         that includes the Task's Location.
     PatientWorkQueryRequest:
@@ -4017,6 +4135,14 @@ components:
           $ref: "#/components/schemas/PatientWorkScope"
         filter:
           $ref: "#/components/schemas/PatientWorkFilter"
+        groups:
+          description: >-
+            Limits follow-up Tasks to these groups. Call, voicemail, text and appointment reviews have no group
+            and always match. Empty or absent means every group.
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/StaffTaskCategory"
         cursor:
           type: string
         limit:
@@ -4029,7 +4155,7 @@ components:
       required: [rows, counts, totals, nextCursor]
       properties:
         rows:
-          description: Patients with a high-priority matching Task first, then by newest matching Task.
+          description: Patients by newest matching Task first.
           type: array
           items:
             $ref: "#/components/schemas/PatientWorkRow"
@@ -4072,10 +4198,10 @@ components:
             comes first, then missed calls and voicemails, texts, appointment reviews, and other Tasks, newest first.
           $ref: "#/components/schemas/Task"
     PatientWorkCounts:
-      description: How many patients each filter matches in the requested scope, Locations, and search.
+      description: How many patients each filter matches in the requested scope, groups, Locations, and search.
       type: object
       additionalProperties: false
-      required: [all, callBack, texts, appointments, unowned]
+      required: [all, callBack, texts, appointments, unowned, highPriorityOnly]
       properties:
         all:
           type: integer
@@ -4092,8 +4218,11 @@ components:
         unowned:
           type: integer
           minimum: 0
+        highPriorityOnly:
+          type: integer
+          minimum: 0
     PatientWorkTotals:
-      description: Totals for the requested scope across the requested Locations, whatever the filter and search.
+      description: Totals for the requested scope and groups across the requested Locations, whatever the filter and search.
       type: object
       additionalProperties: false
       required: [openTasks, patients, patientsOutsideScope]
@@ -4107,7 +4236,7 @@ components:
           type: integer
           minimum: 0
         patientsOutsideScope:
-          description: Patients with open Tasks that the requested scope leaves out.
+          description: Patients with open Tasks in the requested groups that the requested scope leaves out.
           type: integer
           minimum: 0
     TaskPage:
@@ -6015,6 +6144,41 @@ components:
                 type: integer
                 format: int64
                 minimum: 1
+    CompletePatientTasksRequest:
+      type: object
+      additionalProperties: false
+      required: [phone, tasks]
+      properties:
+        phone:
+          type: string
+          maxLength: 40
+        reason:
+          description: Why the Tasks closed. DONE when omitted.
+          $ref: "#/components/schemas/StaffTaskCloseReason"
+        tasks:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, expectedVersion]
+            properties:
+              id:
+                type: string
+                format: uuid
+              expectedVersion:
+                type: integer
+                format: int64
+                minimum: 1
+    CompletePatientTasksResult:
+      type: object
+      additionalProperties: false
+      required: [closed]
+      properties:
+        closed:
+          type: integer
+          minimum: 0
     RenameTaskRequest:
       type: object
       additionalProperties: false

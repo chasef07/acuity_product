@@ -5,7 +5,9 @@ import {
   getEngagementSummary,
   getEngagementTimeline,
   getMessageAttachment,
+  readBlockedSender,
   retryInboundMessageAttachment,
+  setBlockedSender,
   sendMessage as sendMessageRequest,
   sendMessageAgain as sendMessageAgainRequest,
   uploadMessageAttachment as uploadMessageAttachmentRequest,
@@ -240,4 +242,33 @@ function fileToBase64(file: File) {
     }
     reader.readAsDataURL(file)
   })
+}
+
+export function useBlockedSender({ practiceID, phone }: { practiceID: string; phone: string }) {
+  return useRead({
+    live: "task-detail",
+    name: "blocked-sender",
+    identity: { practiceID, phone },
+    read: (identity, transport) =>
+      readBlockedSender({ ...transport, body: { practiceId: identity.practiceID, phone: identity.phone } }),
+  })
+}
+
+export function blockSender({
+  practiceID,
+  locationID,
+  phone,
+  blocked,
+}: {
+  practiceID: string
+  locationID: string
+  phone: string
+  blocked: boolean
+}) {
+  return portalRequest((transport) =>
+    setBlockedSender({
+      ...transport,
+      body: { practiceId: practiceID, locationId: locationID, phone, blocked },
+    }),
+  )
 }

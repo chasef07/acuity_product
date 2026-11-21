@@ -9,6 +9,7 @@ import type {
   PatientWorkRow,
   PatientWorkScope,
   PatientWorkTotals,
+  StaffTaskCategory,
   StaffTaskCloseReason,
   Task,
   TaskPage,
@@ -29,7 +30,7 @@ import {
   workspaceLocationSearch,
   type WorkspacePageView,
 } from "./workspace-location.ts"
-import { patientWorkFilterLabels, type RailFilter } from "./vocabulary.ts"
+import { patientWorkFilterLabels, taskGroups, type RailFilter } from "./vocabulary.ts"
 import { resolveWorkspaceSearch } from "./workspace-search.ts"
 import {
   createWorkspaceRequestBudget,
@@ -59,6 +60,7 @@ export function isWorkView(view: WorkspaceView) {
 type WorkspaceRailState = {
   scope: PatientWorkScope
   filter: RailFilter
+  groups: StaffTaskCategory[]
   completedExpanded: boolean
   scrollTop: number
 }
@@ -259,7 +261,7 @@ export type WorkspaceProjectionIntent =
   | { type: "return-to-call" }
   | { type: "call-disposition"; result: CallingDispositionResult }
   | { type: "toggle-completed" }
-  | { type: "set-rail-view"; scope?: PatientWorkScope; filter?: RailFilter }
+  | { type: "set-rail-view"; scope?: PatientWorkScope; filter?: RailFilter; groups?: StaffTaskCategory[] }
   | { type: "remember-rail-scroll"; scrollTop: number }
   | { type: "navigation-changed" }
 
@@ -952,7 +954,12 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "set-rail-view") {
-      updateRail((rail) => ({ ...rail, scope: intent.scope ?? rail.scope, filter: intent.filter ?? rail.filter }))
+      updateRail((rail) => ({
+        ...rail,
+        scope: intent.scope ?? rail.scope,
+        filter: intent.filter ?? rail.filter,
+        groups: intent.groups ?? rail.groups,
+      }))
       await refreshTaskWindows(state.search.applied)
       return
     }
@@ -1637,6 +1644,7 @@ function emptyRailState(): WorkspaceRailState {
   return {
     scope: "mine",
     filter: "all",
+    groups: [],
     completedExpanded: false,
     scrollTop: 0,
   }
@@ -1666,6 +1674,9 @@ function restoreRailPreferences(
     return {
       scope: value.scope ?? "mine",
       filter: value.filter as RailFilter,
+      groups: Array.isArray(value.groups)
+        ? taskGroups.map(({ value: group }) => group).filter((group) => value.groups!.includes(group))
+        : [],
       completedExpanded: value.completedExpanded === true,
       scrollTop: Math.max(0, value.scrollTop ?? 0),
     }
@@ -1718,13 +1729,14 @@ function restoreAuthorizedScope(
 function patientQueryRequest(
   scope: WorkspaceScope,
   search: string,
-  rail: Pick<WorkspaceRailState, "scope" | "filter">,
+  rail: Pick<WorkspaceRailState, "scope" | "filter" | "groups">,
 ): PatientWorkQueryRequest {
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
     scope: rail.scope,
     filter: rail.filter,
+    ...(rail.groups.length > 0 ? { groups: rail.groups } : {}),
     ...(search ? { search } : {}),
     limit: 50,
   }
@@ -1816,7 +1828,7 @@ function emptyPatientWindow(): WorkspaceProjectionState["patients"] {
   return {
     items: [],
     nextCursor: "",
-    counts: { all: 0, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
+    counts: { all: 0, callBack: 0, texts: 0, appointments: 0, unowned: 0, highPriorityOnly: 0 },
     totals: { openTasks: 0, patients: 0, patientsOutsideScope: 0 },
     loading: false,
     error: "",

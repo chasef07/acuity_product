@@ -52,7 +52,7 @@ import {
   RailLoading,
   RailShowMore,
 } from "./workspace-rail-groups"
-import { PatientFilterChips } from "./workspace-rail-filters"
+import { PatientFilterChips, PatientGroupPicker } from "./workspace-rail-filters"
 import { ProlongedOutageNotice } from "./workspace-rail-outage-notice"
 import { CompletedTaskRow, PatientRow } from "./workspace-rail-patient-row"
 
@@ -275,6 +275,10 @@ export function WorkspaceRail({
                 projection.scope.locationScopeID,
               )}
               onChange={(filter) => onIntent({ type: "set-rail-view", filter })}
+            />
+            <PatientGroupPicker
+              groups={projection.rail.groups}
+              onChange={(groups) => onIntent({ type: "set-rail-view", groups })}
             />
           </div>
           <SidebarGroup className="p-0" role="group" aria-label="Patients with open work">

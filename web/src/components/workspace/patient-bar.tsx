@@ -1,9 +1,15 @@
 "use client"
 
 import { type ReactNode, useState } from "react"
-import { CheckIcon, CopyIcon, PanelRightIcon, PhoneCallIcon } from "lucide-react"
+import { BanIcon, CheckIcon, CopyIcon, EllipsisIcon, PanelRightIcon, PhoneCallIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -14,7 +20,7 @@ import {
 import { useCallingNavigation } from "@/components/workspace/calling-dock"
 import { useCopyState } from "@/hooks/use-copy-state"
 import type { PhoneSummary } from "@/lib/api/generated/types.gen"
-import { useEngagementSummary } from "@/lib/clients/engagement"
+import { blockSender, useBlockedSender, useEngagementSummary } from "@/lib/clients/engagement"
 import { patientName, phoneNames } from "@/lib/patient-work"
 import { formatPhone } from "@/lib/vocabulary"
 import type { EngagementSummary } from "@/lib/workspace-projection"
@@ -131,11 +137,36 @@ type PatientActionsProps = {
 export function PatientActions(props: PatientActionsProps) {
   const calling = useCallingNavigation()
   const summary = useEngagementSummary({ practiceID: props.practiceID, phone: props.engagement.phone })
+  const blocked = useBlockedSender({ practiceID: props.practiceID, phone: props.engagement.phone })
+  const [blockError, setBlockError] = useState("")
+  const [blockPending, setBlockPending] = useState(false)
+  const setBlocked = async (next: boolean) => {
+    setBlockError("")
+    setBlockPending(true)
+    const outcome = await blockSender({
+      practiceID: props.practiceID,
+      locationID: props.route,
+      phone: props.engagement.phone,
+      blocked: next,
+    })
+    setBlockPending(false)
+    if (!outcome.ok) {
+      setBlockError(next
+        ? "Texts from this number could not be blocked. Nothing changed. Try again."
+        : "Texts from this number could not be unblocked. Try again.")
+      return
+    }
+    blocked.retry()
+  }
   return (
     <PatientActionsView
       {...props}
+      callError={props.callError || blockError}
       calling={calling}
       caller={summary.status === "ready" ? summary.data : undefined}
+      textsBlocked={blocked.status === "ready" ? blocked.data.blocked : undefined}
+      blockPending={blockPending}
+      onTextsBlocked={(next) => void setBlocked(next)}
     />
   )
 }
@@ -149,7 +180,16 @@ export function PatientActionsView({
   onPatientTasks,
   calling,
   caller,
-}: PatientActionsProps & { calling: PatientActionsCalling; caller?: Caller }) {
+  textsBlocked,
+  blockPending = false,
+  onTextsBlocked,
+}: PatientActionsProps & {
+  calling: PatientActionsCalling
+  caller?: Caller
+  textsBlocked?: boolean
+  blockPending?: boolean
+  onTextsBlocked?: (blocked: boolean) => void
+}) {
   const openTaskCount = caller?.openTaskCount ?? 0
   const [callError, setCallError] = useState("")
   const { callingOccupied, outboundPending, ownsSoftphone, startOutbound } = calling
@@ -181,6 +221,11 @@ export function PatientActionsView({
           )}
         </Button>
       )}
+      {textsBlocked && (
+        <span data-testid="texts-blocked" className="flex items-center gap-1 text-xs text-muted-foreground">
+          <BanIcon aria-hidden="true" className="size-3.5" /> Texts blocked
+        </span>
+      )}
       <Button
         type="button"
         size="sm"
@@ -192,6 +237,36 @@ export function PatientActionsView({
         <PanelRightIcon data-icon="inline-start" />
         {openTaskCount === 0 ? "Patient" : openTaskCount === 1 ? "1 open Task" : `${openTaskCount} open Tasks`}
       </Button>
+      {onTextsBlocked && textsBlocked !== undefined && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                className="text-muted-foreground"
+                aria-label="More patient actions"
+                disabled={blockPending}
+                aria-busy={blockPending || undefined}
+              />
+            }
+          >
+            {blockPending ? <Spinner /> : <EllipsisIcon />}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuItem disabled={!route} onClick={() => onTextsBlocked(!textsBlocked)}>
+              <BanIcon aria-hidden="true" />
+              {textsBlocked ? "Unblock texts from this number" : "Block texts from this number"}
+            </DropdownMenuItem>
+            {!textsBlocked && (
+              <p className="px-2 pt-0.5 pb-1.5 text-xs text-muted-foreground">
+                Texts STOP to them from this office and closes their open texts. Their texts are still saved but stop creating Tasks. Calls are not blocked.
+              </p>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       {shownError && (
         <p role="alert" className="absolute top-[calc(100%+0.5rem)] right-0 z-20 w-72 rounded-lg border bg-popover px-3 py-2 text-xs text-destructive shadow-sm">
           {shownError}

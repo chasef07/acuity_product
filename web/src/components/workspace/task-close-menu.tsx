@@ -18,10 +18,12 @@ export function offersTaskCloseMenu(task: Pick<Task, "origin">) {
 export function TaskCloseMenu({
   trigger,
   children,
+  reasons = taskCloseMenuReasons,
   onClose,
 }: {
   trigger: React.ReactElement
   children: React.ReactNode
+  reasons?: readonly StaffTaskCloseReason[]
   onClose: (reason: StaffTaskCloseReason) => void
 }) {
   return (
@@ -30,7 +32,7 @@ export function TaskCloseMenu({
       <DropdownMenuContent align="end" className="w-40">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Close as</DropdownMenuLabel>
-          {taskCloseMenuReasons.map((reason) => (
+          {reasons.map((reason) => (
             <DropdownMenuItem key={reason} onClick={() => onClose(reason)}>
               {taskCloseReasonLabels[reason]}
             </DropdownMenuItem>

@@ -92,6 +92,8 @@ export const taskCloseReasonLabels = {
 
 export const taskCloseMenuReasons = ["NOT_NEEDED", "UNREACHABLE"] satisfies StaffTaskCloseReason[]
 
+export const taskCloseAllReasons = ["DONE", "NOT_NEEDED"] satisfies StaffTaskCloseReason[]
+
 export const callWrapUpReasons = ["DONE", "NOT_NEEDED"] satisfies CallingDispositionClosure["reason"][]
 
 export function taskCloseSummary(task: Pick<Task, "closeReason" | "completedBy">) {
@@ -301,6 +303,7 @@ export const patientWorkFilterLabels = {
   callBack: "Call back",
   texts: "Texts",
   appointments: "Appointments",
+  highPriorityOnly: "High priority",
 } satisfies Record<Exclude<PatientWorkFilter, "unowned">, string>
 
 export type RailFilter = keyof typeof patientWorkFilterLabels

@@ -2489,15 +2489,24 @@ func (m *Module) projectInboundReceipt(
 	blocked := isStop(body)
 	started := isStart(body)
 	review := inserted && !blocked && !started
-	if review && len(payload.Media) == 0 && isCourtesyReply(body) {
-		courtesy, err := followsAutomaticText(ctx, tx, threadID, occurredAt)
+	if review {
+		blockedSender, err := isBlockedSender(ctx, tx, practiceID, from)
 		if err != nil {
 			return err
 		}
-		review = !courtesy
+		review = !blockedSender
+	}
+	var answered officeText
+	if review {
+		answered, err = lastOfficeText(ctx, tx, threadID, occurredAt)
+		if err != nil {
+			return err
+		}
+		courtesyAfterOfficeText := answered.found && len(payload.Media) == 0 && isCourtesyReply(body)
+		review = !courtesyAfterOfficeText && !answered.stopJustSent
 	}
 	if review {
-		if err := m.work.EnsureInboundMessageReview(ctx, tx, practiceID, locationID, from, threadID, messageID, occurredAt); err != nil {
+		if err := m.work.EnsureInboundMessageReview(ctx, tx, practiceID, locationID, from, threadID, messageID, answered.staffSubject, occurredAt); err != nil {
 			return fmt.Errorf("project inbound Message review: %w", err)
 		}
 	}
@@ -2662,10 +2671,20 @@ func isCourtesyReply(body string) bool {
 	return courtesyReplies[strings.Join(words, " ")]
 }
 
-func followsAutomaticText(ctx context.Context, tx pgx.Tx, threadID string, occurredAt time.Time) (bool, error) {
-	var automatic bool
+type officeText struct {
+	found        bool
+	staffSubject string
+	stopJustSent bool
+}
+
+func lastOfficeText(ctx context.Context, tx pgx.Tx, threadID string, occurredAt time.Time) (officeText, error) {
+	var text officeText
+	var body string
+	var recent bool
 	err := tx.QueryRow(ctx, `
-		SELECT created_by_kind = $3
+		SELECT CASE WHEN created_by_kind = $3 THEN COALESCE(created_by_subject, '') ELSE '' END,
+			COALESCE(body, ''),
+			created_at > $2::timestamptz - interval '10 minutes'
 		FROM messaging_messages
 		WHERE thread_id = $1
 			AND direction = 'OUTBOUND'
@@ -2673,14 +2692,29 @@ func followsAutomaticText(ctx context.Context, tx pgx.Tx, threadID string, occur
 			AND created_at > $2::timestamptz - interval '24 hours'
 		ORDER BY created_at DESC, id DESC
 		LIMIT 1
-	`, threadID, occurredAt, access.ActorService).Scan(&automatic)
+	`, threadID, occurredAt, access.ActorHuman).Scan(&text.staffSubject, &body, &recent)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return officeText{}, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("find automatic text before reply: %w", err)
+		return officeText{}, fmt.Errorf("find office text before reply: %w", err)
 	}
-	return automatic, nil
+	text.found = true
+	text.stopJustSent = recent && isStop(body)
+	return text, nil
+}
+
+func isBlockedSender(ctx context.Context, tx pgx.Tx, practiceID, phone string) (bool, error) {
+	var blocked bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM messaging_blocked_senders
+			WHERE practice_id = $1 AND phone = $2
+		)
+	`, practiceID, phone).Scan(&blocked); err != nil {
+		return false, fmt.Errorf("check blocked sender: %w", err)
+	}
+	return blocked, nil
 }
 
 const MessageColumns = `

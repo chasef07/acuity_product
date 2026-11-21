@@ -63,7 +63,7 @@ func (f *textReviewFixture) inboundText(patient int, age time.Duration) string {
 	if _, err = tx.Exec(f.ctx, `INSERT INTO messaging_messages(id,thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,provider_message_id,created_at,updated_at) VALUES($1::uuid,$2,$3,$4,'INBOUND','Synthetic question',$5,'+15555550100','DELIVERED',$1::text,$6,$6)`, id, threadID, f.auth.Practice.ID, f.locationID, phone, at); err != nil {
 		f.t.Fatal(err)
 	}
-	if err = f.staff.EnsureInboundMessageReview(f.ctx, tx, f.auth.Practice.ID, f.locationID, phone, threadID, id, at); err != nil {
+	if err = f.staff.EnsureInboundMessageReview(f.ctx, tx, f.auth.Practice.ID, f.locationID, phone, threadID, id, "", at); err != nil {
 		f.t.Fatal(err)
 	}
 	if err = tx.Commit(f.ctx); err != nil {

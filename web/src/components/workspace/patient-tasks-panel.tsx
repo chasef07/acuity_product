@@ -14,11 +14,12 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { useEngagementSummary } from "@/lib/clients/engagement"
 import { signInRequired } from "@/lib/clients/portal-request"
-import { reopenTask } from "@/lib/clients/tasks"
+import { completePatientTasks, reopenTask } from "@/lib/clients/tasks"
 import type { PortalQuery } from "@/lib/data/queries"
 import { cn } from "@/lib/utils"
 import {
   formatRelativeTime,
+  taskCloseAllReasons,
   taskCloseSummary,
   taskGroupLabel,
   taskOriginLabels,
@@ -57,6 +58,23 @@ export function PatientTasksPanel({
   const summary = useEngagementSummary({ practiceID, phone })
   const [reopening, setReopening] = useState("")
   const [reopenFailure, setReopenFailure] = useState<TaskFailure>()
+  const [closingAll, setClosingAll] = useState(false)
+  const [closeAllFailure, setCloseAllFailure] = useState("")
+
+  async function closeAll(tasks: Task[], reason: StaffTaskCloseReason) {
+    if (closingAll) return
+    setClosingAll(true)
+    setCloseAllFailure("")
+    const outcome = await completePatientTasks(phone, tasks, reason)
+    setClosingAll(false)
+    void summary.retry()
+    if (outcome.ok) return
+    setCloseAllFailure(signInRequired(outcome.failure)
+      ? "Sign in again to close these Tasks."
+      : outcome.failure.kind === "conflict"
+        ? "A Task changed elsewhere, so nothing was closed. The latest list is now loaded."
+        : "The Tasks could not be closed. Nothing was closed.")
+  }
 
   async function reopen(task: Task) {
     if (reopening) return
@@ -85,6 +103,9 @@ export function PatientTasksPanel({
       summary={summary}
       reopening={reopening}
       reopenFailure={reopenFailure}
+      closingAll={closingAll}
+      closeAllFailure={closeAllFailure}
+      onCloseAll={(tasks, reason) => void closeAll(tasks, reason)}
       onReopen={(task) => void reopen(task)}
       onRetry={() => void summary.retry()}
     />
@@ -102,12 +123,18 @@ export function PatientTasksPanelView({
   onComplete,
   onOpen,
   opensReviews = false,
+  closingAll = false,
+  closeAllFailure = "",
+  onCloseAll,
   onReopen,
   onRetry,
 }: PatientTasksPanelProps & {
   summary: PortalQuery<Pick<PhoneSummary, "names" | "openTasks" | "openTaskCount" | "closedToday">>
   reopening: string
   reopenFailure?: TaskFailure
+  closingAll?: boolean
+  closeAllFailure?: string
+  onCloseAll?: (tasks: Task[], reason: StaffTaskCloseReason) => void
   onReopen: (task: Task) => void
   onRetry: () => void
 }) {
@@ -188,7 +215,29 @@ export function PatientTasksPanelView({
     <PanelFrame
       ref={section}
       count={count}
+      action={onCloseAll && open.length > 1 && (
+        <TaskCloseMenu
+          trigger={
+            <Button
+              size="xs"
+              variant="ghost"
+              data-testid="close-all-tasks"
+              className="ml-auto text-muted-foreground"
+              disabled={closingAll}
+              aria-busy={closingAll || undefined}
+            />
+          }
+          reasons={taskCloseAllReasons}
+          onClose={(reason) => onCloseAll(open, reason)}
+        >
+          {closingAll && <Spinner data-icon="inline-start" />}
+          {capped ? `Close these ${open.length}` : "Close all"}
+        </TaskCloseMenu>
+      )}
     >
+      {closeAllFailure && (
+        <p role="alert" className="mb-1 text-xs text-destructive">{closeAllFailure}</p>
+      )}
       {summary.status === "ready" && summary.refreshFailure && (
         <p role="alert" className="text-xs text-destructive">
           This list could not be refreshed.{" "}
@@ -296,12 +345,14 @@ function PanelFrame({
   className,
   busy,
   count,
+  action,
   children,
 }: {
   ref?: Ref<HTMLElement>
   className?: string
   busy?: boolean
   count?: number
+  action?: ReactNode
   children: ReactNode
 }) {
   return (
@@ -317,6 +368,7 @@ function PanelFrame({
         {count !== undefined && (
           <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
         )}
+        {action}
       </header>
       <div data-testid="patient-tasks-body" className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto px-5">
         {children}

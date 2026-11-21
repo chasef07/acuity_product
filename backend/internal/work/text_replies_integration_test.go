@@ -39,7 +39,7 @@ func TestTextReplyCompletionTracksProviderEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		if inbound {
-			err = m.EnsureInboundMessageReview(ctx, tx, auth.Practice.ID, auth.Locations[0].ID, "+15555550123", thread, id, now)
+			err = m.EnsureInboundMessageReview(ctx, tx, auth.Practice.ID, auth.Locations[0].ID, "+15555550123", thread, id, "", now)
 		} else {
 			err = m.CaptureTextReply(ctx, tx, thread, id, access.Actor{Subject: identity.Subject, Email: identity.Email})
 		}
