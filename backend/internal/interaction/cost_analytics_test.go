@@ -35,6 +35,43 @@ func TestGPTLiveAndLunaRecordedCosts(t *testing.T) {
 	assertCostClose(t, report.CacheSavingsUSD, .00018)
 }
 
+func TestGPTLiveAndTerraRecordedCosts(t *testing.T) {
+	started := time.Date(2026, 11, 21, 1, 0, 0, 0, time.UTC)
+	report := newCostAnalytics(started, started.Add(time.Hour))
+	report.addCall(started, started.Add(2*time.Minute), json.RawMessage(`[
+ {"provider":"api.openai.com","model":"gpt-live-1.1","session_duration":91.5},
+ {"provider":"api.openai.com","model":"gpt-6.1-terra","input_tokens":10000,"input_cached_tokens":2000,"input_cache_creation_tokens":1000,"output_tokens":500}
+ ]`))
+	report.finalize()
+	if report.PricedCalls != 1 || report.UnpricedUsage != 0 {
+		t.Fatalf("missing coverage: %+v", report)
+	}
+	assertCostClose(t, *costItemForID(report.Items, costTerraInput).CostUSD, .007)
+	assertCostClose(t, *costItemForID(report.Items, costTerraCached).CostUSD, .0001)
+	assertCostClose(t, *costItemForID(report.Items, costTerraWrite).CostUSD, .00125)
+	assertCostClose(t, *costItemForID(report.Items, costTerraOutput).CostUSD, .0025)
+	if costItemForID(report.Items, costLunaInput).CostUSD != nil {
+		t.Fatal("terra usage priced as luna")
+	}
+	assertCostClose(t, report.TotalCostUSD, .1141)
+	assertCostClose(t, *report.CacheHitRate, 20)
+	assertCostClose(t, report.CacheSavingsUSD, .0019)
+}
+
+func TestTerraAboveShortContextTierIsUnpriced(t *testing.T) {
+	started := time.Date(2026, 11, 21, 1, 0, 0, 0, time.UTC)
+	report := newCostAnalytics(started, started.Add(time.Hour))
+	report.addCall(started, started.Add(time.Minute), json.RawMessage(`[
+ {"provider":"api.openai.com","model":"gpt-live-1.1","session_duration":60},
+ {"provider":"api.openai.com","model":"gpt-6.1-terra","input_tokens":200000},
+ {"provider":"api.openai.com","model":"gpt-6.1-terra","input_tokens":200000}
+ ]`))
+	report.finalize()
+	if report.PricedCalls != 0 || report.UnpricedUsage != 2 || costItemForID(report.Items, costTerraInput).CostUSD != nil {
+		t.Fatalf("invented long-context coverage: %+v", report)
+	}
+}
+
 func TestGPTLive11VoiceCostsTheSameAsGPTLive1(t *testing.T) {
 	started := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
 	report := newCostAnalytics(started, started.Add(time.Hour))
