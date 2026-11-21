@@ -473,7 +473,7 @@ test("each page of patients brings the counts and totals the list shows", async 
   })
   await projection.start()
   await realtime.reconcile(0)
-  assert.deepEqual(requests.map((request) => [request.scope, request.filter, request.cursor]), [["everyone", "all", undefined]])
+  assert.deepEqual(requests.map((request) => [request.scope, request.filter, request.cursor]), [["mine", "all", undefined]])
   assert.deepEqual(projection.getSnapshot().patients.counts, counts)
   assert.deepEqual(projection.getSnapshot().patients.totals, totals)
   await projection.dispatch({ type: "load-more", window: "patients" })
@@ -489,7 +489,7 @@ test("each page of patients brings the counts and totals the list shows", async 
 
 test("rail preferences restore through the projection and corrupted or older values fail safe", async () => {
   const key = "acuity.attentionRail.user-1.practice-1"
-  const fresh = { filter: "all", completedExpanded: false, scrollTop: 0 }
+  const fresh = { scope: "mine", filter: "all", completedExpanded: false, scrollTop: 0 }
   for (const [stored, restored] of [
     [{ scrollTop: "not-a-number", taskCategory: "obsolete", expanded: ["unknown"] }, fresh],
     [{ version: 1, expanded: ["tasks", "texts"], taskResponsibility: "all", taskCategory: "optical", scrollTop: 120 }, fresh],
@@ -498,7 +498,11 @@ test("rail preferences restore through the projection and corrupted or older val
     [{ version: 2, scope: "everyone", filter: "unowned", completedExpanded: true, scrollTop: 64 }, fresh],
     [
       { version: 2, scope: "everyone", filter: "texts", completedExpanded: true, scrollTop: 64 },
-      { filter: "texts", completedExpanded: true, scrollTop: 64 },
+      { scope: "everyone", filter: "texts", completedExpanded: true, scrollTop: 64 },
+    ],
+    [
+      { version: 2, filter: "texts", completedExpanded: true, scrollTop: 64 },
+      { scope: "mine", filter: "texts", completedExpanded: true, scrollTop: 64 },
     ],
     [{ version: 2, scope: "mine", filter: "followUp", completedExpanded: false, scrollTop: 0 }, fresh],
   ] as const) {
@@ -530,9 +534,11 @@ test("rail preferences restore through the projection and corrupted or older val
   await realtime.reconcile(0)
   await projection.dispatch({ type: "toggle-completed" })
   await projection.dispatch({ type: "set-rail-view", filter: "callBack" })
+  await projection.dispatch({ type: "set-rail-view", scope: "everyone" })
   await projection.dispatch({ type: "remember-rail-scroll", scrollTop: 42 })
   assert.deepEqual(JSON.parse(values.get(key) ?? ""), {
     version: 2,
+    scope: "everyone",
     filter: "callBack",
     completedExpanded: true,
     scrollTop: 42,
@@ -540,7 +546,7 @@ test("rail preferences restore through the projection and corrupted or older val
   projection.stop()
 })
 
-test("changing the filter reloads the list and the completed shelf, always for everyone", async () => {
+test("the list starts on Mine, and changing the filter or the scope reloads the list and the completed shelf for that scope", async () => {
   const realtime = deterministicRealtime()
   const patientRequests: PatientWorkQueryRequest[] = []
   const completedRequests: Parameters<WorkspaceAuthorityAdapter["tasks"]>[1][] = []
@@ -569,12 +575,20 @@ test("changing the filter reloads the list and the completed shelf, always for e
     stale.apply()
     const state = projection.getSnapshot()
     assert.equal(state.rail.filter, filter)
-    assert.deepEqual(patientRequests.map((request) => [request.scope, request.filter]), [["everyone", filter]])
-    assert.deepEqual(completedRequests.map((request) => [request.state, request.responsibility]), [["COMPLETED", "all"]])
-    assert.deepEqual(openTasks(state).map((item) => item.id), [`everyone-${filter}`])
-    assert.deepEqual(state.completedTasks.items.map((item) => item.id), ["all-done"])
-    assert.equal(state.selection.task?.id, "everyone-all", "the patient opened on first load stays selected after it left the list")
+    assert.deepEqual(patientRequests.map((request) => [request.scope, request.filter]), [["mine", filter]])
+    assert.deepEqual(completedRequests.map((request) => [request.state, request.responsibility]), [["COMPLETED", "mine"]])
+    assert.deepEqual(openTasks(state).map((item) => item.id), [`mine-${filter}`])
+    assert.deepEqual(state.completedTasks.items.map((item) => item.id), ["mine-done"])
+    assert.equal(state.selection.task?.id, "mine-all", "the patient opened on first load stays selected after it left the list")
   }
+  patientRequests.length = 0
+  completedRequests.length = 0
+  await projection.dispatch({ type: "set-rail-view", scope: "everyone" })
+  assert.equal(projection.getSnapshot().rail.scope, "everyone")
+  assert.equal(projection.getSnapshot().rail.filter, "appointments", "switching scope keeps the filter")
+  assert.deepEqual(patientRequests.map((request) => [request.scope, request.filter]), [["everyone", "appointments"]])
+  assert.deepEqual(completedRequests.map((request) => request.responsibility), ["all"])
+  assert.deepEqual(projection.getSnapshot().completedTasks.items.map((item) => item.id), ["all-done"])
   const requestCount = patientRequests.length + completedRequests.length
   await projection.dispatch({ type: "toggle-completed" })
   assert.equal(patientRequests.length + completedRequests.length, requestCount, "expanding the shelf uses the current authoritative window")

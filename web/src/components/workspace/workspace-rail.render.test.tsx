@@ -220,9 +220,25 @@ test("the active chip is filled with the primary colour", () => {
   }
 })
 
-test("the footer states the totals", () => {
-  const footer = rail(projection([patients.callBack])).querySelector("[data-testid='patient-work-footer']")?.textContent
-  assert.equal(footer, "9 patients need attention")
+test("the footer states the totals for the scope in view", () => {
+  const footer = (scope: "mine" | "everyone") => {
+    const base = projection([patients.callBack])
+    return rail({ ...base, rail: { ...base.rail, scope } }).querySelector("[data-testid='patient-work-footer']")?.textContent
+  }
+  assert.equal(footer("mine"), "9 patients need you")
+  assert.equal(footer("everyone"), "9 patients need attention")
+})
+
+test("the footer link switches between Mine and everyone's patients", async (t) => {
+  const base = projection([patients.callBack])
+  const link = (state: WorkspaceProjectionState) => rail(state).querySelector("[data-testid='patient-scope-switch']")?.textContent
+  assert.equal(link(base), "Show 2 more from everyone")
+  assert.equal(link({ ...base, patients: { ...base.patients, totals: { ...base.patients.totals, patientsOutsideScope: 0 } } }), undefined)
+  assert.equal(link({ ...base, rail: { ...base.rail, scope: "everyone" } }), "Show only mine")
+
+  const page = await mountedRail(t, base)
+  await page.chooseScope()
+  assert.deepEqual(page.intents.filter((intent) => intent.startsWith("set-rail-view")), ["set-rail-view:everyone"])
 })
 
 test("the list says when it is loading, empty, failed, or has more to show", () => {
@@ -362,7 +378,13 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
       <WorkspaceRail
         projection={state}
         onIntent={(intent) => {
-          intents.push(intent.type === "apply-search" || intent.type === "submit-search" ? `${intent.type}:${intent.value}` : intent.type)
+          intents.push(
+            intent.type === "apply-search" || intent.type === "submit-search"
+              ? `${intent.type}:${intent.value}`
+              : intent.type === "set-rail-view" && intent.scope
+                ? `${intent.type}:${intent.scope}`
+                : intent.type,
+          )
           if (intent.type === "select-task") opened.push(intent.task.phone)
         }}
       />
@@ -384,6 +406,10 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
       const input = host.querySelector<HTMLInputElement>("input[aria-label='Search tasks, names, or phone']")!
       Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, value)
       input.dispatchEvent(new dom.window.Event("input", { bubbles: true }))
+    }),
+    chooseScope: () => act(async () => {
+      host.querySelector("[data-testid='patient-scope-switch']")!
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, detail: 1 }))
     }),
     pointerClick: (phone: string) => activate(phone, 1),
     keyboardActivate: (phone: string) => activate(phone, 0),

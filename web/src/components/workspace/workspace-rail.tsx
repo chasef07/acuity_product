@@ -33,6 +33,7 @@ import type { PatientWorkRow, Task } from "@/lib/api/generated/types.gen"
 import {
   belowListChangedAtAfter,
   offersAppointmentChecks,
+  patientScopeSwitch,
   patientWorkFooter,
   rowChangedAtAfter,
   rowClickAllowed,
@@ -79,6 +80,7 @@ export function WorkspaceRail({
   const discovery = projection.discovery!
   const practice = currentPractice(projection)
   const patients = projection.patients
+  const scopeSwitch = patientScopeSwitch(patients.totals, projection.rail.scope)
   const selectedTaskID = projection.selection.task?.id ?? ""
   const selectedPhone =
     projection.selection.view === "engagement"
@@ -364,9 +366,22 @@ export function WorkspaceRail({
         {workView && (
           <SidebarFooter className="border-t border-sidebar-border p-2">
             {connection === "degraded" && <ProlongedOutageNotice />}
-            <p data-testid="patient-work-footer" className="px-2 text-xs leading-5 text-muted-foreground">
-              {patientWorkFooter(patients.totals)}
-            </p>
+            <div className="flex flex-col items-start px-2 text-xs leading-5">
+              <p data-testid="patient-work-footer" className="text-muted-foreground">
+                {patientWorkFooter(patients.totals, projection.rail.scope)}
+              </p>
+              {scopeSwitch && (
+                <button
+                  type="button"
+                  data-testid="patient-scope-switch"
+                  className="inline-flex items-center gap-1 rounded-sm font-medium text-sidebar-foreground underline-offset-2 outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+                  onClick={() => onIntent({ type: "set-rail-view", scope: scopeSwitch.scope })}
+                >
+                  {scopeSwitch.label}
+                  <ArrowRightIcon aria-hidden="true" className="size-3" />
+                </button>
+              )}
+            </div>
             {callingStatus}
           </SidebarFooter>
         )}

@@ -1,6 +1,7 @@
 import type {
   PatientWorkCounts,
   PatientWorkRow,
+  PatientWorkScope,
   PatientWorkTotals,
   Task,
 } from "./api/generated/types.gen.ts"
@@ -69,8 +70,21 @@ export function openTaskReason(
   }
 }
 
-export function patientWorkFooter(totals: PatientWorkTotals) {
-  return totals.patients === 1 ? "1 patient needs attention" : `${totals.patients} patients need attention`
+export function patientWorkFooter(totals: PatientWorkTotals, scope: PatientWorkScope) {
+  const verb = scope === "mine" ? "you" : "attention"
+  return totals.patients === 1
+    ? `1 patient needs ${verb}`
+    : `${totals.patients} patients need ${verb}`
+}
+
+export function patientScopeSwitch(
+  totals: PatientWorkTotals,
+  scope: PatientWorkScope,
+): { scope: PatientWorkScope; label: string } | undefined {
+  if (scope === "everyone") return { scope: "mine", label: "Show only mine" }
+  return totals.patientsOutsideScope > 0
+    ? { scope: "everyone", label: `Show ${totals.patientsOutsideScope} more from everyone` }
+    : undefined
 }
 
 export function nextAfterClose({

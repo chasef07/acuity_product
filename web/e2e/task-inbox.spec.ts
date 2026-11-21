@@ -27,7 +27,7 @@ test("visible workload filters show message previews and completion opens the ne
   await expect(urgent.getByTestId("patient-row-name")).toHaveText("(202) 555-0202")
   await expect(urgent.getByTestId("patient-row-reason")).toHaveText(`${key} urgent`)
   await expect(urgent.getByTestId("patient-row-count")).toHaveCount(0)
-  await expect(page.getByTestId("patient-work-footer")).toContainText(/^\d+ patients? needs? attention/)
+  await expect(page.getByTestId("patient-work-footer")).toHaveText(/^\d+ patients? needs? you$/)
   await normal.getByRole("button").click()
   await urgent.getByRole("button").click()
   const taskCard = page.getByRole("button", { name: `View task: ${key} urgent`, exact: true })
@@ -208,7 +208,7 @@ test("the workspace keeps one frame from loading to loaded", async ({ page }, te
   expect(await frame()).toEqual(loading)
 })
 
-test("everyone sees every patient, including a colleague's category and work with no live owner", async ({ page }) => {
+test("Mine leaves out a colleague's category but keeps work with no live owner, and the footer link shows everyone", async ({ page }) => {
   const databaseURL = process.env.E2E_DATABASE_URL
   test.skip(!process.env.E2E_PROVISIONING_OUTPUT || !databaseURL, "E2E fixture and E2E_DATABASE_URL required")
   if (!new URL(databaseURL!).pathname.endsWith("_e2e")) throw new Error("Disposable database required")
@@ -246,6 +246,12 @@ test("everyone sees every patient, including a colleague's category and work wit
     const search = page.getByLabel("Search tasks, names, or phone")
     await search.fill(key)
     await search.press("Enter")
+    await expect(railFilter(page, "all")).toHaveText("All1")
+    await expect(page.getByTestId("patient-row")).toHaveCount(1)
+    await expect(patientRow(page, unowned)).toBeVisible()
+    await expect(page.getByTestId("patient-work-footer")).toHaveText(/^\d+ patients? needs? you$/)
+    await page.getByTestId("patient-scope-switch").click()
+    await expect(page.getByTestId("patient-scope-switch")).toHaveText("Show only mine")
     await expect(railFilter(page, "all")).toHaveText("All2")
     await expect(page.getByTestId("patient-row")).toHaveCount(2)
     await expect(patientRow(page, unowned).getByTestId("patient-row-reason")).toHaveText(`${key} unowned`)
