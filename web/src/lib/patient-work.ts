@@ -70,7 +70,7 @@ export function openTaskReason(
 }
 
 export function patientWorkFooter(totals: PatientWorkTotals) {
-  return `${totals.openTasks} open for ${totals.patients} ${totals.patients === 1 ? "patient" : "patients"}`
+  return totals.patients === 1 ? "1 patient needs attention" : `${totals.patients} patients need attention`
 }
 
 export function nextAfterClose({

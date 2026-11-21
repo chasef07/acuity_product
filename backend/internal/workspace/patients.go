@@ -26,7 +26,6 @@ type PatientWorkFilter string
 
 const (
 	PatientWorkAll          PatientWorkFilter = "all"
-	PatientWorkFollowUp     PatientWorkFilter = "followUp"
 	PatientWorkCallBack     PatientWorkFilter = "callBack"
 	PatientWorkTexts        PatientWorkFilter = "texts"
 	PatientWorkAppointments PatientWorkFilter = "appointments"
@@ -35,7 +34,6 @@ const (
 
 var patientWorkFilterSQL = map[PatientWorkFilter]string{
 	PatientWorkAll:          `true`,
-	PatientWorkFollowUp:     `item.kind_rank = 3`,
 	PatientWorkCallBack:     `item.kind_rank = 0`,
 	PatientWorkTexts:        `item.kind_rank = 1`,
 	PatientWorkAppointments: `item.kind_rank = 2`,
@@ -71,7 +69,6 @@ type PatientWorkRow struct {
 
 type PatientWorkCounts struct {
 	All          int
-	FollowUp     int
 	CallBack     int
 	Texts        int
 	Appointments int
@@ -170,7 +167,7 @@ func (m *Module) QueryPatientWork(
 	if err := tx.QueryRow(ctx, patientWorkSummarySQL(command.Scope, search), search.arguments(
 		command.PracticeID, locationIDs, search.pattern, search.digits, email,
 	)...).Scan(
-		&page.Counts.All, &page.Counts.FollowUp, &page.Counts.CallBack, &page.Counts.Texts,
+		&page.Counts.All, &page.Counts.CallBack, &page.Counts.Texts,
 		&page.Counts.Appointments, &page.Counts.Unowned,
 		&page.Totals.OpenTasks, &page.Totals.Patients, &page.Totals.PatientsOutsideScope,
 	); err != nil {
@@ -276,7 +273,6 @@ func patientWorkSource(
 		bool_or(item.unowned) AS has_unowned,
 		` + patientWorkSearched(scope, search) + ` AS searched,
 		bool_or(` + patientWorkScopeSQL[scope] + `) AS in_scope,
-		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 3) AS in_follow_up,
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 0) AS in_call_back,
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 1) AS in_texts,
 		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 2) AS in_appointments,
@@ -335,7 +331,6 @@ func patientWorkSummarySQL(scope PatientWorkScope, search taskSearch) string {
 	return patientWorkSource(scope, PatientWorkAll, search, "$6") + `
 SELECT
 	count(*) FILTER (WHERE patient.searched AND patient.in_scope),
-	count(*) FILTER (WHERE patient.searched AND patient.in_follow_up),
 	count(*) FILTER (WHERE patient.searched AND patient.in_call_back),
 	count(*) FILTER (WHERE patient.searched AND patient.in_texts),
 	count(*) FILTER (WHERE patient.searched AND patient.in_appointments),

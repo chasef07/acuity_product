@@ -50,8 +50,7 @@ export const callLineLabels = {
   calledIn: "Called in",
   resolvedByAI: "Resolved by AI",
   handledByAI: "Handled by AI",
-  messageTaken: "Message taken",
-  aiTookMessage: "AI took a message",
+  taskCreated: "Task created",
   transferNotRecorded: "Transfer requested, staff outcome not recorded",
   staffAnswered: "Staff answered",
   answered: "Answered",
@@ -299,7 +298,6 @@ export function formatPhone(value: string) {
 
 export const patientWorkFilterLabels = {
   all: "All",
-  followUp: "Tasks",
   callBack: "Call back",
   texts: "Texts",
   appointments: "Appointments",

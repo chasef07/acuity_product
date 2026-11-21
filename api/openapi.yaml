@@ -3990,9 +3990,8 @@ components:
         patient with an open Task.
     PatientWorkFilter:
       type: string
-      enum: [all, followUp, callBack, texts, appointments, unowned]
+      enum: [all, callBack, texts, appointments, unowned]
       description: >-
-        followUp matches follow-up Tasks created by the AI, after a staff call, or after a staff text.
         callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches
         appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person
         listed for the category is its owner at a Location only while they hold an unrevoked membership
@@ -4076,12 +4075,9 @@ components:
       description: How many patients each filter matches in the requested scope, Locations, and search.
       type: object
       additionalProperties: false
-      required: [all, followUp, callBack, texts, appointments, unowned]
+      required: [all, callBack, texts, appointments, unowned]
       properties:
         all:
-          type: integer
-          minimum: 0
-        followUp:
           type: integer
           minimum: 0
         callBack:

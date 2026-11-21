@@ -578,7 +578,7 @@ test("a call with several staff legs names who and when on each View call", asyn
   assert.match(timeline.textContent!, /:01\s[AP]M · maria@example\.test answered.*:09\s[AP]M · Nobody answered, no voicemail/)
 })
 
-test("an AI call that only ended reads Handled by AI, a stored resolved label reads Resolved by AI, and a message taken names its Task", async (t) => {
+test("an AI call that only ended reads Handled by AI, a stored resolved label reads Resolved by AI, and a created Task shows only its Task row", async (t) => {
   const conversation = conversationHarness(t)
   const ai = (id: string, minute: number, aiInteraction: Partial<NonNullable<ConversationTimelineItem["aiInteraction"]>>): ConversationTimelineItem => {
     const occurredAt = `2026-09-05T12:0${minute}:00Z`
@@ -606,9 +606,10 @@ test("an AI call that only ended reads Handled by AI, a stored resolved label re
   assert.deepEqual(read("Synthetic ended"), ["Handled by AI", "muted-foreground"])
   assert.deepEqual(read("Synthetic resolved"), ["Resolved by AI", "success"])
   assert.deepEqual(read("Synthetic booked"), ["Booked by AI", "success"])
-  assert.deepEqual(read("Synthetic message"), ["Message taken", "muted-foreground"])
+  assert.deepEqual(read("Synthetic message"), ["Task created", "muted-foreground"])
   await act(async () => lines().find((element) => element.textContent!.includes("Synthetic message"))!.click())
-  assert.match(timeline.textContent!, /AI took a message: "Synthetic refill request"/)
+  assert.match(timeline.textContent!, /Synthetic refill request/)
+  assert.doesNotMatch(timeline.textContent!, /AI took a message/)
   assert.doesNotMatch(timeline.textContent!, /transferred/)
 })
 

@@ -72,19 +72,18 @@ test("the second line says why the patient is waiting", () => {
 })
 
 test("filter chips count patients, never offer No owner, and offer Appointments only where it has something to offer", () => {
-  const counts = { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 0, unowned: 4 }
+  const counts = { all: 9, callBack: 3, texts: 2, appointments: 0, unowned: 4 }
   const values = (shown: ReturnType<typeof shownPatientWorkFilters>) => shown.map((filter) => filter.value)
 
   assert.deepEqual(shownPatientWorkFilters(counts, "all", false), [
     { value: "all", label: "All", count: 9 },
-    { value: "followUp", label: "Tasks", count: 4 },
     { value: "callBack", label: "Call back", count: 3 },
     { value: "texts", label: "Texts", count: 2 },
   ])
-  assert.deepEqual(values(shownPatientWorkFilters(counts, "all", true)), ["all", "followUp", "callBack", "texts", "appointments"])
-  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, appointments: 1 }, "all", false)), ["all", "followUp", "callBack", "texts", "appointments"])
-  assert.deepEqual(values(shownPatientWorkFilters(counts, "appointments", false)), ["all", "followUp", "callBack", "texts", "appointments"], "the active filter stays reachable at zero")
-  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, followUp: 0 }, "all", false)), ["all", "followUp", "callBack", "texts"], "Tasks is offered at zero")
+  assert.deepEqual(values(shownPatientWorkFilters(counts, "all", true)), ["all", "callBack", "texts", "appointments"])
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, appointments: 1 }, "all", false)), ["all", "callBack", "texts", "appointments"])
+  assert.deepEqual(values(shownPatientWorkFilters(counts, "appointments", false)), ["all", "callBack", "texts", "appointments"], "the active filter stays reachable at zero")
+  assert.deepEqual(values(shownPatientWorkFilters({ ...counts, callBack: 0 }, "all", false)), ["all", "callBack", "texts"], "Call back is offered at zero")
 })
 
 test("appointment checks are offered where Spring Hill is the office in view", () => {
@@ -97,9 +96,9 @@ test("appointment checks are offered where Spring Hill is the office in view", (
   assert.equal(offersAppointmentChecks([hollywood], ""), false)
 })
 
-test("the footer states how much is open for how many patients", () => {
-  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }), "14 open for 9 patients")
-  assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }), "1 open for 1 patient")
+test("the footer states how many patients need attention", () => {
+  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }), "9 patients need attention")
+  assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }), "1 patient needs attention")
 })
 
 test("after a Task is closed the next selection stays with the patient, then the neighbouring row", () => {
