@@ -7,6 +7,7 @@ import type {
   PatientWorkPage,
   PatientWorkQueryRequest,
   PatientWorkRow,
+  PatientWorkScope,
   PatientWorkTotals,
   StaffTaskCloseReason,
   Task,
@@ -28,7 +29,7 @@ import {
   workspaceLocationSearch,
   type WorkspacePageView,
 } from "./workspace-location.ts"
-import { patientWorkFilterLabels, type RailFilter } from "./vocabulary.ts"
+import { patientWorkFilterLabels, patientWorkScopeLabels, type RailFilter } from "./vocabulary.ts"
 import { resolveWorkspaceSearch } from "./workspace-search.ts"
 import {
   createWorkspaceRequestBudget,
@@ -56,6 +57,7 @@ export function isWorkView(view: WorkspaceView) {
 }
 
 type WorkspaceRailState = {
+  scope: PatientWorkScope
   filter: RailFilter
   completedExpanded: boolean
   scrollTop: number
@@ -257,7 +259,7 @@ export type WorkspaceProjectionIntent =
   | { type: "return-to-call" }
   | { type: "call-disposition"; result: CallingDispositionResult }
   | { type: "toggle-completed" }
-  | { type: "set-rail-view"; filter: RailFilter }
+  | { type: "set-rail-view"; scope?: PatientWorkScope; filter?: RailFilter }
   | { type: "remember-rail-scroll"; scrollTop: number }
   | { type: "navigation-changed" }
 
@@ -433,8 +435,8 @@ export function createWorkspaceProjection({
     ] =
       await Promise.all([
         authority.workspace(token, scope, signal),
-        loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, current.rail.filter), patientDepth, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied), windowDepth("completedTasks", current.completedTasks.items.length), signal),
+        loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, current.rail), patientDepth, signal),
+        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail.scope), windowDepth("completedTasks", current.completedTasks.items.length), signal),
         selectedTaskID
           ? authority.task(token, selectedTaskID, signal)
           : Promise.resolve(undefined),
@@ -453,7 +455,7 @@ export function createWorkspaceProjection({
         ),
       )
     const patientResult = storedFilterHidden
-      ? await loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, "all"), patientDepth, signal)
+      ? await loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, { ...current.rail, filter: "all" }), patientDepth, signal)
       : requestedPatients
     if (
       stopped || signal.aborted || generation !== scopeGeneration ||
@@ -950,7 +952,7 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "set-rail-view") {
-      updateRail((rail) => ({ ...rail, filter: intent.filter }))
+      updateRail((rail) => ({ ...rail, scope: intent.scope ?? rail.scope, filter: intent.filter ?? rail.filter }))
       await refreshTaskWindows(state.search.applied)
       return
     }
@@ -1073,7 +1075,7 @@ export function createWorkspaceProjection({
       const result = await authenticatedRequest((token, signal) =>
         authority.patients(
           token,
-          { ...patientQueryRequest(state.scope, state.search.applied, state.rail.filter), cursor: currentWindow.nextCursor },
+          { ...patientQueryRequest(state.scope, state.search.applied, state.rail), cursor: currentWindow.nextCursor },
           signal,
         ),
       )
@@ -1094,7 +1096,7 @@ export function createWorkspaceProjection({
     const result = await authenticatedRequest((token, signal) =>
       authority.tasks(
         token,
-        { ...completedTaskQueryRequest(state.scope, state.search.applied), cursor: currentWindow.nextCursor },
+        { ...completedTaskQueryRequest(state.scope, state.search.applied, state.rail.scope), cursor: currentWindow.nextCursor },
         signal,
       ),
     )
@@ -1458,7 +1460,7 @@ export function createWorkspaceProjection({
     const patientGeneration = ++queryGenerations.patients
     const completedGeneration = ++queryGenerations.completedTasks
     const scope = state.scope
-    const filter = state.rail.filter
+    const rail = state.rail
     windowLoads.patients = { query: patientGeneration, depth: 0 }
     windowLoads.completedTasks = { query: completedGeneration, depth: 0 }
     patch((current) => ({
@@ -1480,8 +1482,8 @@ export function createWorkspaceProjection({
     }))
     const result = await authenticatedRequest(async (token, signal) => {
       const [patients, completedTasks] = await Promise.all([
-        loadPatientWindow(token, patientQueryRequest(scope, search, filter), 0, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(scope, search), 0, signal),
+        loadPatientWindow(token, patientQueryRequest(scope, search, rail), 0, signal),
+        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail.scope), 0, signal),
       ])
       if (
         patients.kind === "unauthenticated" || patients.kind === "unauthorized"
@@ -1633,6 +1635,7 @@ const railPreferencesVersion = 2
 
 function emptyRailState(): WorkspaceRailState {
   return {
+    scope: "mine",
     filter: "all",
     completedExpanded: false,
     scrollTop: 0,
@@ -1655,11 +1658,13 @@ function restoreRailPreferences(
     if (
       value.version !== railPreferencesVersion ||
       !Object.hasOwn(patientWorkFilterLabels, String(value.filter)) ||
+      (value.scope !== undefined && !Object.hasOwn(patientWorkScopeLabels, String(value.scope))) ||
       !Number.isFinite(value.scrollTop)
     ) {
       return emptyRailState()
     }
     return {
+      scope: value.scope ?? "mine",
       filter: value.filter as RailFilter,
       completedExpanded: value.completedExpanded === true,
       scrollTop: Math.max(0, value.scrollTop ?? 0),
@@ -1713,12 +1718,13 @@ function restoreAuthorizedScope(
 function patientQueryRequest(
   scope: WorkspaceScope,
   search: string,
-  filter: RailFilter,
+  rail: Pick<WorkspaceRailState, "scope" | "filter">,
 ): PatientWorkQueryRequest {
+  const { filter } = rail
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
-    scope: "everyone",
+    scope: rail.scope,
     filter,
     ...(search ? { search } : {}),
     limit: 50,
@@ -1728,13 +1734,14 @@ function patientQueryRequest(
 function completedTaskQueryRequest(
   scope: WorkspaceScope,
   search: string,
+  patientScope: PatientWorkScope,
 ): TaskQueryRequest {
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
     state: "COMPLETED",
     ordering: "recent",
-    responsibility: "all",
+    responsibility: patientScope === "mine" ? "mine" : "all",
     includeCounts: false,
     ...(search ? { search } : {}),
     limit: 10,

@@ -51,7 +51,7 @@ import {
   RailLoading,
   RailShowMore,
 } from "./workspace-rail-groups"
-import { PatientFilterChips } from "./workspace-rail-filters"
+import { PatientFilterChips, PatientScopeToggle } from "./workspace-rail-filters"
 import { ProlongedOutageNotice } from "./workspace-rail-outage-notice"
 import { CompletedTaskRow, PatientRow } from "./workspace-rail-patient-row"
 
@@ -265,6 +265,10 @@ export function WorkspaceRail({
           onScroll={rememberScroll}
         >
           <div className="space-y-2 px-1 pt-2">
+            <PatientScopeToggle
+              scope={projection.rail.scope}
+              onChange={(scope) => onIntent({ type: "set-rail-view", scope })}
+            />
             <PatientFilterChips
               filter={projection.rail.filter}
               counts={patients.counts}
@@ -365,7 +369,7 @@ export function WorkspaceRail({
           <SidebarFooter className="border-t border-sidebar-border p-2">
             {connection === "degraded" && <ProlongedOutageNotice />}
             <p data-testid="patient-work-footer" className="px-2 text-xs leading-5 text-muted-foreground">
-              {patientWorkFooter(patients.totals)}
+              {patientWorkFooter(patients.totals, projection.rail.scope)}
             </p>
             {callingStatus}
           </SidebarFooter>

@@ -96,9 +96,11 @@ test("appointment checks are offered where Spring Hill is the office in view", (
   assert.equal(offersAppointmentChecks([hollywood], ""), false)
 })
 
-test("the footer states how many patients need attention", () => {
-  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }), "9 patients need attention")
-  assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }), "1 patient needs attention")
+test("the footer states how many patients need attention, and under Mine how many more are under Everyone", () => {
+  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }, "everyone"), "9 patients need attention")
+  assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }, "everyone"), "1 patient needs attention")
+  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }, "mine"), "9 patients need you · 2 more under Everyone")
+  assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }, "mine"), "1 patient needs you")
 })
 
 test("after a Task is closed the next selection stays with the patient, then the neighbouring row", () => {

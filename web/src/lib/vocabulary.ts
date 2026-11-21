@@ -14,6 +14,7 @@ import type {
   OperatorAiAnalyticsRange,
   OperatorAiCallIssueOutcome,
   PatientWorkFilter,
+  PatientWorkScope,
   StaffTaskCategory,
   StaffTaskCloseReason,
   StaffTaskUrgency,
@@ -295,6 +296,11 @@ export function formatPhone(value: string) {
   if (local.length !== 10) return value
   return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`
 }
+
+export const patientWorkScopeLabels = {
+  mine: "Mine",
+  everyone: "Everyone",
+} satisfies Record<PatientWorkScope, string>
 
 export const patientWorkFilterLabels = {
   all: "All",

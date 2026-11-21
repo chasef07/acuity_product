@@ -73,6 +73,7 @@ export function projectedWorkspace(task: Task): WorkspaceProjectionState {
     detailRevision: 0,
     completion: { pending: [], errors: {} },
     rail: {
+      scope: "mine",
       filter: "all",
       completedExpanded: false,
       scrollTop: 0,
