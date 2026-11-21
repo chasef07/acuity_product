@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.9.0](https://github.com/chasef07/acuity_product/compare/v3.8.0...v3.9.0) (2026-11-21)
+
+
+### Features
+
+* **analytics:** price GPT-6.1 Terra delegator usage alongside Luna ([#663](https://github.com/chasef07/acuity_product/issues/663)) ([6fe6320](https://github.com/chasef07/acuity_product/commit/6fe632018d575010de52220b9c80f6ea2c73df7a))
+* **workspace:** newest-first Work rail with group filter, routed text replies, blocked senders, and close all ([#662](https://github.com/chasef07/acuity_product/issues/662)) ([5d247bd](https://github.com/chasef07/acuity_product/commit/5d247bdcc4a6cdd915e9d1779681710b78a92e0d))
+
 ## [3.8.0](https://github.com/chasef07/acuity_product/compare/v3.7.2...v3.8.0) (2026-11-21)
 
 
