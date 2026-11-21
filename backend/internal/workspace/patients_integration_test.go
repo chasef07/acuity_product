@@ -526,7 +526,7 @@ func TestPatientWorkSearchesAndPagesWithoutGapsOrDuplicates(t *testing.T) {
 		want = append(want, phone)
 	}
 	f.open(patientTask{origin: work.TaskOriginInboundMessageReview, office: "south", phone: want[0]})
-	want = []string{want[5], want[2], want[0], want[6], want[4], want[3], want[1]}
+	want = []string{want[0], want[6], want[5], want[4], want[3], want[2], want[1]}
 
 	command := workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Limit: 3}
 	got := []string{}
@@ -551,6 +551,11 @@ func TestPatientWorkSearchesAndPagesWithoutGapsOrDuplicates(t *testing.T) {
 		Filter: workspace.PatientWorkTexts, Cursor: command.Cursor,
 	}); !errors.Is(err, workspace.ErrInvalidInput) {
 		t.Fatalf("cursor reused under another filter = %v, want invalid input", err)
+	}
+
+	urgent := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkPriority})
+	if got := patientPhones(urgent); !slices.Equal(got, []string{"+17275550305", "+17275550302"}) || urgent.Counts.Priority != 2 {
+		t.Fatalf("High priority filter = %v with count %d, want the two high-priority patients newest first", got, urgent.Counts.Priority)
 	}
 
 	for _, search := range []string{"dolores", "(727) 555-0304"} {

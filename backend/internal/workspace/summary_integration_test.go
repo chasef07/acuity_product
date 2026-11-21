@@ -390,7 +390,7 @@ func TestPhoneSummaryKeepsReviewTasksAndLeavesOutExpiredAndOtherPracticeWork(t *
 		t.Fatalf("insert inbound text: %v", err)
 	}
 	if err := fixture.work.EnsureInboundMessageReview(
-		ctx, tx, fixture.practiceID, office, phone, threadID, messageID, now,
+		ctx, tx, fixture.practiceID, office, phone, threadID, messageID, "", now,
 	); err != nil {
 		t.Fatalf("ensure text review: %v", err)
 	}

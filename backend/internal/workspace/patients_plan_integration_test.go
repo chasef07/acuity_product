@@ -71,19 +71,19 @@ func TestPatientWorkQueriesDoNotScanEveryTask(t *testing.T) {
 	}{
 		{
 			"page",
-			patientWorkPageSQL(PatientWorkMine, PatientWorkAll, taskSearch{}),
-			[]any{practiceID, locationIDs, "", "", "synthetic@staff.test", false, false, time.Unix(0, 0), "", 51},
+			patientWorkPageSQL(PatientWorkMine, PatientWorkAll, "true", taskSearch{}),
+			[]any{practiceID, locationIDs, "", "", "synthetic@staff.test", false, time.Unix(0, 0), "", 51},
 			51,
 		},
 		{
 			"unowned page",
-			patientWorkPageSQL(PatientWorkMine, PatientWorkUnowned, taskSearch{}),
-			[]any{practiceID, locationIDs, "", "", "synthetic@staff.test", false, false, time.Unix(0, 0), "", 51},
+			patientWorkPageSQL(PatientWorkMine, PatientWorkUnowned, "true", taskSearch{}),
+			[]any{practiceID, locationIDs, "", "", "synthetic@staff.test", false, time.Unix(0, 0), "", 51},
 			51,
 		},
 		{
 			"summary",
-			patientWorkSummarySQL(PatientWorkMine, taskSearch{}),
+			patientWorkSummarySQL(PatientWorkMine, "true", taskSearch{}),
 			[]any{practiceID, locationIDs, "", "", "synthetic@staff.test"},
 			1,
 		},

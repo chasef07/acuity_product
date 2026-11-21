@@ -147,7 +147,7 @@ func (s *expiryScenario) inboundText(thread string, age time.Duration) {
 		id, thread, practiceID, locationID, phone, at); err != nil {
 		s.t.Fatalf("insert inbound text: %v", err)
 	}
-	if err := s.staff.EnsureInboundMessageReview(s.ctx, tx, practiceID, locationID, phone, thread, id, at); err != nil {
+	if err := s.staff.EnsureInboundMessageReview(s.ctx, tx, practiceID, locationID, phone, thread, id, "", at); err != nil {
 		s.t.Fatalf("ensure inbound text review: %v", err)
 	}
 	if err := tx.Commit(s.ctx); err != nil {

@@ -1,5 +1,6 @@
 import {
   changeTaskCategory as changeTaskCategoryRequest,
+  completePatientTasks as completePatientTasksRequest,
   completeTask as completeTaskRequest,
   readTask as readTaskRequest,
   renameTask as renameTaskRequest,
@@ -65,6 +66,15 @@ export function changeTaskCategory(task: TaskVersion, category: StaffTaskCategor
       ...transport,
       path: { taskId: task.id },
       body: { expectedVersion: task.version, category },
+    }),
+  )
+}
+
+export function completePatientTasks(phone: string, tasks: TaskVersion[], reason: StaffTaskCloseReason) {
+  return portalRequest((transport) =>
+    completePatientTasksRequest({
+      ...transport,
+      body: { phone, reason, tasks: tasks.map((task) => ({ id: task.id, expectedVersion: task.version })) },
     }),
   )
 }

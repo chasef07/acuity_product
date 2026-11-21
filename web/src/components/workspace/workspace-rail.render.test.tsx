@@ -50,7 +50,7 @@ const railTask: Task = {
   interactions: [],
 }
 
-const patients: Record<Exclude<PatientWorkFilter, "all"> | "followUp", PatientWorkRow> = {
+const patients: Record<Exclude<PatientWorkFilter, "all" | "highPriorityOnly"> | "followUp", PatientWorkRow> = {
   followUp: projectedPatient(
     { ...railTask, id: "follow-up", phone: "+13055550177", origin: "HUMAN_CALL_FOLLOW_UP", title: "Mail the surgery packet" },
     { displayName: "Marta Ruiz" },
@@ -82,7 +82,7 @@ function projection(
     patients: {
       ...base.patients,
       items: rows,
-      counts: { all: 9, callBack: 3, texts: 2, appointments: 1, unowned: 0 },
+      counts: { all: 9, callBack: 3, texts: 2, appointments: 1, unowned: 0, highPriorityOnly: 0 },
       totals: { openTasks: 14, patients: 9, patientsOutsideScope: 2 },
     },
     ...overrides,
@@ -191,7 +191,7 @@ test("filter chips count patients in one quiet tone and never offer No owner", (
   const chips = (state: WorkspaceProjectionState) =>
     [...rail(state).querySelectorAll("[aria-label='Filter patients'] button")]
   const base = projection([patients.callBack])
-  const counted = { ...base, patients: { ...base.patients, counts: { ...base.patients.counts, unowned: 4 } } }
+  const counted = { ...base, patients: { ...base.patients, counts: { ...base.patients.counts, unowned: 4, highPriorityOnly: 0 } } }
   assert.deepEqual(
     chips(counted).map((chip) => chip.textContent),
     ["All9", "Call back3", "Texts2", "Appointments1"],

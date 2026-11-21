@@ -170,6 +170,19 @@ test("a Task done today is checked and struck through, names its reason and who 
   assert.match(closed, /role="alert"[^>]*>The Task could not be reopened\./)
 })
 
+test("Close all is offered for two or more open Tasks and names how many when the list is capped", () => {
+  const closeAll = (markup: string) => new JSDOM(markup).window.document.querySelector('[data-testid="close-all-tasks"]')
+  const onCloseAll = () => {}
+  assert.equal(closeAll(renderToStaticMarkup(view({ summary: ready([fiveTasks[0]]), onCloseAll }))), null, "one Task needs no Close all")
+  assert.equal(closeAll(renderToStaticMarkup(view({ summary: ready(fiveTasks) }))), null, "no handler, no button")
+  const all = closeAll(renderToStaticMarkup(view({ summary: ready(fiveTasks), onCloseAll })))
+  assert.equal(all?.textContent, "Close all")
+  assert.equal(all?.getAttribute("aria-haspopup"), "menu", "it asks why the Tasks closed")
+  assert.equal(closeAll(renderToStaticMarkup(view({ summary: ready(fiveTasks, [], { openTaskCount: 12 }), onCloseAll })))?.textContent, "Close these 5")
+  const failed = renderToStaticMarkup(view({ summary: ready(fiveTasks), onCloseAll, closeAllFailure: "A Task changed elsewhere, so nothing was closed." }))
+  assert.match(failed, /role="alert"[^>]*>A Task changed elsewhere, so nothing was closed\./)
+})
+
 test("loading holds its heading and one row of space", () => {
   const current = fiveTasks[0]
   const loading = renderToStaticMarkup(view({ summary: { status: "loading" } }))
@@ -680,8 +693,8 @@ test("the chosen office reaches Call, and a Task call failure shows under the ac
 })
 
 test("the header reopens the patient panel, naming the open Tasks when there are some", async (t) => {
-  const button = (markup: string) => /<button[^>]*aria-pressed="(true|false)"[^>]*>(?:<svg.*?<\/svg>)?([^<]*open Tasks?)<\/button>/.exec(markup)
-  const toggle = (markup: string) => /<button[^>]*aria-pressed="(true|false)"[^>]*>(?:<svg.*?<\/svg>)?([^<]*)<\/button>/.exec(markup)?.[2]
+  const button = (markup: string) => /<button[^>]*aria-pressed="(true|false)"[^>]*>(?:<svg.*?<\/svg>)?(?:<span[^>]*>)?([^<]*open Tasks?)(?:<\/span>)?<\/button>/.exec(markup)
+  const toggle = (markup: string) => /<button[^>]*aria-pressed="(true|false)"[^>]*>(?:<svg.*?<\/svg>)?(?:<span[^>]*>)?([^<]*)(?:<\/span>)?<\/button>/.exec(markup)?.[2]
   assert.equal(toggle(header({ caller: caller([], 0) })), "Patient", "the patient panel can always be reopened")
   assert.equal(toggle(header()), "Patient")
   assert.equal(button(header({ caller: caller([], 1) }))?.[2], "1 open Task")

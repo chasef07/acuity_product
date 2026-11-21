@@ -291,7 +291,7 @@ func TestCourtesyReplyWithNoRecentAutomaticTextStillOpensAReview(t *testing.T) {
 	}
 }
 
-func TestCourtesyReplyStillOpensAReviewAfterAStaffTextOrWithAnAttachment(t *testing.T) {
+func TestStaffTextRepliesCloseCourtesyRouteToTheSenderAndRespectBlocks(t *testing.T) {
 	fixture := newAutomaticAcknowledgementTestFixture(t, true)
 	ctx := context.Background()
 	if processed, err := fixture.worker.QueueNextTaskAcknowledgement(ctx); err != nil || !processed {
@@ -332,8 +332,75 @@ func TestCourtesyReplyStillOpensAReviewAfterAStaffTextOrWithAnAttachment(t *test
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if reviews := reply("staff-ok", "ok", "", fixture.now.Add(4*time.Minute)); reviews != 1 {
-		t.Fatalf("ok after a staff question opened %d reviews, want 1", reviews)
+	if reviews := reply("staff-ok", "Thank you 👍", "", fixture.now.Add(4*time.Minute)); reviews != 0 {
+		t.Fatalf("thanks after a staff text opened %d reviews, want none", reviews)
+	}
+	if reviews := reply("staff-answer", "3pm works, see you then", "", fixture.now.Add(5*time.Minute)); reviews != 1 {
+		t.Fatalf("a real answer to a staff text opened %d reviews, want 1", reviews)
+	}
+	var routedTo *string
+	if err := fixture.pool.QueryRow(ctx, `SELECT routed_to_subject FROM work_tasks WHERE origin = 'INBOUND_MESSAGE_REVIEW' AND state = 'OPEN'`).Scan(&routedTo); err != nil {
+		t.Fatal(err)
+	}
+	if routedTo == nil || *routedTo != fixture.identity.Subject {
+		t.Fatalf("answer to a staff text routed to %v, want the staff member who texted (%s)", routedTo, fixture.identity.Subject)
+	}
+
+	if _, err := fixture.pool.Exec(ctx, `UPDATE work_tasks SET state = 'COMPLETED', completed_at = $1, completed_by_kind = 'SERVICE', completed_by_subject = 'test', close_reason = 'DONE', version = version + 1 WHERE origin = 'INBOUND_MESSAGE_REVIEW' AND state = 'OPEN'`, fixture.now.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	*fixture.clock = fixture.now.Add(6 * time.Minute)
+	if _, _, err := fixture.module.Send(ctx, messaging.SendCommand{
+		Identity: fixture.identity, PracticeID: fixture.practiceID, LocationID: fixture.locationID,
+		Destination: fixture.task.Phone, Body: "STOP", IdempotencyKey: "staff-stop",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if reviews := reply("opt-out-confirmation", "You are now opted out. No more messages will be sent.", "", fixture.now.Add(7*time.Minute)); reviews != 0 {
+		t.Fatalf("the opt-out confirmation after the office texted STOP opened %d reviews, want none", reviews)
+	}
+
+	block := func(blocked bool) {
+		t.Helper()
+		got, err := fixture.module.SetSenderBlocked(ctx, messaging.BlockSenderCommand{
+			Identity: fixture.identity, PracticeID: fixture.practiceID, LocationID: fixture.locationID,
+			Phone: fixture.task.Phone, Blocked: blocked,
+		})
+		if err != nil || got != blocked {
+			t.Fatalf("set blocked %t = %t, %v", blocked, got, err)
+		}
+		read, err := fixture.module.SenderBlocked(ctx, fixture.identity, fixture.practiceID, fixture.task.Phone)
+		if err != nil || read != blocked {
+			t.Fatalf("read blocked = %t, %v, want %t", read, err, blocked)
+		}
+	}
+	if reviews := reply("before-block", "Congrats! You won a gift card", "", fixture.now.Add(25*time.Hour)); reviews != 1 {
+		t.Fatalf("spam before blocking opened %d reviews, want 1", reviews)
+	}
+	*fixture.clock = fixture.now.Add(25*time.Hour + time.Minute)
+	block(true)
+	var stops int
+	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM messaging_messages WHERE direction = 'OUTBOUND' AND body = 'STOP' AND created_by_kind = 'HUMAN'`).Scan(&stops); err != nil || stops != 2 {
+		t.Fatalf("outbound STOP texts = %d, %v, want the staff one and one for the block", stops, err)
+	}
+	block(true)
+	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM messaging_messages WHERE direction = 'OUTBOUND' AND body = 'STOP'`).Scan(&stops); err != nil || stops != 2 {
+		t.Fatalf("blocking again sent another STOP: %d, %v", stops, err)
+	}
+	var reason string
+	if err := fixture.pool.QueryRow(ctx, `SELECT close_reason FROM work_tasks WHERE origin = 'INBOUND_MESSAGE_REVIEW' ORDER BY created_at DESC LIMIT 1`).Scan(&reason); err != nil || reason != "NOT_NEEDED" {
+		t.Fatalf("blocking closed the open review as %q, %v, want NOT_NEEDED", reason, err)
+	}
+	if reviews := reply("spam", "WIN A FREE CRUISE http://spam.example.test", "", fixture.now.Add(26*time.Hour)); reviews != 0 {
+		t.Fatalf("a blocked sender opened %d reviews, want none", reviews)
+	}
+	var stored int
+	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM messaging_messages WHERE direction = 'INBOUND' AND body LIKE 'WIN A FREE%'`).Scan(&stored); err != nil || stored != 1 {
+		t.Fatalf("blocked text stored %d times, %v, want it kept as evidence", stored, err)
+	}
+	block(false)
+	if reviews := reply("after-unblock", "Sorry, wrong number earlier", "", fixture.now.Add(50*time.Hour)); reviews != 1 {
+		t.Fatalf("after unblocking a text opened %d reviews, want 1", reviews)
 	}
 }
 

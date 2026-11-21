@@ -18,7 +18,9 @@ export function patientWorkFilterShown(
   counts: PatientWorkCounts,
   appointmentsOffered: boolean,
 ) {
-  return filter !== "appointments" || appointmentsOffered || counts.appointments > 0
+  if (filter === "appointments") return appointmentsOffered || counts.appointments > 0
+  if (filter === "highPriorityOnly") return counts.highPriorityOnly > 0
+  return true
 }
 
 export function shownPatientWorkFilters(

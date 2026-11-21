@@ -86,7 +86,7 @@ func TestCommunicationReviewsStaySharedWithinAuthorizedLocations(t *testing.T) {
 		if _, err := tx.Exec(ctx, `INSERT INTO messaging_messages(id,thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,provider_message_id,created_at,updated_at) VALUES($1::uuid,$2,$3,$4,'INBOUND','Synthetic request','+15555550123','+15555550100','DELIVERED',$1::text,$5,$5)`, messageID, threadID, auth.Practice.ID, locationID, now); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.EnsureInboundMessageReview(ctx, tx, auth.Practice.ID, locationID, "+15555550123", threadID, messageID, now); err != nil {
+		if err := m.EnsureInboundMessageReview(ctx, tx, auth.Practice.ID, locationID, "+15555550123", threadID, messageID, "", now); err != nil {
 			t.Fatal(err)
 		}
 		if err := m.EnsureAppointmentReview(ctx, tx, uuid.NewString(), auth.Practice.ID, locationID, "+15555550126", "synthetic-appointment-"+key, "BOOKED", "Check the synthetic appointment.", now); err != nil {

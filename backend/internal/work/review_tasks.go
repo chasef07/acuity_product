@@ -57,16 +57,16 @@ func (m *Module) EnsureAppointmentReview(ctx context.Context, tx pgx.Tx, interac
 	return m.recordReviewActivity(ctx, tx, id, practiceID, "TASK_CREATED", "appointment-review", occurredAt, nil)
 }
 
-func (m *Module) EnsureInboundMessageReview(ctx context.Context, tx pgx.Tx, practiceID, locationID, phone, threadID, messageID string, occurredAt time.Time) error {
+func (m *Module) EnsureInboundMessageReview(ctx context.Context, tx pgx.Tx, practiceID, locationID, phone, threadID, messageID, answeredStaffSubject string, occurredAt time.Time) error {
 	var id string
 	err := tx.QueryRow(ctx, `SELECT id::text FROM work_tasks WHERE message_thread_id=$1 AND origin='INBOUND_MESSAGE_REVIEW' AND state='OPEN' FOR UPDATE`, threadID).Scan(&id)
 	kind := "SOURCE_UPDATED"
 	if errors.Is(err, pgx.ErrNoRows) {
 		kind = "TASK_CREATED"
-		err = tx.QueryRow(ctx, `INSERT INTO work_tasks(practice_id,location_id,phone,title,state,origin,urgency,created_by_kind,created_by_subject,created_at,updated_at,source_message_id,message_thread_id)
-  VALUES($1,$2,$3,'Review inbound text','OPEN','INBOUND_MESSAGE_REVIEW','normal','SERVICE','inbound-message-review',$4,$4,$5,$6) RETURNING id::text`, practiceID, locationID, phone, occurredAt, messageID, threadID).Scan(&id)
+		err = tx.QueryRow(ctx, `INSERT INTO work_tasks(practice_id,location_id,phone,title,state,origin,urgency,created_by_kind,created_by_subject,created_at,updated_at,source_message_id,message_thread_id,routed_to_subject)
+  VALUES($1,$2,$3,'Review inbound text','OPEN','INBOUND_MESSAGE_REVIEW','normal','SERVICE','inbound-message-review',$4,$4,$5,$6,NULLIF($7,'')) RETURNING id::text`, practiceID, locationID, phone, occurredAt, messageID, threadID, answeredStaffSubject).Scan(&id)
 	} else if err == nil {
-		_, err = tx.Exec(ctx, `UPDATE work_tasks SET version=version+1,updated_at=GREATEST(updated_at,$2) WHERE id=$1`, id, occurredAt)
+		_, err = tx.Exec(ctx, `UPDATE work_tasks SET version=version+1,updated_at=GREATEST(updated_at,$2),routed_to_subject=COALESCE(NULLIF($3,''),routed_to_subject) WHERE id=$1`, id, occurredAt, answeredStaffSubject)
 	}
 	if err != nil {
 		return err

@@ -249,7 +249,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 
 	now = now.Add(time.Minute)
 	inbound := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.received","id":"http-inbound-event","occurred_at":"%s","payload":{"id":"http-provider-inbound-1","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100","status":"webhook_delivered"}],"text":"Thank you."}}}`,
+		`{"data":{"record_type":"event","event_type":"message.received","id":"http-inbound-event","occurred_at":"%s","payload":{"id":"http-provider-inbound-1","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100","status":"webhook_delivered"}],"text":"Can I move my appointment?"}}}`,
 		now.Format(time.RFC3339),
 	))
 	deliverSignedWebhook(
@@ -288,7 +288,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	if len(timelineMessages) != 2 ||
 		timelineMessages[0].Delivery != api.MessageDeliveryStateDelivered ||
 		timelineMessages[1].Direction != api.MessageDirectionINBOUND ||
-		timelineMessages[1].Body != "Thank you." {
+		timelineMessages[1].Body != "Can I move my appointment?" {
 		t.Fatalf("HTTP conversation timeline = %#v", timeline)
 	}
 	if senderOf(timelineMessages[0]) != identity.Email || senderOf(timelineMessages[1]) != "" {

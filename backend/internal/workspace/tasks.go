@@ -615,8 +615,9 @@ func taskResponsibilityFilter(responsibility string, email string) string {
  WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
  AND responsibility.category=task.category AND ` + responsibilityOwnerIsLive
 	return `
- AND (` + responsibility + `::text <> 'mine' OR task.category IS NULL
- OR ` + work.TaskIsCommunicationReviewSQL + `
+ AND (` + responsibility + `::text <> 'mine'
+ OR (` + work.TaskIsCommunicationReviewSQL + ` AND ` + routedReviewIsFor(email) + `)
+ OR (` + work.TaskIsFollowUpSQL + ` AND (task.category IS NULL
  OR NOT ` + owner + `)
- OR ` + owner + ` AND responsibility.account_email=` + email + `))`
+ OR ` + owner + ` AND responsibility.account_email=` + email + `))))`
 }

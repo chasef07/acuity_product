@@ -454,7 +454,7 @@ test("temporary token failure keeps Task completion retryable without expiring t
 test("each page of patients brings the counts and totals the list shows", async () => {
   const realtime = deterministicRealtime()
   const requests: PatientWorkQueryRequest[] = []
-  const counts = { all: 6, callBack: 2, texts: 1, appointments: 0, unowned: 3 }
+  const counts = { all: 6, callBack: 2, texts: 1, appointments: 0, unowned: 3, highPriorityOnly: 0 }
   const totals = { openTasks: 9, patients: 7, patientsOutsideScope: 1 }
   const projection = createWorkspaceProjection({
     authority: {
@@ -489,7 +489,7 @@ test("each page of patients brings the counts and totals the list shows", async 
 
 test("rail preferences restore through the projection and corrupted or older values fail safe", async () => {
   const key = "acuity.attentionRail.user-1.practice-1"
-  const fresh = { scope: "mine", filter: "all", completedExpanded: false, scrollTop: 0 }
+  const fresh = { scope: "mine", filter: "all", groups: [], completedExpanded: false, scrollTop: 0 }
   for (const [stored, restored] of [
     [{ scrollTop: "not-a-number", taskCategory: "obsolete", expanded: ["unknown"] }, fresh],
     [{ version: 1, expanded: ["tasks", "texts"], taskResponsibility: "all", taskCategory: "optical", scrollTop: 120 }, fresh],
@@ -498,13 +498,17 @@ test("rail preferences restore through the projection and corrupted or older val
     [{ version: 2, scope: "everyone", filter: "unowned", completedExpanded: true, scrollTop: 64 }, fresh],
     [
       { version: 2, scope: "everyone", filter: "texts", completedExpanded: true, scrollTop: 64 },
-      { scope: "everyone", filter: "texts", completedExpanded: true, scrollTop: 64 },
+      { scope: "everyone", filter: "texts", groups: [], completedExpanded: true, scrollTop: 64 },
     ],
     [
       { version: 2, filter: "texts", completedExpanded: true, scrollTop: 64 },
-      { scope: "mine", filter: "texts", completedExpanded: true, scrollTop: 64 },
+      { scope: "mine", filter: "texts", groups: [], completedExpanded: true, scrollTop: 64 },
     ],
     [{ version: 2, scope: "mine", filter: "followUp", completedExpanded: false, scrollTop: 0 }, fresh],
+    [
+      { version: 2, scope: "mine", filter: "all", groups: ["post_op", "surgery", "pre_op"], completedExpanded: false, scrollTop: 0 },
+      { scope: "mine", filter: "all", groups: ["pre_op", "post_op"], completedExpanded: false, scrollTop: 0 },
+    ],
   ] as const) {
     const values = new Map<string, string>([[key, JSON.stringify(stored)]])
     const projection = createWorkspaceProjection({
@@ -535,11 +539,13 @@ test("rail preferences restore through the projection and corrupted or older val
   await projection.dispatch({ type: "toggle-completed" })
   await projection.dispatch({ type: "set-rail-view", filter: "callBack" })
   await projection.dispatch({ type: "set-rail-view", scope: "everyone" })
+  await projection.dispatch({ type: "set-rail-view", groups: ["pre_op"] })
   await projection.dispatch({ type: "remember-rail-scroll", scrollTop: 42 })
   assert.deepEqual(JSON.parse(values.get(key) ?? ""), {
     version: 2,
     scope: "everyone",
     filter: "callBack",
+    groups: ["pre_op"],
     completedExpanded: true,
     scrollTop: 42,
   })
@@ -1015,7 +1021,7 @@ function patientRow(top: Task, overrides: Partial<PatientWorkRow> = {}): Patient
 function patientPage(rows: PatientWorkRow[], nextCursor = ""): PatientWorkPage {
   return {
     rows,
-    counts: { all: rows.length, callBack: 0, texts: 0, appointments: 0, unowned: 0 },
+    counts: { all: rows.length, callBack: 0, texts: 0, appointments: 0, unowned: 0, highPriorityOnly: 0 },
     totals: { openTasks: rows.length, patients: rows.length, patientsOutsideScope: 0 },
     nextCursor,
   }
@@ -2274,7 +2280,7 @@ test("ticks save independently and each failure stays on its own Task", async ()
 })
 
 for (const [label, stored, counts, restored] of [
-  ["No owner, which is no longer offered, falls back to All", "unowned", { unowned: 3 }, "all"],
+  ["No owner, which is no longer offered, falls back to All", "unowned", { unowned: 3, highPriorityOnly: 0 }, "all"],
   ["Appt checks where none are offered or waiting falls back to All", "appointments", { appointments: 0 }, "all"],
   ["Appt checks with a check waiting is kept", "appointments", { appointments: 1 }, "appointments"],
   ["Call back with nothing to call back is kept", "callBack", { callBack: 0 }, "callBack"],

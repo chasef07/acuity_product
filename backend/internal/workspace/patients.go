@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ const (
 	PatientWorkTexts        PatientWorkFilter = "texts"
 	PatientWorkAppointments PatientWorkFilter = "appointments"
 	PatientWorkUnowned      PatientWorkFilter = "unowned"
+	PatientWorkPriority     PatientWorkFilter = "highPriorityOnly"
 )
 
 var patientWorkFilterSQL = map[PatientWorkFilter]string{
@@ -38,6 +40,7 @@ var patientWorkFilterSQL = map[PatientWorkFilter]string{
 	PatientWorkTexts:        `item.kind_rank = 1`,
 	PatientWorkAppointments: `item.kind_rank = 2`,
 	PatientWorkUnowned:      `item.unowned`,
+	PatientWorkPriority:     `item.high_priority`,
 }
 
 var patientWorkScopeSQL = map[PatientWorkScope]string{
@@ -52,6 +55,7 @@ type QueryPatientWorkCommand struct {
 	Search     string
 	Scope      PatientWorkScope
 	Filter     PatientWorkFilter
+	Groups     []work.TaskCategory
 	Cursor     string
 	Limit      int
 }
@@ -73,6 +77,7 @@ type PatientWorkCounts struct {
 	Texts        int
 	Appointments int
 	Unowned      int
+	Priority     int
 }
 
 type PatientWorkTotals struct {
@@ -107,12 +112,13 @@ func (m *Module) QueryPatientWork(
 	}
 	_, knownScope := patientWorkScopeSQL[command.Scope]
 	_, knownFilter := patientWorkFilterSQL[command.Filter]
+	groups, knownGroups := patientWorkGroupsSQL(command.Groups)
 	if m.database == nil || m.access == nil || command.PracticeID == "" ||
-		len(command.Search) > 500 || !knownScope || !knownFilter ||
+		len(command.Search) > 500 || !knownScope || !knownFilter || !knownGroups ||
 		limit < 1 || limit > 50 {
 		return PatientWorkPage{}, ErrInvalidInput
 	}
-	cursor, err := decodePatientWorkCursor(command.Cursor, command.Scope, command.Filter)
+	cursor, err := decodePatientWorkCursor(command.Cursor, command.Scope, command.Filter, command.Groups)
 	if err != nil {
 		return PatientWorkPage{}, ErrInvalidInput
 	}
@@ -135,9 +141,9 @@ func (m *Module) QueryPatientWork(
 	email := strings.ToLower(command.Identity.Email)
 
 	page := PatientWorkPage{Rows: make([]PatientWorkRow, 0, limit+1)}
-	rows, err := tx.Query(ctx, patientWorkPageSQL(command.Scope, command.Filter, search), search.arguments(
+	rows, err := tx.Query(ctx, patientWorkPageSQL(command.Scope, command.Filter, groups, search), search.arguments(
 		command.PracticeID, locationIDs, search.pattern, search.digits, email,
-		cursor.Present, cursor.HighPriority, cursor.ActivityAt, cursor.Phone, limit+1,
+		cursor.Present, cursor.ActivityAt, cursor.Phone, limit+1,
 	)...)
 	if err != nil {
 		return PatientWorkPage{}, fmt.Errorf("query patient work: %w", err)
@@ -164,11 +170,11 @@ func (m *Module) QueryPatientWork(
 	}
 	rows.Close()
 
-	if err := tx.QueryRow(ctx, patientWorkSummarySQL(command.Scope, search), search.arguments(
+	if err := tx.QueryRow(ctx, patientWorkSummarySQL(command.Scope, groups, search), search.arguments(
 		command.PracticeID, locationIDs, search.pattern, search.digits, email,
 	)...).Scan(
 		&page.Counts.All, &page.Counts.CallBack, &page.Counts.Texts,
-		&page.Counts.Appointments, &page.Counts.Unowned,
+		&page.Counts.Appointments, &page.Counts.Unowned, &page.Counts.Priority,
 		&page.Totals.OpenTasks, &page.Totals.Patients, &page.Totals.PatientsOutsideScope,
 	); err != nil {
 		return PatientWorkPage{}, fmt.Errorf("count patient work: %w", err)
@@ -178,11 +184,11 @@ func (m *Module) QueryPatientWork(
 		page.Rows = page.Rows[:limit]
 		last := page.Rows[limit-1]
 		page.NextCursor, err = encodePatientWorkCursor(patientWorkCursor{
-			Scope:        command.Scope,
-			Filter:       command.Filter,
-			HighPriority: last.HighPriority,
-			ActivityAt:   last.ActivityAt,
-			Phone:        last.Phone,
+			Scope:      command.Scope,
+			Filter:     command.Filter,
+			Groups:     command.Groups,
+			ActivityAt: last.ActivityAt,
+			Phone:      last.Phone,
 		})
 		if err != nil {
 			return PatientWorkPage{}, err
@@ -192,6 +198,23 @@ func (m *Module) QueryPatientWork(
 		return PatientWorkPage{}, fmt.Errorf("commit patient work query: %w", err)
 	}
 	return page, nil
+}
+
+const routedStaffCanReadTask = `
+			SELECT 1 FROM access_memberships routed
+			WHERE routed.practice_id = task.practice_id
+				AND routed.user_subject = task.routed_to_subject
+				AND routed.revoked_at IS NULL
+				AND (routed.location_scope = 'ALL' OR EXISTS (
+					SELECT 1 FROM access_membership_locations allowed
+					WHERE allowed.membership_id = routed.id
+						AND allowed.location_id = task.location_id
+				))`
+
+func routedReviewIsFor(email string) string {
+	return `(task.routed_to_subject IS NULL
+		OR NOT EXISTS (` + routedStaffCanReadTask + `)
+		OR EXISTS (` + routedStaffCanReadTask + ` AND lower(routed.email) = ` + email + `))`
 }
 
 const responsibilityOwnerIsLive = `EXISTS (
@@ -218,8 +241,26 @@ func patientDisplayNameSQL(phone string) string {
 	)`
 }
 
+func patientWorkGroupsSQL(groups []work.TaskCategory) (string, bool) {
+	if len(groups) == 0 {
+		return `true`, true
+	}
+	quoted := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if !slices.Contains(work.TaskCategories, group) {
+			return "", false
+		}
+		quoted = append(quoted, `'`+string(group)+`'`)
+	}
+	return work.TaskIsCommunicationReviewSQL + ` OR task.category IS NULL OR task.category IN (` + strings.Join(quoted, ",") + `)`, true
+}
+
+func patientWorkInScope(scope PatientWorkScope) string {
+	return `(` + patientWorkScopeSQL[scope] + ` AND item.in_groups)`
+}
+
 func patientWorkSearched(scope PatientWorkScope, search taskSearch) string {
-	matched := `bool_or(` + patientWorkScopeSQL[scope] + ` AND item.searched)`
+	matched := `bool_or(` + patientWorkInScope(scope) + ` AND item.searched)`
 	if search.pattern == "" {
 		return matched
 	}
@@ -229,6 +270,7 @@ func patientWorkSearched(scope PatientWorkScope, search taskSearch) string {
 func patientWorkSource(
 	scope PatientWorkScope,
 	filter PatientWorkFilter,
+	groups string,
 	search taskSearch,
 	searchLocations string,
 ) string {
@@ -256,7 +298,11 @@ func patientWorkSource(
 		CASE WHEN ` + work.TaskIsTextReviewSQL + ` THEN task.updated_at ELSE task.created_at END AS activity_at,
 		task.created_at,
 		(` + work.TaskIsFollowUpSQL + ` AND owner.category IS NULL) AS unowned,
-		(` + work.TaskIsCommunicationReviewSQL + ` OR owner.category IS NULL OR owner.mine) AS mine,
+		(
+			(` + work.TaskIsCommunicationReviewSQL + ` AND ` + routedReviewIsFor("$5") + `)
+			OR (` + work.TaskIsFollowUpSQL + ` AND (owner.category IS NULL OR owner.mine))
+		) AS mine,
+		(` + groups + `) AS in_groups,
 		(true` + search.filter(searchLocations) + `) AS searched
 	FROM work_tasks task
 	LEFT JOIN owner
@@ -269,14 +315,16 @@ func patientWorkSource(
 	SELECT
 		item.phone,
 		count(*) AS open_count,
-		count(*) FILTER (WHERE ` + patientWorkScopeSQL[scope] + `) AS scope_open_count,
+		count(*) FILTER (WHERE ` + patientWorkInScope(scope) + `) AS scope_open_count,
 		bool_or(item.unowned) AS has_unowned,
+		bool_or(item.in_groups) AS in_groups,
 		` + patientWorkSearched(scope, search) + ` AS searched,
-		bool_or(` + patientWorkScopeSQL[scope] + `) AS in_scope,
-		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 0) AS in_call_back,
-		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 1) AS in_texts,
-		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.kind_rank = 2) AS in_appointments,
-		bool_or(` + patientWorkScopeSQL[scope] + ` AND item.unowned) AS in_unowned,
+		bool_or(` + patientWorkInScope(scope) + `) AS in_scope,
+		bool_or(` + patientWorkInScope(scope) + ` AND item.kind_rank = 0) AS in_call_back,
+		bool_or(` + patientWorkInScope(scope) + ` AND item.kind_rank = 1) AS in_texts,
+		bool_or(` + patientWorkInScope(scope) + ` AND item.kind_rank = 2) AS in_appointments,
+		bool_or(` + patientWorkInScope(scope) + ` AND item.unowned) AS in_unowned,
+		bool_or(` + patientWorkInScope(scope) + ` AND item.high_priority) AS in_high_priority,
 		COALESCE(bool_or(item.high_priority) FILTER (WHERE ` + patientWorkHit(scope, filter) + `), false) AS high_priority,
 		max(item.activity_at) FILTER (WHERE ` + patientWorkHit(scope, filter) + `) AS activity_at,
 		min(item.created_at) FILTER (WHERE ` + patientWorkHit(scope, filter) + `) AS waiting_since
@@ -286,25 +334,18 @@ func patientWorkSource(
 }
 
 func patientWorkHit(scope PatientWorkScope, filter PatientWorkFilter) string {
-	return patientWorkScopeSQL[scope] + ` AND ` + patientWorkFilterSQL[filter]
+	return patientWorkInScope(scope) + ` AND ` + patientWorkFilterSQL[filter]
 }
 
-func patientWorkPageSQL(scope PatientWorkScope, filter PatientWorkFilter, search taskSearch) string {
-	return patientWorkSource(scope, filter, search, "$11") + `, page AS (
+func patientWorkPageSQL(scope PatientWorkScope, filter PatientWorkFilter, groups string, search taskSearch) string {
+	return patientWorkSource(scope, filter, groups, search, "$10") + `, page AS (
 	SELECT patient.phone, patient.open_count, patient.high_priority, patient.has_unowned, patient.activity_at, patient.waiting_since
 	FROM patient
 	WHERE patient.searched
 		AND patient.activity_at IS NOT NULL
-		AND (
-			NOT $6
-			OR (NOT patient.high_priority AND $7)
-			OR (
-				patient.high_priority = $7
-				AND (patient.activity_at, patient.phone) < ($8, $9)
-			)
-		)
-	ORDER BY patient.high_priority DESC, patient.activity_at DESC, patient.phone DESC
-	LIMIT $10
+		AND (NOT $6 OR (patient.activity_at, patient.phone) < ($7, $8))
+	ORDER BY patient.activity_at DESC, patient.phone DESC
+	LIMIT $9
 )
 SELECT
 	page.phone,
@@ -324,30 +365,31 @@ JOIN LATERAL (
 	LIMIT 1
 ) top ON true
 JOIN work_tasks task ON task.id = top.id` + taskProjectionJoins + `
-ORDER BY page.high_priority DESC, page.activity_at DESC, page.phone DESC`
+ORDER BY page.activity_at DESC, page.phone DESC`
 }
 
-func patientWorkSummarySQL(scope PatientWorkScope, search taskSearch) string {
-	return patientWorkSource(scope, PatientWorkAll, search, "$6") + `
+func patientWorkSummarySQL(scope PatientWorkScope, groups string, search taskSearch) string {
+	return patientWorkSource(scope, PatientWorkAll, groups, search, "$6") + `
 SELECT
 	count(*) FILTER (WHERE patient.searched AND patient.in_scope),
 	count(*) FILTER (WHERE patient.searched AND patient.in_call_back),
 	count(*) FILTER (WHERE patient.searched AND patient.in_texts),
 	count(*) FILTER (WHERE patient.searched AND patient.in_appointments),
 	count(*) FILTER (WHERE patient.searched AND patient.in_unowned),
+	count(*) FILTER (WHERE patient.searched AND patient.in_high_priority),
 	COALESCE(sum(patient.scope_open_count), 0),
 	count(*) FILTER (WHERE patient.in_scope),
-	count(*) FILTER (WHERE NOT patient.in_scope)
+	count(*) FILTER (WHERE patient.in_groups AND NOT patient.in_scope)
 FROM patient`
 }
 
 type patientWorkCursor struct {
-	Present      bool              `json:"-"`
-	Scope        PatientWorkScope  `json:"scope"`
-	Filter       PatientWorkFilter `json:"filter"`
-	HighPriority bool              `json:"highPriority"`
-	ActivityAt   time.Time         `json:"activityAt"`
-	Phone        string            `json:"phone"`
+	Present    bool                `json:"-"`
+	Scope      PatientWorkScope    `json:"scope"`
+	Filter     PatientWorkFilter   `json:"filter"`
+	Groups     []work.TaskCategory `json:"groups"`
+	ActivityAt time.Time           `json:"activityAt"`
+	Phone      string              `json:"phone"`
 }
 
 func encodePatientWorkCursor(cursor patientWorkCursor) (string, error) {
@@ -362,6 +404,7 @@ func decodePatientWorkCursor(
 	raw string,
 	scope PatientWorkScope,
 	filter PatientWorkFilter,
+	groups []work.TaskCategory,
 ) (patientWorkCursor, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -375,7 +418,7 @@ func decodePatientWorkCursor(
 	decoder := json.NewDecoder(bytes.NewReader(decoded))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cursor); err != nil || cursor.ActivityAt.IsZero() ||
-		cursor.Scope != scope || cursor.Filter != filter ||
+		cursor.Scope != scope || cursor.Filter != filter || !slices.Equal(cursor.Groups, groups) ||
 		!contactcontext.IsCanonicalPhone(cursor.Phone) {
 		return patientWorkCursor{}, ErrInvalidInput
 	}

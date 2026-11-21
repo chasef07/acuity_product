@@ -1,6 +1,7 @@
 package workspace_test
 
 import (
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func TestPatientWorkTreatsARosteredPlatformOperatorAsNoOwner(t *testing.T) {
 	}
 }
 
-func TestPatientWorkPagesAcrossPriorityAndTiedActivity(t *testing.T) {
+func TestPatientWorkPagesNewestFirstAcrossPriorityAndTiedActivity(t *testing.T) {
 	f := newPatientWorkFixture(t)
 	reader := f.activate("reader")
 	open := func(phone, urgency string, tied bool) {
@@ -103,8 +104,9 @@ func TestPatientWorkPagesAcrossPriorityAndTiedActivity(t *testing.T) {
 	open("+17275550506", "high_priority", false)
 	open("+17275550507", "normal", false)
 	want := []string{
-		"+17275550506", "+17275550502", "+17275550501",
-		"+17275550507", "+17275550505", "+17275550504", "+17275550503",
+		"+17275550507", "+17275550506",
+		"+17275550505", "+17275550504", "+17275550503",
+		"+17275550502", "+17275550501",
 	}
 	for limit := 1; limit <= len(want); limit++ {
 		command := workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Limit: limit}
@@ -211,5 +213,100 @@ func TestPatientWorkSearchMatchesTheDisplayedNameWithinScope(t *testing.T) {
 	}
 	if row := patientRow(t, f.query(workspace.QueryPatientWorkCommand{Identity: reader, Search: "marisol"}), textOnly); row.DisplayName != "Marisol Vega" {
 		t.Fatalf("text-only patient name = %q, want the thread's name", row.DisplayName)
+	}
+}
+
+func TestPatientWorkGroupsLimitFollowUpsAndKeepReviews(t *testing.T) {
+	f := newPatientWorkFixture(t)
+	reader := f.activate("reader")
+	const (
+		preOp     = "+17275550701"
+		insurance = "+17275550702"
+		texted    = "+17275550703"
+		voicemail = "+17275550704"
+		mixed     = "+17275550705"
+	)
+	ai := func(phone, category string) {
+		f.open(patientTask{origin: work.TaskOriginAbitaAI, office: "north", phone: phone, category: category})
+	}
+	ai(preOp, "pre_op")
+	ai(insurance, "insurance")
+	f.open(patientTask{origin: work.TaskOriginInboundMessageReview, office: "north", phone: texted})
+	f.open(patientTask{origin: work.TaskOriginVoicemail, office: "north", phone: voicemail, voicemail: 9000})
+	ai(mixed, "insurance")
+	ai(mixed, "pre_op")
+
+	page := f.query(workspace.QueryPatientWorkCommand{
+		Identity: reader, Scope: workspace.PatientWorkEveryone,
+		Groups: []work.TaskCategory{work.TaskCategoryPreOp},
+	})
+	assertPatients(t, "Pre-op group", page, preOp, texted, voicemail, mixed)
+	if page.Counts.All != 4 || page.Totals.Patients != 4 || page.Totals.OpenTasks != 4 {
+		t.Fatalf("Pre-op counts and totals = %+v %+v, want the insurance Tasks left out", page.Counts, page.Totals)
+	}
+	first := f.query(workspace.QueryPatientWorkCommand{
+		Identity: reader, Scope: workspace.PatientWorkEveryone, Limit: 1,
+		Groups: []work.TaskCategory{work.TaskCategoryPreOp},
+	})
+	if _, err := f.reads.QueryPatientWork(f.ctx, workspace.QueryPatientWorkCommand{
+		Identity: reader, PracticeID: f.practiceID, Scope: workspace.PatientWorkEveryone, Limit: 1, Cursor: first.NextCursor,
+	}); !errors.Is(err, workspace.ErrInvalidInput) {
+		t.Fatalf("cursor reused with other groups = %v, want invalid input", err)
+	}
+	mine := f.query(workspace.QueryPatientWorkCommand{
+		Identity: reader, Groups: []work.TaskCategory{work.TaskCategoryPreOp},
+	})
+	if mine.Totals.PatientsOutsideScope != 0 {
+		t.Fatalf("Mine outside scope = %d, want patients outside the chosen groups not offered under Everyone", mine.Totals.PatientsOutsideScope)
+	}
+	if _, err := f.reads.QueryPatientWork(f.ctx, workspace.QueryPatientWorkCommand{
+		Identity: reader, PracticeID: f.practiceID, Groups: []work.TaskCategory{"surgery'); DROP TABLE work_tasks; --"},
+	}); !errors.Is(err, workspace.ErrInvalidInput) {
+		t.Fatalf("unknown group = %v, want invalid input", err)
+	}
+}
+
+func TestPatientWorkRoutedTextReviewIsMineOnlyForItsStaffMember(t *testing.T) {
+	f := newPatientWorkFixture(t)
+	reader := f.activate("reader")
+	owner := f.activate("owner")
+	const (
+		shared        = "+17275550801"
+		routed        = "+17275550802"
+		outsideOffice = "+17275550803"
+	)
+	local := f.activate("local")
+	f.open(patientTask{origin: work.TaskOriginInboundMessageReview, office: "north", phone: shared})
+	route := func(phone, office string, to access.Identity) {
+		review := f.open(patientTask{origin: work.TaskOriginInboundMessageReview, office: office, phone: phone})
+		if _, err := f.db.Owner.Exec(f.ctx, `UPDATE work_tasks SET routed_to_subject=$2 WHERE id=$1`, review, to.Subject); err != nil {
+			t.Fatal(err)
+		}
+	}
+	route(routed, "north", owner)
+	route(outsideOffice, "south", local)
+
+	assertPatients(t, "Mine for the staff member who texted", f.query(workspace.QueryPatientWorkCommand{Identity: owner}), shared, routed, outsideOffice)
+	readerMine := f.query(workspace.QueryPatientWorkCommand{Identity: reader})
+	assertPatients(t, "Mine for everyone else, with a reply routed to someone who cannot see its office shared", readerMine, shared, outsideOffice)
+	if readerMine.Totals.PatientsOutsideScope != 1 {
+		t.Fatalf("outside scope = %d, want the routed reply offered under Everyone", readerMine.Totals.PatientsOutsideScope)
+	}
+	assertPatients(t, "Everyone", f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone}), shared, routed, outsideOffice)
+	for identity, want := range map[access.Identity][]string{reader: {shared, outsideOffice}, owner: {shared, routed, outsideOffice}} {
+		page, err := f.reads.QueryTasks(f.ctx, workspace.QueryTasksCommand{
+			Identity: identity, PracticeID: f.practiceID, Responsibility: "mine", Kind: "texts", Ordering: work.TaskOrderingRecent,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := []string{}
+		for _, task := range page.Items {
+			got = append(got, task.Phone)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Fatalf("Task query mine for %s = %v, want %v", identity.Email, got, want)
+		}
 	}
 }

@@ -1516,6 +1516,7 @@ func (server *Server) QueryPatientWork(w http.ResponseWriter, r *http.Request) {
 		Search:     stringValue(body.Search),
 		Scope:      workspace.PatientWorkScope(stringValue((*string)(body.Scope))),
 		Filter:     workspace.PatientWorkFilter(stringValue((*string)(body.Filter))),
+		Groups:     patientWorkGroups(body.Groups),
 		Cursor:     stringValue(body.Cursor),
 		Limit:      intValue(body.Limit),
 	})
@@ -3283,15 +3284,27 @@ func taskResponses(tasks []work.Task) ([]api.Task, error) {
 	return responses, nil
 }
 
+func patientWorkGroups(groups *[]api.StaffTaskCategory) []work.TaskCategory {
+	if groups == nil {
+		return nil
+	}
+	categories := make([]work.TaskCategory, 0, len(*groups))
+	for _, group := range *groups {
+		categories = append(categories, work.TaskCategory(group))
+	}
+	return categories
+}
+
 func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPage, error) {
 	response := api.PatientWorkPage{
 		Rows: make([]api.PatientWorkRow, 0, len(page.Rows)),
 		Counts: api.PatientWorkCounts{
-			All:          page.Counts.All,
-			CallBack:     page.Counts.CallBack,
-			Texts:        page.Counts.Texts,
-			Appointments: page.Counts.Appointments,
-			Unowned:      page.Counts.Unowned,
+			All:              page.Counts.All,
+			CallBack:         page.Counts.CallBack,
+			Texts:            page.Counts.Texts,
+			Appointments:     page.Counts.Appointments,
+			Unowned:          page.Counts.Unowned,
+			HighPriorityOnly: page.Counts.Priority,
 		},
 		Totals: api.PatientWorkTotals{
 			OpenTasks:            page.Totals.OpenTasks,
@@ -3796,3 +3809,75 @@ func intValue(value *int) int {
 }
 
 var _ IdentityAuthenticator = (*authn.JWKSAuthenticator)(nil)
+
+func (server *Server) ReadBlockedSender(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.portalIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.BlockedSenderReadRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	blocked, err := server.messaging.SenderBlocked(ctx, identity, body.PracticeId.String(), body.Phone)
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.BlockedSender{Blocked: blocked})
+}
+
+func (server *Server) SetBlockedSender(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.portalIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.BlockedSenderSetRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	blocked, err := server.messaging.SetSenderBlocked(ctx, messaging.BlockSenderCommand{
+		Identity:   identity,
+		PracticeID: body.PracticeId.String(),
+		LocationID: body.LocationId.String(),
+		Phone:      body.Phone,
+		Blocked:    body.Blocked,
+	})
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.BlockedSender{Blocked: blocked})
+}
+
+func (server *Server) CompletePatientTasks(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.portalIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.CompletePatientTasksRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	tasks := make([]work.ReviewedTask, 0, len(body.Tasks))
+	for _, task := range body.Tasks {
+		tasks = append(tasks, work.ReviewedTask{ID: task.Id.String(), ExpectedVersion: task.ExpectedVersion})
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	closed, err := server.work.CompletePatientTasks(ctx, work.CompletePatientTasksCommand{
+		Identity: identity,
+		Phone:    body.Phone,
+		Tasks:    tasks,
+		Reason:   staffCloseReason(body.Reason),
+	})
+	if err != nil {
+		server.writeDomainError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.CompletePatientTasksResult{Closed: closed})
+}
