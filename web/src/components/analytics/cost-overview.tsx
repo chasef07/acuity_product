@@ -285,12 +285,14 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
         </Table>
         <p className={styles.summaryCaption}>
           GPT Live uses recorded session seconds at $0.05 per minute, without
-          rounding up. Luna uses recorded tokens at Standard short-context rates;
-          cache reads and writes are separate from uncached input. Call reports
-          above 272,000 input tokens cannot establish the per-request context
-          tier, so Luna usage for those calls is unpriced. Long-context rates per
-          1M tokens are $0.20 input, $0.02 cached input, $0.25 cache writes, and
-          $0.75 output. Missing usage is unknown, not free. LiveKit media and
+          rounding up. Luna and Terra use recorded tokens at Standard
+          short-context rates; cache reads and writes are separate from uncached
+          input. Call reports above 272,000 input tokens for one model cannot
+          establish the per-request context tier, so that model’s usage for
+          those calls is unpriced. Long-context rates per 1M tokens are $0.20
+          input, $0.02 cached input, $0.25 cache writes, and $0.75 output for
+          Luna, and $2.00 input, $0.10 cached input, $2.50 cache writes, and
+          $7.50 output for Terra. Missing usage is unknown, not free. LiveKit media and
           Telnyx estimates use call duration. Other models remain unpriced. Estimates exclude tool charges, regional uplifts,
           taxes, and credits.
         </p>

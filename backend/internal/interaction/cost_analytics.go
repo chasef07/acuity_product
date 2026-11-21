@@ -60,7 +60,7 @@ type CostAnalytics struct {
 }
 
 const (
-	costRateEffectiveDate = "2026-09-25"
+	costRateEffectiveDate = "2026-11-21"
 	costMedia             = "media"
 	costTelephony         = "telephony"
 	costVoice             = "gpt_live"
@@ -68,7 +68,30 @@ const (
 	costLunaCached        = "luna_cached"
 	costLunaWrite         = "luna_write"
 	costLunaOutput        = "luna_output"
+	costTerraInput        = "terra_input"
+	costTerraCached       = "terra_cached"
+	costTerraWrite        = "terra_write"
+	costTerraOutput       = "terra_output"
+	shortContextTokens    = 272000
 )
+
+type tokenModel struct {
+	key, input, cached, write, output string
+}
+
+var tokenModels = []tokenModel{
+	{key: "gpt_6_luna", input: costLunaInput, cached: costLunaCached, write: costLunaWrite, output: costLunaOutput},
+	{key: "gpt_6_1_terra", input: costTerraInput, cached: costTerraCached, write: costTerraWrite, output: costTerraOutput},
+}
+
+func tokenModelFor(model string) (tokenModel, bool) {
+	for _, candidate := range tokenModels {
+		if candidate.key == model {
+			return candidate, true
+		}
+	}
+	return tokenModel{}, false
+}
 
 func costItems() []CostItem {
 	return []CostItem{
@@ -77,6 +100,10 @@ func costItems() []CostItem {
 		{ID: costLunaCached, Label: "GPT-6 Luna · cached input", Unit: "tokens", RateUSD: 0.01, RateQuantity: 1e6, RateUnit: "tokens"},
 		{ID: costLunaWrite, Label: "GPT-6 Luna · cache writes", Unit: "tokens", RateUSD: 0.125, RateQuantity: 1e6, RateUnit: "tokens"},
 		{ID: costLunaOutput, Label: "GPT-6 Luna · output", Unit: "tokens", RateUSD: 0.50, RateQuantity: 1e6, RateUnit: "tokens"},
+		{ID: costTerraInput, Label: "GPT-6.1 Terra · uncached input", Unit: "tokens", RateUSD: 1.00, RateQuantity: 1e6, RateUnit: "tokens"},
+		{ID: costTerraCached, Label: "GPT-6.1 Terra · cached input", Unit: "tokens", RateUSD: 0.05, RateQuantity: 1e6, RateUnit: "tokens"},
+		{ID: costTerraWrite, Label: "GPT-6.1 Terra · cache writes", Unit: "tokens", RateUSD: 1.25, RateQuantity: 1e6, RateUnit: "tokens"},
+		{ID: costTerraOutput, Label: "GPT-6.1 Terra · output", Unit: "tokens", RateUSD: 5.00, RateQuantity: 1e6, RateUnit: "tokens"},
 		{ID: costMedia, Label: "LiveKit · media", Unit: "minutes", RateUSD: 0.01, RateQuantity: 1, RateUnit: "minute"},
 		{ID: costTelephony, Label: "Telnyx · inbound SIP", Unit: "minutes", RateUSD: 0.0035, RateQuantity: 1, RateUnit: "minute"},
 	}
@@ -158,16 +185,17 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 	var entries []map[string]any
 	_ = json.Unmarshal(raw, &entries)
 	unpricedUsage := 0
-	var lunaInputTotal float64
+	inputTotals := map[string]float64{}
 	for _, entry := range entries {
 		model, _ := entry["model"].(string)
-		if usageType(entry) == "llm_usage" && costModelKey(model) == "gpt_6_luna" {
+		if usageType(entry) == "llm_usage" {
 			input, valid := usageQuantity(entry, "input_tokens", "inputTokens")
 			if valid {
-				lunaInputTotal += input
+				inputTotals[costModelKey(model)] += input
 			}
 		}
 	}
+	delegated := false
 	for _, entry := range entries {
 		provider, _ := entry["provider"].(string)
 		model, _ := entry["model"].(string)
@@ -189,17 +217,18 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 			input, a := usageQuantity(entry, "input_tokens", "inputTokens")
 			cached, b := usageQuantity(entry, "input_cached_tokens", "inputCachedTokens")
 			output, c := usageQuantity(entry, "output_tokens", "outputTokens")
-			if model == "gpt_6_luna" {
+			if priced, ok := tokenModelFor(model); ok {
 				writes, d := usageQuantity(entry, "input_cache_creation_tokens")
-				if !openAI || !a || !b || !c || !d || cached+writes > input || lunaInputTotal > 272000 {
+				if !openAI || !a || !b || !c || !d || cached+writes > input || inputTotals[model] > shortContextTokens {
 					unpricedUsage++
 					continue
 				}
-				quantities[costLunaInput] += input - cached - writes
-				quantities[costLunaCached] += cached
-				quantities[costLunaWrite] += writes
-				quantities[costLunaOutput] += output
-				known[costLunaInput], known[costLunaCached], known[costLunaWrite], known[costLunaOutput] = true, true, true, true
+				quantities[priced.input] += input - cached - writes
+				quantities[priced.cached] += cached
+				quantities[priced.write] += writes
+				quantities[priced.output] += output
+				known[priced.input], known[priced.cached], known[priced.write], known[priced.output] = true, true, true, true
+				delegated = true
 				continue
 			}
 			unpricedUsage++
@@ -207,7 +236,7 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 			unpricedUsage++
 		}
 	}
-	complete := unpricedUsage == 0 && known[costMedia] && known[costTelephony] && known[costVoice] && known[costLunaInput]
+	complete := unpricedUsage == 0 && known[costMedia] && known[costTelephony] && known[costVoice] && delegated
 	var callCost float64
 	for i := range report.Items {
 		item := &report.Items[i]
@@ -265,13 +294,17 @@ func (report *CostAnalytics) finalize() {
 			report.CostPerMinuteUSD = &perMinute
 		}
 	}
-	inputItem, cachedItem := costItemForID(report.Items, costLunaInput), costItemForID(report.Items, costLunaCached)
-	input := inputItem.Quantity + cachedItem.Quantity + costItemForID(report.Items, costLunaWrite).Quantity
+	var input, cached float64
+	for _, priced := range tokenModels {
+		inputItem, cachedItem := costItemForID(report.Items, priced.input), costItemForID(report.Items, priced.cached)
+		input += inputItem.Quantity + cachedItem.Quantity + costItemForID(report.Items, priced.write).Quantity
+		cached += cachedItem.Quantity
+		report.CacheSavingsUSD += inputItem.cost(cachedItem.Quantity) - cachedItem.cost(cachedItem.Quantity)
+	}
 	if input > 0 {
-		rate := cachedItem.Quantity / input * 100
+		rate := cached / input * 100
 		report.CacheHitRate = &rate
 	}
-	report.CacheSavingsUSD = inputItem.cost(cachedItem.Quantity) - cachedItem.cost(cachedItem.Quantity)
 }
 
 func (item CostItem) cost(quantity float64) float64 {
