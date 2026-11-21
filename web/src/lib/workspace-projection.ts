@@ -29,7 +29,7 @@ import {
   workspaceLocationSearch,
   type WorkspacePageView,
 } from "./workspace-location.ts"
-import { patientWorkFilterLabels, patientWorkScopeLabels, type RailFilter } from "./vocabulary.ts"
+import { patientWorkFilterLabels, type RailFilter } from "./vocabulary.ts"
 import { resolveWorkspaceSearch } from "./workspace-search.ts"
 import {
   createWorkspaceRequestBudget,
@@ -436,7 +436,7 @@ export function createWorkspaceProjection({
       await Promise.all([
         authority.workspace(token, scope, signal),
         loadPatientWindow(token, patientQueryRequest(current.scope, current.search.applied, current.rail), patientDepth, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail.scope), windowDepth("completedTasks", current.completedTasks.items.length), signal),
+        loadTaskWindow(token, completedTaskQueryRequest(current.scope, current.search.applied, current.rail), windowDepth("completedTasks", current.completedTasks.items.length), signal),
         selectedTaskID
           ? authority.task(token, selectedTaskID, signal)
           : Promise.resolve(undefined),
@@ -1096,7 +1096,7 @@ export function createWorkspaceProjection({
     const result = await authenticatedRequest((token, signal) =>
       authority.tasks(
         token,
-        { ...completedTaskQueryRequest(state.scope, state.search.applied, state.rail.scope), cursor: currentWindow.nextCursor },
+        { ...completedTaskQueryRequest(state.scope, state.search.applied, state.rail), cursor: currentWindow.nextCursor },
         signal,
       ),
     )
@@ -1483,7 +1483,7 @@ export function createWorkspaceProjection({
     const result = await authenticatedRequest(async (token, signal) => {
       const [patients, completedTasks] = await Promise.all([
         loadPatientWindow(token, patientQueryRequest(scope, search, rail), 0, signal),
-        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail.scope), 0, signal),
+        loadTaskWindow(token, completedTaskQueryRequest(scope, search, rail), 0, signal),
       ])
       if (
         patients.kind === "unauthenticated" || patients.kind === "unauthorized"
@@ -1658,7 +1658,7 @@ function restoreRailPreferences(
     if (
       value.version !== railPreferencesVersion ||
       !Object.hasOwn(patientWorkFilterLabels, String(value.filter)) ||
-      (value.scope !== undefined && !Object.hasOwn(patientWorkScopeLabels, String(value.scope))) ||
+      (value.scope !== undefined && value.scope !== "mine" && value.scope !== "everyone") ||
       !Number.isFinite(value.scrollTop)
     ) {
       return emptyRailState()
@@ -1720,12 +1720,11 @@ function patientQueryRequest(
   search: string,
   rail: Pick<WorkspaceRailState, "scope" | "filter">,
 ): PatientWorkQueryRequest {
-  const { filter } = rail
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
     scope: rail.scope,
-    filter,
+    filter: rail.filter,
     ...(search ? { search } : {}),
     limit: 50,
   }
@@ -1734,14 +1733,14 @@ function patientQueryRequest(
 function completedTaskQueryRequest(
   scope: WorkspaceScope,
   search: string,
-  patientScope: PatientWorkScope,
+  rail: Pick<WorkspaceRailState, "scope">,
 ): TaskQueryRequest {
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
     state: "COMPLETED",
     ordering: "recent",
-    responsibility: patientScope === "mine" ? "mine" : "all",
+    responsibility: rail.scope === "mine" ? "mine" : "all",
     includeCounts: false,
     ...(search ? { search } : {}),
     limit: 10,

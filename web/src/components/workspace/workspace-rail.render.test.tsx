@@ -225,22 +225,19 @@ test("the footer states the totals for the scope in view", () => {
     const base = projection([patients.callBack])
     return rail({ ...base, rail: { ...base.rail, scope } }).querySelector("[data-testid='patient-work-footer']")?.textContent
   }
-  assert.equal(footer("mine"), "9 patients need you · 2 more under Everyone")
+  assert.equal(footer("mine"), "9 patients need you")
   assert.equal(footer("everyone"), "9 patients need attention")
 })
 
-test("the scope switch shows Mine and Everyone with the one in view pressed", () => {
-  for (const scope of ["mine", "everyone"] as const) {
-    const base = projection([patients.callBack])
-    const items = [...rail({ ...base, rail: { ...base.rail, scope } }).querySelectorAll("[aria-label='Whose patients'] button")]
-    assert.deepEqual(items.map((item) => item.textContent), ["Mine", "Everyone"])
-    assert.deepEqual(items.map((item) => item.getAttribute("aria-pressed")), scope === "mine" ? ["true", "false"] : ["false", "true"])
-  }
-})
+test("the footer link switches between Mine and everyone's patients", async (t) => {
+  const base = projection([patients.callBack])
+  const link = (state: WorkspaceProjectionState) => rail(state).querySelector("[data-testid='patient-scope-switch']")?.textContent
+  assert.equal(link(base), "Show 2 more from everyone")
+  assert.equal(link({ ...base, patients: { ...base.patients, totals: { ...base.patients.totals, patientsOutsideScope: 0 } } }), undefined)
+  assert.equal(link({ ...base, rail: { ...base.rail, scope: "everyone" } }), "Show only mine")
 
-test("choosing Everyone asks for everyone's patients", async (t) => {
-  const page = await mountedRail(t, projection([patients.callBack]))
-  await page.chooseScope("Everyone")
+  const page = await mountedRail(t, base)
+  await page.chooseScope()
   assert.deepEqual(page.intents.filter((intent) => intent.startsWith("set-rail-view")), ["set-rail-view:everyone"])
 })
 
@@ -410,8 +407,8 @@ async function mountedRail(t: TestContext, initial: WorkspaceProjectionState) {
       Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, value)
       input.dispatchEvent(new dom.window.Event("input", { bubbles: true }))
     }),
-    chooseScope: (label: string) => act(async () => {
-      [...host.querySelectorAll("[aria-label='Whose patients'] button")].find((button) => button.textContent === label)!
+    chooseScope: () => act(async () => {
+      host.querySelector("[data-testid='patient-scope-switch']")!
         .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, detail: 1 }))
     }),
     pointerClick: (phone: string) => activate(phone, 1),

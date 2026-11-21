@@ -8,6 +8,7 @@ import {
   offersAppointmentChecks,
   patientName,
   openTaskReason,
+  patientScopeSwitch,
   patientWorkFooter,
   rowChangedAtAfter,
   rowClickAllowed,
@@ -96,11 +97,17 @@ test("appointment checks are offered where Spring Hill is the office in view", (
   assert.equal(offersAppointmentChecks([hollywood], ""), false)
 })
 
-test("the footer states how many patients need attention, and under Mine how many more are under Everyone", () => {
+test("the footer states how many patients need you under Mine and need attention under Everyone", () => {
   assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }, "everyone"), "9 patients need attention")
   assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }, "everyone"), "1 patient needs attention")
-  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }, "mine"), "9 patients need you · 2 more under Everyone")
+  assert.equal(patientWorkFooter({ openTasks: 14, patients: 9, patientsOutsideScope: 2 }, "mine"), "9 patients need you")
   assert.equal(patientWorkFooter({ openTasks: 1, patients: 1, patientsOutsideScope: 0 }, "mine"), "1 patient needs you")
+})
+
+test("the footer offers everyone's patients only when Mine hides some, and always offers the way back", () => {
+  assert.deepEqual(patientScopeSwitch({ openTasks: 14, patients: 9, patientsOutsideScope: 5 }, "mine"), { scope: "everyone", label: "Show 5 more from everyone" })
+  assert.equal(patientScopeSwitch({ openTasks: 9, patients: 9, patientsOutsideScope: 0 }, "mine"), undefined)
+  assert.deepEqual(patientScopeSwitch({ openTasks: 14, patients: 14, patientsOutsideScope: 0 }, "everyone"), { scope: "mine", label: "Show only mine" })
 })
 
 test("after a Task is closed the next selection stays with the patient, then the neighbouring row", () => {

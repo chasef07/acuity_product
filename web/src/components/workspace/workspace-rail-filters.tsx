@@ -1,46 +1,10 @@
 "use client"
 
 import { Badge } from "@/components/ui/badge"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import type { PatientWorkCounts, PatientWorkScope } from "@/lib/api/generated/types.gen"
+import type { PatientWorkCounts } from "@/lib/api/generated/types.gen"
 import { shownPatientWorkFilters } from "@/lib/patient-work"
-import { labelOptions, patientWorkScopeLabels, type RailFilter } from "@/lib/vocabulary"
+import type { RailFilter } from "@/lib/vocabulary"
 import { cn } from "@/lib/utils"
-
-const patientWorkScopes = labelOptions(patientWorkScopeLabels)
-
-export function PatientScopeToggle({
-  scope,
-  onChange,
-}: {
-  scope: PatientWorkScope
-  onChange: (scope: PatientWorkScope) => void
-}) {
-  return (
-    <ToggleGroup
-      aria-label="Whose patients"
-      variant="segmented"
-      size="sm"
-      spacing={0}
-      className="w-full"
-      value={[scope]}
-      onValueChange={(values) => {
-        const next = patientWorkScopes.find((option) => option.value === values[0])
-        if (next) onChange(next.value)
-      }}
-    >
-      {patientWorkScopes.map((option) => (
-        <ToggleGroupItem
-          key={option.value}
-          value={option.value}
-          className="h-7 flex-1 text-xs data-pressed:bg-background data-pressed:shadow-xs"
-        >
-          {option.label}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
-  )
-}
 
 export function PatientFilterChips({
   filter,

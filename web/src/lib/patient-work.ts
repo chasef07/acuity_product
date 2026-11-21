@@ -72,12 +72,19 @@ export function openTaskReason(
 
 export function patientWorkFooter(totals: PatientWorkTotals, scope: PatientWorkScope) {
   const verb = scope === "mine" ? "you" : "attention"
-  const patients = totals.patients === 1
+  return totals.patients === 1
     ? `1 patient needs ${verb}`
     : `${totals.patients} patients need ${verb}`
-  return scope === "mine" && totals.patientsOutsideScope > 0
-    ? `${patients} · ${totals.patientsOutsideScope} more under Everyone`
-    : patients
+}
+
+export function patientScopeSwitch(
+  totals: PatientWorkTotals,
+  scope: PatientWorkScope,
+): { scope: PatientWorkScope; label: string } | undefined {
+  if (scope === "everyone") return { scope: "mine", label: "Show only mine" }
+  return totals.patientsOutsideScope > 0
+    ? { scope: "everyone", label: `Show ${totals.patientsOutsideScope} more from everyone` }
+    : undefined
 }
 
 export function nextAfterClose({
