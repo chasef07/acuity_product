@@ -50,7 +50,7 @@ const railTask: Task = {
   interactions: [],
 }
 
-const patients: Record<Exclude<PatientWorkFilter, "all">, PatientWorkRow> = {
+const patients: Record<Exclude<PatientWorkFilter, "all"> | "followUp", PatientWorkRow> = {
   followUp: projectedPatient(
     { ...railTask, id: "follow-up", phone: "+13055550177", origin: "HUMAN_CALL_FOLLOW_UP", title: "Mail the surgery packet" },
     { displayName: "Marta Ruiz" },
@@ -82,7 +82,7 @@ function projection(
     patients: {
       ...base.patients,
       items: rows,
-      counts: { all: 9, followUp: 4, callBack: 3, texts: 2, appointments: 1, unowned: 0 },
+      counts: { all: 9, callBack: 3, texts: 2, appointments: 1, unowned: 0 },
       totals: { openTasks: 14, patients: 9, patientsOutsideScope: 2 },
     },
     ...overrides,
@@ -106,7 +106,7 @@ function rowText(document: Document, phone: string, part: "name" | "count" | "re
 
 test("each filter lists one row per patient with why that patient is waiting", () => {
   for (const [filter, row, name, reason] of [
-    ["followUp", patients.followUp, "Marta Ruiz", "Mail the surgery packet"],
+    ["all", patients.followUp, "Marta Ruiz", "Mail the surgery packet"],
     ["callBack", patients.callBack, "Dolores Vega", "Voicemail · 0:38"],
     ["texts", patients.texts, "Priya Raman", "Is Dr. Shah in on Friday?"],
     ["appointments", patients.appointments, "(352) 555-0110", "Verify Nov 14 appointment"],
@@ -194,7 +194,7 @@ test("filter chips count patients in one quiet tone and never offer No owner", (
   const counted = { ...base, patients: { ...base.patients, counts: { ...base.patients.counts, unowned: 4 } } }
   assert.deepEqual(
     chips(counted).map((chip) => chip.textContent),
-    ["All9", "Tasks4", "Call back3", "Texts2", "Appointments1"],
+    ["All9", "Call back3", "Texts2", "Appointments1"],
   )
   assert.ok(chips(counted).every((chip) => !(chip.getAttribute("class") ?? "").split(/\s+/).some((name) => /^(text|bg)-destructive$/.test(name))))
   const withoutAppointments = chips({
@@ -203,14 +203,14 @@ test("filter chips count patients in one quiet tone and never offer No owner", (
   })
   assert.deepEqual(
     withoutAppointments.map((chip) => chip.getAttribute("data-filter")),
-    ["all", "followUp", "callBack", "texts"],
+    ["all", "callBack", "texts"],
     "Appointments is offered only where appointment checks exist",
   )
 })
 
 test("the active chip is filled with the primary colour", () => {
   const base = projection([patients.callBack])
-  for (const filter of ["all", "followUp", "callBack", "texts", "appointments"] as const) {
+  for (const filter of ["all", "callBack", "texts", "appointments"] as const) {
     const document = rail({ ...base, rail: { ...base.rail, filter } })
     for (const chip of document.querySelectorAll("[aria-label='Filter patients'] button")) {
       const classes = (chip.getAttribute("class") ?? "").split(/\s+/)
@@ -222,7 +222,7 @@ test("the active chip is filled with the primary colour", () => {
 
 test("the footer states the totals", () => {
   const footer = rail(projection([patients.callBack])).querySelector("[data-testid='patient-work-footer']")?.textContent
-  assert.equal(footer, "14 open for 9 patients")
+  assert.equal(footer, "9 patients need attention")
 })
 
 test("the list says when it is loading, empty, failed, or has more to show", () => {

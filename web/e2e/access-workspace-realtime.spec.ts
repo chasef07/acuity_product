@@ -710,7 +710,7 @@ async function expectNoOpenTasks(page: Page) {
   const patients = page.getByRole("group", { name: "Patients with open work", exact: true })
   await expect(patients).toBeVisible()
   await expect(patients.getByText("Nothing waiting here.")).toBeVisible()
-  await expect(page.getByTestId("patient-work-footer")).toHaveText("0 open for 0 patients")
+  await expect(page.getByTestId("patient-work-footer")).toHaveText("0 patients need attention")
 }
 
 async function abortFirstRealtimeRequest(page: Page) {

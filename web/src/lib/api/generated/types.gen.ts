@@ -757,9 +757,9 @@ export type TaskInteraction = {
 export type PatientWorkScope = 'mine' | 'everyone';
 
 /**
- * followUp matches follow-up Tasks created by the AI, after a staff call, or after a staff text. callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
+ * callBack matches missed-call and voicemail reviews, texts matches text reviews, appointments matches appointment reviews, and unowned matches follow-up Tasks whose category has no owner. A person listed for the category is its owner at a Location only while they hold an unrevoked membership that includes the Task's Location.
  */
-export type PatientWorkFilter = 'all' | 'followUp' | 'callBack' | 'texts' | 'appointments' | 'unowned';
+export type PatientWorkFilter = 'all' | 'callBack' | 'texts' | 'appointments' | 'unowned';
 
 export type PatientWorkQueryRequest = {
     practiceId: string;
@@ -815,7 +815,6 @@ export type PatientWorkRow = {
  */
 export type PatientWorkCounts = {
     all: number;
-    followUp: number;
     callBack: number;
     texts: number;
     appointments: number;

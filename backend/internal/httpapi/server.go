@@ -3288,7 +3288,6 @@ func patientWorkPageResponse(page workspace.PatientWorkPage) (api.PatientWorkPag
 		Rows: make([]api.PatientWorkRow, 0, len(page.Rows)),
 		Counts: api.PatientWorkCounts{
 			All:          page.Counts.All,
-			FollowUp:     page.Counts.FollowUp,
 			CallBack:     page.Counts.CallBack,
 			Texts:        page.Counts.Texts,
 			Appointments: page.Counts.Appointments,

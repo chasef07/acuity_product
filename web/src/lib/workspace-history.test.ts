@@ -52,9 +52,9 @@ test("each call history root reads as one outcome", () => {
     ["AI finished the call alone and the stored call label says resolved", [aiEntry({ resolved: true })],
       { kind: "resolved-by-ai", label: "Resolved by AI", tone: "success" }],
     ["AI finished and left a Task", [aiEntry({}), taskEntry({})],
-      { kind: "message-taken", label: "Message taken", tone: "muted" }],
+      { kind: "task-created", label: "Task created", tone: "muted" }],
     ["AI left a Task on a call labelled resolved", [aiEntry({ resolved: true }), taskEntry({})],
-      { kind: "message-taken", label: "Message taken", tone: "muted" }],
+      { kind: "task-created", label: "Task created", tone: "muted" }],
     ["a call labelled resolved whose booking check is still open", [aiEntry({ resolved: true }), taskEntry({ origin: "APPOINTMENT_REVIEW", title: "Check appointment booking" })],
       { kind: "needs-review", label: "Appointment change needs review", tone: "warning" }],
     ["an unlabelled call whose booking check is still open", [aiEntry({}), taskEntry({ origin: "APPOINTMENT_REVIEW" })],
@@ -72,9 +72,9 @@ test("each call history root reads as one outcome", () => {
     ["a call labelled resolved with one closed and one open Task", [aiEntry({ resolved: true }), taskEntry({ state: "COMPLETED" }), taskEntry({ id: "second", origin: "HUMAN_CALL_FOLLOW_UP" })],
       { kind: "handled-by-ai", label: "Handled by AI", tone: "muted" }],
     ["an unlabelled call whose AI Task staff closed", [aiEntry({}), taskEntry({ state: "COMPLETED" })],
-      { kind: "message-taken", label: "Message taken", tone: "muted" }],
-    ["lines busy, AI took a message", [aiEntry({ status: "ESCALATED" }), taskEntry({})],
-      { kind: "message-taken", label: "Message taken", tone: "muted" }],
+      { kind: "task-created", label: "Task created", tone: "muted" }],
+    ["lines busy, AI created a Task", [aiEntry({ status: "ESCALATED" }), taskEntry({})],
+      { kind: "task-created", label: "Task created", tone: "muted" }],
     ["AI booked and staff verify the visit", [aiEntry({ appointmentOutcome: "BOOKING" }), taskEntry({ origin: "APPOINTMENT_REVIEW" })],
       { kind: "appointment-by-ai", label: "Booked by AI", tone: "success" }],
     ["AI rescheduled", [aiEntry({ appointmentOutcome: "RESCHEDULE" })],
@@ -274,12 +274,9 @@ test("an expanded line lists what the AI did, who answered and for how long, and
     { tone: "warning", text: "Appointment change needs review" },
   ])
   assert.deepEqual(lineOf(aiEntry({ status: "ESCALATED", summary: "Caller asked for a refill." }), taskEntry({ title: "Refill request" })).steps, [
-    { tone: "muted", text: 'AI took a message: "Refill request"' },
     { tone: "muted", text: "Caller asked for a refill." },
   ])
-  assert.deepEqual(lineOf(aiEntry({}), taskEntry({ title: "Refill request" })).steps, [
-    { tone: "muted", text: 'AI took a message: "Refill request"' },
-  ])
+  assert.deepEqual(lineOf(aiEntry({}), taskEntry({ title: "Refill request" })).steps, [])
   assert.deepEqual(lineOf(aiEntry({ status: "ESCALATED" })).steps, [
     { tone: "muted", text: "Transfer requested, staff outcome not recorded" },
   ])
@@ -405,7 +402,7 @@ test("a newer copy of a Task replaces the one a held thread still shows, on the 
   assert.equal(current[2], untouched, "an older copy never replaces what the thread shows")
   assert.equal(current[0]!.entries![0], call.entries![0])
   assert.equal(call.entries![1]!.task!.state, "OPEN", "the loaded page is not mutated")
-  assert.equal(callHistoryPresentation(call)!.outcome.label, "Message taken")
+  assert.equal(callHistoryPresentation(call)!.outcome.label, "Task created")
   assert.equal(callHistoryPresentation(current[0]!)!.outcome.label, "Resolved by AI")
   assert.equal(linkedTaskStatus(callHistoryPresentation(current[0]!)!.tasks[0]!), "Done, by staff@example.test")
   assert.equal(withCurrentTasks(items, []), items)

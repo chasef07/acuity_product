@@ -27,7 +27,7 @@ test("visible workload filters show message previews and completion opens the ne
   await expect(urgent.getByTestId("patient-row-name")).toHaveText("(202) 555-0202")
   await expect(urgent.getByTestId("patient-row-reason")).toHaveText(`${key} urgent`)
   await expect(urgent.getByTestId("patient-row-count")).toHaveCount(0)
-  await expect(page.getByTestId("patient-work-footer")).toContainText(/^\d+ open for \d+ patients?/)
+  await expect(page.getByTestId("patient-work-footer")).toContainText(/^\d+ patients? needs? attention/)
   await normal.getByRole("button").click()
   await urgent.getByRole("button").click()
   const taskCard = page.getByRole("button", { name: `View task: ${key} urgent`, exact: true })
@@ -250,7 +250,7 @@ test("everyone sees every patient, including a colleague's category and work wit
     await expect(page.getByTestId("patient-row")).toHaveCount(2)
     await expect(patientRow(page, unowned).getByTestId("patient-row-reason")).toHaveText(`${key} unowned`)
     await expect(patientRow(page, colleagues).getByTestId("patient-row-reason")).toHaveText(`${key} colleague`)
-    await expect(page.getByTestId("patient-work-footer")).toHaveText(/^\d+ open for \d+ patients$/)
+    await expect(page.getByTestId("patient-work-footer")).toHaveText(/^\d+ patients need attention$/)
   } finally {
     await db.query("DELETE FROM work_responsibilities WHERE account_email = ANY($1::text[])", [roster])
     await db.end()

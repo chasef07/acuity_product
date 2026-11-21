@@ -46,7 +46,7 @@ type CallLineOutcomeKind =
   | "appointment-by-ai"
   | "handled-by-ai"
   | "needs-review"
-  | "message-taken"
+  | "task-created"
   | "answered"
   | "missed"
   | "voicemail"
@@ -75,7 +75,7 @@ const outcomeTones = {
   "appointment-by-ai": "success",
   "handled-by-ai": "muted",
   "needs-review": "warning",
-  "message-taken": "muted",
+  "task-created": "muted",
   answered: "success",
   missed: "destructive",
   voicemail: "warning",
@@ -171,7 +171,7 @@ function aiTasks(tasks: Task[]) {
 }
 
 function aiOutcome(interaction: HistoryAI, tasks: Task[]) {
-  const messageTaken = aiTasks(tasks).length > 0
+  const taskCreated = aiTasks(tasks).length > 0
   switch (interaction.status) {
     case "FAILED":
       return outcome("failed", callLineLabels.aiFailed)
@@ -179,8 +179,8 @@ function aiOutcome(interaction: HistoryAI, tasks: Task[]) {
       return outcome("in-progress", callLineLabels.aiInProgress)
     case "ESCALATED":
       if (interaction.appointmentOutcome === "PARTIAL") return needsReview()
-      return messageTaken
-        ? outcome("message-taken", callLineLabels.messageTaken)
+      return taskCreated
+        ? outcome("task-created", callLineLabels.taskCreated)
         : outcome("unknown", callLineLabels.transferNotRecorded)
     case "COMPLETED": {
       if (interaction.appointmentOutcome === "PARTIAL") return needsReview()
@@ -188,10 +188,10 @@ function aiOutcome(interaction: HistoryAI, tasks: Task[]) {
       if (appointment) return outcome("appointment-by-ai", appointment)
       const open = tasks.filter((task) => task.state === "OPEN")
       if (open.some((task) => task.origin === "APPOINTMENT_REVIEW")) return needsReview()
-      if (aiTasks(open).length > 0) return outcome("message-taken", callLineLabels.messageTaken)
+      if (aiTasks(open).length > 0) return outcome("task-created", callLineLabels.taskCreated)
       if (interaction.resolved && open.length === 0) return outcome("resolved-by-ai", callLineLabels.resolvedByAI)
-      return messageTaken && !interaction.resolved
-        ? outcome("message-taken", callLineLabels.messageTaken)
+      return taskCreated && !interaction.resolved
+        ? outcome("task-created", callLineLabels.taskCreated)
         : outcome("handled-by-ai", callLineLabels.handledByAI)
     }
     default:
@@ -212,14 +212,11 @@ const aiStepLabels = {
   FAILED: callLineLabels.aiFailed,
 } satisfies Record<HistoryAI["status"], string>
 
-function aiLeadStep(interaction: HistoryAI, transferReason: string, staffLeg: boolean, tasks: Task[]) {
+function aiLeadStep(interaction: HistoryAI, transferReason: string, staffLeg: boolean, tasks: Task[]): string | undefined {
   if (interaction.status !== "ESCALATED" && interaction.status !== "COMPLETED") {
     return aiStepLabels[interaction.status] ?? callLineLabels.unknown
   }
-  const messages = staffLeg ? [] : aiTasks(tasks)
-  if (messages.length > 0) {
-    return `${callLineLabels.aiTookMessage}: ${messages.map((task) => `"${task.title}"`).join(", ")}`
-  }
+  if (!staffLeg && aiTasks(tasks).length > 0) return undefined
   if (interaction.status === "COMPLETED") return aiStepLabels.COMPLETED
   if (!staffLeg) return callLineLabels.transferNotRecorded
   return transferReason ? `${aiStepLabels.ESCALATED}: ${transferReason}` : aiStepLabels.ESCALATED
@@ -227,11 +224,9 @@ function aiLeadStep(interaction: HistoryAI, transferReason: string, staffLeg: bo
 
 function aiSteps(interaction: HistoryAI, transferReason: string, staffLeg: boolean, tasks: Task[]): CallLine["steps"] {
   const summary = interaction.summary?.trim()
+  const lead = aiLeadStep(interaction, transferReason, staffLeg, tasks)
   return [
-    {
-      tone: interaction.status === "FAILED" ? "destructive" : "muted",
-      text: aiLeadStep(interaction, transferReason, staffLeg, tasks),
-    },
+    ...(lead ? [{ tone: interaction.status === "FAILED" ? "destructive" as const : "muted" as const, text: lead }] : []),
     ...(interaction.appointmentOutcome === "INDETERMINATE" ? [] : [{
       tone: interaction.appointmentOutcome === "PARTIAL" ? "warning" as const : "success" as const,
       text: appointmentOutcomeTitles[interaction.appointmentOutcome],

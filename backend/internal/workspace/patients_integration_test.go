@@ -354,7 +354,6 @@ func TestPatientWorkListsEveryOpenTaskUnderExactlyOnePatient(t *testing.T) {
 		top    work.TaskOrigin
 	}{
 		{workspace.PatientWorkAll, func(c workspace.PatientWorkCounts) int { return c.All }, phones, work.TaskOriginMissedCall},
-		{workspace.PatientWorkFollowUp, func(c workspace.PatientWorkCounts) int { return c.FollowUp }, []string{everything, urgent, shared}, work.TaskOriginStaffMessageFollowUp},
 		{workspace.PatientWorkCallBack, func(c workspace.PatientWorkCounts) int { return c.CallBack }, []string{everything, voicemail, missed, urgent}, work.TaskOriginMissedCall},
 		{workspace.PatientWorkTexts, func(c workspace.PatientWorkCounts) int { return c.Texts }, []string{everything, texted}, work.TaskOriginInboundMessageReview},
 		{workspace.PatientWorkAppointments, func(c workspace.PatientWorkCounts) int { return c.Appointments }, []string{everything, appointed}, work.TaskOriginAppointmentReview},
@@ -373,13 +372,6 @@ func TestPatientWorkListsEveryOpenTaskUnderExactlyOnePatient(t *testing.T) {
 		}
 	}
 
-	tasks := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkFollowUp})
-	if phones := patientPhones(tasks); !slices.Equal(phones, []string{urgent, shared, everything}) {
-		t.Fatalf("Tasks order = %v, want high priority first then the newest follow-up", phones)
-	}
-	if row := patientRow(t, tasks, urgent); !row.HighPriority || row.Top.ID != urgentTask {
-		t.Fatalf("Tasks row for the high priority patient = %+v, want its high priority follow-up on top", row)
-	}
 	callBack := f.query(workspace.QueryPatientWorkCommand{Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkCallBack})
 	if row := patientRow(t, callBack, voicemail); row.Top.VoicemailDurationSeconds != 38 || row.Top.Origin != work.TaskOriginVoicemail {
 		t.Fatalf("voicemail row = %+v, want a 38 second voicemail", row)
@@ -487,18 +479,8 @@ func TestPatientWorkMineShowsOwnedSharedAndUnownedWork(t *testing.T) {
 	if mine.Totals != (workspace.PatientWorkTotals{OpenTasks: 9, Patients: 9, PatientsOutsideScope: 2}) {
 		t.Fatalf("My Tasks totals = %+v, want the 9 open Tasks and 9 patients in scope with 2 patients outside", mine.Totals)
 	}
-	if mine.Counts != (workspace.PatientWorkCounts{All: 9, FollowUp: 5, CallBack: 1, Texts: 2, Appointments: 1, Unowned: 5}) {
+	if mine.Counts != (workspace.PatientWorkCounts{All: 9, CallBack: 1, Texts: 2, Appointments: 1, Unowned: 5}) {
 		t.Fatalf("My Tasks counts = %+v", mine.Counts)
-	}
-	assertPatients(t, "Tasks under My Tasks", f.query(workspace.QueryPatientWorkCommand{
-		Identity: reader, Filter: workspace.PatientWorkFollowUp,
-	}), lapsed, unlisted, followUp, uncovered, otherOffice)
-	everyoneTasks := f.query(workspace.QueryPatientWorkCommand{
-		Identity: reader, Scope: workspace.PatientWorkEveryone, Filter: workspace.PatientWorkFollowUp,
-	})
-	assertPatients(t, "Tasks under Everyone", everyoneTasks, owned, lapsed, colleagues, unlisted, followUp, mixed, uncovered, otherOffice)
-	if everyoneTasks.Counts.FollowUp != 8 {
-		t.Fatalf("Tasks count under Everyone = %d, want 8 patients", everyoneTasks.Counts.FollowUp)
 	}
 	if row := patientRow(t, mine, mixed); row.Top.ID != mixedText || row.OpenCount != 2 {
 		t.Fatalf("patient with a text and a colleague's Task = %+v, want the text on top and both counted", row)
@@ -507,8 +489,8 @@ func TestPatientWorkMineShowsOwnedSharedAndUnownedWork(t *testing.T) {
 	ownerMine := f.query(workspace.QueryPatientWorkCommand{Identity: owner})
 	assertPatients(t, "My Tasks for the insurance owner", ownerMine, append([]string{owned}, shared...)...)
 	if ownerMine.Totals != (workspace.PatientWorkTotals{OpenTasks: 10, Patients: 10, PatientsOutsideScope: 1}) ||
-		ownerMine.Counts.All != 10 || ownerMine.Counts.FollowUp != 6 || ownerMine.Counts.Unowned != 5 {
-		t.Fatalf("owner totals and counts = %+v %+v, want 10 patients in scope, one outside, 6 with a follow-up and the same No owner count", ownerMine.Totals, ownerMine.Counts)
+		ownerMine.Counts.All != 10 || ownerMine.Counts.Unowned != 5 {
+		t.Fatalf("owner totals and counts = %+v %+v, want 10 patients in scope, one outside, and the same No owner count", ownerMine.Totals, ownerMine.Counts)
 	}
 
 	legacy, err := f.reads.QueryTasks(f.ctx, workspace.QueryTasksCommand{
