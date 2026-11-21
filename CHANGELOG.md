@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.8.0](https://github.com/chasef07/acuity_product/compare/v3.7.2...v3.8.0) (2026-11-21)
+
+
+### Features
+
+* **workspace:** count patients who need attention and say Task created on AI calls ([#659](https://github.com/chasef07/acuity_product/issues/659)) ([1a3f77b](https://github.com/chasef07/acuity_product/commit/1a3f77b7d2f69483eb3aebdd45b9bf0a15d1c457))
+* **workspace:** start the Work rail on Mine, with a footer link to everyone's patients ([#660](https://github.com/chasef07/acuity_product/issues/660)) ([21e9424](https://github.com/chasef07/acuity_product/commit/21e9424245de99cbf4b95a3025141876f5ce9045))
+
 ## [3.7.2](https://github.com/chasef07/acuity_product/compare/v3.7.1...v3.7.2) (2026-11-20)
 
 
