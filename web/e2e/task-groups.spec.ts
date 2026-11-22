@@ -13,7 +13,7 @@ test("one patient row gathers a caller's requests and empties as staff close the
     ["medication", "Casey Example", "Please refill the medication at the pharmacy."],
   ]) {
     const response = await page.request.post(`${portalURL}/v1/tasks`, {
-      headers: { authorization: "Bearer synthetic-service-token" },
+      headers: { authorization: "Bearer synthetic-production-token" },
       data: { callId: `task-groups-${key}`, callerPhone: "+12025550148", category: "optical", idempotencyKey: `task-groups-${key}`, officeKey: "spring-hill", officePhone: "+17275550101", source: "agent", urgency: "normal", summary: `Group request ${key}`, message, patient: { name } },
     })
     expect(response.status()).toBe(201)
@@ -40,7 +40,7 @@ test("one patient row gathers a caller's requests and empties as staff close the
   await expect(category).toContainText("Clinical, medication & pharmacy")
   await expect(count).toHaveText("3 open")
   const newRequest = await page.request.post(`${portalURL}/v1/tasks`, {
-    headers: { authorization: "Bearer synthetic-service-token" },
+    headers: { authorization: "Bearer synthetic-production-token" },
     data: { callId: "task-groups-frames", callerPhone: "+12025550148", category: "optical", idempotencyKey: "task-groups-frames", officeKey: "spring-hill", officePhone: "+17275550101", source: "agent", urgency: "normal", summary: "Group request frames", message: "Please check whether the frames are ready.", patient: { name: "Drew Example" } },
   })
   expect(newRequest.status()).toBe(201)

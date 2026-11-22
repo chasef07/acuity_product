@@ -17,7 +17,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
-func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) {
+func TestProductionProvisioningBuildsTheAbitaTopology(t *testing.T) {
 	db := testdb.Open(t)
 	pool := db.Owner
 	output := filepath.Join(t.TempDir(), "provisioning-output.json")
@@ -103,13 +103,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	}
 	wantRoutes := []route{
 		{Practice: "abita-eye-group", Office: "crystal-river", Location: "crystal-river"},
-		{Practice: "acuity-demo", Office: "dev", Location: "demo-484"},
 		{Practice: "abita-eye-group", Office: "hollywood", Location: "hollywood"},
-		{Practice: "acuity-demo", Office: "mental-health-demo", Location: "new-tampa-demo"},
-		{Practice: "acuity-demo", Office: "new-tampa-demo", Location: "new-tampa-demo"},
 		{Practice: "abita-eye-group", Office: "north-miami-beach-optical", Location: "north-miami-beach-optical"},
-		{Practice: "acuity-demo", Office: "ophthalmology-demo", Location: "ophthalmology-demo"},
-		{Practice: "acuity-demo", Office: "rheumatology-demo", Location: "demo-484"},
 		{Practice: "abita-eye-group", Office: "spring-hill", Location: "spring-hill"},
 		{Practice: "abita-eye-group", Office: "sweetwater", Location: "sweetwater"},
 		{Practice: "abita-eye-group", Office: "sweetwater-optical", Location: "sweetwater-optical"},
@@ -151,9 +146,6 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Key: "spring-hill", Name: "Spring Hill"},
 		{Practice: "abita-eye-group", Key: "sweetwater", Name: "Sweetwater"},
 		{Practice: "abita-eye-group", Key: "sweetwater-optical", Name: "Sweetwater Optical"},
-		{Practice: "acuity-demo", Key: "demo-484", Name: "Rheumatology"},
-		{Practice: "acuity-demo", Key: "new-tampa-demo", Name: "New Tampa Eye Institute"},
-		{Practice: "acuity-demo", Key: "ophthalmology-demo", Name: "Ophthalmology"},
 	}
 	if !reflect.DeepEqual(locations, wantLocations) {
 		t.Fatalf("Locations = %#v, want %#v", locations, wantLocations)
@@ -170,22 +162,12 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	if err != nil {
 		t.Fatalf("discover production selector topology: %v", err)
 	}
-	var demoLocationNames []string
+	var practiceNames []string
 	for _, practice := range discovery.Practices {
-		if practice.Name != "Acuity Demo" {
-			continue
-		}
-		for _, location := range practice.Locations {
-			demoLocationNames = append(demoLocationNames, location.Name)
-		}
+		practiceNames = append(practiceNames, practice.Name)
 	}
-	wantDemoLocationNames := []string{"New Tampa Eye Institute", "Ophthalmology", "Rheumatology"}
-	if !reflect.DeepEqual(demoLocationNames, wantDemoLocationNames) {
-		t.Fatalf(
-			"Acuity Demo selector Locations = %#v, want %#v",
-			demoLocationNames,
-			wantDemoLocationNames,
-		)
+	if !reflect.DeepEqual(practiceNames, []string{"Abita Eye Group"}) {
+		t.Fatalf("operator selector Practices = %#v, want only Abita Eye Group", practiceNames)
 	}
 
 	type number struct {
@@ -229,9 +211,6 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Location: "north-miami-beach-optical", Phone: "+13055095333"},
 		{Practice: "abita-eye-group", Location: "spring-hill", Phone: "+17275919997"},
 		{Practice: "abita-eye-group", Location: "sweetwater", Phone: "+17864654836"},
-		{Practice: "acuity-demo", Location: "demo-484", Phone: "+14843989071"},
-		{Practice: "acuity-demo", Location: "new-tampa-demo", Phone: "+13207388132"},
-		{Practice: "acuity-demo", Location: "ophthalmology-demo", Phone: "+18027878312"},
 	}
 	if !reflect.DeepEqual(voiceNumbers, wantVoiceNumbers) {
 		t.Fatalf("voice numbers = %#v, want %#v", voiceNumbers, wantVoiceNumbers)
@@ -323,13 +302,6 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
 			Active:   true,
 		},
-		{
-			Practice: "acuity-demo",
-			Location: "demo-484",
-			Sender:   "+14843989071",
-			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
-			Active:   true,
-		},
 	}
 	if !reflect.DeepEqual(messagingConfigurations, wantMessagingConfigurations) {
 		t.Fatalf(
@@ -342,7 +314,6 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	const sharedGreeting = "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923."
 	const southFloridaGreeting = "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly."
 	const southFloridaAfterHoursGreeting = southFloridaGreeting + " If this is an emergency, please call 305-741-0830."
-	const demoGreeting = "Thank you for calling Acuity Demo. Please leave a message after the tone."
 	type greetingConfiguration struct {
 		Practice   string
 		Location   string
@@ -386,34 +357,23 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Location: "north-miami-beach-optical", Greeting: southFloridaGreeting},
 		{Practice: "abita-eye-group", Location: "spring-hill", Greeting: sharedGreeting},
 		{Practice: "abita-eye-group", Location: "sweetwater", Greeting: southFloridaGreeting, AfterHours: southFloridaAfterHoursGreeting},
-		{Practice: "acuity-demo", Location: "demo-484", Greeting: demoGreeting},
-		{Practice: "acuity-demo", Location: "new-tampa-demo", Greeting: "Please leave a message after the beep."},
-		{Practice: "acuity-demo", Location: "ophthalmology-demo", Greeting: "Please leave a message after the beep."},
 	}
 	if !reflect.DeepEqual(greetings, wantGreetings) {
 		t.Fatalf("voicemail greetings = %#v, want %#v", greetings, wantGreetings)
 	}
 
-	var grantCount, abitaGrantCount, demoGrantCount int
+	var grantCount, abitaGrantCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT count(*),
-			count(*) FILTER (WHERE practice.provisioning_key = 'abita-eye-group'),
-			count(*) FILTER (
-				WHERE practice.provisioning_key = 'acuity-demo'
-					AND access_grant.email IN (
-						'chase@acuityhealth.io',
-						'kyle@acuityhealth.io'
-					)
-					AND access_grant.role = 'STAFF'
-			)
+			count(*) FILTER (WHERE practice.provisioning_key = 'abita-eye-group')
 		FROM access_grants access_grant
 		JOIN access_practices practice ON practice.id = access_grant.practice_id
-	`).Scan(&grantCount, &abitaGrantCount, &demoGrantCount); err != nil {
+	`).Scan(&grantCount, &abitaGrantCount); err != nil {
 		t.Fatalf("count provisioned Access Grants: %v", err)
 	}
-	if grantCount != 33 || abitaGrantCount != 33 || demoGrantCount != 0 {
-		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 33, 33, 0",
-			grantCount, abitaGrantCount, demoGrantCount)
+	if grantCount != 33 || abitaGrantCount != 33 {
+		t.Fatalf("provisioned Access Grants = total:%d Abita:%d, want 33, 33",
+			grantCount, abitaGrantCount)
 	}
 	var brightVuEmail, brightVuRole, brightVuScope, brightVuLocation string
 	if err := pool.QueryRow(context.Background(), `

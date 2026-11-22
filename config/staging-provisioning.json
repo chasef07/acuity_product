@@ -104,35 +104,6 @@
           ]
         }
       ]
-    },
-    {
-      "Key": "acuity-demo",
-      "Name": "Acuity Demo",
-      "Locations": [
-        {
-          "Key": "demo-484",
-          "Name": "Rheumatology",
-          "AbitaOfficeKeys": [
-            "dev",
-            "rheumatology-demo"
-          ]
-        },
-        {
-          "Key": "ophthalmology-demo",
-          "Name": "Ophthalmology",
-          "AbitaOfficeKeys": [
-            "ophthalmology-demo"
-          ]
-        },
-        {
-          "Key": "new-tampa-demo",
-          "Name": "New Tampa Eye Institute",
-          "AbitaOfficeKeys": [
-            "new-tampa-demo",
-            "mental-health-demo"
-          ]
-        }
-      ]
     }
   ]
 }

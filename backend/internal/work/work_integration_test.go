@@ -2146,23 +2146,25 @@ func TestCompleteTaskRecordsWhyItClosedAndReopenClearsIt(t *testing.T) {
 		}); !errors.Is(err, work.ErrInvalidInput) {
 			t.Fatalf("staff completion with reason %q = %v, want invalid input", reason, err)
 		}
-		if _, err := module.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-			Identity: identity, TaskID: task.ID, Reason: reason,
-			Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}},
+		if _, err := module.CompletePatientTasks(ctx, work.CompletePatientTasksCommand{
+			Identity: identity, Phone: task.Phone, Reason: reason,
+			Tasks: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}},
 		}); !errors.Is(err, work.ErrInvalidInput) {
-			t.Fatalf("staff group completion with reason %q = %v, want invalid input", reason, err)
+			t.Fatalf("staff patient completion with reason %q = %v, want invalid input", reason, err)
 		}
 	}
 	untouched, err := module.ReadTask(ctx, identity, task.ID)
 	if err != nil || untouched.State != work.TaskOpen || untouched.Version != task.Version {
 		t.Fatalf("refused completions changed the Task: %#v, %v", untouched, err)
 	}
-	group, err := module.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-		Identity: identity, TaskID: task.ID, Reason: work.CloseReasonUnreachable,
-		Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}},
-	})
-	if err != nil || group.CloseReason != work.CloseReasonUnreachable {
-		t.Fatalf("group completion = %#v, %v", group, err)
+	if _, err := module.CompletePatientTasks(ctx, work.CompletePatientTasksCommand{
+		Identity: identity, Phone: task.Phone, Reason: work.CloseReasonUnreachable,
+		Tasks: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if closed, err := module.ReadTask(ctx, identity, task.ID); err != nil || closed.CloseReason != work.CloseReasonUnreachable {
+		t.Fatalf("patient completion = %#v, %v", closed, err)
 	}
 }
 

@@ -26,9 +26,6 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		"HUMAN_CALLING_RING_WINDOW_SECONDS":     "20",
 		"HUMAN_CALLING_LEASE_SECONDS":           "30",
 		"HUMAN_CALLING_READINESS_GRACE_SECONDS": "15",
-		"ACUITY_DEMO_SERVICE_TOKEN":             "synthetic-demo-token",
-		"ACUITY_DEMO_SERVICE_SUBJECT":           "abita-demo",
-		"ACUITY_DEMO_SERVICE_PRACTICE_ID":       "00000000-0000-0000-0000-000000000001",
 		"ABITA_EYE_GROUP_SERVICE_TOKEN":         "synthetic-production-token",
 		"ABITA_EYE_GROUP_SERVICE_SUBJECT":       "abita-eye-group",
 		"ABITA_EYE_GROUP_SERVICE_PRACTICE_ID":   "00000000-0000-0000-0000-000000000002",
@@ -90,10 +87,7 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		config.HumanCalling.StaffSIPDomain != "sip.telnyx.com" {
 		t.Fatalf("calling SIP domains = %#v", config.HumanCalling)
 	}
-	if config.Service.AcuityDemo.Token != "synthetic-demo-token" ||
-		config.Service.AcuityDemo.Subject != "abita-demo" ||
-		config.Service.AcuityDemo.PracticeID != "00000000-0000-0000-0000-000000000001" ||
-		config.Service.AbitaEyeGroup.Token != "synthetic-production-token" ||
+	if config.Service.AbitaEyeGroup.Token != "synthetic-production-token" ||
 		config.Service.AbitaEyeGroup.Subject != "abita-eye-group" ||
 		config.Service.AbitaEyeGroup.PracticeID != "00000000-0000-0000-0000-000000000002" {
 		t.Fatalf("service config = %#v", config.Service)
@@ -142,9 +136,6 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 			delete(values, "HUMAN_CALLING_PLAYBACK_SIGNING_KEY")
 		}
 		if role == RoleProviderIngress || role == RoleWorker || role == RoleRealtime || role == RoleMigrate {
-			delete(values, "ACUITY_DEMO_SERVICE_TOKEN")
-			delete(values, "ACUITY_DEMO_SERVICE_SUBJECT")
-			delete(values, "ACUITY_DEMO_SERVICE_PRACTICE_ID")
 			delete(values, "ABITA_EYE_GROUP_SERVICE_TOKEN")
 			delete(values, "ABITA_EYE_GROUP_SERVICE_SUBJECT")
 			delete(values, "ABITA_EYE_GROUP_SERVICE_PRACTICE_ID")
@@ -194,9 +185,6 @@ func TestLoadConfigRejectsMalformedHumanCallingKeys(t *testing.T) {
 		"HUMAN_CALLING_SIP_DOMAIN":            "synthetic.sip.telnyx.com",
 		"HUMAN_CALLING_STAFF_SIP_DOMAIN":      "sip.telnyx.com",
 		"HUMAN_CALLING_HANDOFF_TOKEN_KEY":     "too-short",
-		"ACUITY_DEMO_SERVICE_TOKEN":           "synthetic-demo-token",
-		"ACUITY_DEMO_SERVICE_SUBJECT":         "abita-demo",
-		"ACUITY_DEMO_SERVICE_PRACTICE_ID":     "00000000-0000-0000-0000-000000000001",
 		"ABITA_EYE_GROUP_SERVICE_TOKEN":       "synthetic-production-token",
 		"ABITA_EYE_GROUP_SERVICE_SUBJECT":     "abita-eye-group",
 		"ABITA_EYE_GROUP_SERVICE_PRACTICE_ID": "00000000-0000-0000-0000-000000000002",
@@ -231,11 +219,8 @@ func TestLoadConfigRejectsUnknownRolesAndUnboundedPools(t *testing.T) {
 	}
 }
 
-func TestLoadServiceConfigRequiresDemoAndProductionTenantCredentials(t *testing.T) {
+func TestLoadServiceConfigRequiresTheProductionTenantCredential(t *testing.T) {
 	values := map[string]string{
-		"ACUITY_DEMO_SERVICE_TOKEN":           "demo-token",
-		"ACUITY_DEMO_SERVICE_SUBJECT":         "abita-demo",
-		"ACUITY_DEMO_SERVICE_PRACTICE_ID":     "00000000-0000-0000-0000-000000000001",
 		"ABITA_EYE_GROUP_SERVICE_TOKEN":       "production-token",
 		"ABITA_EYE_GROUP_SERVICE_SUBJECT":     "abita-eye-group",
 		"ABITA_EYE_GROUP_SERVICE_PRACTICE_ID": "00000000-0000-0000-0000-000000000002",
@@ -244,9 +229,7 @@ func TestLoadServiceConfigRequiresDemoAndProductionTenantCredentials(t *testing.
 	if err != nil {
 		t.Fatalf("load service config: %v", err)
 	}
-	if config.AcuityDemo.Token != "demo-token" ||
-		config.AcuityDemo.PracticeID != "00000000-0000-0000-0000-000000000001" ||
-		config.AbitaEyeGroup.Token != "production-token" ||
+	if config.AbitaEyeGroup.Token != "production-token" ||
 		config.AbitaEyeGroup.PracticeID != "00000000-0000-0000-0000-000000000002" {
 		t.Fatalf("service config = %#v", config)
 	}

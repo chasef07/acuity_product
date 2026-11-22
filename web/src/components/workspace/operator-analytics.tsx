@@ -46,7 +46,6 @@ import {
 } from "@/components/ui/table"
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { PendingCallIssues } from "@/components/workspace/call-issue-review"
-import { CallReviewWorkspace } from "@/components/workspace/call-review"
 import { CallLabel, CallLabelFilters, CallLabels, type IntentFilter, type OutcomeFilter } from "./call-labels"
 import { CallFailureFilter } from "./call-failure-filter"
 import type {
@@ -86,7 +85,6 @@ export function OperatorAnalytics({
   const [flowMode, setFlowMode] = useState<FlowMode>("flow")
   const breakdowns = tab === "breakdowns"
   const costView = tab === "cost"
-  const reviewView = tab === "review"
   const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
   const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
   const requestKey = `${practiceID}:${locationID}:${range}:${intent}:${outcome}:${judgeFlag}:${JSON.stringify(selection)}`
@@ -94,7 +92,7 @@ export function OperatorAnalytics({
     practiceID,
     locationID,
     range,
-    enabled: !costView && !reviewView,
+    enabled: !costView,
     intent: breakdowns ? selection.intent : tab === "calls" && intent !== "all" ? intent : undefined,
     outcome: breakdowns ? selection.outcome : tab === "calls" && outcome !== "all" ? outcome : undefined,
     failuresOnly: breakdowns ? selection.judge === "fail" || undefined : tab === "calls" && judgeFlag !== "all" ? true : undefined,
@@ -152,23 +150,20 @@ export function OperatorAnalytics({
         <h1 className="sr-only">{commandCenterPages.find((item) => item.value === tab)!.label}</h1>
         <main className="mx-auto w-full max-w-[1320px] p-4 sm:p-6">
           <div className="mb-5 flex flex-wrap items-center justify-end gap-4">
-            {reviewView && <p className="mr-auto text-[13px] font-medium">Daily call review and golden set</p>}
-            {!reviewView && <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
             <OptionSelect label="Date range" value={range} items={ranges} onChange={setRange} />
             {tab === "calls" && <>
               <CallFailureFilter value={judgeFlag} onChange={setJudgeFlag} />
               <CallLabelFilters intent={intent} outcome={outcome} onIntent={setIntent} onOutcome={setOutcome} />
             </>}
-            </div>}
+            </div>
           </div>
         {breakdowns && flowRequest.state !== "denied" && <section aria-label="Breakdowns" className="mb-5">
           {flowRequest.state === "loading" ? <Skeleton className="h-[640px] w-full rounded-xl" /> : (
             <CallBreakdowns data={flowRequest.data?.summary.distributions} selection={selection} onSelection={setSelection} mode={flowMode} onMode={setFlowMode} onRetry={retryAnalytics} />
           )}
         </section>}
-        {reviewView ? (
-          <CallReviewWorkspace key={practiceID} practiceID={practiceID} onOpenCall={(id) => selectCall(id)} />
-        ) : costView ? (
+        {costView ? (
           <CostOverview
             practiceID={practiceID}
             locationID={locationID}
@@ -222,8 +217,8 @@ export function OperatorAnalytics({
       <OperatorAnalyticsDetailSheet
         interactionID={selectedCall.id}
         focus={selectedCall.focus}
-        onPrevious={!reviewView && previousCall ? () => selectCall(previousCall.id) : undefined}
-        onNext={!reviewView && (nextCall || canLoadNextCall) ? selectNextCall : undefined}
+        onPrevious={previousCall ? () => selectCall(previousCall.id) : undefined}
+        onNext={nextCall || canLoadNextCall ? selectNextCall : undefined}
         navigationLoading={nextPageState === "loading"}
         navigationError={canLoadNextCall && nextPageState === "unavailable"}
         onIssueChange={updateCallIssue}

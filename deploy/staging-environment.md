@@ -56,7 +56,7 @@ staff, add an Access Grant for their Google account.
      URI is the staging web URL;
    - a staging Telnyx Call Control application, credential connection, and
      number, with webhooks pointed at staging `acuity-provider-ingress`;
-   - staging-only service tokens for the demo and Abita practices.
+   - a staging-only service token for the Abita practice.
 6. Create `acuity-portal-api` and `acuity-realtime` first with a placeholder
    `gcloud run deploy <service> --project <staging-project> --region us-east1 --image <backend-image>`.
    The step 7 bootstrap replaces them. Read each URL with

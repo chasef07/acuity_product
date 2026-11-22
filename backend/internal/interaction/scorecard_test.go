@@ -3,12 +3,10 @@ package interaction
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 )
 
 type syntheticTool struct {
@@ -187,50 +185,6 @@ func TestPreviousJuryStillReadsForDisplayButNotAsAnswers(t *testing.T) {
 	}
 }
 
-func TestReviewAsksGatedQuestionsOnlyWhenTheyApply(t *testing.T) {
-	for name, test := range map[string]struct {
-		facts map[string]bool
-		want  string
-	}{
-		"no tools":           {map[string]bool{"availability_searched": false, "scheduling_tool_called": false}, "[new_booking_requested office_rules_grounded office_question_answered promises_backed ended_while_caller_active]"},
-		"availability":       {map[string]bool{"availability_searched": true}, "[new_booking_requested time_offered requested_time_honored office_rules_grounded office_question_answered promises_backed ended_while_caller_active]"},
-		"scheduling write":   {map[string]bool{"scheduling_tool_called": true}, "[new_booking_requested office_rules_grounded appointment_datetime_correct office_question_answered promises_backed ended_while_caller_active]"},
-		"insurance rejected": {map[string]bool{"insurance_verified": false}, "[new_booking_requested office_rules_grounded office_question_answered promises_backed ended_while_caller_active insurance_plan_as_stated]"},
-	} {
-		if got := fmt.Sprint(reviewQuestions(test.facts, legacyJudgeVersion)); got != test.want {
-			t.Errorf("%s: %s", name, got)
-		}
-	}
-}
-
-func TestReviewFlaggedIgnoresBookingNos(t *testing.T) {
-	missed := map[string]bool{"new_booking_requested": true, "scheduling_tool_called": false, "time_offered": false, "ended_while_caller_active": true}
-	if reviewFlagged(missed, nil) {
-		t.Fatal("a booking no alone must not flag a call for review")
-	}
-	if !reviewFlagged(map[string]bool{"new_booking_requested": true, "promises_backed": false}, nil) {
-		t.Fatal("a failure-question no must flag a call for review")
-	}
-}
-
-func TestParseGoldenSetJudgeAnswer(t *testing.T) {
-	for value, want := range map[string]string{"yes (0.82)": "true 0.82", "NO (0.05)": "false 0.05", "error": "<nil> <nil>", "no": "false <nil>"} {
-		answer, probability := parseJudgeAnswer(value)
-		got := "<nil>"
-		if answer != nil {
-			got = fmt.Sprint(*answer)
-		}
-		if probability != nil {
-			got += " " + fmt.Sprint(*probability)
-		} else {
-			got += " <nil>"
-		}
-		if got != want {
-			t.Errorf("parseJudgeAnswer(%q) = %s, want %s", value, got, want)
-		}
-	}
-}
-
 func agentTranscript(t *testing.T, said ...string) json.RawMessage {
 	t.Helper()
 	items := []any{map[string]any{"type": "message", "role": "user", "content": []string{"Synthetic caller turn."}}}
@@ -338,91 +292,6 @@ func TestScorecardCatalogHasEveryQuestionOnce(t *testing.T) {
 	}
 }
 
-func TestTrustWeightsEachSampleByItsShareOfTheDaysCalls(t *testing.T) {
-	no, yes := false, true
-	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
-	calls := map[string]*trustCall{
-		"flagged-caught": {answers: map[string]bool{"kyle": false}, judge: &no, sample: "flagged", date: "2026-10-08"},
-		"flagged-alarm":  {answers: map[string]bool{"kyle": true}, judge: &no, sample: "flagged", date: "2026-10-08"},
-		"random-missed":  {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "random", date: "2026-10-08"},
-		"random-fine":    {answers: map[string]bool{"kyle": true}, judge: &yes, sample: "random", date: "2026-10-08"},
-		"imported":       {answers: map[string]bool{"kyle": false}, judge: &yes, sample: "manual", date: "2026-10-01"},
-	}
-	estimate := estimateTrust(calls, map[string]reviewPool{"2026-10-08": {flagged: 20, random: 180, reviewedFlagged: 2, reviewedRandom: 2}}, now)
-	if estimate.Calls != 4 || estimate.Failures != 2 {
-		t.Fatalf("only queue samples with a recorded pool count: %+v", estimate)
-	}
-	if *estimate.Catch != 10.0/100.0 {
-		t.Fatalf("a miss among 180 unflagged calls outweighs a catch among 20 flagged: catch %v", *estimate.Catch)
-	}
-	if *estimate.Agreement != 100.0/200.0 || estimate.Status != trustStatusBelow {
-		t.Fatalf("weighted agreement and verdict: %+v", estimate)
-	}
-}
-
-func TestTrustWeightsByEveryReviewedCallNotOnlyWhereTheQuestionApplied(t *testing.T) {
-	no, yes := false, true
-	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
-	calls := map[string]*trustCall{}
-	for index := 0; index < 8; index++ {
-		calls[fmt.Sprintf("flagged-%d", index)] = &trustCall{answers: map[string]bool{"kyle": false}, judge: &no, sample: "flagged", date: "2026-10-08"}
-	}
-	calls["random-missed"] = &trustCall{answers: map[string]bool{"kyle": false}, judge: &yes, sample: "random", date: "2026-10-08"}
-	calls["random-fine"] = &trustCall{answers: map[string]bool{"kyle": true}, judge: &yes, sample: "random", date: "2026-10-08"}
-	pools := map[string]reviewPool{"2026-10-08": {flagged: 20, random: 180, reviewedFlagged: 10, reviewedRandom: 10}}
-	estimate := estimateTrust(calls, pools, now)
-	if want := 16.0 / 34.0; math.Abs(*estimate.Catch-want) > 1e-9 {
-		t.Fatalf("catch = %v, want %v (8 caught at weight 2 vs 1 missed at weight 18)", *estimate.Catch, want)
-	}
-}
-
-func TestTrustNeedsBoundsNotJustPointEstimates(t *testing.T) {
-	no, yes := false, true
-	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
-	calls := map[string]*trustCall{}
-	add := func(id string, human, judge bool, reviewers ...string) {
-		answers := map[string]bool{}
-		for _, reviewer := range reviewers {
-			answers[reviewer] = human
-		}
-		verdict := &yes
-		if !judge {
-			verdict = &no
-		}
-		calls[id] = &trustCall{answers: answers, judge: verdict, sample: "random", date: "2026-10-08"}
-	}
-	for index := 0; index < 5; index++ {
-		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
-	}
-	for index := 0; index < 30; index++ {
-		add(fmt.Sprintf("fine-%d", index), true, true, "kyle", "chase")
-	}
-	for index := 30; index < 60; index++ {
-		add(fmt.Sprintf("fine-%d", index), true, true, "kyle")
-	}
-	pools := map[string]reviewPool{"2026-10-08": {random: 65, reviewedRandom: 65}}
-	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusCollected || *estimate.Catch != 1 {
-		t.Fatalf("5 of 5 caught is not yet proof of 90%%: %+v", estimate)
-	}
-	for index := 5; index < 20; index++ {
-		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
-	}
-	pools["2026-10-08"] = reviewPool{random: 80, reviewedRandom: 80}
-	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusCollected {
-		t.Fatalf("20 of 20 caught only shows at least 84%%, short of 90%%: %+v", estimate)
-	}
-	for index := 20; index < 400; index++ {
-		add(fmt.Sprintf("fail-%d", index), false, false, "kyle")
-	}
-	for index := 60; index < 600; index++ {
-		add(fmt.Sprintf("fine-%d", index), true, true, "kyle")
-	}
-	pools["2026-10-08"] = reviewPool{random: 1000, reviewedRandom: 1000}
-	if estimate := estimateTrust(calls, pools, now); estimate.Status != trustStatusTrusted {
-		t.Fatalf("400 no answers with no false alarm prove 5%%: %+v", estimate)
-	}
-}
-
 func TestStaffScorecardFollowsTheJuryMajorityNotTheMean(t *testing.T) {
 	scorecard := agentCallScorecard(json.RawMessage(`{"evaluator":"jury","evaluatorVersion":"typesafe-scorecard-v7","jurors":["a","b","c"],"status":"complete","results":{
 		"promises_backed":{"verdict":false,"probability":0.4667,"votes":{"a":0.1,"b":0.3,"c":1.0},"errors":{}},
@@ -442,44 +311,6 @@ func TestStaffScorecardShowsVerdictsInCatalogOrder(t *testing.T) {
 	}
 	if got := agentCallScorecard(nil); len(got) != 0 || got == nil {
 		t.Fatalf("no evaluation is an empty scorecard: %+v", got)
-	}
-}
-
-func TestGoldenSetDaysSplitJuryNosAndReviewerNos(t *testing.T) {
-	days := goldenSetDays{}
-	for _, review := range []struct {
-		date, question string
-		human, judge   bool
-	}{
-		{"2026-10-11", "promises_backed", true, false},
-		{"2026-10-11", "promises_backed", false, false},
-		{"2026-10-11", "office_rules_grounded", false, true},
-		{"2026-10-11", "office_rules_grounded", true, true},
-		{"2026-10-10", "promises_backed", true, false},
-	} {
-		days.add(review.date, review.question, review.human, review.judge)
-	}
-	result, week := days.list()
-	if len(result) != 2 || result[0].Date != "2026-10-11" || result[0].GoldenSetCounts != (GoldenSetCounts{JudgeNo: 2, FalseAlarms: 1, HumanNo: 2, Misses: 1}) {
-		t.Fatalf("newest day first, with jury nos, false alarms, reviewer nos, and misses: %+v", result)
-	}
-	if len(result[0].Questions) != 2 || result[0].Questions[0].Question != "office_rules_grounded" || result[0].Questions[1].GoldenSetCounts != (GoldenSetCounts{JudgeNo: 2, FalseAlarms: 1, HumanNo: 1}) {
-		t.Fatalf("each day splits by question in catalog order: %+v", result[0].Questions)
-	}
-	if week != (GoldenSetCounts{JudgeNo: 3, FalseAlarms: 2, HumanNo: 2, Misses: 1}) {
-		t.Fatalf("the week total sums the days: %+v", week)
-	}
-}
-
-func TestTrustAllowsFalseAlarmsUpToFivePercent(t *testing.T) {
-	value := func(v float64) *float64 { return &v }
-	estimate := TrustEstimate{Failures: 50, Catch: value(0.97), CatchLow: value(0.92), FalseAlarms: value(0.03), FalseAlarmHigh: value(0.045), Agreement: value(0.95), AgreementLow: value(0.93), HumanAgreement: value(0.95), HumanPairs: 30}
-	if status, reason := trustVerdict(estimate, trustRates{}); status != trustStatusTrusted {
-		t.Fatalf("3%% false alarms with a 4.5%% bound is trusted: %s %s", status, reason)
-	}
-	estimate.FalseAlarms = value(0.06)
-	if status, reason := trustVerdict(estimate, trustRates{}); status != trustStatusBelow || reason != "6% of its no's are false alarms, max 5%" {
-		t.Fatalf("over 5%% false alarms is below the bar: %s %s", status, reason)
 	}
 }
 

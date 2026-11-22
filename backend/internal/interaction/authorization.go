@@ -153,11 +153,3 @@ func (m *Module) beginAnalyticsAuthorization(
 	}
 	return tx, authorization, locationIDs, nil
 }
-
-func locationNames(authorization access.Authorization) map[string]string {
-	result := map[string]string{}
-	for _, location := range authorization.Locations {
-		result[location.ID] = location.Name
-	}
-	return result
-}

@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { latestReviewDay } from "../src/lib/review-day"
 import { signInAs } from "./support"
 
-test("diagnostic and human scorecards connect intent and outcome to failures without hiding unknown checks", async ({ page }, testInfo) => {
+test("diagnostic scorecards connect intent and outcome to failures without hiding unknown checks", async ({ page }, testInfo) => {
   const databaseURL = process.env.E2E_DATABASE_URL
   test.skip(!databaseURL, "E2E_DATABASE_URL is required")
   if (!new URL(databaseURL!).pathname.endsWith("_e2e")) throw new Error("Disposable E2E database required")
@@ -12,7 +11,6 @@ test("diagnostic and human scorecards connect intent and outcome to failures wit
   await client.connect()
   const id = randomUUID()
   const passingID = randomUUID()
-  const reviewDay = latestReviewDay()
   const errors: string[] = []
   page.on("pageerror", (error) => errors.push(error.message))
   try {
@@ -23,8 +21,8 @@ test("diagnostic and human scorecards connect intent and outcome to failures wit
     results.appointment_datetime_correct = { status: "not_applicable", reason: "no_appointment_action" }
     await client.query(
       `INSERT INTO ai_interactions(id,service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript,closeout_payload)
-       VALUES($1,'scorecard-flow-e2e',$2,$3,$1::uuid::text,'+15555550887','+17275550101',$6,$6::timestamptz+interval '2 minutes','COMPLETED',3,$4,$5)`,
-      [id, scope.practice_id, scope.id, { items: [{ type: "message", role: "user", content: ["Synthetic staff request."] }] }, { evaluation: { evaluatorVersion: "typesafe-scorecard-v8", evaluator: "jury", status: "complete", jurors: ["a", "b", "c"], results } }, `${reviewDay}T19:00:00Z`],
+       VALUES($1,'scorecard-flow-e2e',$2,$3,$1::uuid::text,'+15555550887','+17275550101',now()-interval '1 hour',now()-interval '58 minutes','COMPLETED',3,$4,$5)`,
+      [id, scope.practice_id, scope.id, { items: [{ type: "message", role: "user", content: ["Synthetic staff request."] }] }, { evaluation: { evaluatorVersion: "typesafe-scorecard-v8", evaluator: "jury", status: "complete", jurors: ["a", "b", "c"], results } }],
     )
     await client.query("UPDATE ai_interaction_classifications SET status='complete',intent='speak_to_staff',outcome='resolved' WHERE interaction_id=$1", [id])
     for (const key of judged) await client.query(
@@ -40,8 +38,6 @@ test("diagnostic and human scorecards connect intent and outcome to failures wit
     await client.query("UPDATE ai_interaction_classifications SET status='complete',intent='appointment_information',outcome='resolved' WHERE interaction_id=$1", [passingID])
     for (const key of judged) await client.query(`INSERT INTO ai_interaction_scorecard_answers(interaction_id,practice_id,question,source,answer,scorecard_version,judge_model,computed_at) VALUES($1,$2,$3,'judge',true,'typesafe-scorecard-v8','a,b,c',now())`, [passingID, scope.practice_id, key])
     await signInAs(page, "founder@acuity.test", "Synthetic Operator")
-    const { rows: [reviewer] } = await client.query('SELECT id FROM auth."user" WHERE email=$1', ["founder@acuity.test"])
-    await client.query(`INSERT INTO ai_call_review_assignments(practice_id,review_date,reviewer,reviewer_email,interaction_id,sample,overlap,position) VALUES($1,$2,$3,$4,$5,'random',false,0)`, [scope.practice_id, reviewDay, reviewer.id, "founder@acuity.test", id])
     await page.getByRole("button", { name: "Command Center", exact: true }).click()
     await page.getByRole("button", { name: "Workspace selector" }).click()
     await page.getByRole("button", { name: "Fixture Location 1", exact: true }).click()
@@ -49,7 +45,7 @@ test("diagnostic and human scorecards connect intent and outcome to failures wit
     await diagnostics.getByRole("combobox", { name: "Date range", exact: true }).click()
     await page.getByRole("option", { name: "Last 7 days", exact: true }).click()
     const navigation = page.getByRole("navigation", { name: "Command Center", exact: true })
-    await expect(navigation.getByRole("button")).toHaveText(["Calls", "Summary", "Breakdowns", "Tools", "Cost", "Judges", "Review"])
+    await expect(navigation.getByRole("button")).toHaveText(["Calls", "Summary", "Breakdowns", "Tools", "Cost", "Judges"])
     await expect(navigation.getByRole("button", { name: "Calls", exact: true })).toHaveAttribute("aria-current", "page")
     await expect(diagnostics.getByRole("combobox", { name: "Judge flags", exact: true })).toContainText("Any judge failure")
     await expect(diagnostics.getByRole("table").locator("tbody tr")).toHaveCount(1)
@@ -104,29 +100,6 @@ test("diagnostic and human scorecards connect intent and outcome to failures wit
     await flow.screenshot({ path: testInfo.outputPath("diagnostic-flow-mobile.png") })
     await page.keyboard.press("Escape")
     await page.setViewportSize({ width: 1440, height: 1000 })
-    await navigation.getByRole("button", { name: "Review", exact: true }).click()
-    const scorecard = page.getByRole("complementary", { name: "Scorecard", exact: true })
-    await expect(scorecard.getByText("Speak to staff", { exact: true })).toBeVisible()
-    await expect(scorecard.locator("details")).not.toHaveAttribute("open")
-    await scorecard.getByLabel("Review judge checks", { exact: true }).click()
-    const passButtons = scorecard.getByRole("button", { name: "Pass", exact: true })
-    await expect(passButtons).toHaveCount(4)
-    for (const button of await passButtons.all()) await button.click()
-    await expect(scorecard.getByText("Checks incomplete", { exact: true })).toBeVisible()
-    await expect(scorecard.getByText("Disagrees", { exact: true })).toHaveCount(0)
-    await scorecard.getByRole("button", { name: "Save and reveal judge" }).click()
-    await expect(scorecard.getByText("Disagrees", { exact: true })).toBeVisible()
-    await expect(scorecard.getByText("1 failed check", { exact: true })).toBeVisible()
-    await scorecard.getByRole("heading", { name: "Scorecard", exact: true }).scrollIntoViewIfNeeded()
-    await scorecard.screenshot({ path: testInfo.outputPath("human-flow.png") })
-    await scorecard.getByRole("group", { name: "T1 answer", exact: true }).getByRole("button", { name: "Fail", exact: true }).click()
-    await expect(scorecard.getByText("1 failed check", { exact: true })).toBeVisible()
-    await scorecard.getByRole("button", { name: "Save changes", exact: true }).click()
-    await expect(scorecard.getByRole("button", { name: "Saved · Next call" })).toBeVisible()
-    await expect(scorecard.getByText("Disagrees", { exact: true })).toHaveCount(0)
-    const { rows: [saved] } = await client.query("SELECT answer FROM ai_call_reviews WHERE interaction_id=$1 AND question='transfer_policy_followed'", [id])
-    expect(saved.answer).toBe(false)
-    await navigation.getByRole("button", { name: "Calls", exact: true }).click()
     await expect(diagnostics.getByRole("table").locator("tbody tr")).toHaveCount(1)
     const previousVersion = Number(await page.getByTestId("mounted-workspace").getAttribute("data-workspace-version"))
     await client.query("BEGIN")

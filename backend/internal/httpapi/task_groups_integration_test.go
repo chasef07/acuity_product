@@ -224,9 +224,18 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 			members = append(members, map[string]any{"id": member.Id, "expectedVersion": member.Version})
 		}
 	}
-	groupPath := group.Id.String() + "/complete-group"
-	complete(groupPath, map[string]any{"members": members, "reason": "EXPIRED"}, http.StatusBadRequest)
-	complete(groupPath, map[string]any{"members": members, "reason": "ABANDONED"}, http.StatusBadRequest)
+	closeForPatient := func(body map[string]any, wantStatus int) {
+		t.Helper()
+		body["phone"], body["tasks"] = group.Phone, members
+		encoded, _ := json.Marshal(body)
+		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/complete-for-patient", "staff-token", encoded)
+		defer response.Body.Close()
+		if response.StatusCode != wantStatus {
+			t.Fatalf("complete-for-patient with %s: %d %s, want %d", encoded, response.StatusCode, readBody(t, response), wantStatus)
+		}
+	}
+	closeForPatient(map[string]any{"reason": "EXPIRED"}, http.StatusBadRequest)
+	closeForPatient(map[string]any{"reason": "ABANDONED"}, http.StatusBadRequest)
 	if stillOpen := query(); stillOpen.Counts.Tasks != len(payloads) {
 		t.Fatalf("a completion with a reason staff may not give closed work: %d open, want %d", stillOpen.Counts.Tasks, len(payloads))
 	}
@@ -248,7 +257,14 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 		t.Fatalf("reopened Task = %s with close reason %v", reopened.State, reopened.CloseReason)
 	}
 	wantReason("a completion as unreachable", complete(single, map[string]any{"expectedVersion": reopened.Version, "reason": "UNREACHABLE"}, http.StatusOK), api.TaskCloseReasonUNREACHABLE)
-	wantReason("a group completion that names no reason", complete(groupPath, map[string]any{"members": members}, http.StatusOK), api.TaskCloseReasonDONE)
+	closeForPatient(map[string]any{}, http.StatusOK)
+	groupTask := request(t, server.Client(), http.MethodGet, server.URL+"/v1/tasks/"+group.Id.String(), "staff-token", nil)
+	var closedGroup api.Task
+	if err := json.NewDecoder(groupTask.Body).Decode(&closedGroup); err != nil {
+		t.Fatal(err)
+	}
+	groupTask.Body.Close()
+	wantReason("a patient completion that names no reason", closedGroup, api.TaskCloseReasonDONE)
 	if remaining := query(); remaining.Counts.Tasks != len(payloads)-1-len(members) {
 		t.Fatalf("open Tasks after both completions = %d, want %d", remaining.Counts.Tasks, len(payloads)-1-len(members))
 	}

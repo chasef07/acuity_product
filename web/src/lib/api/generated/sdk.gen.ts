@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CancelStaffTransferData, CancelStaffTransferErrors, CancelStaffTransferResponses, ChangeTaskCategoryData, ChangeTaskCategoryErrors, ChangeTaskCategoryResponses, CloseAgentCallInsuranceGapData, CloseAgentCallInsuranceGapErrors, CloseAgentCallInsuranceGapResponses, CloseAgentCallKnowledgeGapData, CloseAgentCallKnowledgeGapErrors, CloseAgentCallKnowledgeGapResponses, CompletePatientTasksData, CompletePatientTasksErrors, CompletePatientTasksResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskGroupData, CompleteTaskGroupErrors, CompleteTaskGroupResponses, CompleteTaskResponses, ConfirmCallingMediaReadyData, ConfirmCallingMediaReadyErrors, ConfirmCallingMediaReadyResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, CreateMessageFollowUpTaskData, CreateMessageFollowUpTaskErrors, CreateMessageFollowUpTaskResponses, CreateStaffTaskData, CreateStaffTaskErrors, CreateStaffTaskResponses, DeclineStaffTransferData, DeclineStaffTransferErrors, DeclineStaffTransferResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, FlagAgentCallIssueData, FlagAgentCallIssueErrors, FlagAgentCallIssueResponses, GetAgentCallData, GetAgentCallErrors, GetAgentCallResponses, GetAiInteractionData, GetAiInteractionErrors, GetAiInteractionResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallResponses, GetCallingRecordingPlaybackData, GetCallingRecordingPlaybackErrors, GetCallingRecordingPlaybackResponses, GetCallingStateData, GetCallingStateErrors, GetCallingStateResponses, GetCallingVoicemailPlaybackData, GetCallingVoicemailPlaybackErrors, GetCallingVoicemailPlaybackResponses, GetEngagementSummaryData, GetEngagementSummaryErrors, GetEngagementSummaryResponses, GetEngagementTimelineData, GetEngagementTimelineErrors, GetEngagementTimelineResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetMessageAttachmentData, GetMessageAttachmentErrors, GetMessageAttachmentResponses, GetOperatorAiInteractionAnalyticsData, GetOperatorAiInteractionAnalyticsErrors, GetOperatorAiInteractionAnalyticsResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetOperatorCallReviewData, GetOperatorCallReviewErrors, GetOperatorCallReviewResponses, GetOperatorScorecardQuestionsData, GetOperatorScorecardQuestionsErrors, GetOperatorScorecardQuestionsResponses, GetProviderMessageMediaData, GetProviderMessageMediaErrors, GetProviderMessageMediaResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskOutboundEligibilityData, GetTaskOutboundEligibilityErrors, GetTaskOutboundEligibilityResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, IngestAiInteractionData, IngestAiInteractionErrors, IngestAiInteractionResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, IssueCallingRecordingPlaybackData, IssueCallingRecordingPlaybackErrors, IssueCallingRecordingPlaybackResponses, IssueCallingVoicemailPlaybackData, IssueCallingVoicemailPlaybackErrors, IssueCallingVoicemailPlaybackResponses, ListStaffTransferCandidatesData, ListStaffTransferCandidatesErrors, ListStaffTransferCandidatesResponses, OpenOperatorCallReviewQueueData, OpenOperatorCallReviewQueueErrors, OpenOperatorCallReviewQueueResponses, PublishInsuranceCatalogData, PublishInsuranceCatalogErrors, PublishInsuranceCatalogResponses, PublishLocationKnowledgeData, PublishLocationKnowledgeErrors, PublishLocationKnowledgeResponses, QueryAgentCallsData, QueryAgentCallsErrors, QueryAgentCallsResponses, QueryBookingAnalyticsData, QueryBookingAnalyticsErrors, QueryBookingAnalyticsResponses, QueryInsuranceCatalogData, QueryInsuranceCatalogErrors, QueryInsuranceCatalogResponses, QueryInsuranceHistoryData, QueryInsuranceHistoryErrors, QueryInsuranceHistoryResponses, QueryLocationKnowledgeData, QueryLocationKnowledgeErrors, QueryLocationKnowledgeHistoryData, QueryLocationKnowledgeHistoryErrors, QueryLocationKnowledgeHistoryResponses, QueryLocationKnowledgeResponses, QueryOperatorAiAnalyticsData, QueryOperatorAiAnalyticsErrors, QueryOperatorAiAnalyticsResponses, QueryOperatorAiCostsData, QueryOperatorAiCostsErrors, QueryOperatorAiCostsResponses, QueryOperatorJudgeAccuracyData, QueryOperatorJudgeAccuracyErrors, QueryOperatorJudgeAccuracyResponses, QueryPatientWorkData, QueryPatientWorkErrors, QueryPatientWorkResponses, QueryStaffAnalyticsData, QueryStaffAnalyticsErrors, QueryStaffAnalyticsResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadAgentInsuranceCatalogData, ReadAgentInsuranceCatalogErrors, ReadAgentInsuranceCatalogResponses, ReadBlockedSenderData, ReadBlockedSenderErrors, ReadBlockedSenderResponses, ReadInsuranceRevisionData, ReadInsuranceRevisionErrors, ReadInsuranceRevisionResponses, ReadLocationKnowledgeRevisionData, ReadLocationKnowledgeRevisionErrors, ReadLocationKnowledgeRevisionResponses, ReadOfficeKnowledgeData, ReadOfficeKnowledgeErrors, ReadOfficeKnowledgeResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveCorrelatedTelnyxMessagingWebhookData, ReceiveCorrelatedTelnyxMessagingWebhookErrors, ReceiveCorrelatedTelnyxMessagingWebhookResponses, ReceiveTelnyxMessagingWebhookData, ReceiveTelnyxMessagingWebhookErrors, ReceiveTelnyxMessagingWebhookResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RequestStaffTransferData, RequestStaffTransferErrors, RequestStaffTransferResponses, RequeueOperatorProviderReceiptData, RequeueOperatorProviderReceiptErrors, RequeueOperatorProviderReceiptResponses, RetryInboundMessageAttachmentData, RetryInboundMessageAttachmentErrors, RetryInboundMessageAttachmentResponses, RetryOutboundCallData, RetryOutboundCallErrors, RetryOutboundCallResponses, ReviewOperatorAiCallIssueData, ReviewOperatorAiCallIssueErrors, ReviewOperatorAiCallIssueResponses, SendMessageAgainData, SendMessageAgainErrors, SendMessageAgainResponses, SendMessageData, SendMessageErrors, SendMessageResponses, SetBlockedSenderData, SetBlockedSenderErrors, SetBlockedSenderResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses, StartOutboundCallData, StartOutboundCallErrors, StartOutboundCallResponses, SubmitOperatorCallReviewData, SubmitOperatorCallReviewErrors, SubmitOperatorCallReviewResponses, UploadMessageAttachmentData, UploadMessageAttachmentErrors, UploadMessageAttachmentResponses } from './types.gen';
+import type { AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CancelStaffTransferData, CancelStaffTransferErrors, CancelStaffTransferResponses, ChangeTaskCategoryData, ChangeTaskCategoryErrors, ChangeTaskCategoryResponses, CloseAgentCallInsuranceGapData, CloseAgentCallInsuranceGapErrors, CloseAgentCallInsuranceGapResponses, CloseAgentCallKnowledgeGapData, CloseAgentCallKnowledgeGapErrors, CloseAgentCallKnowledgeGapResponses, CompletePatientTasksData, CompletePatientTasksErrors, CompletePatientTasksResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskResponses, ConfirmCallingMediaReadyData, ConfirmCallingMediaReadyErrors, ConfirmCallingMediaReadyResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, CreateMessageFollowUpTaskData, CreateMessageFollowUpTaskErrors, CreateMessageFollowUpTaskResponses, CreateStaffTaskData, CreateStaffTaskErrors, CreateStaffTaskResponses, DeclineStaffTransferData, DeclineStaffTransferErrors, DeclineStaffTransferResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, FlagAgentCallIssueData, FlagAgentCallIssueErrors, FlagAgentCallIssueResponses, GetAgentCallData, GetAgentCallErrors, GetAgentCallResponses, GetAiInteractionData, GetAiInteractionErrors, GetAiInteractionResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallResponses, GetCallingRecordingPlaybackData, GetCallingRecordingPlaybackErrors, GetCallingRecordingPlaybackResponses, GetCallingStateData, GetCallingStateErrors, GetCallingStateResponses, GetCallingVoicemailPlaybackData, GetCallingVoicemailPlaybackErrors, GetCallingVoicemailPlaybackResponses, GetEngagementSummaryData, GetEngagementSummaryErrors, GetEngagementSummaryResponses, GetEngagementTimelineData, GetEngagementTimelineErrors, GetEngagementTimelineResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetMessageAttachmentData, GetMessageAttachmentErrors, GetMessageAttachmentResponses, GetOperatorAiInteractionAnalyticsData, GetOperatorAiInteractionAnalyticsErrors, GetOperatorAiInteractionAnalyticsResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetOperatorScorecardQuestionsData, GetOperatorScorecardQuestionsErrors, GetOperatorScorecardQuestionsResponses, GetProviderMessageMediaData, GetProviderMessageMediaErrors, GetProviderMessageMediaResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskOutboundEligibilityData, GetTaskOutboundEligibilityErrors, GetTaskOutboundEligibilityResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, IngestAiInteractionData, IngestAiInteractionErrors, IngestAiInteractionResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, IssueCallingRecordingPlaybackData, IssueCallingRecordingPlaybackErrors, IssueCallingRecordingPlaybackResponses, IssueCallingVoicemailPlaybackData, IssueCallingVoicemailPlaybackErrors, IssueCallingVoicemailPlaybackResponses, ListStaffTransferCandidatesData, ListStaffTransferCandidatesErrors, ListStaffTransferCandidatesResponses, PublishInsuranceCatalogData, PublishInsuranceCatalogErrors, PublishInsuranceCatalogResponses, PublishLocationKnowledgeData, PublishLocationKnowledgeErrors, PublishLocationKnowledgeResponses, QueryAgentCallsData, QueryAgentCallsErrors, QueryAgentCallsResponses, QueryBookingAnalyticsData, QueryBookingAnalyticsErrors, QueryBookingAnalyticsResponses, QueryInsuranceCatalogData, QueryInsuranceCatalogErrors, QueryInsuranceCatalogResponses, QueryInsuranceHistoryData, QueryInsuranceHistoryErrors, QueryInsuranceHistoryResponses, QueryLocationKnowledgeData, QueryLocationKnowledgeErrors, QueryLocationKnowledgeHistoryData, QueryLocationKnowledgeHistoryErrors, QueryLocationKnowledgeHistoryResponses, QueryLocationKnowledgeResponses, QueryOperatorAiAnalyticsData, QueryOperatorAiAnalyticsErrors, QueryOperatorAiAnalyticsResponses, QueryOperatorAiCostsData, QueryOperatorAiCostsErrors, QueryOperatorAiCostsResponses, QueryPatientWorkData, QueryPatientWorkErrors, QueryPatientWorkResponses, QueryStaffAnalyticsData, QueryStaffAnalyticsErrors, QueryStaffAnalyticsResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadAgentInsuranceCatalogData, ReadAgentInsuranceCatalogErrors, ReadAgentInsuranceCatalogResponses, ReadBlockedSenderData, ReadBlockedSenderErrors, ReadBlockedSenderResponses, ReadInsuranceRevisionData, ReadInsuranceRevisionErrors, ReadInsuranceRevisionResponses, ReadLocationKnowledgeRevisionData, ReadLocationKnowledgeRevisionErrors, ReadLocationKnowledgeRevisionResponses, ReadOfficeKnowledgeData, ReadOfficeKnowledgeErrors, ReadOfficeKnowledgeResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveCorrelatedTelnyxMessagingWebhookData, ReceiveCorrelatedTelnyxMessagingWebhookErrors, ReceiveCorrelatedTelnyxMessagingWebhookResponses, ReceiveTelnyxMessagingWebhookData, ReceiveTelnyxMessagingWebhookErrors, ReceiveTelnyxMessagingWebhookResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RequestStaffTransferData, RequestStaffTransferErrors, RequestStaffTransferResponses, RequeueOperatorProviderReceiptData, RequeueOperatorProviderReceiptErrors, RequeueOperatorProviderReceiptResponses, RetryInboundMessageAttachmentData, RetryInboundMessageAttachmentErrors, RetryInboundMessageAttachmentResponses, RetryOutboundCallData, RetryOutboundCallErrors, RetryOutboundCallResponses, ReviewOperatorAiCallIssueData, ReviewOperatorAiCallIssueErrors, ReviewOperatorAiCallIssueResponses, SendMessageAgainData, SendMessageAgainErrors, SendMessageAgainResponses, SendMessageData, SendMessageErrors, SendMessageResponses, SetBlockedSenderData, SetBlockedSenderErrors, SetBlockedSenderResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses, StartOutboundCallData, StartOutboundCallErrors, StartOutboundCallResponses, UploadMessageAttachmentData, UploadMessageAttachmentErrors, UploadMessageAttachmentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -745,23 +745,6 @@ export const changeTaskCategory = <ThrowOnError extends boolean = false>(options
 });
 
 /**
- * Resolve exactly the reviewed open group membership.
- */
-export const completeTaskGroup = <ThrowOnError extends boolean = false>(options: Options<CompleteTaskGroupData, ThrowOnError>): RequestResult<CompleteTaskGroupResponses, CompleteTaskGroupErrors, ThrowOnError> => (options.client ?? client).post<CompleteTaskGroupResponses, CompleteTaskGroupErrors, ThrowOnError>({
-    security: [{
-            key: 'bearerAuth',
-            scheme: 'bearer',
-            type: 'http'
-        }],
-    url: '/v1/tasks/{taskId}/complete-group',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
  * Close exactly the listed open Tasks for one patient phone, all or none. Each Task must still be open at its listed version, so nothing a coworker changed is closed.
  */
 export const completePatientTasks = <ThrowOnError extends boolean = false>(options: Options<CompletePatientTasksData, ThrowOnError>): RequestResult<CompletePatientTasksResponses, CompletePatientTasksErrors, ThrowOnError> => (options.client ?? client).post<CompletePatientTasksResponses, CompletePatientTasksErrors, ThrowOnError>({
@@ -967,70 +950,6 @@ export const getOperatorScorecardQuestions = <ThrowOnError extends boolean = fal
         }],
     url: '/v1/operator/scorecard/questions',
     ...options
-});
-
-/**
- * Open the caller's daily review queue, assigning calls on first open.
- */
-export const openOperatorCallReviewQueue = <ThrowOnError extends boolean = false>(options: Options<OpenOperatorCallReviewQueueData, ThrowOnError>): RequestResult<OpenOperatorCallReviewQueueResponses, OpenOperatorCallReviewQueueErrors, ThrowOnError> => (options.client ?? client).post<OpenOperatorCallReviewQueueResponses, OpenOperatorCallReviewQueueErrors, ThrowOnError>({
-    security: [{
-            key: 'bearerAuth',
-            scheme: 'bearer',
-            type: 'http'
-        }],
-    url: '/v1/operator/call-reviews/queue',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Compare judge answers with the golden set per question and judge version.
- */
-export const queryOperatorJudgeAccuracy = <ThrowOnError extends boolean = false>(options: Options<QueryOperatorJudgeAccuracyData, ThrowOnError>): RequestResult<QueryOperatorJudgeAccuracyResponses, QueryOperatorJudgeAccuracyErrors, ThrowOnError> => (options.client ?? client).post<QueryOperatorJudgeAccuracyResponses, QueryOperatorJudgeAccuracyErrors, ThrowOnError>({
-    security: [{
-            key: 'bearerAuth',
-            scheme: 'bearer',
-            type: 'http'
-        }],
-    url: '/v1/operator/call-reviews/accuracy',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Read one call's review; judge answers are withheld until the reviewer submits.
- */
-export const getOperatorCallReview = <ThrowOnError extends boolean = false>(options: Options<GetOperatorCallReviewData, ThrowOnError>): RequestResult<GetOperatorCallReviewResponses, GetOperatorCallReviewErrors, ThrowOnError> => (options.client ?? client).get<GetOperatorCallReviewResponses, GetOperatorCallReviewErrors, ThrowOnError>({
-    security: [{
-            key: 'bearerAuth',
-            scheme: 'bearer',
-            type: 'http'
-        }],
-    url: '/v1/operator/call-reviews/{interactionId}',
-    ...options
-});
-
-/**
- * Save the reviewer's answers to the golden set and reveal the judge's answers; saving again replaces them.
- */
-export const submitOperatorCallReview = <ThrowOnError extends boolean = false>(options: Options<SubmitOperatorCallReviewData, ThrowOnError>): RequestResult<SubmitOperatorCallReviewResponses, SubmitOperatorCallReviewErrors, ThrowOnError> => (options.client ?? client).put<SubmitOperatorCallReviewResponses, SubmitOperatorCallReviewErrors, ThrowOnError>({
-    security: [{
-            key: 'bearerAuth',
-            scheme: 'bearer',
-            type: 'http'
-        }],
-    url: '/v1/operator/call-reviews/{interactionId}',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
 });
 
 /**

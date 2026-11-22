@@ -64,20 +64,15 @@ func TestTaskCompletionsPublishOneWorkspaceHintPerTransaction(t *testing.T) {
 	}
 	drainWorkspaceHints(t, listener)
 	statements.count.Store(0)
-	anchor, err := traced.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
+	closed, err := traced.CompletePatientTasks(ctx, work.CompletePatientTasksCommand{
 		Reason:   work.CloseReasonDone,
-		Identity: identity, TaskID: members[2].ID, Members: members,
+		Identity: identity, Phone: "+12025550123", Tasks: members,
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || closed != len(members) {
+		t.Fatalf("CompletePatientTasks closed %d: %v", closed, err)
 	}
-	t.Logf("CompleteTaskGroup of 5: %d statements", statements.count.Load())
+	t.Logf("CompletePatientTasks of 5: %d statements", statements.count.Load())
 	assertOneWorkspaceHint(t, db, listener, authorization.Practice.ID)
-	if anchor.ID != members[2].ID || anchor.State != work.TaskCompleted ||
-		anchor.Version != members[2].ExpectedVersion+1 || anchor.CompletedBy == nil ||
-		anchor.CompletedBy.Subject != identity.Subject || anchor.Title != "Optical request group-2" {
-		t.Fatalf("completed group anchor = %#v", anchor)
-	}
 	for _, member := range members {
 		var activities int
 		if err := db.Owner.QueryRow(ctx, `
@@ -92,24 +87,24 @@ func TestTaskCompletionsPublishOneWorkspaceHintPerTransaction(t *testing.T) {
 	}
 
 	stale := create("stale")
-	_, err = traced.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
+	_, err = traced.CompletePatientTasks(ctx, work.CompletePatientTasksCommand{
 		Reason:   work.CloseReasonDone,
-		Identity: identity, TaskID: stale.ID,
-		Members: []work.ReviewedTask{{ID: stale.ID, ExpectedVersion: stale.Version + 1}},
+		Identity: identity, Phone: "+12025550123",
+		Tasks: []work.ReviewedTask{{ID: stale.ID, ExpectedVersion: stale.Version + 1}},
 	})
 	if !errors.Is(err, work.ErrConflict) {
-		t.Fatalf("stale group completion error = %v, want ErrConflict", err)
+		t.Fatalf("stale patient completion error = %v, want ErrConflict", err)
 	}
-	_, err = traced.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
+	_, err = traced.CompletePatientTasks(ctx, work.CompletePatientTasksCommand{
 		Reason:   work.CloseReasonDone,
-		Identity: identity, TaskID: stale.ID,
-		Members: []work.ReviewedTask{
+		Identity: identity, Phone: "+12025550123",
+		Tasks: []work.ReviewedTask{
 			{ID: stale.ID, ExpectedVersion: stale.Version},
 			{ID: "00000000-0000-4000-8000-000000000000", ExpectedVersion: 1},
 		},
 	})
 	if !errors.Is(err, work.ErrDenied) {
-		t.Fatalf("missing group member error = %v, want ErrDenied", err)
+		t.Fatalf("missing patient Task error = %v, want ErrDenied", err)
 	}
 }
 

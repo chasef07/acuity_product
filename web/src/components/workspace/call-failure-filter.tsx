@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button"
-import { useScorecardQuestions } from "@/lib/clients/call-review"
+import { useScorecardQuestions } from "@/lib/clients/scorecard-questions"
 import { juryScorecardVersions } from "@/lib/scorecard-flow"
 import { OptionSelect } from "./manage-agent-page"
 

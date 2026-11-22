@@ -681,12 +681,6 @@ GRANT SELECT, INSERT ON public.ai_interaction_insurance_gap_reviews TO acuity_po
 
 -- Scorecard answers are rebuilt from saved call evidence whenever a call closes.
 GRANT SELECT, INSERT, DELETE ON ai_interaction_scorecard_answers TO acuity_portal, acuity_worker;
--- Platform Operators keep the daily review queue and golden set in the portal.
-GRANT SELECT, INSERT ON ai_call_review_assignments TO acuity_portal;
-GRANT UPDATE (note, question_idea, completed_at) ON ai_call_review_assignments TO acuity_portal;
-GRANT SELECT, INSERT ON ai_call_reviews TO acuity_portal;
-GRANT UPDATE (answer, note) ON ai_call_reviews TO acuity_portal;
-GRANT SELECT, INSERT ON ai_call_review_pools TO acuity_portal;
 
 -- Ingestion projects supplied labels; runtime roles only read the public projection.
 GRANT SELECT (interaction_id, intent, outcome, status)

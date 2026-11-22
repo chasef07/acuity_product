@@ -6,7 +6,6 @@ import {
   Clock3Icon,
   CoinsIcon,
   HouseIcon,
-  ListChecksIcon,
   LayoutDashboardIcon,
   PhoneIcon,
   ScaleIcon,
@@ -26,7 +25,7 @@ import {
 } from "@/components/ui/sidebar"
 import { type ManageAgentPage } from "@/lib/workspace-projection"
 
-export type CommandCenterPage = "calls" | "overview" | "breakdowns" | "tools" | "cost" | "review" | "judges"
+export type CommandCenterPage = "calls" | "overview" | "breakdowns" | "tools" | "cost" | "judges"
 
 export const commandCenterPages: Array<{ value: CommandCenterPage; label: string; icon: typeof PhoneIcon }> = [
   { value: "calls", label: "Calls", icon: PhoneIcon },
@@ -35,7 +34,6 @@ export const commandCenterPages: Array<{ value: CommandCenterPage; label: string
   { value: "tools", label: "Tools", icon: WrenchIcon },
   { value: "cost", label: "Cost", icon: CoinsIcon },
   { value: "judges", label: "Judges", icon: ScaleIcon },
-  { value: "review", label: "Review", icon: ListChecksIcon },
 ]
 
 export type PracticeAnalyticsPage = "bookings" | "volume" | "duration" | "staff"
