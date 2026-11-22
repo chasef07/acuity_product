@@ -48,7 +48,6 @@ type MiddlewareConfig struct {
 }
 
 type ServiceConfig struct {
-	AcuityDemo              ServiceCredentialConfig
 	AbitaEyeGroup           ServiceCredentialConfig
 	AbitaEyeGroupMiddleware *ServiceCredentialConfig
 }
@@ -288,15 +287,11 @@ func loadHandoffConfig(getenv func(string) string) (HumanCallingConfig, error) {
 }
 
 func loadServiceConfig(getenv func(string) string) (ServiceConfig, error) {
-	demo, err := loadServiceCredential(getenv, "ACUITY_DEMO_SERVICE")
-	if err != nil {
-		return ServiceConfig{}, err
-	}
 	production, err := loadServiceCredential(getenv, "ABITA_EYE_GROUP_SERVICE")
 	if err != nil {
 		return ServiceConfig{}, err
 	}
-	config := ServiceConfig{AcuityDemo: demo, AbitaEyeGroup: production}
+	config := ServiceConfig{AbitaEyeGroup: production}
 	const middleware = "ABITA_EYE_GROUP_MIDDLEWARE_SERVICE"
 	if getenv(middleware+"_TOKEN") == "" && getenv(middleware+"_SUBJECT") == "" && getenv(middleware+"_PRACTICE_ID") == "" {
 		return config, nil

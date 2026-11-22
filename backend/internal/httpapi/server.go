@@ -1655,43 +1655,6 @@ func (server *Server) ChangeTaskCategory(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
-func (server *Server) CompleteTaskGroup(
-	w http.ResponseWriter,
-	r *http.Request,
-	taskID openapi_types.UUID,
-) {
-	identity, ok := server.portalIdentity(w, r)
-	if !ok {
-		return
-	}
-	var body api.CompleteTaskGroupRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	members := make([]work.ReviewedTask, 0, len(body.Members))
-	for _, member := range body.Members {
-		members = append(members, work.ReviewedTask{ID: member.Id.String(), ExpectedVersion: member.ExpectedVersion})
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	task, err := server.work.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
-		Identity: identity,
-		TaskID:   taskID.String(),
-		Members:  members,
-		Reason:   staffCloseReason(body.Reason),
-	})
-	if err != nil {
-		server.writeDomainError(w, r, err)
-		return
-	}
-	response, err := taskResponse(task)
-	if err != nil {
-		server.writeDomainError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
 func (server *Server) ReopenTask(
 	w http.ResponseWriter,
 	r *http.Request,

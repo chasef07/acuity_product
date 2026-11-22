@@ -28,7 +28,7 @@ func TestFailuresAreActionableInV12ThroughV8(t *testing.T) {
 			t.Run(version+"/"+key, func(t *testing.T) {
 				raw, _ := json.Marshal(map[string]any{"evaluatorVersion": version, "status": "complete", "jurors": []string{"a", "b", "c"}, "servedModels": map[string]any{"a": "a-served", "b": nil, "c": "c-served"}, "results": map[string]any{key: map[string]any{"verdict": false, "probability": 0.4667, "votes": map[string]float64{"a": 0.1, "b": 0.3, "c": 1.0}}}})
 				answers := judgeAnswers(raw)
-				if len(answers) != 1 || answers[0].Answer || !failedReviewQuestion(map[string]bool{key: false}) {
+				if len(answers) != 1 || answers[0].Answer || !scorecardQuestionByKey[key].Failure {
 					t.Fatalf("false %s verdict must be actionable: %+v", version, answers)
 				}
 				if got := readEvaluation(raw); len(got.Flags) != 1 || got.Flags[0].Check != key {

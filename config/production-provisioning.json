@@ -295,33 +295,6 @@
           "SelectedLocationKeys": ["crystal-river"]
         }
       ]
-    },
-    {
-      "Key": "acuity-demo",
-      "Name": "Acuity Demo",
-      "Locations": [
-        {
-          "Key": "demo-484",
-          "Name": "Rheumatology",
-          "AbitaOfficeKeys": ["dev", "rheumatology-demo"],
-          "VoiceNumber": "+14843989071",
-          "VoicemailGreeting": "Thank you for calling Acuity Demo. Please leave a message after the tone.",
-          "MessagingSender": "+14843989071",
-          "MessagingProfileID": "40019fbc-d47c-4e6c-86ee-87ab00795371"
-        },
-        {
-          "Key": "ophthalmology-demo",
-          "Name": "Ophthalmology",
-          "AbitaOfficeKeys": ["ophthalmology-demo"],
-          "VoiceNumber": "+18027878312"
-        },
-        {
-          "Key": "new-tampa-demo",
-          "Name": "New Tampa Eye Institute",
-          "AbitaOfficeKeys": ["new-tampa-demo", "mental-health-demo"],
-          "VoiceNumber": "+13207388132"
-        }
-      ]
     }
   ]
 }

@@ -592,8 +592,6 @@ func expectedTablePrivileges() map[string]bool {
 		grant(role, "INSERT", "ai_interaction_scorecard_answers")
 		grant(role, "DELETE", "ai_interaction_scorecard_answers")
 	}
-	grant("acuity_portal", "SELECT", "ai_call_review_assignments", "ai_call_reviews", "ai_call_review_pools")
-	grant("acuity_portal", "INSERT", "ai_call_review_assignments", "ai_call_reviews", "ai_call_review_pools")
 
 	grant("acuity_portal", "SELECT", "work_text_replies")
 	grant("acuity_portal", "INSERT", "work_text_replies")
@@ -843,8 +841,6 @@ func expectedColumnPrivileges() map[string]bool {
 		"reviewed_by",
 		"reviewed_at",
 	)
-	grant("acuity_portal", "public.ai_call_review_assignments", "UPDATE", "note", "question_idea", "completed_at")
-	grant("acuity_portal", "public.ai_call_reviews", "UPDATE", "answer", "note")
 	grant("acuity_portal", "public.knowledge_corpora", "UPDATE", "revision_id")
 	grant("acuity_portal", "public.insurance_catalogs", "UPDATE", "revision_id")
 	grant("acuity_portal", "public.work_task_interactions", "UPDATE", "task_id")

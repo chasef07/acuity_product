@@ -99,7 +99,7 @@ func TestCloseoutProjectionRecordsScorecard(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT jsonb_object_agg(a.question,a.answer) FROM ai_interaction_scorecard_answers a JOIN ai_interactions i ON i.id=a.interaction_id WHERE i.source_call_id=$1 AND a.source='judge' AND a.scorecard_version=$2`, payload.SourceCallID, version).Scan(&answers); err != nil {
 			t.Fatal(err)
 		}
-		if len(answers) != 4 || answers["transfer_policy_followed"] || !failedReviewQuestion(answers) {
+		if len(answers) != 4 || answers["transfer_policy_followed"] || !scorecardQuestionByKey["transfer_policy_followed"].Failure {
 			t.Fatalf("%s transfer failure must be projected and flagged: %+v", version, answers)
 		}
 		if _, found := answers["knowledge_available"]; found {

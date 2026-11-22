@@ -36,7 +36,7 @@ test("collapsing Task details preserves the Task in the outbound Call request", 
   const key = `collapsed-task-callback-${Date.now()}`
   const title = `Collapsed Task callback ${key}`
   const created = await page.request.post(`${portalURL}/v1/tasks`, {
-    headers: { authorization: "Bearer synthetic-service-token" },
+    headers: { authorization: "Bearer synthetic-production-token" },
     data: {
       callId: key, callerPhone: "+12025550219", category: "optical",
       idempotencyKey: key, officeKey: "spring-hill", officePhone: "+17275550101",

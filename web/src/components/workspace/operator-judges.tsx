@@ -58,7 +58,7 @@ export function OperatorJudges({ report, onRetry }: { report?: JudgeReport; onRe
               <TableCell className="text-right tabular-nums">{pair.disagreed.toLocaleString()} <span className="text-muted-foreground">· {formatShare(pair.disagreed / pair.compared)}</span></TableCell>
             </TableRow>)}</TableBody>
           </Table> : <Empty><EmptyHeader><EmptyTitle>No paired votes yet</EmptyTitle><EmptyDescription>Two models need valid votes on the same call and judge to compare them.</EmptyDescription></EmptyHeader></Empty>}
-          <p className="text-[11px] text-muted-foreground">Agreement measures consistency, not correctness. Compare against human reviews in Review. Sentiment scores are excluded from this Yes / No comparison.</p>
+          <p className="text-[11px] text-muted-foreground">Agreement measures consistency, not correctness. Sentiment scores are excluded from this Yes / No comparison.</p>
         </CardContent>
       </Card>
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">

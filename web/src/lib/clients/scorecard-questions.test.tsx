@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom"
 
 import { clearAccessToken } from "../auth-client.ts"
 import { DataProvider } from "../data/provider.tsx"
-import { useScorecardQuestions } from "./call-review.ts"
+import { useScorecardQuestions } from "./scorecard-questions.ts"
 
 test("named scorecard versions are read once for the session; the current scorecard is read again on remount", async (t) => {
   const requests: string[] = []

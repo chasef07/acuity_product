@@ -107,7 +107,7 @@ test("an AI call without appointment actions stays call-first", async ({
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
   await createAINoAppointmentCall(page)
   const followUp = await page.request.post(`${portalURL}/v1/tasks`, {
-    headers: { authorization: "Bearer synthetic-service-token" },
+    headers: { authorization: "Bearer synthetic-production-token" },
     data: {
       callId: "messaging-no-appointment-call", callerPhone: "+17275550187",
       category: "documentation", idempotencyKey: "history-paperwork",
@@ -1014,7 +1014,7 @@ async function createAIStaffTask(
 ) {
   const suffix = idempotencySuffix ?? (category === "billing" ? "billing" : "medication")
   const response = await page.request.post(`${portalURL}/v1/tasks`, {
-    headers: { authorization: "Bearer synthetic-service-token" },
+    headers: { authorization: "Bearer synthetic-production-token" },
     data: {
       callId: `messaging-${suffix}`,
       callerPhone: category === "billing" ? "+17275550196" : "+17275550195",

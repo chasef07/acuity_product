@@ -184,7 +184,7 @@ func TestResponsibilityProvisioningConvergesOnTheInput(t *testing.T) {
 	}
 }
 
-func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) {
+func TestGroupedTaskSearchKeepsEveryMember(t *testing.T) {
 	db := testdb.Open(t)
 	now := time.Now().UTC()
 	a := access.New(db.As(testdb.Portal), func() time.Time { return now })
@@ -199,8 +199,8 @@ func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) 
 		}
 		return task
 	}
-	first := create("first", "Family Member One")
-	second := create("second", "Family Member Two")
+	create("first", "Family Member One")
+	create("second", "Family Member Two")
 	reads := workspace.New(db.As(testdb.Portal), a)
 	page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Search: "Family Member One", Limit: 1})
 	if err != nil {
@@ -208,27 +208,6 @@ func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) 
 	}
 	if len(page.Items) != 1 || len(page.Items[0].GroupMembers) != 2 || page.Counts.Tasks != 1 || page.NextCursor != "" {
 		t.Fatalf("filtered group hid membership: %#v", page)
-	}
-	reviewed := []work.ReviewedTask{{ID: first.ID, ExpectedVersion: first.Version}, {ID: second.ID, ExpectedVersion: second.Version}}
-	third := create("third", "Family Member Three")
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: first.ID, Members: reviewed})
-	if !errors.Is(err, work.ErrConflict) {
-		t.Fatalf("unseen arrival: %v", err)
-	}
-	reviewed = append(reviewed, work.ReviewedTask{ID: third.ID, ExpectedVersion: third.Version})
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: first.ID, Members: reviewed})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, member := range reviewed {
-		task, err := m.ReadTask(ctx, identity, member.ID)
-		if err != nil || task.State != work.TaskCompleted || task.CompletedBy.Subject != identity.Subject {
-			t.Fatalf("completion: %#v %v", task, err)
-		}
-	}
-	reopened, err := m.ReopenTask(ctx, work.ReopenTaskCommand{Identity: identity, TaskID: second.ID, ExpectedVersion: 2})
-	if err != nil || reopened.State != work.TaskOpen {
-		t.Fatalf("reopen: %v", err)
 	}
 }
 
@@ -306,18 +285,6 @@ func TestRelatedTaskGroupsKeepCallersSeparate(t *testing.T) {
 		if !seen[ordinary.ID] || !seen[recovery.ID] {
 			t.Fatalf("%s skipped a group: %+v", ordering, seen)
 		}
-	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}})
-	if !errors.Is(err, work.ErrConflict) {
-		t.Fatalf("resolving two callers as one group should fail: %v", err)
-	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	remaining, err := m.ReadTask(ctx, identity, recovery.ID)
-	if err != nil || remaining.State != work.TaskOpen || remaining.Version != recovery.Version {
-		t.Fatalf("ordinary group resolution changed recovery: %v", err)
 	}
 }
 
@@ -444,10 +411,6 @@ func TestGroupMetadataCommandsDenyUnrelatedStaffWithoutSideEffects(t *testing.T)
 	_, err := m.ChangeTaskCategory(ctx, work.ChangeTaskCategoryCommand{Identity: outsider, TaskID: task.ID, ExpectedVersion: task.Version, Category: work.TaskCategoryPreOp})
 	if !errors.Is(err, work.ErrDenied) {
 		t.Fatalf("move denied: %v", err)
-	}
-	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Reason: work.CloseReasonDone, Identity: outsider, TaskID: task.ID, Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}}})
-	if !errors.Is(err, work.ErrDenied) {
-		t.Fatalf("group denied: %v", err)
 	}
 	current, err := m.ReadTask(ctx, identity, task.ID)
 	if err != nil || current.Version != task.Version || current.State != work.TaskOpen {

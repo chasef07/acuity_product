@@ -10,7 +10,7 @@ test("visible workload filters show message previews and completion opens the ne
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
   const key = `shift-${Date.now()}`
   for (const [suffix, urgency, phone] of [["normal", "normal", "+12025550201"], ["urgent", "high_priority", "+12025550202"]] as const) {
-    const result = await page.request.post(`${portalURL}/v1/tasks`, { headers: { authorization: "Bearer synthetic-service-token" }, data: {
+    const result = await page.request.post(`${portalURL}/v1/tasks`, { headers: { authorization: "Bearer synthetic-production-token" }, data: {
       callId: `${key}-${suffix}`, callerPhone: phone, category: "optical", idempotencyKey: `${key}-${suffix}`,
       officeKey: "spring-hill", officePhone: "+17275550101", source: "agent", urgency,
       summary: `${key} ${suffix}`, message: "Synthetic shift work.",
@@ -231,7 +231,7 @@ test("Mine leaves out a colleague's category but keeps work with no live owner, 
       [location.practice_id, location.id, ...roster],
     )
     const file = async (suffix: string, category: string, phone: string) => {
-      const created = await page.request.post(`${portalURL}/v1/tasks`, { headers: { authorization: "Bearer synthetic-service-token" }, data: {
+      const created = await page.request.post(`${portalURL}/v1/tasks`, { headers: { authorization: "Bearer synthetic-production-token" }, data: {
         callId: `${key}-${suffix}`, callerPhone: phone, category, idempotencyKey: `${key}-${suffix}`,
         officeKey: "spring-hill", officePhone: "+17275550101", source: "agent", urgency: "normal",
         summary: `${key} ${suffix}`, message: "Synthetic ownership work.",

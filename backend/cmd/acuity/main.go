@@ -262,15 +262,6 @@ func runAuthorizedHTTP(
 		}
 		credentials := []access.ServiceCredential{
 			{
-				Token: config.Service.AcuityDemo.Token,
-				Identity: access.ServiceIdentity{
-					Subject:       config.Service.AcuityDemo.Subject,
-					PracticeID:    config.Service.AcuityDemo.PracticeID,
-					LocationScope: access.LocationScopeAll,
-					Capabilities:  agentCapabilities,
-				},
-			},
-			{
 				Token: config.Service.AbitaEyeGroup.Token,
 				Identity: access.ServiceIdentity{
 					Subject:       config.Service.AbitaEyeGroup.Subject,

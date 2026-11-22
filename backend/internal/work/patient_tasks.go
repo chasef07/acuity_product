@@ -9,6 +9,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type ReviewedTask struct {
+	ID              string
+	ExpectedVersion int64
+}
+
 type CompletePatientTasksCommand struct {
 	Identity access.Identity
 	Phone    string

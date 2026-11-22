@@ -39,9 +39,3 @@ export function checkState(
   if (!failure) return "context"
   return answer === "yes" ? "pass" : "fail"
 }
-
-export function flowResult(states: CheckState[], complete = true): FlowResult {
-  if (states.includes("fail")) return "fail"
-  if (!complete || states.includes("unknown") || !states.includes("pass")) return "unknown"
-  return "pass"
-}

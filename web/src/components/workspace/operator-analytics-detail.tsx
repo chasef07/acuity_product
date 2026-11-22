@@ -48,7 +48,7 @@ import type {
   OperatorAiTimelineItem,
 } from "@/lib/api/generated/types.gen"
 import { useAiCallEvidence } from "@/lib/clients/agent-calls"
-import { useScorecardQuestions } from "@/lib/clients/call-review"
+import { useScorecardQuestions } from "@/lib/clients/scorecard-questions"
 import { accessDenied } from "@/lib/clients/portal-request"
 import { formatAppointmentDateTime, formatTimestamp } from "@/lib/format-time"
 import {
@@ -499,7 +499,7 @@ function AppointmentFacts({ facts }: { facts: AiAppointmentFacts }) {
   )
 }
 
-export function TimelineItem({
+function TimelineItem({
   item,
   result,
   selected,
@@ -664,7 +664,7 @@ function ToolPayload({
   )
 }
 
-export function timelineEntries(items: OperatorAiTimelineItem[]) {
+function timelineEntries(items: OperatorAiTimelineItem[]) {
   const entries: Array<{
     item: OperatorAiTimelineItem
     result?: OperatorAiTimelineItem
@@ -747,7 +747,7 @@ function EvidenceValue({ label, value }: { label: string; value: string }) {
   )
 }
 
-export function formatOffset(value: string, startedAt: string) {
+function formatOffset(value: string, startedAt: string) {
   return formatClock((Date.parse(value) - Date.parse(startedAt)) / 1_000)
 }
 
